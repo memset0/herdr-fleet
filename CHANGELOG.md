@@ -1,10 +1,21 @@
 # Changelog
 
-All notable changes to Collie are recorded here. The format follows
+All notable changes to Herdr Web Remote and its Collie-derived node UI are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project uses
 [Semantic Versioning](https://semver.org/). The newest `## [x.y.z]` heading **must** match the
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
+
+## [0.24.0] - 2026-08-04
+
+### Added
+
+- Single-account Fleet Gateway, multi-instance local/SSH inventory, transparent Collie routing, and a responsive health dashboard (c8f7a28)
+- Herdr-coupled plugin supervisor with race-safe ensure, generation replacement, child backoff, and bounded ownership health (c8f7a28)
+
+### Changed
+
+- Supported deployment is loopback behind an operator reverse proxy; Tailscale and OS-service management were removed from the plugin workflow (c8f7a28)
 
 ## [0.23.1] - 2026-08-03
 
