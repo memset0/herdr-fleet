@@ -63,4 +63,15 @@ describe("single-account authentication", () => {
     limiter.success("client");
     expect(limiter.allowed("client", 300)).toBeTrue();
   });
+
+  test("bounds abandoned source entries", () => {
+    const limiter = new LoginRateLimiter(1, 10_000, 10_000, 2);
+    limiter.failure("oldest", 1);
+    limiter.failure("second", 2);
+    expect(limiter.allowed("oldest", 3)).toBeFalse();
+    limiter.failure("third", 3);
+    expect(limiter.allowed("oldest", 4)).toBeTrue();
+    expect(limiter.allowed("second", 4)).toBeFalse();
+    expect(limiter.allowed("third", 4)).toBeFalse();
+  });
 });

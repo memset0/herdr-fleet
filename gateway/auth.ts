@@ -108,6 +108,7 @@ export class LoginRateLimiter {
     private readonly maxFailures = 5,
     private readonly windowMs = 10 * 60_000,
     private readonly blockMs = 15 * 60_000,
+    private readonly maxEntries = 10_000,
   ) {}
 
   allowed(key: string, now = Date.now()): boolean {
@@ -115,10 +116,15 @@ export class LoginRateLimiter {
     if (!entry) return true;
     if (entry.blockedUntil > now) return false;
     entry.failures = entry.failures.filter((time) => now - time <= this.windowMs);
+    if (entry.failures.length === 0) this.entries.delete(key);
     return true;
   }
 
   failure(key: string, now = Date.now()): void {
+    if (!this.entries.has(key) && this.entries.size >= this.maxEntries) {
+      const oldest = this.entries.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.entries.delete(oldest);
+    }
     const entry = this.entries.get(key) ?? { failures: [], blockedUntil: 0 };
     entry.failures = entry.failures.filter((time) => now - time <= this.windowMs);
     entry.failures.push(now);

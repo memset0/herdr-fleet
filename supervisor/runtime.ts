@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { chmod, mkdir, readFile } from "node:fs/promises";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +71,10 @@ export async function loadPluginEnv(
   const envPath = join(configDir, ".env");
   let fromFile: Record<string, string> = {};
   try {
+    const info = await stat(envPath);
+    if (process.platform !== "win32" && (info.mode & 0o077) !== 0) {
+      throw new Error("plugin .env must not be accessible by group or other users (chmod 600)");
+    }
     fromFile = parseEnvFile(await readFile(envPath, "utf8"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -78,13 +82,27 @@ export async function loadPluginEnv(
   return { ...fromFile, ...inherited };
 }
 
+function productionTypeScriptFiles(root: string, relative: string): string[] {
+  const absolute = join(root, relative);
+  if (!existsSync(absolute)) return [];
+  const files: string[] = [];
+  for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+    const child = join(relative, entry.name);
+    if (entry.isDirectory()) files.push(...productionTypeScriptFiles(root, child));
+    else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") && entry.name !== "test-helpers.ts") {
+      files.push(child);
+    }
+  }
+  return files.sort();
+}
+
 export function computeGeneration(pluginRoot: string): string {
   const hash = createHash("sha256");
   for (const relative of [
     "package.json",
-    "bridge/index.ts",
-    "gateway/index.ts",
-    "supervisor/daemon.ts",
+    ...productionTypeScriptFiles(pluginRoot, "bridge"),
+    ...productionTypeScriptFiles(pluginRoot, "gateway"),
+    ...productionTypeScriptFiles(pluginRoot, "supervisor"),
   ]) {
     const path = join(pluginRoot, relative);
     hash.update(relative);

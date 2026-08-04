@@ -22,6 +22,7 @@ const BASE_HEADERS: Record<string, string> = {
   "referrer-policy": "no-referrer",
   "x-frame-options": "DENY",
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "strict-transport-security": "max-age=31536000; includeSubDomains",
 };
 
 function response(body: BodyInit | null, init: ResponseInit = {}): Response {

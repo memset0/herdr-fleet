@@ -8,6 +8,7 @@ import {
   ensurePrivateDirs,
   evaluateHostGate,
   parseEnvFile,
+  loadPluginEnv,
   positiveIntEnv,
   resolveRuntimePaths,
   sanitizedDaemonEnv,
@@ -70,5 +71,15 @@ describe("supervisor runtime policy", () => {
     expect(sanitizedDaemonEnv({ HERDR_PLUGIN_EVENT: "pane.focused", KEEP: "yes" })).toEqual({ KEEP: "yes" });
     expect(positiveIntEnv({ X: "bad" }, "X", 15)).toBe(15);
     expect(positiveIntEnv({ X: "20" }, "X", 15)).toBe(20);
+  });
+
+  test("refuses a group-readable plugin env", async () => {
+    const root = await mkdtemp(join(tmpdir(), "web-remote-env-mode-test-"));
+    temporary.push(root);
+    const path = join(root, ".env");
+    await writeFile(path, "COLLIE_PORT=8787\n", { mode: 0o600 });
+    expect((await loadPluginEnv(root, {})).COLLIE_PORT).toBe("8787");
+    await chmod(path, 0o640);
+    await expect(loadPluginEnv(root, {})).rejects.toThrow("chmod 600");
   });
 });
