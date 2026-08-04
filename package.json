@@ -1,18 +1,17 @@
 {
-  "name": "collie",
-  "version": "0.23.1",
+  "name": "herdr-plugin-web-remote",
+  "version": "0.24.0",
   "private": true,
   "license": "MIT",
-  "description": "Collie — a mobile web UI to monitor and reply to your Herdr agent herd over Tailscale",
+  "description": "Authenticated Fleet dashboard and Collie-based remote UI for Herdr",
   "type": "module",
   "scripts": {
-    "start": "bun run bridge/index.ts",
+    "start": "bun run supervisor/control.ts ensure",
     "dev": "bun --watch bridge/index.ts",
-    "build": "bun run typecheck && cd web && bun install && bun run typecheck && bun run build",
+    "build": "bash scripts/build.sh",
     "build:web": "cd web && bun run build",
     "web:dev": "cd web && bun run dev",
-    "test": "bun test ./bridge && bash scripts/collie-ctl.test.sh",
-    "test:ctl": "bash scripts/collie-ctl.test.sh",
+    "test": "bun test ./bridge ./gateway ./supervisor",
     "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {

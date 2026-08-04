@@ -4,7 +4,7 @@
 // (VAPID signing → FCM → device, plus dead-endpoint pruning).
 //
 // Needs the same env the bridge runs with (COLLIE_VAPID_*). Run it via
-//   bash scripts/collie-ctl.sh push-test ["title"] ["body"] ["paneId"]
+//   bun run scripts/push-test.ts ["title"] ["body"] ["paneId"]
 // which sources the plugin .env first. (Direct `bun run scripts/push-test.ts` works too if those
 // vars are already exported.)
 import { join } from "node:path";
@@ -21,7 +21,7 @@ await push.init();
 if (!push.enabled) {
   console.error(
     "✗ push is disabled — COLLIE_VAPID_PUBLIC/PRIVATE aren't set (or web-push isn't installed).\n" +
-      "  Run via `bash scripts/collie-ctl.sh push-test` so the plugin .env is sourced first.",
+      "  Load the plugin .env before running this developer utility.",
   );
   process.exit(1);
 }

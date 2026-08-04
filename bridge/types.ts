@@ -199,7 +199,7 @@ export interface UpdateStatus {
   latestUrl: string | null;
   /** `latest` is strictly newer than `current`. */
   releaseAvailable: boolean;
-  /** The running process is behind the on-disk bridge source — needs `systemctl --user restart collie`. */
+  /** The running process is behind the on-disk bridge source — needs the plugin restart action. */
   bridgeStale: boolean;
   /** When the upstream check last completed (epoch ms), or null if it hasn't run yet. */
   checkedAt: number | null;

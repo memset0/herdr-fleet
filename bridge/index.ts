@@ -76,7 +76,7 @@ await updateStore.load();
 
 // The repo the release check + release links point at. Defaults to Collie's own; overridable for a
 // fork (or a synthetic test target) via COLLIE_UPDATE_REPO.
-const updateRepo = process.env.COLLIE_UPDATE_REPO?.trim() || "AltanS/collie";
+const updateRepo = process.env.COLLIE_UPDATE_REPO?.trim() || "memset0/herdr-plugin-web-remote";
 const updateMonitor = new UpdateMonitor({
   repo: updateRepo,
   current: currentVersion,

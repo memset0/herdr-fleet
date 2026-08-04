@@ -7,7 +7,7 @@
 #   - web/package.json    (PWA frontend)
 #   - CHANGELOG.md        (newest "## [x.y.z]" heading)
 #
-# Exits non-zero with a clear message on any mismatch. Run by `collie-ctl.sh build` and the
+# Exits non-zero with a clear message on any mismatch. Run by `scripts/build.sh` and the
 # pre-commit hook. See CLAUDE.md → "Versioning" for the policy.
 set -euo pipefail
 

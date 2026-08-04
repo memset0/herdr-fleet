@@ -34,19 +34,10 @@ if [ "${SKIP_TESTS:-}" = "1" ]; then
   exit 0
 fi
 
-echo "pre-push: running backend test suite (bun test ./bridge)…" >&2
-if ! (cd "$ROOT" && bun test ./bridge); then
+echo "pre-push: running backend test suite…" >&2
+if ! (cd "$ROOT" && bun test ./bridge ./gateway ./supervisor); then
   cat >&2 <<'EOF'
 ✗ pre-push: backend tests failed — push aborted.
-  Fix the failing tests, or override once with: SKIP_TESTS=1 git push
-EOF
-  exit 1
-fi
-
-echo "pre-push: running control-script lifecycle suite (collie-ctl.test.sh)…" >&2
-if ! (cd "$ROOT" && bash scripts/collie-ctl.test.sh); then
-  cat >&2 <<'EOF'
-✗ pre-push: collie-ctl lifecycle tests failed — push aborted.
   Fix the failing tests, or override once with: SKIP_TESTS=1 git push
 EOF
   exit 1

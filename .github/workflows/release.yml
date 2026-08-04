@@ -34,16 +34,16 @@ jobs:
             fi
             echo "## Update"
             echo
-            echo "Update the plugin — pulls, rebuilds, restarts, and re-links (runs from any directory):"
+            echo "Install or refresh the plugin from GitHub:"
             echo
             echo '```'
-            echo "herdr plugin action invoke update --plugin herdr.collie"
+            echo "herdr plugin install memset0/herdr-plugin-web-remote --yes"
             echo '```'
             echo
             echo "Or just restart the bridge to pick up an already-built change:"
             echo
             echo '```'
-            echo "herdr plugin action invoke restart --plugin herdr.collie"
+            echo "herdr plugin action invoke restart --plugin memset0.web-remote"
             echo '```'
           } > "$notes"
           echo "file=$notes" >> "$GITHUB_OUTPUT"
@@ -51,4 +51,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "Collie $GITHUB_REF_NAME" --notes-file "${{ steps.notes.outputs.file }}"
+        run: gh release create "$GITHUB_REF_NAME" --title "Herdr Web Remote $GITHUB_REF_NAME" --notes-file "${{ steps.notes.outputs.file }}"

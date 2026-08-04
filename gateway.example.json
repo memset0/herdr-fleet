@@ -1,0 +1,44 @@
+{
+  "listen": { "host": "127.0.0.1", "port": 18787 },
+  "public": {
+    "scheme": "https",
+    "fleetHost": "herdr.example.com",
+    "baseDomain": "herdr.example.com",
+    "cookieName": "__Secure-herdr_web_session",
+    "sessionTtlSeconds": 604800
+  },
+  "auth": {
+    "username": "operator-example",
+    "passwordHash": "$argon2id$v=19$m=65536,t=3,p=1$synthetic-salt$synthetic-hash",
+    "sessionSecret": "replace_with_at_least_32_random_base64url_bytes"
+  },
+  "pollIntervalMs": 5000,
+  "nodes": [
+    {
+      "id": "local",
+      "name": "Local",
+      "publicHost": "local.herdr.example.com",
+      "enabled": true,
+      "labels": ["local"],
+      "transport": { "type": "local", "url": "http://127.0.0.1:18788" }
+    },
+    {
+      "id": "cluster-a",
+      "name": "Cluster A",
+      "publicHost": "cluster-a.herdr.example.com",
+      "enabled": false,
+      "labels": ["remote"],
+      "transport": {
+        "type": "ssh",
+        "host": "login.cluster.example",
+        "user": "herdr-web",
+        "port": 22,
+        "identityFile": "/home/operator/.ssh/herdr-web",
+        "knownHostsFile": "/home/operator/.ssh/herdr-web-known-hosts",
+        "localPort": 18789,
+        "remoteHost": "127.0.0.1",
+        "remotePort": 8787
+      }
+    }
+  ]
+}

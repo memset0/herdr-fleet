@@ -33,7 +33,7 @@ export function updateNotice(update: UpdateInfo | undefined): UpdateNotice | nul
     // No release page for "restart needed" — show the Herdr restart action to copy.
     return {
       line: "Bridge restart needed",
-      command: "herdr plugin action invoke restart --plugin herdr.collie",
+      command: "herdr plugin action invoke restart --plugin memset0.web-remote",
     };
   }
   // Guard on `latest` too: without a version string there's nothing meaningful to name. The release

@@ -33,7 +33,7 @@ describe("updateNotice", () => {
   it("prefers the bridge restart over a release when both are pending", () => {
     expect(updateNotice(someUpdate({ bridgeStale: true, releaseAvailable: true }))).toEqual({
       line: "Bridge restart needed",
-      command: "herdr plugin action invoke restart --plugin herdr.collie",
+      command: "herdr plugin action invoke restart --plugin memset0.web-remote",
     });
   });
 
@@ -100,7 +100,7 @@ describe("UpdateBanner", () => {
     expect(await screen.findByText("Bridge restart needed")).toBeInTheDocument();
     expect(screen.queryByRole("link")).toBeNull(); // restart isn't a release — no GitHub link
     expect(
-      screen.getByText("herdr plugin action invoke restart --plugin herdr.collie"),
+      screen.getByText("herdr plugin action invoke restart --plugin memset0.web-remote"),
     ).toBeInTheDocument();
   });
 
