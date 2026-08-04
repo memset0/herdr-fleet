@@ -17,6 +17,10 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 
 - Supported deployment is loopback behind an operator reverse proxy; Tailscale and OS-service management were removed from the plugin workflow (c8f7a28)
 
+### Fixed
+
+- Public responses now carry HSTS, login-source state is bounded, `.env` permissions fail closed, and supervisor generations cover all production backend sources (d903aca)
+
 ## [0.23.1] - 2026-08-03
 
 ### Fixed
