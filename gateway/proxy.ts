@@ -52,6 +52,11 @@ export async function proxyCollie(
   const headers = new Headers(request.headers);
   for (const name of HOP_BY_HOP) headers.delete(name);
   headers.delete("authorization");
+  // Bun fetch transparently decodes gzip but retains the upstream Content-Encoding header. If the
+  // bridge compressed a snapshot, forwarding that mismatched header makes the public proxy try to
+  // decode plain JSON a second time and abort the HTTP/2 stream. Keep this hop uncompressed; Caddy
+  // may independently encode the final public response if configured to do so.
+  headers.set("accept-encoding", "identity");
   const remainingCookie = stripCookie(headers.get("cookie"), config.public.cookieName);
   if (remainingCookie) headers.set("cookie", remainingCookie);
   else headers.delete("cookie");
@@ -68,6 +73,8 @@ export async function proxyCollie(
   });
   const responseHeaders = new Headers(response.headers);
   for (const name of HOP_BY_HOP) responseHeaders.delete(name);
+  responseHeaders.delete("content-encoding");
+  responseHeaders.delete("content-length");
   const location = responseHeaders.get("location");
   if (location?.startsWith(upstream)) {
     responseHeaders.set("location", `${config.public.scheme}://${node.publicHost}${location.slice(upstream.length)}`);

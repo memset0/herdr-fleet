@@ -22,6 +22,8 @@ describe("Collie proxy semantics", () => {
         headers: {
           location: "http://127.0.0.1:18788/pane/next",
           connection: "keep-alive",
+          "content-encoding": "gzip",
+          "content-length": "7",
           "x-upstream": "yes",
         },
       });
@@ -43,10 +45,13 @@ describe("Collie proxy semantics", () => {
     expect(headers.get("host")).toBe("local.example.com");
     expect(headers.get("origin")).toBe("https://local.example.com");
     expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("accept-encoding")).toBe("identity");
     expect(headers.get("cookie")).toBe("collie=kept");
     expect(await new Response(seenInit?.body).text()).toBe("hello");
     expect(result.headers.get("location")).toBe("https://local.example.com/pane/next");
     expect(result.headers.get("connection")).toBeNull();
+    expect(result.headers.get("content-encoding")).toBeNull();
+    expect(result.headers.get("content-length")).toBeNull();
     expect(result.headers.get("x-upstream")).toBe("yes");
   });
 
