@@ -1,9 +1,10 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 
 import { LoginRateLimiter } from "./auth.ts";
+import { parseGatewayConfig, type GatewayConfig } from "./config.ts";
 import { FleetCollector } from "./fleet.ts";
 import { createGatewayHandler } from "./server.ts";
-import { gatewayConfig } from "./test-helpers.ts";
+import { gatewayConfig, rawGatewayConfig } from "./test-helpers.ts";
 import { TransportRegistry } from "./transports.ts";
 
 const config = gatewayConfig();
@@ -21,12 +22,17 @@ function request(host: string, path: string, init: RequestInit = {}): Request {
   return new Request(`https://${host}${path}`, { ...init, headers });
 }
 
-function setup(fetcher: typeof fetch = fetch, limiter?: LoginRateLimiter, now?: () => number) {
-  const transports = new TransportRegistry(config.nodes);
-  const collector = new FleetCollector(config, transports, (async () => {
+function setup(
+  fetcher: typeof fetch = fetch,
+  limiter?: LoginRateLimiter,
+  now?: () => number,
+  gateway: GatewayConfig = config,
+) {
+  const transports = new TransportRegistry(gateway.nodes);
+  const collector = new FleetCollector(gateway, transports, (async () => {
     throw new Error("not polled in handler tests");
   }) as unknown as typeof fetch);
-  return createGatewayHandler({ config, collector, transports, fetcher, limiter, now });
+  return createGatewayHandler({ config: gateway, collector, transports, fetcher, limiter, now });
 }
 
 async function login(handler: ReturnType<typeof setup>, next = "https://fleet.example.com/"): Promise<string> {
@@ -85,6 +91,71 @@ describe("Gateway host routing and auth flow", () => {
     expect(response.status).toBe(200);
     expect(seen.host).toBe("local.example.com");
     expect(seen.cookie).toBe("collie_pref=kept");
+  });
+
+  test("allows only Fleet to frame configured node documents", async () => {
+    const raw = rawGatewayConfig();
+    raw.nodes = [
+      ...(raw.nodes as object[]),
+      {
+        id: "remote",
+        name: "Remote node",
+        publicHost: "remote.example.com",
+        enabled: true,
+        labels: [],
+        transport: { type: "local", url: "http://127.0.0.1:18789" },
+      },
+      {
+        id: "disabled",
+        name: "Disabled node",
+        publicHost: "disabled.example.com",
+        enabled: false,
+        labels: [],
+        transport: { type: "local", url: "http://127.0.0.1:18790" },
+      },
+    ];
+    const framedConfig = parseGatewayConfig(raw);
+    framedConfig.auth.passwordHash = config.auth.passwordHash;
+    const handler = setup((async (input: string | URL | Request) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname.startsWith("/api/")) {
+        return new Response("{}", {
+          headers: { "content-type": "application/json", "x-frame-options": "SAMEORIGIN" },
+        });
+      }
+      return new Response("<!doctype html><title>Collie</title>", {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy":
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+          "x-frame-options": "SAMEORIGIN",
+        },
+      });
+    }) as typeof fetch, undefined, undefined, framedConfig);
+    const cookie = await login(handler);
+
+    const fleet = await handler(request("fleet.example.com", "/", { headers: { cookie } }));
+    const fleetCsp = fleet.headers.get("content-security-policy") ?? "";
+    expect(fleet.status).toBe(200);
+    expect(fleet.headers.get("x-frame-options")).toBe("DENY");
+    expect(fleetCsp).toContain("frame-ancestors 'none'");
+    expect(fleetCsp).toContain("frame-src https://local.example.com https://remote.example.com");
+    expect(fleetCsp).not.toContain("disabled.example.com");
+    expect(fleetCsp).not.toContain("*.example.com");
+
+    const node = await handler(request("local.example.com", "/", { headers: { cookie } }));
+    const nodeCsp = node.headers.get("content-security-policy") ?? "";
+    expect(node.status).toBe(200);
+    expect(node.headers.get("x-frame-options")).toBeNull();
+    expect(node.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(node.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(nodeCsp).toContain("default-src 'self'");
+    expect(nodeCsp).toContain("script-src 'self'");
+    expect(nodeCsp).toContain("frame-ancestors https://fleet.example.com");
+    expect(nodeCsp).not.toContain("frame-ancestors 'none'");
+
+    const api = await handler(request("local.example.com", "/api/snapshot", { headers: { cookie } }));
+    expect(api.headers.get("x-frame-options")).toBe("DENY");
   });
 
   test("keeps only static PWA update assets public and reserves /auth", async () => {

@@ -12,8 +12,9 @@ https://node.herdr.example.com/?session=<session-name>
 https://node.herdr.example.com/pane/<pane-id>?session=<session-name>
 ```
 
-The separate Fleet page aggregates instance/session health without copying terminal contents into
-the central dashboard.
+The Fleet page is a mobile-first Collie shell: one compact row switches instances while one
+width-limited iframe renders the selected node's native Collie home, session, and pane routes. It
+does not reimplement Collie's dashboard or copy terminal contents into a central data model.
 
 ## Architecture
 
@@ -28,6 +29,8 @@ browser ──HTTPS── reverse proxy ──loopback── Fleet Gateway
   subdomains.
 - Gateway routes by exact `Host`, strips its session credential, then transparently proxies the
   stock Collie path/query/method/body/response.
+- Fleet may frame only the exact enabled node origins. Node HTML may be framed only by the exact
+  Fleet origin; APIs, assets, Fleet itself, and every unknown host remain non-embeddable.
 - Every Collie and Gateway listener is loopback-only. TLS is the operator's reverse proxy's job.
 - The plugin's own detached supervisor restarts children with capped backoff. Herdr startup and
   lifecycle hooks idempotently ensure it; it exits after Herdr/plugin health stays absent for a
@@ -137,6 +140,8 @@ invariants:
 - Gateway and Collie bind loopback only; expose only the TLS reverse proxy.
 - Protect `.env`, `gateway.json`, SSH identities, and known-hosts files locally.
 - Keep exact public Host/Origin lists; unknown node hosts fail closed.
+- Keep the generated frame policy exact. Do not replace configured Fleet/node origins with a
+  wildcard or disable the Gateway's CSP/X-Frame-Options handling.
 - Do not place another authentication proxy in front of only some node routes. Gateway authentication
   must cover every API and navigation uniformly.
 - Static PWA update assets may load before login so an installed app can refresh; pane/session APIs

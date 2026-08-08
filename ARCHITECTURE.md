@@ -23,9 +23,17 @@ layer after the Gateway cookie and ambient authorization headers are removed. Ex
 Origin semantics are preserved for Collie's DNS-rebinding and CSRF checks. Unknown hosts are never
 mapped to a default node.
 
-The Fleet collector consumes only stable Collie snapshot summary fields. It does not centrally
-store terminal text. Fleet links return the browser to the native node route, including the exact
-named-session selector.
+The Fleet collector consumes only stable Collie snapshot summary fields for instance identity and
+health. The Fleet page uses those fields to render a single horizontal instance switcher and embeds
+exactly one selected node origin at a time. The iframe owns the complete native Collie route stack,
+so opening a session or pane stays inside Collie's UI and does not require a parallel Fleet data
+model. Switching instances navigates that one iframe to the selected node's root.
+
+Embedding is deliberately asymmetric. Fleet's document CSP permits `frame-src` only for exact,
+enabled node origins and Fleet itself stays non-embeddable. The Gateway rewrites only proxied node
+HTML documents to permit the exact Fleet origin as `frame-ancestors`; node APIs/assets retain
+`X-Frame-Options: DENY`. The shared authenticated cookie is available to the node iframe because all
+public hosts are same-site subdomains, but the Gateway credential is stripped before proxying.
 
 ## Process ownership
 

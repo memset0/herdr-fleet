@@ -31,15 +31,40 @@ function response(body: BodyInit | null, init: ResponseInit = {}): Response {
   return new Response(body, { ...init, headers });
 }
 
-function html(body: string, status = 200, extra: HeadersInit = {}): Response {
+function html(body: string, status = 200, extra: HeadersInit = {}, contentSecurityPolicy = HTML_CSP): Response {
   const headers = new Headers(extra);
   headers.set("content-type", "text/html; charset=utf-8");
-  headers.set("content-security-policy", HTML_CSP);
+  headers.set("content-security-policy", contentSecurityPolicy);
   headers.set("cache-control", "no-store");
   return response(body, {
     status,
     headers,
   });
+}
+
+function publicOrigin(config: GatewayConfig, host: string): string {
+  return `${config.public.scheme}://${host}`;
+}
+
+function fleetDocumentCsp(config: GatewayConfig): string {
+  const frameSources = config.nodes
+    .filter((node) => node.enabled)
+    .map((node) => publicOrigin(config, node.publicHost))
+    .join(" ");
+  return `${HTML_CSP}; frame-src ${frameSources}`;
+}
+
+function nodeDocumentCsp(upstream: string | null, config: GatewayConfig): string {
+  const directives = (upstream ?? "default-src 'none'")
+    .split(";")
+    .map((directive) => directive.trim())
+    .filter((directive) => directive && !directive.toLowerCase().startsWith("frame-ancestors"));
+  directives.push(`frame-ancestors ${publicOrigin(config, config.public.fleetHost)}`);
+  return directives.join("; ");
+}
+
+function isHtmlDocument(headers: Headers): boolean {
+  return headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === "text/html";
 }
 
 function json(value: unknown, status = 200): Response {
@@ -110,6 +135,12 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
     try {
       const proxied = await proxyCollie(request, node, transports.upstream(node), config, fetcher);
       for (const [name, value] of Object.entries(BASE_HEADERS)) proxied.headers.set(name, value);
+      if (isHtmlDocument(proxied.headers)) {
+        proxied.headers.set("content-security-policy", nodeDocumentCsp(proxied.headers.get("content-security-policy"), config));
+        // X-Frame-Options cannot express an exact cross-origin parent and would override the more
+        // precise CSP in older browser implementations. Node documents are framed only by Fleet.
+        proxied.headers.delete("x-frame-options");
+      }
       return proxied;
     } catch {
       return request.headers.get("accept")?.includes("application/json") || new URL(request.url).pathname.startsWith("/api/")
@@ -128,10 +159,10 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
       return response(APP_CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "public, max-age=3600" } });
     }
     if (url.pathname === "/fleet-assets/fleet.css" && request.method === "GET") {
-      return response(FLEET_CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "public, max-age=3600" } });
+      return response(FLEET_CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" } });
     }
     if (url.pathname === "/fleet-assets/fleet.js" && request.method === "GET") {
-      return response(FLEET_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=3600" } });
+      return response(FLEET_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
     }
 
     if (url.pathname === "/auth/login" && request.method === "GET") {
@@ -177,7 +208,9 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
 
     if (host === config.public.fleetHost) {
       if (url.pathname === "/api/fleet" && request.method === "GET") return json(collector.snapshot());
-      if (url.pathname === "/" && request.method === "GET") return html(fleetPage());
+      if (url.pathname === "/" && request.method === "GET") {
+        return html(fleetPage(), 200, {}, fleetDocumentCsp(config));
+      }
       return response("not found\n", { status: 404 });
     }
 
