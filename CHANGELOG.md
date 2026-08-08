@@ -6,6 +6,12 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.0.3] - 2026-08-08
+
+### Fixed
+
+- Fleet embeds now expose only Collie's intended route-content scrollbar instead of adding a competing iframe document scrollbar on desktop and mobile viewports (33cdd79)
+
 ## [2.0.2] - 2026-08-08
 
 ### Security
