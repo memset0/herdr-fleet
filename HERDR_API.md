@@ -1,6 +1,6 @@
-# Herdr socket API — empirically verified (v0.7.2, protocol 16)
+# Herdr socket and plugin API — empirically verified (v0.8.0, protocol 19)
 
-Probed live against a running Herdr server, most recently re-probed 2026-07-07 and cross-checked
+Probed live against a running Herdr server, most recently re-probed 2026-08-08 and cross-checked
 against the bundled machine-readable schema — `herdr api schema [--json | --output PATH]`
 (`schema_version 1`, covering requests, responses, errors, and events) is now the fastest way to
 re-derive this contract without probing. These are the facts the bridge is built on; they confirm
@@ -18,6 +18,23 @@ the socket assumptions behind the design in [`ARCHITECTURE.md`](./ARCHITECTURE.m
 - Malformed requests close the connection too, and the serde error message names the missing/
   wrong field — which is how this contract was reverse-engineered without side effects.
 - **Exception:** `events.subscribe` keeps the connection open and streams events.
+
+## Plugin action → popup → foreground clipboard path (verified on v0.8.0)
+
+- A `[[keys.command]]` whose `type = "plugin_action"` can invoke a qualified manifest action. The
+  action receives the focused `HERDR_PANE_ID`, plugin paths, socket/binary paths, and the full
+  `HERDR_PLUGIN_CONTEXT_JSON`.
+- Action stdout is captured in the plugin command log, not rendered through the active terminal.
+  Clipboard output therefore uses `plugin pane open` with a manifest `[[panes]]` entrypoint whose
+  `placement = "popup"`. The popup is session-modal but layout-neutral, has no Pane id, and retains
+  the underlying focus context in `HERDR_PLUGIN_CONTEXT_JSON`.
+- A popup child that writes `ESC ] 52 ; c ; <base64> BEL` produces a decoded Herdr clipboard event.
+  A headless server sends that event only to the foreground client as `ServerMessage::Clipboard`;
+  the client decodes it and uses Herdr's normal clipboard writer/OSC 52 fallback on the viewing
+  machine. Background clients do not receive the value.
+- `plugin pane open --env KEY=VALUE` provides action-selected, entrypoint-local context. Herdr
+  overwrites only its documented protected runtime keys, so a plugin-namespaced target Pane/session
+  value can cross the action/popup boundary without using an absolute plugin path.
 
 ## Methods the bridge uses (verified params)
 

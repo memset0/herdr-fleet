@@ -9,6 +9,12 @@ loopback address and talks to the primary and named Herdr Unix sockets. Its Reac
 session selector, pane deep links, terminal reads, and terminal writes remain Collie's native data
 path. The bridge knows only its own host; it never contacts the Fleet or publishes itself.
 
+An optional Pane-context action turns the focused Pane id plus public Fleet origin/instance metadata
+into the canonical outer deep link. Because plugin-action stdout is logged rather than connected to
+the terminal, the action opens a transient plugin popup whose single OSC 52 write is consumed by
+Herdr. A headless server forwards that clipboard event only to its foreground client. The popup
+contains no Gateway credential, never reads terminal contents, and leaves the tiled layout intact.
+
 ## Fleet plane
 
 One optional Gateway loads a static, owner-only JSON inventory. A local node maps directly to a

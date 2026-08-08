@@ -4,6 +4,8 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
+import { normalizeFleetUrl, normalizeInstanceId } from "../supervisor/pane-url.ts";
+
 interface Options {
   configDir: string;
   fleetHost: string;
@@ -53,6 +55,8 @@ function parseArgs(args: string[]): Options {
 }
 
 const options = parseArgs(process.argv.slice(2));
+const fleetUrl = normalizeFleetUrl(`https://${options.fleetHost}/`);
+const instanceId = normalizeInstanceId(options.nodeId);
 const username = `herdr-${randomBytes(5).toString("hex")}`;
 const password = randomBytes(24).toString("base64url");
 const passwordHash = await Bun.password.hash(password, { algorithm: "argon2id", memoryCost: 65_536, timeCost: 3 });
@@ -73,7 +77,7 @@ const gateway = {
   pollIntervalMs: 5_000,
   nodes: [
     {
-      id: options.nodeId,
+      id: instanceId,
       name: options.nodeName,
       publicHost: options.nodeHost,
       enabled: true,
@@ -89,6 +93,8 @@ const env = [
   `COLLIE_PUBLIC_HOSTS=${options.nodeHost}`,
   `COLLIE_ALLOWED_ORIGINS=https://${options.nodeHost}`,
   "COLLIE_MULTI_SESSION=1",
+  `HERDR_WEB_FLEET_URL=${fleetUrl}`,
+  `HERDR_WEB_INSTANCE_ID=${instanceId}`,
   `HERDR_WEB_GATEWAY_CONFIG=${gatewayPath}`,
   "HERDR_WEB_DISALLOW_JOBS=1",
   "",

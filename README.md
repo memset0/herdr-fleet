@@ -80,17 +80,49 @@ COLLIE_SKIP_SERVE=1
 COLLIE_PUBLIC_HOSTS=local.herdr.example.com
 COLLIE_ALLOWED_ORIGINS=https://local.herdr.example.com
 COLLIE_MULTI_SESSION=1
+HERDR_WEB_FLEET_URL=https://herdr.example.com/
+HERDR_WEB_INSTANCE_ID=local
 ```
 
 `COLLIE_MULTI_SESSION=1` makes the node UI discover the primary session and all running named
 sessions. On a shared home, set `HERDR_WEB_HOST_PREFIX` to the stable Herdr host's hostname prefix;
-scheduler jobs are denied by default.
+scheduler jobs are denied by default. `HERDR_WEB_FLEET_URL` must be the HTTPS Fleet origin root,
+and `HERDR_WEB_INSTANCE_ID` must match this node's stable Gateway inventory id. They are public
+routing metadata used by the optional Pane-link shortcut; they are not credentials.
 
 A remote node is deliberately a **zero-central-secret** installation. Its `.env` stops at the
 Collie/node settings above: do not set `HERDR_WEB_GATEWAY_CONFIG`, and do not copy `gateway.json`,
 the Fleet password hash, session-signing secret, SSH private keys, or another node's files to it.
 The remote supervisor then starts Collie only. The central Fleet host reaches that loopback listener
 through SSH; the remote plugin never calls back to Fleet and needs no application token.
+
+### Copy the focused Pane's Fleet link
+
+After setting the two public routing variables above, add this portable binding to the Herdr config
+that owns the session:
+
+```toml
+[[keys.command]]
+key = "prefix+ctrl+r"
+type = "plugin_action"
+command = "memset0.web-remote.copy-pane-url"
+description = "copy Web Remote Pane URL"
+```
+
+Focus a Pane, press the configured prefix, then `Ctrl+R`. The action copies the canonical outer
+Fleet link, for example
+`https://herdr.example.com/?instance=local&pane=w0%3Ap3`; a named Herdr session also gets its
+URL-encoded `session` selector. The link never contains the password, cookie, Gateway config, SSH
+identity, or any Pane contents. A browser without a current Web Remote cookie still passes through
+the normal login and then returns to the same deep link.
+
+The action deliberately opens a tiny transient plugin popup and emits one OSC 52 clipboard write.
+Herdr consumes that write and, for `herdr --remote`, forwards it only to the foreground viewing
+client, so the clipboard belongs to the computer at which you are working rather than the server.
+The popup closes after a short drain interval and does not create a Pane or change the tab layout.
+If the terminal blocks OSC 52, its clipboard policy remains authoritative. Missing or invalid
+routing metadata fails closed and writes no clipboard payload; inspect the Web Remote plugin action
+log after correcting the two public variables.
 
 ## Fleet host configuration
 

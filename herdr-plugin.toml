@@ -37,6 +37,22 @@ title = "Stop Web Remote"
 contexts = ["global"]
 command = ["bash", "scripts/web-remote.sh", "stop"]
 
+[[actions]]
+id = "copy-pane-url"
+title = "Copy Web Remote Pane URL"
+description = "Copy the focused Pane's authenticated Fleet deep link to the viewing terminal"
+contexts = ["pane"]
+command = ["bash", "scripts/pane-url.sh", "action"]
+
+[[panes]]
+id = "copy-pane-url"
+title = "Copy Web Remote Pane URL"
+description = "Transient OSC 52 clipboard bridge for the focused Pane's Fleet link"
+placement = "popup"
+width = 48
+height = 5
+command = ["bash", "scripts/pane-url.sh", "copy"]
+
 [[events]]
 on = "pane.agent_detected"
 command = ["bash", "scripts/web-remote.sh", "ensure"]
