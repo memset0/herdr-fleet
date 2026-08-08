@@ -6,6 +6,12 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.0.1] - 2026-08-08
+
+### Fixed
+
+- Fleet logout keeps an exact same-origin CSRF signal while retaining no-referrer behavior for cross-origin requests and node documents (a9133bb)
+
 ## [2.0.0] - 2026-08-08
 
 ### Added
