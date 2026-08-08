@@ -14,6 +14,9 @@ describe("Fleet iframe shell", () => {
     expect(page).not.toContain('class="node-grid"');
     expect(FLEET_CSS).toContain("max-width:640px");
     expect(FLEET_CSS).toContain("height:100dvh");
+    expect(FLEET_CSS).toContain("html,body{height:100%;overflow:hidden}");
+    expect(FLEET_CSS).toContain(".frame-stage{position:relative;display:flex;min-height:0;flex:1;overflow:hidden");
+    expect(FLEET_CSS).toContain(".node-frame{display:block;width:100%;height:100%;border:0");
   });
 
   test("keeps selection URL-addressable without rebuilding Collie content", () => {

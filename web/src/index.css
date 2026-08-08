@@ -176,6 +176,15 @@
        into a live shell. */
     @apply border-border outline-ring;
   }
+  html,
+  body,
+  #root {
+    /* The route owns its content scroller. Clipping the document root prevents an iframe-level
+       scrollbar from appearing beside that intentional scroller in Fleet. */
+    height: 100%;
+    overflow: hidden;
+    overflow: clip;
+  }
   html {
     /* Respect notches; keep the app glued to the viewport edges on mobile. */
     -webkit-text-size-adjust: 100%;
