@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.0.4] - 2026-08-08
+
+### Added
+
+- Fleet links now preserve the selected instance, named session, and Pane while Collie navigation updates the outer URL without reloading the iframe (d6e1447)
+- Release validation now classifies exact SemVer transitions, permits compatible patch skew, and requires explicit exact-version approval for minor and major releases (73ccf1a)
+
+### Security
+
+- Fleet accepts route updates only from the selected iframe at its exact configured origin and only through a bounded, versioned home/Pane message schema (d6e1447)
+
 ## [2.0.3] - 2026-08-08
 
 ### Fixed
