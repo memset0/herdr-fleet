@@ -20,7 +20,17 @@ Read `README.md`, `ARCHITECTURE.md`, `UPSTREAM.md`, and `HERDR_API.md` before ch
 
 `herdr-plugin.toml`, root `package.json`, `web/package.json`, and the newest `CHANGELOG.md` heading
 must agree. Functional changes require a SemVer bump and a concise changelog entry citing the short
-feature commit. Run `scripts/check-version.sh`. Tag releases as `vX.Y.Z` after the release commit.
+feature commit. Patch releases are mutually compatible within one major/minor line: central and
+remote nodes may run different `X.Y.z` versions, and remote nodes may defer those updates. Use a
+minor release when a change requires remote plugins to be reinstalled; report that rollout impact
+to the owner and obtain explicit approval for the exact version before tagging or pushing it. The
+major version changes only on an explicit owner directive and likewise requires exact approval.
+
+Run `scripts/check-version.sh` during development and `scripts/check-version.sh --release` after the
+release commit. The release gate accepts only the next patch, minor, or major version. Minor and
+major gates respectively require `WEB_REMOTE_MINOR_RELEASE_APPROVAL=X.Y.Z` or
+`WEB_REMOTE_MAJOR_RELEASE_APPROVAL=X.Y.Z`; never infer or pre-fill either approval. Tag releases as
+`vX.Y.Z` only after the release gate passes.
 
 ## Verification
 

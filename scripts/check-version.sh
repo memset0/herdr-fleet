@@ -12,6 +12,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+release_mode=0
+
+case "${1:-}" in
+  "") ;;
+  --release) release_mode=1 ;;
+  *) echo "usage: $0 [--release]" >&2; exit 2 ;;
+esac
+if [[ $# -gt 1 ]]; then
+  echo "usage: $0 [--release]" >&2
+  exit 2
+fi
 
 toml_v="$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/herdr-plugin.toml" | head -1)"
 pkg_v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/package.json" | head -1)"
@@ -38,3 +49,24 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 echo "✓ version $toml_v consistent across manifest, package.json, web/package.json, CHANGELOG"
+
+if [[ "$release_mode" -eq 1 ]]; then
+  # shellcheck source=version-policy.sh
+  source "$ROOT/scripts/version-policy.sh"
+  latest_tag=""
+  while IFS= read -r tag; do
+    if [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+      latest_tag="$tag"
+      break
+    fi
+  done < <(git -C "$ROOT" tag --list --sort=-version:refname)
+
+  if [[ -z "$latest_tag" ]]; then
+    echo "✗ no prior strict vX.Y.Z release tag found" >&2
+    exit 1
+  fi
+
+  bump="$(classify_version_bump "${latest_tag#v}" "$toml_v")"
+  require_release_approval "$bump" "$toml_v"
+  echo "✓ $bump release $latest_tag -> v$toml_v satisfies the release policy"
+fi

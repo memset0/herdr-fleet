@@ -186,6 +186,19 @@ invariants:
 
 ## Development
 
+### Version compatibility
+
+Patch versions within one major/minor line are deployment-compatible. For example, a `2.0.4`
+central Gateway may continue serving a remote node on `2.0.2`; patch-only changes do not require
+remote plugin reinstallation and nodes may update later. A change that requires remote plugins to
+be reinstalled increments the minor version and is not released until the operator approves the
+exact target version and rollout. The major version changes only on an explicit operator directive.
+
+Normal validation runs `scripts/check-version.sh`. A release additionally runs
+`scripts/check-version.sh --release`, which compares the candidate to the latest strict `vX.Y.Z`
+tag, rejects skipped or malformed transitions, and enforces exact approval for minor and major
+releases.
+
 ```bash
 bun install --frozen-lockfile
 bun run typecheck
