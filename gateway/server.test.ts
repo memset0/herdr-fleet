@@ -138,6 +138,7 @@ describe("Gateway host routing and auth flow", () => {
     const fleetCsp = fleet.headers.get("content-security-policy") ?? "";
     expect(fleet.status).toBe(200);
     expect(fleet.headers.get("x-frame-options")).toBe("DENY");
+    expect(fleet.headers.get("referrer-policy")).toBe("same-origin");
     expect(fleetCsp).toContain("frame-ancestors 'none'");
     expect(fleetCsp).toContain("frame-src https://local.example.com https://remote.example.com");
     expect(fleetCsp).not.toContain("disabled.example.com");
