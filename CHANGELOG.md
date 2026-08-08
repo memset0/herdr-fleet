@@ -6,6 +6,20 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.0.0] - 2026-08-08
+
+### Added
+
+- Mobile-first Fleet shell with a compact instance switcher and one width-limited native Collie iframe; selection is URL-addressable and remembered locally (6158b2c)
+
+### Changed
+
+- Fleet now delegates session and pane navigation entirely to each node's Collie UI instead of maintaining a separate aggregate session dashboard (6158b2c)
+
+### Security
+
+- Fleet may frame only exact enabled node origins, node HTML may be framed only by the exact Fleet origin, and APIs/assets remain non-embeddable (6158b2c)
+
 ## [1.0.0] - 2026-08-04
 
 ### Added
