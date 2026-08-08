@@ -1,12 +1,27 @@
 import { describe, expect, test } from "bun:test";
 
-import { proxyCollie, publicCollieAsset, stripCookie } from "./proxy.ts";
+import { proxyCollie, publicCollieAsset, stripCookie, stripResponseCookie } from "./proxy.ts";
 import { gatewayConfig } from "./test-helpers.ts";
 
 describe("Collie proxy semantics", () => {
   test("strips only the Gateway cookie", () => {
     expect(stripCookie("a=1; herdr_web_session=secret; collie=kept", "herdr_web_session")).toBe("a=1; collie=kept");
     expect(stripCookie("herdr_web_session=secret", "herdr_web_session")).toBeNull();
+  });
+
+  test("strips only matching upstream Set-Cookie fields without splitting Expires", () => {
+    const headers = new Headers();
+    headers.append("set-cookie", "collie=kept; Expires=Wed, 21 Oct 2030 07:28:00 GMT; Path=/");
+    headers.append("set-cookie", "herdr_web_session=attacker; Domain=.example.com; Path=/; Secure");
+    headers.append("set-cookie", "preferences=kept-too; Path=/");
+    headers.append("set-cookie", "herdr_web_session=cleared; Max-Age=0; Path=/");
+
+    stripResponseCookie(headers, "herdr_web_session");
+
+    expect(headers.getSetCookie()).toEqual([
+      "collie=kept; Expires=Wed, 21 Oct 2030 07:28:00 GMT; Path=/",
+      "preferences=kept-too; Path=/",
+    ]);
   });
 
   test("preserves route/body and public Host while stripping credentials", async () => {
@@ -17,15 +32,18 @@ describe("Collie proxy semantics", () => {
     const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
       seenUrl = String(input);
       seenInit = init;
+      const headers = new Headers({
+        location: "http://127.0.0.1:18788/pane/next",
+        connection: "keep-alive",
+        "content-encoding": "gzip",
+        "content-length": "7",
+        "x-upstream": "yes",
+      });
+      headers.append("set-cookie", "herdr_web_session=must-not-reach-browser; Domain=.example.com; Path=/");
+      headers.append("set-cookie", "collie=kept; Path=/");
       return new Response("proxied", {
         status: 307,
-        headers: {
-          location: "http://127.0.0.1:18788/pane/next",
-          connection: "keep-alive",
-          "content-encoding": "gzip",
-          "content-length": "7",
-          "x-upstream": "yes",
-        },
+        headers,
       });
     }) as typeof fetch;
     const request = new Request("https://local.example.com/api/pane/p1/reply?session=demo", {
@@ -53,6 +71,7 @@ describe("Collie proxy semantics", () => {
     expect(result.headers.get("content-encoding")).toBeNull();
     expect(result.headers.get("content-length")).toBeNull();
     expect(result.headers.get("x-upstream")).toBe("yes");
+    expect(result.headers.getSetCookie()).toEqual(["collie=kept; Path=/"]);
   });
 
   test("only update-safe PWA assets are public", () => {

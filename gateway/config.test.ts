@@ -51,6 +51,37 @@ describe("gateway configuration", () => {
     expect(() => parseGatewayConfig(listenerCollision)).toThrow("duplicate local listener port");
   });
 
+  test("rejects a private SSH identity path reused by another node", () => {
+    const raw = rawGatewayConfig();
+    const remote = {
+      id: "cluster-a",
+      name: "Cluster A",
+      publicHost: "cluster-a.example.com",
+      enabled: true,
+      labels: ["remote"],
+      transport: {
+        type: "ssh",
+        host: "cluster-a.example",
+        user: "herdrweb",
+        port: 22,
+        identityFile: "/synthetic/keys/cluster-a",
+        knownHostsFile: "/synthetic/known_hosts",
+        localPort: 18789,
+        remoteHost: "127.0.0.1",
+        remotePort: 8787,
+      },
+    };
+    nodes(raw)[0] = remote;
+    nodes(raw).push({
+      ...remote,
+      id: "cluster-b",
+      name: "Cluster B",
+      publicHost: "cluster-b.example.com",
+      transport: { ...remote.transport, host: "cluster-b.example", localPort: 18790 },
+    });
+    expect(() => parseGatewayConfig(raw)).toThrow("duplicate SSH identity path");
+  });
+
   test("requires protected config and SSH identity files", async () => {
     const root = await mkdtemp(join(tmpdir(), "web-remote-config-test-"));
     temporary.push(root);
@@ -80,5 +111,49 @@ describe("gateway configuration", () => {
     await expect(loadGatewayConfig(path)).rejects.toThrow("SSH identity must not be accessible");
     await chmod(identity, 0o600);
     expect((await loadGatewayConfig(path)).nodes[0]?.transport.type).toBe("ssh");
+  });
+
+  test("rejects copied SSH private identities even when their paths differ", async () => {
+    const root = await mkdtemp(join(tmpdir(), "web-remote-config-identity-test-"));
+    temporary.push(root);
+    const identityA = join(root, "cluster-a-key");
+    const identityB = join(root, "cluster-b-key");
+    const knownHosts = join(root, "known_hosts");
+    await writeFile(identityA, "synthetic-private-key-a\n", { mode: 0o600 });
+    await writeFile(identityB, "synthetic-private-key-a\n", { mode: 0o600 });
+    await writeFile(knownHosts, "cluster.example ssh-ed25519 synthetic\n", { mode: 0o644 });
+
+    const raw = rawGatewayConfig();
+    const transport = {
+      type: "ssh",
+      host: "cluster-a.example",
+      user: "herdrweb",
+      port: 22,
+      identityFile: identityA,
+      knownHostsFile: knownHosts,
+      localPort: 18789,
+      remoteHost: "127.0.0.1",
+      remotePort: 8787,
+    };
+    nodes(raw)[0] = {
+      id: "cluster-a",
+      name: "Cluster A",
+      publicHost: "cluster-a.example.com",
+      enabled: true,
+      labels: ["remote"],
+      transport,
+    };
+    nodes(raw).push({
+      id: "cluster-b",
+      name: "Cluster B",
+      publicHost: "cluster-b.example.com",
+      enabled: true,
+      labels: ["remote"],
+      transport: { ...transport, host: "cluster-b.example", identityFile: identityB, localPort: 18790 },
+    });
+    const path = join(root, "gateway.json");
+    await writeFile(path, JSON.stringify(raw), { mode: 0o600 });
+
+    await expect(loadGatewayConfig(path)).rejects.toThrow("reuses the SSH private identity");
   });
 });

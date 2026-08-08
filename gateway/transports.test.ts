@@ -26,13 +26,32 @@ function sshConfig(overrides: Partial<SshTransportConfig> = {}): SshTransportCon
 }
 
 describe("SSH transports", () => {
-  test("constructs a pinned, batch, loopback-only forward", () => {
+  test("constructs a pinned, dedicated, batch-only loopback forward", () => {
     const args = sshArgs(sshConfig());
+    expect(args).toContain("-N");
+    expect(args).toContain("-T");
+    expect(args.slice(args.indexOf("-F"), args.indexOf("-F") + 2)).toEqual(["-F", "/dev/null"]);
     expect(args).toContain("BatchMode=yes");
     expect(args).toContain("ExitOnForwardFailure=yes");
     expect(args).toContain("StrictHostKeyChecking=yes");
     expect(args).toContain("UserKnownHostsFile=/synthetic/known_hosts");
+    expect(args).toContain("UpdateHostKeys=no");
+    expect(args).toContain("IdentitiesOnly=yes");
+    expect(args).toContain("IdentityAgent=none");
+    expect(args).toContain("PreferredAuthentications=publickey");
+    expect(args).toContain("PasswordAuthentication=no");
+    expect(args).toContain("KbdInteractiveAuthentication=no");
     expect(args).toContain("ForwardAgent=no");
+    expect(args).toContain("ForwardX11=no");
+    expect(args).toContain("ControlMaster=no");
+    expect(args).toContain("ControlPath=none");
+    expect(args).toContain("ControlPersist=no");
+    expect(args).toContain("GatewayPorts=no");
+    expect(args).toContain("Tunnel=no");
+    expect(args.filter((arg) => arg === "-L")).toHaveLength(1);
+    expect(args).not.toContain("-A");
+    expect(args).not.toContain("-R");
+    expect(args).not.toContain("-D");
     expect(args).toContain("127.0.0.1:18789:127.0.0.1:8787");
     expect(args.slice(-2)).toEqual(["--", "cluster.example"]);
     expect(sshArgs(sshConfig({ remoteHost: "::1" }))).toContain("127.0.0.1:18789:[::1]:8787");

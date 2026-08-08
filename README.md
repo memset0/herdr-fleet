@@ -86,6 +86,12 @@ COLLIE_MULTI_SESSION=1
 sessions. On a shared home, set `HERDR_WEB_HOST_PREFIX` to the stable Herdr host's hostname prefix;
 scheduler jobs are denied by default.
 
+A remote node is deliberately a **zero-central-secret** installation. Its `.env` stops at the
+Collie/node settings above: do not set `HERDR_WEB_GATEWAY_CONFIG`, and do not copy `gateway.json`,
+the Fleet password hash, session-signing secret, SSH private keys, or another node's files to it.
+The remote supervisor then starts Collie only. The central Fleet host reaches that loopback listener
+through SSH; the remote plugin never calls back to Fleet and needs no application token.
+
 ## Fleet host configuration
 
 The Fleet host uses the same node configuration and additionally sets:
@@ -110,9 +116,32 @@ new username/password once. Use a dedicated cookie base (for example `herdr.exam
 than a parent shared by unrelated applications. `gateway.example.json` documents local and SSH
 inventory entries. The live Gateway config must remain an absolute-path, owner-only file.
 
-For each SSH node, use a dedicated key and known-hosts file. The generated command uses batch mode,
-strict host-key verification, `ExitOnForwardFailure`, keepalives, and a loopback-only `-L` forward.
-Restrict the server-side key with `permitopen="127.0.0.1:<collie-port>"` where practical.
+For each SSH node, generate a new key on the Fleet host and never reuse or agent-load it. Keep its
+private half and pinned host-key data on Fleet only; copy only that node's `.pub` line to the remote
+account. For example, using synthetic names:
+
+```bash
+install -d -m 0700 /home/operator/.config/herdr-web/ssh
+ssh-keygen -q -t ed25519 -N '' \
+  -f /home/operator/.config/herdr-web/ssh/cluster-a
+```
+
+The remote `authorized_keys` entry should grant only the required forwarding destination. Modern
+OpenSSH accepts this form (replace the placeholder with the contents of `cluster-a.pub`):
+
+```text
+restrict,port-forwarding,permitopen="127.0.0.1:8787" <cluster-a-public-key>
+```
+
+`restrict` keeps PTY, agent, X11, and user-rc access disabled; `port-forwarding` re-enables forwarding
+only, and `permitopen` limits the `-L` destination. Validate the target OpenSSH behavior before
+enrollment and fail closed on older servers rather than installing an unrestricted key.
+
+Gateway additionally ignores user/system SSH configuration, disables connection multiplexing and
+all ambient authentication mechanisms, and opens one explicit batch-mode loopback `-L`. It rejects
+two enabled nodes whose identity paths or private-key contents match. Removing a node therefore
+means deleting only its inventory entry and central private key plus its one remote public-key line;
+rotating it does not affect other nodes.
 
 Point every concrete Fleet/node hostname at the Gateway loopback listener in the reverse proxy. A
 true wildcard certificate is optional; listing concrete hosts works with ordinary ACME HTTP
@@ -138,7 +167,15 @@ Authenticated Collie access is equivalent to terminal control as the Herdr accou
 invariants:
 
 - Gateway and Collie bind loopback only; expose only the TLS reverse proxy.
-- Protect `.env`, `gateway.json`, SSH identities, and known-hosts files locally.
+- Keep the operator password hash, session-signing secret, full inventory, every SSH private key,
+  and pinned known-hosts files on the Fleet host only. Protect its `.env` and `gateway.json` as mode
+  0600.
+- Give every remote node a different SSH identity. A remote host receives only its own restricted
+  public authorization and Collie configuration—never `gateway.json`, a private key, or a Fleet
+  authentication value.
+- Do not use SSH agent forwarding or a shared Fleet key. Gateway also removes its cookie and request
+  `Authorization` before contacting Collie and refuses an upstream `Set-Cookie` that targets the
+  Gateway cookie name.
 - Keep exact public Host/Origin lists; unknown node hosts fail closed.
 - Keep the generated frame policy exact. Do not replace configured Fleet/node origins with a
   wildcard or disable the Gateway's CSP/X-Frame-Options handling.

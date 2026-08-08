@@ -1,4 +1,5 @@
-import { stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 export interface LocalTransportConfig {
@@ -213,12 +214,20 @@ export function parseGatewayConfig(value: unknown): GatewayConfig {
   const ids = new Set<string>();
   const hosts = new Set<string>();
   const localPorts = new Set<number>([listenPort]);
+  const sshIdentityPaths = new Map<string, string>();
   for (const node of nodes) {
     if (ids.has(node.id)) throw new Error(`duplicate node id: ${node.id}`);
     if (hosts.has(node.publicHost) || node.publicHost === fleetHost) throw new Error(`duplicate public host: ${node.publicHost}`);
     ids.add(node.id);
     hosts.add(node.publicHost);
     if (node.transport.type === "ssh") {
+      if (node.enabled) {
+        const existingNode = sshIdentityPaths.get(node.transport.identityFile);
+        if (existingNode) {
+          throw new Error(`duplicate SSH identity path: ${node.transport.identityFile} (${existingNode}, ${node.id})`);
+        }
+        sshIdentityPaths.set(node.transport.identityFile, node.id);
+      }
       if (localPorts.has(node.transport.localPort)) throw new Error(`duplicate local listener port: ${node.transport.localPort}`);
       localPorts.add(node.transport.localPort);
     } else {
@@ -250,6 +259,7 @@ export async function loadGatewayConfig(path: string, enforcePermissions = proce
     if ((info.mode & 0o077) !== 0) throw new Error("gateway config must not be accessible by group or other users (chmod 600)");
   }
   const config = parseGatewayConfig(JSON.parse(await Bun.file(path).text()) as unknown);
+  const sshIdentityDigests = new Map<string, string>();
   for (const node of config.nodes) {
     if (node.transport.type !== "ssh") continue;
     const identity = await stat(node.transport.identityFile);
@@ -258,6 +268,12 @@ export async function loadGatewayConfig(path: string, enforcePermissions = proce
     if (!knownHosts.isFile()) throw new Error(`${node.id} SSH known-hosts path must be a regular file`);
     if (enforcePermissions && (identity.mode & 0o077) !== 0) {
       throw new Error(`${node.id} SSH identity must not be accessible by group or other users (chmod 600)`);
+    }
+    if (node.enabled) {
+      const digest = createHash("sha256").update(await readFile(node.transport.identityFile)).digest("base64url");
+      const existingNode = sshIdentityDigests.get(digest);
+      if (existingNode) throw new Error(`${node.id} reuses the SSH private identity assigned to ${existingNode}`);
+      sshIdentityDigests.set(digest, node.id);
     }
   }
   return config;

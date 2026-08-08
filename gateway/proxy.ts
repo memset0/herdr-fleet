@@ -21,6 +21,17 @@ export function stripCookie(cookie: string | null, name: string): string | null 
   return retained.length ? retained.join("; ") : null;
 }
 
+export function stripResponseCookie(headers: Headers, name: string): void {
+  const cookies = headers.getSetCookie();
+  if (!cookies.length) return;
+  headers.delete("set-cookie");
+  for (const cookie of cookies) {
+    const separator = cookie.indexOf("=");
+    const cookieName = cookie.slice(0, separator < 0 ? cookie.length : separator).trim();
+    if (cookieName !== name) headers.append("set-cookie", cookie);
+  }
+}
+
 export function publicCollieAsset(pathname: string): boolean {
   return (
     pathname.startsWith("/assets/") ||
@@ -73,6 +84,7 @@ export async function proxyCollie(
   });
   const responseHeaders = new Headers(response.headers);
   for (const name of HOP_BY_HOP) responseHeaders.delete(name);
+  stripResponseCookie(responseHeaders, config.public.cookieName);
   responseHeaders.delete("content-encoding");
   responseHeaders.delete("content-length");
   const location = responseHeaders.get("location");

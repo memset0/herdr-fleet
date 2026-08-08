@@ -21,7 +21,9 @@ an expiring cross-subdomain cookie. Browser navigations without a session enter 
 401. Authenticated requests to a configured node hostname are proxied byte-for-byte at the HTTP
 layer after the Gateway cookie and ambient authorization headers are removed. Exact Host and public
 Origin semantics are preserved for Collie's DNS-rebinding and CSRF checks. Unknown hosts are never
-mapped to a default node.
+mapped to a default node. Upstream response cookies are preserved except for any cookie whose name
+matches the Gateway session cookie, so a node cannot shadow, clear, or replace the central browser
+credential.
 
 The Fleet collector consumes only stable Collie snapshot summary fields for instance identity and
 health. The Fleet page uses those fields to render a single horizontal instance switcher and embeds
@@ -56,8 +58,17 @@ the next Herdr hook or manual `ensure`; child death is recovered immediately by 
 2. Gateway is the only authentication boundary.
 3. Loopback is a host boundary, not per-Unix-user isolation.
 4. The Herdr socket is the terminal-control authority.
-5. SSH keys on the Gateway should be per node, pinned, and restricted to the required loopback
-   forward.
+5. The Fleet password verifier, cookie-signing secret, inventory, pinned host keys, and every SSH
+   private key exist only on the central Gateway host. A remote node runs Collie without a Gateway
+   config or application credential.
+6. Every SSH node has a different private identity. Only its public half is installed remotely,
+   restricted to the required loopback Collie destination; Gateway never forwards an SSH agent and
+   never reuses a multiplexed connection.
+7. Gateway consumes its session credential before proxying and filters the same privileged cookie
+   name from upstream responses. Exact per-node Origin checks prevent one node origin from issuing
+   terminal writes to another.
 
 Because authenticated writes can type into a real terminal, a Gateway compromise has the same
-impact as the Herdr account on configured nodes. No multi-user isolation is claimed.
+impact as the Herdr account on configured nodes. A compromised node still controls content on its
+own node origin, but receives no credential that authenticates to Fleet or another node. No
+multi-user isolation or node-content attestation is claimed.

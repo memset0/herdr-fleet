@@ -33,8 +33,8 @@
         "host": "login.cluster.example",
         "user": "herdr-web",
         "port": 22,
-        "identityFile": "/home/operator/.ssh/herdr-web",
-        "knownHostsFile": "/home/operator/.ssh/herdr-web-known-hosts",
+        "identityFile": "/home/operator/.config/herdr-web/ssh/cluster-a",
+        "knownHostsFile": "/home/operator/.config/herdr-web/ssh/cluster-a-known-hosts",
         "localPort": 18789,
         "remoteHost": "127.0.0.1",
         "remotePort": 8787
