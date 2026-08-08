@@ -116,9 +116,24 @@ URL-encoded `session` selector. The link never contains the password, cookie, Ga
 identity, or any Pane contents. A browser without a current Web Remote cookie still passes through
 the normal login and then returns to the same deep link.
 
+For `herdr --remote`, connect with the remote server's keybindings:
+
+```bash
+herdr --remote <target> --remote-keybindings server
+```
+
+Herdr 0.8 defaults remote attaches to a snapshot of the viewing computer's local keybindings and
+deliberately omits custom command bindings from that snapshot. Consequently, a Web Remote binding
+installed on the remote server cannot fire in the default `local` mode. Keybinding mode is chosen
+during the client handshake: after installing or changing this binding, detach and reconnect with
+`--remote-keybindings server`; `herdr server reload-config` alone cannot switch an already attached
+local-keybindings client. A direct local attach, or SSH followed by running `herdr` on the node,
+already uses the server configuration and needs no extra flag.
+
 The action deliberately opens a tiny transient plugin popup and emits one OSC 52 clipboard write.
-Herdr consumes that write and, for `herdr --remote`, forwards it only to the foreground viewing
-client, so the clipboard belongs to the computer at which you are working rather than the server.
+Herdr consumes that write and, for a server-keybindings `herdr --remote` attach, forwards it only to
+the foreground viewing client, so the clipboard belongs to the computer at which you are working
+rather than the server.
 The popup closes after a short drain interval and does not create a Pane or change the tab layout.
 If the terminal blocks OSC 52, its clipboard policy remains authoritative. Missing or invalid
 routing metadata fails closed and writes no clipboard payload; inspect the Web Remote plugin action
