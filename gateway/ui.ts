@@ -100,6 +100,7 @@ export const FLEET_CSS = `
 
 export const FLEET_JS = `
 const STORAGE_KEY='herdr-web-remote:selected-instance';
+const ROUTE_MESSAGE='herdr-web-remote:route';
 const instances=document.querySelector('#instances');
 const frame=document.querySelector('#node-frame');
 const loading=document.querySelector('#frame-loading');
@@ -113,6 +114,7 @@ const fleetStatus=document.querySelector('#fleet-status');
 let nodes=[];
 let selectedId=null;
 let currentOrigin=null;
+let currentFrameKey=null;
 let refreshing=false;
 
 const healthLabel=(health)=>({online:'Online','herdr-down':'Herdr unavailable','bridge-down':'Collie unavailable','transport-down':'Transport unavailable'}[health]||'Unavailable');
@@ -122,11 +124,36 @@ const requested=()=>new URL(location.href).searchParams.get('instance');
 const nodeOrigin=(node)=>new URL('https://'+node.publicHost+'/').origin;
 const selectedNode=()=>nodes.find((node)=>node.id===selectedId)||null;
 const announce=(message)=>{fleetStatus.textContent=message};
+const validPane=(value)=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)?value:null;
+const validSession=(value)=>{
+ if(typeof value!=='string')return null;
+ const trimmed=value.trim();
+ return trimmed&&trimmed.length<=128&&!/[\\u0000-\\u001f\\u007f]/.test(trimmed)?trimmed:null;
+};
 
-function updateUrl(id){
+function requestedRoute(){
+ const params=new URL(location.href).searchParams;
+ const rawPane=params.get('pane');const rawSession=params.get('session');
+ const paneId=validPane(rawPane);const session=validSession(rawSession);
+ return {view:paneId?'pane':'home',...(paneId?{paneId}:{}),...(session?{session}:{}),invalid:(rawPane!==null&&!paneId)||(rawSession!==null&&!session)};
+}
+
+const routeKey=(origin,route)=>origin+'|'+route.view+'|'+(route.paneId||'')+'|'+(route.session||'');
+
+function frameHref(origin,route){
+ const url=new URL('/',origin);
+ if(route.view==='pane')url.pathname='/pane/'+encodeURIComponent(route.paneId);
+ if(route.session)url.searchParams.set('s',route.session);
+ return url.href;
+}
+
+function replaceUrl(id,route){
  const url=new URL(location.href);
- if(url.searchParams.get('instance')===id)return;
  url.searchParams.set('instance',id);
+ url.searchParams.delete('pane');url.searchParams.delete('session');
+ if(route.view==='pane')url.searchParams.set('pane',route.paneId);
+ if(route.session)url.searchParams.set('session',route.session);
+ if(url.href===location.href)return;
  history.replaceState(null,'',url);
 }
 
@@ -146,7 +173,7 @@ function renderTabs(focusSelected=false){
    const dot=document.createElement('span');dot.className='status-dot';dot.setAttribute('aria-hidden','true');
    const label=document.createElement('span');label.className='instance-name';label.textContent=node.name;
    button.append(dot,label);
-   button.addEventListener('click',()=>selectNode(node.id,{focusTab:false}));
+   button.addEventListener('click',()=>selectNode(node.id,{focusTab:false,resetRoute:true}));
    instances.append(button);
  }
  const active=instances.querySelector('[aria-selected="true"]');
@@ -165,24 +192,28 @@ function updateHealth(node){
 function loadSelected(force=false){
  const node=selectedNode();if(!node)return;
  const origin=nodeOrigin(node);
- openNode.href=origin+'/';openNode.hidden=false;
+ let route=requestedRoute();
+ if(route.invalid){route={view:'home'};replaceUrl(node.id,route)}
+ const href=frameHref(origin,route);const nextFrameKey=routeKey(origin,route);
+ openNode.href=href;openNode.hidden=false;
  frame.title='Collie · '+node.name;
  frame.hidden=false;empty.hidden=true;updateHealth(node);
- if(force||currentOrigin!==origin){
-   currentOrigin=origin;loading.hidden=false;frame.src=origin+'/';
+ if(force||currentFrameKey!==nextFrameKey){
+   currentOrigin=origin;currentFrameKey=nextFrameKey;loading.hidden=false;frame.src=href;
  }
 }
 
 function selectNode(id,options={}){
  const node=nodes.find((candidate)=>candidate.id===id);if(!node)return;
- const changed=selectedId!==id;selectedId=id;remember(id);updateUrl(id);
+ const changed=selectedId!==id;const route=options.resetRoute?{view:'home'}:requestedRoute();
+ selectedId=id;remember(id);replaceUrl(id,route.invalid?{view:'home'}:route);
  renderTabs(Boolean(options.focusTab));
- loadSelected(Boolean(options.forceFrame)||changed);
+ loadSelected(Boolean(options.forceFrame)||changed||Boolean(options.resetRoute));
  announce('Selected '+node.name+'. '+healthLabel(node.health)+'.');
 }
 
 function showEmpty(title,copy){
- selectedId=null;currentOrigin=null;instances.replaceChildren();openNode.hidden=true;notice.hidden=true;loading.hidden=true;frame.hidden=true;frame.removeAttribute('src');
+ selectedId=null;currentOrigin=null;currentFrameKey=null;instances.replaceChildren();openNode.hidden=true;notice.hidden=true;loading.hidden=true;frame.hidden=true;frame.removeAttribute('src');
  emptyTitle.textContent=title;emptyCopy.textContent=copy;empty.hidden=false;announce(title+'. '+copy);
 }
 
@@ -191,7 +222,7 @@ function renderInventory(data){
  if(!nodes.length){showEmpty('No instances','No enabled Herdr instances are configured.');return}
  const choice=chooseNode();
  if(!choice){showEmpty('No instances','No enabled Herdr instances are configured.');return}
- if(choice.id!==selectedId)selectNode(choice.id);
+ if(choice.id!==selectedId)selectNode(choice.id,{resetRoute:requested()!==choice.id});
  else{renderTabs();loadSelected(false)}
 }
 
@@ -212,9 +243,28 @@ async function refresh(){
 instances.addEventListener('keydown',(event)=>{
  if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;
  const index=nodes.findIndex((node)=>node.id===selectedId);if(index<0)return;
- event.preventDefault();const delta=event.key==='ArrowRight'?1:-1;const next=nodes[(index+delta+nodes.length)%nodes.length];if(next)selectNode(next.id,{focusTab:true});
+ event.preventDefault();const delta=event.key==='ArrowRight'?1:-1;const next=nodes[(index+delta+nodes.length)%nodes.length];if(next)selectNode(next.id,{focusTab:true,resetRoute:true});
 });
 frame.addEventListener('load',()=>{loading.hidden=true;const node=selectedNode();if(node)announce(node.name+' Collie loaded.')});
+addEventListener('message',(event)=>{
+ if(event.source!==frame.contentWindow||event.origin!==currentOrigin)return;
+ const data=event.data;
+ if(!data||typeof data!=='object'||data.type!==ROUTE_MESSAGE||data.version!==1)return;
+ if(Object.keys(data).some((key)=>!['type','version','view','paneId','session'].includes(key)))return;
+ const hasSession=Object.prototype.hasOwnProperty.call(data,'session');
+ const session=hasSession?validSession(data.session):null;
+ if(hasSession&&!session)return;
+ let route;
+ if(data.view==='home'){
+   if(Object.prototype.hasOwnProperty.call(data,'paneId'))return;
+   route={view:'home',...(session?{session}:{})};
+ }else if(data.view==='pane'){
+   const paneId=validPane(data.paneId);if(!paneId)return;
+   route={view:'pane',paneId,...(session?{session}:{})};
+ }else return;
+ if(!selectedId||!currentOrigin)return;
+ replaceUrl(selectedId,route);currentFrameKey=routeKey(currentOrigin,route);openNode.href=frameHref(currentOrigin,route);
+});
 document.querySelector('#retry-frame').addEventListener('click',()=>loadSelected(true));
 document.querySelector('#retry-inventory').addEventListener('click',()=>refresh());
 addEventListener('popstate',()=>{const id=requested();if(nodes.some((node)=>node.id===id))selectNode(id)});

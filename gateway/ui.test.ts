@@ -24,9 +24,23 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("searchParams.get('instance')");
     expect(FLEET_JS).toContain("localStorage.getItem(STORAGE_KEY)");
     expect(FLEET_JS).toContain("history.replaceState");
-    expect(FLEET_JS).toContain("currentOrigin!==origin");
-    expect(FLEET_JS).toContain("frame.src=origin+'/'");
+    expect(FLEET_JS).toContain("currentFrameKey!==nextFrameKey");
+    expect(FLEET_JS).toContain("frame.src=href");
     expect(FLEET_JS).not.toContain("innerHTML");
     expect(FLEET_JS).not.toContain("sessionHref");
+  });
+
+  test("restores and accepts only canonical routes from the selected node frame", () => {
+    expect(FLEET_JS).toContain("herdr-web-remote:route");
+    expect(FLEET_JS).toContain("params.get('pane')");
+    expect(FLEET_JS).toContain("params.get('session')");
+    expect(FLEET_JS).toContain("event.source!==frame.contentWindow");
+    expect(FLEET_JS).toContain("event.origin!==currentOrigin");
+    expect(FLEET_JS).toContain("data.version!==1");
+    expect(FLEET_JS).toContain("url.searchParams.delete('pane')");
+    expect(FLEET_JS).toContain("url.searchParams.delete('session')");
+    expect(FLEET_JS).toContain("history.replaceState");
+    expect(FLEET_JS).not.toContain("event.data.url");
+    expect(FLEET_JS).not.toContain("contentWindow.location");
   });
 });
