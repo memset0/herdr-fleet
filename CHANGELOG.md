@@ -6,6 +6,21 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.0] - 2026-08-08
+
+### Added
+
+- A Pane-context action and transient popup now copy the focused Pane's canonical Fleet deep link through Herdr's foreground-client OSC 52 clipboard path, including named sessions and remote attaches (3db28e4)
+- Generic installs can enable the shortcut with public Fleet origin/instance metadata and a documented `prefix+ctrl+r` qualified plugin binding (3db28e4)
+
+### Security
+
+- The shortcut validates and encodes every route selector, reads no Pane contents or Gateway inventory, and copies no login cookie, password, token, SSH identity, or central credential (3db28e4)
+
+### Upgrading
+
+- This minor release adds node-side manifest entrypoints and configuration. Reinstall or update the plugin on each node where the shortcut should be available before adding the binding.
+
 ## [2.0.4] - 2026-08-08
 
 ### Added
