@@ -6,6 +6,13 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.0.2] - 2026-08-08
+
+### Security
+
+- Remote nodes are zero-central-secret: enabled SSH instances require non-reused private identities, and dedicated tunnels ignore ambient SSH configuration, agents, multiplexing, shells, and unrelated forwards (6403d05)
+- Gateway filters its authentication credential in both directions, including upstream attempts to replace the central session cookie, while preserving unrelated Collie cookies (6403d05)
+
 ## [2.0.1] - 2026-08-08
 
 ### Fixed
