@@ -6,6 +6,24 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.1] - 2026-08-14
+
+### Added
+
+- Remote SSH inventory entries may use an optional, fully pinned jump endpoint without inheriting ambient SSH configuration (a9d7cf4)
+
+### Fixed
+
+- SSH transports remain `starting` until the loopback forward accepts a connection, and failed attempts retain capped exponential backoff (a9d7cf4)
+
+### Security
+
+- Jump and target host keys are independently pinned, their private identities cannot overlap, and neither SSH layer permits agent forwarding or multiplexing (a9d7cf4)
+
+### Upgrading
+
+- This central-Gateway patch is wire-compatible with `2.1.0` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.0] - 2026-08-08
 
 ### Added
