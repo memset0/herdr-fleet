@@ -82,6 +82,49 @@ describe("gateway configuration", () => {
     expect(() => parseGatewayConfig(raw)).toThrow("duplicate SSH identity path");
   });
 
+  test("accepts a structured SSH jump endpoint and rejects ambiguous jump configuration", () => {
+    const raw = rawGatewayConfig();
+    nodes(raw)[0]!.transport = {
+      type: "ssh",
+      host: "cluster.example",
+      user: "herdrweb",
+      port: 22,
+      identityFile: "/synthetic/keys/cluster",
+      knownHostsFile: "/synthetic/known-hosts/cluster",
+      localPort: 18789,
+      remoteHost: "127.0.0.1",
+      remotePort: 8787,
+      jump: {
+        host: "bastion.example",
+        user: "gateway",
+        port: 2222,
+        identityFile: "/synthetic/keys/bastion",
+        knownHostsFile: "/synthetic/known-hosts/bastion",
+      },
+    };
+    const config = parseGatewayConfig(raw);
+    const transport = config.nodes[0]?.transport;
+    expect(transport?.type).toBe("ssh");
+    if (transport?.type !== "ssh") throw new Error("expected SSH transport");
+    expect(transport.jump).toEqual({
+      host: "bastion.example",
+      user: "gateway",
+      port: 2222,
+      identityFile: "/synthetic/keys/bastion",
+      knownHostsFile: "/synthetic/known-hosts/bastion",
+    });
+
+    const unknownField = structuredClone(raw);
+    const unknownJump = (nodes(unknownField)[0]!.transport as Record<string, unknown>).jump as Record<string, unknown>;
+    unknownJump.agentForwarding = true;
+    expect(() => parseGatewayConfig(unknownField)).toThrow("jump contains unknown field");
+
+    const sharedPath = structuredClone(raw);
+    const sharedTransport = nodes(sharedPath)[0]!.transport as Record<string, unknown>;
+    (sharedTransport.jump as Record<string, unknown>).identityFile = sharedTransport.identityFile;
+    expect(() => parseGatewayConfig(sharedPath)).toThrow("must differ from the target identity");
+  });
+
   test("requires protected config and SSH identity files", async () => {
     const root = await mkdtemp(join(tmpdir(), "web-remote-config-test-"));
     temporary.push(root);
@@ -155,5 +198,47 @@ describe("gateway configuration", () => {
     await writeFile(path, JSON.stringify(raw), { mode: 0o600 });
 
     await expect(loadGatewayConfig(path)).rejects.toThrow("reuses the SSH private identity");
+  });
+
+  test("requires a protected jump identity and rejects a copied target identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "web-remote-jump-identity-test-"));
+    temporary.push(root);
+    const targetIdentity = join(root, "target-key");
+    const jumpIdentity = join(root, "jump-key");
+    const targetKnownHosts = join(root, "target-known-hosts");
+    const jumpKnownHosts = join(root, "jump-known-hosts");
+    await writeFile(targetIdentity, "synthetic-target-private-key\n", { mode: 0o600 });
+    await writeFile(jumpIdentity, "synthetic-jump-private-key\n", { mode: 0o644 });
+    await writeFile(targetKnownHosts, "cluster.example ssh-ed25519 synthetic-target\n", { mode: 0o644 });
+    await writeFile(jumpKnownHosts, "bastion.example ssh-ed25519 synthetic-jump\n", { mode: 0o644 });
+
+    const raw = rawGatewayConfig();
+    nodes(raw)[0]!.transport = {
+      type: "ssh",
+      host: "cluster.example",
+      user: "herdrweb",
+      port: 22,
+      identityFile: targetIdentity,
+      knownHostsFile: targetKnownHosts,
+      localPort: 18789,
+      remoteHost: "127.0.0.1",
+      remotePort: 8787,
+      jump: {
+        host: "bastion.example",
+        user: "gateway",
+        port: 22,
+        identityFile: jumpIdentity,
+        knownHostsFile: jumpKnownHosts,
+      },
+    };
+    const path = join(root, "gateway.json");
+    await writeFile(path, JSON.stringify(raw), { mode: 0o600 });
+
+    await expect(loadGatewayConfig(path)).rejects.toThrow("SSH jump identity must not be accessible");
+    await chmod(jumpIdentity, 0o600);
+    expect((await loadGatewayConfig(path)).nodes[0]?.transport.type).toBe("ssh");
+
+    await writeFile(jumpIdentity, "synthetic-target-private-key\n", { mode: 0o600 });
+    await expect(loadGatewayConfig(path)).rejects.toThrow("SSH jump reuses its target private identity");
   });
 });

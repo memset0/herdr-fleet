@@ -163,6 +163,15 @@ new username/password once. Use a dedicated cookie base (for example `herdr.exam
 than a parent shared by unrelated applications. `gateway.example.json` documents local and SSH
 inventory entries. The live Gateway config must remain an absolute-path, owner-only file.
 
+An SSH transport may omit `jump` for a direct connection or add the structured `jump` object shown
+in `gateway.example.json` when the target is reachable only through a bastion. The jump endpoint has
+its own absolute private-key and pinned known-hosts paths. Gateway builds both SSH layers with
+`-F /dev/null`, strict host-key checking, batch-only public-key authentication, no agent forwarding,
+and no connection multiplexing; it does not inherit an operator's `~/.ssh/config`. The outer target
+still owns exactly one loopback `-L`, while the jump process is limited to the stdio connection
+needed by that target. A transport remains `starting` until its local forward actually accepts a
+connection, and failed attempts retain capped exponential backoff.
+
 For each SSH node, generate a new key on the Fleet host and never reuse or agent-load it. Keep its
 private half and pinned host-key data on Fleet only; copy only that node's `.pub` line to the remote
 account. For example, using synthetic names:
@@ -186,9 +195,10 @@ enrollment and fail closed on older servers rather than installing an unrestrict
 
 Gateway additionally ignores user/system SSH configuration, disables connection multiplexing and
 all ambient authentication mechanisms, and opens one explicit batch-mode loopback `-L`. It rejects
-two enabled nodes whose identity paths or private-key contents match. Removing a node therefore
-means deleting only its inventory entry and central private key plus its one remote public-key line;
-rotating it does not affect other nodes.
+two enabled nodes whose target identity paths or private-key contents match. A jump identity must
+also differ from every enabled target identity; one bastion identity may serve multiple jumped
+nodes. Removing a node therefore means deleting only its inventory entry and central target private
+key plus its one remote public-key line; rotating it does not affect other nodes.
 
 Point every concrete Fleet/node hostname at the Gateway loopback listener in the reverse proxy. A
 true wildcard certificate is optional; listing concrete hosts works with ordinary ACME HTTP

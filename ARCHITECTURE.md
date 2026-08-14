@@ -18,9 +18,12 @@ contains no Gateway credential, never reads terminal contents, and leaves the ti
 ## Fleet plane
 
 One optional Gateway loads a static, owner-only JSON inventory. A local node maps directly to a
-loopback URL. A remote node maps to a persistent OpenSSH local forward. Transport processes,
-bridge HTTP health, and Herdr/session health are separate states, so one failed node never blocks
-another.
+loopback URL. A remote node maps to a persistent OpenSSH local forward, either directly or through
+one explicitly configured jump endpoint. Both SSH endpoints ignore ambient configuration and pin
+their own host key and private identity. The target owns the single loopback forward; the jump is a
+stdio proxy only. A transport becomes ready only after that forward accepts a loopback connection.
+Transport processes, bridge HTTP health, and Herdr/session health are separate states, so one failed
+node never blocks another.
 
 The Gateway has exactly one operator credential. Argon2id verifies the password; HMAC-SHA256 signs
 an expiring cross-subdomain cookie. Browser navigations without a session enter `/auth/`; APIs get
@@ -64,12 +67,13 @@ the next Herdr hook or manual `ensure`; child death is recovered immediately by 
 2. Gateway is the only authentication boundary.
 3. Loopback is a host boundary, not per-Unix-user isolation.
 4. The Herdr socket is the terminal-control authority.
-5. The Fleet password verifier, cookie-signing secret, inventory, pinned host keys, and every SSH
-   private key exist only on the central Gateway host. A remote node runs Collie without a Gateway
-   config or application credential.
-6. Every SSH node has a different private identity. Only its public half is installed remotely,
-   restricted to the required loopback Collie destination; Gateway never forwards an SSH agent and
-   never reuses a multiplexed connection.
+5. The Fleet password verifier, cookie-signing secret, inventory, pinned target/jump host keys, and
+   every SSH private key exist only on the central Gateway host. A remote node runs Collie without a
+   Gateway config or application credential.
+6. Every SSH target node has a different private identity. Only its public half is installed
+   remotely, restricted to the required loopback Collie destination. A jump identity is distinct
+   from every target identity and may be shared only by transports that intentionally use the same
+   bastion; Gateway never forwards an SSH agent or reuses a multiplexed connection.
 7. Gateway consumes its session credential before proxying and filters the same privileged cookie
    name from upstream responses. Exact per-node Origin checks prevent one node origin from issuing
    terminal writes to another.

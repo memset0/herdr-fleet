@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SshTransportConfig } from "./config.ts";
-import { TransportRegistry, sshArgs } from "./transports.ts";
+import { TransportRegistry, jumpProxyCommand, reconnectDelayMs, sshArgs } from "./transports.ts";
 import { gatewayConfig } from "./test-helpers.ts";
 
 const temporary: string[] = [];
@@ -52,9 +52,69 @@ describe("SSH transports", () => {
     expect(args).not.toContain("-A");
     expect(args).not.toContain("-R");
     expect(args).not.toContain("-D");
+    expect(args.some((arg) => arg.startsWith("ProxyCommand="))).toBe(false);
     expect(args).toContain("127.0.0.1:18789:127.0.0.1:8787");
     expect(args.slice(-2)).toEqual(["--", "cluster.example"]);
     expect(sshArgs(sshConfig({ remoteHost: "::1" }))).toContain("127.0.0.1:18789:[::1]:8787");
+  });
+
+  test("constructs a separately pinned, config-independent jump proxy", () => {
+    const jump = {
+      host: "bastion.example",
+      user: "gateway",
+      port: 2202,
+      identityFile: "/synthetic/jump key'quoted",
+      knownHostsFile: "/synthetic/jump-known-hosts",
+    };
+    const args = sshArgs(sshConfig({ jump }));
+    const proxyOptions = args.filter((arg) => arg.startsWith("ProxyCommand="));
+    expect(proxyOptions).toHaveLength(1);
+    const proxy = jumpProxyCommand(jump);
+    expect(proxyOptions[0]).toBe(`ProxyCommand=${proxy}`);
+    expect(proxy).toContain("'/usr/bin/ssh' '-T' '-F' '/dev/null'");
+    expect(proxy).toContain("'StrictHostKeyChecking=yes'");
+    expect(proxy).toContain("'UserKnownHostsFile=/synthetic/jump-known-hosts'");
+    expect(proxy).toContain("'IdentityAgent=none'");
+    expect(proxy).toContain("'-i' '/synthetic/jump key'\\''quoted'");
+    expect(proxy).toContain("'-W' '%h:%p' '--' 'bastion.example'");
+    expect(args).toContain("UserKnownHostsFile=/synthetic/known_hosts");
+    expect(args).toContain("/synthetic/id_ed25519");
+    expect(args.filter((arg) => arg === "-L")).toHaveLength(1);
+    expect(args.slice(-2)).toEqual(["--", "cluster.example"]);
+  });
+
+  test("uses capped exponential reconnect delays", () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 20].map(reconnectDelayMs)).toEqual([
+      1_000,
+      2_000,
+      4_000,
+      8_000,
+      16_000,
+      30_000,
+      30_000,
+      30_000,
+    ]);
+  });
+
+  test("stays starting until the loopback forward is actually ready", async () => {
+    const root = await mkdtemp(join(tmpdir(), "web-remote-ssh-readiness-test-"));
+    temporary.push(root);
+    const longLived = join(root, "ssh-long-lived");
+    await writeFile(longLived, "#!/usr/bin/env bun\nsetInterval(() => {}, 1_000);\n");
+    await chmod(longLived, 0o700);
+    const local = gatewayConfig().nodes[0]!;
+    const remote = { ...local, id: "remote", publicHost: "remote.example.com", transport: sshConfig() };
+    let ready = false;
+    const registry = new TransportRegistry([local, remote], longLived, async () => ready);
+    registry.start();
+    await Bun.sleep(1_100);
+    expect(registry.status(remote).state).toBe("starting");
+    expect(registry.status(remote).message).toBe("connecting");
+    ready = true;
+    await Bun.sleep(150);
+    expect(registry.status(remote).state).toBe("up");
+    expect(registry.status(remote).message).toBeNull();
+    registry.stop();
   });
 
   test("keeps a failed SSH node down while local nodes remain available", async () => {
@@ -65,7 +125,7 @@ describe("SSH transports", () => {
     await chmod(failing, 0o700);
     const local = gatewayConfig().nodes[0]!;
     const remote = { ...local, id: "remote", publicHost: "remote.example.com", transport: sshConfig() };
-    const registry = new TransportRegistry([local, remote], failing);
+    const registry = new TransportRegistry([local, remote], failing, async () => false);
     registry.start();
     await Bun.sleep(100);
     expect(registry.status(local).state).toBe("up");

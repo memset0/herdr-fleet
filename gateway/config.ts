@@ -7,6 +7,14 @@ export interface LocalTransportConfig {
   url: string;
 }
 
+export interface SshJumpConfig {
+  host: string;
+  user: string;
+  port: number;
+  identityFile: string;
+  knownHostsFile: string;
+}
+
 export interface SshTransportConfig {
   type: "ssh";
   host: string;
@@ -17,6 +25,7 @@ export interface SshTransportConfig {
   localPort: number;
   remoteHost: "127.0.0.1" | "::1";
   remotePort: number;
+  jump?: SshJumpConfig;
 }
 
 export type NodeTransportConfig = LocalTransportConfig | SshTransportConfig;
@@ -105,30 +114,43 @@ function parseLocalTransport(raw: JsonObject, label: string): LocalTransportConf
   return { type: "local", url: url.origin };
 }
 
-function parseSshTransport(raw: JsonObject, label: string): SshTransportConfig {
-  keys(
-    raw,
-    ["type", "host", "user", "port", "identityFile", "knownHostsFile", "localPort", "remoteHost", "remotePort"],
-    label,
-  );
+function sshEndpoint(raw: JsonObject, label: string, validateKeys = true): SshJumpConfig {
+  if (validateKeys) keys(raw, ["host", "user", "port", "identityFile", "knownHostsFile"], label);
   const host = hostname(raw.host, `${label}.host`);
   if (host.startsWith("-")) throw new Error(`${label}.host must not start with '-'`);
   const user = string(raw.user, `${label}.user`);
   if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/.test(user)) throw new Error(`${label}.user is invalid`);
+  return {
+    host,
+    user,
+    port: integer(raw.port ?? 22, `${label}.port`, 1, 65535),
+    identityFile: absolutePath(raw.identityFile, `${label}.identityFile`),
+    knownHostsFile: absolutePath(raw.knownHostsFile, `${label}.knownHostsFile`),
+  };
+}
+
+function parseSshTransport(raw: JsonObject, label: string): SshTransportConfig {
+  keys(
+    raw,
+    ["type", "host", "user", "port", "identityFile", "knownHostsFile", "localPort", "remoteHost", "remotePort", "jump"],
+    label,
+  );
+  const target = sshEndpoint(raw, label, false);
+  const jump = raw.jump === undefined ? undefined : sshEndpoint(object(raw.jump, `${label}.jump`), `${label}.jump`);
+  if (jump?.identityFile === target.identityFile) {
+    throw new Error(`${label}.jump.identityFile must differ from the target identity`);
+  }
   const remoteHost = string(raw.remoteHost, `${label}.remoteHost`);
   if (remoteHost !== "127.0.0.1" && remoteHost !== "::1") {
     throw new Error(`${label}.remoteHost must be 127.0.0.1 or ::1`);
   }
   return {
     type: "ssh",
-    host,
-    user,
-    port: integer(raw.port ?? 22, `${label}.port`, 1, 65535),
-    identityFile: absolutePath(raw.identityFile, `${label}.identityFile`),
-    knownHostsFile: absolutePath(raw.knownHostsFile, `${label}.knownHostsFile`),
+    ...target,
     localPort: integer(raw.localPort, `${label}.localPort`, 1, 65535),
     remoteHost,
     remotePort: integer(raw.remotePort, `${label}.remotePort`, 1, 65535),
+    ...(jump ? { jump } : {}),
   };
 }
 
@@ -260,20 +282,45 @@ export async function loadGatewayConfig(path: string, enforcePermissions = proce
   }
   const config = parseGatewayConfig(JSON.parse(await Bun.file(path).text()) as unknown);
   const sshIdentityDigests = new Map<string, string>();
+  const jumpIdentityDigests = new Map<string, string>();
+
+  async function identityDigest(identityPath: string, knownHostsPath: string, label: string): Promise<string> {
+    const identity = await stat(identityPath);
+    const knownHosts = await stat(knownHostsPath);
+    if (!identity.isFile()) throw new Error(`${label} identity must be a regular file`);
+    if (!knownHosts.isFile()) throw new Error(`${label} known-hosts path must be a regular file`);
+    if (enforcePermissions && (identity.mode & 0o077) !== 0) {
+      throw new Error(`${label} identity must not be accessible by group or other users (chmod 600)`);
+    }
+    return createHash("sha256").update(await readFile(identityPath)).digest("base64url");
+  }
+
   for (const node of config.nodes) {
     if (node.transport.type !== "ssh") continue;
-    const identity = await stat(node.transport.identityFile);
-    const knownHosts = await stat(node.transport.knownHostsFile);
-    if (!identity.isFile()) throw new Error(`${node.id} SSH identity must be a regular file`);
-    if (!knownHosts.isFile()) throw new Error(`${node.id} SSH known-hosts path must be a regular file`);
-    if (enforcePermissions && (identity.mode & 0o077) !== 0) {
-      throw new Error(`${node.id} SSH identity must not be accessible by group or other users (chmod 600)`);
-    }
+    const digest = await identityDigest(
+      node.transport.identityFile,
+      node.transport.knownHostsFile,
+      `${node.id} SSH`,
+    );
     if (node.enabled) {
-      const digest = createHash("sha256").update(await readFile(node.transport.identityFile)).digest("base64url");
       const existingNode = sshIdentityDigests.get(digest);
       if (existingNode) throw new Error(`${node.id} reuses the SSH private identity assigned to ${existingNode}`);
       sshIdentityDigests.set(digest, node.id);
+    }
+    if (node.transport.jump) {
+      const jumpDigest = await identityDigest(
+        node.transport.jump.identityFile,
+        node.transport.jump.knownHostsFile,
+        `${node.id} SSH jump`,
+      );
+      if (jumpDigest === digest) throw new Error(`${node.id} SSH jump reuses its target private identity`);
+      if (node.enabled) jumpIdentityDigests.set(jumpDigest, node.id);
+    }
+  }
+  for (const [digest, jumpNode] of jumpIdentityDigests) {
+    const targetNode = sshIdentityDigests.get(digest);
+    if (targetNode) {
+      throw new Error(`${jumpNode} SSH jump reuses the target private identity assigned to ${targetNode}`);
     }
   }
   return config;

@@ -37,7 +37,14 @@
         "knownHostsFile": "/home/operator/.config/herdr-web/ssh/cluster-a-known-hosts",
         "localPort": 18789,
         "remoteHost": "127.0.0.1",
-        "remotePort": 8787
+        "remotePort": 8787,
+        "jump": {
+          "host": "bastion.example",
+          "user": "gateway",
+          "port": 22,
+          "identityFile": "/home/operator/.config/herdr-web/ssh/bastion",
+          "knownHostsFile": "/home/operator/.config/herdr-web/ssh/bastion-known-hosts"
+        }
       }
     }
   ]
