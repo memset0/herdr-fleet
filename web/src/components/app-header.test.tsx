@@ -79,8 +79,11 @@ describe("AppHeader — the one shared header shell", () => {
       expect(screen.getByText("example › main")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
     } finally {
-      if (ownParent === undefined) delete (window as Window & { parent?: Window }).parent;
-      else Object.defineProperty(window, "parent", ownParent);
+      if (ownParent === undefined) {
+        Object.defineProperty(window, "parent", { configurable: true, value: window });
+      } else {
+        Object.defineProperty(window, "parent", ownParent);
+      }
     }
   });
 
