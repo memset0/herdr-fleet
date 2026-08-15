@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.6] - 2026-08-15
+
+### Changed
+
+- Default-template Discord alerts now put the observed Agent's conventional harness name, workspace, and Tab in `pingme`'s compact runtime header instead of using static Fleet labels (d98f44f)
+- The default message body is now only the clickable canonical Fleet Pane link, with no `Agent completed` / `Agent needs you` title or repeated context block; status and context remain available to custom templates as structured variables (d98f44f)
+
+### Upgrading
+
+- This central presentation patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.5] - 2026-08-15
 
 ### Added
