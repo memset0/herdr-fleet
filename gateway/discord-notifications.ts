@@ -65,7 +65,6 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_PENDING = 128;
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1_024;
 export const FLEET_DISCORD_CONFIRMATION_MS = 10_000;
-const FLEET_RUNTIME_SESSION_NAME = "Fleet";
 const MAX_DISCORD_USERNAME_CHARS = 80;
 const AGENT_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   claude: "Claude Code",
@@ -253,8 +252,8 @@ export class PingmeDiscordSender implements FleetDiscordSender {
     await this.run(this.config.executable, pingmeArguments(this.config, alert), {
       ...this.env,
       PINGME_AGENT_NAME: fleetAgentDisplayName(alert.agent),
-      PINGME_PROJECT_NAME: alert.workspace,
-      PINGME_SESSION_NAME: FLEET_RUNTIME_SESSION_NAME,
+      PINGME_PROJECT_NAME: optionalDisplayName(alert.workspace, alert.workspaceId) ?? "Fleet",
+      PINGME_SESSION_NAME: optionalDisplayName(alert.tab, alert.tabId) ?? "",
       PINGME_SESSION_ID: "",
       CLAUDE_CODE_SESSION_ID: "",
       CODEX_THREAD_ID: "",

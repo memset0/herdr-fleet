@@ -238,10 +238,12 @@ the plugin-owned supervisor. Then add this object to the owner-only `gateway.jso
 reads or distributes the CLI's token, webhook, or private config, and remote nodes need no Discord
 settings.
 
-With `pingme`'s standard default template, Fleet maps the observed harness and workspace into the
-template's Agent/project header and uses the generic session label `Fleet`; concrete Tab and Pane
-labels are not rendered. Known harness ids use their normal product spelling, such as `codex` →
-`Codex`, while unknown names are retained after bounded single-line normalization. Confirmed Ready
+With `pingme`'s standard default template, Fleet maps the observed harness, readable Space name,
+and readable Tab name into the template's Agent, project, and session-title footer metadata.
+The Pane name stays out of that metadata because it is already present in the webhook username.
+An id-only Tab is omitted and an id-only Space uses the generic `Fleet` project fallback. Known
+harness ids use their normal product spelling, such as `codex` → `Codex`, while unknown names are
+retained after bounded single-line normalization. Confirmed Ready
 alerts explicitly select the configured `success` avatar, while Needs You selects `needs-input`;
 the local `pingme` profiles remain the authoritative visual definitions. Each delivery also
 overrides the webhook username with the readable hierarchy
@@ -262,14 +264,12 @@ retry to the original link-only notification.
 The message body contains that compacted final reply followed immediately by one clickable canonical
 Fleet Pane link on the last line—there is no `Agent completed` / `Agent needs you` title and no
 repeated context block. A
-rendered message has this shape (the second line remains `pingme`'s normal local sender/time
-metadata):
+rendered message has this shape with all default metadata on the final subtext line:
 
 ```markdown
-> **🤖 `Codex`   📦 `Example project`   💬 `Fleet`**
-> **🏠 `operator@fleet-host`   📅 `8/15 12:34:56`**
 The requested change is complete.
 [Open Pane in Fleet](https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap7)
+-# 🏠 operator@fleet-host   📦 Example project   🧵 Main   🤖 Codex   📅 8/15 12:34:56
 ```
 
 The default presentation includes no terminal contents, complete history, user prompt, reasoning,
@@ -281,8 +281,8 @@ Omitting `template` uses `pingme`'s existing default template. A custom selector
 works once the installed `pingme` version supports absolute template selectors. Custom templates
 receive `agent`, `status`, `status_label`, `host`, `host_id`, `workspace`, `workspace_id`, `tab`,
 `tab_id`, `pane`, `pane_id`, `session`, `observed_at`, `pane_url`, and optional `agent_reply`
-variables in addition to the composed default `message`, Agent/project/generic-Fleet runtime
-metadata, and state-specific avatar. History resolution and delivery are serialized outside the
+variables in addition to the composed default `message`, Agent/project runtime metadata, readable
+Tab session title, and state-specific avatar. History resolution and delivery are serialized outside the
 collector; delivery uses one direct, timeout-bounded child process at a time, never a shell. A
 failed History read falls back once and a failed transition is diagnosed once; neither is
 automatically retried.

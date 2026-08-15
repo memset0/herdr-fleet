@@ -243,7 +243,7 @@ describe("Fleet Discord message adapter", () => {
     expect(custom.slice(custom.indexOf("--template"), custom.indexOf("--template") + 2)).toEqual(["--template", template]);
   });
 
-  test("invokes the configured executable directly with Agent/project metadata and no concrete Tab context", async () => {
+  test("maps Agent, readable Space, and readable Tab into default-template footer metadata", async () => {
     const calls: Array<{ executable: string; args: readonly string[]; env: NodeJS.ProcessEnv }> = [];
     const run: PingmeCommandRunner = async (executable, args, env) => {
       calls.push({ executable, args, env });
@@ -265,16 +265,15 @@ describe("Fleet Discord message adapter", () => {
       PATH: "/synthetic/bin",
       PINGME_AGENT_NAME: "Codex",
       PINGME_PROJECT_NAME: "Example project",
-      PINGME_SESSION_NAME: "Fleet",
+      PINGME_SESSION_NAME: "Main",
       PINGME_SESSION_ID: "",
       CLAUDE_CODE_SESSION_ID: "",
       CODEX_THREAD_ID: "",
     });
     expect(calls[0]?.args).toContain("success");
-    expect(calls[0]?.env.PINGME_SESSION_NAME).not.toBe("Main");
   });
 
-  test("uses the workspace id fallback without exposing the Tab id in runtime metadata", async () => {
+  test("uses generic Space metadata and omits an internal-id-only Tab title", async () => {
     const calls: Array<{ args: readonly string[]; env: NodeJS.ProcessEnv }> = [];
     const run: PingmeCommandRunner = async (_executable, args, env) => {
       calls.push({ args, env });
@@ -291,8 +290,8 @@ describe("Fleet Discord message adapter", () => {
 
     expect(calls[0]?.env).toMatchObject({
       PINGME_AGENT_NAME: "custom-agent",
-      PINGME_PROJECT_NAME: "w0",
-      PINGME_SESSION_NAME: "Fleet",
+      PINGME_PROJECT_NAME: "Fleet",
+      PINGME_SESSION_NAME: "",
     });
     expect(calls[0]?.args).toContain("needs-input");
     expect(alert.message).toBe(`[Open Pane in Fleet](${alert.paneUrl})`);

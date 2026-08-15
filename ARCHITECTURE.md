@@ -77,9 +77,9 @@ one canonical next refresh subject to the five-second Host floor without adding 
 The adapter constructs the canonical Fleet instance/session/Pane link and invokes an absolute
 local `pingme` executable without a shell. Channel/template selectors and safe Agent-card variables
 cross that process boundary, but Discord credentials remain in `pingme`'s own private local config
-and never enter Gateway or any remote node. The default-template runtime header receives the
-observed harness's human-readable name and workspace plus generic session label `Fleet`; it never
-renders concrete Tab or Pane labels. Ready and Needs You explicitly select the configured
+and never enter Gateway or any remote node. The default-template runtime footer receives the
+observed harness's human-readable name, readable Space name as project, and readable Tab name as
+session title. It never receives a Pane label or coding-session id. Ready and Needs You explicitly select the configured
 `success` and `needs-input` avatars respectively. The webhook username is independently overridden
 with the bounded readable `Space · Tab · Pane` hierarchy, omitting absent levels instead of exposing
 their internal ids and using the existing Agent display name for an otherwise unnamed Pane.
