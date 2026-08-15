@@ -472,7 +472,7 @@ describe("Fleet Discord transition ledger", () => {
     );
   });
 
-  test("cancels Ready when it becomes Recent and re-arms only after a later re-entry", async () => {
+  test("keeps Ready through Recent and confirms at the original deadline", async () => {
     const sender = new RecordingSender();
     const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
     notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
@@ -485,24 +485,52 @@ describe("Fleet Discord transition ledger", () => {
       notifier.observe(
         fleet([card("w0:p1", "done", { lastActiveAt: 100, lastSeenAt: 500 })], { generatedAt: 5_000 }),
       ),
-    ).toBeNull();
+    ).toBe(10_100);
+    notifier.observe(
+      fleet(
+        [card("w0:p1", "done", { lastActiveAt: 100, lastSeenAt: 500, observedAt: 10_100 })],
+        { generatedAt: 10_100 },
+      ),
+    );
+    notifier.observe(
+      fleet([card("w0:p1", "done", { lastActiveAt: 100, lastSeenAt: 500 })], { generatedAt: 20_000 }),
+    );
+    await notifier.flush();
+
+    expect(sender.alerts.map((alert) => [alert.status, alert.observedAt])).toEqual([["done", 10_100]]);
+  });
+
+  test("keeps Needs You through idle and unknown states", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    expect(notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 100 }))).toBe(10_100);
+    expect(notifier.observe(fleet([card("w0:p1", "idle")], { generatedAt: 5_000 }))).toBe(10_100);
+    notifier.observe(
+      fleet([card("w0:p1", "unknown", { observedAt: 10_100 })], { generatedAt: 10_100 }),
+    );
+    await notifier.flush();
+
+    expect(sender.alerts.map((alert) => [alert.status, alert.observedAt])).toEqual([["blocked", 10_100]]);
+  });
+
+  test("updates the retained attention group without resetting its deadline", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "done", { lastActiveAt: 100, lastSeenAt: 10 })], { generatedAt: 100 }),
+      ),
+    ).toBe(10_100);
+    expect(notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 5_000 }))).toBe(10_100);
     notifier.observe(
       fleet([card("w0:p1", "done", { lastActiveAt: 100, lastSeenAt: 500 })], { generatedAt: 10_100 }),
     );
-    expect(sender.alerts).toEqual([]);
-
-    expect(
-      notifier.observe(
-        fleet([card("w0:p1", "done", { lastActiveAt: 12_000, lastSeenAt: 500 })], { generatedAt: 12_000 }),
-      ),
-    ).toBe(22_000);
-    notifier.observe(
-      fleet([card("w0:p1", "done", { lastActiveAt: 12_000, lastSeenAt: 500, observedAt: 22_000 })], {
-        generatedAt: 22_000,
-      }),
-    );
     await notifier.flush();
-    expect(sender.alerts.map((alert) => alert.status)).toEqual(["done"]);
+
+    expect(sender.alerts.map((alert) => alert.status)).toEqual(["blocked"]);
+    expect(fleetDiscordAvatar(sender.alerts[0]!.status)).toBe("needs-input");
   });
 
   test("cancels Needs You when work resumes before confirmation", async () => {

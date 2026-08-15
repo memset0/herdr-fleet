@@ -123,6 +123,10 @@ function actionableGroup(agent: FleetAgentCard): ActionableGroup | null {
   return null;
 }
 
+function notificationStatus(group: ActionableGroup): FleetDiscordAlert["status"] {
+  return group === "ready" ? "done" : "blocked";
+}
+
 export function fleetDiscordAvatar(status: FleetDiscordAlert["status"]): "success" | "needs-input" {
   return status === "done" ? "success" : "needs-input";
 }
@@ -310,25 +314,24 @@ export class FleetDiscordNotifier {
 
         if (!previous || previous.identity !== identity) {
           this.candidates.delete(key);
-        } else if (currentActionable !== previous.actionable) {
+        } else if (agent.status === "working") {
           this.candidates.delete(key);
-          if (currentActionable !== null) {
+        } else {
+          const candidate = this.candidates.get(key);
+          if (candidate && candidate.identity !== identity) {
+            this.candidates.delete(key);
+          } else if (candidate) {
+            if (currentActionable !== null) candidate.group = currentActionable;
+            if (state.generatedAt >= candidate.dueAt) {
+              this.candidates.delete(key);
+              this.enqueue(node, agent, candidate.group);
+            }
+          } else if (currentActionable !== null && currentActionable !== previous.actionable) {
             this.candidates.set(key, {
               identity,
               group: currentActionable,
               dueAt: state.generatedAt + FLEET_DISCORD_CONFIRMATION_MS,
             });
-          }
-        } else {
-          const candidate = this.candidates.get(key);
-          if (
-            candidate &&
-            (currentActionable === null || candidate.identity !== identity || candidate.group !== currentActionable)
-          ) {
-            this.candidates.delete(key);
-          } else if (candidate && state.generatedAt >= candidate.dueAt) {
-            this.candidates.delete(key);
-            this.enqueue(node, agent);
           }
         }
         this.observations.set(key, {
@@ -360,11 +363,12 @@ export class FleetDiscordNotifier {
     await this.queue;
   }
 
-  private enqueue(node: FleetNodeState, agent: FleetAgentCard): void {
+  private enqueue(node: FleetNodeState, agent: FleetAgentCard, group: ActionableGroup): void {
     if (this.pending >= this.maxPending) {
       this.warn(`[gateway/discord] alert queue is full; dropped ${node.id}/${agent.paneId}`);
       return;
     }
+    const alertAgent: FleetAgentCard = { ...agent, status: notificationStatus(group) };
     this.pending += 1;
     this.queue = this.queue
       .then(async () => {
@@ -378,7 +382,7 @@ export class FleetDiscordNotifier {
             this.warn(`[gateway/discord] could not read History for ${node.id}/${agent.paneId}; using link-only alert`);
           }
         }
-        await this.sender.send(buildFleetDiscordAlert(this.fleetHost, node, agent, reply));
+        await this.sender.send(buildFleetDiscordAlert(this.fleetHost, node, alertAgent, reply));
       })
       .catch(() => {
         // The composed message is an argv value; keep it out of diagnostics even if an injected

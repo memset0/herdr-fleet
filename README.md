@@ -211,11 +211,13 @@ loop. The live Gateway config must remain an absolute-path, owner-only file.
 The central Gateway can notify Discord when a successfully fetched Agent newly enters green
 `Ready · unseen` (a `done` card whose activity is newer than its last-seen time) or red `blocked`
 (`Needs You`). The first successful observation is a silent baseline. A later transition first
-becomes an in-memory candidate; Gateway sends only when another authoritative fetch at least ten
-seconds later still places the same Pane identity in the same actionable group. Becoming Recent
-after a human opens it, resuming work, going offline, disappearing, or changing identity cancels
-the candidate. A confirmed group sends once and cannot repeat until the card leaves and re-enters
-an actionable group.
+becomes an in-memory candidate; Gateway sends only after another authoritative fetch at least ten
+seconds later still finds the same reachable Pane identity without an intervening `Working`
+(`Running`) observation. Opening the Pane so Ready becomes Recent, moving through idle/unknown, or
+switching between Ready and Needs You preserves the candidate and its original deadline; the newest
+attention group selects the eventual status and avatar. Explicitly resuming work cancels the event,
+as do going offline, disappearing, or changing identity to prevent stale delivery. A confirmed
+continuously actionable group sends once and does not repeat until a later actionable transition.
 
 Confirmation uses the exact Fleet refresh state described above: the earliest candidate deadline
 may bring the one canonical next refresh forward, but it creates no second timer, collector, or

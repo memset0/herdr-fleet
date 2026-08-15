@@ -68,11 +68,14 @@ authoritatively, including confirmed removals.
 
 When central Discord alerts are configured, a second memory-only ledger consumes completed live
 collector cycles. It silently baselines first-seen Pane identities and creates a candidate when a
-later authoritative observation enters `Ready · unseen` or `Needs You`. A second authoritative
-observation at least ten seconds later must confirm the same group; handling, offline projection,
-removal, or identity replacement cancels the candidate, and a confirmed continuous group sends
-only once. The ledger returns its earliest deadline to the existing collector, which may clamp its
-one canonical next refresh subject to the five-second Host floor without adding a timer or backoff.
+later authoritative observation enters `Ready · unseen` or `Needs You`. The candidate retains its
+original deadline across Recent, idle, unknown, and attention-group changes; the latest actionable
+group selects delivery status. A second authoritative observation at least ten seconds later
+confirms the same reachable Pane unless it entered `Working`/`Running`; that explicit work
+resumption, offline projection, removal, or identity replacement cancels the candidate. A confirmed
+continuous group sends only once. The ledger returns its earliest deadline to the existing
+collector, which may clamp its one canonical next refresh subject to the five-second Host floor
+without adding a timer or backoff.
 
 The adapter constructs the canonical Fleet instance/Space/Tab/Pane link plus an optional named-session
 selector and invokes an absolute
