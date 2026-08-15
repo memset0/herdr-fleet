@@ -51,6 +51,44 @@ describe("gateway configuration", () => {
     expect(() => parseGatewayConfig(listenerCollision)).toThrow("duplicate local listener port");
   });
 
+  test("parses an optional central-only Discord notifier and forwards an opaque template selector", () => {
+    const raw = rawGatewayConfig();
+    raw.discordNotifications = {
+      enabled: true,
+      executable: "/opt/example/bin/pingme",
+      channel: "test",
+      template: "/opt/example/templates/fleet alert.md",
+    };
+    expect(parseGatewayConfig(raw).discordNotifications).toEqual({
+      enabled: true,
+      executable: "/opt/example/bin/pingme",
+      channel: "test",
+      template: "/opt/example/templates/fleet alert.md",
+    });
+
+    const disabled = rawGatewayConfig();
+    disabled.discordNotifications = { enabled: false };
+    expect(parseGatewayConfig(disabled).discordNotifications).toEqual({ enabled: false });
+  });
+
+  test("rejects incomplete or unsafe Discord notifier selectors", () => {
+    const missing = rawGatewayConfig();
+    missing.discordNotifications = { enabled: true, executable: "/opt/example/bin/pingme" };
+    expect(() => parseGatewayConfig(missing)).toThrow("require executable and channel");
+
+    const relative = rawGatewayConfig();
+    relative.discordNotifications = { enabled: true, executable: "pingme", channel: "test" };
+    expect(() => parseGatewayConfig(relative)).toThrow("must be absolute");
+
+    const invalidChannel = rawGatewayConfig();
+    invalidChannel.discordNotifications = {
+      enabled: true,
+      executable: "/opt/example/bin/pingme",
+      channel: "--test-channel",
+    };
+    expect(() => parseGatewayConfig(invalidChannel)).toThrow("numeric id or configured alias");
+  });
+
   test("rejects a private SSH identity path reused by another node", () => {
     const raw = rawGatewayConfig();
     const remote = {
@@ -154,6 +192,22 @@ describe("gateway configuration", () => {
     await expect(loadGatewayConfig(path)).rejects.toThrow("SSH identity must not be accessible");
     await chmod(identity, 0o600);
     expect((await loadGatewayConfig(path)).nodes[0]?.transport.type).toBe("ssh");
+  });
+
+  test("requires an enabled Discord notifier path to be a real executable file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "web-remote-discord-config-test-"));
+    temporary.push(root);
+    const executable = join(root, "pingme");
+    const path = join(root, "gateway.json");
+    const raw = rawGatewayConfig();
+    raw.discordNotifications = { enabled: true, executable, channel: "test" };
+    await writeFile(path, JSON.stringify(raw), { mode: 0o600 });
+
+    await expect(loadGatewayConfig(path)).rejects.toThrow("executable is unavailable");
+    await writeFile(executable, "synthetic binary\n", { mode: 0o600 });
+    await expect(loadGatewayConfig(path)).rejects.toThrow("regular executable file");
+    await chmod(executable, 0o700);
+    expect((await loadGatewayConfig(path)).discordNotifications).toMatchObject({ enabled: true, channel: "test" });
   });
 
   test("rejects copied SSH private identities even when their paths differ", async () => {

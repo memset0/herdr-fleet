@@ -13,6 +13,11 @@
     "sessionSecret": "replace_with_at_least_32_random_base64url_bytes"
   },
   "pollIntervalMs": 5000,
+  "discordNotifications": {
+    "enabled": false,
+    "executable": "/usr/local/bin/pingme",
+    "channel": "test"
+  },
   "nodes": [
     {
       "id": "local",

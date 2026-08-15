@@ -249,6 +249,90 @@ describe("Fleet aggregation", () => {
     expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 20_100 });
   });
 
+  test("notification monitoring reschedules one timer from the shared backoff and manual floor", async () => {
+    const config = gatewayConfig();
+    const transports = new TransportRegistry(config.nodes);
+    let clock = 100;
+    let calls = 0;
+    let nextHandle = 0;
+    const jobs = new Map<number, { callback: () => void | Promise<void>; delayMs: number }>();
+    const cancelled: number[] = [];
+    const cycles: number[] = [];
+    const collector = new FleetCollector(
+      config,
+      transports,
+      (async () => {
+        calls += 1;
+        return response([], [session("default", { isPrimary: true, agents: 0 })]);
+      }) as unknown as typeof fetch,
+      () => clock,
+      {
+        schedule: (callback, delayMs) => {
+          const handle = ++nextHandle;
+          jobs.set(handle, { callback, delayMs });
+          return handle;
+        },
+        cancel: (handle) => {
+          cancelled.push(handle as number);
+          jobs.delete(handle as number);
+        },
+        onCycle: (state) => cycles.push(state.refresh.delayMs),
+      },
+    );
+    const fireOnlyTimer = async (): Promise<void> => {
+      expect(jobs.size).toBe(1);
+      const [handle, job] = [...jobs][0]!;
+      jobs.delete(handle);
+      await job.callback();
+    };
+
+    expect(jobs.size).toBe(0);
+    collector.startBackgroundRefresh();
+    collector.startBackgroundRefresh();
+    expect([...jobs.values()].map((job) => job.delayMs)).toEqual([0]);
+    await fireOnlyTimer();
+    expect(calls).toBe(1);
+    expect(cycles).toEqual([5_000]);
+    expect([...jobs.values()].map((job) => job.delayMs)).toEqual([5_000]);
+
+    clock = 200;
+    await collector.refresh({ manual: true });
+    expect(calls).toBe(1);
+    expect([...jobs.values()].map((job) => job.delayMs)).toEqual([4_900]);
+
+    clock = 5_100;
+    await fireOnlyTimer();
+    expect(calls).toBe(2);
+    expect(cycles).toEqual([5_000, 5_000]);
+    expect([...jobs.values()].map((job) => job.delayMs)).toEqual([5_000]);
+
+    clock = 10_100;
+    await fireOnlyTimer();
+    expect(calls).toBe(3);
+    expect(cycles).toEqual([5_000, 5_000, 10_000]);
+    expect([...jobs.values()].map((job) => job.delayMs)).toEqual([10_000]);
+
+    collector.stopBackgroundRefresh();
+    expect(jobs.size).toBe(0);
+    expect(cancelled.length).toBeGreaterThan(0);
+  });
+
+  test("keeps collection page-driven until background monitoring is explicitly started", async () => {
+    const config = gatewayConfig();
+    const transports = new TransportRegistry(config.nodes);
+    const jobs: unknown[] = [];
+    const collector = new FleetCollector(config, transports, undefined, Date.now, {
+      schedule: (callback, delayMs) => {
+        jobs.push({ callback, delayMs });
+        return jobs.length;
+      },
+      cancel: () => undefined,
+    });
+
+    expect(jobs).toEqual([]);
+    expect(collector.snapshot().refresh.nextAt).toBe(0);
+  });
+
   test("failed primary attempts activate the same hard revisit floor", async () => {
     const config = gatewayConfig();
     const transports = new TransportRegistry(config.nodes);

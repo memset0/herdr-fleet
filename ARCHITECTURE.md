@@ -34,11 +34,13 @@ mapped to a default node. Upstream response cookies are preserved except for any
 matches the Gateway session cookie, so a node cannot shadow, clear, or replace the central browser
 credential.
 
-An authenticated `/api/fleet` read drives one coalesced collector refresh; there is no unconditional
-Gateway polling while no Fleet page is open. The collector reads each node's primary snapshot and
-fans out across its reachable named sessions. It validates and projects only stable instance,
-session, health, and Agent-card fields. Pane contents, histories, device authorization, update
-metadata, credentials, and unknown response fields never enter the aggregate.
+An authenticated `/api/fleet` read drives one coalesced collector refresh. There is no unconditional
+Gateway polling while no Fleet page is open unless the optional central Discord notifier is enabled;
+in that mode one background wakeup advances the very same collector and canonical adaptive
+schedule. The collector reads each node's primary snapshot and fans out across its reachable named
+sessions. It validates and projects only stable instance, session, health, and Agent-card fields.
+Pane contents, histories, device authorization, update metadata, credentials, and unknown response
+fields never enter the aggregate.
 
 The Fleet page uses that projection to render a single horizontal instance switcher, a bounded
 cross-host Agent menu in Fleet's own header, and exactly one selected node origin at a time. The
@@ -59,6 +61,14 @@ The Gateway keeps only an in-memory, per-node/session last-known Agent cache. A 
 its cards visibly offline/stale but interleaved in the normal triage sections according to the last
 successfully observed status and timestamps; the next successful snapshot replaces that source
 authoritatively, including confirmed removals.
+
+When central Discord alerts are configured, a second memory-only ledger consumes completed live
+collector cycles. It silently baselines first-seen Pane identities and emits once when a later
+authoritative observation enters `done` or `blocked`; offline projections cannot fire it. The
+adapter constructs the canonical Fleet instance/session/Pane link and invokes an absolute local
+`pingme` executable without a shell. Channel/template selectors and safe Agent-card variables cross
+that process boundary, but Discord credentials remain in `pingme`'s own private local config and
+never enter Gateway or any remote node.
 
 Embedding is deliberately asymmetric. Fleet's document CSP permits `frame-src` only for exact,
 enabled node origins and Fleet itself stays non-embeddable. The Gateway rewrites only proxied node

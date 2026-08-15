@@ -2,6 +2,7 @@
 
 import { createGatewayHandler } from "./server.ts";
 import { loadGatewayConfig } from "./config.ts";
+import { FleetDiscordNotifier, PingmeDiscordSender } from "./discord-notifications.ts";
 import { FleetCollector } from "./fleet.ts";
 import { TransportRegistry } from "./transports.ts";
 
@@ -11,7 +12,13 @@ if (!configPath) throw new Error("usage: gateway/index.ts /absolute/path/to/gate
 const config = await loadGatewayConfig(configPath);
 const transports = new TransportRegistry(config.nodes);
 transports.start();
-const collector = new FleetCollector(config, transports);
+const discordConfig = config.discordNotifications?.enabled ? config.discordNotifications : null;
+const discordNotifier = discordConfig
+  ? new FleetDiscordNotifier(config.public.fleetHost, new PingmeDiscordSender(discordConfig))
+  : null;
+const collector = new FleetCollector(config, transports, fetch, Date.now, {
+  ...(discordNotifier ? { onCycle: (state) => discordNotifier.observe(state) } : {}),
+});
 const handler = createGatewayHandler({ config, collector, transports });
 
 const server = Bun.serve({
@@ -24,12 +31,17 @@ const server = Bun.serve({
 process.stdout.write(
   `[gateway] listening on http://${server.hostname}:${server.port} for ${config.public.fleetHost} + ${config.nodes.filter((node) => node.enabled).length} node(s)\n`,
 );
+if (discordConfig) {
+  process.stdout.write(`[gateway] Discord Agent alerts enabled for channel ${discordConfig.channel}\n`);
+  collector.startBackgroundRefresh();
+}
 
 let stopping = false;
 const shutdown = async (signal: string): Promise<void> => {
   if (stopping) return;
   stopping = true;
   process.stdout.write(`[gateway] shutting down (${signal})\n`);
+  collector.stopBackgroundRefresh();
   transports.stop();
   await server.stop();
 };

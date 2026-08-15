@@ -65,7 +65,9 @@ opens, retries, and multiple tabs cannot bypass the floor. A request that arrive
 the in-memory aggregate and earliest legal next time without revisiting the Host. Primary discovery
 and its reachable named-session fan-out form one Host transaction; named sessions do not acquire
 separate backoffs. Overlapping eligible requests are coalesced, and no fixed collector loop polls
-nodes while no Fleet page is open.
+nodes while no Fleet page is open unless central Discord Agent notifications are enabled. When they
+are enabled, one Gateway-owned wakeup advances this same adaptive schedule in the background; it
+does not create another collector, Host visit, or exponential-backoff sequence.
 
 If a Host or one named Herdr session becomes unreachable, its last successful cards stay interleaved
 in their last-known triage sections, dimmed and labelled offline with their Host and last observation
@@ -80,6 +82,7 @@ credentials, update state, device authorization, and unknown snapshot fields rem
 - Bun
 - A reverse proxy providing HTTPS
 - OpenSSH on the Fleet host only when remote nodes use the SSH transport
+- `pingme` on the Fleet host only when central Discord Agent notifications are enabled
 
 Linux and macOS are supported. The plugin and its long-running processes run as the same account
 that owns the target Herdr socket.
@@ -199,6 +202,54 @@ than a parent shared by unrelated applications. `gateway.example.json` documents
 inventory entries. Its existing `pollIntervalMs` is the Gateway-owned adaptive-refresh base (5000
 by default and clamped to the five-second Host revisit floor), not an unconditional server polling
 loop. The live Gateway config must remain an absolute-path, owner-only file.
+
+### Discord Agent notifications
+
+The central Gateway can notify Discord when a successfully fetched Agent newly enters green
+`done` or red `blocked` (`Needs You`). The first successful observation is a silent baseline, an
+unchanged or offline cached card never repeats an alert, and recovery is compared with the last
+successfully fetched state. Monitoring uses the exact Fleet refresh state described above: one
+adaptive 5-second-to-1-hour delay and the same hard five-second per-Host floor for browser and
+notification activity together.
+
+Install and privately configure `pingme` only on the Fleet host, under the same account that runs
+the plugin-owned supervisor. Then add this object to the owner-only `gateway.json`:
+
+```json
+"discordNotifications": {
+  "enabled": true,
+  "executable": "/usr/local/bin/pingme",
+  "channel": "test"
+}
+```
+
+`executable` must be an absolute regular executable file. `channel` is passed as an explicit
+`pingme` channel id or configured alias; the initial validation rollout should use a dedicated
+`test` alias before a later configuration change selects a production destination. Gateway never
+reads or distributes the CLI's token, webhook, or private config, and remote nodes need no Discord
+settings.
+
+Each default-template message includes the Agent, `completed`/`needs you` state, Host, workspace,
+Tab, Pane, optional named Herdr session, and a clickable canonical Fleet Pane link. It includes no
+terminal contents, history, cookie, credential, or SSH material. For example:
+
+```text
+🟢 Agent completed
+Agent: codex
+Host: Cluster A
+Workspace: Example project
+Tab: Main
+Pane: Review (w0:p7)
+Open Pane in Fleet: https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap7
+```
+
+Omitting `template` uses `pingme`'s existing default template. A custom selector can be supplied as
+`"template": "fleet-alert"`; Fleet forwards the selector unchanged, so an absolute `.md` path also
+works once the installed `pingme` version supports absolute template selectors. Custom templates
+receive `agent`, `status`, `status_label`, `host`, `host_id`, `workspace`, `workspace_id`, `tab`,
+`tab_id`, `pane`, `pane_id`, `session`, `observed_at`, and `pane_url` variables in addition to the
+complete default `message`. Delivery uses one direct, timeout-bounded child process at a time, never
+a shell; a failed transition is diagnosed once and not automatically retried.
 
 An SSH transport may omit `jump` for a direct connection or add the structured `jump` object shown
 in `gateway.example.json` when the target is reachable only through a bastion. The jump endpoint has

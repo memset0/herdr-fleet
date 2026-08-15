@@ -39,6 +39,20 @@ export interface NodeConfig {
   transport: NodeTransportConfig;
 }
 
+export type DiscordNotificationConfig =
+  | {
+      enabled: false;
+      executable?: string;
+      channel?: string;
+      template?: string;
+    }
+  | {
+      enabled: true;
+      executable: string;
+      channel: string;
+      template?: string;
+    };
+
 export interface GatewayConfig {
   listen: { host: "127.0.0.1" | "::1"; port: number };
   public: {
@@ -50,6 +64,7 @@ export interface GatewayConfig {
   };
   auth: { username: string; passwordHash: string; sessionSecret: string };
   pollIntervalMs: number;
+  discordNotifications?: DiscordNotificationConfig;
   nodes: NodeConfig[];
 }
 
@@ -99,6 +114,40 @@ function absolutePath(value: unknown, label: string): string {
   const path = string(value, label);
   if (!isAbsolute(path)) throw new Error(`${label} must be absolute`);
   return path;
+}
+
+function optionalSelector(value: unknown, label: string, max: number): string | undefined {
+  if (value === undefined) return undefined;
+  const selector = string(value, label);
+  if (selector.length > max || /[\u0000-\u001f\u007f]/.test(selector)) {
+    throw new Error(`${label} is invalid`);
+  }
+  return selector;
+}
+
+function parseDiscordNotifications(value: unknown): DiscordNotificationConfig | undefined {
+  if (value === undefined) return undefined;
+  const raw = object(value, "discordNotifications");
+  keys(raw, ["enabled", "executable", "channel", "template"], "discordNotifications");
+  if (typeof raw.enabled !== "boolean") throw new Error("discordNotifications.enabled must be a boolean");
+
+  const executable = raw.executable === undefined ? undefined : absolutePath(raw.executable, "discordNotifications.executable");
+  const channel = optionalSelector(raw.channel, "discordNotifications.channel", 128);
+  const template = optionalSelector(raw.template, "discordNotifications.template", 4_096);
+  if (channel && !/^(?:[0-9]{1,32}|(?=[A-Za-z0-9_-]{1,64}$)(?=.*[A-Za-z])[A-Za-z0-9][A-Za-z0-9_-]*)$/.test(channel)) {
+    throw new Error("discordNotifications.channel must be a numeric id or configured alias");
+  }
+  if (raw.enabled && (!executable || !channel)) {
+    throw new Error("enabled discordNotifications require executable and channel");
+  }
+  return raw.enabled
+    ? { enabled: true, executable: executable!, channel: channel!, ...(template ? { template } : {}) }
+    : {
+        enabled: false,
+        ...(executable ? { executable } : {}),
+        ...(channel ? { channel } : {}),
+        ...(template ? { template } : {}),
+      };
 }
 
 function parseLocalTransport(raw: JsonObject, label: string): LocalTransportConfig {
@@ -197,7 +246,7 @@ function parseNode(value: unknown, index: number, baseDomain: string): NodeConfi
 
 export function parseGatewayConfig(value: unknown): GatewayConfig {
   const raw = object(value, "config");
-  keys(raw, ["listen", "public", "auth", "pollIntervalMs", "nodes"], "config");
+  keys(raw, ["listen", "public", "auth", "pollIntervalMs", "discordNotifications", "nodes"], "config");
 
   const listen = object(raw.listen, "listen");
   keys(listen, ["host", "port"], "listen");
@@ -259,6 +308,7 @@ export function parseGatewayConfig(value: unknown): GatewayConfig {
     }
   }
 
+  const discordNotifications = parseDiscordNotifications(raw.discordNotifications);
   return {
     listen: { host: listenHost, port: listenPort },
     public: {
@@ -270,6 +320,7 @@ export function parseGatewayConfig(value: unknown): GatewayConfig {
     },
     auth: { username, passwordHash, sessionSecret },
     pollIntervalMs: integer(raw.pollIntervalMs ?? 5_000, "pollIntervalMs", 1_000, 300_000),
+    ...(discordNotifications ? { discordNotifications } : {}),
     nodes,
   };
 }
@@ -281,6 +332,13 @@ export async function loadGatewayConfig(path: string, enforcePermissions = proce
     if ((info.mode & 0o077) !== 0) throw new Error("gateway config must not be accessible by group or other users (chmod 600)");
   }
   const config = parseGatewayConfig(JSON.parse(await Bun.file(path).text()) as unknown);
+  if (config.discordNotifications?.enabled) {
+    const executable = await stat(config.discordNotifications.executable).catch(() => null);
+    if (!executable) throw new Error("discordNotifications.executable is unavailable");
+    if (!executable.isFile() || (executable.mode & 0o111) === 0) {
+      throw new Error("discordNotifications.executable must be a regular executable file");
+    }
+  }
   const sshIdentityDigests = new Map<string, string>();
   const jumpIdentityDigests = new Map<string, string>();
 

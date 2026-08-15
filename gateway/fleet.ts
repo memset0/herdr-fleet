@@ -75,6 +75,13 @@ export interface FleetState {
   nodes: FleetNodeState[];
 }
 
+export interface FleetCollectorRuntime {
+  schedule?: (callback: () => void | Promise<void>, delayMs: number) => unknown;
+  cancel?: (handle: unknown) => void;
+  onCycle?: (state: FleetState) => void;
+  warn?: (message: string) => void;
+}
+
 const MIN_NODE_REVISIT_MS = 5_000;
 const MAX_REFRESH_MS = 3_600_000;
 const AGENT_STATUSES = new Set<FleetAgentStatus>(["idle", "working", "blocked", "done", "unknown"]);
@@ -244,12 +251,19 @@ export class FleetCollector {
   private manualResetPending = false;
   private revision = 0;
   private visibleSignature: string;
+  private readonly schedule: NonNullable<FleetCollectorRuntime["schedule"]>;
+  private readonly cancel: NonNullable<FleetCollectorRuntime["cancel"]>;
+  private readonly onCycle: FleetCollectorRuntime["onCycle"];
+  private readonly warn: NonNullable<FleetCollectorRuntime["warn"]>;
+  private backgroundEnabled = false;
+  private backgroundTimer: unknown | null = null;
 
   constructor(
     config: GatewayConfig,
     private readonly transports: TransportRegistry,
     private readonly fetcher: typeof fetch = fetch,
     private readonly now: () => number = Date.now,
+    runtime: FleetCollectorRuntime = {},
   ) {
     this.enabledNodes = config.nodes.filter((candidate) => candidate.enabled);
     this.baseRefreshMs = Math.max(config.pollIntervalMs, MIN_NODE_REVISIT_MS);
@@ -258,6 +272,39 @@ export class FleetCollector {
       this.states.set(node.id, initialState(node, transports.status(node), now()));
     }
     this.visibleSignature = this.signature();
+    this.schedule =
+      runtime.schedule ??
+      ((callback, delayMs) => setTimeout(() => void callback(), delayMs));
+    this.cancel = runtime.cancel ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+    this.onCycle = runtime.onCycle;
+    this.warn = runtime.warn ?? ((message) => console.warn(message));
+  }
+
+  startBackgroundRefresh(): void {
+    if (this.backgroundEnabled) return;
+    this.backgroundEnabled = true;
+    this.scheduleBackground(0);
+  }
+
+  stopBackgroundRefresh(): void {
+    this.backgroundEnabled = false;
+    if (this.backgroundTimer === null) return;
+    this.cancel(this.backgroundTimer);
+    this.backgroundTimer = null;
+  }
+
+  private scheduleBackground(delayOverride?: number): void {
+    if (!this.backgroundEnabled) return;
+    if (this.backgroundTimer !== null) this.cancel(this.backgroundTimer);
+    const delayMs = delayOverride ?? Math.max(0, this.nextRefreshAt - this.now());
+    this.backgroundTimer = this.schedule(async () => {
+      this.backgroundTimer = null;
+      try {
+        await this.refresh();
+      } catch {
+        this.warn("[gateway/fleet] background refresh failed");
+      }
+    }, delayMs);
   }
 
   private nextNodeEligibility(): number {
@@ -276,6 +323,14 @@ export class FleetCollector {
   }
 
   async refresh(options: { manual?: boolean } = {}): Promise<void> {
+    try {
+      await this.refreshOnce(options);
+    } finally {
+      this.scheduleBackground();
+    }
+  }
+
+  private async refreshOnce(options: { manual?: boolean }): Promise<void> {
     const manual = options.manual === true;
     if (manual) this.manualResetPending = true;
     if (this.inFlight) {
@@ -312,6 +367,13 @@ export class FleetCollector {
           ? this.baseRefreshMs
           : Math.min(Math.max(this.refreshDelayMs, this.baseRefreshMs) * 2, MAX_REFRESH_MS);
       this.nextRefreshAt = Math.max(this.now() + this.refreshDelayMs, this.nextNodeEligibility());
+      if (this.onCycle) {
+        try {
+          this.onCycle(this.snapshot());
+        } catch {
+          this.warn("[gateway/fleet] collection observer failed");
+        }
+      }
     })();
     this.inFlight = pending;
     try {
