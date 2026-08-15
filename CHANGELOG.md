@@ -6,6 +6,20 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.10] - 2026-08-15
+
+### Changed
+
+- Default-template alerts map readable Space and Tab names to `pingme` project and session-title metadata so the shared trailing footer can replace a Fleet-specific template while Pane remains in the webhook username (4459edd)
+
+### Security
+
+- Internal-id-only Tabs and every coding-agent session/thread identifier remain absent from default footer metadata (4459edd)
+
+### Upgrading
+
+- This central presentation patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.9] - 2026-08-15
 
 ### Fixed
