@@ -15,7 +15,8 @@ Read `README.md`, `ARCHITECTURE.md`, `UPSTREAM.md`, and `HERDR_API.md` before ch
 - The supported lifecycle is the plugin-owned supervisor. Do not add systemd, launchd, cron,
   Tailscale, a public listener, or a shared-home pidfile.
 - Keep Fleet aggregation to stable, explicitly allowlisted summary and Agent-card fields. Pane
-  contents and histories stay on the native node route.
+  contents and histories stay on the native node route; only a confirmed Discord alert may make one
+  bounded, side-effect-free History read and forward its newest Assistant text without retaining it.
 
 ## Versioning
 

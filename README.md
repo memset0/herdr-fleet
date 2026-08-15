@@ -15,7 +15,9 @@ https://node.herdr.example.com/pane/<pane-id>?session=<session-name>
 The Fleet page is a mobile-first Collie shell: one compact row switches instances, a header menu
 triages Agents across every Host, and one width-limited iframe renders the selected node's native
 Collie home, session, and pane routes. The aggregate contains only Agent-card metadata; Fleet never
-copies terminal contents or histories into its central data model.
+copies terminal contents or histories into its central data model. Inside that iframe, Collie's
+redundant home/logo affordance is omitted so the native breadcrumb can use the released header
+space; a direct or new-tab Collie page retains the logo and its normal home action.
 
 The compact header identifies the Agent menu with an Agent symbol and an inline count covering
 `Needs you`, `Ready · unseen`, and `Working`; `Recent` cards do not contribute to that number. An
@@ -241,29 +243,44 @@ template's Agent/project header and uses the generic session label `Fleet`; conc
 labels are not rendered. Known harness ids use their normal product spelling, such as `codex` →
 `Codex`, while unknown names are retained after bounded single-line normalization. Confirmed Ready
 alerts explicitly select the configured `success` avatar, while Needs You selects `needs-input`;
-the local `pingme` profiles remain the authoritative visual definitions. The message body is only
-one clickable canonical Fleet Pane link—there is no `Agent completed` / `Agent needs you` title and
-no repeated context block. A rendered message has this shape (the second line remains `pingme`'s
-normal local sender/time metadata):
+the local `pingme` profiles remain the authoritative visual definitions.
+
+Only after the ten-second confirmation succeeds, Gateway makes at most one direct, timeout- and
+size-bounded request to that Pane's existing History route through its configured transport. It
+omits Collie's seen-attribution header, selects only text parts from the newest qualifying
+Assistant entry, normalizes terminal controls, and caps the reply at 1,000 Unicode characters.
+User turns, reasoning, tools, summaries, notes, and all other transcript entries remain excluded;
+the reply is held only for the in-flight notification and never enters Fleet state, caches, logs,
+or backoff. Disabled, unsupported, malformed, oversized, or unreachable History degrades without
+retry to the original link-only notification.
+
+The message body contains that bounded final reply, a blank line, and one clickable canonical Fleet
+Pane link—there is no `Agent completed` / `Agent needs you` title and no repeated context block. A
+rendered message has this shape (the second line remains `pingme`'s normal local sender/time
+metadata):
 
 ```markdown
 > **🤖 `Codex`   📦 `Example project`   💬 `Fleet`**
 > **🏠 `operator@fleet-host`   📅 `8/15 12:34:56`**
+The requested change is complete.
+
 [Open Pane in Fleet](https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap7)
 ```
 
-The default presentation includes no terminal contents, history, cookie, credential, or SSH
-material. The state is intentionally implicit in the notification event rather than repeated in
-the body.
+The default presentation includes no terminal contents, complete history, user prompt, reasoning,
+tool traffic, cookie, credential, or SSH material. The state is intentionally implicit in the
+notification event rather than repeated in the body.
 
 Omitting `template` uses `pingme`'s existing default template. A custom selector can be supplied as
 `"template": "fleet-alert"`; Fleet forwards the selector unchanged, so an absolute `.md` path also
 works once the installed `pingme` version supports absolute template selectors. Custom templates
 receive `agent`, `status`, `status_label`, `host`, `host_id`, `workspace`, `workspace_id`, `tab`,
-`tab_id`, `pane`, `pane_id`, `session`, `observed_at`, and `pane_url` variables in addition to the
-link-only default `message`, Agent/project/generic-Fleet runtime metadata, and state-specific
-avatar. Delivery uses one direct, timeout-bounded child process at a time, never a shell; a failed
-transition is diagnosed once and not automatically retried.
+`tab_id`, `pane`, `pane_id`, `session`, `observed_at`, `pane_url`, and optional `agent_reply`
+variables in addition to the composed default `message`, Agent/project/generic-Fleet runtime
+metadata, and state-specific avatar. History resolution and delivery are serialized outside the
+collector; delivery uses one direct, timeout-bounded child process at a time, never a shell. A
+failed History read falls back once and a failed transition is diagnosed once; neither is
+automatically retried.
 
 An SSH transport may omit `jump` for a direct connection or add the structured `jump` object shown
 in `gateway.example.json` when the target is reachable only through a bastion. The jump endpoint has

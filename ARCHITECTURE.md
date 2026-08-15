@@ -47,6 +47,10 @@ cross-host Agent menu in Fleet's own header, and exactly one selected node origi
 menu follows Collie's triage/card vocabulary, adds the owning Host, and turns a card selection into
 the existing canonical instance/session/Pane route. The iframe still owns the complete native
 Collie route stack and every terminal operation; Fleet does not reproduce Pane views or actions.
+The shared native Header omits its complete Collie home/logo affordance when framed, releasing that
+space to the breadcrumb, while the same top-level page retains the mark, connection animation, and
+home action. This presentation decision lives in each node Web bundle, so an older compatible node
+may retain the old embedded mark until its normal upgrade.
 
 Each browser requests Fleet immediately on load and sends a manual reset when the menu is opened.
 The Gateway owns one request-driven adaptive delay and canonical next-refresh time for every tab.
@@ -76,9 +80,16 @@ cross that process boundary, but Discord credentials remain in `pingme`'s own pr
 and never enter Gateway or any remote node. The default-template runtime header receives the
 observed harness's human-readable name and workspace plus generic session label `Fleet`; it never
 renders concrete Tab or Pane labels. Ready and Needs You explicitly select the configured
-`success` and `needs-input` avatars respectively, while the message body is only the canonical
-Markdown Pane link. Status and the remaining context stay available as structured custom-template
-variables without being repeated in the default body.
+`success` and `needs-input` avatars respectively.
+
+For a confirmed alert only, the serialized delivery queue makes one bounded request to the Pane's
+native History route through the same configured transport and exact Host mapping. The request does
+not carry seen attribution and does not re-enter collection. Runtime validation selects only the
+newest Assistant entry with text, excludes every other role and part kind, normalizes controls, and
+caps the ephemeral reply. The default message places that reply before the canonical Markdown Pane
+link; the bounded reply is also an optional custom-template variable. Unavailable or incompatible
+History falls back to the byte-compatible link-only body without a retry, and neither transcript
+content nor failure details enter state or diagnostics.
 
 Embedding is deliberately asymmetric. Fleet's document CSP permits `frame-src` only for exact,
 enabled node origins and Fleet itself stays non-embeddable. The Gateway rewrites only proxied node
