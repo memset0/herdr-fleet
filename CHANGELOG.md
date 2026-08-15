@@ -6,6 +6,16 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.9] - 2026-08-15
+
+### Fixed
+
+- Discord webhook usernames retain the full `Space · Tab · Pane` hierarchy when a Pane has no explicit label by using Collie's existing human-readable Agent-name fallback instead of dropping the Pane level (0aaab95)
+
+### Upgrading
+
+- This central presentation patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.8] - 2026-08-15
 
 ### Added
