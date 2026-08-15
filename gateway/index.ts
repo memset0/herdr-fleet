@@ -4,6 +4,7 @@ import { createGatewayHandler } from "./server.ts";
 import { loadGatewayConfig } from "./config.ts";
 import { FleetDiscordNotifier, PingmeDiscordSender } from "./discord-notifications.ts";
 import { FleetCollector } from "./fleet.ts";
+import { CollieFleetHistoryReader } from "./history.ts";
 import { TransportRegistry } from "./transports.ts";
 
 const configPath = process.argv[2];
@@ -14,7 +15,9 @@ const transports = new TransportRegistry(config.nodes);
 transports.start();
 const discordConfig = config.discordNotifications?.enabled ? config.discordNotifications : null;
 const discordNotifier = discordConfig
-  ? new FleetDiscordNotifier(config.public.fleetHost, new PingmeDiscordSender(discordConfig))
+  ? new FleetDiscordNotifier(config.public.fleetHost, new PingmeDiscordSender(discordConfig), {
+      history: new CollieFleetHistoryReader(config, transports),
+    })
   : null;
 const collector = new FleetCollector(config, transports, fetch, Date.now, {
   ...(discordNotifier ? { onCycle: (state) => discordNotifier.observe(state) } : {}),

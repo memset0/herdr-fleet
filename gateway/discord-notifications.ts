@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 
 import type { DiscordNotificationConfig } from "./config.ts";
 import type { FleetAgentCard, FleetAgentStatus, FleetNodeState, FleetState } from "./fleet.ts";
+import { normalizeFleetAgentReply, type FleetHistoryReader } from "./history.ts";
 
 type EnabledDiscordNotifications = Extract<DiscordNotificationConfig, { enabled: true }>;
 
@@ -20,6 +21,7 @@ export interface FleetDiscordAlert {
   session: string;
   observedAt: number;
   paneUrl: string;
+  agentReply?: string;
   message: string;
 }
 
@@ -55,6 +57,7 @@ interface NotificationCandidate {
 interface NotifierOptions {
   maxPending?: number;
   warn?: (message: string) => void;
+  history?: FleetHistoryReader;
 }
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
@@ -151,6 +154,7 @@ export function buildFleetDiscordAlert(
   fleetHost: string,
   node: Pick<FleetNodeState, "id" | "name">,
   agent: FleetAgentCard,
+  agentReply?: string | null,
 ): FleetDiscordAlert {
   if (!isAttentionStatus(agent.status)) throw new Error("Fleet Discord alerts require blocked or done status");
   const statusLabel = agent.status === "blocked" ? "needs you" : "completed";
@@ -159,6 +163,10 @@ export function buildFleetDiscordAlert(
   const pane = displayLine(agent.paneLabel ?? agent.sessionName ?? "", agent.paneId);
   const session = displayLine(agent.herdrSession, "default");
   const paneUrl = buildFleetPaneUrl(fleetHost, node.id, agent);
+  const reply = agentReply === undefined || agentReply === null
+    ? null
+    : normalizeFleetAgentReply(agentReply);
+  const link = `[Open Pane in Fleet](${paneUrl})`;
 
   return {
     agent: displayLine(agent.agent, "agent"),
@@ -175,7 +183,8 @@ export function buildFleetDiscordAlert(
     session,
     observedAt: agent.observedAt,
     paneUrl,
-    message: `[Open Pane in Fleet](${paneUrl})`,
+    ...(reply !== null ? { agentReply: reply } : {}),
+    message: reply === null ? link : `${reply}\n\n${link}`,
   };
 }
 
@@ -195,6 +204,7 @@ export function pingmeArguments(config: EnabledDiscordNotifications, alert: Flee
     ["session", alert.session],
     ["observed_at", String(alert.observedAt)],
     ["pane_url", alert.paneUrl],
+    ["agent_reply", alert.agentReply ?? ""],
   ];
   const args = ["send", "--channel", config.channel, "--avatar", fleetDiscordAvatar(alert.status)];
   if (config.template) args.push("--template", config.template);
@@ -228,6 +238,7 @@ export class FleetDiscordNotifier {
   private readonly candidates = new Map<string, NotificationCandidate>();
   private readonly maxPending: number;
   private readonly warn: (message: string) => void;
+  private readonly history: FleetHistoryReader | null;
   private queue: Promise<void> = Promise.resolve();
   private pending = 0;
 
@@ -238,6 +249,7 @@ export class FleetDiscordNotifier {
   ) {
     this.maxPending = options.maxPending ?? DEFAULT_MAX_PENDING;
     this.warn = options.warn ?? ((message) => console.warn(message));
+    this.history = options.history ?? null;
   }
 
   observe(state: FleetState): number | null {
@@ -286,7 +298,7 @@ export class FleetDiscordNotifier {
             this.candidates.delete(key);
           } else if (candidate && state.generatedAt >= candidate.dueAt) {
             this.candidates.delete(key);
-            this.enqueue(buildFleetDiscordAlert(this.fleetHost, node, agent));
+            this.enqueue(node, agent);
           }
         }
         this.observations.set(key, {
@@ -318,17 +330,30 @@ export class FleetDiscordNotifier {
     await this.queue;
   }
 
-  private enqueue(alert: FleetDiscordAlert): void {
+  private enqueue(node: FleetNodeState, agent: FleetAgentCard): void {
     if (this.pending >= this.maxPending) {
-      this.warn(`[gateway/discord] alert queue is full; dropped ${alert.hostId}/${alert.paneId}`);
+      this.warn(`[gateway/discord] alert queue is full; dropped ${node.id}/${agent.paneId}`);
       return;
     }
     this.pending += 1;
     this.queue = this.queue
-      .then(() => this.sender.send(alert))
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : "unknown delivery failure";
-        this.warn(`[gateway/discord] could not deliver ${alert.hostId}/${alert.paneId}: ${displayLine(message, "failure", 160)}`);
+      .then(async () => {
+        let reply: string | null = null;
+        if (this.history !== null) {
+          try {
+            reply = await this.history.latestAssistantReply(node.id, agent);
+          } catch {
+            // Never include the thrown message: a future adapter could accidentally put transcript
+            // content in it. Node/Pane identity is enough to diagnose the link-only fallback.
+            this.warn(`[gateway/discord] could not read History for ${node.id}/${agent.paneId}; using link-only alert`);
+          }
+        }
+        await this.sender.send(buildFleetDiscordAlert(this.fleetHost, node, agent, reply));
+      })
+      .catch(() => {
+        // The composed message is an argv value; keep it out of diagnostics even if an injected
+        // sender returns an unsafe error string.
+        this.warn(`[gateway/discord] could not deliver ${node.id}/${agent.paneId}; event will not be retried`);
       })
       .finally(() => {
         this.pending -= 1;

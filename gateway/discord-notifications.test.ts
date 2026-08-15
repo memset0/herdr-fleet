@@ -16,6 +16,7 @@ import {
   type PingmeCommandRunner,
 } from "./discord-notifications.ts";
 import type { FleetAgentCard, FleetAgentStatus, FleetNodeState, FleetState } from "./fleet.ts";
+import type { FleetHistoryReader } from "./history.ts";
 
 const enabledConfig: Extract<DiscordNotificationConfig, { enabled: true }> = {
   enabled: true,
@@ -116,6 +117,19 @@ class RecordingSender implements FleetDiscordSender {
   }
 }
 
+class RecordingHistoryReader implements FleetHistoryReader {
+  readonly calls: Array<{ nodeId: string; paneId: string; session: string }> = [];
+
+  constructor(
+    private readonly read: (nodeId: string, agent: FleetAgentCard) => Promise<string | null>,
+  ) {}
+
+  async latestAssistantReply(nodeId: string, agent: FleetAgentCard): Promise<string | null> {
+    this.calls.push({ nodeId, paneId: agent.paneId, session: agent.herdrSession });
+    return this.read(nodeId, agent);
+  }
+}
+
 describe("Fleet Discord message adapter", () => {
   test("builds a canonical named-session Pane link with a link-only message", () => {
     const agent = card("w0:p7", "done", {
@@ -141,6 +155,24 @@ describe("Fleet Discord message adapter", () => {
     expect(alert.message).not.toContain("Agent completed");
     expect(alert.message).not.toContain("Host:");
     expect(alert.message).not.toContain(agent.cwd);
+  });
+
+  test("puts one normalized bounded Agent reply before the canonical link", () => {
+    const agent = card("w0:p7", "done");
+    const alert = buildFleetDiscordAlert(
+      "fleet.example.com",
+      { id: "cluster-a", name: "Cluster A" },
+      agent,
+      `  \u001b[32mFinished.\u001b[0m\r\nAll checks passed.\u0000  `,
+    );
+
+    expect(alert.agentReply).toBe("Finished.\nAll checks passed.");
+    expect(alert.message).toBe(
+      `Finished.\nAll checks passed.\n\n[Open Pane in Fleet](${alert.paneUrl})`,
+    );
+    expect(pingmeArguments(enabledConfig, alert)).toContain(
+      "agent_reply=Finished.\nAll checks passed.",
+    );
   });
 
   test("uses conventional Agent display names and preserves bounded unknown names", () => {
@@ -244,6 +276,124 @@ describe("Fleet Discord message adapter", () => {
 });
 
 describe("Fleet Discord transition ledger", () => {
+  test("reads History once only after ten-second confirmation and then sends reply plus link", async () => {
+    const sender = new RecordingSender();
+    const history = new RecordingHistoryReader(async () => "The requested change is complete.");
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender, { history });
+
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(
+      fleet([card("w0:p1", "done", { lastActiveAt: 100, observedAt: 100 })], { generatedAt: 100 }),
+    );
+    notifier.observe(
+      fleet([card("w0:p1", "done", { lastActiveAt: 100, observedAt: 10_099 })], { generatedAt: 10_099 }),
+    );
+    expect(history.calls).toEqual([]);
+    expect(sender.alerts).toEqual([]);
+
+    notifier.observe(
+      fleet([card("w0:p1", "done", { lastActiveAt: 100, observedAt: 10_100 })], { generatedAt: 10_100 }),
+    );
+    await notifier.flush();
+
+    expect(history.calls).toEqual([{ nodeId: "cluster-a", paneId: "w0:p1", session: "default" }]);
+    expect(sender.alerts).toHaveLength(1);
+    expect(sender.alerts[0]?.message).toBe(
+      `The requested change is complete.\n\n[Open Pane in Fleet](${sender.alerts[0]?.paneUrl})`,
+    );
+
+    notifier.observe(
+      fleet([card("w0:p1", "done", { lastActiveAt: 900, observedAt: 20_000 })], { generatedAt: 20_000 }),
+    );
+    await notifier.flush();
+    expect(history.calls).toHaveLength(1);
+    expect(sender.alerts).toHaveLength(1);
+  });
+
+  test("does not read History when an actionable candidate is handled before confirmation", async () => {
+    const sender = new RecordingSender();
+    const history = new RecordingHistoryReader(async () => "must not be read");
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender, { history });
+
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 100 }));
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 5_000 }));
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 10_100 }));
+    await notifier.flush();
+
+    expect(history.calls).toEqual([]);
+    expect(sender.alerts).toEqual([]);
+  });
+
+  test("keeps the exact link-only body when History is unavailable", async () => {
+    const sender = new RecordingSender();
+    const history = new RecordingHistoryReader(async () => null);
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender, { history });
+
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 100 }));
+    notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 10_100 }));
+    await notifier.flush();
+
+    expect(history.calls).toHaveLength(1);
+    expect(sender.alerts[0]?.agentReply).toBeUndefined();
+    expect(sender.alerts[0]?.message).toBe(
+      `[Open Pane in Fleet](${sender.alerts[0]?.paneUrl})`,
+    );
+  });
+
+  test("History failure is not retried or exposed and still delivers the link-only alert", async () => {
+    const warnings: string[] = [];
+    const sender = new RecordingSender();
+    const history = new RecordingHistoryReader(async () => {
+      throw new Error("private transcript fragment");
+    });
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender, {
+      history,
+      warn: (message) => warnings.push(message),
+    });
+
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 100 })], { generatedAt: 100 }));
+    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 100 })], { generatedAt: 10_100 }));
+    await notifier.flush();
+
+    expect(history.calls).toHaveLength(1);
+    expect(sender.alerts).toHaveLength(1);
+    expect(sender.alerts[0]?.message).toBe(`[Open Pane in Fleet](${sender.alerts[0]?.paneUrl})`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("using link-only alert");
+    expect(warnings[0]).not.toContain("private transcript fragment");
+  });
+
+  test("serializes History resolution and delivery for simultaneous confirmations", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const sender = new RecordingSender();
+    const history = new RecordingHistoryReader(async (_nodeId, agent) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await Bun.sleep(1);
+      active -= 1;
+      return `Reply for ${agent.paneId}`;
+    });
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender, { history });
+    const baseline = [card("w0:p1", "working"), card("w0:p2", "working")];
+    const actionable = [
+      card("w0:p1", "done", { lastActiveAt: 100 }),
+      card("w0:p2", "blocked", { lastActiveAt: 100 }),
+    ];
+
+    notifier.observe(fleet(baseline, { generatedAt: 0 }));
+    notifier.observe(fleet(actionable, { generatedAt: 100 }));
+    notifier.observe(fleet(actionable, { generatedAt: 10_100 }));
+    await notifier.flush();
+
+    expect(history.calls).toHaveLength(2);
+    expect(sender.alerts).toHaveLength(2);
+    expect(maxActive).toBe(1);
+  });
+
   test("silently baselines and confirms each actionable group only after ten seconds", async () => {
     const sender = new RecordingSender();
     const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
