@@ -80,7 +80,9 @@ cross that process boundary, but Discord credentials remain in `pingme`'s own pr
 and never enter Gateway or any remote node. The default-template runtime header receives the
 observed harness's human-readable name and workspace plus generic session label `Fleet`; it never
 renders concrete Tab or Pane labels. Ready and Needs You explicitly select the configured
-`success` and `needs-input` avatars respectively.
+`success` and `needs-input` avatars respectively. The webhook username is independently overridden
+with the bounded readable `Space · Tab · Pane` hierarchy, omitting absent levels instead of exposing
+their internal ids.
 
 For a confirmed alert only, the serialized delivery queue makes one bounded request to the Pane's
 native History route through the same configured transport and exact Host mapping. The request does

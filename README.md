@@ -243,7 +243,10 @@ template's Agent/project header and uses the generic session label `Fleet`; conc
 labels are not rendered. Known harness ids use their normal product spelling, such as `codex` →
 `Codex`, while unknown names are retained after bounded single-line normalization. Confirmed Ready
 alerts explicitly select the configured `success` avatar, while Needs You selects `needs-input`;
-the local `pingme` profiles remain the authoritative visual definitions.
+the local `pingme` profiles remain the authoritative visual definitions. Each delivery also
+overrides the webhook username with the readable hierarchy
+`Space Name · Tab Name · Pane Name`. A level missing from an older node is omitted rather than
+replaced with an internal id, and the complete username is bounded to Discord's 80-character limit.
 
 Only after the ten-second confirmation succeeds, Gateway makes at most one direct, timeout- and
 size-bounded request to that Pane's existing History route through its configured transport. It
