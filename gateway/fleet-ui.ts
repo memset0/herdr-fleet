@@ -29,17 +29,25 @@ export function nextFleetRefreshDelay(
   return Math.min(Math.max(currentMs, baseMs) * 2, maxMs);
 }
 
-export function fleetAgentBucket(agent: {
+interface FleetAgentTriageInput {
   reachable: boolean;
   status: string;
   lastActiveAt?: number;
   lastSeenAt?: number;
-}): "needs" | "ready" | "working" | "recent" | "offline" {
+}
+
+export function fleetAgentBucket(
+  agent: FleetAgentTriageInput,
+): "needs" | "ready" | "working" | "recent" | "offline" {
   if (!agent.reachable) return "offline";
   if (agent.status === "blocked") return "needs";
   if (agent.status === "done" && (agent.lastActiveAt ?? 0) > (agent.lastSeenAt ?? 0)) return "ready";
   if (agent.status === "working") return "working";
   return "recent";
+}
+
+export function fleetHeaderAgentCount(agents: readonly FleetAgentTriageInput[]): number {
+  return agents.filter((agent) => fleetAgentBucket(agent) !== "recent").length;
 }
 
 export function fleetPage(): string {
@@ -52,13 +60,23 @@ export function fleetPage(): string {
           <span class="connecting">Connecting…</span>
         </nav>
         <button id="agent-menu-toggle" class="header-action agent-menu-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="agent-menu" aria-label="Open all Agents" title="All Agents">
-          <span class="agent-menu-glyph" aria-hidden="true">●</span>
+          <svg class="header-icon agent-menu-icon" data-icon="agent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <rect width="16" height="12" x="4" y="8" rx="2"></rect>
+            <path d="M12 8V4H8"></path>
+            <path d="M2 14h2"></path>
+            <path d="M20 14h2"></path>
+            <path d="M9 13v2"></path>
+            <path d="M15 13v2"></path>
+          </svg>
           <span id="agent-menu-count" class="agent-menu-count" aria-hidden="true">0</span>
         </button>
-        <a id="open-node" class="header-action" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open selected Collie directly" title="Open directly" hidden>↗</a>
-        <form class="logout-form" method="post" action="/auth/logout">
-          <button class="header-action" type="submit" aria-label="Sign out" title="Sign out">⇥</button>
-        </form>
+        <a id="open-node" class="header-action" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open selected Collie in a new tab" title="Open in new tab" hidden>
+          <svg class="header-icon" data-icon="external-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M15 3h6v6"></path>
+            <path d="M10 14 21 3"></path>
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+          </svg>
+        </a>
       </header>
       <section id="agent-menu" class="agent-menu" role="dialog" aria-modal="false" aria-label="Agents across all Hosts" hidden>
         <div class="agent-menu-heading">
@@ -215,24 +233,25 @@ button { color: inherit; }
   text-decoration: none;
   cursor: pointer;
 }
+.header-icon { width: 1.15rem; height: 1.15rem; flex: none; }
+.agent-menu-toggle {
+  width: auto;
+  min-width: 3.35rem;
+  grid-template-columns: auto auto;
+  gap: .35rem;
+  padding: 0 .55rem;
+}
 .agent-menu-toggle[aria-expanded="true"] { background: var(--accent); color: var(--foreground); }
-.agent-menu-glyph { color: var(--status-working); font-size: .85rem; }
+.agent-menu-icon { color: var(--status-working); }
 .agent-menu-count {
-  position: absolute;
-  top: .2rem;
-  right: .15rem;
-  min-width: 1.1rem;
-  border: 2px solid var(--muted);
-  border-radius: 999px;
-  background: var(--foreground);
-  padding: .08rem .24rem;
-  color: var(--background);
-  font-size: .58rem;
+  min-width: 1ch;
+  color: currentColor;
+  font-size: .76rem;
   font-weight: 800;
   line-height: 1;
   text-align: center;
+  font-variant-numeric: tabular-nums;
 }
-.logout-form { display: block; margin: 0; }
 .agent-menu {
   position: absolute;
   z-index: 30;
@@ -584,8 +603,10 @@ function renderAgents(){
  for(const node of nodes){for(const agent of Array.isArray(node.agentEntries)?node.agentEntries:[])entries.push({node,agent})}
  const live=entries.filter(({agent})=>agent.reachable).length;
  const offline=entries.length-live;
- agentMenuCount.textContent=String(live);
- agentMenuToggle.setAttribute('aria-label','Open all Agents · '+live+' live'+(offline?' · '+offline+' offline':''));
+ const counted=entries.filter(({agent})=>bucket(agent)!=='recent').length;
+ agentMenuCount.textContent=String(counted);
+ agentMenuToggle.title='All Agents · '+counted+' outside Recent';
+ agentMenuToggle.setAttribute('aria-label','Open all Agents · '+counted+' outside Recent · '+live+' live'+(offline?' · '+offline+' offline':''));
  if(!entries.length){agentSections.append(element('p','agent-empty','No agents running.'));return}
  const sections=[
    {key:'needs',label:'Needs you',color:'var(--status-blocked)',attention:true},

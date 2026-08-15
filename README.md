@@ -17,6 +17,11 @@ triages Agents across every Host, and one width-limited iframe renders the selec
 Collie home, session, and pane routes. The aggregate contains only Agent-card metadata; Fleet never
 copies terminal contents or histories into its central data model.
 
+The compact header identifies the Agent menu with an Agent symbol and an inline count covering
+`Needs you`, `Ready · unseen`, `Working`, and `Offline`; `Recent` cards remain in the menu but do not
+contribute to that number. The adjacent arrow-leaving-a-square control opens the selected Collie in
+a new tab. Fleet intentionally exposes no logout button in this header.
+
 ## Architecture
 
 ```text

@@ -4,6 +4,7 @@ import {
   FLEET_CSS,
   FLEET_JS,
   fleetAgentBucket,
+  fleetHeaderAgentCount,
   fleetPage,
   nextFleetRefreshDelay,
 } from "./fleet-ui.ts";
@@ -19,6 +20,14 @@ describe("Fleet iframe shell", () => {
     expect(page).toContain('id="agent-menu"');
     expect(page.indexOf('id="agent-menu"')).toBeLessThan(page.indexOf('id="node-frame"'));
     expect(page).toContain('id="open-node"');
+    expect(page).toContain('data-icon="agent"');
+    expect(page).toContain('data-icon="external-link"');
+    expect(page).toContain('d="M15 3h6v6"');
+    expect(page).not.toContain("agent-menu-glyph");
+    expect(page).not.toContain("/auth/logout");
+    expect(page).not.toContain("logout-form");
+    expect(page).not.toContain("Sign out");
+    expect(page).not.toContain(">↗</a>");
     expect(page).toContain('id="retry-frame"');
     expect(page).not.toContain("Fleet totals");
     expect(page).not.toContain('class="node-grid"');
@@ -28,6 +37,9 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toMatch(/\.agent-sections \{[^}]*overflow-y: auto/);
     expect(FLEET_CSS).toMatch(/\.frame-stage \{[^}]*min-height: 0;[^}]*overflow: hidden/);
     expect(FLEET_CSS).toMatch(/\.node-frame \{[^}]*width: 100%;[^}]*height: 100%;[^}]*border: 0/);
+    expect(FLEET_CSS).toMatch(/\.agent-menu-toggle \{[^}]*grid-template-columns: auto auto/);
+    expect(FLEET_CSS).toMatch(/\.agent-menu-count \{[^}]*color: currentColor/);
+    expect(FLEET_CSS).not.toMatch(/\.agent-menu-count \{[^}]*position: absolute/);
   });
 
   test("keeps selection URL-addressable without rebuilding Collie content", () => {
@@ -60,6 +72,19 @@ describe("Fleet iframe shell", () => {
     expect(fleetAgentBucket({ reachable: true, status: "working" })).toBe("working");
     expect(fleetAgentBucket({ reachable: true, status: "idle" })).toBe("recent");
     expect(fleetAgentBucket({ reachable: false, status: "working" })).toBe("offline");
+
+    expect(
+      fleetHeaderAgentCount([
+        { reachable: true, status: "blocked" },
+        { reachable: true, status: "done", lastActiveAt: 2, lastSeenAt: 1 },
+        { reachable: true, status: "working" },
+        { reachable: false, status: "idle" },
+        { reachable: true, status: "idle" },
+        { reachable: true, status: "done", lastActiveAt: 1, lastSeenAt: 1 },
+      ]),
+    ).toBe(4);
+    expect(FLEET_JS).toContain("entries.filter(({agent})=>bucket(agent)!=='recent').length");
+    expect(FLEET_JS).toContain("outside Recent");
   });
 
   test("opens cards through validated canonical instance, Pane, and session selectors", () => {
