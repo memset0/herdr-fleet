@@ -9,8 +9,8 @@ loopback address and talks to the primary and named Herdr Unix sockets. Its Reac
 session selector, pane deep links, terminal reads, and terminal writes remain Collie's native data
 path. The bridge knows only its own host; it never contacts the Fleet or publishes itself.
 
-An optional Pane-context action turns the focused Pane id plus public Fleet origin/instance metadata
-into the canonical outer deep link. Because plugin-action stdout is logged rather than connected to
+An optional Pane-context action turns the focused Space, Tab, and Pane ids plus public Fleet
+origin/instance metadata into the canonical outer deep link. Because plugin-action stdout is logged rather than connected to
 the terminal, the action opens a transient plugin popup whose single OSC 52 write is consumed by
 Herdr. A headless server forwards that clipboard event only to its foreground client. The popup
 contains no Gateway credential, never reads terminal contents, and leaves the tiled layout intact.
@@ -74,7 +74,8 @@ removal, or identity replacement cancels the candidate, and a confirmed continuo
 only once. The ledger returns its earliest deadline to the existing collector, which may clamp its
 one canonical next refresh subject to the five-second Host floor without adding a timer or backoff.
 
-The adapter constructs the canonical Fleet instance/session/Pane link and invokes an absolute
+The adapter constructs the canonical Fleet instance/Space/Tab/Pane link plus an optional named-session
+selector and invokes an absolute
 local `pingme` executable without a shell. Channel/template selectors and safe Agent-card variables
 cross that process boundary, but Discord credentials remain in `pingme`'s own private local config
 and never enter Gateway or any remote node. The default-template runtime footer receives the

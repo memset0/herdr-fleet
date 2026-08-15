@@ -140,7 +140,9 @@ describe("Fleet Discord message adapter", () => {
       paneLabel: "Release",
     });
     const url = buildFleetPaneUrl("fleet.example.com", "cluster-a", agent);
-    expect(url).toBe("https://fleet.example.com/?instance=cluster-a&pane=w0%3Ap7&session=batch+demo");
+    expect(url).toBe(
+      "https://fleet.example.com/?instance=cluster-a&space=w0&tab=w0%3At0&pane=w0%3Ap7&session=batch+demo",
+    );
 
     const alert = buildFleetDiscordAlert("fleet.example.com", { id: "cluster-a", name: "Cluster A" }, agent);
     expect(alert.message).toBe(`[Open Pane in Fleet](${url})`);

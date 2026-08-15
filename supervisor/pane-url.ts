@@ -6,6 +6,8 @@ import { loadPluginEnv, PLUGIN_ID } from "./runtime.ts";
 const INSTANCE_ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const PANE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+const TARGET_SPACE_ENV = "HERDR_WEB_REMOTE_TARGET_SPACE";
+const TARGET_TAB_ENV = "HERDR_WEB_REMOTE_TARGET_TAB";
 const TARGET_PANE_ENV = "HERDR_WEB_REMOTE_TARGET_PANE";
 const TARGET_SESSION_ENV = "HERDR_WEB_REMOTE_TARGET_SESSION";
 const POPUP_ENTRYPOINT = "copy-pane-url";
@@ -31,6 +33,8 @@ type CommandRunner = (
 export interface FleetPaneUrlInput {
   fleetUrl: string;
   instanceId: string;
+  spaceId: string;
+  tabId: string;
   paneId: string;
   session?: string;
 }
@@ -88,6 +92,12 @@ export function normalizePaneId(value: string | undefined): string {
   return normalized;
 }
 
+function normalizeLocationId(value: string | undefined, label: "Space" | "Tab"): string {
+  const normalized = requiredValue(value, `focused ${label} id is unavailable`);
+  if (!PANE_ID.test(normalized)) fail(`focused ${label} id is invalid`);
+  return normalized;
+}
+
 export function normalizeSessionName(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   if (!normalized || normalized === "default") return undefined;
@@ -110,6 +120,8 @@ export function sessionNameFromRuntime(env: Environment): string | undefined {
 export function buildFleetPaneUrl(input: FleetPaneUrlInput): string {
   const url = new URL(normalizeFleetUrl(input.fleetUrl));
   url.searchParams.set("instance", normalizeInstanceId(input.instanceId));
+  url.searchParams.set("space", normalizeLocationId(input.spaceId, "Space"));
+  url.searchParams.set("tab", normalizeLocationId(input.tabId, "Tab"));
   url.searchParams.set("pane", normalizePaneId(input.paneId));
   const session = normalizeSessionName(input.session);
   if (session) url.searchParams.set("session", session);
@@ -120,7 +132,7 @@ export function osc52ClipboardSequence(value: string): string {
   return `\u001b]52;c;${Buffer.from(value, "utf8").toString("base64")}\u0007`;
 }
 
-export function popupOpenArgs(paneId: string, session?: string): string[] {
+export function popupOpenArgs(spaceId: string, tabId: string, paneId: string, session?: string): string[] {
   const args = [
     "plugin",
     "pane",
@@ -131,6 +143,10 @@ export function popupOpenArgs(paneId: string, session?: string): string[] {
     POPUP_ENTRYPOINT,
     "--placement",
     "popup",
+    "--env",
+    `${TARGET_SPACE_ENV}=${normalizeLocationId(spaceId, "Space")}`,
+    "--env",
+    `${TARGET_TAB_ENV}=${normalizeLocationId(tabId, "Tab")}`,
     "--env",
     `${TARGET_PANE_ENV}=${normalizePaneId(paneId)}`,
   ];
@@ -143,6 +159,8 @@ export function popupOpenArgs(paneId: string, session?: string): string[] {
 
 async function configuredPaneUrl(
   env: Environment,
+  spaceId: string,
+  tabId: string,
   paneId: string,
   session: string | undefined,
   loadEnv: EnvLoader,
@@ -157,6 +175,8 @@ async function configuredPaneUrl(
   return buildFleetPaneUrl({
     fleetUrl: configured.HERDR_WEB_FLEET_URL ?? "",
     instanceId: configured.HERDR_WEB_INSTANCE_ID ?? "",
+    spaceId,
+    tabId,
     paneId,
     session,
   });
@@ -177,12 +197,14 @@ export async function runCopyAction(
   run: CommandRunner = defaultRunner,
   loadEnv: EnvLoader = loadPluginEnv,
 ): Promise<void> {
+  const spaceId = normalizeLocationId(env.HERDR_WORKSPACE_ID, "Space");
+  const tabId = normalizeLocationId(env.HERDR_TAB_ID, "Tab");
   const paneId = normalizePaneId(env.HERDR_PANE_ID);
   const session = sessionNameFromRuntime(env);
-  await configuredPaneUrl(env, paneId, session, loadEnv);
+  await configuredPaneUrl(env, spaceId, tabId, paneId, session, loadEnv);
 
   const binary = env.HERDR_BIN_PATH?.trim() || "herdr";
-  const result = run(binary, popupOpenArgs(paneId, session), { ...env });
+  const result = run(binary, popupOpenArgs(spaceId, tabId, paneId, session), { ...env });
   if (result.error || result.status !== 0) {
     fail(`Herdr could not open the clipboard popup (exit ${result.status ?? "unavailable"})`);
   }
@@ -194,9 +216,11 @@ export async function runCopyPopup(
   drain: () => Promise<void> = () => Bun.sleep(POPUP_DRAIN_MS),
   loadEnv: EnvLoader = loadPluginEnv,
 ): Promise<string> {
+  const spaceId = normalizeLocationId(env[TARGET_SPACE_ENV], "Space");
+  const tabId = normalizeLocationId(env[TARGET_TAB_ENV], "Tab");
   const paneId = normalizePaneId(env[TARGET_PANE_ENV]);
   const session = normalizeSessionName(env[TARGET_SESSION_ENV]);
-  const url = await configuredPaneUrl(env, paneId, session, loadEnv);
+  const url = await configuredPaneUrl(env, spaceId, tabId, paneId, session, loadEnv);
   await write(osc52ClipboardSequence(url));
   await drain();
   return url;

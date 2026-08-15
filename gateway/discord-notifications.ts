@@ -164,6 +164,8 @@ export function runPingmeCommand(
 export function buildFleetPaneUrl(fleetHost: string, nodeId: string, agent: FleetAgentCard): string {
   const url = new URL(`https://${fleetHost}/`);
   url.searchParams.set("instance", nodeId);
+  url.searchParams.set("space", agent.workspaceId);
+  url.searchParams.set("tab", agent.tabId);
   url.searchParams.set("pane", agent.paneId);
   if (!agent.primarySession) url.searchParams.set("session", agent.herdrSession);
   return url.toString();

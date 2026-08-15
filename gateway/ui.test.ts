@@ -90,9 +90,13 @@ describe("Fleet iframe shell", () => {
   });
 
   test("opens cards through validated canonical instance, Pane, and session selectors", () => {
+    expect(FLEET_JS).toContain("const spaceId=validPane(agent.workspaceId)");
+    expect(FLEET_JS).toContain("const tabId=validPane(agent.tabId)");
     expect(FLEET_JS).toContain("const paneId=validPane(agent.paneId)");
     expect(FLEET_JS).toContain("agent.primarySession?null:validSession(agent.herdrSession)");
-    expect(FLEET_JS).toContain("selectNode(node.id,{route:{view:'pane',paneId");
+    expect(FLEET_JS).toContain("selectNode(node.id,{route:{view:'pane',spaceId,tabId,paneId");
+    expect(FLEET_JS).toContain("url.searchParams.set('space',route.spaceId)");
+    expect(FLEET_JS).toContain("url.searchParams.set('tab',route.tabId)");
     expect(FLEET_JS).toContain("url.searchParams.set('pane',route.paneId)");
     expect(FLEET_JS).toContain("url.searchParams.set('session',route.session)");
     expect(FLEET_JS).toContain("closeAgentMenu();");
@@ -118,11 +122,15 @@ describe("Fleet iframe shell", () => {
   test("restores and accepts only canonical routes from the selected node frame", () => {
     expect(FLEET_JS).toContain("herdr-web-remote:route");
     expect(FLEET_JS).toContain("params.get('pane')");
+    expect(FLEET_JS).toContain("params.get('space')");
+    expect(FLEET_JS).toContain("params.get('tab')");
     expect(FLEET_JS).toContain("params.get('session')");
     expect(FLEET_JS).toContain("event.source!==frame.contentWindow");
     expect(FLEET_JS).toContain("event.origin!==currentOrigin");
     expect(FLEET_JS).toContain("data.version!==1");
     expect(FLEET_JS).toContain("url.searchParams.delete('pane')");
+    expect(FLEET_JS).toContain("url.searchParams.delete('space')");
+    expect(FLEET_JS).toContain("url.searchParams.delete('tab')");
     expect(FLEET_JS).toContain("url.searchParams.delete('session')");
     expect(FLEET_JS).toContain("history.replaceState");
     expect(FLEET_JS).not.toContain("event.data.url");

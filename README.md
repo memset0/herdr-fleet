@@ -151,8 +151,9 @@ description = "copy Web Remote Pane URL"
 
 Focus a Pane, press the configured prefix, then `Ctrl+R`. The action copies the canonical outer
 Fleet link, for example
-`https://herdr.example.com/?instance=local&pane=w0%3Ap3`; a named Herdr session also gets its
-URL-encoded `session` selector. The link never contains the password, cookie, Gateway config, SSH
+`https://herdr.example.com/?instance=local&space=w0&tab=w0%3At2&pane=w0%3Ap3`; a named Herdr session
+also gets its URL-encoded `session` selector. The four routing selectors identify the inventory Host,
+Space, Tab, and Pane explicitly; the link never contains the password, cookie, Gateway config, SSH
 identity, or any Pane contents. A browser without a current Web Remote cookie still passes through
 the normal login and then returns to the same deep link.
 
@@ -268,7 +269,7 @@ rendered message has this shape with all default metadata on the final subtext l
 
 ```markdown
 The requested change is complete.
-[Open Pane in Fleet](https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap7)
+[Open Pane in Fleet](https://herdr.example.com/?instance=cluster-a&space=w0&tab=w0%3At2&pane=w0%3Ap7)
 -# 🏠 operator@fleet-host   📦 Example project   🧵 Main   🤖 Codex   📅 8/15 12:34:56
 ```
 

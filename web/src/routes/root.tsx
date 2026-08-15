@@ -36,7 +36,7 @@ export function RootLayout() {
   // from covering the route's sticky header — it reserves real space instead of overlaying.
   return (
     <div className="flex h-[100dvh] flex-col">
-      <FleetRouteReporter />
+      <FleetRouteReporter agents={data.agents} shellPanes={data.shellPanes} />
       {/* API-observed self-update: mounted unconditionally so its controller runs (and can
           auto-update) for the app's lifetime; renders the slim "tap to update" row only when a fresh
           build is confirmed but auto-update is held off (unsent work) or already spent. */}

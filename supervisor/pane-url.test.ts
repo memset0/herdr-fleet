@@ -24,9 +24,11 @@ describe("focused Pane Fleet URL", () => {
       buildFleetPaneUrl({
         fleetUrl: "https://herdr.example.com",
         instanceId: "cluster-a",
+        spaceId: "w0",
+        tabId: "w0:t2",
         paneId: "w0:p3",
       }),
-    ).toBe("https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap3");
+    ).toBe("https://herdr.example.com/?instance=cluster-a&space=w0&tab=w0%3At2&pane=w0%3Ap3");
   });
 
   test("encodes a named session after the instance and Pane selectors", () => {
@@ -34,11 +36,13 @@ describe("focused Pane Fleet URL", () => {
       buildFleetPaneUrl({
         fleetUrl: "https://herdr.example.com/",
         instanceId: "cluster-a",
+        spaceId: "w0",
+        tabId: "w0:t2",
         paneId: "w0:p3",
         session: "research / 中文",
       }),
     ).toBe(
-      "https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap3&session=research+%2F+%E4%B8%AD%E6%96%87",
+      "https://herdr.example.com/?instance=cluster-a&space=w0&tab=w0%3At2&pane=w0%3Ap3&session=research+%2F+%E4%B8%AD%E6%96%87",
     );
   });
 
@@ -52,19 +56,21 @@ describe("focused Pane Fleet URL", () => {
       "https://herdr.example.com/#x",
     ]) {
       expect(() =>
-        buildFleetPaneUrl({ fleetUrl, instanceId: "cluster-a", paneId: "w0:p3" }),
+        buildFleetPaneUrl({ fleetUrl, instanceId: "cluster-a", spaceId: "w0", tabId: "w0:t2", paneId: "w0:p3" }),
       ).toThrow();
     }
     expect(() =>
-      buildFleetPaneUrl({ fleetUrl: config.HERDR_WEB_FLEET_URL, instanceId: "Cluster A", paneId: "w0:p3" }),
+      buildFleetPaneUrl({ fleetUrl: config.HERDR_WEB_FLEET_URL, instanceId: "Cluster A", spaceId: "w0", tabId: "w0:t2", paneId: "w0:p3" }),
     ).toThrow("instance id");
     expect(() =>
-      buildFleetPaneUrl({ fleetUrl: config.HERDR_WEB_FLEET_URL, instanceId: "cluster-a", paneId: "../p3" }),
+      buildFleetPaneUrl({ fleetUrl: config.HERDR_WEB_FLEET_URL, instanceId: "cluster-a", spaceId: "w0", tabId: "w0:t2", paneId: "../p3" }),
     ).toThrow("Pane id");
     expect(() =>
       buildFleetPaneUrl({
         fleetUrl: config.HERDR_WEB_FLEET_URL,
         instanceId: "cluster-a",
+        spaceId: "w0",
+        tabId: "w0:t2",
         paneId: "w0:p3",
         session: "bad\nsession",
       }),
@@ -105,7 +111,7 @@ describe("Pane URL clipboard bridge", () => {
   });
 
   test("opens the registered popup with validated plugin-namespaced context", () => {
-    expect(popupOpenArgs("w0:p3", "demo")).toEqual([
+    expect(popupOpenArgs("w0", "w0:t2", "w0:p3", "demo")).toEqual([
       "plugin",
       "pane",
       "open",
@@ -115,6 +121,10 @@ describe("Pane URL clipboard bridge", () => {
       "copy-pane-url",
       "--placement",
       "popup",
+      "--env",
+      "HERDR_WEB_REMOTE_TARGET_SPACE=w0",
+      "--env",
+      "HERDR_WEB_REMOTE_TARGET_TAB=w0:t2",
       "--env",
       "HERDR_WEB_REMOTE_TARGET_PANE=w0:p3",
       "--env",
@@ -127,6 +137,8 @@ describe("Pane URL clipboard bridge", () => {
     await runCopyAction(
       {
         HERDR_BIN_PATH: "/opt/herdr/bin/herdr",
+        HERDR_WORKSPACE_ID: "w0",
+        HERDR_TAB_ID: "w0:t2",
         HERDR_PANE_ID: "w0:p3",
         HERDR_PLUGIN_CONFIG_DIR: "/synthetic/config",
         HERDR_SESSION: "demo",
@@ -139,13 +151,18 @@ describe("Pane URL clipboard bridge", () => {
     );
     expect(invocation).toEqual({
       binary: "/opt/herdr/bin/herdr",
-      args: popupOpenArgs("w0:p3", "demo"),
+      args: popupOpenArgs("w0", "w0:t2", "w0:p3", "demo"),
     });
 
     let ran = false;
     await expect(
       runCopyAction(
-        { HERDR_PANE_ID: "w0:p3", HERDR_PLUGIN_CONFIG_DIR: "/synthetic/config" },
+        {
+          HERDR_WORKSPACE_ID: "w0",
+          HERDR_TAB_ID: "w0:t2",
+          HERDR_PANE_ID: "w0:p3",
+          HERDR_PLUGIN_CONFIG_DIR: "/synthetic/config",
+        },
         () => {
           ran = true;
           return { status: 0 };
@@ -163,6 +180,8 @@ describe("Pane URL clipboard bridge", () => {
     const url = await runCopyPopup(
       {
         HERDR_PLUGIN_CONFIG_DIR: "/synthetic/config",
+        HERDR_WEB_REMOTE_TARGET_SPACE: "w0",
+        HERDR_WEB_REMOTE_TARGET_TAB: "w0:t2",
         HERDR_WEB_REMOTE_TARGET_PANE: "w0:p3",
         HERDR_WEB_REMOTE_TARGET_SESSION: "demo",
       },
@@ -174,7 +193,9 @@ describe("Pane URL clipboard bridge", () => {
       },
       loadConfig,
     );
-    expect(url).toBe("https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap3&session=demo");
+    expect(url).toBe(
+      "https://herdr.example.com/?instance=cluster-a&space=w0&tab=w0%3At2&pane=w0%3Ap3&session=demo",
+    );
     expect(calls).toEqual([osc52ClipboardSequence(url), "drained"]);
 
     const encoded = calls[0]!.slice("\u001b]52;c;".length, -1);
@@ -187,6 +208,8 @@ describe("Pane URL clipboard bridge", () => {
       runCopyPopup(
         {
           HERDR_PLUGIN_CONFIG_DIR: "/synthetic/config",
+          HERDR_WEB_REMOTE_TARGET_SPACE: "w0",
+          HERDR_WEB_REMOTE_TARGET_TAB: "w0:t2",
           HERDR_WEB_REMOTE_TARGET_PANE: "bad pane",
         },
         (value) => {

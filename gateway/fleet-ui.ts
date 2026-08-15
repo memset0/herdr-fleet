@@ -459,12 +459,27 @@ const timeAgo=(at)=>{const seconds=Math.max(0,Math.floor((Date.now()-at)/1000));
 
 function requestedRoute(){
  const params=new URL(location.href).searchParams;
- const rawPane=params.get('pane');const rawSession=params.get('session');
- const paneId=validPane(rawPane);const session=validSession(rawSession);
- return {view:paneId?'pane':'home',...(paneId?{paneId}:{}),...(session?{session}:{}),invalid:(rawPane!==null&&!paneId)||(rawSession!==null&&!session)};
+ const rawSpace=params.get('space');const rawTab=params.get('tab');const rawPane=params.get('pane');const rawSession=params.get('session');
+ const spaceId=validPane(rawSpace);const tabId=validPane(rawTab);const paneId=validPane(rawPane);const session=validSession(rawSession);
+ const hasLocation=rawSpace!==null||rawTab!==null;
+ const invalid=(rawPane!==null&&!paneId)||(rawSession!==null&&!session)||(hasLocation&&(!paneId||!spaceId||!tabId));
+ return {view:paneId?'pane':'home',...(paneId?{paneId}:{}),...(spaceId&&tabId?{spaceId,tabId}:{}),...(session?{session}:{}),invalid};
 }
 
 const routeKey=(origin,route)=>origin+'|'+route.view+'|'+(route.paneId||'')+'|'+(route.session||'');
+
+function canonicalPaneRoute(paneId,session,spaceId=null,tabId=null){
+ const route={view:'pane',paneId,...(session?{session}:{})};
+ const node=selectedNode();
+ const match=node&&Array.isArray(node.agentEntries)?node.agentEntries.find((agent)=>agent.paneId===paneId&&(session?(!agent.primarySession&&agent.herdrSession===session):agent.primarySession)):null;
+ const matchedSpace=validPane(match&&match.workspaceId);const matchedTab=validPane(match&&match.tabId);
+ if(matchedSpace&&matchedTab)return {...route,spaceId:matchedSpace,tabId:matchedTab};
+ const safeSpace=validPane(spaceId);const safeTab=validPane(tabId);
+ if(safeSpace&&safeTab)return {...route,spaceId:safeSpace,tabId:safeTab};
+ const current=requestedRoute();
+ if(current.view==='pane'&&current.paneId===paneId&&(current.session||'')===(session||'')&&current.spaceId&&current.tabId)return {...route,spaceId:current.spaceId,tabId:current.tabId};
+ return route;
+}
 
 function frameHref(origin,route){
  const url=new URL('/',origin);
@@ -476,8 +491,11 @@ function frameHref(origin,route){
 function replaceUrl(id,route){
  const url=new URL(location.href);
  url.searchParams.set('instance',id);
- url.searchParams.delete('pane');url.searchParams.delete('session');
- if(route.view==='pane')url.searchParams.set('pane',route.paneId);
+ url.searchParams.delete('space');url.searchParams.delete('tab');url.searchParams.delete('pane');url.searchParams.delete('session');
+ if(route.view==='pane'){
+   if(route.spaceId&&route.tabId){url.searchParams.set('space',route.spaceId);url.searchParams.set('tab',route.tabId)}
+   url.searchParams.set('pane',route.paneId);
+ }
  if(route.session)url.searchParams.set('session',route.session);
  if(url.href===location.href)return;
  history.replaceState(null,'',url);
@@ -517,6 +535,7 @@ function loadSelected(force=false){
  const origin=nodeOrigin(node);
  let route=requestedRoute();
  if(route.invalid){route={view:'home'};replaceUrl(node.id,route)}
+ else if(route.view==='pane'){route=canonicalPaneRoute(route.paneId,route.session,route.spaceId,route.tabId);replaceUrl(node.id,route)}
  const href=frameHref(origin,route);const nextFrameKey=routeKey(origin,route);
  openNode.href=href;openNode.hidden=false;
  frame.title='Collie · '+node.name;
@@ -528,8 +547,10 @@ function selectNode(id,options={}){
  const node=nodes.find((candidate)=>candidate.id===id);if(!node)return;
  const changed=selectedId!==id;
  const supplied=options.route&&options.route.view==='pane'?options.route:null;
- const route=supplied||(options.resetRoute?{view:'home'}:requestedRoute());
- selectedId=id;remember(id);replaceUrl(id,route.invalid?{view:'home'}:route);
+ let route=supplied||(options.resetRoute?{view:'home'}:requestedRoute());
+ selectedId=id;remember(id);
+ route=route.invalid?{view:'home'}:route.view==='pane'?canonicalPaneRoute(route.paneId,route.session,route.spaceId,route.tabId):route;
+ replaceUrl(id,route);
  renderTabs(Boolean(options.focusTab));
  loadSelected(Boolean(options.forceFrame)||changed||Boolean(options.resetRoute));
  announce('Selected '+node.name+'. '+healthLabel(node.health)+'.');
@@ -562,10 +583,10 @@ function sortAgentEntries(key,entries){
 }
 
 function selectAgent(node,agent){
- const paneId=validPane(agent.paneId);const session=agent.primarySession?null:validSession(agent.herdrSession);
- if(!paneId||(!agent.primarySession&&!session))return;
+ const spaceId=validPane(agent.workspaceId);const tabId=validPane(agent.tabId);const paneId=validPane(agent.paneId);const session=agent.primarySession?null:validSession(agent.herdrSession);
+ if(!spaceId||!tabId||!paneId||(!agent.primarySession&&!session))return;
  closeAgentMenu();
- selectNode(node.id,{route:{view:'pane',paneId,...(session?{session}:{})}});
+ selectNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(session?{session}:{})}});
 }
 
 function renderAgentCard(node,agent){
@@ -679,17 +700,21 @@ addEventListener('message',(event)=>{
  if(event.source!==frame.contentWindow||event.origin!==currentOrigin)return;
  const data=event.data;
  if(!data||typeof data!=='object'||data.type!==ROUTE_MESSAGE||data.version!==1)return;
- if(Object.keys(data).some((key)=>!['type','version','view','paneId','session'].includes(key)))return;
+ if(Object.keys(data).some((key)=>!['type','version','view','spaceId','tabId','paneId','session'].includes(key)))return;
  const hasSession=Object.prototype.hasOwnProperty.call(data,'session');
  const session=hasSession?validSession(data.session):null;
  if(hasSession&&!session)return;
  let route;
  if(data.view==='home'){
-   if(Object.prototype.hasOwnProperty.call(data,'paneId'))return;
+   if(Object.prototype.hasOwnProperty.call(data,'spaceId')||Object.prototype.hasOwnProperty.call(data,'tabId')||Object.prototype.hasOwnProperty.call(data,'paneId'))return;
    route={view:'home',...(session?{session}:{})};
  }else if(data.view==='pane'){
    const paneId=validPane(data.paneId);if(!paneId)return;
-   route={view:'pane',paneId,...(session?{session}:{})};
+   const hasSpace=Object.prototype.hasOwnProperty.call(data,'spaceId');const hasTab=Object.prototype.hasOwnProperty.call(data,'tabId');
+   if(hasSpace!==hasTab)return;
+   const spaceId=hasSpace?validPane(data.spaceId):null;const tabId=hasTab?validPane(data.tabId):null;
+   if((hasSpace&&!spaceId)||(hasTab&&!tabId))return;
+   route=canonicalPaneRoute(paneId,session,spaceId,tabId);
  }else return;
  if(!selectedId||!currentOrigin)return;
  replaceUrl(selectedId,route);currentFrameKey=routeKey(currentOrigin,route);openNode.href=frameHref(currentOrigin,route);

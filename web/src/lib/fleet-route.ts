@@ -15,8 +15,16 @@ export type FleetRouteMessage =
       version: typeof FLEET_ROUTE_MESSAGE_VERSION;
       view: "pane";
       paneId: string;
+      spaceId?: string;
+      tabId?: string;
       session?: string;
     };
+
+export interface FleetPaneLocation {
+  paneId: string;
+  workspaceId: string;
+  tabId: string;
+}
 
 interface MessageTarget {
   postMessage(message: FleetRouteMessage, targetOrigin: string): void;
@@ -37,7 +45,11 @@ function paneIdFrom(pathname: string): string | undefined {
 }
 
 /** Collapse Collie's native routes into the two shareable Fleet states: homepage or Pane. */
-export function fleetRouteMessage(pathname: string, search: string): FleetRouteMessage {
+export function fleetRouteMessage(
+  pathname: string,
+  search: string,
+  location?: FleetPaneLocation,
+): FleetRouteMessage {
   const session = normalizeSession(new URLSearchParams(search).get(SESSION_PARAM));
   const paneId = paneIdFrom(pathname);
   if (paneId) {
@@ -46,6 +58,9 @@ export function fleetRouteMessage(pathname: string, search: string): FleetRouteM
       version: FLEET_ROUTE_MESSAGE_VERSION,
       view: "pane",
       paneId,
+      ...(location?.paneId === paneId
+        ? { spaceId: location.workspaceId, tabId: location.tabId }
+        : {}),
       ...(session ? { session } : {}),
     };
   }

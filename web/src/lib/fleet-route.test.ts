@@ -28,8 +28,13 @@ describe("fleetRouteMessage", () => {
       paneId: "wH:p8",
       session: "cluster-demo",
     } as const;
-    expect(fleetRouteMessage("/pane/wH%3Ap8", "?s=cluster-demo")).toEqual(expected);
-    expect(fleetRouteMessage("/pane/wH%3Ap8/history", "?s=cluster-demo")).toEqual(expected);
+    const location = { paneId: "wH:p8", workspaceId: "wH", tabId: "wH:t2" };
+    const complete = { ...expected, spaceId: "wH", tabId: "wH:t2" };
+    expect(fleetRouteMessage("/pane/wH%3Ap8", "?s=cluster-demo", location)).toEqual(complete);
+    expect(fleetRouteMessage("/pane/wH%3Ap8/history", "?s=cluster-demo", location)).toEqual(complete);
+    expect(
+      fleetRouteMessage("/pane/wH%3Ap8", "?s=cluster-demo", { ...location, paneId: "wH:p9" }),
+    ).toEqual(expected);
   });
 
   it("canonicalizes unsupported and malformed routes to the homepage", () => {
