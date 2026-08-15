@@ -248,14 +248,16 @@ the local `pingme` profiles remain the authoritative visual definitions.
 Only after the ten-second confirmation succeeds, Gateway makes at most one direct, timeout- and
 size-bounded request to that Pane's existing History route through its configured transport. It
 omits Collie's seen-attribution header, selects only text parts from the newest qualifying
-Assistant entry, normalizes terminal controls, and caps the reply at 1,000 Unicode characters.
+Assistant entry, normalizes terminal controls, removes blank lines, and caps the reply at 1,000
+Unicode characters.
 User turns, reasoning, tools, summaries, notes, and all other transcript entries remain excluded;
 the reply is held only for the in-flight notification and never enters Fleet state, caches, logs,
 or backoff. Disabled, unsupported, malformed, oversized, or unreachable History degrades without
 retry to the original link-only notification.
 
-The message body contains that bounded final reply, a blank line, and one clickable canonical Fleet
-Pane link—there is no `Agent completed` / `Agent needs you` title and no repeated context block. A
+The message body contains that compacted final reply followed immediately by one clickable canonical
+Fleet Pane link on the last line—there is no `Agent completed` / `Agent needs you` title and no
+repeated context block. A
 rendered message has this shape (the second line remains `pingme`'s normal local sender/time
 metadata):
 
@@ -263,7 +265,6 @@ metadata):
 > **🤖 `Codex`   📦 `Example project`   💬 `Fleet`**
 > **🏠 `operator@fleet-host`   📅 `8/15 12:34:56`**
 The requested change is complete.
-
 [Open Pane in Fleet](https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap7)
 ```
 

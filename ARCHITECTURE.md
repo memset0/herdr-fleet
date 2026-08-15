@@ -85,8 +85,9 @@ renders concrete Tab or Pane labels. Ready and Needs You explicitly select the c
 For a confirmed alert only, the serialized delivery queue makes one bounded request to the Pane's
 native History route through the same configured transport and exact Host mapping. The request does
 not carry seen attribution and does not re-enter collection. Runtime validation selects only the
-newest Assistant entry with text, excludes every other role and part kind, normalizes controls, and
-caps the ephemeral reply. The default message places that reply before the canonical Markdown Pane
+newest Assistant entry with text, excludes every other role and part kind, normalizes controls,
+removes blank lines, and caps the ephemeral reply. The default message places that compact reply
+immediately before the canonical Markdown Pane
 link; the bounded reply is also an optional custom-template variable. Unavailable or incompatible
 History falls back to the byte-compatible link-only body without a retry, and neither transcript
 content nor failure details enter state or diagnostics.
