@@ -184,7 +184,7 @@ export function buildFleetDiscordAlert(
     observedAt: agent.observedAt,
     paneUrl,
     ...(reply !== null ? { agentReply: reply } : {}),
-    message: reply === null ? link : `${reply}\n\n${link}`,
+    message: reply === null ? link : `${reply}\n${link}`,
   };
 }
 

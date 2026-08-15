@@ -52,7 +52,7 @@ describe("Fleet History extraction", () => {
           { role: "note", parts: [{ kind: "text", text: "background task" }] },
         ],
       }),
-    ).toBe("Deployment finished.\n\nAll checks passed.");
+    ).toBe("Deployment finished.\nAll checks passed.");
   });
 
   test("walks past newer reasoning/tool-only Assistant entries", () => {
@@ -69,8 +69,8 @@ describe("Fleet History extraction", () => {
   });
 
   test("normalizes ANSI and unsafe controls while retaining multiline prose", () => {
-    expect(normalizeFleetAgentReply(" \u001b[31mDone\u001b[0m\r\nline\u0000two\t✓ ")).toBe(
-      "Done\nline two\t✓",
+    expect(normalizeFleetAgentReply(" \u001b[31mDone\u001b[0m\r\n \r\nline\u0000two\t✓\n\t\nFinal ")).toBe(
+      "Done\nline two\t✓\nFinal",
     );
     expect(normalizeFleetAgentReply("\u0000\u0007  ")).toBeNull();
   });

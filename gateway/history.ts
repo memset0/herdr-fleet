@@ -29,6 +29,9 @@ export function normalizeFleetAgentReply(value: string): string | null {
     .replaceAll("\r", "\n")
     .replace(ANSI_ESCAPE, "")
     .replace(UNSAFE_CONTROL, " ")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .join("\n")
     .trim();
   if (normalized === "") return null;
 

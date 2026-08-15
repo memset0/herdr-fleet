@@ -168,7 +168,7 @@ describe("Fleet Discord message adapter", () => {
 
     expect(alert.agentReply).toBe("Finished.\nAll checks passed.");
     expect(alert.message).toBe(
-      `Finished.\nAll checks passed.\n\n[Open Pane in Fleet](${alert.paneUrl})`,
+      `Finished.\nAll checks passed.\n[Open Pane in Fleet](${alert.paneUrl})`,
     );
     expect(pingmeArguments(enabledConfig, alert)).toContain(
       "agent_reply=Finished.\nAll checks passed.",
@@ -299,7 +299,7 @@ describe("Fleet Discord transition ledger", () => {
     expect(history.calls).toEqual([{ nodeId: "cluster-a", paneId: "w0:p1", session: "default" }]);
     expect(sender.alerts).toHaveLength(1);
     expect(sender.alerts[0]?.message).toBe(
-      `The requested change is complete.\n\n[Open Pane in Fleet](${sender.alerts[0]?.paneUrl})`,
+      `The requested change is complete.\n[Open Pane in Fleet](${sender.alerts[0]?.paneUrl})`,
     );
 
     notifier.observe(
