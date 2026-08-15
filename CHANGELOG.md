@@ -6,6 +6,24 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.2] - 2026-08-15
+
+### Added
+
+- Fleet's outer header now offers a Collie-aligned Agent menu that groups every Host and named session by attention state and opens the exact instance, session, and Pane when selected (9ba6109)
+
+### Changed
+
+- Fleet refreshes on page load and menu open, then doubles unchanged polling from five seconds up to one hour; failed Hosts or sessions retain explicitly offline last-known cards until an authoritative recovery (9ba6109)
+
+### Security
+
+- Cross-host aggregation strictly validates and allowlists Agent-card fields while excluding Pane output, histories, credentials, authorization state, update metadata, and unknown snapshot fields (9ba6109)
+
+### Upgrading
+
+- This central-Gateway patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.1] - 2026-08-14
 
 ### Added
