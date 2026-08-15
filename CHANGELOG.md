@@ -6,6 +6,18 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.12] - 2026-08-15
+
+### Fixed
+
+- Pending Ready and Needs You notifications now survive passive Recent, idle, unknown, and attention-group changes until their original ten-second deadline, preventing Pane views from silently discarding an alert (202dcba)
+- Only an authoritative Working/Running observation cancels an attention candidate as handled; offline projection, removal, and identity replacement retain their existing stale-delivery safeguards (202dcba)
+- A candidate that changes attention groups keeps its original deadline and delivers with the latest Ready/Needs You status and avatar while using the newest card's exact route context (202dcba)
+
+### Upgrading
+
+- This central notification patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.11] - 2026-08-15
 
 ### Fixed
