@@ -6,6 +6,20 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.3] - 2026-08-15
+
+### Changed
+
+- Fleet's Agent control now uses a recognizable Agent symbol with an inline count limited to `Needs you`, `Ready · unseen`, `Working`, and `Offline`, while the direct-open action uses the standard arrow-leaving-a-square symbol (4c5fd1d)
+
+### Removed
+
+- The Fleet header no longer exposes a logout button; the authenticated logout endpoint and cookie lifecycle remain unchanged (4c5fd1d)
+
+### Upgrading
+
+- This central-Gateway patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.2] - 2026-08-15
 
 ### Added
