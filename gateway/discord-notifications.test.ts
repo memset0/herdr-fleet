@@ -198,7 +198,12 @@ describe("Fleet Discord message adapter", () => {
           paneLabel: "w0:p1",
         }),
       ),
-    ).toBe("Fleet");
+    ).toBe("Codex");
+    expect(
+      fleetDiscordUsername(
+        card("w0:p1", "done", { paneLabel: undefined, sessionName: undefined }),
+      ),
+    ).toBe("Example project · Main · Codex");
     expect(
       Array.from(
         fleetDiscordUsername(

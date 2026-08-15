@@ -96,7 +96,8 @@ export function fleetDiscordUsername(agent: FleetAgentCard): string {
     optionalDisplayName(agent.workspaceLabel, agent.workspaceId),
     optionalDisplayName(agent.tabLabel, agent.tabId),
     optionalDisplayName(agent.paneLabel, agent.paneId)
-      ?? optionalDisplayName(agent.sessionName, agent.paneId),
+      ?? optionalDisplayName(agent.sessionName, agent.paneId)
+      ?? fleetAgentDisplayName(agent.agent),
   ].filter((value): value is string => value !== null);
   return displayLine(levels.join(" · "), "Fleet", MAX_DISCORD_USERNAME_CHARS);
 }
