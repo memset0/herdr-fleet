@@ -6,7 +6,7 @@ import {
   fleetAgentBucket,
   fleetHeaderAgentCount,
   fleetPage,
-  nextFleetRefreshDelay,
+  fleetRefreshWaitMs,
 } from "./fleet-ui.ts";
 
 describe("Fleet iframe shell", () => {
@@ -60,7 +60,7 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("{key:'ready',label:'Ready · unseen'");
     expect(FLEET_JS).toContain("{key:'working',label:'Working'");
     expect(FLEET_JS).toContain("{key:'recent',label:'Recent'");
-    expect(FLEET_JS).toContain("{key:'offline',label:'Offline'");
+    expect(FLEET_JS).not.toContain("{key:'offline',label:'Offline'");
     expect(FLEET_JS).toContain("element('span','host-chip',node.name)");
     expect(FLEET_JS).toContain("element('span','offline-chip','offline')");
     expect(FLEET_CSS).toContain("--status-blocked:");
@@ -71,7 +71,9 @@ describe("Fleet iframe shell", () => {
     expect(fleetAgentBucket({ reachable: true, status: "done", lastActiveAt: 2, lastSeenAt: 1 })).toBe("ready");
     expect(fleetAgentBucket({ reachable: true, status: "working" })).toBe("working");
     expect(fleetAgentBucket({ reachable: true, status: "idle" })).toBe("recent");
-    expect(fleetAgentBucket({ reachable: false, status: "working" })).toBe("offline");
+    expect(fleetAgentBucket({ reachable: false, status: "working" })).toBe("working");
+    expect(fleetAgentBucket({ reachable: false, status: "blocked" })).toBe("needs");
+    expect(fleetAgentBucket({ reachable: false, status: "idle" })).toBe("recent");
 
     expect(
       fleetHeaderAgentCount([
@@ -82,7 +84,7 @@ describe("Fleet iframe shell", () => {
         { reachable: true, status: "idle" },
         { reachable: true, status: "done", lastActiveAt: 1, lastSeenAt: 1 },
       ]),
-    ).toBe(4);
+    ).toBe(3);
     expect(FLEET_JS).toContain("entries.filter(({agent})=>bucket(agent)!=='recent').length");
     expect(FLEET_JS).toContain("outside Recent");
   });
@@ -96,19 +98,20 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("closeAgentMenu();");
   });
 
-  test("backs unchanged refreshes off to one hour and resets manual or changed refreshes", () => {
-    expect(nextFleetRefreshDelay(5_000, 5_000, 3_600_000, { manual: false, unchanged: true })).toBe(10_000);
-    expect(nextFleetRefreshDelay(10_000, 5_000, 3_600_000, { manual: false, unchanged: true })).toBe(20_000);
-    expect(nextFleetRefreshDelay(3_600_000, 5_000, 3_600_000, { manual: false, unchanged: true })).toBe(3_600_000);
-    expect(nextFleetRefreshDelay(600_000, 5_000, 3_600_000, { manual: true, unchanged: true })).toBe(5_000);
-    expect(nextFleetRefreshDelay(600_000, 5_000, 3_600_000, { manual: false, unchanged: false })).toBe(5_000);
+  test("follows the Gateway's canonical refresh time without a browser backoff", () => {
+    expect(fleetRefreshWaitMs(10_100, 5_100)).toBe(5_000);
+    expect(fleetRefreshWaitMs(5_101, 5_100)).toBe(250);
+    expect(fleetRefreshWaitMs(Number.NaN, 5_100)).toBe(5_000);
 
     expect(FLEET_JS).toContain("const DEFAULT_REFRESH_MS=5000");
-    expect(FLEET_JS).toContain("const DEFAULT_MAX_REFRESH_MS=3600000");
-    expect(FLEET_JS).toContain("refreshDelayMs=manual?refreshBaseMs:unchanged?Math.min");
-    expect(FLEET_JS).toContain("clearRefreshTimer();refreshDelayMs=refreshBaseMs");
+    expect(FLEET_JS).toContain("const MIN_REFRESH_TIMER_MS=250");
+    expect(FLEET_JS).toContain("manual?'/api/fleet?manual=1':'/api/fleet'");
+    expect(FLEET_JS).toContain("nextAt-generatedAt");
     expect(FLEET_JS).toContain("void refresh({manual:true})");
     expect(FLEET_JS).toContain("void refresh();");
+    expect(FLEET_JS).not.toContain("refreshDelayMs");
+    expect(FLEET_JS).not.toContain("lastRevision");
+    expect(FLEET_JS).not.toContain("data.revision");
     expect(FLEET_JS).not.toContain("setInterval");
   });
 

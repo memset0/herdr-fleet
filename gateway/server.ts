@@ -208,7 +208,7 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
 
     if (host === config.public.fleetHost) {
       if (url.pathname === "/api/fleet" && request.method === "GET") {
-        await collector.refresh();
+        await collector.refresh({ manual: url.searchParams.get("manual") === "1" });
         return json(collector.snapshot());
       }
       if (url.pathname === "/" && request.method === "GET") {

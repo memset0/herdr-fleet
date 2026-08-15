@@ -32,7 +32,7 @@ function setup(
   }) as unknown as typeof fetch,
 ) {
   const transports = new TransportRegistry(gateway.nodes);
-  const collector = new FleetCollector(gateway, transports, collectorFetcher);
+  const collector = new FleetCollector(gateway, transports, collectorFetcher, now ?? Date.now);
   return createGatewayHandler({ config: gateway, collector, transports, fetcher, limiter, now });
 }
 
@@ -74,6 +74,7 @@ describe("Gateway host routing and auth flow", () => {
   });
 
   test("refreshes node state only for an authenticated Fleet API read", async () => {
+    let clock = 100;
     let calls = 0;
     const collectorFetcher = (async () => {
       calls += 1;
@@ -89,7 +90,7 @@ describe("Gateway host routing and auth flow", () => {
         { headers: { "content-type": "application/json" } },
       );
     }) as unknown as typeof fetch;
-    const handler = setup(fetch, undefined, undefined, config, collectorFetcher);
+    const handler = setup(fetch, undefined, () => clock, config, collectorFetcher);
 
     expect((await handler(request("fleet.example.com", "/api/fleet"))).status).toBe(401);
     expect(calls).toBe(0);
@@ -99,9 +100,28 @@ describe("Gateway host routing and auth flow", () => {
     expect(response.status).toBe(200);
     expect(calls).toBe(1);
     expect(await response.json()).toMatchObject({
-      refresh: { baseMs: 5_000, maxMs: 3_600_000 },
+      generatedAt: 100,
+      refresh: {
+        baseMs: 5_000,
+        maxMs: 3_600_000,
+        minNodeRevisitMs: 5_000,
+        delayMs: 5_000,
+        nextAt: 5_100,
+      },
       totals: { nodes: 1, online: 1, agents: 0 },
     });
+
+    clock = 200;
+    const cached = await handler(request("fleet.example.com", "/api/fleet?manual=1", { headers: { cookie } }));
+    expect(cached.status).toBe(200);
+    expect(calls).toBe(1);
+    expect(await cached.json()).toMatchObject({ refresh: { delayMs: 5_000, nextAt: 5_100 } });
+
+    clock = 5_100;
+    const due = await handler(request("fleet.example.com", "/api/fleet", { headers: { cookie } }));
+    expect(due.status).toBe(200);
+    expect(calls).toBe(2);
+    expect(await due.json()).toMatchObject({ refresh: { delayMs: 5_000, nextAt: 10_100 } });
   });
 
   test("logs in once and proxies node requests without the session credential", async () => {

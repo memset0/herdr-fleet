@@ -46,11 +46,19 @@ menu follows Collie's triage/card vocabulary, adds the owning Host, and turns a 
 the existing canonical instance/session/Pane route. The iframe still owns the complete native
 Collie route stack and every terminal operation; Fleet does not reproduce Pane views or actions.
 
-Each browser refreshes immediately on load and when the menu is opened. Unchanged visible revisions
-double the next delay from the configured base (five seconds by default) up to one hour; visible
-changes and manual menu opens reset it. The Gateway keeps only an in-memory, per-node/session
-last-known Agent cache. A failed source leaves its cards visible but explicitly offline/stale;
-the next successful snapshot replaces that source authoritatively, including confirmed removals.
+Each browser requests Fleet immediately on load and sends a manual reset when the menu is opened.
+The Gateway owns one request-driven adaptive delay and canonical next-refresh time for every tab.
+Unchanged completed cycles double that shared delay from the effective base (at least five seconds)
+up to one hour; visible changes and manual menu opens reset it. A fixed per-node gate also prevents
+successive primary collection attempts from starting less than five seconds apart, including after
+failure. Early requests receive cached state and the canonical next time. One eligible node
+transaction includes primary discovery plus named-session fan-out; neither nodes, sessions, nor
+browsers maintain another exponential sequence.
+
+The Gateway keeps only an in-memory, per-node/session last-known Agent cache. A failed source leaves
+its cards visibly offline/stale but interleaved in the normal triage sections according to the last
+successfully observed status and timestamps; the next successful snapshot replaces that source
+authoritatively, including confirmed removals.
 
 Embedding is deliberately asymmetric. Fleet's document CSP permits `frame-src` only for exact,
 enabled node origins and Fleet itself stays non-embeddable. The Gateway rewrites only proxied node

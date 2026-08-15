@@ -64,11 +64,18 @@ export interface FleetNodeState {
 export interface FleetState {
   generatedAt: number;
   revision: number;
-  refresh: { baseMs: number; maxMs: number };
+  refresh: {
+    baseMs: number;
+    maxMs: number;
+    minNodeRevisitMs: number;
+    delayMs: number;
+    nextAt: number;
+  };
   totals: { nodes: number; online: number; agents: number; working: number; blocked: number };
   nodes: FleetNodeState[];
 }
 
+const MIN_NODE_REVISIT_MS = 5_000;
 const MAX_REFRESH_MS = 3_600_000;
 const AGENT_STATUSES = new Set<FleetAgentStatus>(["idle", "working", "blocked", "done", "unknown"]);
 const ROUTE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -227,32 +234,84 @@ function sortAgentEntries(entries: FleetAgentCard[]): FleetAgentCard[] {
 }
 
 export class FleetCollector {
+  private readonly enabledNodes: NodeConfig[];
+  private readonly baseRefreshMs: number;
   private readonly states = new Map<string, FleetNodeState>();
+  private readonly lastAttemptAt = new Map<string, number>();
   private inFlight: Promise<void> | null = null;
+  private refreshDelayMs: number;
+  private nextRefreshAt = 0;
+  private manualResetPending = false;
   private revision = 0;
   private visibleSignature: string;
 
   constructor(
-    private readonly config: GatewayConfig,
+    config: GatewayConfig,
     private readonly transports: TransportRegistry,
     private readonly fetcher: typeof fetch = fetch,
     private readonly now: () => number = Date.now,
   ) {
-    for (const node of config.nodes.filter((candidate) => candidate.enabled)) {
+    this.enabledNodes = config.nodes.filter((candidate) => candidate.enabled);
+    this.baseRefreshMs = Math.max(config.pollIntervalMs, MIN_NODE_REVISIT_MS);
+    this.refreshDelayMs = this.baseRefreshMs;
+    for (const node of this.enabledNodes) {
       this.states.set(node.id, initialState(node, transports.status(node), now()));
     }
     this.visibleSignature = this.signature();
   }
 
-  async refresh(): Promise<void> {
-    if (this.inFlight) return this.inFlight;
+  private nextNodeEligibility(): number {
+    return this.enabledNodes.reduce((latest, node) => {
+      const attemptedAt = this.lastAttemptAt.get(node.id);
+      return attemptedAt === undefined ? latest : Math.max(latest, attemptedAt + MIN_NODE_REVISIT_MS);
+    }, 0);
+  }
+
+  private finishLateManualReset(): void {
+    if (!this.manualResetPending) return;
+    this.manualResetPending = false;
+    this.refreshDelayMs = this.baseRefreshMs;
+    const now = this.now();
+    this.nextRefreshAt = Math.max(now + this.baseRefreshMs, this.nextNodeEligibility());
+  }
+
+  async refresh(options: { manual?: boolean } = {}): Promise<void> {
+    const manual = options.manual === true;
+    if (manual) this.manualResetPending = true;
+    if (this.inFlight) {
+      await this.inFlight;
+      if (manual) this.finishLateManualReset();
+      return;
+    }
+
+    const now = this.now();
+    const nextEligibleAt = this.nextNodeEligibility();
+    if (manual) {
+      this.refreshDelayMs = this.baseRefreshMs;
+      this.nextRefreshAt = Math.max(now, nextEligibleAt);
+    } else if (now < this.nextRefreshAt) {
+      return;
+    }
+    if (now < nextEligibleAt) {
+      this.nextRefreshAt = nextEligibleAt;
+      return;
+    }
+
     const pending = (async () => {
-      await Promise.all(this.config.nodes.filter((node) => node.enabled).map((node) => this.refreshNode(node)));
+      await Promise.all(this.enabledNodes.map((node) => this.refreshNode(node)));
       const next = this.signature();
-      if (next !== this.visibleSignature) {
+      const changed = next !== this.visibleSignature;
+      if (changed) {
         this.visibleSignature = next;
         this.revision += 1;
       }
+      const reset = this.manualResetPending;
+      this.manualResetPending = false;
+      this.refreshDelayMs =
+        changed || reset
+          ? this.baseRefreshMs
+          : Math.min(Math.max(this.refreshDelayMs, this.baseRefreshMs) * 2, MAX_REFRESH_MS);
+      this.nextRefreshAt = Math.max(this.now() + this.refreshDelayMs, this.nextNodeEligibility());
     })();
     this.inFlight = pending;
     try {
@@ -296,6 +355,7 @@ export class FleetCollector {
       return;
     }
 
+    this.lastAttemptAt.set(node.id, now);
     try {
       const snapshot = await this.fetchSnapshot(node);
       const bridgeConnected = snapshot.bridge === "connected";
@@ -382,7 +442,13 @@ export class FleetCollector {
     return {
       generatedAt: this.now(),
       revision: this.revision,
-      refresh: { baseMs: this.config.pollIntervalMs, maxMs: MAX_REFRESH_MS },
+      refresh: {
+        baseMs: this.baseRefreshMs,
+        maxMs: MAX_REFRESH_MS,
+        minNodeRevisitMs: MIN_NODE_REVISIT_MS,
+        delayMs: this.refreshDelayMs,
+        nextAt: this.nextRefreshAt,
+      },
       totals: {
         nodes: nodes.length,
         online: nodes.filter((node) => node.health === "online").length,

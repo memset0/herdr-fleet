@@ -19,14 +19,11 @@ function documentShell(title: string, body: string, assets: string[]): string {
 </html>`;
 }
 
-export function nextFleetRefreshDelay(
-  currentMs: number,
-  baseMs: number,
-  maxMs: number,
-  options: { manual: boolean; unchanged: boolean },
-): number {
-  if (options.manual || !options.unchanged) return baseMs;
-  return Math.min(Math.max(currentMs, baseMs) * 2, maxMs);
+export function fleetRefreshWaitMs(nextAt: number, generatedAt: number, fallbackMs = 5_000): number {
+  if (!Number.isSafeInteger(nextAt) || !Number.isSafeInteger(generatedAt) || nextAt < 0 || generatedAt < 0) {
+    return fallbackMs;
+  }
+  return Math.max(250, nextAt - generatedAt);
 }
 
 interface FleetAgentTriageInput {
@@ -38,8 +35,7 @@ interface FleetAgentTriageInput {
 
 export function fleetAgentBucket(
   agent: FleetAgentTriageInput,
-): "needs" | "ready" | "working" | "recent" | "offline" {
-  if (!agent.reachable) return "offline";
+): "needs" | "ready" | "working" | "recent" {
   if (agent.status === "blocked") return "needs";
   if (agent.status === "done" && (agent.lastActiveAt ?? 0) > (agent.lastSeenAt ?? 0)) return "ready";
   if (agent.status === "working") return "working";
@@ -414,7 +410,7 @@ export const FLEET_JS = `
 const STORAGE_KEY='herdr-web-remote:selected-instance';
 const ROUTE_MESSAGE='herdr-web-remote:route';
 const DEFAULT_REFRESH_MS=5000;
-const DEFAULT_MAX_REFRESH_MS=3600000;
+const MIN_REFRESH_TIMER_MS=250;
 const instances=document.querySelector('#instances');
 const frame=document.querySelector('#node-frame');
 const loading=document.querySelector('#frame-loading');
@@ -437,10 +433,6 @@ let currentFrameKey=null;
 let refreshing=false;
 let queuedManualRefresh=false;
 let refreshTimer=null;
-let refreshBaseMs=DEFAULT_REFRESH_MS;
-let refreshMaxMs=DEFAULT_MAX_REFRESH_MS;
-let refreshDelayMs=DEFAULT_REFRESH_MS;
-let lastRevision=null;
 
 const healthLabel=(health)=>({online:'Online','herdr-down':'Herdr unavailable','bridge-down':'Collie unavailable','transport-down':'Transport unavailable'}[health]||'Unavailable');
 const statusLabel=(status)=>({blocked:'needs you',working:'working',done:'done',idle:'idle',unknown:'unknown'}[status]||'unknown');
@@ -556,7 +548,6 @@ function agentParts(agent){
 }
 
 function bucket(agent){
- if(!agent.reachable)return'offline';
  if(agent.status==='blocked')return'needs';
  if(agent.status==='done'&&(agent.lastActiveAt||0)>(agent.lastSeenAt||0))return'ready';
  if(agent.status==='working')return'working';
@@ -566,8 +557,7 @@ function bucket(agent){
 function sortAgentEntries(key,entries){
  const copy=[...entries];
  if(key==='needs'||key==='ready'||key==='working')copy.sort((a,b)=>(b.agent.lastActiveAt||0)-(a.agent.lastActiveAt||0));
- else if(key==='recent')copy.sort((a,b)=>(b.agent.lastSeenAt||0)-(a.agent.lastSeenAt||0));
- else copy.sort((a,b)=>b.agent.observedAt-a.agent.observedAt);
+ else copy.sort((a,b)=>(b.agent.lastSeenAt||0)-(a.agent.lastSeenAt||0));
  return copy;
 }
 
@@ -613,7 +603,6 @@ function renderAgents(){
    {key:'ready',label:'Ready · unseen',color:'var(--status-done)',attention:true},
    {key:'working',label:'Working',color:'var(--status-working)'},
    {key:'recent',label:'Recent',color:'var(--status-idle)'},
-   {key:'offline',label:'Offline',color:'var(--status-blocked)'},
  ];
  for(const section of sections){
    const matching=sortAgentEntries(section.key,entries.filter(({agent})=>bucket(agent)===section.key));
@@ -645,37 +634,35 @@ function openAgentMenu(){
 }
 
 function clearRefreshTimer(){if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null}}
-function scheduleRefresh(){
- clearRefreshTimer();agentRefreshState.textContent='Next refresh in '+formatDelay(refreshDelayMs);
- refreshTimer=setTimeout(()=>{refreshTimer=null;void refresh()},refreshDelayMs);
+function scheduleRefresh(waitMs){
+ const delay=Number.isSafeInteger(waitMs)?Math.max(MIN_REFRESH_TIMER_MS,waitMs):DEFAULT_REFRESH_MS;
+ clearRefreshTimer();agentRefreshState.textContent='Next refresh in '+formatDelay(delay);
+ refreshTimer=setTimeout(()=>{refreshTimer=null;void refresh()},delay);
 }
 
 async function refresh(options={}){
  const manual=Boolean(options.manual);
- if(manual){clearRefreshTimer();refreshDelayMs=refreshBaseMs}
+ if(manual)clearRefreshTimer();
  if(refreshing){if(manual)queuedManualRefresh=true;return}
  refreshing=true;agentRefreshState.textContent='Refreshing…';
+ let nextWaitMs=DEFAULT_REFRESH_MS;
  try{
-   const response=await fetch('/api/fleet',{headers:{accept:'application/json'},cache:'no-store'});
+   const response=await fetch(manual?'/api/fleet?manual=1':'/api/fleet',{headers:{accept:'application/json'},cache:'no-store'});
    if(response.status===401){location.assign('/auth/login?next='+encodeURIComponent(location.href));return}
    if(!response.ok)throw new Error('HTTP '+response.status);
    const data=await response.json();
-   const nextBase=data.refresh&&Number.isSafeInteger(data.refresh.baseMs)?data.refresh.baseMs:DEFAULT_REFRESH_MS;
-   const nextMax=data.refresh&&Number.isSafeInteger(data.refresh.maxMs)?data.refresh.maxMs:DEFAULT_MAX_REFRESH_MS;
-   refreshBaseMs=Math.max(1000,nextBase);refreshMaxMs=Math.max(refreshBaseMs,nextMax);
-   const revision=Number.isSafeInteger(data.revision)?data.revision:null;
-   const unchanged=lastRevision!==null&&revision!==null&&revision===lastRevision;
-   lastRevision=revision;renderInventory(data);
-   refreshDelayMs=manual?refreshBaseMs:unchanged?Math.min(Math.max(refreshDelayMs,refreshBaseMs)*2,refreshMaxMs):refreshBaseMs;
+   const generatedAt=Number.isSafeInteger(data.generatedAt)?data.generatedAt:null;
+   const nextAt=data.refresh&&Number.isSafeInteger(data.refresh.nextAt)?data.refresh.nextAt:null;
+   if(generatedAt!==null&&nextAt!==null)nextWaitMs=Math.max(MIN_REFRESH_TIMER_MS,nextAt-generatedAt);
+   renderInventory(data);
  }catch(error){
    const message=error instanceof Error?error.message:String(error);
    if(!nodes.length)showEmpty('Fleet unavailable','Could not load instance inventory. '+message);
    announce('Fleet refresh failed. '+message);
-   refreshDelayMs=manual?refreshBaseMs:Math.min(Math.max(refreshDelayMs,refreshBaseMs)*2,refreshMaxMs);
  }finally{
    refreshing=false;
    if(queuedManualRefresh){queuedManualRefresh=false;void refresh({manual:true});return}
-   scheduleRefresh();
+   scheduleRefresh(nextWaitMs);
  }
 }
 

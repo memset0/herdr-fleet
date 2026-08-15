@@ -18,9 +18,10 @@ Collie home, session, and pane routes. The aggregate contains only Agent-card me
 copies terminal contents or histories into its central data model.
 
 The compact header identifies the Agent menu with an Agent symbol and an inline count covering
-`Needs you`, `Ready · unseen`, `Working`, and `Offline`; `Recent` cards remain in the menu but do not
-contribute to that number. The adjacent arrow-leaving-a-square control opens the selected Collie in
-a new tab. Fleet intentionally exposes no logout button in this header.
+`Needs you`, `Ready · unseen`, and `Working`; `Recent` cards do not contribute to that number. An
+offline card keeps the section and count treatment implied by its last successfully observed state
+while remaining visibly stale. The adjacent arrow-leaving-a-square control opens the selected
+Collie in a new tab. Fleet intentionally exposes no logout button in this header.
 
 ## Architecture
 
@@ -35,9 +36,10 @@ browser ──HTTPS── reverse proxy ──loopback── Fleet Gateway
   subdomains.
 - Gateway routes by exact `Host`, strips its session credential, then transparently proxies the
   stock Collie path/query/method/body/response.
-- The Fleet Agent menu groups `Needs you`, `Ready · unseen`, `Working`, `Recent`, and visibly stale
-  offline cards across all reachable named sessions. Choosing one switches the existing iframe to
-  that exact inventory Host, session, and Pane.
+- The Fleet Agent menu groups live and visibly stale cards under `Needs you`, `Ready · unseen`,
+  `Working`, and `Recent` across all named sessions. An offline card stays interleaved according to
+  its last-known status. Choosing one switches the existing iframe to that exact inventory Host,
+  session, and Pane.
 - Fleet may frame only the exact enabled node origins. Node HTML may be framed only by the exact
   Fleet origin; APIs, assets, Fleet itself, and every unknown host remain non-embeddable.
 - Every Collie and Gateway listener is loopback-only. TLS is the operator's reverse proxy's job.
@@ -50,19 +52,27 @@ the exact Collie base.
 
 ### Fleet Agent refresh
 
-Opening an authenticated Fleet page performs one aggregate refresh. Opening the Agent menu performs
-another immediately and resets its schedule. If the visible aggregate does not change, that page
-backs off from the configured five-second base to 10 seconds, 20 seconds, and later doubled delays,
-capped at one hour. Any visible Agent/session/health change resets the next delay to the base.
-Overlapping requests are coalesced by the Gateway, and no fixed collector loop polls nodes while no
-Fleet page is open.
+Opening an authenticated Fleet page requests the aggregate immediately. Opening the Agent menu sends
+a manual reset with the same request. The Gateway—not each browser tab—owns one adaptive schedule for
+the whole aggregate. If a completed collection cycle does not change the visible state, that shared
+delay doubles from the effective five-second base to 10 seconds, 20 seconds, and later delays, capped
+at one hour. A visible Agent/session/health change or manual reset returns the shared delay to its
+base. Browsers receive the canonical next-refresh time and merely schedule their next read from it.
 
-If a Host or one named Herdr session becomes unreachable, its last successful cards stay in the menu
-under `Offline`, dimmed and labelled with their Host and last observation age. This cache is memory
-only and is never presented as live. A later successful snapshot is authoritative: recovered Agents
-move back to their current status section and Agents no longer reported disappear. Fleet projects
-only the card fields needed for this view; Pane output, history, credentials, update state, device
-authorization, and unknown snapshot fields remain excluded.
+Independently of that one shared backoff, every configured Host has a hard five-second minimum
+between the starts of primary snapshot attempts, including attempts that fail. Page loads, menu
+opens, retries, and multiple tabs cannot bypass the floor. A request that arrives too early receives
+the in-memory aggregate and earliest legal next time without revisiting the Host. Primary discovery
+and its reachable named-session fan-out form one Host transaction; named sessions do not acquire
+separate backoffs. Overlapping eligible requests are coalesced, and no fixed collector loop polls
+nodes while no Fleet page is open.
+
+If a Host or one named Herdr session becomes unreachable, its last successful cards stay interleaved
+in their last-known triage sections, dimmed and labelled offline with their Host and last observation
+age. This cache is memory only and is never presented as live. A later successful snapshot is
+authoritative: recovered Agents move to their current status section and Agents no longer reported
+disappear. Fleet projects only the card fields needed for this view; Pane output, history,
+credentials, update state, device authorization, and unknown snapshot fields remain excluded.
 
 ## Requirements
 
@@ -186,9 +196,9 @@ bun run scripts/generate-config.ts \
 The command refuses to overwrite `.env` or `gateway.json`, creates both as mode 0600, and prints the
 new username/password once. Use a dedicated cookie base (for example `herdr.example.com`) rather
 than a parent shared by unrelated applications. `gateway.example.json` documents local and SSH
-inventory entries. Its existing `pollIntervalMs` is the Fleet page's adaptive-refresh base (5000 by
-default), not an unconditional server polling loop. The live Gateway config must remain an
-absolute-path, owner-only file.
+inventory entries. Its existing `pollIntervalMs` is the Gateway-owned adaptive-refresh base (5000
+by default and clamped to the five-second Host revisit floor), not an unconditional server polling
+loop. The live Gateway config must remain an absolute-path, owner-only file.
 
 An SSH transport may omit `jump` for a direct connection or add the structured `jump` object shown
 in `gateway.example.json` when the target is reachable only through a bastion. The jump endpoint has

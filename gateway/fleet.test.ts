@@ -69,7 +69,13 @@ describe("Fleet aggregation", () => {
 
     const state = collector.snapshot();
     expect(state.totals).toEqual({ nodes: 1, online: 1, agents: 2, working: 1, blocked: 1 });
-    expect(state.refresh).toEqual({ baseMs: 5_000, maxMs: 3_600_000 });
+    expect(state.refresh).toEqual({
+      baseMs: 5_000,
+      maxMs: 3_600_000,
+      minNodeRevisitMs: 5_000,
+      delayMs: 5_000,
+      nextAt: 5_100,
+    });
     expect(state.nodes[0]?.sessions.map((entry) => entry.name)).toEqual(["default", "batch demo"]);
     expect(state.nodes[0]?.agentEntries.map((entry) => [entry.paneId, entry.herdrSession, entry.reachable])).toEqual([
       ["w1:p2", "batch demo", true],
@@ -121,7 +127,7 @@ describe("Fleet aggregation", () => {
     expect(collector.snapshot().nodes[0]?.agentEntries).toHaveLength(2);
 
     round = 1;
-    clock = 200;
+    clock = 5_100;
     await collector.refresh();
     const offline = collector.snapshot().nodes[0];
     expect(offline?.health).toBe("bridge-down");
@@ -129,7 +135,7 @@ describe("Fleet aggregation", () => {
     expect(offline?.agentEntries.every((entry) => !entry.reachable && entry.observedAt === 100)).toBeTrue();
 
     round = 2;
-    clock = 300;
+    clock = 10_100;
     await collector.refresh();
     const recovered = collector.snapshot().nodes[0];
     expect(recovered?.health).toBe("online");
@@ -141,6 +147,7 @@ describe("Fleet aggregation", () => {
     const transports = new TransportRegistry(config.nodes);
     let failNamed = false;
     let primaryStatus: "idle" | "working" = "idle";
+    let clock = 100;
     const fetcher = (async (input: string | URL | Request) => {
       const named = new URL(String(input)).searchParams.get("session");
       if (named) {
@@ -152,11 +159,12 @@ describe("Fleet aggregation", () => {
         session("batch", { blocked: 1 }),
       ]);
     }) as typeof fetch;
-    const collector = new FleetCollector(config, transports, fetcher, () => 100);
+    const collector = new FleetCollector(config, transports, fetcher, () => clock);
 
     await collector.refresh();
     failNamed = true;
     primaryStatus = "working";
+    clock = 5_100;
     await collector.refresh();
 
     const node = collector.snapshot().nodes[0];
@@ -182,13 +190,93 @@ describe("Fleet aggregation", () => {
 
     await collector.refresh();
     const first = collector.snapshot().revision;
-    clock = 200;
+    clock = 5_100;
     await collector.refresh();
     expect(collector.snapshot().revision).toBe(first);
 
     status = "working";
+    clock = 15_100;
     await collector.refresh();
     expect(collector.snapshot().revision).toBe(first + 1);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 20_100 });
+  });
+
+  test("owns one shared backoff and never revisits a cluster inside five seconds", async () => {
+    const config = gatewayConfig();
+    config.pollIntervalMs = 1_000;
+    const transports = new TransportRegistry(config.nodes);
+    let clock = 100;
+    let calls = 0;
+    const fetcher = (async () => {
+      calls += 1;
+      return response([], [session("default", { isPrimary: true, agents: 0 })]);
+    }) as unknown as typeof fetch;
+    const collector = new FleetCollector(config, transports, fetcher, () => clock);
+
+    await collector.refresh();
+    expect(calls).toBe(1);
+    expect(collector.snapshot().refresh).toEqual({
+      baseMs: 5_000,
+      maxMs: 3_600_000,
+      minNodeRevisitMs: 5_000,
+      delayMs: 5_000,
+      nextAt: 5_100,
+    });
+
+    clock = 200;
+    await collector.refresh();
+    await collector.refresh({ manual: true });
+    expect(calls).toBe(1);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 5_100 });
+
+    clock = 5_099;
+    await collector.refresh();
+    expect(calls).toBe(1);
+
+    clock = 5_100;
+    await collector.refresh();
+    expect(calls).toBe(2);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 10_100 });
+
+    clock = 10_100;
+    await collector.refresh();
+    expect(calls).toBe(3);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 10_000, nextAt: 20_100 });
+
+    clock = 15_100;
+    await collector.refresh({ manual: true });
+    expect(calls).toBe(4);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 20_100 });
+  });
+
+  test("failed primary attempts activate the same hard revisit floor", async () => {
+    const config = gatewayConfig();
+    const transports = new TransportRegistry(config.nodes);
+    let clock = 100;
+    let calls = 0;
+    const collector = new FleetCollector(
+      config,
+      transports,
+      (async () => {
+        calls += 1;
+        throw new Error("synthetic bridge failure");
+      }) as unknown as typeof fetch,
+      () => clock,
+    );
+
+    await collector.refresh();
+    expect(calls).toBe(1);
+    expect(collector.snapshot().nodes[0]).toMatchObject({ health: "bridge-down", message: "synthetic bridge failure" });
+
+    clock = 2_000;
+    await collector.refresh({ manual: true });
+    expect(calls).toBe(1);
+    expect(collector.snapshot().refresh.nextAt).toBe(5_100);
+
+    clock = 5_100;
+    await collector.refresh();
+    expect(calls).toBe(2);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 10_100 });
   });
 
   test("coalesces concurrent refreshes", async () => {
