@@ -53,14 +53,21 @@ interface NotifierOptions {
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_PENDING = 128;
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1_024;
+const AGENT_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+  pi: "Pi",
+};
 
 function displayLine(value: string, fallback: string, max = 240): string {
   const line = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim() || fallback;
   return line.length <= max ? line : `${line.slice(0, Math.max(0, max - 1))}…`;
 }
 
-function inlineCode(value: string): string {
-  return `\`${value.replaceAll("`", "ˋ")}\``;
+export function fleetAgentDisplayName(value: string): string {
+  const agent = displayLine(value, "Agent");
+  return AGENT_DISPLAY_NAMES[agent.toLowerCase()] ?? agent;
 }
 
 function sourceKey(nodeId: string, session: string): string {
@@ -133,17 +140,6 @@ export function buildFleetDiscordAlert(
   const pane = displayLine(agent.paneLabel ?? agent.sessionName ?? "", agent.paneId);
   const session = displayLine(agent.herdrSession, "default");
   const paneUrl = buildFleetPaneUrl(fleetHost, node.id, agent);
-  const title = agent.status === "blocked" ? "🔴 Agent needs you" : "🟢 Agent completed";
-  const lines = [
-    title,
-    `Agent: ${inlineCode(displayLine(agent.agent, "agent"))}`,
-    `Host: ${inlineCode(displayLine(node.name, node.id))}`,
-    `Workspace: ${inlineCode(workspace)}`,
-    `Tab: ${inlineCode(tab)}`,
-    `Pane: ${inlineCode(pane === agent.paneId ? pane : `${pane} (${agent.paneId})`)}`,
-  ];
-  if (!agent.primarySession) lines.push(`Session: ${inlineCode(session)}`);
-  lines.push(`[Open Pane in Fleet](${paneUrl})`);
 
   return {
     agent: displayLine(agent.agent, "agent"),
@@ -160,7 +156,7 @@ export function buildFleetDiscordAlert(
     session,
     observedAt: agent.observedAt,
     paneUrl,
-    message: lines.join("\n"),
+    message: `[Open Pane in Fleet](${paneUrl})`,
   };
 }
 
@@ -198,9 +194,9 @@ export class PingmeDiscordSender implements FleetDiscordSender {
   async send(alert: FleetDiscordAlert): Promise<void> {
     await this.run(this.config.executable, pingmeArguments(this.config, alert), {
       ...this.env,
-      PINGME_AGENT_NAME: "Herdr Fleet",
-      PINGME_PROJECT_NAME: "Web Remote",
-      PINGME_SESSION_NAME: "fleet-agent-alerts",
+      PINGME_AGENT_NAME: fleetAgentDisplayName(alert.agent),
+      PINGME_PROJECT_NAME: alert.workspace,
+      PINGME_SESSION_NAME: alert.tab,
     });
   }
 }

@@ -229,27 +229,31 @@ the plugin-owned supervisor. Then add this object to the owner-only `gateway.jso
 reads or distributes the CLI's token, webhook, or private config, and remote nodes need no Discord
 settings.
 
-Each default-template message includes the Agent, `completed`/`needs you` state, Host, workspace,
-Tab, Pane, optional named Herdr session, and a clickable canonical Fleet Pane link. It includes no
-terminal contents, history, cookie, credential, or SSH material. For example:
+With `pingme`'s standard default template, Fleet maps the observed harness, workspace, and Tab into
+the template's Agent/project/session header. Known harness ids use their normal product spelling,
+such as `codex` → `Codex`, while unknown names are retained after bounded single-line
+normalization. The message body is only one clickable canonical Fleet Pane link—there is no
+`Agent completed` / `Agent needs you` title and no repeated context block. A rendered message has
+this shape (the second line remains `pingme`'s normal local sender/time metadata):
 
-```text
-🟢 Agent completed
-Agent: codex
-Host: Cluster A
-Workspace: Example project
-Tab: Main
-Pane: Review (w0:p7)
-Open Pane in Fleet: https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap7
+```markdown
+> **🤖 `Codex`   📦 `Example project`   💬 `Main`**
+> **🏠 `operator@fleet-host`   📅 `8/15 12:34:56`**
+[Open Pane in Fleet](https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap7)
 ```
+
+The default presentation includes no terminal contents, history, cookie, credential, or SSH
+material. The state is intentionally implicit in the notification event rather than repeated in
+the body.
 
 Omitting `template` uses `pingme`'s existing default template. A custom selector can be supplied as
 `"template": "fleet-alert"`; Fleet forwards the selector unchanged, so an absolute `.md` path also
 works once the installed `pingme` version supports absolute template selectors. Custom templates
 receive `agent`, `status`, `status_label`, `host`, `host_id`, `workspace`, `workspace_id`, `tab`,
 `tab_id`, `pane`, `pane_id`, `session`, `observed_at`, and `pane_url` variables in addition to the
-complete default `message`. Delivery uses one direct, timeout-bounded child process at a time, never
-a shell; a failed transition is diagnosed once and not automatically retried.
+link-only default `message` and the same Agent-specific runtime metadata. Delivery uses one direct,
+timeout-bounded child process at a time, never a shell; a failed transition is diagnosed once and
+not automatically retried.
 
 An SSH transport may omit `jump` for a direct connection or add the structured `jump` object shown
 in `gateway.example.json` when the target is reachable only through a bastion. The jump endpoint has

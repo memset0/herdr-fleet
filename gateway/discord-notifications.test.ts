@@ -4,6 +4,7 @@ import type { DiscordNotificationConfig } from "./config.ts";
 import {
   buildFleetDiscordAlert,
   buildFleetPaneUrl,
+  fleetAgentDisplayName,
   FleetDiscordNotifier,
   PingmeDiscordSender,
   pingmeArguments,
@@ -102,7 +103,7 @@ class RecordingSender implements FleetDiscordSender {
 }
 
 describe("Fleet Discord message adapter", () => {
-  test("builds a canonical named-session Pane link and concise Agent context", () => {
+  test("builds a canonical named-session Pane link with a link-only message", () => {
     const agent = card("w0:p7", "done", {
       herdrSession: "batch demo",
       primarySession: false,
@@ -112,11 +113,28 @@ describe("Fleet Discord message adapter", () => {
     expect(url).toBe("https://fleet.example.com/?instance=cluster-a&pane=w0%3Ap7&session=batch+demo");
 
     const alert = buildFleetDiscordAlert("fleet.example.com", { id: "cluster-a", name: "Cluster A" }, agent);
-    expect(alert.message).toContain("🟢 Agent completed");
-    expect(alert.message).toContain("Host: `Cluster A`");
-    expect(alert.message).toContain("Pane: `Release (w0:p7)`");
-    expect(alert.message).toContain(`[Open Pane in Fleet](${url})`);
+    expect(alert.message).toBe(`[Open Pane in Fleet](${url})`);
+    expect(alert).toMatchObject({
+      agent: "codex",
+      status: "done",
+      statusLabel: "completed",
+      host: "Cluster A",
+      workspace: "Example project",
+      tab: "Main",
+      pane: "Release",
+      session: "batch demo",
+    });
+    expect(alert.message).not.toContain("Agent completed");
+    expect(alert.message).not.toContain("Host:");
     expect(alert.message).not.toContain(agent.cwd);
+  });
+
+  test("uses conventional Agent display names and preserves bounded unknown names", () => {
+    expect(fleetAgentDisplayName("codex")).toBe("Codex");
+    expect(fleetAgentDisplayName("CLAUDE")).toBe("Claude Code");
+    expect(fleetAgentDisplayName("opencode")).toBe("OpenCode");
+    expect(fleetAgentDisplayName("pi")).toBe("Pi");
+    expect(fleetAgentDisplayName("  custom\nagent  ")).toBe("custom agent");
   });
 
   test("uses the default template unless an opaque custom selector is configured", () => {
@@ -132,6 +150,7 @@ describe("Fleet Discord message adapter", () => {
     expect(defaults).toContain(`pane_url=${alert.paneUrl}`);
     expect(defaults.at(-2)).toBe("--");
     expect(defaults.at(-1)).toBe(alert.message);
+    expect(alert.message).toBe(`[Open Pane in Fleet](${alert.paneUrl})`);
 
     const template = "/opt/example/templates/fleet alert.md";
     const custom = pingmeArguments({ ...enabledConfig, template }, alert);
@@ -158,10 +177,34 @@ describe("Fleet Discord message adapter", () => {
     expect(calls[0]?.args).toEqual(pingmeArguments(enabledConfig, alert));
     expect(calls[0]?.env).toMatchObject({
       PATH: "/synthetic/bin",
-      PINGME_AGENT_NAME: "Herdr Fleet",
-      PINGME_PROJECT_NAME: "Web Remote",
-      PINGME_SESSION_NAME: "fleet-agent-alerts",
+      PINGME_AGENT_NAME: "Codex",
+      PINGME_PROJECT_NAME: "Example project",
+      PINGME_SESSION_NAME: "Main",
     });
+  });
+
+  test("uses workspace and Tab ids when display labels are absent", async () => {
+    const calls: Array<{ env: NodeJS.ProcessEnv }> = [];
+    const run: PingmeCommandRunner = async (_executable, _args, env) => {
+      calls.push({ env });
+      return { stdout: "{}" };
+    };
+    const sender = new PingmeDiscordSender(enabledConfig, run, {});
+    const alert = buildFleetDiscordAlert(
+      "fleet.example.com",
+      { id: "cluster-a", name: "Cluster A" },
+      card("w0:p1", "blocked", { agent: "custom-agent", workspaceLabel: " \n ", tabLabel: undefined }),
+    );
+
+    await sender.send(alert);
+
+    expect(calls[0]?.env).toMatchObject({
+      PINGME_AGENT_NAME: "custom-agent",
+      PINGME_PROJECT_NAME: "w0",
+      PINGME_SESSION_NAME: "w0:t0",
+    });
+    expect(alert.message).toBe(`[Open Pane in Fleet](${alert.paneUrl})`);
+    expect(alert.message).not.toContain("needs you");
   });
 
   test("bounds missing-executable and timeout failures without exposing child output", async () => {
@@ -190,7 +233,9 @@ describe("Fleet Discord transition ledger", () => {
       ["done", 400],
       ["blocked", 500],
     ]);
-    expect(sender.alerts.at(-1)?.message).toContain("🔴 Agent needs you");
+    expect(sender.alerts.at(-1)?.message).toBe(
+      `[Open Pane in Fleet](${sender.alerts.at(-1)?.paneUrl})`,
+    );
   });
 
   test("ignores offline projections and compares recovery with the last successful fetch", async () => {
