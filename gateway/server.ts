@@ -207,7 +207,10 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
     }
 
     if (host === config.public.fleetHost) {
-      if (url.pathname === "/api/fleet" && request.method === "GET") return json(collector.snapshot());
+      if (url.pathname === "/api/fleet" && request.method === "GET") {
+        await collector.refresh();
+        return json(collector.snapshot());
+      }
       if (url.pathname === "/" && request.method === "GET") {
         const document = html(fleetPage(), 200, {}, fleetDocumentCsp(config));
         // Fetch serializes Origin as `null` for non-CORS POST navigations under `no-referrer`,

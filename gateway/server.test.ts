@@ -27,11 +27,12 @@ function setup(
   limiter?: LoginRateLimiter,
   now?: () => number,
   gateway: GatewayConfig = config,
+  collectorFetcher: typeof fetch = (async () => {
+    throw new Error("not polled in handler tests");
+  }) as unknown as typeof fetch,
 ) {
   const transports = new TransportRegistry(gateway.nodes);
-  const collector = new FleetCollector(gateway, transports, (async () => {
-    throw new Error("not polled in handler tests");
-  }) as unknown as typeof fetch);
+  const collector = new FleetCollector(gateway, transports, collectorFetcher);
   return createGatewayHandler({ config: gateway, collector, transports, fetcher, limiter, now });
 }
 
@@ -70,6 +71,37 @@ describe("Gateway host routing and auth flow", () => {
     const location = new URL(deep.headers.get("location")!);
     expect(location.origin + location.pathname).toBe("https://fleet.example.com/auth/login");
     expect(location.searchParams.get("next")).toBe("https://local.example.com/pane/p1?session=batch%20demo");
+  });
+
+  test("refreshes node state only for an authenticated Fleet API read", async () => {
+    let calls = 0;
+    const collectorFetcher = (async () => {
+      calls += 1;
+      return new Response(
+        JSON.stringify({
+          bridge: "connected",
+          sessions: [
+            { name: "default", isPrimary: true, reachable: true, agents: 0, working: 0, blocked: 0 },
+          ],
+          agents: [],
+          ts: 10,
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    const handler = setup(fetch, undefined, undefined, config, collectorFetcher);
+
+    expect((await handler(request("fleet.example.com", "/api/fleet"))).status).toBe(401);
+    expect(calls).toBe(0);
+
+    const cookie = await login(handler);
+    const response = await handler(request("fleet.example.com", "/api/fleet", { headers: { cookie } }));
+    expect(response.status).toBe(200);
+    expect(calls).toBe(1);
+    expect(await response.json()).toMatchObject({
+      refresh: { baseMs: 5_000, maxMs: 3_600_000 },
+      totals: { nodes: 1, online: 1, agents: 0 },
+    });
   });
 
   test("logs in once and proxies node requests without the session credential", async () => {

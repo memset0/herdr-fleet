@@ -34,11 +34,23 @@ mapped to a default node. Upstream response cookies are preserved except for any
 matches the Gateway session cookie, so a node cannot shadow, clear, or replace the central browser
 credential.
 
-The Fleet collector consumes only stable Collie snapshot summary fields for instance identity and
-health. The Fleet page uses those fields to render a single horizontal instance switcher and embeds
-exactly one selected node origin at a time. The iframe owns the complete native Collie route stack,
-so opening a session or pane stays inside Collie's UI and does not require a parallel Fleet data
-model. Switching instances navigates that one iframe to the selected node's root.
+An authenticated `/api/fleet` read drives one coalesced collector refresh; there is no unconditional
+Gateway polling while no Fleet page is open. The collector reads each node's primary snapshot and
+fans out across its reachable named sessions. It validates and projects only stable instance,
+session, health, and Agent-card fields. Pane contents, histories, device authorization, update
+metadata, credentials, and unknown response fields never enter the aggregate.
+
+The Fleet page uses that projection to render a single horizontal instance switcher, a bounded
+cross-host Agent menu in Fleet's own header, and exactly one selected node origin at a time. The
+menu follows Collie's triage/card vocabulary, adds the owning Host, and turns a card selection into
+the existing canonical instance/session/Pane route. The iframe still owns the complete native
+Collie route stack and every terminal operation; Fleet does not reproduce Pane views or actions.
+
+Each browser refreshes immediately on load and when the menu is opened. Unchanged visible revisions
+double the next delay from the configured base (five seconds by default) up to one hour; visible
+changes and manual menu opens reset it. The Gateway keeps only an in-memory, per-node/session
+last-known Agent cache. A failed source leaves its cards visible but explicitly offline/stale;
+the next successful snapshot replaces that source authoritatively, including confirmed removals.
 
 Embedding is deliberately asymmetric. Fleet's document CSP permits `frame-src` only for exact,
 enabled node origins and Fleet itself stays non-embeddable. The Gateway rewrites only proxied node
@@ -77,6 +89,8 @@ the next Herdr hook or manual `ensure`; child death is recovered immediately by 
 7. Gateway consumes its session credential before proxying and filters the same privileged cookie
    name from upstream responses. Exact per-node Origin checks prevent one node origin from issuing
    terminal writes to another.
+8. Fleet Agent aggregation is an allowlist projection from already authenticated snapshot routes;
+   it cannot request Pane output or turn an unvalidated Host, session, or Pane value into a route.
 
 Because authenticated writes can type into a real terminal, a Gateway compromise has the same
 impact as the Herdr account on configured nodes. A compromised node still controls content on its

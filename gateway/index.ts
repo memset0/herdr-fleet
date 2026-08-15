@@ -12,7 +12,6 @@ const config = await loadGatewayConfig(configPath);
 const transports = new TransportRegistry(config.nodes);
 transports.start();
 const collector = new FleetCollector(config, transports);
-await collector.start();
 const handler = createGatewayHandler({ config, collector, transports });
 
 const server = Bun.serve({
@@ -31,7 +30,6 @@ const shutdown = async (signal: string): Promise<void> => {
   if (stopping) return;
   stopping = true;
   process.stdout.write(`[gateway] shutting down (${signal})\n`);
-  collector.stop();
   transports.stop();
   await server.stop();
 };
