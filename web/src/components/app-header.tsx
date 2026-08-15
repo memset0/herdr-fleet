@@ -62,11 +62,16 @@ export function AppHeader({
   const connecting = isConnecting({ bridge, error, stalled });
   const trouble = useConnectionTrouble(connecting);
   const lost = useConnectionLost(connecting);
+  // Fleet already owns the surrounding navigation. Omit the entire home affordance in any framed
+  // native view so its button/wordmark does not reserve space; a direct/new-tab Collie page keeps it.
+  const embedded = typeof window !== "undefined" && window.parent !== window;
   return (
     <header className="sticky top-0 z-20 flex items-center gap-2 border-b border-border/60 bg-muted pl-4 pr-2 py-2 [padding-top:calc(env(safe-area-inset-top)_+_0.5rem)]">
       {override ?? (
         <>
-          <CollieHome onHome={onHome} trouble={trouble} lost={lost} wordmark={wordmark} />
+          {!embedded && (
+            <CollieHome onHome={onHome} trouble={trouble} lost={lost} wordmark={wordmark} />
+          )}
           {/* Center region: the breadcrumb (or, on the dashboard/space, an empty flex-1 spacer that
               pushes the right cluster to the edge). min-w-0 so the breadcrumb truncates when tight. */}
           <div className="flex min-w-0 flex-1 items-center">{children}</div>

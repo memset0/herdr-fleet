@@ -57,6 +57,33 @@ describe("AppHeader — the one shared header shell", () => {
     expect(onHome).toHaveBeenCalledOnce();
   });
 
+  it("omits the complete home affordance in a frame while preserving header content", () => {
+    const ownParent = Object.getOwnPropertyDescriptor(window, "parent");
+    Object.defineProperty(window, "parent", { configurable: true, value: {} });
+    try {
+      const { container } = renderHeader(
+        <AppHeader
+          bridge="connected"
+          error={false}
+          onHome={() => {}}
+          wordmark
+          rightTrail={<SettingsGear />}
+        >
+          <span>example › main</span>
+        </AppHeader>,
+      );
+
+      expect(screen.queryByRole("button", { name: "Collie home" })).toBeNull();
+      expect(screen.queryByText("Collie")).toBeNull();
+      expect(container.querySelector("img[src='/favicon.svg']")).toBeNull();
+      expect(screen.getByText("example › main")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    } finally {
+      if (ownParent === undefined) delete (window as Window & { parent?: Window }).parent;
+      else Object.defineProperty(window, "parent", ownParent);
+    }
+  });
+
   it("navigates to a session-scoped /settings via the shared gear", async () => {
     render(
       <MemoryRouter initialEntries={["/?s=collie-demo"]}>
