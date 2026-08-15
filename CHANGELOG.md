@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.4] - 2026-08-15
+
+### Fixed
+
+- Fleet now keeps one Gateway-owned 5-second-to-1-hour refresh backoff across every tab and enforces a non-bypassable five-second per-Host floor after successful or failed primary snapshot attempts (b5380f9)
+- Offline Agent cards remain visibly stale but stay interleaved in `Needs you`, `Ready · unseen`, `Working`, or `Recent` according to their last confirmed state, including the header count's `Recent` exclusion (b5380f9)
+
+### Upgrading
+
+- This central-Gateway patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.3] - 2026-08-15
 
 ### Changed
