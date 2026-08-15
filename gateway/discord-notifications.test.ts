@@ -6,6 +6,7 @@ import {
   buildFleetPaneUrl,
   fleetAgentDisplayName,
   fleetDiscordAvatar,
+  fleetDiscordUsername,
   FLEET_DISCORD_CONFIRMATION_MS,
   FleetDiscordNotifier,
   PingmeDiscordSender,
@@ -36,6 +37,7 @@ function card(
     workspaceNumber: 0,
     tabId: "w0:t0",
     tabLabel: "Main",
+    paneLabel: "Agent pane",
     agent: "codex",
     status,
     cwd: "/srv/example-project",
@@ -151,6 +153,7 @@ describe("Fleet Discord message adapter", () => {
       tab: "Main",
       pane: "Release",
       session: "batch demo",
+      username: "Example project · Main · Release",
     });
     expect(alert.message).not.toContain("Agent completed");
     expect(alert.message).not.toContain("Host:");
@@ -183,6 +186,32 @@ describe("Fleet Discord message adapter", () => {
     expect(fleetAgentDisplayName("  custom\nagent  ")).toBe("custom agent");
   });
 
+  test("uses readable Space, Tab, and Pane names as the bounded Discord username", () => {
+    expect(fleetDiscordUsername(card("w0:p1", "done"))).toBe(
+      "Example project · Main · Agent pane",
+    );
+    expect(
+      fleetDiscordUsername(
+        card("w0:p1", "done", {
+          workspaceLabel: "w0",
+          tabLabel: "w0:t0",
+          paneLabel: "w0:p1",
+        }),
+      ),
+    ).toBe("Fleet");
+    expect(
+      Array.from(
+        fleetDiscordUsername(
+          card("w0:p1", "done", {
+            workspaceLabel: "Project ".repeat(20),
+            tabLabel: "Long tab",
+            paneLabel: "Long pane",
+          }),
+        ),
+      ),
+    ).toHaveLength(80);
+  });
+
   test("maps actionable states onto configured status avatar profiles", () => {
     expect(fleetDiscordAvatar("done")).toBe("success");
     expect(fleetDiscordAvatar("blocked")).toBe("needs-input");
@@ -197,6 +226,7 @@ describe("Fleet Discord message adapter", () => {
     const defaults = pingmeArguments(enabledConfig, alert);
     expect(defaults).not.toContain("--template");
     expect(defaults.slice(0, 5)).toEqual(["send", "--channel", "test", "--avatar", "needs-input"]);
+    expect(defaults.slice(5, 7)).toEqual(["--username", "Example project · Main · Agent pane"]);
     expect(defaults).toContain("status=blocked");
     expect(defaults).toContain(`pane_url=${alert.paneUrl}`);
     expect(defaults.at(-2)).toBe("--");

@@ -21,6 +21,7 @@ export interface FleetDiscordAlert {
   session: string;
   observedAt: number;
   paneUrl: string;
+  username: string;
   agentReply?: string;
   message: string;
 }
@@ -65,6 +66,7 @@ const DEFAULT_MAX_PENDING = 128;
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1_024;
 export const FLEET_DISCORD_CONFIRMATION_MS = 10_000;
 const FLEET_RUNTIME_SESSION_NAME = "Fleet";
+const MAX_DISCORD_USERNAME_CHARS = 80;
 const AGENT_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   claude: "Claude Code",
   codex: "Codex",
@@ -74,12 +76,29 @@ const AGENT_DISPLAY_NAMES: Readonly<Record<string, string>> = {
 
 function displayLine(value: string, fallback: string, max = 240): string {
   const line = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim() || fallback;
-  return line.length <= max ? line : `${line.slice(0, Math.max(0, max - 1))}…`;
+  const characters = Array.from(line);
+  return characters.length <= max ? line : `${characters.slice(0, Math.max(0, max - 1)).join("")}…`;
 }
 
 export function fleetAgentDisplayName(value: string): string {
   const agent = displayLine(value, "Agent");
   return AGENT_DISPLAY_NAMES[agent.toLowerCase()] ?? agent;
+}
+
+function optionalDisplayName(value: string | undefined, internalId: string): string | null {
+  if (value === undefined) return null;
+  const line = displayLine(value, "");
+  return line === "" || line === internalId ? null : line;
+}
+
+export function fleetDiscordUsername(agent: FleetAgentCard): string {
+  const levels = [
+    optionalDisplayName(agent.workspaceLabel, agent.workspaceId),
+    optionalDisplayName(agent.tabLabel, agent.tabId),
+    optionalDisplayName(agent.paneLabel, agent.paneId)
+      ?? optionalDisplayName(agent.sessionName, agent.paneId),
+  ].filter((value): value is string => value !== null);
+  return displayLine(levels.join(" · "), "Fleet", MAX_DISCORD_USERNAME_CHARS);
 }
 
 function sourceKey(nodeId: string, session: string): string {
@@ -183,6 +202,7 @@ export function buildFleetDiscordAlert(
     session,
     observedAt: agent.observedAt,
     paneUrl,
+    username: fleetDiscordUsername(agent),
     ...(reply !== null ? { agentReply: reply } : {}),
     message: reply === null ? link : `${reply}\n${link}`,
   };
@@ -206,7 +226,15 @@ export function pingmeArguments(config: EnabledDiscordNotifications, alert: Flee
     ["pane_url", alert.paneUrl],
     ["agent_reply", alert.agentReply ?? ""],
   ];
-  const args = ["send", "--channel", config.channel, "--avatar", fleetDiscordAvatar(alert.status)];
+  const args = [
+    "send",
+    "--channel",
+    config.channel,
+    "--avatar",
+    fleetDiscordAvatar(alert.status),
+    "--username",
+    alert.username,
+  ];
   if (config.template) args.push("--template", config.template);
   for (const [key, value] of variables) args.push("--var", `${key}=${value}`);
   args.push("--", alert.message);
