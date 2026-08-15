@@ -6,6 +6,25 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.5] - 2026-08-15
+
+### Added
+
+- The central Fleet Gateway can send one local `pingme` Discord alert when a live Agent newly completes or enters `Needs You`, including Host/Pane context and a clickable canonical Fleet Pane link (6d91f08)
+- Optional custom-template selectors receive stable Agent, state, Host, workspace, Tab, Pane, session, observation-time, and Pane-link variables while the default rollout continues to use `pingme`'s existing template (6d91f08)
+
+### Changed
+
+- Enabling Discord alerts advances the existing 2.1.4 Gateway collector in the background through its one shared five-second-to-one-hour backoff and per-Host floor, with a silent startup baseline and no duplicate schedule (6d91f08)
+
+### Security
+
+- Discord credentials remain exclusively in `pingme`'s private local configuration; Gateway invokes one configured absolute executable without a shell and never sends Pane contents, history, cookies, tokens, or SSH material (6d91f08)
+
+### Upgrading
+
+- This central-Gateway patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.4] - 2026-08-15
 
 ### Fixed
