@@ -5,6 +5,8 @@ import {
   buildFleetDiscordAlert,
   buildFleetPaneUrl,
   fleetAgentDisplayName,
+  fleetDiscordAvatar,
+  FLEET_DISCORD_CONFIRMATION_MS,
   FleetDiscordNotifier,
   PingmeDiscordSender,
   pingmeArguments,
@@ -49,8 +51,14 @@ function card(
 
 function fleet(
   cards: FleetAgentCard[],
-  options: Partial<{ health: FleetNodeState["health"]; sessionReachable: boolean; sessionPresent: boolean }> = {},
+  options: Partial<{
+    generatedAt: number;
+    health: FleetNodeState["health"];
+    sessionReachable: boolean;
+    sessionPresent: boolean;
+  }> = {},
 ): FleetState {
+  const generatedAt = options.generatedAt ?? 100;
   const health = options.health ?? "online";
   const sessions = options.sessionPresent === false
     ? []
@@ -65,9 +73,15 @@ function fleet(
         },
       ];
   return {
-    generatedAt: 100,
+    generatedAt,
     revision: 1,
-    refresh: { baseMs: 5_000, maxMs: 3_600_000, minNodeRevisitMs: 5_000, delayMs: 5_000, nextAt: 5_100 },
+    refresh: {
+      baseMs: 5_000,
+      maxMs: 3_600_000,
+      minNodeRevisitMs: 5_000,
+      delayMs: 5_000,
+      nextAt: generatedAt + 5_000,
+    },
     totals: { nodes: 1, online: health === "online" ? 1 : 0, agents: cards.length, working: 0, blocked: 0 },
     nodes: [
       {
@@ -83,8 +97,8 @@ function fleet(
         blocked: cards.filter((entry) => entry.status === "blocked").length,
         sessions,
         agentEntries: cards,
-        observedAt: 100,
-        lastHealthyAt: health === "online" ? 100 : 50,
+        observedAt: generatedAt,
+        lastHealthyAt: health === "online" ? generatedAt : 50,
         message: null,
       },
     ],
@@ -137,6 +151,11 @@ describe("Fleet Discord message adapter", () => {
     expect(fleetAgentDisplayName("  custom\nagent  ")).toBe("custom agent");
   });
 
+  test("maps actionable states onto configured status avatar profiles", () => {
+    expect(fleetDiscordAvatar("done")).toBe("success");
+    expect(fleetDiscordAvatar("blocked")).toBe("needs-input");
+  });
+
   test("uses the default template unless an opaque custom selector is configured", () => {
     const alert = buildFleetDiscordAlert(
       "fleet.example.com",
@@ -145,7 +164,7 @@ describe("Fleet Discord message adapter", () => {
     );
     const defaults = pingmeArguments(enabledConfig, alert);
     expect(defaults).not.toContain("--template");
-    expect(defaults.slice(0, 3)).toEqual(["send", "--channel", "test"]);
+    expect(defaults.slice(0, 5)).toEqual(["send", "--channel", "test", "--avatar", "needs-input"]);
     expect(defaults).toContain("status=blocked");
     expect(defaults).toContain(`pane_url=${alert.paneUrl}`);
     expect(defaults.at(-2)).toBe("--");
@@ -157,7 +176,7 @@ describe("Fleet Discord message adapter", () => {
     expect(custom.slice(custom.indexOf("--template"), custom.indexOf("--template") + 2)).toEqual(["--template", template]);
   });
 
-  test("invokes the configured executable directly with Fleet runtime metadata", async () => {
+  test("invokes the configured executable directly with Agent/project metadata and no concrete Tab context", async () => {
     const calls: Array<{ executable: string; args: readonly string[]; env: NodeJS.ProcessEnv }> = [];
     const run: PingmeCommandRunner = async (executable, args, env) => {
       calls.push({ executable, args, env });
@@ -179,14 +198,19 @@ describe("Fleet Discord message adapter", () => {
       PATH: "/synthetic/bin",
       PINGME_AGENT_NAME: "Codex",
       PINGME_PROJECT_NAME: "Example project",
-      PINGME_SESSION_NAME: "Main",
+      PINGME_SESSION_NAME: "Fleet",
+      PINGME_SESSION_ID: "",
+      CLAUDE_CODE_SESSION_ID: "",
+      CODEX_THREAD_ID: "",
     });
+    expect(calls[0]?.args).toContain("success");
+    expect(calls[0]?.env.PINGME_SESSION_NAME).not.toBe("Main");
   });
 
-  test("uses workspace and Tab ids when display labels are absent", async () => {
-    const calls: Array<{ env: NodeJS.ProcessEnv }> = [];
-    const run: PingmeCommandRunner = async (_executable, _args, env) => {
-      calls.push({ env });
+  test("uses the workspace id fallback without exposing the Tab id in runtime metadata", async () => {
+    const calls: Array<{ args: readonly string[]; env: NodeJS.ProcessEnv }> = [];
+    const run: PingmeCommandRunner = async (_executable, args, env) => {
+      calls.push({ args, env });
       return { stdout: "{}" };
     };
     const sender = new PingmeDiscordSender(enabledConfig, run, {});
@@ -201,10 +225,12 @@ describe("Fleet Discord message adapter", () => {
     expect(calls[0]?.env).toMatchObject({
       PINGME_AGENT_NAME: "custom-agent",
       PINGME_PROJECT_NAME: "w0",
-      PINGME_SESSION_NAME: "w0:t0",
+      PINGME_SESSION_NAME: "Fleet",
     });
+    expect(calls[0]?.args).toContain("needs-input");
     expect(alert.message).toBe(`[Open Pane in Fleet](${alert.paneUrl})`);
     expect(alert.message).not.toContain("needs you");
+    expect(alert.message).not.toContain("Main");
   });
 
   test("bounds missing-executable and timeout failures without exposing child output", async () => {
@@ -218,53 +244,170 @@ describe("Fleet Discord message adapter", () => {
 });
 
 describe("Fleet Discord transition ledger", () => {
-  test("silently baselines, then emits done, same-state activity, and Needs You once each", async () => {
+  test("silently baselines and confirms each actionable group only after ten seconds", async () => {
     const sender = new RecordingSender();
     const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
-    notifier.observe(fleet([card("w0:p1", "working")]));
-    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 200, observedAt: 200 })]));
-    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 200, observedAt: 300 })]));
-    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 400, observedAt: 400 })]));
-    notifier.observe(fleet([card("w0:p1", "blocked", { lastActiveAt: 500, observedAt: 500 })]));
+    expect(notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }))).toBeNull();
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "done", { lastActiveAt: 200, observedAt: 200 })], { generatedAt: 200 }),
+      ),
+    ).toBe(200 + FLEET_DISCORD_CONFIRMATION_MS);
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "done", { lastActiveAt: 400, observedAt: 10_199 })], { generatedAt: 10_199 }),
+      ),
+    ).toBe(10_200);
+    expect(sender.alerts).toEqual([]);
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "done", { lastActiveAt: 400, observedAt: 10_200 })], { generatedAt: 10_200 }),
+      ),
+    ).toBeNull();
+    notifier.observe(
+      fleet([card("w0:p1", "done", { lastActiveAt: 800, observedAt: 11_000 })], { generatedAt: 11_000 }),
+    );
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "blocked", { lastActiveAt: 12_000, observedAt: 12_000 })], { generatedAt: 12_000 }),
+      ),
+    ).toBe(22_000);
+    notifier.observe(
+      fleet([card("w0:p1", "blocked", { lastActiveAt: 12_000, observedAt: 22_000 })], { generatedAt: 22_000 }),
+    );
     await notifier.flush();
 
     expect(sender.alerts.map((alert) => [alert.status, alert.observedAt])).toEqual([
-      ["done", 200],
-      ["done", 400],
-      ["blocked", 500],
+      ["done", 10_200],
+      ["blocked", 22_000],
     ]);
     expect(sender.alerts.at(-1)?.message).toBe(
       `[Open Pane in Fleet](${sender.alerts.at(-1)?.paneUrl})`,
     );
   });
 
-  test("ignores offline projections and compares recovery with the last successful fetch", async () => {
+  test("cancels Ready when it becomes Recent and re-arms only after a later re-entry", async () => {
     const sender = new RecordingSender();
     const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
-    notifier.observe(fleet([card("w0:p1", "working")]));
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "done", { lastActiveAt: 100, lastSeenAt: 10 })], { generatedAt: 100 }),
+      ),
+    ).toBe(10_100);
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "done", { lastActiveAt: 100, lastSeenAt: 500 })], { generatedAt: 5_000 }),
+      ),
+    ).toBeNull();
+    notifier.observe(
+      fleet([card("w0:p1", "done", { lastActiveAt: 100, lastSeenAt: 500 })], { generatedAt: 10_100 }),
+    );
+    expect(sender.alerts).toEqual([]);
+
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "done", { lastActiveAt: 12_000, lastSeenAt: 500 })], { generatedAt: 12_000 }),
+      ),
+    ).toBe(22_000);
+    notifier.observe(
+      fleet([card("w0:p1", "done", { lastActiveAt: 12_000, lastSeenAt: 500, observedAt: 22_000 })], {
+        generatedAt: 22_000,
+      }),
+    );
+    await notifier.flush();
+    expect(sender.alerts.map((alert) => alert.status)).toEqual(["done"]);
+  });
+
+  test("cancels Needs You when work resumes before confirmation", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    expect(notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 100 }))).toBe(10_100);
+    expect(notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 5_000 }))).toBeNull();
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 10_100 }));
+    await notifier.flush();
+    expect(sender.alerts).toEqual([]);
+  });
+
+  test("cancels offline candidates and compares recovery with the last successful group", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    expect(notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 100 }))).toBe(10_100);
     notifier.observe(
       fleet([card("w0:p1", "blocked", { reachable: false, observedAt: 100 })], {
+        generatedAt: 5_000,
         health: "transport-down",
         sessionReachable: false,
       }),
     );
-    notifier.observe(fleet([card("w0:p1", "blocked", { observedAt: 300, lastActiveAt: 300 })]));
-    await notifier.flush();
-
-    expect(sender.alerts).toHaveLength(1);
-    expect(sender.alerts[0]?.status).toBe("blocked");
-  });
-
-  test("prunes authoritative removals and silently re-baselines removed or identity-replaced Panes", async () => {
-    const sender = new RecordingSender();
-    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
-    notifier.observe(fleet([card("w0:p1", "working")]));
-    notifier.observe(fleet([]));
-    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 300 })]));
-    notifier.observe(fleet([card("w0:p1", "blocked", { agent: "claude", lastActiveAt: 400 })]));
+    expect(
+      notifier.observe(
+        fleet([card("w0:p1", "blocked", { observedAt: 20_000, lastActiveAt: 20_000 })], {
+          generatedAt: 20_000,
+        }),
+      ),
+    ).toBeNull();
     await notifier.flush();
 
     expect(sender.alerts).toEqual([]);
+  });
+
+  test("prunes candidates and silently re-baselines removed or identity-replaced Panes", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 100 })], { generatedAt: 100 }));
+    expect(notifier.observe(fleet([], { generatedAt: 5_000 }))).toBeNull();
+    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 300 })], { generatedAt: 20_000 }));
+    notifier.observe(
+      fleet([card("w0:p1", "blocked", { agent: "claude", lastActiveAt: 400 })], { generatedAt: 30_000 }),
+    );
+    notifier.observe(
+      fleet([card("w0:p1", "blocked", { agent: "claude", lastActiveAt: 400 })], { generatedAt: 50_000 }),
+    );
+    await notifier.flush();
+
+    expect(sender.alerts).toEqual([]);
+  });
+
+  test("returns the earliest candidate deadline and never resets it for newer same-group activity", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working"), card("w0:p2", "working")], { generatedAt: 0 }));
+    expect(
+      notifier.observe(
+        fleet(
+          [card("w0:p1", "done", { lastActiveAt: 100 }), card("w0:p2", "working")],
+          { generatedAt: 100 },
+        ),
+      ),
+    ).toBe(10_100);
+    expect(
+      notifier.observe(
+        fleet(
+          [card("w0:p1", "done", { lastActiveAt: 500 }), card("w0:p2", "blocked")],
+          { generatedAt: 200 },
+        ),
+      ),
+    ).toBe(10_100);
+    expect(
+      notifier.observe(
+        fleet(
+          [card("w0:p1", "done", { lastActiveAt: 500 }), card("w0:p2", "blocked")],
+          { generatedAt: 10_100 },
+        ),
+      ),
+    ).toBe(10_200);
+    notifier.observe(
+      fleet(
+        [card("w0:p1", "done", { lastActiveAt: 900 }), card("w0:p2", "blocked")],
+        { generatedAt: 10_200 },
+      ),
+    );
+    await notifier.flush();
+    expect(sender.alerts.map((alert) => alert.paneId)).toEqual(["w0:p1", "w0:p2"]);
   });
 
   test("does not retry failed events and bounds simultaneous delivery", async () => {
@@ -274,18 +417,18 @@ describe("Fleet Discord transition ledger", () => {
       maxPending: 1,
       warn: (message) => warnings.push(message),
     });
-    notifier.observe(fleet([card("w0:p1", "working"), card("w0:p2", "working")]));
+    notifier.observe(fleet([card("w0:p1", "working"), card("w0:p2", "working")], { generatedAt: 0 }));
     notifier.observe(
       fleet([
         card("w0:p1", "done", { lastActiveAt: 200 }),
         card("w0:p2", "blocked", { lastActiveAt: 200 }),
-      ]),
+      ], { generatedAt: 100 }),
     );
     notifier.observe(
       fleet([
         card("w0:p1", "done", { lastActiveAt: 200 }),
         card("w0:p2", "blocked", { lastActiveAt: 200 }),
-      ]),
+      ], { generatedAt: 10_100 }),
     );
     await notifier.flush();
 
@@ -297,10 +440,16 @@ describe("Fleet Discord transition ledger", () => {
   test("preserves state for an unavailable session but prunes a session removed by a healthy node", async () => {
     const sender = new RecordingSender();
     const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
-    notifier.observe(fleet([card("w0:p1", "working")]));
-    notifier.observe(fleet([card("w0:p1", "working", { reachable: false })], { sessionReachable: false }));
-    notifier.observe(fleet([], { sessionPresent: false }));
-    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 400 })]));
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(
+      fleet([card("w0:p1", "working", { reachable: false })], {
+        generatedAt: 100,
+        sessionReachable: false,
+      }),
+    );
+    notifier.observe(fleet([], { generatedAt: 200, sessionPresent: false }));
+    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 400 })], { generatedAt: 300 }));
+    notifier.observe(fleet([card("w0:p1", "done", { lastActiveAt: 400 })], { generatedAt: 20_000 }));
     await notifier.flush();
 
     expect(sender.alerts).toEqual([]);

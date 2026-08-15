@@ -41,8 +41,15 @@ interface LastObservation {
   nodeId: string;
   sourceKey: string;
   identity: string;
-  status: FleetAgentStatus;
-  lastActiveAt?: number;
+  actionable: ActionableGroup | null;
+}
+
+type ActionableGroup = "ready" | "needs-you";
+
+interface NotificationCandidate {
+  identity: string;
+  group: ActionableGroup;
+  dueAt: number;
 }
 
 interface NotifierOptions {
@@ -53,6 +60,8 @@ interface NotifierOptions {
 const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_PENDING = 128;
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1_024;
+export const FLEET_DISCORD_CONFIRMATION_MS = 10_000;
+const FLEET_RUNTIME_SESSION_NAME = "Fleet";
 const AGENT_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   claude: "Claude Code",
   codex: "Codex",
@@ -84,6 +93,16 @@ function cardIdentity(agent: FleetAgentCard): string {
 
 function isAttentionStatus(status: FleetAgentStatus): status is FleetDiscordAlert["status"] {
   return status === "blocked" || status === "done";
+}
+
+function actionableGroup(agent: FleetAgentCard): ActionableGroup | null {
+  if (agent.status === "blocked") return "needs-you";
+  if (agent.status === "done" && (agent.lastActiveAt ?? 0) > (agent.lastSeenAt ?? 0)) return "ready";
+  return null;
+}
+
+export function fleetDiscordAvatar(status: FleetDiscordAlert["status"]): "success" | "needs-input" {
+  return status === "done" ? "success" : "needs-input";
 }
 
 function commandFailure(error: { code?: string | number; killed?: boolean; signal?: string | null }): Error {
@@ -177,7 +196,7 @@ export function pingmeArguments(config: EnabledDiscordNotifications, alert: Flee
     ["observed_at", String(alert.observedAt)],
     ["pane_url", alert.paneUrl],
   ];
-  const args = ["send", "--channel", config.channel];
+  const args = ["send", "--channel", config.channel, "--avatar", fleetDiscordAvatar(alert.status)];
   if (config.template) args.push("--template", config.template);
   for (const [key, value] of variables) args.push("--var", `${key}=${value}`);
   args.push("--", alert.message);
@@ -196,13 +215,17 @@ export class PingmeDiscordSender implements FleetDiscordSender {
       ...this.env,
       PINGME_AGENT_NAME: fleetAgentDisplayName(alert.agent),
       PINGME_PROJECT_NAME: alert.workspace,
-      PINGME_SESSION_NAME: alert.tab,
+      PINGME_SESSION_NAME: FLEET_RUNTIME_SESSION_NAME,
+      PINGME_SESSION_ID: "",
+      CLAUDE_CODE_SESSION_ID: "",
+      CODEX_THREAD_ID: "",
     });
   }
 }
 
 export class FleetDiscordNotifier {
   private readonly observations = new Map<string, LastObservation>();
+  private readonly candidates = new Map<string, NotificationCandidate>();
   private readonly maxPending: number;
   private readonly warn: (message: string) => void;
   private queue: Promise<void> = Promise.resolve();
@@ -217,7 +240,7 @@ export class FleetDiscordNotifier {
     this.warn = options.warn ?? ((message) => console.warn(message));
   }
 
-  observe(state: FleetState): void {
+  observe(state: FleetState): number | null {
     const authoritativeNodes = new Set<string>();
     const knownSources = new Set<string>();
     const authoritativeSources = new Set<string>();
@@ -231,32 +254,46 @@ export class FleetDiscordNotifier {
         if (session.reachable) authoritativeSources.add(source);
       }
       for (const agent of node.agentEntries) {
-        if (!agent.reachable) continue;
-        const source = sourceKey(node.id, agent.herdrSession);
         const key = cardKey(node.id, agent);
+        if (!agent.reachable) {
+          this.candidates.delete(key);
+          continue;
+        }
+        const source = sourceKey(node.id, agent.herdrSession);
         const identity = cardIdentity(agent);
         const previous = this.observations.get(key);
+        const currentActionable = actionableGroup(agent);
         currentCards.add(key);
         authoritativeSources.add(source);
 
-        const newerActivity =
-          agent.lastActiveAt !== undefined &&
-          previous?.lastActiveAt !== undefined &&
-          agent.lastActiveAt > previous.lastActiveAt;
-        if (
-          previous &&
-          previous.identity === identity &&
-          isAttentionStatus(agent.status) &&
-          (previous.status !== agent.status || newerActivity)
-        ) {
-          this.enqueue(buildFleetDiscordAlert(this.fleetHost, node, agent));
+        if (!previous || previous.identity !== identity) {
+          this.candidates.delete(key);
+        } else if (currentActionable !== previous.actionable) {
+          this.candidates.delete(key);
+          if (currentActionable !== null) {
+            this.candidates.set(key, {
+              identity,
+              group: currentActionable,
+              dueAt: state.generatedAt + FLEET_DISCORD_CONFIRMATION_MS,
+            });
+          }
+        } else {
+          const candidate = this.candidates.get(key);
+          if (
+            candidate &&
+            (currentActionable === null || candidate.identity !== identity || candidate.group !== currentActionable)
+          ) {
+            this.candidates.delete(key);
+          } else if (candidate && state.generatedAt >= candidate.dueAt) {
+            this.candidates.delete(key);
+            this.enqueue(buildFleetDiscordAlert(this.fleetHost, node, agent));
+          }
         }
         this.observations.set(key, {
           nodeId: node.id,
           sourceKey: source,
           identity,
-          status: agent.status,
-          ...(agent.lastActiveAt !== undefined ? { lastActiveAt: agent.lastActiveAt } : {}),
+          actionable: currentActionable,
         });
       }
     }
@@ -264,8 +301,17 @@ export class FleetDiscordNotifier {
     for (const [key, previous] of this.observations) {
       const sourceRemoved = authoritativeNodes.has(previous.nodeId) && !knownSources.has(previous.sourceKey);
       const cardRemoved = authoritativeSources.has(previous.sourceKey) && !currentCards.has(key);
-      if (sourceRemoved || cardRemoved) this.observations.delete(key);
+      if (sourceRemoved || cardRemoved) {
+        this.observations.delete(key);
+        this.candidates.delete(key);
+      }
     }
+
+    let earliest: number | null = null;
+    for (const candidate of this.candidates.values()) {
+      if (earliest === null || candidate.dueAt < earliest) earliest = candidate.dueAt;
+    }
+    return earliest;
   }
 
   async flush(): Promise<void> {

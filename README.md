@@ -206,11 +206,18 @@ loop. The live Gateway config must remain an absolute-path, owner-only file.
 ### Discord Agent notifications
 
 The central Gateway can notify Discord when a successfully fetched Agent newly enters green
-`done` or red `blocked` (`Needs You`). The first successful observation is a silent baseline, an
-unchanged or offline cached card never repeats an alert, and recovery is compared with the last
-successfully fetched state. Monitoring uses the exact Fleet refresh state described above: one
-adaptive 5-second-to-1-hour delay and the same hard five-second per-Host floor for browser and
-notification activity together.
+`Ready · unseen` (a `done` card whose activity is newer than its last-seen time) or red `blocked`
+(`Needs You`). The first successful observation is a silent baseline. A later transition first
+becomes an in-memory candidate; Gateway sends only when another authoritative fetch at least ten
+seconds later still places the same Pane identity in the same actionable group. Becoming Recent
+after a human opens it, resuming work, going offline, disappearing, or changing identity cancels
+the candidate. A confirmed group sends once and cannot repeat until the card leaves and re-enters
+an actionable group.
+
+Confirmation uses the exact Fleet refresh state described above: the earliest candidate deadline
+may bring the one canonical next refresh forward, but it creates no second timer, collector, or
+backoff. Browser and notification activity still share one adaptive 5-second-to-1-hour delay and
+the same hard five-second per-Host floor.
 
 Install and privately configure `pingme` only on the Fleet host, under the same account that runs
 the plugin-owned supervisor. Then add this object to the owner-only `gateway.json`:
@@ -229,15 +236,18 @@ the plugin-owned supervisor. Then add this object to the owner-only `gateway.jso
 reads or distributes the CLI's token, webhook, or private config, and remote nodes need no Discord
 settings.
 
-With `pingme`'s standard default template, Fleet maps the observed harness, workspace, and Tab into
-the template's Agent/project/session header. Known harness ids use their normal product spelling,
-such as `codex` → `Codex`, while unknown names are retained after bounded single-line
-normalization. The message body is only one clickable canonical Fleet Pane link—there is no
-`Agent completed` / `Agent needs you` title and no repeated context block. A rendered message has
-this shape (the second line remains `pingme`'s normal local sender/time metadata):
+With `pingme`'s standard default template, Fleet maps the observed harness and workspace into the
+template's Agent/project header and uses the generic session label `Fleet`; concrete Tab and Pane
+labels are not rendered. Known harness ids use their normal product spelling, such as `codex` →
+`Codex`, while unknown names are retained after bounded single-line normalization. Confirmed Ready
+alerts explicitly select the configured `success` avatar, while Needs You selects `needs-input`;
+the local `pingme` profiles remain the authoritative visual definitions. The message body is only
+one clickable canonical Fleet Pane link—there is no `Agent completed` / `Agent needs you` title and
+no repeated context block. A rendered message has this shape (the second line remains `pingme`'s
+normal local sender/time metadata):
 
 ```markdown
-> **🤖 `Codex`   📦 `Example project`   💬 `Main`**
+> **🤖 `Codex`   📦 `Example project`   💬 `Fleet`**
 > **🏠 `operator@fleet-host`   📅 `8/15 12:34:56`**
 [Open Pane in Fleet](https://herdr.example.com/?instance=cluster-a&pane=w0%3Ap7)
 ```
@@ -251,9 +261,9 @@ Omitting `template` uses `pingme`'s existing default template. A custom selector
 works once the installed `pingme` version supports absolute template selectors. Custom templates
 receive `agent`, `status`, `status_label`, `host`, `host_id`, `workspace`, `workspace_id`, `tab`,
 `tab_id`, `pane`, `pane_id`, `session`, `observed_at`, and `pane_url` variables in addition to the
-link-only default `message` and the same Agent-specific runtime metadata. Delivery uses one direct,
-timeout-bounded child process at a time, never a shell; a failed transition is diagnosed once and
-not automatically retried.
+link-only default `message`, Agent/project/generic-Fleet runtime metadata, and state-specific
+avatar. Delivery uses one direct, timeout-bounded child process at a time, never a shell; a failed
+transition is diagnosed once and not automatically retried.
 
 An SSH transport may omit `jump` for a direct connection or add the structured `jump` object shown
 in `gateway.example.json` when the target is reachable only through a bastion. The jump endpoint has

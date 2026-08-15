@@ -78,7 +78,7 @@ export interface FleetState {
 export interface FleetCollectorRuntime {
   schedule?: (callback: () => void | Promise<void>, delayMs: number) => unknown;
   cancel?: (handle: unknown) => void;
-  onCycle?: (state: FleetState) => void;
+  onCycle?: (state: FleetState) => number | null | void;
   warn?: (message: string) => void;
 }
 
@@ -369,7 +369,11 @@ export class FleetCollector {
       this.nextRefreshAt = Math.max(this.now() + this.refreshDelayMs, this.nextNodeEligibility());
       if (this.onCycle) {
         try {
-          this.onCycle(this.snapshot());
+          const observerDeadline = this.onCycle(this.snapshot());
+          if (typeof observerDeadline === "number" && Number.isFinite(observerDeadline)) {
+            const earliestEligibleAt = Math.max(this.now(), this.nextNodeEligibility());
+            this.nextRefreshAt = Math.min(this.nextRefreshAt, Math.max(observerDeadline, earliestEligibleAt));
+          }
         } catch {
           this.warn("[gateway/fleet] collection observer failed");
         }

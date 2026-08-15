@@ -63,15 +63,22 @@ successfully observed status and timestamps; the next successful snapshot replac
 authoritatively, including confirmed removals.
 
 When central Discord alerts are configured, a second memory-only ledger consumes completed live
-collector cycles. It silently baselines first-seen Pane identities and emits once when a later
-authoritative observation enters `done` or `blocked`; offline projections cannot fire it. The
-adapter constructs the canonical Fleet instance/session/Pane link and invokes an absolute local
-`pingme` executable without a shell. Channel/template selectors and safe Agent-card variables cross
-that process boundary, but Discord credentials remain in `pingme`'s own private local config and
-never enter Gateway or any remote node. The default-template runtime header receives the observed
-harness's human-readable name, workspace, and Tab; its message body is only the canonical Markdown
-Pane link. Status and the remaining context stay available as structured custom-template variables
-without being repeated in the default body.
+collector cycles. It silently baselines first-seen Pane identities and creates a candidate when a
+later authoritative observation enters `Ready · unseen` or `Needs You`. A second authoritative
+observation at least ten seconds later must confirm the same group; handling, offline projection,
+removal, or identity replacement cancels the candidate, and a confirmed continuous group sends
+only once. The ledger returns its earliest deadline to the existing collector, which may clamp its
+one canonical next refresh subject to the five-second Host floor without adding a timer or backoff.
+
+The adapter constructs the canonical Fleet instance/session/Pane link and invokes an absolute
+local `pingme` executable without a shell. Channel/template selectors and safe Agent-card variables
+cross that process boundary, but Discord credentials remain in `pingme`'s own private local config
+and never enter Gateway or any remote node. The default-template runtime header receives the
+observed harness's human-readable name and workspace plus generic session label `Fleet`; it never
+renders concrete Tab or Pane labels. Ready and Needs You explicitly select the configured
+`success` and `needs-input` avatars respectively, while the message body is only the canonical
+Markdown Pane link. Status and the remaining context stay available as structured custom-template
+variables without being repeated in the default body.
 
 Embedding is deliberately asymmetric. Fleet's document CSP permits `frame-src` only for exact,
 enabled node origins and Fleet itself stays non-embeddable. The Gateway rewrites only proxied node

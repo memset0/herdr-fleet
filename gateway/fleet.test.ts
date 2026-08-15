@@ -276,7 +276,9 @@ describe("Fleet aggregation", () => {
           cancelled.push(handle as number);
           jobs.delete(handle as number);
         },
-        onCycle: (state) => cycles.push(state.refresh.delayMs),
+        onCycle: (state) => {
+          cycles.push(state.refresh.delayMs);
+        },
       },
     );
     const fireOnlyTimer = async (): Promise<void> => {
@@ -315,6 +317,67 @@ describe("Fleet aggregation", () => {
     collector.stopBackgroundRefresh();
     expect(jobs.size).toBe(0);
     expect(cancelled.length).toBeGreaterThan(0);
+  });
+
+  test("clamps the one canonical timer to an observer deadline without changing backoff or the Host floor", async () => {
+    const config = gatewayConfig();
+    const transports = new TransportRegistry(config.nodes);
+    let clock = 100;
+    let calls = 0;
+    let nextHandle = 0;
+    let observerDeadline: number | null = null;
+    const jobs = new Map<number, { callback: () => void | Promise<void>; delayMs: number }>();
+    const collector = new FleetCollector(
+      config,
+      transports,
+      (async () => {
+        calls += 1;
+        return response([], [session("default", { isPrimary: true, agents: 0 })]);
+      }) as unknown as typeof fetch,
+      () => clock,
+      {
+        schedule: (callback, delayMs) => {
+          const handle = ++nextHandle;
+          jobs.set(handle, { callback, delayMs });
+          return handle;
+        },
+        cancel: (handle) => {
+          jobs.delete(handle as number);
+        },
+        onCycle: () => observerDeadline,
+      },
+    );
+    const fireOnlyTimer = async (): Promise<void> => {
+      expect(jobs.size).toBe(1);
+      const [handle, job] = [...jobs][0]!;
+      jobs.delete(handle);
+      await job.callback();
+    };
+
+    collector.startBackgroundRefresh();
+    await fireOnlyTimer();
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 5_100 });
+
+    observerDeadline = 9_000;
+    clock = 5_100;
+    await fireOnlyTimer();
+    expect(calls).toBe(2);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 10_000, nextAt: 10_100 });
+    expect([...jobs.values()].map((job) => job.delayMs)).toEqual([5_000]);
+
+    clock = 6_000;
+    await collector.refresh({ manual: true });
+    expect(calls).toBe(2);
+    expect(jobs.size).toBe(1);
+    expect([...jobs.values()].map((job) => job.delayMs)).toEqual([4_100]);
+
+    observerDeadline = null;
+    clock = 10_100;
+    await fireOnlyTimer();
+    expect(calls).toBe(3);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 15_100 });
+    expect(jobs.size).toBe(1);
+    collector.stopBackgroundRefresh();
   });
 
   test("keeps collection page-driven until background monitoring is explicitly started", async () => {
