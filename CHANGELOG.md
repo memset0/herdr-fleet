@@ -6,6 +6,21 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.11] - 2026-08-15
+
+### Fixed
+
+- Canonical notification, Agent-menu, iframe-report, and clipboard links now retain explicit validated Host-instance, Space, Tab, and Pane route identity so sibling Panes in one Tab cannot lose their distinguishing context (be95e58)
+- The central iframe shell derives or preserves Space/Tab identity for compatible older node reports and rejects partial pairs instead of silently stripping complete outer-link context (be95e58)
+
+### Security
+
+- Complete route links contain only public inventory/Herdr route selectors and never add a coding-agent session or Thread identifier (be95e58)
+
+### Upgrading
+
+- Central deployment fixes new notification links immediately. Remote nodes remain compatible; updating them later lets their iframe route reporter provide Space/Tab directly.
+
 ## [2.1.10] - 2026-08-15
 
 ### Changed
