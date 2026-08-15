@@ -6,6 +6,26 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.8] - 2026-08-15
+
+### Added
+
+- Confirmed Ready and Needs You alerts now make one bounded, non-seen History read and put only the newest Assistant text before the canonical Fleet Pane link, with link-only fallback for unavailable or incompatible nodes (2bac34c)
+- Discord deliveries override the webhook username with the bounded readable `Space · Tab · Pane` hierarchy while omitting unavailable or internal-id-only levels (ed11391)
+
+### Changed
+
+- Alert replies remove blank lines and place the Fleet link immediately on the final line for a more compact Discord layout (02b503f)
+- Native Collie headers omit the redundant dog/home affordance only while framed, allowing the breadcrumb to shift left; direct and new-tab pages retain the existing logo and home action (152a3a0)
+
+### Security
+
+- History enrichment excludes user turns, reasoning, tools, summaries, notes, and all other entries; bounds response bytes and reply characters; never enters Fleet state, logs, or backoff; and cannot mark a Pane seen (2bac34c)
+
+### Upgrading
+
+- This patch remains wire-compatible with `2.1.x` node bridges. Older nodes keep link-only alerts when History is disabled and retain their prior embedded-header presentation until separately upgraded.
+
 ## [2.1.7] - 2026-08-15
 
 ### Changed
