@@ -6,6 +6,18 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.7] - 2026-08-15
+
+### Changed
+
+- Fleet now holds each new `Ready · unseen` or `Needs You` state for ten seconds and sends only after a later authoritative fetch confirms the same actionable group; handling, offline state, removal, or identity replacement cancels the candidate, and a continuous confirmed group never repeats (a8b86fe)
+- Confirmation deadlines clamp the existing collector's one canonical next refresh while preserving its adaptive delay, single timer, in-flight coalescing, and five-second per-Host floor (a8b86fe)
+- Confirmed Ready and Needs You alerts explicitly select the configured `success` and `needs-input` avatars; the default runtime header now uses generic `Fleet` instead of a concrete Tab, and the body remains only the canonical Pane link (a8b86fe)
+
+### Upgrading
+
+- This central notification patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.6] - 2026-08-15
 
 ### Changed
