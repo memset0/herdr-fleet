@@ -6,6 +6,18 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.13] - 2026-08-16
+
+### Fixed
+
+- Unreachable cached Agent cards now preserve pending confirmation deadlines and the last authoritative attention group, so recovery resumes the same episode instead of losing or duplicating it (28fec41)
+- Suspended offline candidates no longer pull the shared collector toward an expired deadline, preserving its adaptive backoff while the existing schedule discovers recovery (28fec41)
+- The Gateway now allows one `pingme` child up to 120 seconds to finish its own bounded Discord operation and logs only a sanitized failure class, without automatic redelivery after an ambiguous timeout (28fec41)
+
+### Upgrading
+
+- This central notification patch remains wire-compatible with `2.1.x` node bridges, so remote nodes may defer updating and do not need a restart.
+
 ## [2.1.12] - 2026-08-15
 
 ### Fixed
