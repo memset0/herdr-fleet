@@ -61,7 +61,7 @@ interface NotifierOptions {
   history?: FleetHistoryReader;
 }
 
-const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
+export const PINGME_COMMAND_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_PENDING = 128;
 const MAX_COMMAND_OUTPUT_BYTES = 64 * 1_024;
 export const FLEET_DISCORD_CONFIRMATION_MS = 10_000;
@@ -131,17 +131,38 @@ export function fleetDiscordAvatar(status: FleetDiscordAlert["status"]): "succes
   return status === "done" ? "success" : "needs-input";
 }
 
-function commandFailure(error: { code?: string | number; killed?: boolean; signal?: string | null }): Error {
-  if (error.killed || error.signal === "SIGTERM") return new Error("pingme timed out");
-  if (error.code === "ENOENT") return new Error("pingme executable is unavailable");
-  return new Error(`pingme exited unsuccessfully${error.code === undefined ? "" : ` (${String(error.code)})`}`);
+export type PingmeCommandFailureKind = "timeout" | "unavailable" | "exit";
+
+export class PingmeCommandFailure extends Error {
+  constructor(readonly kind: PingmeCommandFailureKind, exitCode?: string | number) {
+    super(
+      kind === "timeout"
+        ? "pingme timed out"
+        : kind === "unavailable"
+          ? "pingme executable is unavailable"
+          : `pingme exited unsuccessfully${exitCode === undefined ? "" : ` (${String(exitCode)})`}`,
+    );
+    this.name = "PingmeCommandFailure";
+  }
+}
+
+function commandFailure(
+  error: { code?: string | number; killed?: boolean; signal?: string | null },
+): PingmeCommandFailure {
+  if (error.killed || error.signal === "SIGTERM") {
+    return new PingmeCommandFailure("timeout");
+  }
+  if (error.code === "ENOENT") {
+    return new PingmeCommandFailure("unavailable");
+  }
+  return new PingmeCommandFailure("exit", error.code);
 }
 
 export function runPingmeCommand(
   executable: string,
   args: readonly string[],
   env: NodeJS.ProcessEnv,
-  timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  timeoutMs = PINGME_COMMAND_TIMEOUT_MS,
 ): Promise<PingmeCommandResult> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -291,6 +312,7 @@ export class FleetDiscordNotifier {
     const knownSources = new Set<string>();
     const authoritativeSources = new Set<string>();
     const currentCards = new Set<string>();
+    const reachableCards = new Set<string>();
 
     for (const node of state.nodes) {
       if (node.health === "online") authoritativeNodes.add(node.id);
@@ -301,15 +323,13 @@ export class FleetDiscordNotifier {
       }
       for (const agent of node.agentEntries) {
         const key = cardKey(node.id, agent);
-        if (!agent.reachable) {
-          this.candidates.delete(key);
-          continue;
-        }
+        if (!agent.reachable) continue;
         const source = sourceKey(node.id, agent.herdrSession);
         const identity = cardIdentity(agent);
         const previous = this.observations.get(key);
         const currentActionable = actionableGroup(agent);
         currentCards.add(key);
+        reachableCards.add(key);
         authoritativeSources.add(source);
 
         if (!previous || previous.identity !== identity) {
@@ -353,7 +373,8 @@ export class FleetDiscordNotifier {
     }
 
     let earliest: number | null = null;
-    for (const candidate of this.candidates.values()) {
+    for (const [key, candidate] of this.candidates) {
+      if (!reachableCards.has(key)) continue;
       if (earliest === null || candidate.dueAt < earliest) earliest = candidate.dueAt;
     }
     return earliest;
@@ -384,10 +405,15 @@ export class FleetDiscordNotifier {
         }
         await this.sender.send(buildFleetDiscordAlert(this.fleetHost, node, alertAgent, reply));
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         // The composed message is an argv value; keep it out of diagnostics even if an injected
         // sender returns an unsafe error string.
-        this.warn(`[gateway/discord] could not deliver ${node.id}/${agent.paneId}; event will not be retried`);
+        const reason = error instanceof PingmeCommandFailure
+          ? ` (${error.kind === "timeout" ? "pingme timed out" : error.kind === "unavailable" ? "pingme unavailable" : "pingme exited"})`
+          : "";
+        this.warn(
+          `[gateway/discord] could not deliver ${node.id}/${agent.paneId}${reason}; event will not be retried`,
+        );
       })
       .finally(() => {
         this.pending -= 1;

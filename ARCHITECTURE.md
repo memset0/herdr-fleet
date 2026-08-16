@@ -71,11 +71,13 @@ collector cycles. It silently baselines first-seen Pane identities and creates a
 later authoritative observation enters `Ready · unseen` or `Needs You`. The candidate retains its
 original deadline across Recent, idle, unknown, and attention-group changes; the latest actionable
 group selects delivery status. A second authoritative observation at least ten seconds later
-confirms the same reachable Pane unless it entered `Working`/`Running`; that explicit work
-resumption, offline projection, removal, or identity replacement cancels the candidate. A confirmed
-continuous group sends only once. The ledger returns its earliest deadline to the existing
-collector, which may clamp its one canonical next refresh subject to the five-second Host floor
-without adding a timer or backoff.
+confirms the same reachable Pane unless it entered `Working`/`Running`. An unreachable cached card
+is missing evidence: it changes neither the candidate nor the last authoritative comparison, and
+recovery of the same identity resumes the episode. Explicit work resumption, authoritative removal,
+or identity replacement still cancels. A confirmed episode sends once and an offline interval does
+not rearm it. The ledger returns the earliest deadline only for currently reachable candidate
+cards, so an expired suspended candidate cannot clamp repeated outage polling to the five-second
+Host floor or add another timer/backoff.
 
 The adapter constructs the canonical Fleet instance/Space/Tab/Pane link plus an optional named-session
 selector and invokes an absolute
@@ -96,7 +98,11 @@ removes blank lines, and caps the ephemeral reply. The default message places th
 immediately before the canonical Markdown Pane
 link; the bounded reply is also an optional custom-template variable. Unavailable or incompatible
 History falls back to the byte-compatible link-only body without a retry, and neither transcript
-content nor failure details enter state or diagnostics.
+content nor unsafe failure details enter state or diagnostics. The delivery child has a 120-second
+outer deadline so `pingme` can complete its own bounded Discord operation without being killed at
+the ten-second Agent confirmation interval. Known failures log only a closed
+timeout/unavailable/exit class and are not automatically retried, because a process timeout can be
+ambiguous after Discord has accepted a message.
 
 Embedding is deliberately asymmetric. Fleet's document CSP permits `frame-src` only for exact,
 enabled node origins and Fleet itself stays non-embeddable. The Gateway rewrites only proxied node

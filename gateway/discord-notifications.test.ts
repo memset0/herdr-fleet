@@ -9,6 +9,8 @@ import {
   fleetDiscordUsername,
   FLEET_DISCORD_CONFIRMATION_MS,
   FleetDiscordNotifier,
+  PINGME_COMMAND_TIMEOUT_MS,
+  PingmeCommandFailure,
   PingmeDiscordSender,
   pingmeArguments,
   runPingmeCommand,
@@ -302,12 +304,34 @@ describe("Fleet Discord message adapter", () => {
   });
 
   test("bounds missing-executable and timeout failures without exposing child output", async () => {
-    await expect(
-      runPingmeCommand("/synthetic/missing/pingme", [], {}, 100),
-    ).rejects.toThrow("executable is unavailable");
-    await expect(
-      runPingmeCommand(process.execPath, ["-e", "await Bun.sleep(1000)"], process.env, 10),
-    ).rejects.toThrow("timed out");
+    expect(PINGME_COMMAND_TIMEOUT_MS).toBe(120_000);
+
+    try {
+      await runPingmeCommand("/synthetic/missing/pingme", [], {}, 100);
+      throw new Error("missing executable unexpectedly succeeded");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PingmeCommandFailure);
+      expect((error as PingmeCommandFailure).kind).toBe("unavailable");
+      expect((error as Error).message).toBe("pingme executable is unavailable");
+    }
+
+    try {
+      await runPingmeCommand(process.execPath, ["-e", "await Bun.sleep(1000)"], process.env, 10);
+      throw new Error("timed command unexpectedly succeeded");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PingmeCommandFailure);
+      expect((error as PingmeCommandFailure).kind).toBe("timeout");
+      expect((error as Error).message).toBe("pingme timed out");
+    }
+
+    try {
+      await runPingmeCommand(process.execPath, ["-e", "process.exit(7)"], process.env, 100);
+      throw new Error("failed command unexpectedly succeeded");
+    } catch (error) {
+      expect(error).toBeInstanceOf(PingmeCommandFailure);
+      expect((error as PingmeCommandFailure).kind).toBe("exit");
+      expect((error as Error).message).toContain("(7)");
+    }
   });
 });
 
@@ -544,28 +568,92 @@ describe("Fleet Discord transition ledger", () => {
     expect(sender.alerts).toEqual([]);
   });
 
-  test("cancels offline candidates and compares recovery with the last successful group", async () => {
+  test("suspends a candidate offline without pinning refresh and confirms it on recovery", async () => {
     const sender = new RecordingSender();
     const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
     notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
     expect(notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 100 }))).toBe(10_100);
-    notifier.observe(
+    expect(notifier.observe(
       fleet([card("w0:p1", "blocked", { reachable: false, observedAt: 100 })], {
         generatedAt: 5_000,
         health: "transport-down",
         sessionReachable: false,
       }),
+    )).toBeNull();
+    expect(notifier.observe(
+      fleet([card("w0:p1", "blocked", { reachable: false, observedAt: 100 })], {
+        generatedAt: 20_000,
+        health: "transport-down",
+        sessionReachable: false,
+      }),
+    )).toBeNull();
+    notifier.observe(
+      fleet([card("w0:p1", "idle", { observedAt: 30_000, lastActiveAt: 20_000 })], {
+        generatedAt: 30_000,
+      }),
     );
-    expect(
-      notifier.observe(
-        fleet([card("w0:p1", "blocked", { observedAt: 20_000, lastActiveAt: 20_000 })], {
-          generatedAt: 20_000,
-        }),
-      ),
-    ).toBeNull();
     await notifier.flush();
 
+    expect(sender.alerts.map((alert) => [alert.status, alert.observedAt])).toEqual([["blocked", 30_000]]);
+    notifier.observe(fleet([card("w0:p1", "idle")], { generatedAt: 40_000 }));
+    await notifier.flush();
+    expect(sender.alerts).toHaveLength(1);
+  });
+
+  test("keeps the original remaining deadline when a candidate recovers before it is due", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    expect(notifier.observe(fleet([card("w0:p1", "done")], { generatedAt: 100 }))).toBe(10_100);
+    expect(notifier.observe(
+      fleet([card("w0:p1", "done", { reachable: false })], {
+        generatedAt: 5_000,
+        sessionReachable: false,
+      }),
+    )).toBeNull();
+    expect(notifier.observe(fleet([card("w0:p1", "done")], { generatedAt: 6_000 }))).toBe(10_100);
+    notifier.observe(fleet([card("w0:p1", "done", { observedAt: 10_100 })], { generatedAt: 10_100 }));
+    await notifier.flush();
+    expect(sender.alerts).toHaveLength(1);
+  });
+
+  test("cancels a suspended candidate when recovery authoritatively resumes work", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(fleet([card("w0:p1", "blocked")], { generatedAt: 100 }));
+    notifier.observe(
+      fleet([card("w0:p1", "blocked", { reachable: false })], {
+        generatedAt: 5_000,
+        sessionReachable: false,
+      }),
+    );
+    expect(notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 20_000 }))).toBeNull();
+    await notifier.flush();
     expect(sender.alerts).toEqual([]);
+  });
+
+  test("does not duplicate an already delivered episode across repeated offline recovery", async () => {
+    const sender = new RecordingSender();
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender);
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(fleet([card("w0:p1", "done")], { generatedAt: 100 }));
+    notifier.observe(fleet([card("w0:p1", "done")], { generatedAt: 10_100 }));
+    await notifier.flush();
+    expect(sender.alerts).toHaveLength(1);
+
+    for (const generatedAt of [20_000, 30_000]) {
+      expect(notifier.observe(
+        fleet([card("w0:p1", "done", { reachable: false })], {
+          generatedAt,
+          health: "transport-down",
+          sessionReachable: false,
+        }),
+      )).toBeNull();
+    }
+    expect(notifier.observe(fleet([card("w0:p1", "done")], { generatedAt: 40_000 }))).toBeNull();
+    await notifier.flush();
+    expect(sender.alerts).toHaveLength(1);
   });
 
   test("prunes candidates and silently re-baselines removed or identity-replaced Panes", async () => {
@@ -649,6 +737,23 @@ describe("Fleet Discord transition ledger", () => {
     expect(sender.alerts).toHaveLength(1);
     expect(warnings.filter((message) => message.includes("queue is full"))).toHaveLength(1);
     expect(warnings.filter((message) => message.includes("could not deliver"))).toHaveLength(1);
+    expect(warnings.join("\n")).not.toContain("synthetic failure");
+  });
+
+  test("logs only the closed pingme failure classification", async () => {
+    const warnings: string[] = [];
+    const sender = new RecordingSender(new PingmeCommandFailure("timeout"));
+    const notifier = new FleetDiscordNotifier("fleet.example.com", sender, {
+      warn: (message) => warnings.push(message),
+    });
+    notifier.observe(fleet([card("w0:p1", "working")], { generatedAt: 0 }));
+    notifier.observe(fleet([card("w0:p1", "done")], { generatedAt: 100 }));
+    notifier.observe(fleet([card("w0:p1", "done")], { generatedAt: 10_100 }));
+    await notifier.flush();
+
+    expect(warnings).toEqual([
+      "[gateway/discord] could not deliver cluster-a/w0:p1 (pingme timed out); event will not be retried",
+    ]);
   });
 
   test("preserves state for an unavailable session but prunes a session removed by a healthy node", async () => {

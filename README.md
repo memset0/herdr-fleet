@@ -215,14 +215,18 @@ becomes an in-memory candidate; Gateway sends only after another authoritative f
 seconds later still finds the same reachable Pane identity without an intervening `Working`
 (`Running`) observation. Opening the Pane so Ready becomes Recent, moving through idle/unknown, or
 switching between Ready and Needs You preserves the candidate and its original deadline; the newest
-attention group selects the eventual status and avatar. Explicitly resuming work cancels the event,
-as do going offline, disappearing, or changing identity to prevent stale delivery. A confirmed
-continuously actionable group sends once and does not repeat until a later actionable transition.
+attention group selects the eventual status and avatar. An offline Host/session is treated as
+missing evidence: it preserves the candidate and the last authoritative comparison without sending
+from stale data. Recovery of the same Pane resumes the original deadline, while explicit work
+resumption, authoritative removal, or identity replacement cancels the event. A confirmed episode
+sends once; an offline interval alone never rearms it or repeats the same notification.
 
 Confirmation uses the exact Fleet refresh state described above: the earliest candidate deadline
-may bring the one canonical next refresh forward, but it creates no second timer, collector, or
-backoff. Browser and notification activity still share one adaptive 5-second-to-1-hour delay and
-the same hard five-second per-Host floor.
+may bring the one canonical next refresh forward only while that Pane is reachable. A suspended
+offline candidate does not pin polling to the five-second floor; recovery is discovered through the
+same adaptive/manual schedule and an overdue candidate is evaluated immediately. This creates no
+second timer, collector, or backoff. Browser and notification activity still share one adaptive
+5-second-to-1-hour delay and the same hard five-second per-Host floor.
 
 Install and privately configure `pingme` only on the Fleet host, under the same account that runs
 the plugin-owned supervisor. Then add this object to the owner-only `gateway.json`:
@@ -286,9 +290,11 @@ receive `agent`, `status`, `status_label`, `host`, `host_id`, `workspace`, `work
 `tab_id`, `pane`, `pane_id`, `session`, `observed_at`, `pane_url`, and optional `agent_reply`
 variables in addition to the composed default `message`, Agent/project runtime metadata, readable
 Tab session title, and state-specific avatar. History resolution and delivery are serialized outside the
-collector; delivery uses one direct, timeout-bounded child process at a time, never a shell. A
-failed History read falls back once and a failed transition is diagnosed once; neither is
-automatically retried.
+collector; delivery uses one direct child process at a time, never a shell. Its 120-second outer
+bound allows `pingme` to finish its own bounded Discord request instead of killing it at the
+ten-second Agent confirmation interval. A failed History read falls back once, while a failed
+delivery emits only a sanitized timeout/unavailable/exit class; neither is automatically retried,
+avoiding an ambiguous timeout producing a duplicate Discord message.
 
 An SSH transport may omit `jump` for a direct connection or add the structured `jump` object shown
 in `gateway.example.json` when the target is reachable only through a bastion. The jump endpoint has
