@@ -1,7 +1,10 @@
 // Semantic Block AST — the intermediate representation between the ANSI parse and the React
-// renderer. `raw` mirrors terminal output verbatim; `prompt-select` lifts a Claude single-choice
-// dialog into a typed payload the renderer draws as buttons. The discriminated union is shaped so
-// further grammars (tool calls, …) are added as new `kind`s without disturbing these.
+// renderer. `raw` mirrors terminal output verbatim; every other kind lifts a dialog into a typed
+// payload the renderer draws as buttons. Those payloads are harness-NEUTRAL contracts, each in its
+// own harness/*-model.ts (re-exported below): what ANY adapter promises when it emits that kind, so
+// the renderers and the race guard are written against the model, never against a harness's
+// internals. The discriminated union is shaped so further grammars (tool calls, …) are added as new
+// `kind`s without disturbing these.
 //
 // The pipeline is: parseAnsi(text) → AnsiSegment[] → splitLines(segments) → StyledLine[] →
 // buildBlocks(lines, ctx) → Block[]. splitLines (and the pure helpers below) live here; the
@@ -18,28 +21,35 @@
 // (find covers the raw mirror only).
 
 import type { AnsiSegment } from "./ansi";
-import type { PromptModel } from "./harness/claude/prompt-select";
-import type { WizardModel } from "./harness/claude/wizard";
-import type { PreviewSelectModel } from "./harness/claude/preview-select";
-import type { MultiSelectModel } from "./harness/claude/multi-select";
+import { PURE_HORIZONTAL_RULE_GLYPH_CLASS } from "./rule-glyphs";
+import type { PromptModel } from "./harness/prompt-model";
+import type { WizardModel } from "./harness/wizard-model";
+import type { PreviewSelectModel } from "./harness/preview-model";
+import type { MultiSelectModel } from "./harness/multi-select-model";
+import type { MenuModel } from "./harness/menu-model";
 
-// Re-export the prompt-select + wizard + preview + multi-select models so consumers (the block
-// components, the race guards) have one import site for the AST's typed payloads. These are
-// TYPE-ONLY re-exports (erased under verbatimModuleSyntax), so they add no runtime edge into
-// harness/ — the value dependency stays one-way (harness → blocks).
-export type { PromptModel, PromptOption, PromptFamily } from "./harness/claude/prompt-select";
-export type { WizardModel, WizardOption, WizardStepChip, WizardAnswer } from "./harness/claude/wizard";
-export type { PreviewSelectModel, PreviewOption, PreviewNote } from "./harness/claude/preview-select";
+// Re-export every dialog model so consumers (the block components, the race guards) have one import
+// site for the AST's typed payloads. All five are harness-NEUTRAL contracts (harness/*-model.ts):
+// the payload an adapter promises when it emits that block kind, not a Claude internal — the
+// dependency points at the shared modules, never at claude/. These are TYPE-ONLY re-exports (erased
+// under verbatimModuleSyntax), so they add no runtime edge into harness/ either — the value
+// dependency stays one-way (harness → blocks).
+export type { PromptModel, PromptOption, PromptFamily } from "./harness/prompt-model";
+export type { WizardModel, WizardOption, WizardStepChip, WizardAnswer } from "./harness/wizard-model";
+export type { PreviewSelectModel, PreviewOption, PreviewNote } from "./harness/preview-model";
 export type {
   MultiSelectModel,
   MultiSelectOption,
   MultiSelectEscape,
   MultiPointer,
-} from "./harness/claude/multi-select";
+} from "./harness/multi-select-model";
+export type { MenuModel, MenuAction, MenuNav, MenuLeftRight } from "./harness/menu-model";
 
 /** One visual line: the styled segments that make it up, with the line-terminating "\n" removed. */
 export interface StyledLine {
   segments: AnsiSegment[];
+  /** Keep this known terminal-width border on one visual row when the mirror wraps. */
+  noWrap?: true;
 }
 
 /** A run of raw terminal output. Renders as verbatim styled text (the T1 mirror). */
@@ -94,6 +104,19 @@ export interface MultiSelectBlock {
 }
 
 /**
+ * A GENERIC modal menu (the `/model` picker and its kin) claimed by the last-resort footer grammar —
+ * a screen no specific dialog grammar owns, driven by the keys it printed in its own footer. Unlike
+ * the dialog blocks above, its region text IS rendered: the grammar understands the footer, not the
+ * body, so the body has to stay readable for the buttons under it to mean anything. `lines` is that
+ * region — still not part of the find haystack (find runs over raw blocks only).
+ */
+export interface MenuBlock {
+  kind: "menu";
+  menu: MenuModel;
+  lines: StyledLine[];
+}
+
+/**
  * A semantic block. A discriminated union on `kind`; new members are added purely additively, so a
  * `switch (block.kind)` in the renderer stays exhaustive.
  */
@@ -102,7 +125,8 @@ export type Block =
   | PromptSelectBlock
   | WizardBlock
   | PreviewSelectBlock
-  | MultiSelectBlock;
+  | MultiSelectBlock
+  | MenuBlock;
 
 /**
  * Split parsed segments into visual lines at "\n" boundaries. The newline characters become the
@@ -133,7 +157,7 @@ export function splitLines(segments: AnsiSegment[]): StyledLine[] {
       const end = idx === -1 ? t.length : idx;
       if (end > start) current.push({ ...seg, text: t.slice(start, end) });
       if (idx === -1) break;
-      lines.push({ segments: current });
+      lines.push(styledLine(current));
       current = [];
       start = idx + 1;
     }
@@ -141,17 +165,49 @@ export function splitLines(segments: AnsiSegment[]): StyledLine[] {
 
   // The trailing run (after the last "\n", or the whole input if it had none) is the final line —
   // pushed even when empty so a trailing newline yields a terminating blank line.
-  lines.push({ segments: current });
+  lines.push(styledLine(current));
   return lines;
 }
 
-// The two generic StyledLine probes trimTrailingBlank needs. Kept LOCAL (harness/claude/markers has
-// an identical pair for the grammars) so this core module imports nothing from harness/ — that is
-// what keeps the harness → blocks edge one-way and cycle-free.
-function lineText(line: StyledLine): string {
+// A terminal-width horizontal border is visually useless when browser wrapping turns it into several rows.
+// This deliberately accepts only one repeated horizontal rule glyph (apart from terminal padding): labels,
+// mixed rows, corners/tables, prose, and ASCII rules keep the mirror's ordinary wrapping.
+//
+// Twenty stands on two facts of its own, and deliberately cites no other threshold. (1) Nothing in prose,
+// markdown or code runs to twenty IDENTICAL rule glyphs, so the classifier cannot fire on real content.
+// (2) Below roughly twenty columns a row already fits the narrowest mirror without wrapping, so clipping
+// it would buy nothing — the only rows worth clipping are the ones wide enough to wrap.
+//
+// An earlier revision derived this number from the Claude grammar's own 20-glyph box-border run. That run
+// no longer exists: it was a hidden assumption that the pane is at least twenty columns wide, which is
+// exactly what stalled the reply guard on a 19-column pane (issue #76), and markers.ts replaced it with a
+// display-cell floor. Do not re-couple the two. They classify borders for different consumers with
+// opposite failure costs — a false positive there types Enter into the wrong screen, a false positive here
+// crops a short rule — so they share the glyph alphabet in rule-glyphs.ts and nothing else.
+const MIN_NO_WRAP_BORDER_LENGTH = 20;
+const PURE_HORIZONTAL_BORDER = new RegExp(
+  `^([${PURE_HORIZONTAL_RULE_GLYPH_CLASS}])\\1{${MIN_NO_WRAP_BORDER_LENGTH - 1},}$`,
+);
+
+function styledLine(segments: AnsiSegment[]): StyledLine {
+  const text = segments.map((segment) => segment.text).join("");
+  return PURE_HORIZONTAL_BORDER.test(text.trim()) ? { segments, noWrap: true } : { segments };
+}
+
+// The two generic StyledLine probes. They live HERE, in the core AST module that imports nothing
+// from harness/, because they are properties of a StyledLine and of no grammar: the renderer
+// (components/ansi-output.tsx) and every harness adapter need them, and a second copy in a
+// harness-specific module would make a neutral consumer import a harness. harness/claude/markers
+// re-exports them so the Claude grammars keep their one import site.
+
+/** The visible text of a line: its segments' text concatenated (the "\n" separator lives between
+ *  lines, so a single line's text never contains one). */
+export function lineText(line: StyledLine): string {
   return line.segments.map((s) => s.text).join("");
 }
-function isBlank(text: string): boolean {
+
+/** True when a line is empty or only whitespace. */
+export function isBlank(text: string): boolean {
   return text.trim().length === 0;
 }
 

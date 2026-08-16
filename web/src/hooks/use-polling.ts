@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useRevalidator } from "react-router";
 
+import { beginCatchUp, endCatchUp, isLocked, useLocked } from "@/lib/idle";
 import type { HomeData } from "@/lib/loaders";
 
 // Adaptive polling, the React Router way: a timer that calls `revalidator.revalidate()`, which
@@ -63,9 +64,35 @@ export function usePolling(data: HomeData | undefined, paneId?: string | null): 
 
   const ms = intervalFor(data, paneId);
 
+  // Resuming from the idle lock must refetch AT ONCE. The route tree stays mounted through a pause
+  // (see App), so unlocking re-runs no loaders by itself — without this the first thing you'd see on
+  // resume is however stale the snapshot got while paused, for up to one full interval. Fires on the
+  // falling edge only; `wasLocked` seeds from the current value so mounting never counts as a release.
+  const locked = useLocked();
+  const wasLocked = useRef(locked);
+  useEffect(() => {
+    const released = wasLocked.current && !locked;
+    wasLocked.current = locked;
+    if (!released) return;
+    beginCatchUp(); // holds the cover through the refetch — see the settle effect below
+    if (ref.current.state === "idle") ref.current.revalidate();
+  }, [locked]);
+
+  // End the catch-up beat when the revalidator comes to rest. Keyed on the state itself, so it can't
+  // fire on the loading edge: at release the state is still "idle" for one render, but `beginCatchUp`
+  // has already run by the time this effect's dependency changes to "loading" and back.
+  useEffect(() => {
+    if (revalidator.state === "idle") endCatchUp();
+  }, [revalidator.state]);
+
   useEffect(() => {
     const tick = () => {
       if (document.hidden) return;
+      // Idle-locked: the app is covered and nobody is reading it, so don't keep hitting the socket.
+      // A live read (not a captured render value) because this fires from an interval — and unlike
+      // the `navigator.onLine` trap below, this flag can't lie: it's set by our own lock, and
+      // resuming re-runs every loader, so a pause can't strand the UI on stale data.
+      if (isLocked()) return;
       // Deliberately NO navigator.onLine gate here. On some phones the flag lies — it stuck FALSE
       // after an airplane-mode toggle even though the network was back — and gating the tick on it
       // wedged polling permanently: the app froze on "not connected" with a resting/bad-state dog and

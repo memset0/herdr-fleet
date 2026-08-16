@@ -25,6 +25,23 @@ offline card keeps the section and count treatment implied by its last successfu
 while remaining visibly stale. The adjacent arrow-leaving-a-square control opens the selected
 Collie in a new tab. Fleet intentionally exposes no logout button in this header.
 
+### Collie node controls
+
+The node UI includes Collie v0.28.0's safer remote-input path. A free-text reply refreshes the Pane,
+refuses supported harnesses whose composer is hidden by a dialog, types first, and sends Enter only
+after the fresh Pane verifies the text. The explicit type-anyway path still withholds Enter when it
+cannot verify the draft. Direct terminal typing is a separate ordered queue: it adds no implicit
+Enter and drops pending keys when the selected Pane or page context changes. Claude Code and OMP
+receive structured menu controls; unsupported or ambiguous terminal states stay on the generic
+direct-typing path.
+
+Pane history can search several comma-separated roots per harness, which supports mixed agent
+profiles on one Herdr host. A session is resolved in the first matching root and every later read is
+realpath-contained within that same root. The PWA also carries the v0.28.0 multiline, CJK-width,
+narrow-Pane, Markdown-table, Ctrl+C, and idle-scroll fixes plus lazy bundled Nerd Font symbols.
+HTML navigation remains network-first through the Gateway; only validated same-origin font
+responses enter the lazy cache.
+
 ## Architecture
 
 ```text
@@ -130,6 +147,16 @@ sessions. On a shared home, set `HERDR_WEB_HOST_PREFIX` to the stable Herdr host
 scheduler jobs are denied by default. `HERDR_WEB_FLEET_URL` must be the HTTPS Fleet origin root,
 and `HERDR_WEB_INSTANCE_ID` must match this node's stable Gateway inventory id. They are public
 routing metadata used by the optional Pane-link shortcut; they are not credentials.
+
+Each transcript-root override accepts one directory or several comma-separated directories searched
+in order. Omit them to use the normal harness homes:
+
+```dotenv
+COLLIE_TRANSCRIPT_ROOT=/home/operator/.claude/projects,/home/operator/.claude-work/projects
+COLLIE_CODEX_ROOT=/home/operator/.codex/sessions
+COLLIE_PI_ROOT=/home/operator/.pi/agent/sessions
+COLLIE_OPENCODE_ROOT=/home/operator/.local/share/opencode
+```
 
 A remote node is deliberately a **zero-central-secret** installation. Its `.env` stops at the
 Collie/node settings above: do not set `HERDR_WEB_GATEWAY_CONFIG`, and do not copy `gateway.json`,

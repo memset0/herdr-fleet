@@ -1,7 +1,9 @@
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { parseAnsi } from "../ansi";
+import { splitLines } from "../blocks";
 import { claudeAdapter } from "./claude";
 import { describeAdapterConformance, isValidHerdrKey } from "./conformance";
 
@@ -9,8 +11,12 @@ import { describeAdapterConformance, isValidHerdrKey } from "./conformance";
 // cohorts are derived from the byte-faithful corpus (web/src/fixtures/panes/claude--*.txt) by
 // GLOBBING it, so a newly-captured dialog is covered the moment it lands — including the multiSelect
 // captures whose block may still be wiring up (a not-yet-detecting own fixture is tolerated by the
-// suite, see conformance.ts). Foreign = [] until a second adapter exists; the harness handles the
-// empty cohort cleanly.
+// suite, see conformance.ts).
+//
+// The FOREIGN cohort is the omp corpus — the second adapter's captures. Until it existed this leg was
+// vacuous (`foreignFixtures: []`), so "an adapter must stay raw on another harness's screens" was a
+// documented promise nothing checked. Claude's grammars return raw-only on all 20 omp captures today,
+// and the mirror-image assertion lives in harness/omp.test.ts.
 
 const PANES_DIR = join(import.meta.dirname, "..", "..", "fixtures", "panes");
 
@@ -25,15 +31,25 @@ const NEUTRAL = [
   "claude--send-inflight.txt",
   "claude--rename-resolved.txt",
   "claude--draft-wrapped.txt",
+  // A long send that Claude collapsed into `[Pasted text #3 +3 lines]`: still an input box holding a
+  // draft, never a dialog. Pinned below (.adr/0010) — the token must not read as a modal.
+  "claude--draft-paste-placeholder.txt",
   // Input boxes with the background-agents footer below them — still composer chrome (stripped), not a
   // dialog, so they must stay raw / lift no interactive block.
   "claude--draft-footer-empty.txt",
   "claude--draft-footer-single.txt",
   "claude--draft-footer-wrapped.txt",
+  // The /model picker DISMISSED: the input box is back, so this is an ordinary idle screen. It is the
+  // negative control for the generic menu grammar — its statusline is `·`-separated like a key-hint
+  // footer, and the input-box gate is the only thing that keeps it raw.
+  "claude--menu-model-picker-dismissed.txt",
 ];
 
 const allClaudeFixtures = readdirSync(PANES_DIR)
   .filter((f) => f.startsWith("claude--") && f.endsWith(".txt"))
+  .sort();
+const allOmpFixtures = readdirSync(PANES_DIR)
+  .filter((f) => f.startsWith("omp--") && f.endsWith(".txt"))
   .sort();
 
 const ownFixtures = allClaudeFixtures.filter((f) => !NEUTRAL.includes(f));
@@ -41,8 +57,33 @@ const neutralFixtures = allClaudeFixtures.filter((f) => NEUTRAL.includes(f));
 
 describeAdapterConformance(claudeAdapter, {
   ownFixtures,
-  foreignFixtures: [], // no second adapter yet — the suite tolerates an empty foreign cohort
+  foreignFixtures: allOmpFixtures, // the second adapter's captures — cross-adapter fail-closed
   neutralFixtures,
+});
+
+// The paste-placeholder screen (.adr/0010). The fail-closed cohort above already pins "no dialog is
+// lifted from it"; what this adds is the POSITIVE half the reply guard depends on — the token screen
+// is an ordinary input box with a draft in it, so the pre-flight lets a send through and the draft the
+// guard polls is the token. If any of this drifted, a long send would go back to being un-sendable.
+describe("claude--draft-paste-placeholder.txt — a collapsed long send is composer chrome", () => {
+  const lines = splitLines(
+    parseAnsi(readFileSync(join(PANES_DIR, "claude--draft-paste-placeholder.txt"), "utf8")),
+  );
+
+  it("reads the placeholder off the ❯ line as the draft", () => {
+    expect(claudeAdapter.extractInputDraft(lines)).toBe("[Pasted text #3 +3 lines]");
+  });
+
+  it("is composer-ready (the pre-flight must not mistake the token for a modal)", () => {
+    expect(claudeAdapter.composerReady!(lines)).toBe(true);
+  });
+
+  it("lifts no interactive block, and the draft it shows is send evidence for a matching send", () => {
+    expect(claudeAdapter.buildBlocks(lines).every((b) => b.kind === "raw")).toBe(true);
+    const draft = claudeAdapter.extractInputDraft(lines)!;
+    expect(claudeAdapter.draftCarriesSend!("one\ntwo\nthree\nfour", draft)).toBe(true);
+    expect(claudeAdapter.draftIsOpaque!(draft)).toBe(true);
+  });
 });
 
 // A focused unit test of the grammar validator itself — the load-bearing helper the suite leans on.

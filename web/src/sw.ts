@@ -4,6 +4,7 @@ import { NavigationRoute, registerRoute } from "workbox-routing";
 import { clientsClaim } from "workbox-core";
 
 import { decidePush, type PushPayload } from "./lib/push-decision";
+import { FONT_URLS } from "./lib/sw-routes";
 
 // Custom service worker (vite-plugin-pwa `injectManifest`). It does everything the old generated
 // Workbox SW did — precache the app shell + SPA-fallback navigations — PLUS the two handlers a
@@ -28,6 +29,43 @@ declare const self: ServiceWorkerGlobalScope & {
 // precached and may update while signed out, but no API or HTML navigation bypasses Gateway.
 registerRoute(new NavigationRoute(({ request }) => fetch(request)));
 precacheAndRoute(self.__WB_MANIFEST);
+
+// Bundled Nerd Font faces remain lazy rather than joining the app-shell precache. Cache only an
+// unredirected 200 that identifies itself as a font: an expired Gateway session may otherwise turn
+// a subresource fetch into sign-in HTML, and persisting that response would leave the PWA showing
+// tofu until its site data is cleared.
+const FONT_CACHE = "collie-fonts";
+const isStorableFont = (response: Response) =>
+  response.status === 200 &&
+  !response.redirected &&
+  (response.headers.get("content-type") ?? "").includes("font");
+
+registerRoute(
+  ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith("/fonts/"),
+  async ({ request }) => {
+    const cache = await caches.open(FONT_CACHE);
+    const cached = await cache.match(request);
+    if (cached) return cached;
+
+    const response = await fetch(request);
+    if (isStorableFont(response)) void cache.put(request, response.clone()).catch(() => null);
+    return response;
+  },
+);
+
+// Font versions live in their filenames. Remove any superseded lazy entry without changing the
+// network-first rule for navigations or allowing an API/HTML response into this cache.
+self.addEventListener("activate", (event: ExtendableEvent) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(FONT_CACHE);
+      const live = new Set<string>(FONT_URLS);
+      for (const request of await cache.keys()) {
+        if (!live.has(new URL(request.url).pathname)) await cache.delete(request);
+      }
+    })(),
+  );
+});
 
 // `registerType: "autoUpdate"` means a fresh build should take over without a user gesture. With
 // injectManifest we own that lifecycle: skip the waiting phase on install, claim open clients on

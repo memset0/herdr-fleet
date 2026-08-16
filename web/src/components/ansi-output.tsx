@@ -5,15 +5,16 @@ import { cn } from "@/lib/utils";
 import { parseAnsi } from "@/lib/ansi";
 import { buildBlocks } from "@/lib/harness";
 import {
+  lineText,
   splitLines,
   type Block,
+  type MenuModel,
   type MultiSelectModel,
   type PreviewSelectModel,
   type PromptModel,
   type PromptOption,
   type WizardModel,
 } from "@/lib/blocks";
-import { lineText } from "@/lib/harness/claude/markers";
 import { MIRROR_SPACE, MIRROR_INVERT, styleFor } from "@/components/mirror-space";
 import { findMatches, splitSegment, type FindMatch } from "@/lib/find";
 import { findLinks } from "@/lib/links";
@@ -21,6 +22,7 @@ import { PromptSelectBlock } from "@/components/prompt-select-block";
 import { WizardBlock } from "@/components/wizard-block";
 import { PreviewSelectBlock, type PreviewBlockAction } from "@/components/preview-select-block";
 import { MultiSelectBlock } from "@/components/multi-select-block";
+import { MenuBlock, type MenuBlockAction } from "@/components/menu-block";
 import type { MultiSelectIntent } from "@/lib/multi-select-action";
 
 /** A raw block, narrowed off the Block union (the highlight/offset paths only touch these). */
@@ -33,6 +35,8 @@ type WizBlock = Extract<Block, { kind: "wizard" }>;
 type PrevBlock = Extract<Block, { kind: "preview-select" }>;
 /** The (at most one) multi-select block — tail, mutually exclusive with the other dialog blocks. */
 type MultiBlock = Extract<Block, { kind: "multi-select" }>;
+/** The (at most one) generic-menu block — tail, and only ever lifted when all four above declined. */
+type GenericMenuBlock = Extract<Block, { kind: "menu" }>;
 
 export interface AnsiOutputProps {
   text: string;
@@ -50,8 +54,9 @@ export interface AnsiOutputProps {
   currentMatch?: number;
   /** Reports the current match count back to the parent (drives the find bar's "3/17"). */
   onMatchCount?: (count: number) => void;
-  /** The pane's agent — gates the Claude-only block grammars (prompt-select, chrome). Absent/other
-   *  agents render pure raw output. */
+  /** The pane's agent — picks the adapter whose block grammars run (prompt-select, chrome). Each
+   *  registered adapter contributes its own: claude lifts dialogs and strips chrome, omp strips chrome
+   *  only. An absent/unregistered agent renders pure raw output. */
   agent?: string;
   /** Injected handler for a prompt-select tap (the race guard lives in AgentChat). Absent (or with a
    *  disabled block) means the buttons render but don't act — AnsiOutput never touches the network. */
@@ -65,7 +70,10 @@ export interface AnsiOutputProps {
   /** Injected handler for a multi-select tap (toggle / submit / escape / confirm / cancel — the
    *  race-guarded choreography lives in lib/multi-select-action.ts). Same presentational contract. */
   onMultiSelectAction?: (action: MultiSelectIntent, multi: MultiSelectModel) => void | Promise<void>;
-  /** Disable the prompt-select/wizard/preview/multi-select buttons (read-only device / gone pane). */
+  /** Injected handler for a generic-menu tap (a footer-named key, or an arrow — the race-guarded
+   *  send lives in lib/menu-action.ts). Same presentational contract as onPromptAction. */
+  onMenuAction?: (action: MenuBlockAction, menu: MenuModel) => void | Promise<void>;
+  /** Disable the prompt-select/wizard/preview/multi-select/menu buttons (read-only / gone pane). */
   promptDisabled?: boolean;
 }
 
@@ -149,6 +157,7 @@ export const AnsiOutput = memo(function AnsiOutput({
   onWizardAction,
   onPreviewAction,
   onMultiSelectAction,
+  onMenuAction,
   promptDisabled,
 }: AnsiOutputProps) {
   const segments = useMemo(() => parseAnsi(text), [text]);
@@ -172,6 +181,10 @@ export const AnsiOutput = memo(function AnsiOutput({
   );
   const multiBlock = useMemo(
     () => blocks.find((b): b is MultiBlock => b.kind === "multi-select") ?? null,
+    [blocks],
+  );
+  const menuBlock = useMemo(
+    () => blocks.find((b): b is GenericMenuBlock => b.kind === "menu") ?? null,
     [blocks],
   );
 
@@ -226,6 +239,13 @@ export const AnsiOutput = memo(function AnsiOutput({
       multi={multiBlock.multi}
       disabled={promptDisabled || !onMultiSelectAction}
       onAction={(action) => onMultiSelectAction?.(action, multiBlock.multi)}
+    />
+  ) : menuBlock ? (
+    <MenuBlock
+      menu={menuBlock.menu}
+      lines={menuBlock.lines}
+      disabled={promptDisabled || !onMenuAction}
+      onAction={(action) => onMenuAction?.(action, menuBlock.menu)}
     />
   ) : null;
 
@@ -309,10 +329,15 @@ export const AnsiOutput = memo(function AnsiOutput({
               </span>
             );
           });
+          const content = line.noWrap && wrap ? (
+            <span className="inline-block max-w-full overflow-hidden align-bottom whitespace-pre break-normal">{segNodes}</span>
+          ) : (
+            segNodes
+          );
           return (
             <Fragment key={li}>
               {li > 0 ? "\n" : null}
-              {segNodes}
+              {content}
             </Fragment>
           );
         })}

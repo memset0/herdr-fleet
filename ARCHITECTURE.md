@@ -9,6 +9,20 @@ loopback address and talks to the primary and named Herdr Unix sockets. Its Reac
 session selector, pane deep links, terminal reads, and terminal writes remain Collie's native data
 path. The bridge knows only its own host; it never contacts the Fleet or publishes itself.
 
+Remote input is deliberately read-before-write. A structured free-text reply takes a fresh Pane
+snapshot, fails closed when a supported harness positively lacks a visible composer, writes the
+draft, and emits its submit keys only after a second read verifies that text. A deliberate
+type-anyway override skips only the composer refusal, not submit verification. Direct terminal
+typing uses an ordered queue with no implicit Enter and invalidates pending input on Pane changes,
+page lock/backgrounding, or failure, so old keys cannot spill into a later context.
+
+Harness transcript settings accept several ordered roots. Discovery selects the first root that
+contains the reported session and binds subsequent reads to its realpath; the existing containment
+check is applied relative to that selected root rather than to a caller-derived path. The Web bundle
+keeps every HTML navigation network-first so an expired Gateway session cannot be bypassed by the
+PWA. Lazy Nerd Font responses use a separate cache and are stored only when the same-origin fetch is
+an unredirected 200 with a font content type; obsolete named font entries are swept on activation.
+
 An optional Pane-context action turns the focused Space, Tab, and Pane ids plus public Fleet
 origin/instance metadata into the canonical outer deep link. Because plugin-action stdout is logged rather than connected to
 the terminal, the action opens a transient plugin popup whose single OSC 52 write is consumed by

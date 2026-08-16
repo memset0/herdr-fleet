@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Push } from "./push.ts";
+import { Push, topicIsSendable } from "./push.ts";
 import type { PushSender, PushSubscription } from "./push.ts";
 import { loadConfig } from "./config.ts";
 
@@ -97,6 +97,145 @@ describe("Push — broadcast delivery & pruning", () => {
   });
 });
 
+// Issue #68: a subscription can be permanently dead while the push service answers with something
+// other than 404/410 (Apple says 400 BadDeviceToken), so it was retried forever and re-logged every
+// cycle. Eviction closes that, but only where the evidence is unambiguous — hence the origin guard.
+describe("Push — eviction of persistently-failing subscriptions", () => {
+  const APPLE = "https://web.push.apple.com";
+  const FCM = "https://fcm.googleapis.com";
+  /** A rejection shaped exactly like the WebPushError `web-push` throws (message is the useless
+   *  constant; the real signal is statusCode + the service's reason in `body`). */
+  const rejects = (statusCode: number, body: string) =>
+    Object.assign(new Error("Received unexpected response code"), { statusCode, body });
+
+  /** Collects console output so eviction/prune lines can be asserted (they're the operator's only
+   *  view of this behaviour) without spraying the test run. */
+  async function capturingConsole<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {
+    const lines: string[] = [];
+    const collect = ((...args: unknown[]) => void lines.push(args.map(String).join(" "))) as typeof console.warn;
+    const [origWarn, origLog] = [console.warn, console.log];
+    console.warn = collect;
+    console.log = collect;
+    try {
+      return { result: await fn(), lines };
+    } finally {
+      console.warn = origWarn;
+      console.log = origLog;
+    }
+  }
+
+  /** A sender that fails for `failing` endpoints and delivers for everything else. */
+  function partialSender(failing: Map<string, Error>): PushSender {
+    return (s) => {
+      const err = failing.get(s.endpoint);
+      return err ? Promise.reject(err) : Promise.resolve();
+    };
+  }
+
+  const rounds = (push: Push, n: number) =>
+    capturingConsole(async () => {
+      for (let i = 0; i < n; i++) await push.notify("t", "b");
+    });
+
+  test("a dead-but-not-410 subscription is evicted once a sibling on its service succeeds", async () => {
+    const cfg = await tempCfg();
+    const [dead, live] = [`${APPLE}/dead`, `${APPLE}/live`];
+    const push = new Push(cfg, partialSender(new Map([[dead, rejects(400, '{"reason":"BadDeviceToken"}')]])));
+    const subs = enable(push, [sub(dead), sub(live)]);
+
+    // Four rounds of failure are not enough — a run of transients must not cost anyone their pushes.
+    await rounds(push, 4);
+    expect([...subs.keys()]).toEqual([dead, live]);
+
+    const { lines } = await rounds(push, 1);
+    expect([...subs.keys()]).toEqual([live]);
+    expect(await fileEndpoints(cfg.stateDir)).toEqual([live]);
+    expect(lines.some((l) => l.includes("evicting subscription after 5 consecutive failures"))).toBe(true);
+  });
+
+  test("a service-wide rejection never evicts, however long it lasts", async () => {
+    // The 403-storm case: a VAPID slip makes one service reject every device it holds. Nothing on
+    // that origin succeeds, so nothing is counted — otherwise a sender-side mistake would silently
+    // unsubscribe every iPhone in the herd. This test pins the design.
+    const cfg = await tempCfg();
+    const apples = [`${APPLE}/a`, `${APPLE}/b`, `${APPLE}/c`];
+    const storm = rejects(403, '{"reason":"InvalidProviderToken"}');
+    const push = new Push(cfg, partialSender(new Map(apples.map((e) => [e, storm]))));
+    const subs = enable(push, [...apples.map(sub), sub(`${FCM}/ok`)]);
+
+    await rounds(push, 20);
+
+    expect([...subs.keys()].length).toBe(4);
+  });
+
+  test("the only subscription is never evicted, however long it fails", async () => {
+    // No sibling ⇒ no proof the token is at fault. Losing the sole subscription would trade a loud
+    // log line for silent no-push, which is strictly worse for the one-phone operator.
+    const cfg = await tempCfg();
+    const only = `${APPLE}/only`;
+    const push = new Push(cfg, partialSender(new Map([[only, rejects(400, "BadDeviceToken")]])));
+    const subs = enable(push, [sub(only)]);
+
+    await rounds(push, 20);
+
+    expect([...subs.keys()]).toEqual([only]);
+  });
+
+  test("one delivery resets the streak", async () => {
+    const cfg = await tempCfg();
+    const [flaky, live] = [`${APPLE}/flaky`, `${APPLE}/live`];
+    const failing = new Map([[flaky, rejects(500, "")]]);
+    const push = new Push(cfg, partialSender(failing));
+    const subs = enable(push, [sub(flaky), sub(live)]);
+
+    await rounds(push, 4);
+    failing.delete(flaky);
+    await rounds(push, 1); // recovers
+    failing.set(flaky, rejects(500, ""));
+    await rounds(push, 4); // four more is short of the threshold again
+
+    expect([...subs.keys()]).toEqual([flaky, live]);
+  });
+
+  test("re-subscribing clears the streak of an identical endpoint", async () => {
+    const cfg = await tempCfg();
+    const [flaky, live] = [`${APPLE}/flaky`, `${APPLE}/live`];
+    const push = new Push(cfg, partialSender(new Map([[flaky, rejects(400, "BadDeviceToken")]])));
+    const subs = enable(push, [sub(flaky), sub(live)]);
+
+    await rounds(push, 4);
+    await push.addSubscription(sub(flaky)); // the device just asked for pushes again
+    await rounds(push, 4);
+
+    expect([...subs.keys()]).toEqual([flaky, live]);
+  });
+
+  test("a failure logs the status and the service's reason, not just the useless message", async () => {
+    // `err.message` alone is the constant "Received unexpected response code" — the whole reason
+    // this issue was undiagnosable from the logs.
+    const cfg = await tempCfg();
+    const endpoint = `${APPLE}/x`;
+    const push = new Push(cfg, partialSender(new Map([[endpoint, rejects(400, '{"reason":"BadDeviceToken"}')]])));
+    enable(push, [sub(endpoint)]);
+
+    const { lines } = await rounds(push, 1);
+
+    const failed = lines.find((l) => l.includes("send failed"));
+    expect(failed).toContain("status=400");
+    expect(failed).toContain("BadDeviceToken");
+  });
+
+  test("a 410 prune says so out loud", async () => {
+    const cfg = await tempCfg();
+    const push = new Push(cfg, (s) => (s.endpoint === "dead" ? Promise.reject(gone("dead")) : Promise.resolve()));
+    enable(push, [sub("dead")]);
+
+    const { lines } = await rounds(push, 1);
+
+    expect(lines.some((l) => l.includes("pruning gone subscription (410)"))).toBe(true);
+  });
+});
+
 describe("Push — persistence", () => {
   test("addSubscription persists with owner-only (0600) permissions", async () => {
     const cfg = await tempCfg();
@@ -130,7 +269,7 @@ describe("Push — per-message collapse topic (update must not share the herd sl
   // herd summary and an update push silently overwrite each other. Capture the options + payload the
   // sender receives to pin the seam the update feature must never regress.
   function capturing() {
-    const sends: { payload: string; options: { topic: string; TTL: number } }[] = [];
+    const sends: { payload: string; options: { topic: string; TTL: number; urgency?: string } }[] = [];
     const sender: PushSender = (_s, payload, options) => {
       sends.push({ payload, options });
       return Promise.resolve();
@@ -138,7 +277,7 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     return { sender, sends };
   }
 
-  test("an update push rides its OWN topic + longer TTL, and carries the settings target", async () => {
+  test("an update push rides its OWN topic + longer TTL at default urgency, and carries the settings target", async () => {
     const cfg = await tempCfg();
     const { sender, sends } = capturing();
     const push = new Push(cfg, sender);
@@ -146,7 +285,9 @@ describe("Push — per-message collapse topic (update must not share the herd sl
 
     await push.send({ type: "update", tag: "collie:update", title: "t", body: "b", target: "settings" });
 
-    expect(sends[0]!.options).toEqual({ topic: "collie-update", TTL: 259_200 });
+    // No `urgency` — an update notice is NOT worth punching through Android's power-saving the way a
+    // waiting agent is. The absence is the decision; `toEqual` pins it.
+    expect(sends[0]!.options).toEqual({ topic: "collie-updates", TTL: 259_200 });
     expect(JSON.parse(sends[0]!.payload).data.target).toBe("settings");
   });
 
@@ -158,7 +299,9 @@ describe("Push — per-message collapse topic (update must not share the herd sl
 
     await push.send({ title: "claude needs you", body: "…", tag: "collie:herd", paneId: "w1:p1" });
 
-    expect(sends[0]!.options).toEqual({ topic: "collie-herd", TTL: 21_600 });
+    // `urgency: "high"` is not cosmetic: at web-push's default (`normal`) FCM lets Android defer the
+    // message by Doze / App Standby bucket, which silently ate alerts entirely. See push.ts.
+    expect(sends[0]!.options).toEqual({ topic: "collie-herd", TTL: 21_600, urgency: "high" });
     expect("target" in JSON.parse(sends[0]!.payload).data).toBe(false);
   });
 
@@ -170,5 +313,43 @@ describe("Push — per-message collapse topic (update must not share the herd sl
 
     await push.send({ type: "clear", tag: "collie:herd" });
     expect(sends[0]!.options.topic).toBe("collie-herd");
+    // A deferred retraction is as bad as a deferred alert — it strands handled work on the lock
+    // screen — so a clear is high-urgency too.
+    expect(sends[0]!.options.urgency).toBe("high");
+  });
+
+  // Apple decodes the RFC 8030 `Topic` and refuses a length base64 cannot produce (≡ 1 mod 4), where
+  // FCM and Mozilla treat it as opaque. So a topic shortened for tidiness can break Apple delivery
+  // while every other service keeps working, and nothing surfaces it but that service's 400 —
+  // "collie-update" (13) shipped that way from 0.11.0. Assert the topics the code ACTUALLY emits: a
+  // guard that restated the constants would still pass after someone edited one, which is the only
+  // failure it exists to catch.
+  test("every topic the bridge emits is a shape all push services accept", async () => {
+    const cfg = await tempCfg();
+    const { sender, sends } = capturing();
+    const push = new Push(cfg, sender);
+    enable(push, [sub("a")]);
+
+    await push.send({ type: "update", tag: "collie:update", title: "t", body: "b", target: "settings" });
+    await push.send({ title: "claude needs you", body: "…", tag: "collie:herd", paneId: "w1:p1" });
+    await push.send({ type: "clear", tag: "collie:herd" });
+
+    expect(sends.length).toBe(3);
+    for (const { options } of sends) expect(topicIsSendable(options.topic)).toBe(true);
+  });
+
+  test("topicIsSendable rejects the lengths base64 cannot produce — the Apple trap", () => {
+    expect(topicIsSendable("collie-update")).toBe(false); // 13 ≡ 1 (mod 4) — the shipped bug
+    expect(topicIsSendable("collie-herdab")).toBe(false); // 13 too, unrelated wording, fails alike
+    expect(topicIsSendable("collie-update-xyz")).toBe(false); // 17 ≡ 1 (mod 4)
+    expect(topicIsSendable("a")).toBe(false); // 1 ≡ 1 (mod 4)
+  });
+
+  test("topicIsSendable still enforces RFC 8030's alphabet and ceiling", () => {
+    expect(topicIsSendable("collie herd")).toBe(false); // space
+    expect(topicIsSendable("collie.herd")).toBe(false); // dot is not URL-safe base64
+    expect(topicIsSendable("")).toBe(false);
+    expect(topicIsSendable("a".repeat(33))).toBe(false); // over the 32-char ceiling
+    expect(topicIsSendable("a".repeat(32))).toBe(true); // exactly 32, and 32 ≡ 0
   });
 });
