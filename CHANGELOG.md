@@ -6,6 +6,28 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.2.0] - 2026-08-16
+
+### Added
+
+- Adopt Collie v0.28.0 at exact upstream commit `2910f40278f3ca1646fc472dd3589da4a47776e4`, including ordered direct terminal typing, harness-neutral dialog guards, the Tier-1 `omp` adapter and slash palette, GFM history tables, and bundled lazy Nerd Font symbols.
+- Allow every transcript-root setting to name multiple comma-separated roots while keeping each selected session realpath-contained within the root where it was found.
+
+### Fixed
+
+- Bind destructive pre-clear and reply submission to a fresh visible composer read, including narrow panes, wrapped CJK drafts, and Claude paste placeholders, so a dialog transition cannot receive stale text or an unverified submit key.
+- Restore valid Apple update-push topics, retire repeatedly failing push subscriptions safely, prevent idle session-name polling from scrolling panes, and preserve sign-in classification behind redirecting identity proxies.
+
+### Security
+
+- Preserve Web Remote's authenticated Gateway, exact Host/Origin and frame policy, network-first navigation, loopback listeners, transcript containment, zero-central-secret remote nodes, and plugin-owned supervisor lifecycle across the upstream merge.
+- Continue excluding upstream Tailscale publication, systemd/launchd/Windows lifecycle, QR tooling, and moving self-update behavior.
+
+### Upgrading
+
+- This is a node-affecting minor release. Upgrade the central Gateway plugin and every managed Fleet node to `2.2.0`; existing configuration remains valid, while the new comma-separated transcript roots are optional.
+- Activation replaces only each node's Web Remote supervisor generation and children. It does not restart Herdr, terminate Pane processes, or install an operating-system service.
+
 ## [2.1.14] - 2026-08-16
 
 ### Fixed
