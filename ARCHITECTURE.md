@@ -83,9 +83,13 @@ The adapter constructs the canonical Fleet instance/Space/Tab/Pane link plus an 
 selector and invokes an absolute
 local `pingme` executable without a shell. Channel/template selectors and safe Agent-card variables
 cross that process boundary, but Discord credentials remain in `pingme`'s own private local config
-and never enter Gateway or any remote node. The default-template runtime footer receives the
-observed harness's human-readable name, readable Space name as project, and readable Tab name as
-session title. It never receives a Pane label or coding-session id. Ready and Needs You explicitly select the configured
+and never enter Gateway or any remote node. The adapter passes the normalized readable name of the
+Agent's exact inventory Host through `pingme send --host`; an unavailable readable name falls back
+to that node's stable id, never the central process's automatically derived user and hostname. This
+reserved runtime value remains independent of the stable custom-template Host variables and the
+webhook username. The default-template runtime footer also receives the observed harness's
+human-readable name, readable Space name as project, and readable Tab name as session title. It
+never receives a Pane label or coding-session id. Ready and Needs You explicitly select the configured
 `success` and `needs-input` avatars respectively. The webhook username is independently overridden
 with the bounded readable `Space · Tab · Pane` hierarchy, omitting absent levels instead of exposing
 their internal ids and using the existing Agent display name for an otherwise unnamed Pane.

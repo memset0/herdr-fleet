@@ -261,6 +261,8 @@ export function pingmeArguments(config: EnabledDiscordNotifications, alert: Flee
     fleetDiscordAvatar(alert.status),
     "--username",
     alert.username,
+    "--host",
+    alert.host,
   ];
   if (config.template) args.push("--template", config.template);
   for (const [key, value] of variables) args.push("--var", `${key}=${value}`);

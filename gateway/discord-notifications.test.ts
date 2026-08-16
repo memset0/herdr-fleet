@@ -236,7 +236,10 @@ describe("Fleet Discord message adapter", () => {
     expect(defaults).not.toContain("--template");
     expect(defaults.slice(0, 5)).toEqual(["send", "--channel", "test", "--avatar", "needs-input"]);
     expect(defaults.slice(5, 7)).toEqual(["--username", "Example project · Main · Agent pane"]);
+    expect(defaults.slice(7, 9)).toEqual(["--host", "Cluster A"]);
     expect(defaults).toContain("status=blocked");
+    expect(defaults).toContain("host=Cluster A");
+    expect(defaults).toContain("host_id=cluster-a");
     expect(defaults).toContain(`pane_url=${alert.paneUrl}`);
     expect(defaults.at(-2)).toBe("--");
     expect(defaults.at(-1)).toBe(alert.message);
@@ -245,6 +248,22 @@ describe("Fleet Discord message adapter", () => {
     const template = "/opt/example/templates/fleet alert.md";
     const custom = pingmeArguments({ ...enabledConfig, template }, alert);
     expect(custom.slice(custom.indexOf("--template"), custom.indexOf("--template") + 2)).toEqual(["--template", template]);
+    expect(custom.slice(custom.indexOf("--host"), custom.indexOf("--host") + 2)).toEqual(["--host", "Cluster A"]);
+    expect(custom.slice(custom.indexOf("--username"), custom.indexOf("--username") + 2)).toEqual([
+      "--username",
+      "Example project · Main · Agent pane",
+    ]);
+  });
+
+  test("falls back to the bounded inventory id for runtime Host metadata", () => {
+    const alert = buildFleetDiscordAlert(
+      "fleet.example.com",
+      { id: "cluster-a", name: " \n " },
+      card("w0:p1", "done"),
+    );
+
+    expect(alert.host).toBe("cluster-a");
+    expect(pingmeArguments(enabledConfig, alert).slice(7, 9)).toEqual(["--host", "cluster-a"]);
   });
 
   test("maps Agent, readable Space, and readable Tab into default-template footer metadata", async () => {
@@ -265,6 +284,8 @@ describe("Fleet Discord message adapter", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.executable).toBe("/opt/example/bin/pingme");
     expect(calls[0]?.args).toEqual(pingmeArguments(enabledConfig, alert));
+    expect(calls[0]?.args).toContain("--host");
+    expect(calls[0]?.args).toContain("Cluster A");
     expect(calls[0]?.env).toMatchObject({
       PATH: "/synthetic/bin",
       PINGME_AGENT_NAME: "Codex",

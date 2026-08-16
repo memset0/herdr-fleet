@@ -84,7 +84,8 @@ credentials, update state, device authorization, and unknown snapshot fields rem
 - Bun
 - A reverse proxy providing HTTPS
 - OpenSSH on the Fleet host only when remote nodes use the SSH transport
-- `pingme` on the Fleet host only when central Discord Agent notifications are enabled
+- `pingme` with per-send `send --host <LABEL>` support on the Fleet host only when central Discord
+  Agent notifications are enabled
 
 Linux and macOS are supported. The plugin and its long-running processes run as the same account
 that owns the target Herdr socket.
@@ -247,6 +248,11 @@ settings.
 
 With `pingme`'s standard default template, Fleet maps the observed harness, readable Space name,
 and readable Tab name into the template's Agent, project, and session-title footer metadata.
+It passes the same normalized readable inventory Host carried by the alert through `--host`, so
+`runtime.host` identifies the machine that owns the Agent instead of the central Gateway process's
+automatically detected `user@hostname`; a missing readable Host name falls back to that node's
+stable inventory id without adding a system user. This runtime override is independent of the
+custom-template `host` / `host_id` variables and the webhook username.
 The Pane name stays out of that metadata because it is already present in the webhook username.
 An id-only Tab is omitted and an id-only Space uses the generic `Fleet` project fallback. Known
 harness ids use their normal product spelling, such as `codex` → `Codex`, while unknown names are
@@ -276,7 +282,7 @@ rendered message has this shape with all default metadata on the final subtext l
 ```markdown
 The requested change is complete.
 [Open Pane in Fleet](https://herdr.example.com/?instance=cluster-a&space=w0&tab=w0%3At2&pane=w0%3Ap7)
--# 🏠 operator@fleet-host   📦 Example project   🧵 Main   🤖 Codex   📅 8/15 12:34:56
+-# 🏠 Cluster A   📦 Example project   🧵 Main   🤖 Codex   📅 8/15 12:34:56
 ```
 
 The default presentation includes no terminal contents, complete history, user prompt, reasoning,
