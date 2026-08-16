@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.1.14] - 2026-08-16
+
+### Fixed
+
+- Every Fleet Agent alert now passes its normalized readable inventory Host through `pingme send --host`, so the default runtime footer identifies the machine that owns the Agent instead of the central Gateway process (02dfaf4)
+- Missing readable Host names fall back to the stable inventory id without adding a system user, while existing custom-template Host variables and the Space/Tab/Pane webhook username remain unchanged (02dfaf4)
+
+### Upgrading
+
+- Upgrade the central Fleet host's local `pingme` executable to a revision with `send --host <LABEL>` support before activating this patch. Remote `2.1.x` node bridges remain compatible and may defer updating.
+
 ## [2.1.13] - 2026-08-16
 
 ### Fixed
