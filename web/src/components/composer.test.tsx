@@ -48,6 +48,7 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
+    onResize: vi.fn(async () => {}),
     onSent: vi.fn(),
     ...overrides,
   };
@@ -77,6 +78,7 @@ function renderComposerWithStatus(overrides: Partial<ComponentProps<typeof Compo
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
+    onResize: vi.fn(async () => {}),
     onSent: vi.fn(),
     ...overrides,
   };
@@ -424,6 +426,7 @@ describe("Composer — send", () => {
               setWrap={vi.fn()}
               stepFontSize={vi.fn()}
               setRawTerminal={vi.fn()}
+              onResize={vi.fn(async () => {})}
               onSent={vi.fn()}
             />
           </>
@@ -515,6 +518,7 @@ describe("Composer — send", () => {
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
+      onResize: vi.fn(async () => {}),
       onSent: vi.fn(),
     };
     const router = createMemoryRouter([
@@ -610,6 +614,7 @@ describe("Composer — typing into the terminal", () => {
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
+            onResize={vi.fn(async () => {})}
             onSent={vi.fn()}
           />
         </>
@@ -814,6 +819,7 @@ describe("Composer — typing into the terminal", () => {
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
+            onResize={vi.fn(async () => {})}
             onSent={vi.fn()}
           />
         </>
@@ -955,6 +961,7 @@ function renderDraftHarness(overrides: Partial<ComponentProps<typeof Composer>> 
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
+      onResize: vi.fn(async () => {}),
       onSent: vi.fn(),
       ...rest,
       terminalDraft: stable,
@@ -1225,6 +1232,7 @@ describe("Composer — in-flight echo suppression (match-last-sent)", () => {
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
+      onResize: vi.fn(async () => {}),
       onSent: vi.fn(),
     };
     return (
@@ -1591,7 +1599,7 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
 });
 
 describe("Composer — display prefs behind the gear", () => {
-  it("the View row is gone; wrap/raw/font live behind the Display gear as labelled controls", async () => {
+  it("wrap/raw/font and the custom manual resize live behind the Display gear", async () => {
     const user = userEvent.setup();
     renderComposer();
 
@@ -1604,6 +1612,21 @@ describe("Composer — display prefs behind the gear", () => {
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Raw terminal" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Decrease font size" })).toBeInTheDocument();
+    const textSizeRow = screen.getByText("Text size").closest("div.flex.items-center.justify-between");
+    expect(textSizeRow?.nextElementSibling).toHaveTextContent("ResizeCustom");
+    expect(screen.getByText("Custom")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resize pane to this view" })).toBeEnabled();
+  });
+
+  it("invokes the custom resize exactly once per explicit click", async () => {
+    const user = userEvent.setup();
+    const onResize = vi.fn(async () => {});
+    renderComposer({ onResize });
+
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(onResize).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Resize pane to this view" }));
+    expect(onResize).toHaveBeenCalledTimes(1);
   });
 
   it("the Display dock shares the single drawer slot with Keys", async () => {
@@ -1626,6 +1649,7 @@ describe("Composer — display prefs behind the gear", () => {
     expect(screen.getByRole("button", { name: "Keys" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Display settings" }));
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resize pane to this view" })).toBeDisabled();
   });
 });
 
@@ -1759,6 +1783,7 @@ describe("Composer — draft persistence", () => {
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
+      onResize: vi.fn(async () => {}),
       onSent: vi.fn(),
       ...overrides,
     };

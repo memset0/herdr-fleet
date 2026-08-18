@@ -2,6 +2,10 @@
 
 Status: **Accepted** (2026-08-04)
 
+Narrowing: [ADR 0011](./0011-manual-width-fit-retains-a-controller.md) supersedes this record's
+blanket refusal of terminal `control` for one explicit, width-only operator action. The no-emulator,
+`pane.read` rendering, no-frame-streaming, and cursor decisions remain accepted.
+
 ## Context
 
 "Render the pane properly, with a real terminal emulator" is the most re-proposed idea in this repo,

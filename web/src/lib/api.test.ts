@@ -8,6 +8,7 @@ import {
   createTab,
   fetchPane,
   fetchSnapshot,
+  resizePane,
   sendKeys,
   sendReply,
   uploadImage,
@@ -26,6 +27,24 @@ describe("api client", () => {
   it("createTab posts and returns the created pane", async () => {
     const res = await createTab("w2");
     expect(res.ok).toBe(true);
+  });
+
+  it("resizePane posts columns to the session-scoped manual resize action", async () => {
+    let seen: { url: string; body: unknown } | undefined;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/resize$/, async ({ request }) => {
+        seen = { url: request.url, body: await request.json() };
+        return HttpResponse.json({ ok: true, cols: 64, rows: 31 });
+      }),
+    );
+
+    await expect(resizePane("w1:p1", 64, "demo")).resolves.toEqual({
+      ok: true,
+      cols: 64,
+      rows: 31,
+    });
+    expect(seen?.url).toContain("/api/pane/w1%3Ap1/resize?session=demo");
+    expect(seen?.body).toEqual({ cols: 64 });
   });
 
   it("throws with the status and body on a non-2xx response", async () => {

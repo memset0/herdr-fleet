@@ -15,11 +15,15 @@ vi.mock("@/lib/prompt-action", () => ({
 vi.mock("@/lib/wizard-action", () => ({
   submitWizardKeys: vi.fn(),
 }));
+vi.mock("@/lib/terminal-resize", () => ({
+  measureTerminalColumns: vi.fn(() => 64),
+}));
 
 import { server } from "@/test/setup";
 import { clearStatus } from "@/lib/status";
 import { submitPromptOption } from "@/lib/prompt-action";
 import { submitWizardKeys } from "@/lib/wizard-action";
+import { measureTerminalColumns } from "@/lib/terminal-resize";
 import { fixtureAgents } from "@/test/handlers";
 import { AgentChat } from "./agent-chat";
 
@@ -31,7 +35,10 @@ beforeAll(() => {
   // jsdom doesn't implement scrollTo; the terminal mirror's auto-scroll calls it.
   if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {};
 });
-beforeEach(() => clearStatus());
+beforeEach(() => {
+  clearStatus();
+  vi.mocked(measureTerminalColumns).mockClear();
+});
 
 function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
   const agent = fixtureAgents[0]!; // a blocked claude agent
@@ -80,6 +87,44 @@ describe("AgentChat — reply flow", () => {
 
     expect(await screen.findByText("agent busy")).toBeInTheDocument();
     expect(box).toHaveValue("retry this"); // not cleared on failure
+  });
+});
+
+describe("AgentChat — custom manual Pane resize", () => {
+  it("measures and posts only after the Display Resize button is clicked", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/resize$/, async ({ request }) => {
+        requests.push({ url: request.url, body: await request.json() });
+        return HttpResponse.json({ ok: true, cols: 64, rows: 31 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderChat({ session: "demo" });
+
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(measureTerminalColumns).not.toHaveBeenCalled();
+    expect(requests).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: "Resize pane to this view" }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(measureTerminalColumns).toHaveBeenCalledTimes(1);
+    expect(requests[0]!.url).toContain("/api/pane/w1%3Ap1/resize?session=demo");
+    expect(requests[0]!.body).toEqual({ cols: 64 });
+    expect(await screen.findByText("Resized to 64 columns")).toBeInTheDocument();
+  });
+
+  it("surfaces a controller conflict without changing the browser layout", async () => {
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/resize$/, () =>
+        HttpResponse.json({ ok: false, error: "terminal already has a controller" }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderChat();
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    await user.click(screen.getByRole("button", { name: "Resize pane to this view" }));
+    expect(await screen.findByText("terminal already has a controller")).toBeInTheDocument();
   });
 });
 

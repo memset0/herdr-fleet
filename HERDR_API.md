@@ -48,6 +48,38 @@ the socket assumptions behind the design in [`ARCHITECTURE.md`](./ARCHITECTURE.m
 | `pane.send_keys` | `{pane_id, keys}` | (ack) |
 | `agent.send` | `{target, text}` | (ack) — writes **literal** text, no Enter |
 
+## Writable terminal-session controller (v0.8.0)
+
+Herdr 0.8.0's supported CLI provides the one stateful primitive behind Collie's custom manual
+width fit:
+
+```text
+herdr terminal session control <PANE_ID> --cols <N> --rows <N>
+```
+
+The installed CLI help and the v0.8.0 implementation/tests were re-checked for Web Remote 2.3.0:
+
+- The process connects to the exact `HERDR_SOCKET_PATH`, acquires writable controller ownership for
+  the target Pane, then prints newline-delimited `terminal.frame` records whose ANSI bytes are
+  base64-encoded. Web Remote drains and discards those frames; it still renders `pane.read` and does
+  not add a terminal emulator.
+- stdin accepts newline-delimited `{"type":"terminal.resize","cols":N,"rows":N}` and
+  `{"type":"terminal.release"}` commands. A controller is ready only after the first frame; a
+  `terminal.closed` record or early exit is a failed acquisition.
+- Only one terminal-session controller owns input/resize for a terminal. `--takeover` can evict it,
+  but Web Remote deliberately never supplies that flag; a conflict remains visible to the operator.
+- Disconnecting the controller restores the shared runtime to the normal Herdr application Pane
+  size. A manual resize that claims to persist must therefore retain one controller process and
+  reuse its stdin for later explicit clicks; a one-shot child cannot implement this feature.
+- The CLI requires both columns and rows at acquisition and on a resize command. Collie's browser
+  submits only columns; the bridge pairs them with the Pane's current `scroll.viewport_rows` from
+  `session.snapshot`, so opening the Display drawer never changes the PTY height.
+
+This is an intentional owner-maintained extension, isolated in `bridge/terminal-resize.ts` and
+documented by [ADR 0011](./.adr/0011-manual-width-fit-retains-a-controller.md). It changes the shared
+PTY only after an authenticated Display → Resize click and is not used for streaming output, input,
+Fleet rail changes, or automatic browser resize handling.
+
 - `pane.read` `source` ∈ `visible | recent | recent_unwrapped | detection` — **snake_case on the
   wire**: `recent-unwrapped` gets `invalid_request: unknown variant` (live-probed 2026-08-03,
   herdr 0.7.5; the variant list above is quoted from that error). `detection`'s semantics are

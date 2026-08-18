@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
-import { AArrowDown, AArrowUp } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { AArrowDown, AArrowUp, Loader2, Scaling } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { DisplayPrefs } from "@/hooks/use-display-prefs";
@@ -23,6 +24,8 @@ interface DisplayPrefsContentProps {
   setWrap: (wrap: boolean) => void;
   stepFontSize: (delta: number) => void;
   setRawTerminal: (raw: boolean) => void;
+  onResize: () => Promise<void>;
+  resizeDisabled: boolean;
 }
 
 // One settings row: name (+ optional explanation) on the left, control on the right. Module-level so
@@ -33,7 +36,7 @@ function Row({
   htmlFor,
   control,
 }: {
-  label: string;
+  label: ReactNode;
   hint?: string;
   htmlFor?: string;
   control: ReactNode;
@@ -56,7 +59,21 @@ export function DisplayPrefsContent({
   setWrap,
   stepFontSize,
   setRawTerminal,
+  onResize,
+  resizeDisabled,
 }: DisplayPrefsContentProps) {
+  const [resizing, setResizing] = useState(false);
+
+  async function resize() {
+    if (resizing || resizeDisabled) return;
+    setResizing(true);
+    try {
+      await onResize();
+    } finally {
+      setResizing(false);
+    }
+  }
+
   return (
     <div className="divide-y divide-border/60 border-t border-border/60 bg-muted/30 px-3 py-1">
       <Row
@@ -113,6 +130,35 @@ export function DisplayPrefsContent({
               <AArrowUp className="size-4" />
             </Button>
           </div>
+        }
+      />
+      {/* WEB REMOTE CUSTOM: keep this row isolated directly below Text size. It is intentionally not
+          part of upstream Collie's persisted display prefs: one click mutates the real shared PTY,
+          while every other row here is browser-local. See .adr/0011 and HERDR_API.md. */}
+      <Row
+        label={
+          <span className="flex items-center gap-1.5">
+            Resize
+            <Badge
+              variant="outline"
+              className="px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
+            >
+              Custom
+            </Badge>
+          </span>
+        }
+        hint="Fits the real Pane width once. Later layout changes do not resize it."
+        control={
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={resizeDisabled || resizing}
+            onClick={() => void resize()}
+            aria-label="Resize pane to this view"
+          >
+            {resizing ? <Loader2 className="animate-spin" /> : <Scaling />}
+            Resize
+          </Button>
         }
       />
     </div>

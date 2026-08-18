@@ -254,7 +254,10 @@ export class StateEngine {
           // Scrollback depth + viewport = what a `recent` read can yield. Omitted when the server
           // predates `scroll`, so an older Herdr simply reads as "unknown" rather than "zero".
           ...(p.scroll
-            ? { readableLines: p.scroll.max_offset_from_bottom + p.scroll.viewport_rows }
+            ? {
+                readableLines: p.scroll.max_offset_from_bottom + p.scroll.viewport_rows,
+                viewportRows: p.scroll.viewport_rows,
+              }
             : {}),
         };
       };

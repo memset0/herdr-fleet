@@ -11,6 +11,7 @@ import type {
   NotifyPrefs,
   PaneHistoryResponse,
   PaneReadResponse,
+  PaneResizeResponse,
   SnapshotResponse,
   UpdateInfo,
   UploadResponse,
@@ -335,6 +336,21 @@ export function sendKeys(
       }),
     },
     recoverPromptChanged,
+  );
+}
+
+/** Resize the real shared PTY width once; the bridge preserves Herdr's current row count. */
+export function resizePane(
+  paneId: string,
+  cols: number,
+  session?: string,
+): Promise<PaneResizeResponse> {
+  return req<PaneResizeResponse>(
+    withSession(`/api/pane/${encodeURIComponent(paneId)}/resize`, session),
+    {
+      method: "POST",
+      body: JSON.stringify({ cols }),
+    },
   );
 }
 

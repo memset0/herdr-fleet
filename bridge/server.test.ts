@@ -15,15 +15,18 @@ import {
   normalizeTabLabel,
   paneReadResponse,
   replyPane,
+  resizePane,
   resolveStaticPath,
   sendReplySteps,
   startupWarnings,
   withBuildHeader,
   type ReplySender,
+  type PaneResizeController,
 } from "./server.ts";
 import { AuditLog } from "./audit.ts";
 import type { Config } from "./config.ts";
 import type { HerdrClient, PaneRead } from "./herdr-client.ts";
+import type { AgentView } from "./types.ts";
 
 // checkAccess is the API security gate (same-origin/CSRF + optional Tailscale identity). A
 // regression here silently opens remote shell access, so it gets the most direct coverage.
@@ -258,6 +261,111 @@ describe("resolveStaticPath — static path traversal guard", () => {
     // normalize(join(WEB, "../dist-x/evil.js")) === "/srv/collie/web/dist-x/evil.js" — a bare
     // startsWith(WEB) would accept it; the `+ sep` boundary is what rejects it.
     expect(resolveStaticPath("/../dist-x/evil.js", WEB)).toBeNull();
+  });
+});
+
+describe("resizePane — width-only manual PTY resize", () => {
+  const pane = (viewportRows?: number): AgentView => ({
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    workspaceLabel: "demo",
+    workspaceNumber: 1,
+    tabId: "w1:t1",
+    agent: "claude",
+    status: "idle",
+    cwd: "/tmp/demo",
+    focused: true,
+    ...(viewportRows === undefined ? {} : { viewportRows }),
+  });
+
+  function resizeRequest(body: unknown): Request {
+    return new Request("http://localhost/api/pane/w1%3Ap1/resize", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test("uses the browser's columns and preserves Herdr's current viewport rows", async () => {
+    const calls: unknown[] = [];
+    const controller: PaneResizeController = {
+      resize: async (socketPath, paneId, size) => void calls.push({ socketPath, paneId, size }),
+    };
+    const lines: string[] = [];
+    const audit = new AuditLog((line) => void lines.push(line), () => 0);
+    const response = await resizePane(
+      controller,
+      { current: () => ({ agents: [pane(37)], shellPanes: [] }) } as never,
+      "/sessions/demo/herdr.sock",
+      "w1:p1",
+      resizeRequest({ cols: 68 }),
+      audit,
+      "phone",
+      "demo",
+    );
+
+    expect(await response.json()).toEqual({ ok: true, cols: 68, rows: 37 });
+    expect(calls).toEqual([
+      {
+        socketPath: "/sessions/demo/herdr.sock",
+        paneId: "w1:p1",
+        size: { cols: 68, rows: 37 },
+      },
+    ]);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      action: "pane.resize",
+      paneId: "w1:p1",
+      session: "demo",
+      device: "phone",
+      detail: { cols: 68, rows: 37, resized: true },
+    });
+  });
+
+  test("refuses invalid columns before acquiring a controller", async () => {
+    let called = false;
+    const response = await resizePane(
+      { resize: async () => void (called = true) },
+      { current: () => ({ agents: [pane(24)], shellPanes: [] }) } as never,
+      "/tmp/herdr.sock",
+      "w1:p1",
+      resizeRequest({ cols: 80.5 }),
+      new AuditLog(() => {}),
+      null,
+      "default",
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("bad cols");
+    expect(called).toBe(false);
+  });
+
+  test("fails explicitly when Herdr has not reported row geometry", async () => {
+    let called = false;
+    const response = await resizePane(
+      { resize: async () => void (called = true) },
+      { current: () => ({ agents: [pane()], shellPanes: [] }) } as never,
+      "/tmp/herdr.sock",
+      "w1:p1",
+      resizeRequest({ cols: 60 }),
+      new AuditLog(() => {}),
+      null,
+      "default",
+    );
+    expect(await response.json()).toEqual({ ok: false, error: "Pane geometry is not available yet" });
+    expect(called).toBe(false);
+  });
+
+  test("surfaces controller ownership conflicts without hiding the action failure", async () => {
+    const response = await resizePane(
+      { resize: async () => Promise.reject(new Error("terminal already has a controller")) },
+      { current: () => ({ agents: [], shellPanes: [pane(24)] }) } as never,
+      "/tmp/herdr.sock",
+      "w1:p1",
+      resizeRequest({ cols: 60 }),
+      new AuditLog(() => {}),
+      null,
+      "default",
+    );
+    expect(await response.json()).toEqual({ ok: false, error: "terminal already has a controller" });
   });
 });
 

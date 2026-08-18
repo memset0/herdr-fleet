@@ -17,6 +17,7 @@ import { herdTagFor, type SessionRegistry } from "./sessions.ts";
 import type { Snooze } from "./snooze.ts";
 import type { UpdateMonitor } from "./update.ts";
 import type { StateEngine } from "./state-engine.ts";
+import { validTerminalColumns, type TerminalResizeManager } from "./terminal-resize.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 import type { JournalAdapter } from "./journal/types.ts";
@@ -29,6 +30,7 @@ import type {
   DeviceAuth,
   PaneHistoryResponse,
   PaneReadResponse,
+  PaneResizeResponse,
   SnapshotResponse,
   UploadResponse,
 } from "./types.ts";
@@ -90,7 +92,7 @@ const SECURITY_HEADERS: Record<string, string> = {
 // (or a co-located proxy) can reach the bridge's port, so a loopback caller is the on-host operator.
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|resize|history))?$/;
 // Turns per history page. "Show entire history" means the WHOLE conversation, so the client asks for
 // everything and this ceiling is a safety net against a pathological log, not the normal path — a
 // 1400-turn session is ~1.4 MB raw / ~400 KB gzipped, which a tailnet link serves fine. The default
@@ -123,7 +125,7 @@ export const SEEN_HEADER = "x-collie-seen";
  * doing so promotes it to a preflighted CORS request, and the bridge answers no preflight. Our own
  * same-origin `fetch` sets it freely.
  *
- * Write actions (reply/keys/upload/close/rename) need no header: they already cleared
+ * Write actions (reply/keys/upload/close/rename/resize) need no header: they already cleared
  * `guard(…, "write")`, which requires an `Origin`. `history` is a read despite being an action
  * segment, so it needs the header like any other read.
  */
@@ -141,8 +143,9 @@ export function startServer(opts: {
   updateMonitor: UpdateMonitor;
   audit: AuditLog;
   activity: ActivityLedger;
+  terminalResize: TerminalResizeManager;
 }) {
-  const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity } = opts;
+  const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity, terminalResize } = opts;
   // One journal registry + store for the process. The store's cache is keyed by absolute path, so
   // sharing it across herdr sessions AND across harnesses is correct — two sessions can front panes
   // whose agents write into the same root. Which harnesses have journals at all is decided in
@@ -250,7 +253,8 @@ export function startServer(opts: {
         const paneId = decodeURIComponent(paneMatch[1]!);
         const action = paneMatch[2];
         // Reading a pane is allowed for any access-gated client; every action (reply/keys/upload/
-        // close) types into or restructures a terminal, so it additionally needs an authorised device.
+        // close/rename/resize) types into or restructures a terminal, so it additionally needs an
+        // authorised device.
         // `history` is a READ despite being an action segment — it only ever reads a log off disk.
         const isRead = !action || action === "history";
         const denied = guard(req, cfg, isRead ? "read" : "write");
@@ -281,6 +285,8 @@ export function startServer(opts: {
         if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit, device, session);
         if (action === "close" && req.method === "POST") return closePane(herdr, paneId, req, audit, device, session);
         if (action === "rename" && req.method === "POST") return renamePane(herdr, paneId, req, audit, device, session);
+        if (action === "resize" && req.method === "POST")
+          return resizePane(terminalResize, rt.engine, rt.socketPath, paneId, req, audit, device, session);
         return text("method not allowed", 405);
       }
 
@@ -396,6 +402,73 @@ export function startServer(opts: {
   for (const w of startupWarnings(cfg)) console.warn(w);
 
   return server;
+}
+
+/** The retained-controller surface resizePane needs; exported separately for a focused fake. */
+export interface PaneResizeController {
+  resize(socketPath: string, paneId: string, size: { cols: number; rows: number }): Promise<void>;
+}
+
+/**
+ * Width-only manual resize. Rows come from Herdr's latest snapshot, not browser geometry: opening
+ * Display Settings shortens the Collie mirror, and adopting that temporary height would violate the
+ * action's promise to change width only.
+ */
+export async function resizePane(
+  controller: PaneResizeController,
+  engine: Pick<StateEngine, "current">,
+  socketPath: string,
+  paneId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+): Promise<Response> {
+  const ae = req.headers.get("accept-encoding");
+  let body: { cols?: unknown };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return text("bad body", 400);
+  }
+  if (!validTerminalColumns(body.cols)) return text("bad cols", 400);
+
+  const snapshot = engine.current();
+  const pane = [...snapshot.agents, ...snapshot.shellPanes].find((p) => p.paneId === paneId);
+  const rows = pane?.viewportRows;
+  if (rows === undefined) {
+    const error = pane ? "Pane geometry is not available yet" : "Pane is no longer available";
+    audit.record({
+      action: "pane.resize",
+      paneId,
+      session,
+      device,
+      detail: { cols: body.cols, resized: false, error },
+    });
+    return json({ ok: false, error } satisfies PaneResizeResponse, ae);
+  }
+
+  try {
+    await controller.resize(socketPath, paneId, { cols: body.cols, rows });
+    audit.record({
+      action: "pane.resize",
+      paneId,
+      session,
+      device,
+      detail: { cols: body.cols, rows, resized: true },
+    });
+    return json({ ok: true, cols: body.cols, rows } satisfies PaneResizeResponse, ae);
+  } catch (err) {
+    const error = (err as Error).message;
+    audit.record({
+      action: "pane.resize",
+      paneId,
+      session,
+      device,
+      detail: { cols: body.cols, rows, resized: false, error },
+    });
+    return json({ ok: false, error } satisfies PaneResizeResponse, ae);
+  }
 }
 
 /**
