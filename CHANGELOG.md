@@ -6,6 +6,24 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.2.1] - 2026-08-18
+
+### Added
+
+- Wide Fleet windows now use a Collie-styled, collapsible `Host → Space → Tab → Pane` rail, the unchanged native Collie iframe as a full-height centre, and the existing `FLEET / All Agents` component as a persistent right rail; phone behavior remains compact and intermediate windows are no longer capped at 640 px (ad83984).
+- The tree reuses each existing Agent snapshot response without topology traversal or extra remote requests, retains expansion across refreshes, shows Host health and each Pane's Agent status or `shell`, and keeps failed-session topology visibly stale until authoritative recovery (ad83984).
+- Optional `fleetUi.iframeCacheSize` accepts 1–10 and defaults to one; visited Host documents are retained lazily with foreground-visit LRU eviction, exact per-frame route/origin isolation, and a 30-minute silent cleanup of every non-selected iframe (ad83984).
+
+### Security
+
+- Fleet continues projecting only bounded identifiers, safe labels, status, and routing metadata for the hierarchy; Pane output, history, credentials, device state, update state, and unknown snapshot fields remain excluded (ad83984).
+- Cached frames remain exact-origin authenticated Collie documents. The selected frame is never evicted, Agent state never affects cache priority, and the parent neither inspects iframe content nor invokes or changes Collie's idle lock (ad83984).
+
+### Upgrading
+
+- This patch is central-compatible: upgrade only the central Gateway plugin to `2.2.1`; remote node bundles may remain on `2.2.0` because their existing snapshot and route-report surfaces already provide the required data.
+- Existing config preserves one resident iframe. To opt in to five, add `"fleetUi": { "iframeCacheSize": 5 }` to the owner-only central `gateway.json`; activation replaces only Web Remote's plugin-owned children and does not restart Herdr or terminate Panes.
+
 ## [2.2.0] - 2026-08-16
 
 ### Added

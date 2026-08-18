@@ -1,6 +1,6 @@
 id = "memset0.web-remote"
 name = "Web Remote"
-version = "2.2.0"
+version = "2.2.1"
 min_herdr_version = "0.8.0"
 description = "Authenticated Fleet dashboard and Collie-based remote UI for Herdr"
 platforms = ["linux", "macos"]
