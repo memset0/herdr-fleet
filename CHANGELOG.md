@@ -6,6 +6,22 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.3.0] - 2026-08-18
+
+### Added
+
+- Add a visibly `Custom` manual Resize action directly below Text size in Collie's Pane display settings. A click measures the current terminal scrollport with the selected monospace font and resizes only that Pane's column count; window changes never resize automatically (d12a4dd).
+- Retain and reuse one non-takeover Herdr terminal controller per resized Pane, preserving the Pane's current viewport row count while applying the requested width (d12a4dd).
+
+### Security
+
+- Reuse the existing write Origin/Host, device-authorization, session, and audit gates for resize requests; viewport rows remain bridge-only and are never exposed in the browser snapshot (d12a4dd).
+
+### Upgrading
+
+- This is a node-affecting minor release. Upgrade the central Gateway plugin and every managed Fleet node to `2.3.0`; no configuration changes are required.
+- Activation replaces only Web Remote's plugin-owned supervisor generation and children. It does not restart Herdr or terminate Panes. Restarting the bridge releases any active manual-resize controller, so Herdr may restore its desktop-owned layout until Resize is clicked again.
+
 ## [2.2.2] - 2026-08-18
 
 ### Fixed
