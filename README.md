@@ -13,14 +13,17 @@ https://node.herdr.example.com/pane/<pane-id>?session=<session-name>
 ```
 
 The Fleet page is a responsive Collie shell. Phone widths keep the compact Host row and expandable
-Agent menu. Wider intermediate windows remove the old 640 px shell limit; at 1200 px, Fleet reflows
+Agent menu. The AppBar `H` opens the same Host tree in a bounded left drawer; it is mutually
+exclusive with the Agent menu and closes after tree navigation without disturbing the selected
+iframe. Wider intermediate windows remove the old 640 px shell limit; at 1200 px, Fleet reflows
 into a Collie-styled `Host → Space → Tab → Pane` Explorer, one full-height native iframe, and the
 existing Agent sections as a persistent right rail. The left rail omits a redundant `Hosts` title
 and keeps the new-tab action at its top right; the right rail omits the redundant `FLEET / All
 Agents` title and keeps the canonical refresh status at its bottom. Hosts start expanded to show
-every Space; Host/Space/Tab activation only toggles browser-local disclosure, each Pane shows its
-Agent status or `shell`, and only a Pane click opens its exact native route. There is no desktop
-AppBar above the iframe.
+every Space. A Host body opens that Host's native Collie home while its chevron changes only local
+disclosure; Space and multi-Pane Tab rows remain disclosure-only. A one-Pane Tab is flattened into a
+single direct row labelled by the Tab and decorated with the Pane's Agent status or `shell`, while
+multi-Pane Tabs retain explicit Pane children. There is no desktop AppBar above the iframe.
 
 Both desktop rail boundaries are pointer- and keyboard-resizable. Fleet remembers bounded left and
 right preferences in that browser, clamps them to preserve the 40rem centre after viewport changes,
@@ -89,7 +92,10 @@ the exact Collie base.
 ### Fleet Agent refresh
 
 Opening an authenticated Fleet page requests the aggregate immediately. Opening the Agent menu sends
-a manual reset with the same request. The Gateway—not each browser tab—owns one adaptive schedule for
+a manual reset with the same request. Activating a live `Ready · unseen` or `Needs you` card also
+navigates first and submits that existing bounded reset so the handled state is observed promptly;
+Working, Recent, offline/stale, and tree navigation do not reset the schedule. The Gateway—not each
+browser tab—owns one adaptive schedule for
 the whole aggregate. If a completed collection cycle does not change the visible state, that shared
 delay doubles from the effective five-second base to 10 seconds, 20 seconds, and later delays, capped
 at one hour. A visible Agent/session/health change or manual reset returns the shared delay to its

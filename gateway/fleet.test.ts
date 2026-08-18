@@ -412,6 +412,76 @@ describe("Fleet aggregation", () => {
     expect(cancelled.length).toBeGreaterThan(0);
   });
 
+  test("coalesces repeated manual resets from a long backoff into one floor-bounded transaction and timer", async () => {
+    const config = gatewayConfig();
+    const transports = new TransportRegistry(config.nodes);
+    let clock = 100;
+    let calls = 0;
+    let hold = false;
+    let release: (() => void) | undefined;
+    let gate = Promise.resolve();
+    let nextHandle = 0;
+    const jobs = new Map<number, { callback: () => void | Promise<void>; delayMs: number }>();
+    const cycles: number[] = [];
+    const collector = new FleetCollector(
+      config,
+      transports,
+      (async () => {
+        calls += 1;
+        if (hold) await gate;
+        return response([], [session("default", { isPrimary: true, agents: 0 })]);
+      }) as unknown as typeof fetch,
+      () => clock,
+      {
+        schedule: (callback, delayMs) => {
+          const handle = ++nextHandle;
+          jobs.set(handle, { callback, delayMs });
+          return handle;
+        },
+        cancel: (handle) => jobs.delete(handle as number),
+        onCycle: (state) => {
+          cycles.push(state.refresh.delayMs);
+        },
+      },
+    );
+
+    collector.startBackgroundRefresh();
+    for (const at of [100, 5_100, 15_100, 35_100]) {
+      clock = at;
+      await collector.refresh();
+    }
+    expect(calls).toBe(4);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 40_000, nextAt: 75_100 });
+    expect(jobs.size).toBe(1);
+
+    clock = 35_101;
+    await Promise.all([
+      collector.refresh({ manual: true }),
+      collector.refresh({ manual: true }),
+      collector.refresh({ manual: true }),
+    ]);
+    expect(calls).toBe(4);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 40_100 });
+    expect([...jobs.values()].map((job) => job.delayMs)).toEqual([4_999]);
+
+    hold = true;
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    clock = 40_100;
+    const first = collector.refresh({ manual: true });
+    const second = collector.refresh({ manual: true });
+    const third = collector.refresh({ manual: true });
+    expect(calls).toBe(5);
+    release?.();
+    await Promise.all([first, second, third]);
+    expect(calls).toBe(5);
+    expect(collector.snapshot().refresh).toMatchObject({ delayMs: 5_000, nextAt: 45_100 });
+    expect(jobs.size).toBe(1);
+    expect(cycles).toEqual([5_000, 10_000, 20_000, 40_000, 5_000]);
+    collector.stopBackgroundRefresh();
+  });
+
   test("clamps the one canonical timer to an observer deadline without changing backoff or the Host floor", async () => {
     const config = gatewayConfig();
     const transports = new TransportRegistry(config.nodes);

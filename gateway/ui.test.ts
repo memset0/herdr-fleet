@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   FLEET_CSS,
   FLEET_JS,
+  fleetAttentionResetEligible,
   fleetAgentBucket,
   fleetHeaderAgentCount,
   fleetIframeCacheQuietExpired,
@@ -12,6 +13,7 @@ import {
   fleetRailWidthPreferences,
   fleetRailWidths,
   fleetRefreshWaitMs,
+  fleetTreeTabMode,
 } from "./fleet-ui.ts";
 
 describe("Fleet iframe shell", () => {
@@ -24,6 +26,10 @@ describe("Fleet iframe shell", () => {
     expect(page).toContain('id="instances"');
     expect(page).toContain('role="tree"');
     expect(page).toContain('aria-label="Herdr Hosts"');
+    expect(page).toContain('id="tree-menu-toggle"');
+    expect(page).toContain('aria-controls="instances"');
+    expect(page).toContain('id="tree-menu-backdrop"');
+    expect(page).toContain('class="fleet-mark fleet-home-mark"');
     expect(page).not.toContain('class="rail-title"');
     expect(page).not.toContain('>Hosts<');
     expect(page).toContain('id="agent-menu-toggle"');
@@ -65,6 +71,10 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toMatch(/\.agent-sections \{ order: 1; flex: 1; \}/);
     expect(FLEET_CSS).toContain('.fleet-shell[data-resizing="true"] .node-frame { pointer-events: none; }');
     expect(FLEET_CSS).toContain(".tree-row-level-4");
+    expect(FLEET_CSS).toContain('@media (max-width: 1199px)');
+    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*position: fixed;[^}]*overflow-y: auto/);
+    expect(FLEET_CSS).toContain('.fleet-tree-toggle { display: none; }');
+    expect(FLEET_CSS).toContain('.fleet-home-mark { display: grid; align-self: flex-start; }');
   });
 
   test("clamps, resizes, and parses browser-local desktop rail widths", () => {
@@ -176,6 +186,32 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("closeAgentMenu();");
   });
 
+  test("resets the shared schedule only after live attention-card navigation", () => {
+    expect(fleetAttentionResetEligible({ reachable: true, status: "blocked" })).toBeTrue();
+    expect(fleetAttentionResetEligible({ reachable: true, status: "done", lastActiveAt: 2, lastSeenAt: 1 })).toBeTrue();
+    expect(fleetAttentionResetEligible({ reachable: true, status: "working" })).toBeFalse();
+    expect(fleetAttentionResetEligible({ reachable: true, status: "done", lastActiveAt: 1, lastSeenAt: 1 })).toBeFalse();
+    expect(fleetAttentionResetEligible({ reachable: false, status: "blocked" })).toBeFalse();
+    expect(fleetAttentionResetEligible({ reachable: false, status: "done", lastActiveAt: 2, lastSeenAt: 1 })).toBeFalse();
+
+    const handlerStart = FLEET_JS.indexOf("function selectAgent(node,agent)");
+    const handlerEnd = FLEET_JS.indexOf("function renderAgentCard", handlerStart);
+    const handler = FLEET_JS.slice(handlerStart, handlerEnd);
+    expect(handler).toContain("const resetAttention=Boolean(agent.reachable)&&(bucket(agent)==='ready'||bucket(agent)==='needs')");
+    expect(handler.indexOf("selectNode(node.id")).toBeLessThan(handler.indexOf("if(resetAttention)void refresh({manual:true})"));
+    expect(handler).toContain("if(!spaceId||!tabId||!paneId");
+    expect(FLEET_JS).toContain("if(refreshing){if(manual)queuedManualRefresh=true;return}");
+    expect(FLEET_JS).toContain("if(queuedManualRefresh){queuedManualRefresh=false;void refresh({manual:true});return}");
+
+    const failureStart = FLEET_JS.indexOf("}catch(error){", FLEET_JS.indexOf("async function refresh"));
+    const failureEnd = FLEET_JS.indexOf("}finally{", failureStart);
+    const failure = FLEET_JS.slice(failureStart, failureEnd);
+    expect(failure).not.toContain("selectNode(");
+    expect(failure).not.toContain("replaceUrl(");
+    expect(failure).not.toContain("loadSelected(");
+    expect(failure).not.toContain("frame.src");
+  });
+
   test("follows the Gateway's canonical refresh time without a browser backoff", () => {
     expect(fleetRefreshWaitMs(10_100, 5_100)).toBe(5_000);
     expect(fleetRefreshWaitMs(5_101, 5_100)).toBe(250);
@@ -228,10 +264,37 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("if(force||entry.frameKey!==nextFrameKey){entry.frameKey=nextFrameKey;entry.loading=true;entry.frame.src=href}");
   });
 
-  test("keeps every non-Pane desktop tree row disclosure-only", () => {
-    expect(FLEET_JS).toContain("if(desktopMedia.matches){toggleTree(hostKey);return}");
+  test("navigates Host bodies, keeps disclosure separate, and flattens one-Pane Tabs", () => {
+    expect(fleetTreeTabMode([])).toBe("empty");
+    expect(fleetTreeTabMode([{ paneId: "w0:p1" }])).toBe("direct");
+    expect(fleetTreeTabMode([{ paneId: "w0:p1" }, { paneId: "w0:p2" }])).toBe("branch");
+    expect(fleetTreeTabMode([{ paneId: "../../private" }])).toBe("empty");
+    expect(fleetTreeTabMode([{ paneId: "w0:p1" }, { paneId: "w0:p1" }])).toBe("direct");
+
+    expect(FLEET_JS).toContain("event.target.closest('.tree-chevron')");
+    expect(FLEET_JS).toContain("selectTreeNode(node.id,{route:{view:'home'},focusTreeKey:hostKey})");
+    expect(FLEET_JS).toContain("event.key==='ArrowRight'");
+    expect(FLEET_JS).toContain("event.key!=='ArrowRight'&&event.key!=='ArrowLeft'");
     expect(FLEET_JS).toContain("button.addEventListener('click',()=>toggleTree(key))");
-    expect(FLEET_JS).toContain("paneRow.addEventListener('click',()=>selectNode(node.id");
-    expect(FLEET_JS).not.toContain("if(desktopMedia.matches){if(expandedTreeKeys.has(hostKey))");
+    expect(FLEET_JS).toContain("const tabLabel=tab.label||'Tab '+tab.number;const validPanes=validTabPanes(tab)");
+    expect(FLEET_JS).toContain("if(validPanes.length<=1)expandedTreeKeys.delete(tabKey)");
+    expect(FLEET_JS).toContain("if(validPanes.length===1)");
+    expect(FLEET_JS).toContain("appendPaneTreatment(tabRow,pane,tabLabel)");
+    expect(FLEET_JS).toContain("direct-pane-tree-row");
+    expect(FLEET_JS).toContain("paneRow.addEventListener('click',()=>selectTreeNode(node.id");
+    expect(FLEET_JS).not.toContain("appendPaneTreatment(tabRow,pane,paneLabel(pane))");
+  });
+
+  test("uses the compact H mark as a mutually exclusive, dismissible tree drawer", () => {
+    expect(FLEET_JS).toContain("let treeOpen=false");
+    expect(FLEET_JS).toContain("shell.dataset.treeOpen='true'");
+    expect(FLEET_JS).toContain("delete shell.dataset.treeOpen");
+    expect(FLEET_JS).toContain("closeAgentMenu();treeOpen=true");
+    expect(FLEET_JS).toContain("closeTreeMenu();agentMenu.hidden=false");
+    expect(FLEET_JS).toContain("treeMenuBackdrop.addEventListener('click'");
+    expect(FLEET_JS).toContain("if(treeOpen){closeTreeMenu({restoreFocus:true});return}");
+    expect(FLEET_JS).toContain("if(nextDesktop){closeTreeMenu()");
+    expect(FLEET_JS).toContain("if(compactTree)closeTreeMenu({restoreFocus:true})");
+    expect(FLEET_JS).toContain("if(desktopMedia.matches||treeOpen){selectTreeNode(node.id");
   });
 });

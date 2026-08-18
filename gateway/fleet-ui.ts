@@ -46,6 +46,24 @@ export function fleetHeaderAgentCount(agents: readonly FleetAgentTriageInput[]):
   return agents.filter((agent) => fleetAgentBucket(agent) !== "recent").length;
 }
 
+export function fleetAttentionResetEligible(agent: FleetAgentTriageInput): boolean {
+  if (!agent.reachable) return false;
+  const bucket = fleetAgentBucket(agent);
+  return bucket === "ready" || bucket === "needs";
+}
+
+export type FleetTreeTabMode = "empty" | "direct" | "branch";
+
+export function fleetTreeTabMode(panes: readonly { paneId?: unknown }[]): FleetTreeTabMode {
+  const ids = new Set<string>();
+  for (const pane of panes) {
+    if (typeof pane.paneId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(pane.paneId)) continue;
+    ids.add(pane.paneId);
+  }
+  if (ids.size === 0) return "empty";
+  return ids.size === 1 ? "direct" : "branch";
+}
+
 export const FLEET_IFRAME_CACHE_QUIET_MS = 30 * 60 * 1_000;
 
 export interface FleetIframeCacheEntry {
@@ -158,7 +176,8 @@ export function fleetPage(iframeCacheSize = 1): string {
     "Fleet · Collie",
     `<main class="fleet-shell" data-iframe-cache-size="${boundedCacheSize}">
       <header id="host-rail" class="fleet-header">
-        <a class="fleet-mark" href="/" aria-label="Fleet home" title="Herdr Fleet">H</a>
+        <button id="tree-menu-toggle" class="fleet-mark fleet-tree-toggle" type="button" aria-expanded="false" aria-controls="instances" aria-label="Open Host tree" title="Hosts">H</button>
+        <a class="fleet-mark fleet-home-mark" href="/" aria-label="Fleet home" title="Herdr Fleet">H</a>
         <nav id="instances" class="instance-strip" aria-label="Herdr Hosts" role="tree">
           <span class="connecting">Connecting…</span>
         </nav>
@@ -181,6 +200,7 @@ export function fleetPage(iframeCacheSize = 1): string {
           </svg>
         </a>
       </header>
+      <button id="tree-menu-backdrop" class="tree-menu-backdrop" type="button" aria-label="Close Host tree" hidden></button>
       <aside id="agent-menu" class="agent-menu" aria-label="Agents across all Hosts" hidden>
         <div class="agent-menu-heading">
           <div>
@@ -273,13 +293,26 @@ button { color: inherit; }
   height: 2.75rem;
   flex: none;
   place-items: center;
+  border: 0;
   border-radius: calc(var(--radius) - 2px);
+  background: transparent;
   color: var(--foreground);
   font-size: 1rem;
   font-weight: 900;
   text-decoration: none;
+  cursor: pointer;
 }
 .fleet-mark:hover, .header-action:hover { background: var(--accent); color: var(--foreground); }
+.fleet-home-mark { display: none; }
+.fleet-tree-toggle[aria-expanded="true"] { background: var(--accent); color: var(--foreground); }
+.tree-menu-backdrop {
+  position: fixed;
+  z-index: 15;
+  inset: calc(3.75rem + env(safe-area-inset-top)) 0 0;
+  border: 0;
+  background: light-dark(#0000002e, #00000080);
+  cursor: default;
+}
 .instance-strip {
   display: flex;
   min-width: 0;
@@ -294,7 +327,7 @@ button { color: inherit; }
 .host-tree { display: contents; }
 .tree-children { display: none; }
 .tree-chevron, .tree-pane-dot, .tree-hint { flex: none; }
-.tree-chevron { display: none; width: .8rem; color: var(--muted-foreground); font-size: 1rem; line-height: 1; transition: transform .12s ease; }
+.tree-chevron { display: none; width: 1rem; height: 100%; place-items: center; color: var(--muted-foreground); font-size: 1rem; line-height: 1; transition: transform .12s ease; }
 .tree-row[aria-expanded="true"] > .tree-chevron { transform: rotate(90deg); }
 .tree-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-hint { max-width: 5.5rem; overflow: hidden; color: var(--muted-foreground); font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -510,6 +543,58 @@ button { color: inherit; }
 [hidden] { display: none !important; }
 :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 @keyframes pulse { 50% { opacity: .45; transform: scale(.96); } }
+@media (max-width: 1199px) {
+.fleet-shell[data-tree-open="true"] .instance-strip {
+  position: fixed;
+  z-index: 25;
+  top: calc(3.75rem + env(safe-area-inset-top));
+  bottom: 0;
+  left: 0;
+  display: block;
+  width: min(22rem, calc(100vw - 3rem));
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--border);
+  background: var(--background);
+  padding: .65rem .55rem max(1rem, env(safe-area-inset-bottom));
+  box-shadow: 18px 0 42px light-dark(#00000024, #000000a0);
+}
+.fleet-shell[data-tree-open="true"] .host-tree { display: block; }
+.fleet-shell[data-tree-open="true"] .tree-children:not([hidden]) { display: block; }
+.fleet-shell[data-tree-open="true"] .tree-chevron { display: grid; }
+.fleet-shell[data-tree-open="true"] .tree-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 2.15rem;
+  align-items: center;
+  gap: .4rem;
+  border: 0;
+  border-radius: calc(var(--radius) - 3px);
+  background: transparent;
+  padding-right: .5rem;
+  color: var(--muted-foreground);
+  font-size: .76rem;
+  text-align: left;
+  cursor: pointer;
+}
+.fleet-shell[data-tree-open="true"] .tree-row:hover { background: color-mix(in oklch, var(--accent) 60%, transparent); color: var(--foreground); }
+.fleet-shell[data-tree-open="true"] .tree-row[aria-selected="true"] { background: var(--accent); color: var(--foreground); }
+.fleet-shell[data-tree-open="true"] .tree-row[data-stale="true"] { opacity: .58; }
+.fleet-shell[data-tree-open="true"] .tree-row[data-disabled="true"] { cursor: default; }
+.fleet-shell[data-tree-open="true"] .tree-row-level-2 { padding-left: 1.25rem; }
+.fleet-shell[data-tree-open="true"] .tree-row-level-3 { padding-left: 2.15rem; }
+.fleet-shell[data-tree-open="true"] .tree-row-level-4 { padding-left: 3.05rem; }
+.fleet-shell[data-tree-open="true"] .instance-tab {
+  width: 100%;
+  max-width: none;
+  justify-content: flex-start;
+  border-radius: calc(var(--radius) - 1px);
+  padding: 0 .5rem;
+}
+}
 @media (max-width: 640px) {
   .fleet-shell { box-shadow: none; }
   .fleet-header { padding-right: .25rem; padding-left: .25rem; }
@@ -535,7 +620,9 @@ button { color: inherit; }
     border-bottom: 0;
     padding: 1rem .75rem;
   }
-  .fleet-mark { align-self: flex-start; }
+  .fleet-tree-toggle { display: none; }
+  .fleet-home-mark { display: grid; align-self: flex-start; }
+  .tree-menu-backdrop { display: none !important; }
   .instance-strip {
     width: 100%;
     flex-direction: column;
@@ -546,7 +633,7 @@ button { color: inherit; }
   }
   .host-tree { display: block; }
   .tree-children:not([hidden]) { display: block; }
-  .tree-chevron { display: block; }
+  .tree-chevron { display: grid; }
   .tree-row {
     display: flex;
     width: 100%;
@@ -566,6 +653,7 @@ button { color: inherit; }
   .tree-row:hover { background: color-mix(in oklch, var(--accent) 60%, transparent); color: var(--foreground); }
   .tree-row[aria-selected="true"] { background: var(--accent); color: var(--foreground); }
   .tree-row[data-stale="true"] { opacity: .58; }
+  .tree-row[data-disabled="true"] { cursor: default; }
   .tree-row-level-2 { padding-left: 1.25rem; }
   .tree-row-level-3 { padding-left: 2.15rem; }
   .tree-row-level-4 { padding-left: 3.05rem; }
@@ -652,6 +740,8 @@ const DESKTOP_MEDIA='(min-width: 1200px)';
 const RAIL_WIDTHS={leftDefault:${FLEET_RAIL_WIDTHS.leftDefault},leftMin:${FLEET_RAIL_WIDTHS.leftMin},leftMax:${FLEET_RAIL_WIDTHS.leftMax},rightDefault:${FLEET_RAIL_WIDTHS.rightDefault},rightMin:${FLEET_RAIL_WIDTHS.rightMin},rightMax:${FLEET_RAIL_WIDTHS.rightMax},centreMin:${FLEET_RAIL_WIDTHS.centreMin}};
 const shell=document.querySelector('.fleet-shell');
 const instances=document.querySelector('#instances');
+const treeMenuToggle=document.querySelector('#tree-menu-toggle');
+const treeMenuBackdrop=document.querySelector('#tree-menu-backdrop');
 const frameStage=document.querySelector('#frame-stage');
 const loading=document.querySelector('#frame-loading');
 const notice=document.querySelector('#node-notice');
@@ -682,6 +772,7 @@ let refreshTimer=null;
 let quietTimer=null;
 let lastFrameVisitAt=Date.now();
 let desktopMode=desktopMedia.matches;
+let treeOpen=false;
 let preferredRailWidths=readRailWidthPreferences();
 let appliedRailWidths={left:RAIL_WIDTHS.leftDefault,right:RAIL_WIDTHS.rightDefault};
 let railDrag=null;
@@ -914,9 +1005,19 @@ function chooseNode(){
 
 const treeKey=(nodeId,session,kind,id)=>[nodeId,session,kind,id].join('|');
 
+function focusTreeKey(key){
+ const target=[...instances.querySelectorAll('[data-tree-key]')].find((entry)=>entry.dataset.treeKey===key);if(target)target.focus();
+}
+
 function toggleTree(key){
  if(expandedTreeKeys.has(key))expandedTreeKeys.delete(key);else expandedTreeKeys.add(key);
- renderTabs();const target=[...instances.querySelectorAll('[data-tree-key]')].find((entry)=>entry.dataset.treeKey===key);if(target)target.focus();
+ renderTabs();focusTreeKey(key);
+}
+
+function handleDisclosureKey(event,key){
+ if((!desktopMedia.matches&&!treeOpen)||(event.key!=='ArrowRight'&&event.key!=='ArrowLeft'))return;
+ const shouldOpen=event.key==='ArrowRight';if(expandedTreeKeys.has(key)===shouldOpen)return;
+ event.preventDefault();toggleTree(key);
 }
 
 function disclosureRow(level,key,label,expanded,options={}){
@@ -926,13 +1027,25 @@ function disclosureRow(level,key,label,expanded,options={}){
  const chevron=element('span','tree-chevron','›');chevron.setAttribute('aria-hidden','true');
  const name=element('span','tree-label',label);button.append(chevron,name);
  if(options.hint)button.append(element('span','tree-hint',options.hint));
- button.addEventListener('click',()=>toggleTree(key));return button;
+ button.addEventListener('click',()=>toggleTree(key));button.addEventListener('keydown',(event)=>handleDisclosureKey(event,key));return button;
 }
 
 function paneLabel(pane){
  if(pane.label)return pane.label;
  if(pane.kind==='agent'&&pane.agent)return pane.agent;
  const suffix=String(pane.paneId).split(':').pop();return 'Pane '+(suffix||pane.paneId);
+}
+
+function validTabPanes(tab){
+ const panes=[];const seen=new Set();
+ for(const pane of Array.isArray(tab.panes)?tab.panes:[]){const paneId=validPane(pane&&pane.paneId);if(!paneId||seen.has(paneId))continue;seen.add(paneId);panes.push({pane,paneId})}
+ return panes;
+}
+
+function appendPaneTreatment(row,pane,label){
+ const paneState=pane.kind==='shell'?'shell':statusLabel(pane.status);const paneDot=element('span','tree-pane-dot');
+ paneDot.style.setProperty('--tree-pane-color',pane.kind==='shell'?'var(--status-idle)':statusColor(pane.status));paneDot.setAttribute('aria-hidden','true');
+ row.append(paneDot,element('span','tree-label',label),element('span','tree-hint',paneState));return paneState;
 }
 
 function renderTabs(focusSelected=false){
@@ -949,10 +1062,12 @@ function renderTabs(focusSelected=false){
    const chevron=element('span','tree-chevron','›');chevron.setAttribute('aria-hidden','true');
    const dot=element('span','status-dot');dot.setAttribute('aria-hidden','true');
    const label=element('span','instance-name tree-label',node.name);button.append(chevron,dot,label);
-   button.addEventListener('click',()=>{
-     if(desktopMedia.matches){toggleTree(hostKey);return}
+   button.addEventListener('click',(event)=>{
+     if((desktopMedia.matches||treeOpen)&&event.target.closest('.tree-chevron')){toggleTree(hostKey);return}
+     if(desktopMedia.matches||treeOpen){selectTreeNode(node.id,{route:{view:'home'},focusTreeKey:hostKey});return}
      selectNode(node.id,{focusTreeKey:hostKey});
    });
+   button.addEventListener('keydown',(event)=>handleDisclosureKey(event,hostKey));
    const hostChildren=element('div','tree-children');hostChildren.setAttribute('role','group');hostChildren.hidden=!expandedTreeKeys.has(hostKey);
    const trees=Array.isArray(node.treeSessions)?node.treeSessions:[];
    for(const tree of trees){
@@ -966,20 +1081,32 @@ function renderTabs(focusSelected=false){
        for(const tab of Array.isArray(space.tabs)?space.tabs:[]){
          const tabId=validPane(tab.tabId);if(!tabId)continue;
          const tabKey=treeKey(node.id,session,'tab',tabId);liveKeys.add(tabKey);
+         const tabLabel=tab.label||'Tab '+tab.number;const validPanes=validTabPanes(tab);
+         if(validPanes.length<=1)expandedTreeKeys.delete(tabKey);
+         if(validPanes.length===0){
+           const tabRow=element('div','tree-row tree-row-level-3');tabRow.dataset.treeKey=tabKey;tabRow.dataset.disabled='true';
+           tabRow.setAttribute('role','treeitem');tabRow.setAttribute('aria-level','3');tabRow.setAttribute('aria-disabled','true');if(!tree.reachable)tabRow.dataset.stale='true';
+           tabRow.append(element('span','tree-label',tabLabel));spaceChildren.append(tabRow);continue;
+         }
+         if(validPanes.length===1){
+           const {pane,paneId}=validPanes[0];const tabRow=element('button','tree-row tree-row-level-3 direct-pane-tree-row');tabRow.type='button';tabRow.dataset.treeKey=tabKey;
+           tabRow.setAttribute('role','treeitem');tabRow.setAttribute('aria-level','3');if(!tree.reachable)tabRow.dataset.stale='true';
+           const selected=node.id===selectedId&&route.view==='pane'&&route.paneId===paneId&&(route.session||'')===(tree.primarySession?'':session);
+           tabRow.setAttribute('aria-selected',String(selected));const paneState=appendPaneTreatment(tabRow,pane,tabLabel);tabRow.setAttribute('aria-label',tabLabel+' · '+paneState);
+           tabRow.addEventListener('click',()=>selectTreeNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:tabKey}));
+           spaceChildren.append(tabRow);continue;
+         }
          const tabOpen=expandedTreeKeys.has(tabKey);
-         const tabRow=disclosureRow(3,tabKey,tab.label||'Tab '+tab.number,tabOpen,{stale:!tree.reachable});
+         const tabRow=disclosureRow(3,tabKey,tabLabel,tabOpen,{stale:!tree.reachable});
          const tabChildren=element('div','tree-children');tabChildren.setAttribute('role','group');tabChildren.hidden=!tabOpen;
-         for(const pane of Array.isArray(tab.panes)?tab.panes:[]){
-           const paneId=validPane(pane.paneId);if(!paneId)continue;
+         for(const {pane,paneId} of validPanes){
            const paneKey=treeKey(node.id,session,'pane',paneId);liveKeys.add(paneKey);
            const paneRow=element('button','tree-row tree-row-level-4 pane-tree-row');paneRow.type='button';paneRow.dataset.treeKey=paneKey;
-           paneRow.setAttribute('role','treeitem');paneRow.setAttribute('aria-level','4');paneRow.dataset.stale=String(!tree.reachable);
+           paneRow.setAttribute('role','treeitem');paneRow.setAttribute('aria-level','4');if(!tree.reachable)paneRow.dataset.stale='true';
            const selected=node.id===selectedId&&route.view==='pane'&&route.paneId===paneId&&(route.session||'')===(tree.primarySession?'':session);
            paneRow.setAttribute('aria-selected',String(selected));
-           const paneState=pane.kind==='shell'?'shell':statusLabel(pane.status);const paneDot=element('span','tree-pane-dot');
-           paneDot.style.setProperty('--tree-pane-color',pane.kind==='shell'?'var(--status-idle)':statusColor(pane.status));paneDot.setAttribute('aria-hidden','true');
-           paneRow.append(paneDot,element('span','tree-label',paneLabel(pane)),element('span','tree-hint',paneState));
-           paneRow.addEventListener('click',()=>selectNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:paneKey}));
+           appendPaneTreatment(paneRow,pane,paneLabel(pane));
+           paneRow.addEventListener('click',()=>selectTreeNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:paneKey}));
            tabChildren.append(paneRow);
          }
          spaceChildren.append(tabRow,tabChildren);
@@ -1016,7 +1143,7 @@ function loadSelected(force=false,routeOverride=null){
 function selectNode(id,options={}){
  const node=nodes.find((candidate)=>candidate.id===id);if(!node)return;
  const existing=frameRegistry.get(id);
- const supplied=options.route&&options.route.view==='pane'?options.route:null;
+ const supplied=options.route&&(options.route.view==='pane'||options.route.view==='home')?options.route:null;
  let route=supplied||(options.routeFromUrl?requestedRoute():existing?.route||{view:'home'});
  selectedId=id;remember(id);
  const entry=ensureFrame(node);
@@ -1025,6 +1152,12 @@ function selectNode(id,options={}){
  renderTabs(options.focusTreeKey||Boolean(options.focusTab));
  loadSelected(Boolean(options.forceFrame),route);
  announce('Selected '+node.name+'. '+healthLabel(node.health)+'.');
+}
+
+function selectTreeNode(id,options={}){
+ const compactTree=treeOpen&&!desktopMedia.matches;
+ selectNode(id,compactTree?{...options,focusTreeKey:false}:options);
+ if(compactTree)closeTreeMenu({restoreFocus:true});
 }
 
 function showEmpty(title,copy){
@@ -1055,10 +1188,12 @@ function sortAgentEntries(key,entries){
 }
 
 function selectAgent(node,agent){
+ const resetAttention=Boolean(agent.reachable)&&(bucket(agent)==='ready'||bucket(agent)==='needs');
  const spaceId=validPane(agent.workspaceId);const tabId=validPane(agent.tabId);const paneId=validPane(agent.paneId);const session=agent.primarySession?null:validSession(agent.herdrSession);
  if(!spaceId||!tabId||!paneId||(!agent.primarySession&&!session))return;
  closeAgentMenu();
  selectNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(session?{session}:{})}});
+ if(resetAttention)void refresh({manual:true});
 }
 
 function renderAgentCard(node,agent){
@@ -1120,16 +1255,26 @@ function renderInventory(data){
  else{renderTabs();loadSelected(false)}
 }
 
+function closeTreeMenu(options={}){
+ treeOpen=false;delete shell.dataset.treeOpen;treeMenuBackdrop.hidden=true;treeMenuToggle.setAttribute('aria-expanded','false');treeMenuToggle.setAttribute('aria-label','Open Host tree');
+ if(options.restoreFocus&&!desktopMedia.matches)treeMenuToggle.focus();
+}
+
+function openTreeMenu(){
+ if(desktopMedia.matches)return;
+ closeAgentMenu();treeOpen=true;shell.dataset.treeOpen='true';treeMenuBackdrop.hidden=false;treeMenuToggle.setAttribute('aria-expanded','true');treeMenuToggle.setAttribute('aria-label','Close Host tree');renderTabs();
+}
+
 function closeAgentMenu(){if(desktopMedia.matches)return;agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
 
 function openAgentMenu(){
- agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','true');renderAgents();
+ closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','true');renderAgents();
  void refresh({manual:true});
 }
 
 function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
- if(nextDesktop){agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false');renderAgents()}
+ if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false');renderAgents()}
  else if(desktopMode){agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
  desktopMode=nextDesktop;applyRailWidthPreferences();
 }
@@ -1168,14 +1313,20 @@ async function refresh(options={}){
 }
 
 instances.addEventListener('keydown',(event)=>{
- if(desktopMedia.matches||!event.target.closest('[data-instance]'))return;
+ if(desktopMedia.matches||treeOpen||!event.target.closest('[data-instance]'))return;
  if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;
  const index=nodes.findIndex((node)=>node.id===selectedId);if(index<0)return;
  event.preventDefault();const delta=event.key==='ArrowRight'?1:-1;const next=nodes[(index+delta+nodes.length)%nodes.length];if(next)selectNode(next.id,{focusTab:true});
 });
+treeMenuToggle.addEventListener('click',()=>{if(treeOpen)closeTreeMenu({restoreFocus:true});else openTreeMenu()});
+treeMenuBackdrop.addEventListener('click',()=>closeTreeMenu({restoreFocus:true}));
 agentMenuToggle.addEventListener('click',()=>{if(agentMenu.hidden)openAgentMenu();else closeAgentMenu()});
 document.addEventListener('pointerdown',(event)=>{if(!desktopMedia.matches&&!agentMenu.hidden&&!agentMenu.contains(event.target)&&!agentMenuToggle.contains(event.target))closeAgentMenu()});
-document.addEventListener('keydown',(event)=>{if(event.key==='Escape'&&!desktopMedia.matches&&!agentMenu.hidden){closeAgentMenu();agentMenuToggle.focus()}});
+document.addEventListener('keydown',(event)=>{
+ if(event.key!=='Escape'||desktopMedia.matches)return;
+ if(treeOpen){closeTreeMenu({restoreFocus:true});return}
+ if(!agentMenu.hidden){closeAgentMenu();agentMenuToggle.focus()}
+});
 addEventListener('message',(event)=>{
  const entry=[...frameRegistry.values()].find((candidate)=>event.source===candidate.frame.contentWindow);if(!entry||event.origin!==entry.origin)return;
  const data=event.data;

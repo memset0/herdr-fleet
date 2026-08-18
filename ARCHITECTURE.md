@@ -58,12 +58,17 @@ Pane contents, histories, device authorization, update metadata, credentials, an
 fields never enter the aggregate.
 
 At phone widths Fleet uses that projection for a horizontal instance switcher, a bounded cross-host
-Agent menu, and one selected node. At 1200 px the same DOM becomes a Collie-styled collapsible
-Host/Space/Tab/Pane rail, a full-height centre iframe with no AppBar, and the same Agent panel as a
-persistent right rail. The left rail stacks vertically without a visible `Hosts` title, retains the
-new-tab action at its top right, and treats every non-Pane row as disclosure-only. The desktop Agent
-rail hides its `FLEET / All Agents` title and places the canonical refresh state below its scrolling
-sections. Intermediate widths are no longer capped at 640 px. Expansion state is local and survives
+Agent menu, and one selected node. Its AppBar `H` toggles the shared hierarchy as a bounded left
+drawer; the drawer and Agent menu are mutually exclusive, disclosure remains local, and route
+selection closes the drawer without replacing the selected iframe. At 1200 px the same tree state
+becomes a Collie-styled collapsible Host/Space/Tab/Pane rail, a full-height centre iframe with no
+AppBar, and the same Agent panel as a persistent right rail. The left rail stacks vertically without
+a visible `Hosts` title, retains the new-tab action at its top right, and splits Host-home activation
+from its disclosure chevron. Space and multi-Pane Tab rows are disclosure-only; a Tab with one
+validated Pane becomes a direct level-three row with that Pane's status instead of a redundant
+child. The desktop Agent rail hides its `FLEET / All Agents` title and places the canonical refresh
+state at the bottom, below its scrolling sections. Intermediate widths are no longer capped at
+640 px. Expansion state is local and survives
 aggregate refreshes; cached topology is marked stale with its source.
 
 Two overlaid desktop separators update only bounded parent-grid CSS variables. Pointer and keyboard
@@ -81,6 +86,10 @@ home action. This presentation decision lives in each node Web bundle, so an old
 may retain the old embedded mark until its normal upgrade.
 
 Each browser requests Fleet immediately on load and sends a manual reset when the menu is opened.
+A click on a live `Ready · unseen` or `Needs You` card performs its validated Pane navigation first
+and then feeds the same manual-reset path; Working, Recent, unreachable/stale, and tree navigation do
+not. The existing browser boolean coalesces overlapping reset requests, while a failed reset leaves
+the already selected route untouched.
 The Gateway owns one request-driven adaptive delay and canonical next-refresh time for every tab.
 Unchanged completed cycles double that shared delay from the effective base (at least five seconds)
 up to one hour; visible changes and manual menu opens reset it. A fixed per-node gate also prevents
