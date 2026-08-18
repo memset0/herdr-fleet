@@ -6,6 +6,22 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.3.1] - 2026-08-18
+
+### Added
+
+- Reuse the Collie-styled Host tree as a compact/mobile drawer opened from the AppBar `H`, while preserving the same expansion state, resident iframe, and wide-screen three-column layout (2d4002d).
+- Flatten Tabs with exactly one valid Pane into direct level-three destinations that display the Pane's Agent or `shell` state; multi-Pane Tabs remain expandable (2d4002d).
+
+### Fixed
+
+- Restore Host-row navigation to the Host home document while keeping its dedicated chevron as the hierarchy disclosure control (2d4002d).
+- After opening a live `Ready unseen` or `Needs You` Agent card, request an immediate Fleet refresh through the existing bounded manual-reset path, preserving its five-second floor and single queued retry (2d4002d).
+
+### Upgrading
+
+- This is a central-only Fleet patch. Upgrade the central Gateway plugin to `2.3.1`; remote Collie nodes may remain on `2.3.0`, and no configuration changes or node reinstall are required.
+
 ## [2.3.0] - 2026-08-18
 
 ### Added
