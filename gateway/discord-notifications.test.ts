@@ -102,6 +102,7 @@ function fleet(
         blocked: cards.filter((entry) => entry.status === "blocked").length,
         sessions,
         agentEntries: cards,
+        treeSessions: [],
         observedAt: generatedAt,
         lastHealthyAt: health === "online" ? generatedAt : 50,
         message: null,

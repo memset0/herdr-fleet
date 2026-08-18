@@ -85,6 +85,9 @@ describe("Gateway host routing and auth flow", () => {
             { name: "default", isPrimary: true, reachable: true, agents: 0, working: 0, blocked: 0 },
           ],
           agents: [],
+          shellPanes: [],
+          workspaces: [],
+          tabs: [],
           ts: 10,
         }),
         { headers: { "content-type": "application/json" } },
@@ -166,6 +169,7 @@ describe("Gateway host routing and auth flow", () => {
         transport: { type: "local", url: "http://127.0.0.1:18790" },
       },
     ];
+    raw.fleetUi = { iframeCacheSize: 5 };
     const framedConfig = parseGatewayConfig(raw);
     framedConfig.auth.passwordHash = config.auth.passwordHash;
     const handler = setup((async (input: string | URL | Request) => {
@@ -195,6 +199,7 @@ describe("Gateway host routing and auth flow", () => {
     expect(fleetCsp).toContain("frame-src https://local.example.com https://remote.example.com");
     expect(fleetCsp).not.toContain("disabled.example.com");
     expect(fleetCsp).not.toContain("*.example.com");
+    expect(await fleet.text()).toContain('data-iframe-cache-size="5"');
 
     const node = await handler(request("local.example.com", "/", { headers: { cookie } }));
     const nodeCsp = node.headers.get("content-security-policy") ?? "";

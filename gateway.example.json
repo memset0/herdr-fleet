@@ -13,6 +13,9 @@
     "sessionSecret": "replace_with_at_least_32_random_base64url_bytes"
   },
   "pollIntervalMs": 5000,
+  "fleetUi": {
+    "iframeCacheSize": 5
+  },
   "discordNotifications": {
     "enabled": false,
     "executable": "/usr/local/bin/pingme",

@@ -53,6 +53,10 @@ export type DiscordNotificationConfig =
       template?: string;
     };
 
+export interface FleetUiConfig {
+  iframeCacheSize: number;
+}
+
 export interface GatewayConfig {
   listen: { host: "127.0.0.1" | "::1"; port: number };
   public: {
@@ -64,6 +68,7 @@ export interface GatewayConfig {
   };
   auth: { username: string; passwordHash: string; sessionSecret: string };
   pollIntervalMs: number;
+  fleetUi: FleetUiConfig;
   discordNotifications?: DiscordNotificationConfig;
   nodes: NodeConfig[];
 }
@@ -148,6 +153,15 @@ function parseDiscordNotifications(value: unknown): DiscordNotificationConfig | 
         ...(channel ? { channel } : {}),
         ...(template ? { template } : {}),
       };
+}
+
+function parseFleetUi(value: unknown): FleetUiConfig {
+  if (value === undefined) return { iframeCacheSize: 1 };
+  const raw = object(value, "fleetUi");
+  keys(raw, ["iframeCacheSize"], "fleetUi");
+  return {
+    iframeCacheSize: integer(raw.iframeCacheSize ?? 1, "fleetUi.iframeCacheSize", 1, 10),
+  };
 }
 
 function parseLocalTransport(raw: JsonObject, label: string): LocalTransportConfig {
@@ -246,7 +260,7 @@ function parseNode(value: unknown, index: number, baseDomain: string): NodeConfi
 
 export function parseGatewayConfig(value: unknown): GatewayConfig {
   const raw = object(value, "config");
-  keys(raw, ["listen", "public", "auth", "pollIntervalMs", "discordNotifications", "nodes"], "config");
+  keys(raw, ["listen", "public", "auth", "pollIntervalMs", "fleetUi", "discordNotifications", "nodes"], "config");
 
   const listen = object(raw.listen, "listen");
   keys(listen, ["host", "port"], "listen");
@@ -320,6 +334,7 @@ export function parseGatewayConfig(value: unknown): GatewayConfig {
     },
     auth: { username, passwordHash, sessionSecret },
     pollIntervalMs: integer(raw.pollIntervalMs ?? 5_000, "pollIntervalMs", 1_000, 300_000),
+    fleetUi: parseFleetUi(raw.fleetUi),
     ...(discordNotifications ? { discordNotifications } : {}),
     nodes,
   };

@@ -12,10 +12,16 @@ https://node.herdr.example.com/?session=<session-name>
 https://node.herdr.example.com/pane/<pane-id>?session=<session-name>
 ```
 
-The Fleet page is a mobile-first Collie shell: one compact row switches instances, a header menu
-triages Agents across every Host, and one width-limited iframe renders the selected node's native
-Collie home, session, and pane routes. The aggregate contains only Agent-card metadata; Fleet never
-copies terminal contents or histories into its central data model. Inside that iframe, Collie's
+The Fleet page is a responsive Collie shell. Phone widths keep the compact Host row and expandable
+Agent menu. Wider intermediate windows remove the old 640 px shell limit; at 1200 px, Fleet reflows
+into a Collie-styled `Host → Space → Tab → Pane` Explorer, one full-height native iframe, and the
+existing `FLEET / All Agents` panel as a persistent right rail. Hosts start expanded to show every
+Space; Space/Tab disclosure is browser-local, each Pane shows its Agent status or `shell`, and a Pane
+click opens its exact native route. There is no desktop AppBar above the iframe.
+
+Fleet derives this tree from the `workspaces`, `tabs`, Agent panes, and shell panes already present in
+the same Collie snapshot fetched for Agent state. Expanding rows makes no request, and the projection
+never includes Pane contents or histories. Inside the unchanged iframe, Collie's
 redundant home/logo affordance is omitted so the native breadcrumb can use the released header
 space; a direct or new-tab Collie page retains the logo and its normal home action.
 
@@ -93,7 +99,9 @@ in their last-known triage sections, dimmed and labelled offline with their Host
 age. This cache is memory only and is never presented as live. A later successful snapshot is
 authoritative: recovered Agents move to their current status section and Agents no longer reported
 disappear. Fleet projects only the card fields needed for this view; Pane output, history,
-credentials, update state, device authorization, and unknown snapshot fields remain excluded.
+credentials, update state, device authorization, and unknown snapshot fields remain excluded. The
+allowlisted Space/Tab/Pane tree follows the same cache and backoff and is visibly stale on failure;
+it never adds a per-Space, per-Tab, or per-Pane network traversal.
 
 ## Requirements
 
@@ -232,7 +240,12 @@ new username/password once. Use a dedicated cookie base (for example `herdr.exam
 than a parent shared by unrelated applications. `gateway.example.json` documents local and SSH
 inventory entries. Its existing `pollIntervalMs` is the Gateway-owned adaptive-refresh base (5000
 by default and clamped to the five-second Host revisit floor), not an unconditional server polling
-loop. The live Gateway config must remain an absolute-path, owner-only file.
+loop. Optional `fleetUi.iframeCacheSize` accepts an integer from 1 through 10 and defaults to 1.
+Setting it to 5 lazily keeps up to five most-recently-foregrounded Host documents alive while showing
+only the selected one. Agent/health state never affects eviction; after 30 minutes with no Host
+selection or revisit, Fleet silently removes every non-selected iframe. The selected iframe survives,
+and Fleet does not invoke or change Collie's own idle lock. The live Gateway config must remain an
+absolute-path, owner-only file.
 
 ### Discord Agent notifications
 

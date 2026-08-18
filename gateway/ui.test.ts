@@ -5,20 +5,25 @@ import {
   FLEET_JS,
   fleetAgentBucket,
   fleetHeaderAgentCount,
+  fleetIframeCacheQuietExpired,
+  fleetIframeEvictionCandidate,
   fleetPage,
   fleetRefreshWaitMs,
 } from "./fleet-ui.ts";
 
 describe("Fleet iframe shell", () => {
-  test("renders one Collie viewport, one compact instance row, and an outer Agent menu", () => {
+  test("renders a lazy frame stage, responsive Host tree, and reused Agent surface", () => {
     const page = fleetPage();
-    expect(page.match(/<iframe\b/g)?.length).toBe(1);
+    expect(page).not.toContain("<iframe");
+    expect(page).toContain('data-iframe-cache-size="1"');
+    expect(fleetPage(5)).toContain('data-iframe-cache-size="5"');
+    expect(fleetPage(99)).toContain('data-iframe-cache-size="1"');
     expect(page).toContain('id="instances"');
-    expect(page).toContain('role="tablist"');
+    expect(page).toContain('role="tree"');
     expect(page).toContain('id="agent-menu-toggle"');
     expect(page).toContain('aria-haspopup="dialog"');
     expect(page).toContain('id="agent-menu"');
-    expect(page.indexOf('id="agent-menu"')).toBeLessThan(page.indexOf('id="node-frame"'));
+    expect(page.indexOf('id="agent-menu"')).toBeLessThan(page.indexOf('id="frame-stage"'));
     expect(page).toContain('id="open-node"');
     expect(page).toContain('data-icon="agent"');
     expect(page).toContain('data-icon="external-link"');
@@ -31,7 +36,7 @@ describe("Fleet iframe shell", () => {
     expect(page).toContain('id="retry-frame"');
     expect(page).not.toContain("Fleet totals");
     expect(page).not.toContain('class="node-grid"');
-    expect(FLEET_CSS).toMatch(/max-width:\s*640px/);
+    expect(FLEET_CSS).not.toMatch(/\.fleet-shell\s*\{[^}]*max-width:\s*640px/);
     expect(FLEET_CSS).toMatch(/height:\s*100dvh/);
     expect(FLEET_CSS).toMatch(/html, body \{ height: 100%; overflow: hidden/);
     expect(FLEET_CSS).toMatch(/\.agent-sections \{[^}]*overflow-y: auto/);
@@ -40,19 +45,37 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toMatch(/\.agent-menu-toggle \{[^}]*grid-template-columns: auto auto/);
     expect(FLEET_CSS).toMatch(/\.agent-menu-count \{[^}]*color: currentColor/);
     expect(FLEET_CSS).not.toMatch(/\.agent-menu-count \{[^}]*position: absolute/);
+    expect(FLEET_CSS).toContain("@media (min-width: 1200px)");
+    expect(FLEET_CSS).toContain('grid-template-areas: "hosts frame agents"');
+    expect(FLEET_CSS).toContain(".tree-row-level-4");
   });
 
-  test("keeps selection URL-addressable without rebuilding Collie content", () => {
+  test("keeps selected and hidden Collie documents in a bounded LRU registry", () => {
     expect(() => new Function(FLEET_JS)).not.toThrow();
     expect(FLEET_JS).toContain("searchParams.get('instance')");
     expect(FLEET_JS).toContain("localStorage.getItem(STORAGE_KEY)");
     expect(FLEET_JS).toContain("history.replaceState");
-    expect(FLEET_JS).toContain("currentFrameKey!==nextFrameKey");
-    expect(FLEET_JS).toContain("frame.src=href");
+    expect(FLEET_JS).toContain("const frameRegistry=new Map()");
+    expect(FLEET_JS).toContain("while(frameRegistry.size>=iframeCacheSize)");
+    expect(FLEET_JS).toContain("entry.frame.src=href");
+    expect(FLEET_JS).toContain("resident.frame.hidden=resident!==entry");
+    expect(FLEET_JS).toContain("left.lastVisitedAt-right.lastVisitedAt");
+    expect(FLEET_JS).toContain("FRAME_CACHE_QUIET_MS=1800000");
+    expect(FLEET_JS).toContain("if(id!==selectedId)releaseFrame(id)");
+    expect(FLEET_JS).not.toContain("bucket(agent)!=='recent').length&&");
     expect(FLEET_JS).not.toContain("innerHTML");
     expect(FLEET_JS).toContain("textContent=String(text)");
     expect(FLEET_JS).toContain("replaceChildren");
     expect(FLEET_JS).not.toContain("sessionHref");
+
+    expect(fleetIframeEvictionCandidate([
+      { id: "selected", lastVisitedAt: 1 },
+      { id: "older", lastVisitedAt: 10 },
+      { id: "newer", lastVisitedAt: 20 },
+    ], "selected")).toBe("older");
+    expect(fleetIframeEvictionCandidate([{ id: "selected", lastVisitedAt: 1 }], "selected")).toBeNull();
+    expect(fleetIframeCacheQuietExpired(1_800_100, 100)).toBeTrue();
+    expect(fleetIframeCacheQuietExpired(1_800_099, 100)).toBeFalse();
   });
 
   test("renders Collie triage, Host identity, and stale cards through safe DOM nodes", () => {
@@ -66,6 +89,11 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toContain("--status-blocked:");
     expect(FLEET_CSS).toContain("--status-working:");
     expect(FLEET_CSS).toContain('.agent-card[data-live="false"]');
+    expect(FLEET_JS).toContain("Array.isArray(node.treeSessions)?node.treeSessions:[]");
+    expect(FLEET_JS).toContain("const expandedTreeKeys=new Set()");
+    expect(FLEET_JS).toContain("if(!initializedHostKeys.has(hostKey))");
+    expect(FLEET_JS).toContain("pane.kind==='shell'?'shell':statusLabel(pane.status)");
+    expect(FLEET_JS).toContain("selectNode(node.id,{route:{view:'pane',spaceId,tabId,paneId");
 
     expect(fleetAgentBucket({ reachable: true, status: "blocked" })).toBe("needs");
     expect(fleetAgentBucket({ reachable: true, status: "done", lastActiveAt: 2, lastSeenAt: 1 })).toBe("ready");
@@ -119,20 +147,21 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).not.toContain("setInterval");
   });
 
-  test("restores and accepts only canonical routes from the selected node frame", () => {
+  test("restores routes only from an exact registered frame and isolates hidden updates", () => {
     expect(FLEET_JS).toContain("herdr-web-remote:route");
     expect(FLEET_JS).toContain("params.get('pane')");
     expect(FLEET_JS).toContain("params.get('space')");
     expect(FLEET_JS).toContain("params.get('tab')");
     expect(FLEET_JS).toContain("params.get('session')");
-    expect(FLEET_JS).toContain("event.source!==frame.contentWindow");
-    expect(FLEET_JS).toContain("event.origin!==currentOrigin");
+    expect(FLEET_JS).toContain("event.source===candidate.frame.contentWindow");
+    expect(FLEET_JS).toContain("event.origin!==entry.origin");
     expect(FLEET_JS).toContain("data.version!==1");
     expect(FLEET_JS).toContain("url.searchParams.delete('pane')");
     expect(FLEET_JS).toContain("url.searchParams.delete('space')");
     expect(FLEET_JS).toContain("url.searchParams.delete('tab')");
     expect(FLEET_JS).toContain("url.searchParams.delete('session')");
     expect(FLEET_JS).toContain("history.replaceState");
+    expect(FLEET_JS).toContain("if(entry.id!==selectedId)return");
     expect(FLEET_JS).not.toContain("event.data.url");
     expect(FLEET_JS).not.toContain("contentWindow.location");
   });

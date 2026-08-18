@@ -29,6 +29,25 @@ interface AgentProjection {
   lastSeenAt?: number;
 }
 
+interface WorkspaceProjection {
+  workspaceId: string;
+  number: number;
+  label: string;
+  focused: boolean;
+  activeTabId: string;
+  tabCount: number;
+  paneCount: number;
+}
+
+interface TabProjection {
+  tabId: string;
+  workspaceId: string;
+  number: number;
+  label: string;
+  focused: boolean;
+  paneCount: number;
+}
+
 export interface FleetAgentCard extends AgentProjection {
   herdrSession: string;
   primarySession: boolean;
@@ -40,7 +59,43 @@ interface CollieSnapshot {
   bridge: string;
   sessions: SessionSummary[];
   agents: AgentProjection[];
+  shellPanes: AgentProjection[];
+  workspaces: WorkspaceProjection[];
+  tabs: TabProjection[];
   ts: number;
+}
+
+export interface FleetTreePane {
+  paneId: string;
+  label: string | null;
+  agent: string;
+  kind: "agent" | "shell";
+  status: FleetAgentStatus;
+  focused: boolean;
+}
+
+export interface FleetTreeTab {
+  tabId: string;
+  number: number;
+  label: string;
+  focused: boolean;
+  panes: FleetTreePane[];
+}
+
+export interface FleetTreeSpace {
+  workspaceId: string;
+  number: number;
+  label: string;
+  focused: boolean;
+  tabs: FleetTreeTab[];
+}
+
+export interface FleetSessionTree {
+  herdrSession: string;
+  primarySession: boolean;
+  reachable: boolean;
+  observedAt: number;
+  spaces: FleetTreeSpace[];
 }
 
 export interface FleetNodeState {
@@ -56,6 +111,7 @@ export interface FleetNodeState {
   blocked: number;
   sessions: SessionSummary[];
   agentEntries: FleetAgentCard[];
+  treeSessions: FleetSessionTree[];
   observedAt: number;
   lastHealthyAt: number | null;
   message: string | null;
@@ -125,6 +181,22 @@ function optionalTimestamp(value: unknown, label: string): number | undefined {
   return value as number;
 }
 
+function routeId(value: unknown, label: string): string {
+  const id = requiredString(value, label, 128);
+  if (!ROUTE_ID.test(id)) throw new Error(`${label} is invalid`);
+  return id;
+}
+
+function nonNegativeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`${label} is invalid`);
+  return value as number;
+}
+
+function boolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${label} is invalid`);
+  return value;
+}
+
 function parseAgent(value: unknown, index: number): AgentProjection {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`agents[${index}] is not an object`);
@@ -143,15 +215,14 @@ function parseAgent(value: unknown, index: number): AgentProjection {
   const lastActiveAt = optionalTimestamp(agent.lastActiveAt, `agents[${index}].lastActiveAt`);
   const lastSeenAt = optionalTimestamp(agent.lastSeenAt, `agents[${index}].lastSeenAt`);
 
-  const paneId = requiredString(agent.paneId, `agents[${index}].paneId`, 128);
-  if (!ROUTE_ID.test(paneId)) throw new Error(`agents[${index}].paneId is invalid`);
+  const paneId = routeId(agent.paneId, `agents[${index}].paneId`);
 
   return {
     paneId,
-    workspaceId: requiredString(agent.workspaceId, `agents[${index}].workspaceId`, 128),
+    workspaceId: routeId(agent.workspaceId, `agents[${index}].workspaceId`),
     workspaceLabel: displayString(agent.workspaceLabel, `agents[${index}].workspaceLabel`, 1_024),
     workspaceNumber: agent.workspaceNumber as number,
-    tabId: requiredString(agent.tabId, `agents[${index}].tabId`, 128),
+    tabId: routeId(agent.tabId, `agents[${index}].tabId`),
     agent: requiredString(agent.agent, `agents[${index}].agent`, 128),
     status,
     cwd: displayString(agent.cwd, `agents[${index}].cwd`),
@@ -164,6 +235,37 @@ function parseAgent(value: unknown, index: number): AgentProjection {
   };
 }
 
+function parseWorkspace(value: unknown, index: number): WorkspaceProjection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`workspaces[${index}] is not an object`);
+  }
+  const workspace = value as Record<string, unknown>;
+  return {
+    workspaceId: routeId(workspace.workspaceId, `workspaces[${index}].workspaceId`),
+    number: nonNegativeInteger(workspace.number, `workspaces[${index}].number`),
+    label: displayString(workspace.label, `workspaces[${index}].label`, 1_024),
+    focused: boolean(workspace.focused, `workspaces[${index}].focused`),
+    activeTabId: routeId(workspace.activeTabId, `workspaces[${index}].activeTabId`),
+    tabCount: nonNegativeInteger(workspace.tabCount, `workspaces[${index}].tabCount`),
+    paneCount: nonNegativeInteger(workspace.paneCount, `workspaces[${index}].paneCount`),
+  };
+}
+
+function parseTab(value: unknown, index: number): TabProjection {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`tabs[${index}] is not an object`);
+  }
+  const tab = value as Record<string, unknown>;
+  return {
+    tabId: routeId(tab.tabId, `tabs[${index}].tabId`),
+    workspaceId: routeId(tab.workspaceId, `tabs[${index}].workspaceId`),
+    number: nonNegativeInteger(tab.number, `tabs[${index}].number`),
+    label: displayString(tab.label, `tabs[${index}].label`, 1_024),
+    focused: boolean(tab.focused, `tabs[${index}].focused`),
+    paneCount: nonNegativeInteger(tab.paneCount, `tabs[${index}].paneCount`),
+  };
+}
+
 function parseSnapshot(value: unknown): CollieSnapshot {
   if (!value || typeof value !== "object") throw new Error("snapshot is not an object");
   const snapshot = value as Record<string, unknown>;
@@ -171,11 +273,19 @@ function parseSnapshot(value: unknown): CollieSnapshot {
     typeof snapshot.bridge !== "string" ||
     !Array.isArray(snapshot.sessions) ||
     !snapshot.sessions.every(validSession) ||
-    !Array.isArray(snapshot.agents)
+    !Array.isArray(snapshot.agents) ||
+    !Array.isArray(snapshot.shellPanes) ||
+    !Array.isArray(snapshot.workspaces) ||
+    !Array.isArray(snapshot.tabs)
   ) {
     throw new Error("snapshot shape is incompatible");
   }
-  if (snapshot.sessions.length > 256 || snapshot.agents.length > 4_096) {
+  if (
+    snapshot.sessions.length > 256 ||
+    snapshot.agents.length + snapshot.shellPanes.length > 4_096 ||
+    snapshot.workspaces.length > 1_024 ||
+    snapshot.tabs.length > 4_096
+  ) {
     throw new Error("snapshot shape exceeds Fleet limits");
   }
   const sessionNames = new Set((snapshot.sessions as SessionSummary[]).map((session) => session.name));
@@ -183,16 +293,83 @@ function parseSnapshot(value: unknown): CollieSnapshot {
   if (sessionNames.size !== snapshot.sessions.length || primarySessions !== 1) {
     throw new Error("snapshot session registry is ambiguous");
   }
+  const agents = (snapshot.agents as unknown[]).map(parseAgent);
+  const shellPanes = (snapshot.shellPanes as unknown[]).map((pane, index) => parseAgent(pane, agents.length + index));
+  const workspaces = (snapshot.workspaces as unknown[]).map(parseWorkspace);
+  const tabs = (snapshot.tabs as unknown[]).map(parseTab);
+  const workspaceIds = new Set(workspaces.map((workspace) => workspace.workspaceId));
+  const tabIds = new Set(tabs.map((tab) => tab.tabId));
+  if (workspaceIds.size !== workspaces.length || tabIds.size !== tabs.length) {
+    throw new Error("snapshot topology contains duplicate ids");
+  }
+  if (tabs.some((tab) => !workspaceIds.has(tab.workspaceId))) {
+    throw new Error("snapshot tab references an unknown workspace");
+  }
+  const panes = [...agents, ...shellPanes];
+  if (new Set(panes.map((pane) => pane.paneId)).size !== panes.length) {
+    throw new Error("snapshot topology contains duplicate pane ids");
+  }
+  if (panes.some((pane) => !workspaceIds.has(pane.workspaceId) || !tabIds.has(pane.tabId))) {
+    throw new Error("snapshot pane references unknown topology");
+  }
   return {
     bridge: snapshot.bridge,
     sessions: snapshot.sessions,
-    agents: snapshot.agents.map(parseAgent),
+    agents,
+    shellPanes,
+    workspaces,
+    tabs,
     ts: Number.isFinite(snapshot.ts) ? (snapshot.ts as number) : Date.now(),
   };
 }
 
 function offlineAgents(entries: readonly FleetAgentCard[]): FleetAgentCard[] {
   return entries.map((entry) => ({ ...entry, reachable: false }));
+}
+
+function offlineTrees(entries: readonly FleetSessionTree[]): FleetSessionTree[] {
+  return entries.map((entry) => ({ ...entry, reachable: false }));
+}
+
+function sessionTree(snapshot: CollieSnapshot, session: SessionSummary, observedAt: number): FleetSessionTree {
+  const panes = [
+    ...snapshot.agents.map((pane) => ({ ...pane, kind: "agent" as const })),
+    ...snapshot.shellPanes.map((pane) => ({ ...pane, kind: "shell" as const })),
+  ];
+  return {
+    herdrSession: session.name,
+    primarySession: session.isPrimary,
+    reachable: true,
+    observedAt,
+    spaces: [...snapshot.workspaces]
+      .sort((left, right) => left.number - right.number || left.workspaceId.localeCompare(right.workspaceId))
+      .map((workspace) => ({
+        workspaceId: workspace.workspaceId,
+        number: workspace.number,
+        label: workspace.label,
+        focused: workspace.focused,
+        tabs: snapshot.tabs
+          .filter((tab) => tab.workspaceId === workspace.workspaceId)
+          .sort((left, right) => left.number - right.number || left.tabId.localeCompare(right.tabId))
+          .map((tab) => ({
+            tabId: tab.tabId,
+            number: tab.number,
+            label: tab.label,
+            focused: tab.focused,
+            panes: panes
+              .filter((pane) => pane.workspaceId === workspace.workspaceId && pane.tabId === tab.tabId)
+              .sort((left, right) => left.paneId.localeCompare(right.paneId))
+              .map((pane) => ({
+                paneId: pane.paneId,
+                label: pane.paneLabel ?? pane.sessionName ?? null,
+                agent: pane.agent,
+                kind: pane.kind,
+                status: pane.status,
+                focused: pane.focused,
+              })),
+          })),
+      })),
+  };
 }
 
 function unavailableState(
@@ -221,6 +398,7 @@ function unavailableState(
       blocked: 0,
     })),
     agentEntries: offlineAgents(previous?.agentEntries ?? []),
+    treeSessions: offlineTrees(previous?.treeSessions ?? []),
     observedAt: now,
     lastHealthyAt: previous?.lastHealthyAt ?? null,
     message,
@@ -391,6 +569,11 @@ export class FleetCollector {
     return offlineAgents(previous?.agentEntries.filter((entry) => entry.herdrSession === name) ?? []);
   }
 
+  private cachedSessionTree(previous: FleetNodeState | undefined, name: string): FleetSessionTree | null {
+    const tree = previous?.treeSessions.find((entry) => entry.herdrSession === name);
+    return tree ? { ...tree, reachable: false } : null;
+  }
+
   private currentSession(agents: AgentProjection[], session: SessionSummary, observedAt: number): FleetAgentCard[] {
     return agents.map((agent) => ({
       ...agent,
@@ -426,19 +609,39 @@ export class FleetCollector {
       const snapshot = await this.fetchSnapshot(node);
       const bridgeConnected = snapshot.bridge === "connected";
       const sessionResults = await Promise.all(
-        snapshot.sessions.map(async (session): Promise<{ session: SessionSummary; entries: FleetAgentCard[] }> => {
+        snapshot.sessions.map(async (session): Promise<{
+          session: SessionSummary;
+          entries: FleetAgentCard[];
+          tree: FleetSessionTree | null;
+        }> => {
           if (!bridgeConnected || !session.reachable) {
-            return { session: { ...session, reachable: false }, entries: this.cachedSession(previous, session.name) };
+            return {
+              session: { ...session, reachable: false },
+              entries: this.cachedSession(previous, session.name),
+              tree: this.cachedSessionTree(previous, session.name),
+            };
           }
           if (session.isPrimary) {
-            return { session, entries: this.currentSession(snapshot.agents, session, now) };
+            return {
+              session,
+              entries: this.currentSession(snapshot.agents, session, now),
+              tree: sessionTree(snapshot, session, now),
+            };
           }
           try {
             const detail = await this.fetchSnapshot(node, session.name);
             if (detail.bridge !== "connected") throw new Error("named session bridge is disconnected");
-            return { session, entries: this.currentSession(detail.agents, session, now) };
+            return {
+              session,
+              entries: this.currentSession(detail.agents, session, now),
+              tree: sessionTree(detail, session, now),
+            };
           } catch {
-            return { session: { ...session, reachable: false }, entries: this.cachedSession(previous, session.name) };
+            return {
+              session: { ...session, reachable: false },
+              entries: this.cachedSession(previous, session.name),
+              tree: this.cachedSessionTree(previous, session.name),
+            };
           }
         }),
       );
@@ -461,6 +664,7 @@ export class FleetCollector {
         blocked,
         sessions,
         agentEntries: sortAgentEntries(sessionResults.flatMap((result) => result.entries)),
+        treeSessions: sessionResults.flatMap((result) => result.tree ? [result.tree] : []),
         observedAt: now,
         lastHealthyAt: online ? now : (previous?.lastHealthyAt ?? null),
         message: online ? null : "Collie is reachable but no Herdr session is connected",
@@ -498,6 +702,7 @@ export class FleetCollector {
         blocked: node.blocked,
         sessions: node.sessions,
         agentEntries: node.agentEntries.map(({ observedAt: _observedAt, ...entry }) => entry),
+        treeSessions: node.treeSessions.map(({ observedAt: _observedAt, ...tree }) => tree),
         message: node.message,
       })),
     );

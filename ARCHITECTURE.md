@@ -52,14 +52,19 @@ An authenticated `/api/fleet` read drives one coalesced collector refresh. There
 Gateway polling while no Fleet page is open unless the optional central Discord notifier is enabled;
 in that mode one background wakeup advances the very same collector and canonical adaptive
 schedule. The collector reads each node's primary snapshot and fans out across its reachable named
-sessions. It validates and projects only stable instance, session, health, and Agent-card fields.
+sessions. It validates and projects only stable instance, session, health, Agent-card, and bounded
+Space/Tab/Pane tree fields from those same snapshot responses; tree disclosure adds no node request.
 Pane contents, histories, device authorization, update metadata, credentials, and unknown response
 fields never enter the aggregate.
 
-The Fleet page uses that projection to render a single horizontal instance switcher, a bounded
-cross-host Agent menu in Fleet's own header, and exactly one selected node origin at a time. The
-menu follows Collie's triage/card vocabulary, adds the owning Host, and turns a card selection into
-the existing canonical instance/session/Pane route. The iframe still owns the complete native
+At phone widths Fleet uses that projection for a horizontal instance switcher, a bounded cross-host
+Agent menu, and one selected node. At 1200 px the same DOM becomes a Collie-styled collapsible
+Host/Space/Tab/Pane rail, a full-height centre iframe with no AppBar, and the same Agent panel as a
+persistent right rail. Intermediate widths are no longer capped at 640 px. Expansion state is local
+and survives aggregate refreshes; cached topology is marked stale with its source.
+
+The Agent panel follows Collie's triage/card vocabulary, adds the owning Host, and turns a card
+selection into the existing canonical instance/session/Pane route. The iframe still owns the complete native
 Collie route stack and every terminal operation; Fleet does not reproduce Pane views or actions.
 The shared native Header omits its complete Collie home/logo affordance when framed, releasing that
 space to the breadcrumb, while the same top-level page retains the mark, connection animation, and
@@ -75,10 +80,17 @@ failure. Early requests receive cached state and the canonical next time. One el
 transaction includes primary discovery plus named-session fan-out; neither nodes, sessions, nor
 browsers maintain another exponential sequence.
 
-The Gateway keeps only an in-memory, per-node/session last-known Agent cache. A failed source leaves
+The Gateway keeps an in-memory, per-node/session last-known Agent and allowlisted topology cache. A failed source leaves
 its cards visibly offline/stale but interleaved in the normal triage sections according to the last
 successfully observed status and timestamps; the next successful snapshot replaces that source
-authoritatively, including confirmed removals.
+authoritatively, including confirmed removals. The same rule retains or replaces its tree.
+
+Fleet optionally maintains a browser-memory Host-keyed iframe registry. Its configured 1–10 capacity
+defaults to one; admission is lazy and full capacity evicts only the non-selected frame with the
+oldest foreground-visit timestamp. Hidden route messages update only their exact registered frame,
+and exact window/origin validation gates all messages. One wall-clock quiet timer removes every
+non-selected frame after 30 minutes without a Host selection/revisit. No Agent state, child activity,
+or Collie idle-lock behavior enters this cache policy.
 
 When central Discord alerts are configured, a second memory-only ledger consumes completed live
 collector cycles. It silently baselines first-seen Pane identities and creates a candidate when a

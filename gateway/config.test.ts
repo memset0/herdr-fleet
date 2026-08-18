@@ -17,7 +17,24 @@ describe("gateway configuration", () => {
   test("accepts an exact loopback local inventory", () => {
     const config = parseGatewayConfig(rawGatewayConfig());
     expect(config.public.fleetHost).toBe("fleet.example.com");
+    expect(config.fleetUi).toEqual({ iframeCacheSize: 1 });
     expect(config.nodes[0]?.transport).toEqual({ type: "local", url: "http://127.0.0.1:18788" });
+  });
+
+  test("accepts a bounded Fleet iframe cache size and rejects invalid Fleet UI settings", () => {
+    const configured = rawGatewayConfig();
+    configured.fleetUi = { iframeCacheSize: 5 };
+    expect(parseGatewayConfig(configured).fleetUi.iframeCacheSize).toBe(5);
+
+    for (const iframeCacheSize of [0, 11, 1.5, "5"]) {
+      const invalid = rawGatewayConfig();
+      invalid.fleetUi = { iframeCacheSize };
+      expect(() => parseGatewayConfig(invalid)).toThrow("fleetUi.iframeCacheSize");
+    }
+
+    const unknown = rawGatewayConfig();
+    unknown.fleetUi = { iframeCacheSize: 5, prioritizeAttention: true };
+    expect(() => parseGatewayConfig(unknown)).toThrow("fleetUi contains unknown field");
   });
 
   test("rejects unknown fields, non-boolean enablement, non-loopback URLs, and disabled-only inventory", () => {

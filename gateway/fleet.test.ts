@@ -41,7 +41,24 @@ function session(
 }
 
 function response(agents: Record<string, unknown>[], sessions = [session("default", { isPrimary: true })], bridge = "connected") {
-  return new Response(JSON.stringify({ bridge, sessions, agents, ts: 50 }), {
+  const workspaces = [...new Map(agents.map((entry) => [String(entry.workspaceId), {
+    workspaceId: entry.workspaceId,
+    number: entry.workspaceNumber,
+    label: entry.workspaceLabel,
+    focused: false,
+    activeTabId: entry.tabId,
+    tabCount: 1,
+    paneCount: agents.filter((candidate) => candidate.workspaceId === entry.workspaceId).length,
+  }])).values()];
+  const tabs = [...new Map(agents.map((entry) => [String(entry.tabId), {
+    tabId: entry.tabId,
+    workspaceId: entry.workspaceId,
+    number: 0,
+    label: entry.tabLabel ?? "Main",
+    focused: false,
+    paneCount: agents.filter((candidate) => candidate.tabId === entry.tabId).length,
+  }])).values()];
+  return new Response(JSON.stringify({ bridge, sessions, agents, shellPanes: [], workspaces, tabs, ts: 50 }), {
     headers: { "content-type": "application/json" },
   });
 }
@@ -103,6 +120,76 @@ describe("Fleet aggregation", () => {
     expect(JSON.stringify(state)).not.toContain("synthetic-secret");
   });
 
+  test("projects a bounded Host tree from the same snapshot request without Pane content", async () => {
+    const config = gatewayConfig();
+    const transports = new TransportRegistry(config.nodes);
+    let calls = 0;
+    const payload = {
+      bridge: "connected",
+      sessions: [session("default", { isPrimary: true })],
+      agents: [agent("w0:p1", "working", { paneLabel: "build" })],
+      shellPanes: [agent("w0:p2", "unknown", {
+        agent: "shell",
+        kind: "shell",
+        paneLabel: "logs",
+        cwd: "/private/shell-path",
+        terminal: "must not be projected",
+      })],
+      workspaces: [{
+        workspaceId: "w0",
+        number: 1,
+        label: "Example project",
+        focused: true,
+        activeTabId: "w0:t0",
+        tabCount: 1,
+        paneCount: 2,
+      }],
+      tabs: [{
+        tabId: "w0:t0",
+        workspaceId: "w0",
+        number: 1,
+        label: "Main",
+        focused: true,
+        paneCount: 2,
+      }],
+      ts: 50,
+    };
+    const fetcher = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify(payload));
+    }) as unknown as typeof fetch;
+    const collector = new FleetCollector(config, transports, fetcher, () => 100);
+
+    await collector.refresh();
+
+    expect(calls).toBe(1);
+    const trees = collector.snapshot().nodes[0]?.treeSessions;
+    expect(trees).toEqual([{
+      herdrSession: "default",
+      primarySession: true,
+      reachable: true,
+      observedAt: 100,
+      spaces: [{
+        workspaceId: "w0",
+        number: 1,
+        label: "Example project",
+        focused: true,
+        tabs: [{
+          tabId: "w0:t0",
+          number: 1,
+          label: "Main",
+          focused: true,
+          panes: [
+            { paneId: "w0:p1", label: "build", agent: "codex", kind: "agent", status: "working", focused: false },
+            { paneId: "w0:p2", label: "logs", agent: "shell", kind: "shell", status: "unknown", focused: false },
+          ],
+        }],
+      }],
+    }]);
+    expect(JSON.stringify(trees)).not.toContain("private/shell-path");
+    expect(JSON.stringify(trees)).not.toContain("must not be projected");
+  });
+
   test("retains only failed sources as stale and removes recovered omissions", async () => {
     const config = gatewayConfig();
     const transports = new TransportRegistry(config.nodes);
@@ -133,6 +220,8 @@ describe("Fleet aggregation", () => {
     expect(offline?.health).toBe("bridge-down");
     expect(offline?.agentEntries).toHaveLength(2);
     expect(offline?.agentEntries.every((entry) => !entry.reachable && entry.observedAt === 100)).toBeTrue();
+    expect(offline?.treeSessions).toHaveLength(2);
+    expect(offline?.treeSessions.every((entry) => !entry.reachable && entry.observedAt === 100)).toBeTrue();
 
     round = 2;
     clock = 10_100;
@@ -140,6 +229,8 @@ describe("Fleet aggregation", () => {
     const recovered = collector.snapshot().nodes[0];
     expect(recovered?.health).toBe("online");
     expect(recovered?.agentEntries).toEqual([]);
+    expect(recovered?.treeSessions).toHaveLength(2);
+    expect(recovered?.treeSessions.every((entry) => entry.reachable && entry.spaces.length === 0)).toBeTrue();
   });
 
   test("keeps a failed named session stale while its sibling remains current", async () => {
@@ -178,6 +269,8 @@ describe("Fleet aggregation", () => {
       status: "blocked",
       reachable: false,
     });
+    expect(node?.treeSessions.find((entry) => entry.herdrSession === "default")?.reachable).toBeTrue();
+    expect(node?.treeSessions.find((entry) => entry.herdrSession === "batch")?.reachable).toBeFalse();
   });
 
   test("changes revision only when visible state changes", async () => {
