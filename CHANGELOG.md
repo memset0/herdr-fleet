@@ -6,6 +6,25 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.2.2] - 2026-08-18
+
+### Fixed
+
+- Repair the desktop Host rail's vertical layout, remove the redundant visible `Hosts` and `FLEET / All Agents` headings, keep the selected-node new-tab action at the Host rail's top right, and move the canonical refresh state to the bottom of the Agent rail (0244be3).
+- Make Host, Space, and Tab rows disclosure-only on desktop so only Pane rows switch the selected Collie document (0244be3).
+
+### Added
+
+- Let pointer and keyboard users resize both desktop rails, remember bounded browser-local preferences, and clamp them after viewport changes while preserving at least 40rem for the native Collie iframe (0244be3).
+
+### Security
+
+- Resizing changes only parent-grid CSS variables and temporarily shields cross-origin iframe pointer capture; it never recreates, reloads, or rewrites a resident frame, so Collie navigation after initial admission remains attached to that exact cached document (0244be3).
+
+### Upgrading
+
+- This patch changes only the central Fleet shell. Upgrade the central Gateway plugin to `2.2.2`; remote node bundles may remain on `2.2.0`, and existing `fleetUi.iframeCacheSize` configuration remains valid.
+
 ## [2.2.1] - 2026-08-18
 
 ### Added
