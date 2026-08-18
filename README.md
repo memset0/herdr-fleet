@@ -15,15 +15,26 @@ https://node.herdr.example.com/pane/<pane-id>?session=<session-name>
 The Fleet page is a responsive Collie shell. Phone widths keep the compact Host row and expandable
 Agent menu. Wider intermediate windows remove the old 640 px shell limit; at 1200 px, Fleet reflows
 into a Collie-styled `Host → Space → Tab → Pane` Explorer, one full-height native iframe, and the
-existing `FLEET / All Agents` panel as a persistent right rail. Hosts start expanded to show every
-Space; Space/Tab disclosure is browser-local, each Pane shows its Agent status or `shell`, and a Pane
-click opens its exact native route. There is no desktop AppBar above the iframe.
+existing Agent sections as a persistent right rail. The left rail omits a redundant `Hosts` title
+and keeps the new-tab action at its top right; the right rail omits the redundant `FLEET / All
+Agents` title and keeps the canonical refresh status at its bottom. Hosts start expanded to show
+every Space; Host/Space/Tab activation only toggles browser-local disclosure, each Pane shows its
+Agent status or `shell`, and only a Pane click opens its exact native route. There is no desktop
+AppBar above the iframe.
+
+Both desktop rail boundaries are pointer- and keyboard-resizable. Fleet remembers bounded left and
+right preferences in that browser, clamps them to preserve the 40rem centre after viewport changes,
+and uses the shipped widths when storage is missing or invalid. The separators and preferences do
+not affect compact layouts.
 
 Fleet derives this tree from the `workspaces`, `tabs`, Agent panes, and shell panes already present in
 the same Collie snapshot fetched for Agent state. Expanding rows makes no request, and the projection
 never includes Pane contents or histories. Inside the unchanged iframe, Collie's
 redundant home/logo affordance is omitted so the native breadcrumb can use the released header
 space; a direct or new-tab Collie page retains the logo and its normal home action.
+Rail resizing never recreates or renavigates a resident iframe. If Collie navigates after initial
+load, its exact-window/origin route report remains attached to that cached document while hidden and
+when later revealed.
 
 The compact header identifies the Agent menu with an Agent symbol and an inline count covering
 `Needs you`, `Ready · unseen`, and `Working`; `Recent` cards do not contribute to that number. An

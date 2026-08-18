@@ -8,6 +8,9 @@ import {
   fleetIframeCacheQuietExpired,
   fleetIframeEvictionCandidate,
   fleetPage,
+  fleetRailResize,
+  fleetRailWidthPreferences,
+  fleetRailWidths,
   fleetRefreshWaitMs,
 } from "./fleet-ui.ts";
 
@@ -20,11 +23,19 @@ describe("Fleet iframe shell", () => {
     expect(fleetPage(99)).toContain('data-iframe-cache-size="1"');
     expect(page).toContain('id="instances"');
     expect(page).toContain('role="tree"');
+    expect(page).toContain('aria-label="Herdr Hosts"');
+    expect(page).not.toContain('class="rail-title"');
+    expect(page).not.toContain('>Hosts<');
     expect(page).toContain('id="agent-menu-toggle"');
     expect(page).toContain('aria-haspopup="dialog"');
     expect(page).toContain('id="agent-menu"');
     expect(page.indexOf('id="agent-menu"')).toBeLessThan(page.indexOf('id="frame-stage"'));
     expect(page).toContain('id="open-node"');
+    expect(page).toContain('id="host-rail-resizer"');
+    expect(page).toContain('id="agent-rail-resizer"');
+    expect(page).toContain('role="separator"');
+    expect(page).toContain('aria-controls="host-rail"');
+    expect(page).toContain('aria-controls="agent-menu"');
     expect(page).toContain('data-icon="agent"');
     expect(page).toContain('data-icon="external-link"');
     expect(page).toContain('d="M15 3h6v6"');
@@ -47,7 +58,42 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).not.toMatch(/\.agent-menu-count \{[^}]*position: absolute/);
     expect(FLEET_CSS).toContain("@media (min-width: 1200px)");
     expect(FLEET_CSS).toContain('grid-template-areas: "hosts frame agents"');
+    expect(FLEET_CSS).toContain("var(--fleet-host-rail-width) minmax(40rem, 1fr) var(--fleet-agent-rail-width)");
+    expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.fleet-header \{[^}]*flex-direction: column/);
+    expect(FLEET_CSS).toMatch(/#open-node \{[^}]*position: absolute;[^}]*top: 1rem;[^}]*right: \.75rem/);
+    expect(FLEET_CSS).toMatch(/\.agent-menu-heading > div \{ display: none; \}/);
+    expect(FLEET_CSS).toMatch(/\.agent-sections \{ order: 1; flex: 1; \}/);
+    expect(FLEET_CSS).toContain('.fleet-shell[data-resizing="true"] .node-frame { pointer-events: none; }');
     expect(FLEET_CSS).toContain(".tree-row-level-4");
+  });
+
+  test("clamps, resizes, and parses browser-local desktop rail widths", () => {
+    expect(fleetRailWidths(null, 1_200)).toEqual({ left: 224, right: 336 });
+    expect(fleetRailWidths(null, 1_600)).toEqual({ left: 224, right: 336 });
+
+    const constrained = fleetRailWidths({ left: 9_999, right: 9_999 }, 1_200);
+    expect(constrained.left).toBeGreaterThanOrEqual(176);
+    expect(constrained.right).toBeGreaterThanOrEqual(256);
+    expect(constrained.left + constrained.right).toBeLessThanOrEqual(560);
+
+    expect(fleetRailResize({ left: 224, right: 336 }, "left", 999, 1_200)).toEqual({ left: 224, right: 336 });
+    expect(fleetRailResize({ left: 176, right: 256 }, "right", 400, 1_200)).toEqual({ left: 176, right: 384 });
+    expect(fleetRailResize({ left: 224, right: 336 }, "left", Number.NaN, 1_600)).toEqual({ left: 224, right: 336 });
+
+    expect(fleetRailWidthPreferences('{"version":1,"left":248,"right":368}')).toEqual({ left: 248, right: 368 });
+    expect(fleetRailWidthPreferences('{"version":1,"left":9999,"right":9999}')).toEqual({ left: 9999, right: 9999 });
+    expect(fleetRailWidthPreferences('{"version":2,"left":248,"right":368}')).toBeNull();
+    expect(fleetRailWidthPreferences('{"version":1,"left":-1,"right":368}')).toBeNull();
+    expect(fleetRailWidthPreferences("not json")).toBeNull();
+    expect(fleetRailWidthPreferences(null)).toBeNull();
+
+    expect(FLEET_JS).toContain("RAIL_STORAGE_KEY='herdr-web-remote:fleet-rail-widths:v1'");
+    expect(FLEET_JS).toContain("localStorage.getItem(RAIL_STORAGE_KEY)");
+    expect(FLEET_JS).toContain("localStorage.setItem(RAIL_STORAGE_KEY");
+    expect(FLEET_JS).toContain("addEventListener('resize',applyRailWidthPreferences)");
+    expect(FLEET_JS).toContain("event.key!=='ArrowLeft'&&event.key!=='ArrowRight'");
+    expect(FLEET_JS).toContain("handle.setPointerCapture(event.pointerId)");
+    expect(FLEET_JS).toContain("aria-valuetext");
   });
 
   test("keeps selected and hidden Collie documents in a bounded LRU registry", () => {
@@ -164,5 +210,28 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("if(entry.id!==selectedId)return");
     expect(FLEET_JS).not.toContain("event.data.url");
     expect(FLEET_JS).not.toContain("contentWindow.location");
+
+    const resizeStart = FLEET_JS.indexOf("function renderRailWidths()");
+    const resizeEnd = FLEET_JS.indexOf("function requestedRoute()");
+    const resizeSource = FLEET_JS.slice(resizeStart, resizeEnd);
+    expect(resizeStart).toBeGreaterThan(-1);
+    expect(resizeEnd).toBeGreaterThan(resizeStart);
+    expect(resizeSource).not.toContain("ensureFrame(");
+    expect(resizeSource).not.toContain("loadSelected(");
+    expect(resizeSource).not.toContain("selectNode(");
+    expect(resizeSource).not.toContain("frame.src");
+
+    expect(FLEET_JS).toContain("if(entry)return entry");
+    expect(FLEET_JS).toContain("resident.frame.hidden=resident!==entry");
+    expect(FLEET_JS).toContain("entry.route=route;entry.frameKey=routeKey(entry.origin,route)");
+    expect(FLEET_JS).toContain("if(entry.id!==selectedId)return");
+    expect(FLEET_JS).toContain("if(force||entry.frameKey!==nextFrameKey){entry.frameKey=nextFrameKey;entry.loading=true;entry.frame.src=href}");
+  });
+
+  test("keeps every non-Pane desktop tree row disclosure-only", () => {
+    expect(FLEET_JS).toContain("if(desktopMedia.matches){toggleTree(hostKey);return}");
+    expect(FLEET_JS).toContain("button.addEventListener('click',()=>toggleTree(key))");
+    expect(FLEET_JS).toContain("paneRow.addEventListener('click',()=>selectNode(node.id");
+    expect(FLEET_JS).not.toContain("if(desktopMedia.matches){if(expandedTreeKeys.has(hostKey))");
   });
 });

@@ -60,8 +60,17 @@ fields never enter the aggregate.
 At phone widths Fleet uses that projection for a horizontal instance switcher, a bounded cross-host
 Agent menu, and one selected node. At 1200 px the same DOM becomes a Collie-styled collapsible
 Host/Space/Tab/Pane rail, a full-height centre iframe with no AppBar, and the same Agent panel as a
-persistent right rail. Intermediate widths are no longer capped at 640 px. Expansion state is local
-and survives aggregate refreshes; cached topology is marked stale with its source.
+persistent right rail. The left rail stacks vertically without a visible `Hosts` title, retains the
+new-tab action at its top right, and treats every non-Pane row as disclosure-only. The desktop Agent
+rail hides its `FLEET / All Agents` title and places the canonical refresh state below its scrolling
+sections. Intermediate widths are no longer capped at 640 px. Expansion state is local and survives
+aggregate refreshes; cached topology is marked stale with its source.
+
+Two overlaid desktop separators update only bounded parent-grid CSS variables. Pointer and keyboard
+adjustments share one path, and a versioned browser-local record stores finite pixel preferences;
+each viewport reapplies them while protecting a 40rem centre. A temporary drag shield prevents the
+cross-origin iframe from taking a gesture without removing or changing that frame. Compact layouts
+neither display the separators nor apply the remembered widths.
 
 The Agent panel follows Collie's triage/card vocabulary, adds the owning Host, and turns a card
 selection into the existing canonical instance/session/Pane route. The iframe still owns the complete native
@@ -88,9 +97,11 @@ authoritatively, including confirmed removals. The same rule retains or replaces
 Fleet optionally maintains a browser-memory Host-keyed iframe registry. Its configured 1–10 capacity
 defaults to one; admission is lazy and full capacity evicts only the non-selected frame with the
 oldest foreground-visit timestamp. Hidden route messages update only their exact registered frame,
-and exact window/origin validation gates all messages. One wall-clock quiet timer removes every
-non-selected frame after 30 minutes without a Host selection/revisit. No Agent state, child activity,
-or Collie idle-lock behavior enters this cache policy.
+and exact window/origin validation gates all messages. A document that navigates after admission
+retains that latest accepted route; rail resize and hide/reveal do not call frame loading, replace the
+element, or reassign its source. One wall-clock quiet timer removes every non-selected frame after
+30 minutes without a Host selection/revisit. No Agent state, child activity, or Collie idle-lock
+behavior enters this cache policy.
 
 When central Discord alerts are configured, a second memory-only ledger consumes completed live
 collector cycles. It silently baselines first-seen Pane identities and creates a candidate when a

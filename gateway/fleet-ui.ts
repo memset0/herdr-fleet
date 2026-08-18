@@ -67,6 +67,89 @@ export function fleetIframeCacheQuietExpired(now: number, lastVisitedAt: number)
   return Number.isFinite(now) && Number.isFinite(lastVisitedAt) && now - lastVisitedAt >= FLEET_IFRAME_CACHE_QUIET_MS;
 }
 
+export interface FleetRailWidths {
+  left: number;
+  right: number;
+}
+
+export const FLEET_RAIL_WIDTHS = {
+  leftDefault: 224,
+  leftMin: 176,
+  leftMax: 480,
+  rightDefault: 336,
+  rightMin: 256,
+  rightMax: 576,
+  centreMin: 640,
+} as const;
+
+function clampRailWidth(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, Math.round(value)));
+}
+
+export function fleetRailWidths(
+  preferred: Partial<FleetRailWidths> | null | undefined,
+  viewportWidth: number,
+): FleetRailWidths {
+  const viewport = Number.isFinite(viewportWidth) && viewportWidth > 0 ? Math.floor(viewportWidth) : 1_200;
+  let left = clampRailWidth(
+    Number.isFinite(preferred?.left) ? Number(preferred?.left) : FLEET_RAIL_WIDTHS.leftDefault,
+    FLEET_RAIL_WIDTHS.leftMin,
+    FLEET_RAIL_WIDTHS.leftMax,
+  );
+  let right = clampRailWidth(
+    Number.isFinite(preferred?.right) ? Number(preferred?.right) : FLEET_RAIL_WIDTHS.rightDefault,
+    FLEET_RAIL_WIDTHS.rightMin,
+    FLEET_RAIL_WIDTHS.rightMax,
+  );
+  const minimumRailTotal = FLEET_RAIL_WIDTHS.leftMin + FLEET_RAIL_WIDTHS.rightMin;
+  const railBudget = Math.max(minimumRailTotal, viewport - FLEET_RAIL_WIDTHS.centreMin);
+  let overflow = Math.max(0, left + right - railBudget);
+  if (overflow > 0) {
+    const leftFlex = left - FLEET_RAIL_WIDTHS.leftMin;
+    const rightFlex = right - FLEET_RAIL_WIDTHS.rightMin;
+    const flexTotal = leftFlex + rightFlex;
+    const leftReduction = flexTotal > 0 ? Math.min(leftFlex, Math.floor((overflow * leftFlex) / flexTotal)) : 0;
+    left -= leftReduction;
+    overflow -= leftReduction;
+    const rightReduction = Math.min(rightFlex, overflow);
+    right -= rightReduction;
+    overflow -= rightReduction;
+    left -= Math.min(left - FLEET_RAIL_WIDTHS.leftMin, overflow);
+  }
+  return { left, right };
+}
+
+export function fleetRailResize(
+  current: FleetRailWidths,
+  side: "left" | "right",
+  requestedWidth: number,
+  viewportWidth: number,
+): FleetRailWidths {
+  const viewport = Number.isFinite(viewportWidth) && viewportWidth > 0 ? Math.floor(viewportWidth) : 1_200;
+  const other = side === "left" ? current.right : current.left;
+  const minimum = side === "left" ? FLEET_RAIL_WIDTHS.leftMin : FLEET_RAIL_WIDTHS.rightMin;
+  const staticMaximum = side === "left" ? FLEET_RAIL_WIDTHS.leftMax : FLEET_RAIL_WIDTHS.rightMax;
+  const maximum = Math.max(minimum, Math.min(staticMaximum, viewport - FLEET_RAIL_WIDTHS.centreMin - other));
+  const fallback = side === "left" ? current.left : current.right;
+  const width = clampRailWidth(Number.isFinite(requestedWidth) ? requestedWidth : fallback, minimum, maximum);
+  return side === "left" ? { left: width, right: current.right } : { left: current.left, right: width };
+}
+
+export function fleetRailWidthPreferences(serialized: string | null): FleetRailWidths | null {
+  if (!serialized) return null;
+  try {
+    const value: unknown = JSON.parse(serialized);
+    if (!value || typeof value !== "object") return null;
+    const record = value as Record<string, unknown>;
+    if (record.version !== 1 || !Number.isFinite(record.left) || !Number.isFinite(record.right)) return null;
+    const left = Number(record.left);
+    const right = Number(record.right);
+    return left > 0 && right > 0 ? { left, right } : null;
+  } catch {
+    return null;
+  }
+}
+
 export function fleetPage(iframeCacheSize = 1): string {
   const boundedCacheSize = Number.isSafeInteger(iframeCacheSize) && iframeCacheSize >= 1 && iframeCacheSize <= 10
     ? iframeCacheSize
@@ -74,9 +157,8 @@ export function fleetPage(iframeCacheSize = 1): string {
   return documentShell(
     "Fleet · Collie",
     `<main class="fleet-shell" data-iframe-cache-size="${boundedCacheSize}">
-      <header class="fleet-header">
+      <header id="host-rail" class="fleet-header">
         <a class="fleet-mark" href="/" aria-label="Fleet home" title="Herdr Fleet">H</a>
-        <p class="rail-title">Hosts</p>
         <nav id="instances" class="instance-strip" aria-label="Herdr Hosts" role="tree">
           <span class="connecting">Connecting…</span>
         </nav>
@@ -109,6 +191,8 @@ export function fleetPage(iframeCacheSize = 1): string {
         </div>
         <div id="agent-sections" class="agent-sections"></div>
       </aside>
+      <div id="host-rail-resizer" class="rail-resizer host-rail-resizer" role="separator" aria-label="Resize Host sidebar" aria-orientation="vertical" aria-controls="host-rail" tabindex="0"></div>
+      <div id="agent-rail-resizer" class="rail-resizer agent-rail-resizer" role="separator" aria-label="Resize Agent sidebar" aria-orientation="vertical" aria-controls="agent-menu" tabindex="0"></div>
       <section id="frame-stage" class="frame-stage" aria-live="polite">
         <div id="frame-loading" class="frame-loading" hidden>
           <span class="loading-mark" aria-hidden="true">H</span>
@@ -160,6 +244,8 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 button, a { font: inherit; }
 button { color: inherit; }
 .fleet-shell {
+  --fleet-host-rail-width: 14rem;
+  --fleet-agent-rail-width: 21rem;
   position: relative;
   display: flex;
   height: 100dvh;
@@ -169,7 +255,6 @@ button { color: inherit; }
   background: var(--background);
   box-shadow: 0 0 0 1px var(--border), 0 18px 70px light-dark(#00000012, #00000070);
 }
-.rail-title { display: none; }
 .fleet-header {
   z-index: 20;
   display: flex;
@@ -293,6 +378,7 @@ button { color: inherit; }
   box-shadow: 0 22px 48px light-dark(#00000024, #000000a0);
   backdrop-filter: blur(18px);
 }
+.rail-resizer { display: none; }
 .agent-menu-heading {
   display: flex;
   flex: none;
@@ -434,13 +520,15 @@ button { color: inherit; }
 @media (min-width: 1200px) {
   .fleet-shell {
     display: grid;
-    grid-template: minmax(0, 1fr) / 14rem minmax(40rem, 1fr) 21rem;
+    grid-template: minmax(0, 1fr) / var(--fleet-host-rail-width) minmax(40rem, 1fr) var(--fleet-agent-rail-width);
     grid-template-areas: "hosts frame agents";
     box-shadow: none;
   }
   .fleet-header {
+    position: relative;
     grid-area: hosts;
     min-height: 0;
+    flex-direction: column;
     align-items: stretch;
     gap: .35rem;
     border-right: 1px solid var(--border);
@@ -448,16 +536,8 @@ button { color: inherit; }
     padding: 1rem .75rem;
   }
   .fleet-mark { align-self: flex-start; }
-  .rail-title {
-    display: block;
-    margin: .65rem .6rem .15rem;
-    color: var(--muted-foreground);
-    font-size: .68rem;
-    font-weight: 800;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-  }
   .instance-strip {
+    width: 100%;
     flex-direction: column;
     align-items: stretch;
     gap: .2rem;
@@ -497,7 +577,7 @@ button { color: inherit; }
     padding: 0 .5rem;
   }
   .agent-menu-toggle { display: none; }
-  #open-node { margin-top: auto; }
+  #open-node { position: absolute; top: 1rem; right: .75rem; }
   .agent-menu {
     position: relative;
     z-index: 10;
@@ -512,7 +592,48 @@ button { color: inherit; }
     box-shadow: none;
     backdrop-filter: none;
   }
+  .agent-menu-heading {
+    order: 2;
+    align-items: center;
+    justify-content: flex-end;
+    border-top: 1px solid var(--border);
+    border-bottom: 0;
+    padding: .6rem .75rem;
+  }
+  .agent-menu-heading > div { display: none; }
+  .agent-refresh-state { margin-left: auto; }
+  .agent-sections { order: 1; flex: 1; }
   .frame-stage { grid-area: frame; }
+  .rail-resizer {
+    position: absolute;
+    z-index: 40;
+    top: 0;
+    bottom: 0;
+    display: block;
+    width: .7rem;
+    border: 0;
+    background: transparent;
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .rail-resizer::after {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--border);
+    content: "";
+    transition: width .12s ease, background .12s ease;
+  }
+  .rail-resizer:hover::after, .rail-resizer:focus-visible::after {
+    width: 2px;
+    background: var(--ring);
+  }
+  .host-rail-resizer { left: var(--fleet-host-rail-width); transform: translateX(-50%); }
+  .agent-rail-resizer { right: var(--fleet-agent-rail-width); transform: translateX(50%); }
+  .fleet-shell[data-resizing="true"] { cursor: col-resize; user-select: none; }
+  .fleet-shell[data-resizing="true"] .node-frame { pointer-events: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .loading-mark { animation: none; }
@@ -522,11 +643,13 @@ button { color: inherit; }
 
 export const FLEET_JS = `
 const STORAGE_KEY='herdr-web-remote:selected-instance';
+const RAIL_STORAGE_KEY='herdr-web-remote:fleet-rail-widths:v1';
 const ROUTE_MESSAGE='herdr-web-remote:route';
 const DEFAULT_REFRESH_MS=5000;
 const MIN_REFRESH_TIMER_MS=250;
 const FRAME_CACHE_QUIET_MS=1800000;
 const DESKTOP_MEDIA='(min-width: 1200px)';
+const RAIL_WIDTHS={leftDefault:${FLEET_RAIL_WIDTHS.leftDefault},leftMin:${FLEET_RAIL_WIDTHS.leftMin},leftMax:${FLEET_RAIL_WIDTHS.leftMax},rightDefault:${FLEET_RAIL_WIDTHS.rightDefault},rightMin:${FLEET_RAIL_WIDTHS.rightMin},rightMax:${FLEET_RAIL_WIDTHS.rightMax},centreMin:${FLEET_RAIL_WIDTHS.centreMin}};
 const shell=document.querySelector('.fleet-shell');
 const instances=document.querySelector('#instances');
 const frameStage=document.querySelector('#frame-stage');
@@ -543,6 +666,8 @@ const agentMenuToggle=document.querySelector('#agent-menu-toggle');
 const agentMenuCount=document.querySelector('#agent-menu-count');
 const agentSections=document.querySelector('#agent-sections');
 const agentRefreshState=document.querySelector('#agent-refresh-state');
+const hostRailResizer=document.querySelector('#host-rail-resizer');
+const agentRailResizer=document.querySelector('#agent-rail-resizer');
 const desktopMedia=matchMedia(DESKTOP_MEDIA);
 const configuredCacheSize=Number(shell.dataset.iframeCacheSize);
 const iframeCacheSize=Number.isSafeInteger(configuredCacheSize)&&configuredCacheSize>=1&&configuredCacheSize<=10?configuredCacheSize:1;
@@ -557,6 +682,9 @@ let refreshTimer=null;
 let quietTimer=null;
 let lastFrameVisitAt=Date.now();
 let desktopMode=desktopMedia.matches;
+let preferredRailWidths=readRailWidthPreferences();
+let appliedRailWidths={left:RAIL_WIDTHS.leftDefault,right:RAIL_WIDTHS.rightDefault};
+let railDrag=null;
 
 const healthLabel=(health)=>({online:'Online','herdr-down':'Herdr unavailable','bridge-down':'Collie unavailable','transport-down':'Transport unavailable'}[health]||'Unavailable');
 const statusLabel=(status)=>({blocked:'needs you',working:'working',done:'done',idle:'idle',unknown:'unknown'}[status]||'unknown');
@@ -580,6 +708,97 @@ const baseName=(value)=>String(value||'').replace(/[\\/\\\\]+$/,'').split(/[\\/\
 const shortCwd=(value)=>{const parts=String(value||'').split(/[\\/\\\\]/).filter(Boolean);return parts.length>2?'…/'+parts.slice(-2).join('/'):String(value||'')};
 const formatDelay=(ms)=>ms>=3600000?'1h':ms>=60000?Math.round(ms/60000)+'m':Math.round(ms/1000)+'s';
 const timeAgo=(at)=>{const seconds=Math.max(0,Math.floor((Date.now()-at)/1000));if(seconds<60)return seconds+'s';const minutes=Math.floor(seconds/60);if(minutes<60)return minutes+'m';const hours=Math.floor(minutes/60);if(hours<24)return hours+'h';return Math.floor(hours/24)+'d'};
+
+function clampRail(value,minimum,maximum){return Math.min(maximum,Math.max(minimum,Math.round(value)))}
+
+function fitRailWidths(preferred,viewportWidth=innerWidth){
+ const viewport=Number.isFinite(viewportWidth)&&viewportWidth>0?Math.floor(viewportWidth):1200;
+ let left=clampRail(Number.isFinite(preferred?.left)?preferred.left:RAIL_WIDTHS.leftDefault,RAIL_WIDTHS.leftMin,RAIL_WIDTHS.leftMax);
+ let right=clampRail(Number.isFinite(preferred?.right)?preferred.right:RAIL_WIDTHS.rightDefault,RAIL_WIDTHS.rightMin,RAIL_WIDTHS.rightMax);
+ const minimumRailTotal=RAIL_WIDTHS.leftMin+RAIL_WIDTHS.rightMin;
+ const railBudget=Math.max(minimumRailTotal,viewport-RAIL_WIDTHS.centreMin);
+ let overflow=Math.max(0,left+right-railBudget);
+ if(overflow>0){
+   const leftFlex=left-RAIL_WIDTHS.leftMin;const rightFlex=right-RAIL_WIDTHS.rightMin;const flexTotal=leftFlex+rightFlex;
+   const leftReduction=flexTotal>0?Math.min(leftFlex,Math.floor((overflow*leftFlex)/flexTotal)):0;
+   left-=leftReduction;overflow-=leftReduction;
+   const rightReduction=Math.min(rightFlex,overflow);right-=rightReduction;overflow-=rightReduction;
+   left-=Math.min(left-RAIL_WIDTHS.leftMin,overflow);
+ }
+ return {left,right};
+}
+
+function readRailWidthPreferences(){
+ try{
+   const value=JSON.parse(localStorage.getItem(RAIL_STORAGE_KEY)||'null');
+   if(!value||value.version!==1||!Number.isFinite(value.left)||!Number.isFinite(value.right)||value.left<=0||value.right<=0)throw new Error('invalid');
+   return {left:value.left,right:value.right};
+ }catch{return {left:RAIL_WIDTHS.leftDefault,right:RAIL_WIDTHS.rightDefault}}
+}
+
+function persistRailWidthPreferences(){
+ try{localStorage.setItem(RAIL_STORAGE_KEY,JSON.stringify({version:1,left:preferredRailWidths.left,right:preferredRailWidths.right}))}catch{}
+}
+
+function railMaximum(side,widths=appliedRailWidths,viewportWidth=innerWidth){
+ const minimum=side==='left'?RAIL_WIDTHS.leftMin:RAIL_WIDTHS.rightMin;
+ const staticMaximum=side==='left'?RAIL_WIDTHS.leftMax:RAIL_WIDTHS.rightMax;
+ const other=side==='left'?widths.right:widths.left;
+ return Math.max(minimum,Math.min(staticMaximum,Math.floor(viewportWidth)-RAIL_WIDTHS.centreMin-other));
+}
+
+function updateRailSeparator(handle,side){
+ const minimum=side==='left'?RAIL_WIDTHS.leftMin:RAIL_WIDTHS.rightMin;
+ const maximum=railMaximum(side);
+ const value=side==='left'?appliedRailWidths.left:appliedRailWidths.right;
+ handle.setAttribute('aria-valuemin',String(minimum));handle.setAttribute('aria-valuemax',String(maximum));handle.setAttribute('aria-valuenow',String(value));handle.setAttribute('aria-valuetext',value+' pixels');
+}
+
+function renderRailWidths(){
+ shell.style.setProperty('--fleet-host-rail-width',appliedRailWidths.left+'px');
+ shell.style.setProperty('--fleet-agent-rail-width',appliedRailWidths.right+'px');
+ updateRailSeparator(hostRailResizer,'left');updateRailSeparator(agentRailResizer,'right');
+}
+
+function applyRailWidthPreferences(){
+ if(!desktopMedia.matches){shell.style.removeProperty('--fleet-host-rail-width');shell.style.removeProperty('--fleet-agent-rail-width');return}
+ appliedRailWidths=fitRailWidths(preferredRailWidths);renderRailWidths();
+}
+
+function setRailWidth(side,requestedWidth,persist=false){
+ const minimum=side==='left'?RAIL_WIDTHS.leftMin:RAIL_WIDTHS.rightMin;
+ const current=side==='left'?appliedRailWidths.left:appliedRailWidths.right;
+ const width=clampRail(Number.isFinite(requestedWidth)?requestedWidth:current,minimum,railMaximum(side));
+ appliedRailWidths=side==='left'?{left:width,right:appliedRailWidths.right}:{left:appliedRailWidths.left,right:width};
+ preferredRailWidths=side==='left'?{left:width,right:preferredRailWidths.right}:{left:preferredRailWidths.left,right:width};
+ renderRailWidths();if(persist)persistRailWidthPreferences();
+}
+
+function railWidthFromPointer(side,event){
+ const bounds=shell.getBoundingClientRect();return side==='left'?event.clientX-bounds.left:bounds.right-event.clientX;
+}
+
+function finishRailDrag(handle,persist){
+ if(!railDrag||railDrag.handle!==handle)return;
+ if(persist)persistRailWidthPreferences();railDrag=null;delete shell.dataset.resizing;
+}
+
+function bindRailResizer(handle,side){
+ handle.addEventListener('pointerdown',(event)=>{
+   if(!desktopMedia.matches||event.button!==0)return;
+   event.preventDefault();railDrag={handle,side,pointerId:event.pointerId};shell.dataset.resizing='true';
+   handle.setPointerCapture(event.pointerId);setRailWidth(side,railWidthFromPointer(side,event));
+ });
+ handle.addEventListener('pointermove',(event)=>{if(railDrag?.handle===handle&&railDrag.pointerId===event.pointerId)setRailWidth(side,railWidthFromPointer(side,event))});
+ handle.addEventListener('pointerup',(event)=>{if(railDrag?.handle!==handle||railDrag.pointerId!==event.pointerId)return;setRailWidth(side,railWidthFromPointer(side,event));finishRailDrag(handle,true)});
+ handle.addEventListener('pointercancel',()=>finishRailDrag(handle,false));
+ handle.addEventListener('lostpointercapture',()=>finishRailDrag(handle,false));
+ handle.addEventListener('keydown',(event)=>{
+   if(!desktopMedia.matches||(event.key!=='ArrowLeft'&&event.key!=='ArrowRight'))return;
+   event.preventDefault();const physicalDelta=(event.key==='ArrowRight'?1:-1)*(event.shiftKey?32:8);const widthDelta=side==='left'?physicalDelta:-physicalDelta;
+   setRailWidth(side,(side==='left'?appliedRailWidths.left:appliedRailWidths.right)+widthDelta,true);
+ });
+}
 
 function requestedRoute(){
  const params=new URL(location.href).searchParams;
@@ -654,7 +873,8 @@ function makeFrame(node){
 function ensureFrame(node){
  const origin=nodeOrigin(node);let entry=frameRegistry.get(node.id);
  if(entry&&entry.origin!==origin){releaseFrame(node.id,true);entry=null}
- return entry||makeFrame(node);
+ if(entry)return entry;
+ return makeFrame(node);
 }
 
 function showOnlyFrame(entry){
@@ -730,7 +950,7 @@ function renderTabs(focusSelected=false){
    const dot=element('span','status-dot');dot.setAttribute('aria-hidden','true');
    const label=element('span','instance-name tree-label',node.name);button.append(chevron,dot,label);
    button.addEventListener('click',()=>{
-     if(desktopMedia.matches){if(expandedTreeKeys.has(hostKey))expandedTreeKeys.delete(hostKey);else expandedTreeKeys.add(hostKey)}
+     if(desktopMedia.matches){toggleTree(hostKey);return}
      selectNode(node.id,{focusTreeKey:hostKey});
    });
    const hostChildren=element('div','tree-children');hostChildren.setAttribute('role','group');hostChildren.hidden=!expandedTreeKeys.has(hostKey);
@@ -911,7 +1131,7 @@ function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
  if(nextDesktop){agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false');renderAgents()}
  else if(desktopMode){agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
- desktopMode=nextDesktop;
+ desktopMode=nextDesktop;applyRailWidthPreferences();
 }
 
 function clearRefreshTimer(){if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null}}
@@ -983,6 +1203,8 @@ addEventListener('message',(event)=>{
 document.querySelector('#retry-frame').addEventListener('click',()=>loadSelected(true));
 document.querySelector('#retry-inventory').addEventListener('click',()=>refresh({manual:true}));
 addEventListener('popstate',()=>{const id=requested();if(nodes.some((node)=>node.id===id))selectNode(id,{routeFromUrl:true})});
+bindRailResizer(hostRailResizer,'left');bindRailResizer(agentRailResizer,'right');
+addEventListener('resize',applyRailWidthPreferences);
 desktopMedia.addEventListener('change',syncAgentMenuLayout);syncAgentMenuLayout();
 void refresh();
 `;
