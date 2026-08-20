@@ -4,6 +4,11 @@ Herdr Web Remote adds a password-protected public Fleet dashboard and one native
 [Collie](https://github.com/AltanS/collie) UI per Herdr host. It is a Herdr 0.8+ plugin and does
 not install a system service, configure Tailscale, or expose a raw bridge port.
 
+The same plugin release also ships a Linux-only, normally closed ttyd emergency-terminal
+companion. It is not a second plugin, process managed by the normal supervisor, or replacement for
+Collie. Installation, startup hooks, and `ensure` leave every fallback process and route absent;
+only the operator-facing companion CLI can open one bounded lease.
+
 The Collie-derived node UI can inspect and control panes, switch among every locally discovered
 named Herdr session, and keep its native deep links:
 
@@ -41,6 +46,13 @@ Right-clicking a Tab or an explicit Pane opens a compact rename editor; the keyb
 gesture does the same. A flattened one-Pane row renames its visible
 Tab label, while a blank explicit Pane label clears it. Host and Space rename remain intentionally
 absent because Fleet does not add a new central or node HTTP action for this patch.
+
+When a Gateway inventory node has a validated `fallbackUrl`, Fleet creates a secondary **Emergency
+terminal** link only in its wide fine-pointer desktop-computer presentation. Phone, tablet, compact,
+and coarse-pointer presentations do not create the link in the DOM. The link performs a plain
+top-level navigation with no prefetch, status probe, WebSocket, or activation request. A closed
+fallback therefore stays unreachable; its separate authentication and active lease remain
+authoritative even for an already authenticated Fleet browser.
 
 Fleet derives this tree from the `workspaces`, `tabs`, Agent panes, and shell panes already present in
 the same Collie snapshot fetched for Agent state. Expanding rows makes no request, and the projection
@@ -80,6 +92,10 @@ responses enter the lazy cache.
 browser ──HTTPS── reverse proxy ──loopback── Fleet Gateway
                                             ├── local Collie ── Unix socket ── Herdr
                                             └── SSH -L ── remote Collie ───── Herdr
+
+explicit operator activation only:
+
+browser ──HTTPS── temporary route ── independent auth ── fixed ttyd/Herdr attachment
 ```
 
 - One Argon2id-backed username/password; no registration, users, roles, or tenant isolation.
@@ -155,7 +171,31 @@ herdr plugin action invoke ensure --plugin memset0.web-remote
 ```
 
 The build uses frozen Bun lockfiles, typechecks the bridge/Gateway/supervisor and web app, builds to
-a staging directory, then swaps the completed PWA into place.
+a staging directory, runs the generic ttyd companion security/integration tests, then swaps the
+completed PWA into place.
+
+## Dormant ttyd companion
+
+The generic service, verified ttyd pin, synthetic inventory, and CLI are in
+[`services/ttyd-fallback/`](./services/ttyd-fallback/). Real node mappings, SSH identities,
+credentials, reverse-proxy paths, and runtime findings must remain in an owner-protected external
+deployment overlay. The plugin manifest stays the only Herdr registration and deliberately has no
+fallback startup action or event.
+
+The public Gateway inventory may expose only an optional exact HTTPS origin root:
+
+```json
+{
+  "id": "local",
+  "name": "Local",
+  "publicHost": "local.herdr.example.com",
+  "fallbackUrl": "https://terminal-local.herdr.example.com/"
+}
+```
+
+Gateway rejects credentials, ports, paths, queries, fragments, foreign domains, and hosts reserved
+by Fleet or Collie. This value is navigation metadata only. See the companion README for dormant
+installation and explicit prepare/enable/status/disable commands.
 
 ## Node configuration
 

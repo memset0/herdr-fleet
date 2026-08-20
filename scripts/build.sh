@@ -9,6 +9,7 @@ bun_bin="$(find_bun)"
 "$root/scripts/check-version.sh"
 (cd "$root" && "$bun_bin" install --frozen-lockfile && "$bun_bin" run typecheck)
 (cd "$root/web" && "$bun_bin" install --frozen-lockfile && "$bun_bin" run typecheck)
+"$root/services/ttyd-fallback/test/run.sh"
 
 staging="$root/web/dist-staging"
 old="$root/web/dist-old"

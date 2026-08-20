@@ -26,6 +26,7 @@
       "id": "local",
       "name": "Local",
       "publicHost": "local.herdr.example.com",
+      "fallbackUrl": "https://terminal-local.herdr.example.com/",
       "enabled": true,
       "labels": ["local"],
       "transport": { "type": "local", "url": "http://127.0.0.1:18788" }

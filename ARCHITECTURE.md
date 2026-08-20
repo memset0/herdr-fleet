@@ -1,6 +1,7 @@
 # Architecture
 
-Herdr Web Remote is two cooperating applications managed by one plugin-owned supervisor.
+Herdr Web Remote is two cooperating applications managed by one plugin-owned supervisor plus one
+dormant emergency companion shipped by the same plugin release.
 
 ## Node plane
 
@@ -38,6 +39,13 @@ their own host key and private identity. The target owns the single loopback for
 stdio proxy only. A transport becomes ready only after that forward accepts a loopback connection.
 Transport processes, bridge HTTP health, and Herdr/session health are separate states, so one failed
 node never blocks another.
+
+Each inventory node may additionally project one exact HTTPS `fallbackUrl`. It contains no
+credential, lease state, private transport, or activation primitive. Fleet creates its navigation
+link only when the presentation is both at least 1200 px wide and reports hover plus a fine pointer;
+compact, phone, tablet, and coarse-pointer DOMs omit it. Rendering and hovering perform no network
+operation, and the link opens a new top-level document without a referrer. This presentation rule
+is not an authorization boundary.
 
 The Gateway has exactly one operator credential. Argon2id verifies the password; HMAC-SHA256 signs
 an expiring cross-subdomain cookie. Browser navigations without a session enter `/auth/`; APIs get
@@ -210,10 +218,30 @@ jobs or non-designated login nodes from claiming listeners.
 This layer deliberately does not create an OS service. Complete supervisor death is recovered by
 the next Herdr hook or manual `ensure`; child death is recovered immediately by the supervisor.
 
+## Dormant ttyd companion
+
+`services/ttyd-fallback/` is release payload owned by `memset0.web-remote`, but it is not a
+supervisor child, startup hook, event action, or another manifest. A normal build validates it; a
+normal install merely makes the exact-version files available. The operator must separately invoke
+its stable CLI with an external owner-protected inventory.
+
+An activation resolves one selected or focused Pane through the already running Herdr server and
+binds ttyd to the resulting fixed terminal id. The browser cannot supply a command, Herdr socket,
+session, Pane, or terminal. The listener is an owner-only Unix socket; a local or restricted-SSH
+stdio broker, independent Basic-auth verifier, and temporary reverse-proxy route are created only
+after preflight and remain bounded by one lease. Cleanup removes those components without touching
+the normal supervisor, Gateway, Collie, Herdr server, or existing Panes.
+
+Real inventory, relay keys, credentials, Caddy layout, and runtime state are external deployment
+inputs. The generic repository contains only a synthetic example and the pinned upstream ttyd
+artifacts. This preserves an independent recovery path while keeping the normal Remote product as
+the single release and ownership boundary.
+
 ## Trust boundaries
 
 1. The TLS reverse proxy is the only public listener.
-2. Gateway is the only authentication boundary.
+2. Gateway is the normal Fleet/Collie authentication boundary; an active ttyd companion uses a
+   separate activation-scoped verifier so Gateway failure does not become fallback failure.
 3. Loopback is a host boundary, not per-Unix-user isolation.
 4. The Herdr socket is the terminal-control authority.
 5. The Fleet password verifier, cookie-signing secret, inventory, pinned target/jump host keys, and

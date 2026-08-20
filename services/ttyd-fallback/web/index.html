@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Herdr emergency terminal</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #111018; color: #e8e2f2; }
+    main { width: min(38rem, calc(100% - 2rem)); border: 1px solid #494252; border-radius: 14px; padding: 2rem; background: #1a1721; }
+    h1 { margin: 0 0 1rem; font-size: 1.35rem; }
+    p { color: #bdb5c8; line-height: 1.6; }
+    .terminal-entry { display: none; }
+    .compact-note { display: block; }
+    @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+      .terminal-entry { display: inline-flex; align-items: center; min-height: 2.75rem; padding: .7rem 1rem; border-radius: 8px; background: #7c5cff; color: white; text-decoration: none; font-weight: 700; }
+      .terminal-entry:focus-visible { outline: 3px solid #d4c8ff; outline-offset: 3px; }
+      .compact-note { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Herdr emergency terminal</h1>
+    <p>This is a temporary, single-client fallback. Shutdown or lease expiry removes the route and terminal attachment.</p>
+    <a class="terminal-entry" href="/terminal/">Open current Herdr terminal</a>
+    <p class="compact-note">This entry is available only in the desktop-computer presentation.</p>
+  </main>
+</body>
+</html>

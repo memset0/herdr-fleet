@@ -5,6 +5,7 @@ import {
   FLEET_JS,
   fleetAttentionResetEligible,
   fleetAgentBucket,
+  fleetDesktopFallbackUrl,
   fleetFrameActivityActive,
   fleetHeaderAgentCount,
   fleetIframeCacheQuietExpired,
@@ -60,6 +61,7 @@ describe("Fleet iframe shell", () => {
     expect(page).not.toContain("/auth/logout");
     expect(page).not.toContain("logout-form");
     expect(page).not.toContain("Sign out");
+    expect(page).not.toContain("Emergency terminal");
     expect(page).not.toContain(">↗</a>");
     expect(page).toContain('id="retry-frame"');
     expect(page).not.toContain("Fleet totals");
@@ -94,6 +96,27 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.host-rail-footer \{[^}]*display: flex/);
     expect(FLEET_CSS).toContain('.fleet-settings {');
     expect(FLEET_CSS).toContain('bottom: calc(100% + .5rem)');
+  });
+
+  test("creates the non-activating fallback entry only for a desktop computer presentation", () => {
+    const fallback = "https://terminal-local.example.com/";
+    expect(fleetDesktopFallbackUrl(fallback, true)).toBe(fallback);
+    expect(fleetDesktopFallbackUrl(fallback, false)).toBeNull();
+    expect(fleetDesktopFallbackUrl("javascript:alert(1)", true)).toBeNull();
+    expect(fleetDesktopFallbackUrl("https://operator:secret@terminal-local.example.com/", true)).toBeNull();
+    expect(FLEET_CSS).toContain("@media (min-width: 1200px) and (hover: hover) and (pointer: fine)");
+    expect(FLEET_JS).toContain("FALLBACK_DESKTOP_MEDIA='(min-width: 1200px) and (hover: hover) and (pointer: fine)'");
+    expect(FLEET_JS).toContain("const href=fallbackDesktopMedia.matches?fallbackHref(node):null");
+    expect(FLEET_JS).toContain("if(!href){if(link)link.remove();return}");
+    expect(FLEET_JS).toContain("element('a','desktop-fallback-entry','Emergency terminal')");
+    expect(FLEET_JS).toContain("link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer'");
+    expect(FLEET_JS).toContain("fallbackDesktopMedia.addEventListener('change',syncFallbackEntry)");
+    const handlerStart = FLEET_JS.indexOf("function syncFallbackEntry()");
+    const handlerEnd = FLEET_JS.indexOf("function loadSelected", handlerStart);
+    const handler = FLEET_JS.slice(handlerStart, handlerEnd);
+    expect(handler).not.toContain("fetch(");
+    expect(handler).not.toContain("WebSocket");
+    expect(handler).not.toContain("enable");
   });
 
   test("parses the browser-local cache override and applies runtime shrink semantics", () => {

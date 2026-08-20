@@ -66,6 +66,7 @@ function response(agents: Record<string, unknown>[], sessions = [session("defaul
 describe("Fleet aggregation", () => {
   test("projects safe Agent cards across primary and named sessions", async () => {
     const config = gatewayConfig();
+    config.nodes[0]!.fallbackUrl = "https://terminal-local.example.com/";
     const transports = new TransportRegistry(config.nodes);
     const fetcher = (async (input: string | URL | Request) => {
       const url = new URL(String(input));
@@ -94,6 +95,7 @@ describe("Fleet aggregation", () => {
       nextAt: 5_100,
     });
     expect(state.nodes[0]?.sessions.map((entry) => entry.name)).toEqual(["default", "batch demo"]);
+    expect(state.nodes[0]?.fallbackUrl).toBe("https://terminal-local.example.com/");
     expect(state.nodes[0]?.agentEntries.map((entry) => [entry.paneId, entry.herdrSession, entry.reachable])).toEqual([
       ["w1:p2", "batch demo", true],
       ["w0:p1", "default", true],

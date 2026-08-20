@@ -34,6 +34,7 @@ export interface NodeConfig {
   id: string;
   name: string;
   publicHost: string;
+  fallbackUrl?: string;
   enabled: boolean;
   labels: string[];
   transport: NodeTransportConfig;
@@ -119,6 +120,32 @@ function absolutePath(value: unknown, label: string): string {
   const path = string(value, label);
   if (!isAbsolute(path)) throw new Error(`${label} must be absolute`);
   return path;
+}
+
+function fallbackUrl(value: unknown, label: string, baseDomain: string): string | undefined {
+  if (value === undefined) return undefined;
+  let url: URL;
+  try {
+    url = new URL(string(value, label));
+  } catch {
+    throw new Error(`${label} must be an exact HTTPS URL`);
+  }
+  const host = hostname(url.hostname, `${label} hostname`);
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    (url.pathname !== "/" && url.pathname !== "") ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(`${label} must be an HTTPS origin root without credentials, port, query, or fragment`);
+  }
+  if (host === baseDomain || !host.endsWith(`.${baseDomain}`)) {
+    throw new Error(`${label} must be a subdomain of ${baseDomain}`);
+  }
+  return `https://${host}/`;
 }
 
 function optionalSelector(value: unknown, label: string, max: number): string | undefined {
@@ -220,13 +247,14 @@ function parseSshTransport(raw: JsonObject, label: string): SshTransportConfig {
 function parseNode(value: unknown, index: number, baseDomain: string): NodeConfig {
   const label = `nodes[${index}]`;
   const raw = object(value, label);
-  keys(raw, ["id", "name", "publicHost", "enabled", "labels", "transport"], label);
+  keys(raw, ["id", "name", "publicHost", "fallbackUrl", "enabled", "labels", "transport"], label);
   const id = string(raw.id, `${label}.id`);
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(id)) throw new Error(`${label}.id is invalid`);
   const publicHost = hostname(raw.publicHost, `${label}.publicHost`);
   if (publicHost === baseDomain || !publicHost.endsWith(`.${baseDomain}`)) {
     throw new Error(`${label}.publicHost must be a subdomain of ${baseDomain}`);
   }
+  const parsedFallbackUrl = fallbackUrl(raw.fallbackUrl, `${label}.fallbackUrl`, baseDomain);
   const rawLabels = raw.labels ?? [];
   if (!Array.isArray(rawLabels) || rawLabels.some((entry) => typeof entry !== "string" || !entry.trim())) {
     throw new Error(`${label}.labels must be an array of non-empty strings`);
@@ -245,6 +273,7 @@ function parseNode(value: unknown, index: number, baseDomain: string): NodeConfi
     id,
     name: string(raw.name, `${label}.name`),
     publicHost,
+    ...(parsedFallbackUrl ? { fallbackUrl: parsedFallbackUrl } : {}),
     enabled:
       raw.enabled === undefined
         ? true
@@ -298,6 +327,8 @@ export function parseGatewayConfig(value: unknown): GatewayConfig {
   if (!nodes.some((node) => node.enabled)) throw new Error("nodes must contain at least one enabled instance");
   const ids = new Set<string>();
   const hosts = new Set<string>();
+  const fallbackHosts = new Set<string>();
+  const reservedHosts = new Set([fleetHost, ...nodes.map((node) => node.publicHost)]);
   const localPorts = new Set<number>([listenPort]);
   const sshIdentityPaths = new Map<string, string>();
   for (const node of nodes) {
@@ -305,6 +336,13 @@ export function parseGatewayConfig(value: unknown): GatewayConfig {
     if (hosts.has(node.publicHost) || node.publicHost === fleetHost) throw new Error(`duplicate public host: ${node.publicHost}`);
     ids.add(node.id);
     hosts.add(node.publicHost);
+    if (node.fallbackUrl) {
+      const host = new URL(node.fallbackUrl).hostname;
+      if (reservedHosts.has(host) || fallbackHosts.has(host)) {
+        throw new Error(`duplicate or reserved fallback host: ${host}`);
+      }
+      fallbackHosts.add(host);
+    }
     if (node.transport.type === "ssh") {
       if (node.enabled) {
         const existingNode = sshIdentityPaths.get(node.transport.identityFile);

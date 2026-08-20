@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "nodes": {
+    "local-a": {
+      "enabled": true,
+      "architecture": "x86_64",
+      "owner": "operator",
+      "python": "/usr/bin/python3",
+      "host_exact": "workstation-a",
+      "herdr": "/usr/local/bin/herdr",
+      "session": null,
+      "server_socket": "/home/operator/.config/herdr/herdr.sock",
+      "runtime_dir": "/run/user/1000/herdr-web-remote-ttyd",
+      "install_root": "/home/operator/.local/libexec/herdr-web-remote/ttyd-fallback",
+      "public_host": "terminal-a.herdr.example.com",
+      "transport": {
+        "kind": "local"
+      }
+    },
+    "cluster-a": {
+      "enabled": false,
+      "architecture": "aarch64",
+      "owner": "operator",
+      "python": "/usr/bin/python3",
+      "host_prefix": "login-",
+      "reject_slurm": true,
+      "herdr": "/home/operator/.local/bin/herdr",
+      "session": "cluster-a",
+      "server_socket": "/tmp/cluster-a-herdr/herdr.sock",
+      "runtime_dir": "/tmp/herdr-web-remote-ttyd-operator",
+      "install_root": "/home/operator/.local/libexec/herdr-web-remote/ttyd-fallback",
+      "public_host": "terminal-cluster-a.herdr.example.com",
+      "transport": {
+        "kind": "ssh",
+        "host": "cluster-a.internal.example",
+        "port": 22,
+        "user": "operator",
+        "identity": "ssh/cluster-a-fallback",
+        "known_hosts": "ssh/cluster-a-known-hosts",
+        "control_identity": "/home/operator/.ssh/id_ed25519",
+        "control_known_hosts": "ssh/cluster-a-known-hosts"
+      }
+    }
+  }
+}

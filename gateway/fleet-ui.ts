@@ -204,6 +204,20 @@ export function fleetRailWidthPreferences(serialized: string | null): FleetRailW
   }
 }
 
+/** Fleet creates the emergency entry only for the wide desktop presentation. */
+export function fleetDesktopFallbackUrl(value: unknown, desktop: boolean): string | null {
+  if (!desktop || typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.port
+      && url.pathname === "/" && !url.search && !url.hash
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): string {
   const boundedCacheSize = Number.isSafeInteger(iframeCacheSize) && iframeCacheSize >= 1 && iframeCacheSize <= 10
     ? iframeCacheSize
@@ -400,6 +414,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 .tree-pane-dot { width: .45rem; height: .45rem; border-radius: 999px; background: var(--tree-pane-color); box-shadow: 0 0 0 2px color-mix(in oklch, var(--tree-pane-color) 16%, transparent); }
 .tree-row-wrap { position: relative; min-width: 0; }
 .tree-inline-action { display: none; }
+.desktop-fallback-entry { display: none; }
 .host-rail-footer, .tree-action-status, .fleet-settings, .tree-rename { display: none; }
 .connecting { padding: 0 .6rem; color: var(--muted-foreground); font-size: .8rem; }
 .instance-tab {
@@ -862,6 +877,17 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
     background: var(--muted);
   }
   .host-rail-version { color: var(--muted-foreground); font-size: .66rem; font-variant-numeric: tabular-nums; }
+  .desktop-fallback-entry {
+    min-width: 0;
+    align-items: center;
+    border-radius: calc(var(--radius) - 4px);
+    padding: .3rem .4rem;
+    color: var(--muted-foreground);
+    font-size: .63rem;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .desktop-fallback-entry:hover, .desktop-fallback-entry:focus-visible { background: var(--accent); color: var(--foreground); }
   .host-rail-settings {
     display: grid;
     width: 2rem;
@@ -989,6 +1015,9 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   .fleet-shell[data-resizing="true"] { cursor: col-resize; user-select: none; }
   .fleet-shell[data-resizing="true"] .node-frame { pointer-events: none; }
 }
+@media (min-width: 1200px) and (hover: hover) and (pointer: fine) {
+  .desktop-fallback-entry { display: inline-flex; }
+}
 @media (prefers-reduced-motion: reduce) {
   .loading-mark { animation: none; }
   .agent-card { transition: none; }
@@ -1013,6 +1042,7 @@ const DEFAULT_REFRESH_MS=5000;
 const MIN_REFRESH_TIMER_MS=250;
 const FRAME_CACHE_QUIET_MS=1800000;
 const DESKTOP_MEDIA='(min-width: 1200px)';
+const FALLBACK_DESKTOP_MEDIA='(min-width: 1200px) and (hover: hover) and (pointer: fine)';
 const RAIL_WIDTHS={leftDefault:${FLEET_RAIL_WIDTHS.leftDefault},leftMin:${FLEET_RAIL_WIDTHS.leftMin},leftMax:${FLEET_RAIL_WIDTHS.leftMax},rightDefault:${FLEET_RAIL_WIDTHS.rightDefault},rightMin:${FLEET_RAIL_WIDTHS.rightMin},rightMax:${FLEET_RAIL_WIDTHS.rightMax},centreMin:${FLEET_RAIL_WIDTHS.centreMin}};
 const shell=document.querySelector('.fleet-shell');
 const instances=document.querySelector('#instances');
@@ -1032,6 +1062,8 @@ const agentMenuToggle=document.querySelector('#agent-menu-toggle');
 const agentMenuCount=document.querySelector('#agent-menu-count');
 const agentSections=document.querySelector('#agent-sections');
 const agentRefreshState=document.querySelector('#agent-refresh-state');
+const hostRailFooter=document.querySelector('#host-rail-footer');
+const settingsAnchor=document.querySelector('.fleet-settings-anchor');
 const hostRailResizer=document.querySelector('#host-rail-resizer');
 const agentRailResizer=document.querySelector('#agent-rail-resizer');
 const settingsToggle=document.querySelector('#fleet-settings-toggle');
@@ -1047,6 +1079,7 @@ const renameError=document.querySelector('#tree-rename-error');
 const renameCancel=document.querySelector('#tree-rename-cancel');
 const renameSave=document.querySelector('#tree-rename-save');
 const desktopMedia=matchMedia(DESKTOP_MEDIA);
+const fallbackDesktopMedia=matchMedia(FALLBACK_DESKTOP_MEDIA);
 const configuredCacheSize=Number(shell.dataset.iframeCacheSize);
 const defaultCacheSize=Number.isSafeInteger(configuredCacheSize)&&configuredCacheSize>=1&&configuredCacheSize<=10?configuredCacheSize:1;
 let iframeCacheSize=readIframeCachePreference();
@@ -1077,6 +1110,10 @@ const remember=(id)=>{try{localStorage.setItem(STORAGE_KEY,id)}catch{}};
 const requested=()=>new URL(location.href).searchParams.get('instance');
 const nodeOrigin=(node)=>new URL('https://'+node.publicHost+'/').origin;
 const selectedNode=()=>nodes.find((node)=>node.id===selectedId)||null;
+const fallbackHref=(node)=>{
+ if(!node||typeof node.fallbackUrl!=='string')return null;
+ try{const url=new URL(node.fallbackUrl);return url.protocol==='https:'&&!url.username&&!url.password&&!url.port&&url.pathname==='/'&&!url.search&&!url.hash?url.href:null}catch{return null}
+};
 const announce=(message)=>{fleetStatus.textContent=message};
 const validPane=(value)=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)?value:null;
 const validSession=(value)=>{
@@ -1614,6 +1651,14 @@ function updateHealth(node){
  if(!healthy){const detail=node.message?' · '+node.message:'';noticeText.textContent=node.name+' · '+healthLabel(node.health)+detail}
 }
 
+function syncFallbackEntry(){
+ let link=hostRailFooter.querySelector('[data-fallback-entry]');
+ const node=selectedNode();const href=fallbackDesktopMedia.matches?fallbackHref(node):null;
+ if(!href){if(link)link.remove();return}
+ if(!link){link=element('a','desktop-fallback-entry','Emergency terminal');link.dataset.fallbackEntry='true';link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';hostRailFooter.insertBefore(link,settingsAnchor)}
+ link.href=href;link.title='Open '+node.name+' emergency terminal';link.setAttribute('aria-label','Open '+node.name+' emergency terminal in a new tab');
+}
+
 function loadSelected(force=false,routeOverride=null){
  const node=selectedNode();if(!node)return;
  const entry=ensureFrame(node);let route=routeOverride||entry.route||{view:'home'};
@@ -1622,6 +1667,7 @@ function loadSelected(force=false,routeOverride=null){
  const href=frameHref(entry.origin,route);const nextFrameKey=routeKey(entry.origin,route);
  entry.route=route;entry.frame.title='Collie · '+node.name;
  openNode.href=href;openNode.hidden=false;updateHealth(node);
+ syncFallbackEntry();
  if(force||entry.frameKey!==nextFrameKey){entry.frameKey=nextFrameKey;entry.loading=true;entry.frame.src=href}
  showOnlyFrame(entry);replaceUrl(node.id,route);
 }
@@ -1649,6 +1695,7 @@ function selectTreeNode(id,options={}){
 function showEmpty(title,copy){
  for(const id of [...frameRegistry.keys()])releaseFrame(id,true);
  selectedId=null;instances.replaceChildren();openNode.hidden=true;notice.hidden=true;loading.hidden=true;
+ syncFallbackEntry();
  emptyTitle.textContent=title;emptyCopy.textContent=copy;empty.hidden=false;announce(title+'. '+copy);
 }
 
@@ -1764,7 +1811,7 @@ function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
  if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false');renderAgents()}
  else if(desktopMode){closeSettings();closeRename();agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
- desktopMode=nextDesktop;applyRailWidthPreferences();broadcastFrameActivity();
+ desktopMode=nextDesktop;renderTabs();syncFallbackEntry();applyRailWidthPreferences();broadcastFrameActivity();
 }
 
 function clearRefreshTimer(){if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null}}
@@ -1859,6 +1906,6 @@ addEventListener('popstate',()=>{const id=requested();if(nodes.some((node)=>node
 bindRailResizer(hostRailResizer,'left');bindRailResizer(agentRailResizer,'right');
 addEventListener('resize',applyRailWidthPreferences);
 document.addEventListener('visibilitychange',broadcastFrameActivity);
-desktopMedia.addEventListener('change',syncAgentMenuLayout);syncAgentMenuLayout();
+desktopMedia.addEventListener('change',syncAgentMenuLayout);fallbackDesktopMedia.addEventListener('change',syncFallbackEntry);syncAgentMenuLayout();
 void refresh();
 `;

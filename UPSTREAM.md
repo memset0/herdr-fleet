@@ -10,6 +10,10 @@ plugin-owned supervisor. Upstream's Tailscale/system-service control path is int
 of this derivative's supported workflow. Windows Task Scheduler, QR lifecycle tooling, and
 upstream's moving self-update path are likewise excluded.
 
+The dormant `services/ttyd-fallback/` companion is Web Remote-owned generic code, not Collie-derived
+source. Its separate ttyd provenance and artifact integrity record live in that directory's
+`UPSTREAM.md`, `VERSION`, and `SHA256SUMS`; do not mix its lifecycle into a future Collie import.
+
 Web Remote also carries one browser-local Fleet framing extension: an exact-parent, versioned
 activity message gates Collie's `x-collie-seen` read attribution for hidden resident iframes while
 standalone Collie keeps upstream behavior. Keep this small protocol, API-header seam, and activation

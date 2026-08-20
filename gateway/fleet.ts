@@ -102,6 +102,7 @@ export interface FleetNodeState {
   id: string;
   name: string;
   publicHost: string;
+  fallbackUrl?: string;
   labels: string[];
   health: "online" | "herdr-down" | "bridge-down" | "transport-down";
   transport: TransportStatus;
@@ -383,6 +384,7 @@ function unavailableState(
     id: node.id,
     name: node.name,
     publicHost: node.publicHost,
+    ...(node.fallbackUrl ? { fallbackUrl: node.fallbackUrl } : {}),
     labels: node.labels,
     health: transport.state === "up" ? "bridge-down" : "transport-down",
     transport,
@@ -655,6 +657,7 @@ export class FleetCollector {
         id: node.id,
         name: node.name,
         publicHost: node.publicHost,
+        ...(node.fallbackUrl ? { fallbackUrl: node.fallbackUrl } : {}),
         labels: node.labels,
         health: online ? "online" : "herdr-down",
         transport,
@@ -693,6 +696,7 @@ export class FleetCollector {
         id: node.id,
         name: node.name,
         publicHost: node.publicHost,
+        fallbackUrl: node.fallbackUrl,
         labels: node.labels,
         health: node.health,
         transport: { kind: node.transport.kind, state: node.transport.state, message: node.transport.message },
