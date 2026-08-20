@@ -5,6 +5,7 @@ import {
   FLEET_JS,
   fleetAttentionResetEligible,
   fleetAgentBucket,
+  fleetFrameActivityActive,
   fleetHeaderAgentCount,
   fleetIframeCacheQuietExpired,
   fleetIframeEvictionCandidate,
@@ -132,6 +133,33 @@ describe("Fleet iframe shell", () => {
     expect(fleetIframeEvictionCandidate([{ id: "selected", lastVisitedAt: 1 }], "selected")).toBeNull();
     expect(fleetIframeCacheQuietExpired(1_800_100, 100)).toBeTrue();
     expect(fleetIframeCacheQuietExpired(1_800_099, 100)).toBeFalse();
+  });
+
+  test("activates only the unobscured selected iframe and posts exact-origin state", () => {
+    const base = {
+      selected: true,
+      frameHidden: false,
+      documentHidden: false,
+      desktop: true,
+      treeOpen: false,
+      agentMenuHidden: false,
+    };
+    expect(fleetFrameActivityActive(base)).toBeTrue();
+    expect(fleetFrameActivityActive({ ...base, selected: false })).toBeFalse();
+    expect(fleetFrameActivityActive({ ...base, frameHidden: true })).toBeFalse();
+    expect(fleetFrameActivityActive({ ...base, documentHidden: true })).toBeFalse();
+    expect(fleetFrameActivityActive({ ...base, desktop: false, agentMenuHidden: true })).toBeTrue();
+    expect(fleetFrameActivityActive({ ...base, desktop: false, agentMenuHidden: false })).toBeFalse();
+    expect(fleetFrameActivityActive({ ...base, desktop: false, agentMenuHidden: true, treeOpen: true })).toBeFalse();
+
+    expect(FLEET_JS).toContain("FRAME_ACTIVITY_MESSAGE='herdr-web-remote:activity'");
+    expect(FLEET_JS).toContain("FRAME_ACTIVITY_VERSION=1");
+    expect(FLEET_JS).toContain("target.postMessage({type:FRAME_ACTIVITY_MESSAGE,version:FRAME_ACTIVITY_VERSION,active:frameActivityActive(entry)},entry.origin)");
+    expect(FLEET_JS).toContain("value.addEventListener('load'");
+    expect(FLEET_JS).toContain("postFrameActivity(entry)");
+    expect(FLEET_JS).toContain("broadcastFrameActivity()");
+    expect(FLEET_JS).toContain("document.addEventListener('visibilitychange',broadcastFrameActivity)");
+    expect(FLEET_JS).not.toContain("contentWindow.document");
   });
 
   test("renders Collie triage, Host identity, and stale cards through safe DOM nodes", () => {
@@ -289,8 +317,8 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("let treeOpen=false");
     expect(FLEET_JS).toContain("shell.dataset.treeOpen='true'");
     expect(FLEET_JS).toContain("delete shell.dataset.treeOpen");
-    expect(FLEET_JS).toContain("closeAgentMenu();treeOpen=true");
-    expect(FLEET_JS).toContain("closeTreeMenu();agentMenu.hidden=false");
+    expect(FLEET_JS).toContain("closeAgentMenu({syncActivity:false});treeOpen=true");
+    expect(FLEET_JS).toContain("closeTreeMenu({syncActivity:false});agentMenu.hidden=false");
     expect(FLEET_JS).toContain("treeMenuBackdrop.addEventListener('click'");
     expect(FLEET_JS).toContain("if(treeOpen){closeTreeMenu({restoreFocus:true});return}");
     expect(FLEET_JS).toContain("if(nextDesktop){closeTreeMenu()");

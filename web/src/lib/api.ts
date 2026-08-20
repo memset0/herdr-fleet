@@ -4,6 +4,7 @@
 import { trackBusy } from "./busy";
 import { markLive } from "./connection-health";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
+import { paneObservationActive } from "./fleet-activity";
 import type {
   ActionResponse,
   BridgeConfig,
@@ -236,7 +237,7 @@ export async function fetchPane(
   // seen. A cross-site no-cors GET can't set a custom header, so it can't clear your alerts by
   // guessing pane ids (bridge/server.ts → marksPaneSeen).
   const headers: Record<string, string> = {
-    "x-collie-seen": "1",
+    ...(paneObservationActive() ? { "x-collie-seen": "1" } : {}),
     [XHR_HEADER]: XHR_HEADER_VALUE,
   };
   if (cached) headers["if-none-match"] = cached.etag;
@@ -291,11 +292,11 @@ export function fetchHistory(
   if (opts.before) q.set("before", opts.before);
   const qs = q.toString();
   const path = `/api/pane/${encodeURIComponent(paneId)}/history${qs ? `?${qs}` : ""}`;
-  // Reading the transcript is looking at the pane — and history is a READ, so like fetchPane it
-  // carries the header that lets the bridge count it (bridge/server.ts → marksPaneSeen).
+  // Reading the transcript counts only while this Collie document is actually observable. A hidden
+  // resident Fleet frame may keep History mounted, but it cannot clear Ready · unseen.
   return req<PaneHistoryResponse>(withSession(path, session), {
     signal,
-    headers: { "x-collie-seen": "1" },
+    headers: paneObservationActive() ? { "x-collie-seen": "1" } : {},
   });
 }
 

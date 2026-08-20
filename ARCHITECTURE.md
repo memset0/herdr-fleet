@@ -112,6 +112,18 @@ element, or reassign its source. One wall-clock quiet timer removes every non-se
 30 minutes without a Host selection/revisit. No Agent state, child activity, or Collie idle-lock
 behavior enters this cache policy.
 
+Seen attribution is a separate derived channel over those same resident windows. Fleet posts a
+bounded versioned `{active}` message to each child's exact configured origin after load, selection,
+compact-overlay, desktop-breakpoint, and top-document visibility changes. Exactly the selected,
+unobscured child of a visible Fleet document is active. Framed Collie accepts only the exact parent
+window and supported schema, starts inactive, and combines the parent bit with its own document
+visibility. Its Pane and History reads include `x-collie-seen` only while active; a false-to-true edge
+immediately revalidates the mounted Pane through the existing router poll owner. Standalone Collie
+remains active while its document is visible. Message loss therefore fails toward an extra unseen
+state rather than falsely clearing one, and the existing node `lastSeenAt` remains the sole authority
+for Collie, Fleet triage, and Discord confirmation. Snapshot reads, write-side activity, iframe
+identity/routes, cache policy, and notification persistence are unchanged.
+
 When central Discord alerts are configured, a second memory-only ledger consumes completed live
 collector cycles. It silently baselines first-seen Pane identities and creates a candidate when a
 later authoritative observation enters `Ready · unseen` or `Needs You`. The candidate retains its
@@ -159,6 +171,10 @@ enabled node origins and Fleet itself stays non-embeddable. The Gateway rewrites
 HTML documents to permit the exact Fleet origin as `frame-ancestors`; node APIs/assets retain
 `X-Frame-Options: DENY`. The shared authenticated cookie is available to the node iframe because all
 public hosts are same-site subdomains, but the Gateway credential is stripped before proxying.
+The child cannot recover Fleet's origin under the deliberate no-referrer policy, so activity
+messages use exact parent-window validation in Collie while Fleet always supplies an exact
+`targetOrigin`; the `frame-ancestors` policy is the complementary guarantee that only the owning
+authenticated Fleet page can be that parent.
 
 ## Process ownership
 

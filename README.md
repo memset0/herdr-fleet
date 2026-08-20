@@ -264,6 +264,16 @@ selection or revisit, Fleet silently removes every non-selected iframe. The sele
 and Fleet does not invoke or change Collie's own idle lock. The live Gateway config must remain an
 absolute-path, owner-only file.
 
+A resident Collie page may continue its normal polling while hidden, but it cannot mark a Pane seen.
+Fleet sends a versioned browser-only activity message to every exact-origin child; only the selected
+iframe in a visible Fleet document, unobscured by a compact Host/Agent overlay, is active. Framed
+Collie starts inactive until its exact parent sends that state, and inactive Pane/History reads omit
+`x-collie-seen`. Revealing the frame triggers one immediate Pane revalidation, which updates the same
+node-owned seen timestamp already consumed by Collie, Fleet, and Discord. Opening Collie directly as
+a top-level page keeps its existing seen behavior. This adds no Fleet seen database, does not pause
+hidden polling, and does not change cache LRU, quiet cleanup, idle lock, or authenticated write
+actions.
+
 ### Discord Agent notifications
 
 The central Gateway can notify Discord when a successfully fetched Agent newly enters green

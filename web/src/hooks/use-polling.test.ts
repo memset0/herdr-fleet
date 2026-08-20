@@ -8,8 +8,17 @@ import type { AgentView } from "@/lib/types";
 // usePolling reads useRevalidator(); drive its state/revalidate directly (hoisted so the vi.mock
 // factory can close over the holder). intervalFor is pure and doesn't touch it.
 const rr = vi.hoisted(() => ({ state: "idle" as "idle" | "loading", revalidate: vi.fn() }));
+const fleetActivity = vi.hoisted(() => ({ listener: null as (() => void) | null }));
 vi.mock("react-router", () => ({
   useRevalidator: () => ({ state: rr.state, revalidate: rr.revalidate }),
+}));
+vi.mock("@/lib/fleet-activity", () => ({
+  subscribeFleetActivation: (listener: () => void) => {
+    fleetActivity.listener = listener;
+    return () => {
+      if (fleetActivity.listener === listener) fleetActivity.listener = null;
+    };
+  },
 }));
 
 // ---------------------------------------------------------------------------
@@ -127,6 +136,7 @@ describe("usePolling — superseding a wedged revalidation", () => {
     vi.useFakeTimers();
     rr.state = "idle";
     rr.revalidate.mockClear();
+    fleetActivity.listener = null;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -151,6 +161,22 @@ describe("usePolling — superseding a wedged revalidation", () => {
     renderHook(() => usePolling(hotData()));
     vi.advanceTimersByTime(1_500); // one HOT tick
     expect(rr.revalidate).toHaveBeenCalled();
+  });
+
+  it("revalidates immediately when Fleet activates this framed page", () => {
+    renderHook(() => usePolling(hotData(), "w1:p1"));
+    expect(fleetActivity.listener).not.toBeNull();
+    act(() => fleetActivity.listener?.());
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("supersedes one in-flight read when Fleet activates the page", () => {
+    rr.state = "loading";
+    const view = renderHook(() => usePolling(hotData(), "w1:p1"));
+    act(() => fleetActivity.listener?.());
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(fleetActivity.listener).toBeNull();
   });
 
   // The idle lock pauses polling rather than unmounting the route tree, so the tick is the only thing

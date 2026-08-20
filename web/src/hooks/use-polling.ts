@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useRevalidator } from "react-router";
 
 import { beginCatchUp, endCatchUp, isLocked, useLocked } from "@/lib/idle";
+import { subscribeFleetActivation } from "@/lib/fleet-activity";
 import type { HomeData } from "@/lib/loaders";
 
 // Adaptive polling, the React Router way: a timer that calls `revalidator.revalidate()`, which
@@ -86,7 +87,7 @@ export function usePolling(data: HomeData | undefined, paneId?: string | null): 
   }, [revalidator.state]);
 
   useEffect(() => {
-    const tick = () => {
+    const tick = (force = false) => {
       if (document.hidden) return;
       // Idle-locked: the app is covered and nobody is reading it, so don't keep hitting the socket.
       // A live read (not a captured render value) because this fires from an interval — and unlike
@@ -101,7 +102,7 @@ export function usePolling(data: HomeData | undefined, paneId?: string | null): 
       // focus/online/visibility listeners below only accelerate that first beat. Never STOP fetching
       // because a possibly-lying flag says offline.
       const r = ref.current;
-      if (r.state === "idle") {
+      if (r.state === "idle" || force) {
         r.revalidate();
         return;
       }
@@ -115,6 +116,7 @@ export function usePolling(data: HomeData | undefined, paneId?: string | null): 
     const onVisible = () => {
       if (!document.hidden) tick();
     };
+    const unsubscribeActivation = subscribeFleetActivation(() => tick(true));
     window.addEventListener("focus", onWake);
     window.addEventListener("online", onWake);
     document.addEventListener("visibilitychange", onVisible);
@@ -123,6 +125,7 @@ export function usePolling(data: HomeData | undefined, paneId?: string | null): 
       window.removeEventListener("focus", onWake);
       window.removeEventListener("online", onWake);
       document.removeEventListener("visibilitychange", onVisible);
+      unsubscribeActivation();
     };
   }, [ms]);
 }

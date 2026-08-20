@@ -1,3 +1,4 @@
+import { useLayoutEffect } from "react";
 import { RouterProvider } from "react-router";
 
 import { router } from "./router";
@@ -5,6 +6,7 @@ import { BusyBar } from "@/components/busy-bar";
 import { IdleLock } from "@/components/idle-lock";
 import { useIdleLock } from "@/hooks/use-idle-lock";
 import { useCatchingUp } from "@/lib/idle";
+import { startFleetActivity } from "@/lib/fleet-activity";
 
 // The idle lock COVERS the app rather than replacing it. It used to render instead of the router,
 // which unmounted the whole route tree — and with it every piece of local component state, including
@@ -16,6 +18,9 @@ import { useCatchingUp } from "@/lib/idle";
 // generating a box, so it can't change layout — the cover already blocks pointers, this closes the
 // keyboard path behind it.
 export function App() {
+  // Install before child passive effects report their route to Fleet. Framed API reads already
+  // default inactive at module load, so even the initial router loader cannot win the load race.
+  useLayoutEffect(() => startFleetActivity(), []);
   const { locked, unlock } = useIdleLock();
   // The cover outlives the lock by one beat: resuming refetches, and dropping the cover the instant
   // you tap would hand you back the same stale screen it just told you was frozen (see lib/idle).

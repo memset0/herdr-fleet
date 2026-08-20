@@ -10,6 +10,12 @@ plugin-owned supervisor. Upstream's Tailscale/system-service control path is int
 of this derivative's supported workflow. Windows Task Scheduler, QR lifecycle tooling, and
 upstream's moving self-update path are likewise excluded.
 
+Web Remote also carries one browser-local Fleet framing extension: an exact-parent, versioned
+activity message gates Collie's `x-collie-seen` read attribution for hidden resident iframes while
+standalone Collie keeps upstream behavior. Keep this small protocol, API-header seam, and activation
+revalidation together when importing a later upstream release; it owns no persisted state and must
+not be replaced by Fleet-side observation storage.
+
 When importing a later Collie release, start from clean synchronized checkouts with one writer,
 preflight a named stable tag, and merge that tag's dereferenced commit from the `upstream` remote so
 the release remains Git ancestry. Do not silently follow upstream's default branch. Record the
