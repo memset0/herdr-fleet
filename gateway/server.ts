@@ -116,6 +116,7 @@ export interface GatewayHandlerOptions {
   config: GatewayConfig;
   collector: FleetCollector;
   transports: TransportRegistry;
+  pluginVersion?: string;
   fetcher?: typeof fetch;
   limiter?: LoginRateLimiter;
   now?: () => number;
@@ -123,6 +124,7 @@ export interface GatewayHandlerOptions {
 
 export function createGatewayHandler(options: GatewayHandlerOptions): (request: Request) => Promise<Response> {
   const { config, collector, transports } = options;
+  const pluginVersion = options.pluginVersion ?? "development";
   const fetcher = options.fetcher ?? fetch;
   const limiter = options.limiter ?? new LoginRateLimiter();
   const now = options.now ?? Date.now;
@@ -212,7 +214,7 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
         return json(collector.snapshot());
       }
       if (url.pathname === "/" && request.method === "GET") {
-        const document = html(fleetPage(config.fleetUi.iframeCacheSize), 200, {}, fleetDocumentCsp(config));
+        const document = html(fleetPage(config.fleetUi.iframeCacheSize, pluginVersion), 200, {}, fleetDocumentCsp(config));
         // Fetch serializes Origin as `null` for non-CORS POST navigations under `no-referrer`,
         // defeating logout's exact-origin CSRF check. Fleet needs same-origin referrers only for
         // that form POST; cross-origin navigations still disclose no referrer, and node documents

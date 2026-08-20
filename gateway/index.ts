@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { createGatewayHandler } from "./server.ts";
 import { loadGatewayConfig } from "./config.ts";
 import { FleetDiscordNotifier, PingmeDiscordSender } from "./discord-notifications.ts";
@@ -9,6 +12,10 @@ import { TransportRegistry } from "./transports.ts";
 
 const configPath = process.argv[2];
 if (!configPath) throw new Error("usage: gateway/index.ts /absolute/path/to/gateway.json");
+
+const pluginVersion = (
+  JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }
+).version;
 
 const config = await loadGatewayConfig(configPath);
 const transports = new TransportRegistry(config.nodes);
@@ -22,7 +29,7 @@ const discordNotifier = discordConfig
 const collector = new FleetCollector(config, transports, fetch, Date.now, {
   ...(discordNotifier ? { onCycle: (state) => discordNotifier.observe(state) } : {}),
 });
-const handler = createGatewayHandler({ config, collector, transports });
+const handler = createGatewayHandler({ config, collector, transports, pluginVersion });
 
 const server = Bun.serve({
   hostname: config.listen.host,

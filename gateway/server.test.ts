@@ -30,10 +30,11 @@ function setup(
   collectorFetcher: typeof fetch = (async () => {
     throw new Error("not polled in handler tests");
   }) as unknown as typeof fetch,
+  pluginVersion = "2.4.1-test",
 ) {
   const transports = new TransportRegistry(gateway.nodes);
   const collector = new FleetCollector(gateway, transports, collectorFetcher, now ?? Date.now);
-  return createGatewayHandler({ config: gateway, collector, transports, fetcher, limiter, now });
+  return createGatewayHandler({ config: gateway, collector, transports, fetcher, limiter, now, pluginVersion });
 }
 
 async function login(handler: ReturnType<typeof setup>, next = "https://fleet.example.com/"): Promise<string> {
@@ -200,6 +201,7 @@ describe("Gateway host routing and auth flow", () => {
     expect(fleetCsp).not.toContain("disabled.example.com");
     expect(fleetCsp).not.toContain("*.example.com");
     expect(await fleet.text()).toContain('data-iframe-cache-size="5"');
+    expect(await (await handler(request("fleet.example.com", "/", { headers: { cookie } }))).text()).toContain('data-plugin-version="2.4.1-test"');
 
     const node = await handler(request("local.example.com", "/", { headers: { cookie } }));
     const nodeCsp = node.headers.get("content-security-policy") ?? "";

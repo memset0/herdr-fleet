@@ -77,6 +77,12 @@ each viewport reapplies them while protecting a 40rem centre. A temporary drag s
 cross-origin iframe from taking a gesture without removing or changing that frame. Compact layouts
 neither display the separators nor apply the remembered widths.
 
+The left rail's desktop-only footer receives the running Gateway package version and treats the
+configured iframe capacity as a resettable default. A separate versioned browser-local value selects
+the effective 1–10 capacity. Decreasing it repeatedly uses the existing non-selected LRU candidate;
+increasing it stays lazy. The footer and its upward settings popup do not exist in compact layout and
+do not enter Gateway configuration, Fleet aggregate state, or a node request.
+
 The Agent panel follows Collie's triage/card vocabulary, adds the owning Host, and turns a card
 selection into the existing canonical instance/session/Pane route. The iframe still owns the complete native
 Collie route stack and every terminal operation; Fleet does not reproduce Pane views or actions.
@@ -123,6 +129,16 @@ remains active while its document is visible. Message loss therefore fails towar
 state rather than falsely clearing one, and the existing node `lastSeenAt` remains the sole authority
 for Collie, Fleet triage, and Discord confirmation. Snapshot reads, write-side activity, iframe
 identity/routes, cache policy, and notification persistence are unchanged.
+
+Four explicit Explorer mutations use a sibling exact-parent message contract. Fleet probes an
+exact configured Collie WindowProxy for protocol support, then sends one bounded `create-workspace`,
+`create-tab`, `rename-tab`, or `rename-pane` request; the child validates its exact parent and
+delegates to the existing same-origin typed API client. The result carries only correlation/action state and, for a
+create, the three returned hierarchy ids. Fleet validates exact source, origin, request id, version,
+keys, ids, and action before navigating or refreshing. It may create one temporary inactive child
+for an uncached Host, removes that child at completion/timeout, and never retries the mutation.
+Consequently the existing bridge authorization/audit/session semantics remain authoritative and
+node APIs gain no CORS or Gateway-proxy write surface.
 
 When central Discord alerts are configured, a second memory-only ledger consumes completed live
 collector cycles. It silently baselines first-seen Pane identities and creates a candidate when a

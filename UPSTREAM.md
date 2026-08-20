@@ -16,6 +16,12 @@ standalone Collie keeps upstream behavior. Keep this small protocol, API-header 
 revalidation together when importing a later upstream release; it owns no persisted state and must
 not be replaced by Fleet-side observation storage.
 
+The framed Web bundle additionally accepts four exact-parent, versioned Fleet Explorer actions and
+delegates them to Collie's existing typed `createWorkspace`, `createTab`, `renameTab`, and
+`renamePane` clients. Keep that allowlist, readiness/result correlation, and request de-duplication
+together during an upstream
+import. It adds no node HTTP route or CORS surface, and standalone Collie never accepts the protocol.
+
 When importing a later Collie release, start from clean synchronized checkouts with one writer,
 preflight a named stable tag, and merge that tag's dereferenced commit from the `upstream` remote so
 the release remains Git ancestry. Do not silently follow upstream's default branch. Record the

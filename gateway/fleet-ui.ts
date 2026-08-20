@@ -85,6 +85,24 @@ export function fleetIframeCacheQuietExpired(now: number, lastVisitedAt: number)
   return Number.isFinite(now) && Number.isFinite(lastVisitedAt) && now - lastVisitedAt >= FLEET_IFRAME_CACHE_QUIET_MS;
 }
 
+export function fleetIframeCachePreference(serialized: string | null, configured: number): number {
+  const fallback = Number.isSafeInteger(configured) && configured >= 1 && configured <= 10 ? configured : 1;
+  if (!serialized) return fallback;
+  try {
+    const value: unknown = JSON.parse(serialized);
+    if (!value || typeof value !== "object") return fallback;
+    const record = value as Record<string, unknown>;
+    return record.version === 1
+      && Number.isSafeInteger(record.size)
+      && Number(record.size) >= 1
+      && Number(record.size) <= 10
+      ? Number(record.size)
+      : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export interface FleetFrameActivityInput {
   selected: boolean;
   frameHidden: boolean;
@@ -184,13 +202,18 @@ export function fleetRailWidthPreferences(serialized: string | null): FleetRailW
   }
 }
 
-export function fleetPage(iframeCacheSize = 1): string {
+export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): string {
   const boundedCacheSize = Number.isSafeInteger(iframeCacheSize) && iframeCacheSize >= 1 && iframeCacheSize <= 10
     ? iframeCacheSize
     : 1;
+  const safeVersion = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/.test(pluginVersion) ? pluginVersion : "unknown";
+  const cacheOptions = Array.from({ length: 10 }, (_, index) => {
+    const size = index + 1;
+    return `<option value="${size}">${size}</option>`;
+  }).join("");
   return documentShell(
     "Fleet · Collie",
-    `<main class="fleet-shell" data-iframe-cache-size="${boundedCacheSize}">
+    `<main class="fleet-shell" data-iframe-cache-size="${boundedCacheSize}" data-plugin-version="${safeVersion}">
       <header id="host-rail" class="fleet-header">
         <button id="tree-menu-toggle" class="fleet-mark fleet-tree-toggle" type="button" aria-expanded="false" aria-controls="instances" aria-label="Open Host tree" title="Hosts">H</button>
         <a class="fleet-mark fleet-home-mark" href="/" aria-label="Fleet home" title="Herdr Fleet">H</a>
@@ -215,6 +238,35 @@ export function fleetPage(iframeCacheSize = 1): string {
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
           </svg>
         </a>
+        <div id="tree-action-status" class="tree-action-status" role="status" hidden></div>
+        <footer id="host-rail-footer" class="host-rail-footer">
+          <span class="host-rail-version" aria-label="Web Remote version ${safeVersion}">v${safeVersion}</span>
+          <div class="fleet-settings-anchor">
+            <button id="fleet-settings-toggle" class="host-rail-settings" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="fleet-settings" aria-label="Fleet settings" title="Fleet settings">
+              <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
+                <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20.3h-3v-.08a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 15a1.7 1.7 0 0 0-1.56-1.03H5.36v-3h.08A1.7 1.7 0 0 0 7 9.94a1.7 1.7 0 0 0-.34-1.88L6.6 8l2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56V4.64h3v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06L19.8 8l-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.08v3h-.08A1.7 1.7 0 0 0 19.4 15Z"></path>
+              </svg>
+            </button>
+            <section id="fleet-settings" class="fleet-settings" role="dialog" aria-label="Fleet settings" hidden>
+              <div class="fleet-settings-heading">
+                <strong>Fleet settings</strong>
+                <span>Browser only</span>
+              </div>
+              <label class="fleet-setting-row" for="iframe-cache-size">
+                <span>
+                  <strong>Cached pages</strong>
+                  <small>Keep recently visited Hosts alive</small>
+                </span>
+                <select id="iframe-cache-size" aria-describedby="iframe-cache-default">${cacheOptions}</select>
+              </label>
+              <div class="fleet-settings-foot">
+                <span id="iframe-cache-default">Default: ${boundedCacheSize}</span>
+                <button id="iframe-cache-reset" type="button">Use default</button>
+              </div>
+            </section>
+          </div>
+        </footer>
       </header>
       <button id="tree-menu-backdrop" class="tree-menu-backdrop" type="button" aria-label="Close Host tree" hidden></button>
       <aside id="agent-menu" class="agent-menu" aria-label="Agents across all Hosts" hidden>
@@ -245,6 +297,17 @@ export function fleetPage(iframeCacheSize = 1): string {
           <p id="empty-copy">No enabled Herdr instances are configured.</p>
           <button id="retry-inventory" class="primary-action" type="button">Try again</button>
         </div>
+      </section>
+      <section id="tree-rename" class="tree-rename" role="dialog" aria-labelledby="tree-rename-title" hidden>
+        <form id="tree-rename-form">
+          <label id="tree-rename-title" for="tree-rename-input">Rename</label>
+          <input id="tree-rename-input" type="text" maxlength="256" autocomplete="off" spellcheck="false">
+          <p id="tree-rename-error" class="tree-rename-error" role="status" hidden></p>
+          <div class="tree-rename-actions">
+            <button id="tree-rename-cancel" type="button">Cancel</button>
+            <button id="tree-rename-save" type="submit">Save</button>
+          </div>
+        </form>
       </section>
       <p id="fleet-status" class="sr-only" role="status">Connecting to Fleet.</p>
     </main>`,
@@ -348,6 +411,9 @@ button { color: inherit; }
 .tree-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-hint { max-width: 5.5rem; overflow: hidden; color: var(--muted-foreground); font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
 .tree-pane-dot { width: .45rem; height: .45rem; border-radius: 999px; background: var(--tree-pane-color); box-shadow: 0 0 0 2px color-mix(in oklch, var(--tree-pane-color) 16%, transparent); }
+.tree-row-wrap { position: relative; min-width: 0; }
+.tree-inline-action { display: none; }
+.host-rail-footer, .tree-action-status, .fleet-settings, .tree-rename { display: none; }
 .connecting { padding: 0 .6rem; color: var(--muted-foreground); font-size: .8rem; }
 .instance-tab {
   display: flex;
@@ -634,7 +700,7 @@ button { color: inherit; }
     gap: .35rem;
     border-right: 1px solid var(--border);
     border-bottom: 0;
-    padding: 1rem .75rem;
+    padding: 1rem .75rem 0;
   }
   .fleet-tree-toggle { display: none; }
   .fleet-home-mark { display: grid; align-self: flex-start; }
@@ -646,6 +712,7 @@ button { color: inherit; }
     gap: .2rem;
     overflow-x: hidden;
     overflow-y: auto;
+    padding-bottom: .5rem;
   }
   .host-tree { display: block; }
   .tree-children:not([hidden]) { display: block; }
@@ -673,6 +740,27 @@ button { color: inherit; }
   .tree-row-level-2 { padding-left: 1.25rem; }
   .tree-row-level-3 { padding-left: 2.15rem; }
   .tree-row-level-4 { padding-left: 3.05rem; }
+  .tree-row-wrap > .tree-row { padding-right: 2rem; }
+  .tree-inline-action {
+    position: absolute;
+    top: 50%;
+    right: .22rem;
+    display: grid;
+    width: 1.5rem;
+    height: 1.5rem;
+    place-items: center;
+    transform: translateY(-50%);
+    border: 0;
+    border-radius: calc(var(--radius) - 4px);
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .tree-row-wrap:hover .tree-inline-action, .tree-inline-action:focus-visible { opacity: 1; }
+  .tree-inline-action:hover { background: var(--accent); color: var(--foreground); }
   .instance-tab {
     width: 100%;
     max-width: none;
@@ -682,6 +770,89 @@ button { color: inherit; }
   }
   .agent-menu-toggle { display: none; }
   #open-node { position: absolute; top: 1rem; right: .75rem; }
+  .host-rail-footer {
+    position: relative;
+    display: flex;
+    min-height: 2.75rem;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 -.75rem;
+    border-top: 1px solid var(--border);
+    padding: .45rem .65rem;
+    background: var(--muted);
+  }
+  .host-rail-version { color: var(--muted-foreground); font-size: .66rem; font-variant-numeric: tabular-nums; }
+  .host-rail-settings {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border: 0;
+    border-radius: calc(var(--radius) - 3px);
+    background: transparent;
+    color: var(--muted-foreground);
+    cursor: pointer;
+  }
+  .host-rail-settings:hover, .host-rail-settings[aria-expanded="true"] { background: var(--accent); color: var(--foreground); }
+  .fleet-settings-anchor { position: relative; }
+  .fleet-settings {
+    position: absolute;
+    z-index: 60;
+    right: 0;
+    bottom: calc(100% + .5rem);
+    display: block;
+    width: min(19rem, calc(var(--fleet-host-rail-width) - 1rem));
+    min-width: 10rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    padding: .8rem;
+    box-shadow: 0 16px 42px light-dark(#00000020, #000000a0);
+  }
+  .fleet-settings-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; font-size: .78rem; }
+  .fleet-settings-heading span { color: var(--muted-foreground); font-size: .62rem; }
+  .fleet-setting-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-top: .85rem; }
+  .fleet-setting-row > span { display: grid; min-width: 0; gap: .15rem; }
+  .fleet-setting-row strong { font-size: .72rem; }
+  .fleet-setting-row small { color: var(--muted-foreground); font-size: .62rem; line-height: 1.35; }
+  .fleet-setting-row select { min-width: 3.5rem; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: .35rem .45rem; color: var(--foreground); }
+  .fleet-settings-foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .75rem; color: var(--muted-foreground); font-size: .62rem; }
+  .fleet-settings-foot button { border: 0; background: transparent; padding: .25rem; color: var(--muted-foreground); font-size: .64rem; cursor: pointer; }
+  .fleet-settings-foot button:hover { color: var(--foreground); }
+  .tree-action-status {
+    display: block;
+    flex: none;
+    margin: .15rem 0 .35rem;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--card);
+    padding: .45rem .55rem;
+    color: var(--muted-foreground);
+    font-size: .67rem;
+    line-height: 1.35;
+  }
+  .tree-action-status[data-kind="error"] { border-color: color-mix(in oklch, var(--status-blocked) 38%, var(--border)); color: var(--status-blocked); }
+  .tree-rename {
+    position: fixed;
+    z-index: 70;
+    left: .65rem;
+    display: block;
+    width: min(18rem, calc(var(--fleet-host-rail-width) - 1.3rem));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    padding: .7rem;
+    box-shadow: 0 16px 42px light-dark(#00000020, #000000a0);
+  }
+  .tree-rename form { display: grid; gap: .55rem; }
+  .tree-rename label { font-size: .72rem; font-weight: 750; }
+  .tree-rename input { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: .48rem .55rem; color: var(--foreground); }
+  .tree-rename-error { margin: 0; color: var(--status-blocked); font-size: .64rem; line-height: 1.35; }
+  .tree-rename-actions { display: flex; justify-content: flex-end; gap: .4rem; }
+  .tree-rename-actions button { min-height: 1.85rem; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: 0 .65rem; color: var(--foreground); font-size: .68rem; cursor: pointer; }
+  #tree-rename-save { background: var(--accent); font-weight: 700; }
+  .tree-rename-actions button:disabled { cursor: wait; opacity: .55; }
   .agent-menu {
     position: relative;
     z-index: 10;
@@ -748,9 +919,17 @@ button { color: inherit; }
 export const FLEET_JS = `
 const STORAGE_KEY='herdr-web-remote:selected-instance';
 const RAIL_STORAGE_KEY='herdr-web-remote:fleet-rail-widths:v1';
+const CACHE_STORAGE_KEY='herdr-web-remote:fleet-iframe-cache:v1';
 const ROUTE_MESSAGE='herdr-web-remote:route';
 const FRAME_ACTIVITY_MESSAGE='herdr-web-remote:activity';
 const FRAME_ACTIVITY_VERSION=1;
+const ACTION_PROBE_MESSAGE='herdr-web-remote:action-probe';
+const ACTION_READY_MESSAGE='herdr-web-remote:action-ready';
+const ACTION_REQUEST_MESSAGE='herdr-web-remote:action-request';
+const ACTION_RESULT_MESSAGE='herdr-web-remote:action-result';
+const ACTION_VERSION=1;
+const ACTION_PROBE_TIMEOUT_MS=8000;
+const ACTION_RESULT_TIMEOUT_MS=25000;
 const DEFAULT_REFRESH_MS=5000;
 const MIN_REFRESH_TIMER_MS=250;
 const FRAME_CACHE_QUIET_MS=1800000;
@@ -776,9 +955,22 @@ const agentSections=document.querySelector('#agent-sections');
 const agentRefreshState=document.querySelector('#agent-refresh-state');
 const hostRailResizer=document.querySelector('#host-rail-resizer');
 const agentRailResizer=document.querySelector('#agent-rail-resizer');
+const settingsToggle=document.querySelector('#fleet-settings-toggle');
+const settingsPopover=document.querySelector('#fleet-settings');
+const cacheSizeSelect=document.querySelector('#iframe-cache-size');
+const cacheReset=document.querySelector('#iframe-cache-reset');
+const treeActionStatus=document.querySelector('#tree-action-status');
+const renamePopover=document.querySelector('#tree-rename');
+const renameForm=document.querySelector('#tree-rename-form');
+const renameTitle=document.querySelector('#tree-rename-title');
+const renameInput=document.querySelector('#tree-rename-input');
+const renameError=document.querySelector('#tree-rename-error');
+const renameCancel=document.querySelector('#tree-rename-cancel');
+const renameSave=document.querySelector('#tree-rename-save');
 const desktopMedia=matchMedia(DESKTOP_MEDIA);
 const configuredCacheSize=Number(shell.dataset.iframeCacheSize);
-const iframeCacheSize=Number.isSafeInteger(configuredCacheSize)&&configuredCacheSize>=1&&configuredCacheSize<=10?configuredCacheSize:1;
+const defaultCacheSize=Number.isSafeInteger(configuredCacheSize)&&configuredCacheSize>=1&&configuredCacheSize<=10?configuredCacheSize:1;
+let iframeCacheSize=readIframeCachePreference();
 const frameRegistry=new Map();
 const expandedTreeKeys=new Set();
 const initializedHostKeys=new Set();
@@ -794,6 +986,9 @@ let treeOpen=false;
 let preferredRailWidths=readRailWidthPreferences();
 let appliedRailWidths={left:RAIL_WIDTHS.leftDefault,right:RAIL_WIDTHS.rightDefault};
 let railDrag=null;
+let pendingAction=null;
+let renameTarget=null;
+let actionStatusTimer=null;
 
 const healthLabel=(health)=>({online:'Online','herdr-down':'Herdr unavailable','bridge-down':'Collie unavailable','transport-down':'Transport unavailable'}[health]||'Unavailable');
 const statusLabel=(status)=>({blocked:'needs you',working:'working',done:'done',idle:'idle',unknown:'unknown'}[status]||'unknown');
@@ -817,6 +1012,41 @@ const baseName=(value)=>String(value||'').replace(/[\\/\\\\]+$/,'').split(/[\\/\
 const shortCwd=(value)=>{const parts=String(value||'').split(/[\\/\\\\]/).filter(Boolean);return parts.length>2?'…/'+parts.slice(-2).join('/'):String(value||'')};
 const formatDelay=(ms)=>ms>=3600000?'1h':ms>=60000?Math.round(ms/60000)+'m':Math.round(ms/1000)+'s';
 const timeAgo=(at)=>{const seconds=Math.max(0,Math.floor((Date.now()-at)/1000));if(seconds<60)return seconds+'s';const minutes=Math.floor(seconds/60);if(minutes<60)return minutes+'m';const hours=Math.floor(minutes/60);if(hours<24)return hours+'h';return Math.floor(hours/24)+'d'};
+
+function readIframeCachePreference(){
+ try{
+   const value=JSON.parse(localStorage.getItem(CACHE_STORAGE_KEY)||'null');
+   return value&&value.version===1&&Number.isSafeInteger(value.size)&&value.size>=1&&value.size<=10?value.size:defaultCacheSize;
+ }catch{return defaultCacheSize}
+}
+
+function persistIframeCachePreference(size){
+ try{localStorage.setItem(CACHE_STORAGE_KEY,JSON.stringify({version:1,size}))}catch{}
+}
+
+function showTreeActionStatus(message,kind='success'){
+ if(actionStatusTimer!==null){clearTimeout(actionStatusTimer);actionStatusTimer=null}
+ treeActionStatus.textContent=message;treeActionStatus.dataset.kind=kind;treeActionStatus.hidden=false;announce(message);
+ actionStatusTimer=setTimeout(()=>{actionStatusTimer=null;treeActionStatus.hidden=true;delete treeActionStatus.dataset.kind},5000);
+}
+
+function shrinkFrameCache(){
+ while(frameRegistry.size>iframeCacheSize){const candidate=evictionCandidate();if(!candidate)break;releaseFrame(candidate.id)}
+}
+
+function setIframeCacheSize(value,{persist=true}={}){
+ const size=Number(value);if(!Number.isSafeInteger(size)||size<1||size>10)return false;
+ iframeCacheSize=size;cacheSizeSelect.value=String(size);if(persist)persistIframeCachePreference(size);shrinkFrameCache();
+ announce('Iframe cache set to '+size+'.');return true;
+}
+
+function closeSettings({restoreFocus=false}={}){
+ settingsPopover.hidden=true;settingsToggle.setAttribute('aria-expanded','false');if(restoreFocus)settingsToggle.focus();
+}
+
+function openSettings(){
+ if(!desktopMedia.matches)return;closeRename();settingsPopover.hidden=false;settingsToggle.setAttribute('aria-expanded','true');cacheSizeSelect.value=String(iframeCacheSize);cacheSizeSelect.focus();
+}
 
 function clampRail(value,minimum,maximum){return Math.min(maximum,Math.max(minimum,Math.round(value)))}
 
@@ -1028,6 +1258,140 @@ function reconcileFrames(){
  }
 }
 
+function actionRequestId(){
+ if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
+ return Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,18);
+}
+
+function exactMessageKeys(value,allowed){return Object.keys(value).every((key)=>allowed.includes(key))}
+
+function validActionResult(data,action,requestId){
+ if(!data||typeof data!=='object'||data.type!==ACTION_RESULT_MESSAGE||data.version!==ACTION_VERSION||data.requestId!==requestId||data.action!==action||typeof data.ok!=='boolean')return false;
+ if(!data.ok)return exactMessageKeys(data,['type','version','requestId','action','ok','error'])&&typeof data.error==='string'&&data.error.length>0&&data.error.length<=240;
+ if(action==='create-workspace'||action==='create-tab'){
+   if(!exactMessageKeys(data,['type','version','requestId','action','ok','pane'])||!data.pane||typeof data.pane!=='object'||!exactMessageKeys(data.pane,['paneId','workspaceId','tabId']))return false;
+   return Boolean(validPane(data.pane.paneId)&&validPane(data.pane.workspaceId)&&validPane(data.pane.tabId));
+ }
+ return exactMessageKeys(data,['type','version','requestId','action','ok']);
+}
+
+function finishPendingAction(result,error=null){
+ const state=pendingAction;if(!state)return;
+ clearTimeout(state.probeTimer);clearTimeout(state.timeout);
+ if(state.temporary)state.frame.remove();
+ pendingAction=null;delete shell.dataset.actionBusy;
+ if(error)state.reject(error);else state.resolve(result);
+}
+
+function failPendingAction(message){finishPendingAction(null,new Error(message))}
+
+function postActionProbe(){
+ const state=pendingAction;if(!state||state.phase!=='probing')return;
+ const target=state.frame.contentWindow;if(!target)return;
+ target.postMessage({type:ACTION_PROBE_MESSAGE,version:ACTION_VERSION,requestId:state.requestId},state.origin);
+ clearTimeout(state.probeTimer);state.probeTimer=setTimeout(postActionProbe,500);
+}
+
+function sendPendingAction(){
+ const state=pendingAction;if(!state||state.phase!=='probing')return;
+ const target=state.frame.contentWindow;if(!target){failPendingAction('Collie page is unavailable.');return}
+ state.phase='sent';clearTimeout(state.probeTimer);clearTimeout(state.timeout);
+ target.postMessage(state.request,state.origin);
+ state.timeout=setTimeout(()=>failPendingAction('Collie did not confirm the action. Check the node before trying again.'),ACTION_RESULT_TIMEOUT_MS);
+}
+
+function handleActionMessage(event){
+ const state=pendingAction;if(!state||event.source!==state.frame.contentWindow||event.origin!==state.origin)return false;
+ const data=event.data;
+ if(data&&typeof data==='object'&&data.type===ACTION_READY_MESSAGE){
+   if(state.phase!=='probing'||!exactMessageKeys(data,['type','version','requestId'])||data.version!==ACTION_VERSION||data.requestId!==state.requestId)return true;
+   sendPendingAction();return true;
+ }
+ if(!validActionResult(data,state.request.action,state.requestId))return true;
+ finishPendingAction(data);return true;
+}
+
+function dispatchNodeAction(node,payload){
+ if(pendingAction)return Promise.reject(new Error('Another sidebar action is still running.'));
+ const origin=nodeOrigin(node);const resident=frameRegistry.get(node.id);
+ const frame=resident?.frame||document.createElement('iframe');const temporary=!resident;
+ if(temporary){
+   frame.className='node-frame action-frame';frame.title='Collie action · '+node.name;frame.allow='clipboard-read; clipboard-write';frame.hidden=true;
+   frameStage.prepend(frame);
+ }
+ const requestId=actionRequestId();const request={type:ACTION_REQUEST_MESSAGE,version:ACTION_VERSION,requestId,...payload};
+ return new Promise((resolve,reject)=>{
+   pendingAction={nodeId:node.id,origin,frame,temporary,requestId,request,phase:'probing',resolve,reject,probeTimer:null,timeout:null};
+   shell.dataset.actionBusy='true';
+   frame.addEventListener('load',()=>{
+     const target=frame.contentWindow;if(target)target.postMessage({type:FRAME_ACTIVITY_MESSAGE,version:FRAME_ACTIVITY_VERSION,active:false},origin);
+     postActionProbe();
+   },{once:true});
+   pendingAction.probeTimer=setTimeout(postActionProbe,0);
+   pendingAction.timeout=setTimeout(()=>failPendingAction('This Collie version does not support sidebar actions, or the node is unavailable.'),ACTION_PROBE_TIMEOUT_MS);
+   if(temporary)frame.src=frameHref(origin,{view:'home'});else postActionProbe();
+ });
+}
+
+function closeRename({restoreFocus=false}={}){
+ const target=renameTarget;renameTarget=null;renamePopover.hidden=true;renameError.hidden=true;renameError.textContent='';
+ renameSave.disabled=false;renameCancel.disabled=false;
+ if(restoreFocus&&target?.row?.isConnected)target.row.focus();
+}
+
+function openRename(row,target){
+ if(!desktopMedia.matches||target.reachable!==true)return;
+ closeSettings();renameTarget={...target,row};renameTitle.textContent='Rename '+(target.action==='rename-tab'?'Tab':'Pane');renameInput.value=target.label||'';
+ renameError.hidden=true;renameError.textContent='';renamePopover.hidden=false;
+ const bounds=row.getBoundingClientRect();const popupHeight=150;const below=bounds.bottom+6;const top=below+popupHeight<=innerHeight-12?below:Math.max(12,bounds.top-popupHeight-6);
+ renamePopover.style.top=Math.round(top)+'px';requestAnimationFrame(()=>{renameInput.focus();renameInput.select()});
+}
+
+function bindRename(row,target){
+ row.addEventListener('contextmenu',(event)=>{if(!desktopMedia.matches)return;event.preventDefault();openRename(row,target)});
+ row.addEventListener('keydown',(event)=>{if(!desktopMedia.matches||(event.key!=='ContextMenu'&&!(event.shiftKey&&event.key==='F10')))return;event.preventDefault();openRename(row,target)});
+}
+
+async function createPaneFromSpace(node,target,button){
+ if(node.health!=='online'||target.reachable!==true){showTreeActionStatus('This Space is currently unavailable.','error');return}
+ button.disabled=true;showTreeActionStatus('Creating Pane…');
+ try{
+   const result=await dispatchNodeAction(node,{action:'create-tab',workspaceId:target.workspaceId,...(target.session?{session:target.session}:{})});
+   if(!result.ok){showTreeActionStatus(result.error,'error');return}
+   const pane=result.pane;showTreeActionStatus('New Pane ready.');
+   selectNode(node.id,{route:{view:'pane',spaceId:pane.workspaceId,tabId:pane.tabId,paneId:pane.paneId,...(target.session?{session:target.session}:{})}});
+   void refresh({manual:true});
+ }catch(error){showTreeActionStatus(error instanceof Error?error.message:String(error),'error')}
+ finally{if(button.isConnected)button.disabled=false}
+}
+
+async function createSpaceFromHost(node,target,button){
+ if(node.health!=='online'||target.reachable!==true){showTreeActionStatus('This Host is currently unavailable.','error');return}
+ button.disabled=true;showTreeActionStatus('Creating Space…');
+ try{
+   const result=await dispatchNodeAction(node,{action:'create-workspace'});
+   if(!result.ok){showTreeActionStatus(result.error,'error');return}
+   const pane=result.pane;showTreeActionStatus('New Space ready.');
+   selectNode(node.id,{route:{view:'pane',spaceId:pane.workspaceId,tabId:pane.tabId,paneId:pane.paneId}});
+   void refresh({manual:true});
+ }catch(error){showTreeActionStatus(error instanceof Error?error.message:String(error),'error')}
+ finally{if(button.isConnected)button.disabled=false}
+}
+
+async function submitRename(){
+ const target=renameTarget;if(!target)return;
+ const node=nodes.find((candidate)=>candidate.id===target.nodeId);if(!node||node.health!=='online'||target.reachable!==true){renameError.textContent='This node is currently unavailable.';renameError.hidden=false;return}
+ const label=renameInput.value.trim();if(target.action==='rename-tab'&&!label){renameError.textContent='A Tab name is required.';renameError.hidden=false;return}
+ renameError.hidden=true;renameSave.disabled=true;renameCancel.disabled=true;
+ const idField=target.action==='rename-tab'?{tabId:target.targetId}:{paneId:target.targetId};
+ try{
+   const result=await dispatchNodeAction(node,{action:target.action,...idField,label,...(target.session?{session:target.session}:{})});
+   if(!result.ok){renameError.textContent=result.error;renameError.hidden=false;return}
+   const kind=target.action==='rename-tab'?'Tab':'Pane';closeRename();showTreeActionStatus(label?kind+' renamed.':kind+' label cleared.');void refresh({manual:true});
+ }catch(error){renameError.textContent=error instanceof Error?error.message:String(error);renameError.hidden=false}
+ finally{renameSave.disabled=false;renameCancel.disabled=false}
+}
+
 function chooseNode(){
  const candidates=[selectedId,requested(),remembered()];
  for(const id of candidates){const match=nodes.find((node)=>node.id===id);if(match)return match}
@@ -1086,6 +1450,8 @@ function renderTabs(focusSelected=false){
    const hostKey=treeKey(node.id,'','host',node.id);liveKeys.add(hostKey);
    if(!initializedHostKeys.has(hostKey)){initializedHostKeys.add(hostKey);expandedTreeKeys.add(hostKey)}
    const wrapper=element('div','host-tree');wrapper.setAttribute('role','none');
+   const trees=Array.isArray(node.treeSessions)?node.treeSessions:[];
+   const primaryTree=trees.find((tree)=>tree&&tree.primarySession===true);
    const button=element('button','instance-tab tree-row tree-row-level-1');
    button.type='button';button.setAttribute('role','treeitem');button.setAttribute('aria-level','1');button.setAttribute('aria-expanded',String(expandedTreeKeys.has(hostKey)));
    button.dataset.instance=node.id;button.dataset.treeKey=hostKey;button.dataset.health=node.health;
@@ -1099,8 +1465,11 @@ function renderTabs(focusSelected=false){
      selectNode(node.id,{focusTreeKey:hostKey});
    });
    button.addEventListener('keydown',(event)=>handleDisclosureKey(event,hostKey));
+   const hostRowWrap=element('div','tree-row-wrap');hostRowWrap.setAttribute('role','none');
+   const addSpace=element('button','tree-inline-action','+');addSpace.type='button';addSpace.setAttribute('aria-label','New Space on '+node.name);addSpace.title='New Space';
+   addSpace.hidden=node.health!=='online'||primaryTree?.reachable!==true;addSpace.addEventListener('click',(event)=>{event.stopPropagation();void createSpaceFromHost(node,{reachable:primaryTree?.reachable===true},addSpace)});
+   hostRowWrap.append(button,addSpace);
    const hostChildren=element('div','tree-children');hostChildren.setAttribute('role','group');hostChildren.hidden=!expandedTreeKeys.has(hostKey);
-   const trees=Array.isArray(node.treeSessions)?node.treeSessions:[];
    for(const tree of trees){
      const session=typeof tree.herdrSession==='string'?tree.herdrSession:'';const sessionHint=trees.length>1&&!tree.primarySession?session:'';
      for(const space of Array.isArray(tree.spaces)?tree.spaces:[]){
@@ -1108,6 +1477,10 @@ function renderTabs(focusSelected=false){
        const spaceKey=treeKey(node.id,session,'space',spaceId);liveKeys.add(spaceKey);
        const spaceOpen=expandedTreeKeys.has(spaceKey);
        const spaceRow=disclosureRow(2,spaceKey,space.label||'Space '+space.number,spaceOpen,{stale:!tree.reachable,hint:sessionHint});
+       const spaceRowWrap=element('div','tree-row-wrap');spaceRowWrap.setAttribute('role','none');
+       const addPane=element('button','tree-inline-action','+');addPane.type='button';addPane.setAttribute('aria-label','New Pane in '+(space.label||'Space '+space.number));addPane.title='New Pane';
+       addPane.hidden=!tree.reachable;addPane.addEventListener('click',(event)=>{event.stopPropagation();void createPaneFromSpace(node,{workspaceId:spaceId,session:!tree.primarySession&&session?session:'',reachable:tree.reachable},addPane)});
+       spaceRowWrap.append(spaceRow,addPane);
        const spaceChildren=element('div','tree-children');spaceChildren.setAttribute('role','group');spaceChildren.hidden=!spaceOpen;
        for(const tab of Array.isArray(space.tabs)?space.tabs:[]){
          const tabId=validPane(tab.tabId);if(!tabId)continue;
@@ -1115,9 +1488,9 @@ function renderTabs(focusSelected=false){
          const tabLabel=tab.label||'Tab '+tab.number;const validPanes=validTabPanes(tab);
          if(validPanes.length<=1)expandedTreeKeys.delete(tabKey);
          if(validPanes.length===0){
-           const tabRow=element('div','tree-row tree-row-level-3');tabRow.dataset.treeKey=tabKey;tabRow.dataset.disabled='true';
+           const tabRow=element('button','tree-row tree-row-level-3');tabRow.type='button';tabRow.dataset.treeKey=tabKey;tabRow.dataset.disabled='true';
            tabRow.setAttribute('role','treeitem');tabRow.setAttribute('aria-level','3');tabRow.setAttribute('aria-disabled','true');if(!tree.reachable)tabRow.dataset.stale='true';
-           tabRow.append(element('span','tree-label',tabLabel));spaceChildren.append(tabRow);continue;
+           tabRow.append(element('span','tree-label',tabLabel));if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});spaceChildren.append(tabRow);continue;
          }
          if(validPanes.length===1){
            const {pane,paneId}=validPanes[0];const tabRow=element('button','tree-row tree-row-level-3 direct-pane-tree-row');tabRow.type='button';tabRow.dataset.treeKey=tabKey;
@@ -1125,10 +1498,12 @@ function renderTabs(focusSelected=false){
            const selected=node.id===selectedId&&route.view==='pane'&&route.paneId===paneId&&(route.session||'')===(tree.primarySession?'':session);
            tabRow.setAttribute('aria-selected',String(selected));const paneState=appendPaneTreatment(tabRow,pane,tabLabel);tabRow.setAttribute('aria-label',tabLabel+' · '+paneState);
            tabRow.addEventListener('click',()=>selectTreeNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:tabKey}));
+           if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});
            spaceChildren.append(tabRow);continue;
          }
          const tabOpen=expandedTreeKeys.has(tabKey);
          const tabRow=disclosureRow(3,tabKey,tabLabel,tabOpen,{stale:!tree.reachable});
+         if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});
          const tabChildren=element('div','tree-children');tabChildren.setAttribute('role','group');tabChildren.hidden=!tabOpen;
          for(const {pane,paneId} of validPanes){
            const paneKey=treeKey(node.id,session,'pane',paneId);liveKeys.add(paneKey);
@@ -1138,14 +1513,15 @@ function renderTabs(focusSelected=false){
            paneRow.setAttribute('aria-selected',String(selected));
            appendPaneTreatment(paneRow,pane,paneLabel(pane));
            paneRow.addEventListener('click',()=>selectTreeNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:paneKey}));
+           if(tree.reachable)bindRename(paneRow,{nodeId:node.id,action:'rename-pane',targetId:paneId,label:pane.label||'',session:!tree.primarySession&&session?session:'',reachable:true});
            tabChildren.append(paneRow);
          }
          spaceChildren.append(tabRow,tabChildren);
        }
-       hostChildren.append(spaceRow,spaceChildren);
+       hostChildren.append(spaceRowWrap,spaceChildren);
      }
    }
-   wrapper.append(button,hostChildren);instances.append(wrapper);
+   wrapper.append(hostRowWrap,hostChildren);instances.append(wrapper);
  }
  for(const key of [...expandedTreeKeys]){if(!liveKeys.has(key))expandedTreeKeys.delete(key)}
  const focusKey=focusSelected&&typeof focusSelected==='string'?focusSelected:null;
@@ -1307,7 +1683,7 @@ function openAgentMenu(){
 function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
  if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false');renderAgents()}
- else if(desktopMode){agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
+ else if(desktopMode){closeSettings();closeRename();agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
  desktopMode=nextDesktop;applyRailWidthPreferences();broadcastFrameActivity();
 }
 
@@ -1353,13 +1729,27 @@ instances.addEventListener('keydown',(event)=>{
 treeMenuToggle.addEventListener('click',()=>{if(treeOpen)closeTreeMenu({restoreFocus:true});else openTreeMenu()});
 treeMenuBackdrop.addEventListener('click',()=>closeTreeMenu({restoreFocus:true}));
 agentMenuToggle.addEventListener('click',()=>{if(agentMenu.hidden)openAgentMenu();else closeAgentMenu()});
-document.addEventListener('pointerdown',(event)=>{if(!desktopMedia.matches&&!agentMenu.hidden&&!agentMenu.contains(event.target)&&!agentMenuToggle.contains(event.target))closeAgentMenu()});
+settingsToggle.addEventListener('click',()=>{if(settingsPopover.hidden)openSettings();else closeSettings({restoreFocus:true})});
+cacheSizeSelect.value=String(iframeCacheSize);
+cacheSizeSelect.addEventListener('change',()=>setIframeCacheSize(cacheSizeSelect.value));
+cacheReset.addEventListener('click',()=>{try{localStorage.removeItem(CACHE_STORAGE_KEY)}catch{}setIframeCacheSize(defaultCacheSize,{persist:false})});
+renameCancel.addEventListener('click',()=>closeRename({restoreFocus:true}));
+renameForm.addEventListener('submit',(event)=>{event.preventDefault();void submitRename()});
+document.addEventListener('pointerdown',(event)=>{
+ if(!desktopMedia.matches&&!agentMenu.hidden&&!agentMenu.contains(event.target)&&!agentMenuToggle.contains(event.target))closeAgentMenu();
+ if(desktopMedia.matches&&!settingsPopover.hidden&&!settingsPopover.contains(event.target)&&!settingsToggle.contains(event.target))closeSettings();
+ if(desktopMedia.matches&&!renamePopover.hidden&&!renamePopover.contains(event.target)&&!event.target.closest('[data-tree-key]'))closeRename();
+});
 document.addEventListener('keydown',(event)=>{
- if(event.key!=='Escape'||desktopMedia.matches)return;
+ if(event.key!=='Escape')return;
+ if(desktopMedia.matches&&!settingsPopover.hidden){closeSettings({restoreFocus:true});return}
+ if(desktopMedia.matches&&!renamePopover.hidden){closeRename({restoreFocus:true});return}
+ if(desktopMedia.matches)return;
  if(treeOpen){closeTreeMenu({restoreFocus:true});return}
  if(!agentMenu.hidden){closeAgentMenu();agentMenuToggle.focus()}
 });
 addEventListener('message',(event)=>{
+ if(handleActionMessage(event))return;
  const entry=[...frameRegistry.values()].find((candidate)=>event.source===candidate.frame.contentWindow);if(!entry||event.origin!==entry.origin)return;
  const data=event.data;
  if(!data||typeof data!=='object'||data.type!==ROUTE_MESSAGE||data.version!==1)return;

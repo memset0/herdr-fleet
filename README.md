@@ -30,6 +30,16 @@ right preferences in that browser, clamps them to preserve the 40rem centre afte
 and uses the shipped widths when storage is missing or invalid. The separators and preferences do
 not affect compact layouts.
 
+The desktop Host rail ends in a small version/settings footer. Its upward popup currently controls
+only how many Host pages this browser keeps resident (1–10): a browser-local override applies
+immediately, can be reset to the Gateway-provided default, and shrinking it evicts only the oldest
+non-selected frames. Reachable Host and Space rows expose separate `+` actions: Host creates a Space
+in its primary Herdr session, while Space creates a Tab; both open the fresh shell Pane.
+Right-clicking a Tab or an explicit Pane opens a compact rename editor; the keyboard context-menu
+gesture does the same. A flattened one-Pane row renames its visible
+Tab label, while a blank explicit Pane label clears it. Host and Space rename remain intentionally
+absent because Fleet does not add a new central or node HTTP action for this patch.
+
 Fleet derives this tree from the `workspaces`, `tabs`, Agent panes, and shell panes already present in
 the same Collie snapshot fetched for Agent state. Expanding rows makes no request, and the projection
 never includes Pane contents or histories. Inside the unchanged iframe, Collie's
@@ -273,6 +283,16 @@ node-owned seen timestamp already consumed by Collie, Fleet, and Discord. Openin
 a top-level page keeps its existing seen behavior. This adds no Fleet seen database, does not pause
 hidden polling, and does not change cache LRU, quiet cleanup, idle lock, or authenticated write
 actions.
+
+Desktop tree mutations reuse those native Collie pages rather than adding a cross-origin Gateway
+write proxy. A Host-row `+` creates a Space in that Host's primary Herdr session, while a Space-row
+`+` creates a Tab and its first Pane in that exact session. Fleet performs a versioned readiness
+handshake with the exact configured child window/origin, sends only one allowlisted
+`create-workspace`, `create-tab`, `rename-tab`, or `rename-pane` command, and accepts only the
+correlated result. An uncached Host gets one temporary inactive child for the
+explicit action; it is removed afterward and never joins cache LRU. A timeout is never retried
+automatically, so a lost create result cannot duplicate a Tab. Older compatible nodes remain fully
+navigable but report the quick action as unsupported until their Web bundle is updated.
 
 ### Discord Agent notifications
 

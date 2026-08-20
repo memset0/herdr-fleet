@@ -9,6 +9,7 @@ import {
   fleetHeaderAgentCount,
   fleetIframeCacheQuietExpired,
   fleetIframeEvictionCandidate,
+  fleetIframeCachePreference,
   fleetPage,
   fleetRailResize,
   fleetRailWidthPreferences,
@@ -19,9 +20,18 @@ import {
 
 describe("Fleet iframe shell", () => {
   test("renders a lazy frame stage, responsive Host tree, and reused Agent surface", () => {
-    const page = fleetPage();
+    const page = fleetPage(1, "2.4.1");
     expect(page).not.toContain("<iframe");
     expect(page).toContain('data-iframe-cache-size="1"');
+    expect(page).toContain('data-plugin-version="2.4.1"');
+    expect(page).toContain('aria-label="Web Remote version 2.4.1"');
+    expect(page).toContain('id="host-rail-footer"');
+    expect(page).toContain('id="fleet-settings-toggle"');
+    expect(page).toContain('id="fleet-settings"');
+    expect(page).toContain('id="iframe-cache-size"');
+    expect(page).toContain('id="iframe-cache-reset"');
+    expect(page).toContain('Default: 1');
+    expect(fleetPage(1, '<script>alert("x")</script>')).toContain('data-plugin-version="unknown"');
     expect(fleetPage(5)).toContain('data-iframe-cache-size="5"');
     expect(fleetPage(99)).toContain('data-iframe-cache-size="1"');
     expect(page).toContain('id="instances"');
@@ -76,6 +86,27 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*position: fixed;[^}]*overflow-y: auto/);
     expect(FLEET_CSS).toContain('.fleet-tree-toggle { display: none; }');
     expect(FLEET_CSS).toContain('.fleet-home-mark { display: grid; align-self: flex-start; }');
+    expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.host-rail-footer \{[^}]*display: flex/);
+    expect(FLEET_CSS).toContain('.fleet-settings {');
+    expect(FLEET_CSS).toContain('bottom: calc(100% + .5rem)');
+  });
+
+  test("parses the browser-local cache override and applies runtime shrink semantics", () => {
+    expect(fleetIframeCachePreference(null, 5)).toBe(5);
+    expect(fleetIframeCachePreference('{"version":1,"size":3}', 5)).toBe(3);
+    expect(fleetIframeCachePreference('{"version":2,"size":3}', 5)).toBe(5);
+    expect(fleetIframeCachePreference('{"version":1,"size":0}', 5)).toBe(5);
+    expect(fleetIframeCachePreference('{"version":1,"size":11}', 5)).toBe(5);
+    expect(fleetIframeCachePreference("bad json", 5)).toBe(5);
+    expect(fleetIframeCachePreference(null, 99)).toBe(1);
+
+    expect(FLEET_JS).toContain("CACHE_STORAGE_KEY='herdr-web-remote:fleet-iframe-cache:v1'");
+    expect(FLEET_JS).toContain("let iframeCacheSize=readIframeCachePreference()");
+    expect(FLEET_JS).toContain("localStorage.setItem(CACHE_STORAGE_KEY,JSON.stringify({version:1,size}))");
+    expect(FLEET_JS).toContain("localStorage.removeItem(CACHE_STORAGE_KEY)");
+    expect(FLEET_JS).toContain("while(frameRegistry.size>iframeCacheSize)");
+    expect(FLEET_JS).toContain("setIframeCacheSize(cacheSizeSelect.value)");
+    expect(FLEET_JS).toContain("setIframeCacheSize(defaultCacheSize,{persist:false})");
   });
 
   test("clamps, resizes, and parses browser-local desktop rail widths", () => {
@@ -311,6 +342,30 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("direct-pane-tree-row");
     expect(FLEET_JS).toContain("paneRow.addEventListener('click',()=>selectTreeNode(node.id");
     expect(FLEET_JS).not.toContain("appendPaneTreatment(tabRow,pane,paneLabel(pane))");
+  });
+
+  test("delegates only bounded exact-child Host, Space, Tab, and Pane actions", () => {
+    expect(FLEET_JS).toContain("ACTION_PROBE_MESSAGE='herdr-web-remote:action-probe'");
+    expect(FLEET_JS).toContain("ACTION_REQUEST_MESSAGE='herdr-web-remote:action-request'");
+    expect(FLEET_JS).toContain("ACTION_RESULT_MESSAGE='herdr-web-remote:action-result'");
+    expect(FLEET_JS).toContain("event.source!==state.frame.contentWindow||event.origin!==state.origin");
+    expect(FLEET_JS).toContain("target.postMessage(state.request,state.origin)");
+    expect(FLEET_JS).toContain("state.phase='sent'");
+    expect(FLEET_JS).not.toContain("setInterval");
+    expect(FLEET_JS).toContain("const temporary=!resident");
+    expect(FLEET_JS).toContain("if(state.temporary)state.frame.remove()");
+    expect(FLEET_JS).toContain("action:'create-workspace'");
+    expect(FLEET_JS).toContain("primaryTree=trees.find((tree)=>tree&&tree.primarySession===true)");
+    expect(FLEET_JS).toContain("addSpace.hidden=node.health!=='online'||primaryTree?.reachable!==true");
+    expect(FLEET_JS).toContain("action:'create-tab',workspaceId:target.workspaceId");
+    expect(FLEET_JS).toContain("bindRename(tabRow,{nodeId:node.id,action:'rename-tab'");
+    expect(FLEET_JS).toContain("bindRename(paneRow,{nodeId:node.id,action:'rename-pane'");
+    expect(FLEET_JS).toContain("event.key!=='ContextMenu'&&!(event.shiftKey&&event.key==='F10')");
+    expect(FLEET_JS).not.toContain("action:'rename-space'");
+    expect(FLEET_JS).not.toContain("action:'rename-host'");
+    expect(FLEET_JS).not.toContain("contentWindow.fetch");
+    expect(FLEET_CSS).toContain(".tree-inline-action");
+    expect(FLEET_CSS).toContain(".tree-rename {");
   });
 
   test("uses the compact H mark as a mutually exclusive, dismissible tree drawer", () => {
