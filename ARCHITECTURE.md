@@ -77,11 +77,14 @@ each viewport reapplies them while protecting a 40rem centre. A temporary drag s
 cross-origin iframe from taking a gesture without removing or changing that frame. Compact layouts
 neither display the separators nor apply the remembered widths.
 
-The left rail's desktop-only footer receives the running Gateway package version and treats the
-configured iframe capacity as a resettable default. A separate versioned browser-local value selects
-the effective 1–10 capacity. Decreasing it repeatedly uses the existing non-selected LRU candidate;
-increasing it stays lazy. The footer and its upward settings popup do not exist in compact layout and
-do not enter Gateway configuration, Fleet aggregate state, or a node request.
+The shared left-tree footer receives the running Gateway package version and treats the configured
+iframe capacity as a resettable default. It stays at the bottom of the desktop rail and becomes a
+fixed footer below the independently scrolling tree while the compact `H` drawer is open. A separate
+versioned browser-local value selects the effective 1–10 capacity. Decreasing it repeatedly uses the
+existing non-selected LRU candidate; increasing it stays lazy. The upward popup is dismissed with
+the compact drawer, and neither presentation enters Gateway configuration, Fleet aggregate state,
+or a node request. Existing Host/Space `+` controls are also touch-visible in the open drawer and use
+the same exact-child action contract as desktop.
 
 The Agent panel follows Collie's triage/card vocabulary, adds the owning Host, and turns a card
 selection into the existing canonical instance/session/Pane route. The iframe still owns the complete native

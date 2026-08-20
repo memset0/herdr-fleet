@@ -30,11 +30,13 @@ right preferences in that browser, clamps them to preserve the 40rem centre afte
 and uses the shipped widths when storage is missing or invalid. The separators and preferences do
 not affect compact layouts.
 
-The desktop Host rail ends in a small version/settings footer. Its upward popup currently controls
-only how many Host pages this browser keeps resident (1–10): a browser-local override applies
-immediately, can be reset to the Gateway-provided default, and shrinking it evicts only the oldest
-non-selected frames. Reachable Host and Space rows expose separate `+` actions: Host creates a Space
-in its primary Herdr session, while Space creates a Tab; both open the fresh shell Pane.
+The desktop Host rail and the open compact `H` drawer end in a small version/settings footer. Its
+upward popup currently controls only how many Host pages this browser keeps resident (1–10): a
+browser-local override applies immediately, can be reset to the Gateway-provided default, and
+shrinking it evicts only the oldest non-selected frames. Reachable Host and Space rows expose
+separate `+` actions in both presentations: Host creates a Space in its primary Herdr session, while
+Space creates a Tab; both open the fresh shell Pane. Compact controls stay visible for touch instead
+of requiring hover.
 Right-clicking a Tab or an explicit Pane opens a compact rename editor; the keyboard context-menu
 gesture does the same. A flattened one-Pane row renames its visible
 Tab label, while a blank explicit Pane label clears it. Host and Space rename remain intentionally

@@ -84,6 +84,11 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toContain(".tree-row-level-4");
     expect(FLEET_CSS).toContain('@media (max-width: 1199px)');
     expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*position: fixed;[^}]*overflow-y: auto/);
+    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*bottom: calc\(3\.35rem \+ env\(safe-area-inset-bottom\)\)/);
+    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.host-rail-footer \{[^}]*position: fixed;[^}]*display: flex/);
+    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.fleet-settings \{[^}]*bottom: calc\(100% \+ \.5rem\);[^}]*display: block/);
+    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.tree-inline-action \{[^}]*display: grid;[^}]*opacity: \.82/);
+    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.tree-action-status \{[^}]*position: fixed;[^}]*display: block/);
     expect(FLEET_CSS).toContain('.fleet-tree-toggle { display: none; }');
     expect(FLEET_CSS).toContain('.fleet-home-mark { display: grid; align-self: flex-start; }');
     expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.host-rail-footer \{[^}]*display: flex/);
@@ -107,6 +112,10 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("while(frameRegistry.size>iframeCacheSize)");
     expect(FLEET_JS).toContain("setIframeCacheSize(cacheSizeSelect.value)");
     expect(FLEET_JS).toContain("setIframeCacheSize(defaultCacheSize,{persist:false})");
+    expect(FLEET_JS).toContain("if(!desktopMedia.matches&&!treeOpen)return;closeRename()");
+    expect(FLEET_JS).toContain("if(!desktopMedia.matches&&!settingsPopover.hidden)closeSettings()");
+    expect(FLEET_JS).toContain("if((desktopMedia.matches||treeOpen)&&!settingsPopover.hidden");
+    expect(FLEET_JS).toContain("if(!settingsPopover.hidden){closeSettings({restoreFocus:true});return}");
   });
 
   test("clamps, resizes, and parses browser-local desktop rail widths", () => {
@@ -331,6 +340,7 @@ describe("Fleet iframe shell", () => {
     expect(fleetTreeTabMode([{ paneId: "w0:p1" }, { paneId: "w0:p1" }])).toBe("direct");
 
     expect(FLEET_JS).toContain("event.target.closest('.tree-chevron')");
+    expect(FLEET_JS).toContain("selectTreeNode(node.id,{route:{view:'pane',spaceId:pane.workspaceId");
     expect(FLEET_JS).toContain("selectTreeNode(node.id,{route:{view:'home'},focusTreeKey:hostKey})");
     expect(FLEET_JS).toContain("event.key==='ArrowRight'");
     expect(FLEET_JS).toContain("event.key!=='ArrowRight'&&event.key!=='ArrowLeft'");
