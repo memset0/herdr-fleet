@@ -6,6 +6,23 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.4.1] - 2026-08-20
+
+### Added
+
+- Add a desktop Host-rail footer with the running version and a browser-local iframe-cache capacity setting that applies immediately while preserving the selected frame, existing LRU order, and 30-minute quiet cleanup (17a950e).
+- Add separate reachable-row actions for creating a Space on a Host's primary session and creating a Tab with a fresh Pane in an exact Space/session, then open the returned Pane without changing disclosure state (17a950e).
+- Add context-menu and keyboard rename editing for Tabs and explicit Panes, including flattened one-Pane Tab rows and Collie's existing blank Pane-label clearing behavior (17a950e).
+
+### Security
+
+- Delegate only four bounded structural actions through an exact-parent child contract with strict schemas, source/origin/request correlation, de-duplication, bounded timeouts, and no automatic mutation retry; no node HTTP route or cross-origin Gateway write proxy is added (17a950e).
+
+### Upgrading
+
+- Upgrade the central Gateway/Fleet plugin to `2.4.1`, then update managed Collie node bundles to enable the quick actions. Older `2.4.x` nodes remain fully navigable and fail the optional action handshake safely; no configuration or data migration is required.
+- The cache override is stored only in each browser. Removing it with **Use default** restores the existing `fleetUi.iframeCacheSize` value.
+
 ## [2.4.0] - 2026-08-20
 
 ### Added
