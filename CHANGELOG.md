@@ -6,6 +6,26 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.4.0] - 2026-08-20
+
+### Added
+
+- Add a bounded, versioned Fleet-to-Collie activity message sent only to each resident iframe's exact configured origin; framed Collie accepts activity only from its exact parent window and fails closed before the first valid message (bba81e6).
+- Revalidate the current Pane once when a cached frame becomes the selected, unobscured frame in a visible Fleet document, without adding another timer or recreating the iframe (bba81e6).
+
+### Fixed
+
+- Prevent hidden cached iframes, background Fleet tabs, and compact overlays from advancing a Pane's shared seen timestamp: inactive Pane and History reads now omit `x-collie-seen`, while standalone Collie and authenticated write actions retain their existing behavior (bba81e6).
+
+### Security
+
+- Keep the node's existing `lastSeenAt` as the single authority for Collie, Fleet, and Discord; the activity protocol carries only one boolean, adds no browser/Fleet persistence, and preserves Gateway CSP, exact route validation, cache LRU, quiet cleanup, idle lock, and PTY boundaries (bba81e6).
+
+### Upgrading
+
+- This is a node-affecting minor release. Upgrade the central Gateway/Fleet plugin to `2.4.0` first, then reinstall or update every managed Collie node bundle to `2.4.0`; no configuration or data migration is required.
+- Activation replaces only Web Remote's plugin-owned supervisor generation and children. It does not restart Herdr or terminate Panes. Roll back both layers to `2.3.1` if mixed-version verification fails.
+
 ## [2.3.1] - 2026-08-18
 
 ### Added
