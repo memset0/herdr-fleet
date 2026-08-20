@@ -1,6 +1,6 @@
 {
   "name": "herdr-plugin-web-remote",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "private": true,
   "license": "MIT",
   "description": "Authenticated Fleet dashboard and Collie-based remote UI for Herdr",

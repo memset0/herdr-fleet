@@ -6,6 +6,21 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.4.2] - 2026-08-20
+
+### Changed
+
+- Redesign the script-free Gateway login as a compact Herdr Web Remote sign-in surface with explicit labels, neutral light/dark styling, visible focus, safe-area spacing, touch-friendly controls, and semantic generic failure alerts (762facf).
+- Compose both Gateway login and Fleet stylesheets from the same Collie-aligned token and focus foundation while preserving Fleet's existing layout, status colors, and behavior (762facf).
+
+### Fixed
+
+- Revalidate the unversioned `/auth/app.css` response so a rollout cannot pair new login markup with a stale one-hour stylesheet, while preserving its public route and security headers (762facf).
+
+### Upgrading
+
+- This is a central-only Gateway patch. Upgrade the central plugin to `2.4.2`; remote `2.4.x` Collie nodes remain compatible and do not need to be reinstalled or restarted.
+
 ## [2.4.1] - 2026-08-20
 
 ### Added
