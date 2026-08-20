@@ -6,6 +6,22 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.4.3] - 2026-08-20
+
+### Added
+
+- Show the running Web Remote version and browser-local iframe-cache settings footer at the bottom of the open compact Host drawer, with the same bounded upward popup used by the desktop rail (88d4740).
+- Keep reachable Host and Space `+` actions touch-visible in the compact tree so phone users can create a Space or Tab through the existing exact-child action contract (88d4740).
+
+### Fixed
+
+- Reserve the compact drawer footer and safe-area height from the independently scrolling Host tree, and dismiss the settings popup consistently on outside pointer, Escape, or drawer close (88d4740).
+- Route successful compact create actions through the shared tree selection path so the fresh Pane opens without leaving the overlay active (88d4740).
+
+### Upgrading
+
+- This is a central-only Gateway patch. Upgrade the central plugin to `2.4.3`; remote `2.4.x` Collie nodes remain compatible and do not need to be reinstalled or restarted.
+
 ## [2.4.2] - 2026-08-20
 
 ### Changed
