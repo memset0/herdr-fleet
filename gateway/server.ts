@@ -158,7 +158,7 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
     const authenticated = hasSession(request, config, now());
 
     if (url.pathname === "/auth/app.css" && request.method === "GET") {
-      return response(APP_CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "public, max-age=3600" } });
+      return response(APP_CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" } });
     }
     if (url.pathname === "/fleet-assets/fleet.css" && request.method === "GET") {
       return response(FLEET_CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" } });

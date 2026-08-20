@@ -1,3 +1,5 @@
+import { GATEWAY_THEME_CSS } from "./theme.ts";
+
 function documentShell(title: string, body: string, assets: string[]): string {
   const tags = assets
     .map((asset) =>
@@ -315,20 +317,8 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
   );
 }
 
-export const FLEET_CSS = `
+export const FLEET_CSS = `${GATEWAY_THEME_CSS}
 :root {
-  color-scheme: light dark;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-synthesis: none;
-  --radius: .65rem;
-  --background: light-dark(oklch(.97 0 0), oklch(.145 0 0));
-  --foreground: light-dark(oklch(.145 0 0), oklch(.985 0 0));
-  --card: light-dark(oklch(1 0 0), oklch(.205 0 0));
-  --muted: light-dark(oklch(.94 0 0), oklch(.269 0 0));
-  --muted-foreground: light-dark(oklch(.48 0 0), oklch(.708 0 0));
-  --accent: light-dark(oklch(.92 0 0), oklch(.269 0 0));
-  --border: light-dark(oklch(.922 0 0), oklch(1 0 0 / 12%));
-  --ring: light-dark(oklch(.62 0 0), oklch(.556 0 0));
   --status-blocked: light-dark(oklch(.46 .2 25), oklch(.7 .2 24));
   --status-working: light-dark(oklch(.46 .12 72), oklch(.82 .15 82));
   --status-done: light-dark(oklch(.45 .14 152), oklch(.74 .16 152));
@@ -337,11 +327,8 @@ export const FLEET_CSS = `
   --status-online: var(--status-done);
   --status-down: var(--status-blocked);
 }
-* { box-sizing: border-box; }
 html, body { height: 100%; overflow: hidden; }
 body { margin: 0; background: var(--muted); color: var(--foreground); }
-button, a { font: inherit; }
-button { color: inherit; }
 .fleet-shell {
   --fleet-host-rail-width: 14rem;
   --fleet-agent-rail-width: 21rem;
@@ -623,7 +610,6 @@ button { color: inherit; }
 .primary-action { min-height: 2.75rem; padding: 0 1rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 [hidden] { display: none !important; }
-:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 @keyframes pulse { 50% { opacity: .45; transform: scale(.96); } }
 @media (max-width: 1199px) {
 .fleet-shell[data-tree-open="true"] .instance-strip {
