@@ -6,6 +6,23 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.0] - 2026-08-20
+
+### Added
+
+- Ship a normally dormant ttyd emergency-terminal companion inside the existing `memset0.web-remote` release, with a pinned/verified Linux binary installer, fixed client-only Herdr attachment, explicit bounded lifecycle CLI, synthetic inventory, public documentation, and security/integration tests (c9d0119).
+- Accept a validated per-node HTTPS `fallbackUrl` and create a secondary emergency-terminal link only in the desktop-computer Fleet presentation; compact, phone, tablet, and coarse-pointer DOMs do not receive the entry, and render/hover never probes or activates the route (c9d0119).
+
+### Security
+
+- Keep the fallback outside the Collie/Gateway data path while retaining independent activation-scoped authentication, exact Host/Origin and trusted-header checks, one writable client, owner/host/job gates, dedicated restricted SSH transport, a 30-second to two-hour lease, transactional cleanup, and no browser-selected command or terminal (c9d0119).
+- Keep one Herdr plugin identity, manifest, supervisor, and release stream. Normal registration, startup, events, `ensure`, and updates start no ttyd process, broker, auth helper, route, transport, service, timer, hook, or fallback supervisor (c9d0119).
+
+### Upgrading
+
+- This is a node-affecting minor release. Upgrade the central Gateway/Fleet plugin to `2.5.0` first, then update every managed node bundle to `2.5.0` so its dormant companion payload comes from the same exact release. Add `fallbackUrl` only after the central validator is upgraded.
+- Activation remains a separate trusted-operator command and does not restart Herdr or terminate Panes. Retain the prior closed payload and forced-command authorization as inert rollback material until per-node activation and cleanup acceptance passes.
+
 ## [2.4.3] - 2026-08-20
 
 ### Added
