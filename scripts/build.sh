@@ -9,7 +9,18 @@ bun_bin="$(find_bun)"
 "$root/scripts/check-version.sh"
 (cd "$root" && "$bun_bin" install --frozen-lockfile && "$bun_bin" run typecheck)
 (cd "$root/web" && "$bun_bin" install --frozen-lockfile && "$bun_bin" run typecheck)
-"$root/services/ttyd-fallback/test/run.sh"
+case "${HERDR_WEB_TTYD_TEST_MODE:-run}" in
+  run)
+    "$root/services/ttyd-fallback/test/run.sh"
+    ;;
+  defer-to-activation)
+    printf 'web-remote: ttyd companion tests deferred to the managed activation gate\n'
+    ;;
+  *)
+    printf 'web-remote: invalid HERDR_WEB_TTYD_TEST_MODE\n' >&2
+    exit 1
+    ;;
+esac
 
 staging="$root/web/dist-staging"
 old="$root/web/dist-old"

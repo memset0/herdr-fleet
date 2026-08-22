@@ -87,3 +87,6 @@ services/ttyd-fallback/test/run.sh
 ```
 
 The tests use only temporary synthetic identities, paths, sockets, and fake Herdr/ttyd executables.
+Normal Web Remote builds always run them. A managed split-host build may set
+`HERDR_WEB_TTYD_TEST_MODE=defer-to-activation` only when its activation gate runs this exact suite
+with a compatible Python before replacing the live plugin; unsupported values fail the build.
