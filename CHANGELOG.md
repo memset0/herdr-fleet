@@ -6,6 +6,16 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.2] - 2026-08-22
+
+### Fixed
+
+- Isolate the synthetic central-runtime ownership operation and resolve the effective group independently of the username in the successful activation unit test, so the companion security suite runs on rootless managed nodes without attempting a real `chown(root, caddy)` (255b17a).
+
+### Upgrading
+
+- Upgrade `2.5.1` release checkouts to `2.5.2` before rootless node rollout. Runtime behavior and the dormant/activation security topology are unchanged.
+
 ## [2.5.1] - 2026-08-22
 
 ### Fixed
