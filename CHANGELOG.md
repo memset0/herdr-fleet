@@ -6,6 +6,16 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.5] - 2026-08-22
+
+### Fixed
+
+- Replace Fleet's hand-authored settings gear with the exact standard Lucide `Settings` geometry already selected by Collie's UI library, keeping the outer outline and inner circle aligned on the same centre without changing the button or popup behavior (3fecfbd).
+
+### Upgrading
+
+- This is a central-only Fleet presentation patch. Upgrade the central Gateway plugin to `2.5.5`; compatible remote `2.5.x` nodes do not need to be reinstalled or restarted.
+
 ## [2.5.4] - 2026-08-22
 
 ### Security
