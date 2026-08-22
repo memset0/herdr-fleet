@@ -188,6 +188,8 @@ while True:
         selected = controller.select_node(inventory, "local-a")
         fragment = controller.caddy_fragment(selected, pathlib.Path("/run/synthetic"), pathlib.Path("/var/lib/synthetic"), 2000000000)
         self.assertIn("forward_auth unix//", fragment)
+        self.assertIn("@bad_host not host terminal-a.example.com", fragment)
+        self.assertIn("respond @bad_host 404", fragment)
         self.assertIn("not header Origin https://terminal-a.example.com", fragment)
         self.assertIn("int({time.now.unix}) >= 2000000000", fragment)
         self.assertIn("request_header -X-Herdr-Fallback-User", fragment)
