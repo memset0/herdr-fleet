@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.1] - 2026-08-22
+
+### Fixed
+
+- Run the companion installer's strict inventory import with Python bytecode generation disabled, so installing from an exact Web Remote checkout cannot dirty that checkout and block the next exact-release lifecycle command (6f81e30).
+- Let the companion test runner use an explicitly selected compatible Python for older Linux hosts, and exercise the installer with `PYTHONDONTWRITEBYTECODE` removed while requiring that no service-local `__pycache__` is created (6f81e30).
+
+### Upgrading
+
+- Upgrade `2.5.0` deployments to `2.5.1` before preparing or activating the ttyd companion. The normal Collie/Gateway protocol and fallback security topology are unchanged; installation remains dormant.
+
 ## [2.5.0] - 2026-08-20
 
 ### Added
