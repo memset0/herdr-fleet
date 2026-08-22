@@ -268,6 +268,8 @@ while True:
         self.assertIn("(min-width: 1024px) and (hover: hover) and (pointer: fine)", page)
         self.assertNotIn("fetch(", page)
         self.assertNotIn("WebSocket(", page)
+        cli = (ROOT / "ttyd-fallback").read_text()
+        self.assertIn('exec "$python_bin" -B "$service_dir/controller.py" "$@"', cli)
 
     def test_unknown_inventory_never_defaults(self) -> None:
         inventory = controller.load_inventory(self.inventory)
