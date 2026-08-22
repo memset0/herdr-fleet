@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.3] - 2026-08-22
+
+### Fixed
+
+- Allow an explicitly managed split-host build to defer the ttyd companion suite to its activation gate, while keeping the suite mandatory by default and rejecting every unknown test mode (513b9a1).
+- Document that a deferred build is valid only when the exact prepared release runs the companion suite with a compatible Python before replacing the live plugin (513b9a1).
+
+### Upgrading
+
+- Upgrade the repo-less H20 rollout to `2.5.3`: gpu-7 performs the normal frozen Web Remote build and backend tests, then node-1 runs the exact companion suite with its existing Python 3.12 before the atomic plugin switch. Runtime behavior remains unchanged.
+
 ## [2.5.2] - 2026-08-22
 
 ### Fixed
