@@ -28,6 +28,11 @@ describe("Fleet iframe shell", () => {
     expect(page).toContain('aria-label="Web Remote version 2.4.1"');
     expect(page).toContain('id="host-rail-footer"');
     expect(page).toContain('id="fleet-settings-toggle"');
+    expect(page).toContain('data-icon="settings"');
+    expect(page).toContain('d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0');
+    expect(page).toContain('<circle cx="12" cy="12" r="3"></circle>');
+    expect(page).not.toContain('d="M12 15.5a3.5 3.5 0 1 0 0-7');
+    expect(page).not.toContain('d="M19.4 15a1.7 1.7 0 0 0 .34 1.88');
     expect(page).toContain('id="fleet-settings"');
     expect(page).toContain('id="iframe-cache-size"');
     expect(page).toContain('id="iframe-cache-reset"');
