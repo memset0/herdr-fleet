@@ -80,4 +80,9 @@ HERDR_WEB_TTYD_DRY_RUN=1 \
   >"$test_root/dry-run.out"
 grep -Fq 'dry-run version=' "$test_root/dry-run.out"
 
+env -u PYTHONDONTWRITEBYTECODE HERDR_WEB_TTYD_DRY_RUN=1 \
+  "$service_dir/install.sh" --inventory "$inventory" --node local-a \
+  >"$test_root/no-pycache.out"
+test ! -d "$service_dir/__pycache__"
+
 printf 'installer rejection tests: ok\n'

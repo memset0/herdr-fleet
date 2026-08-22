@@ -57,7 +57,7 @@ case "$(uname -m)" in
   *) die "unsupported architecture: $(uname -m)" ;;
 esac
 
-if ! node_output="$("$config_python" -c '
+if ! node_output="$("$config_python" -B -c '
 import pathlib, sys
 sys.path.insert(0, sys.argv[1])
 import controller
