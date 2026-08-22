@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import grp
 import hashlib
 import importlib.util
 import json
@@ -303,12 +304,13 @@ while True:
             runtime_root=str(runtime), state_root=str(state_root),
             caddy_config=str(caddy), caddy_import="import /synthetic/*.caddy",
             caddy_fragment=str(self.root / "fragment.caddy"), landing_root=str(self.root / "landing"),
-            proxy_group=pwd.getpwuid(os.geteuid()).pw_name, inventory=str(self.inventory),
+            proxy_group=grp.getgrgid(os.getegid()).gr_name, inventory=str(self.inventory),
         )
         modules = subprocess.CompletedProcess([], 0, "http.handlers.headers\nhttp.handlers.reverse_proxy\n", "")
         with mock.patch.object(controller, "node_command", side_effect=node_call), \
              mock.patch.object(controller.subprocess, "run", return_value=modules), \
              mock.patch.object(controller.subprocess, "Popen", side_effect=popen), \
+             mock.patch.object(controller.os, "chown"), \
              mock.patch.object(controller, "component", side_effect=lambda *_args: next(components)), \
              mock.patch.object(controller, "unix_http_status", side_effect=[200, 401, 200]), \
              mock.patch.object(controller, "caddy_apply"):
