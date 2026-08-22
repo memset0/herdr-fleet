@@ -238,6 +238,9 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
       <header id="host-rail" class="fleet-header">
         <button id="tree-menu-toggle" class="fleet-mark fleet-tree-toggle" type="button" aria-expanded="false" aria-controls="instances" aria-label="Open Host tree" title="Hosts">H</button>
         <a class="fleet-mark fleet-home-mark" href="/" aria-label="Fleet home" title="Herdr Fleet">H</a>
+        <nav id="host-switcher" class="host-switcher" aria-label="Herdr Host switcher" role="tablist">
+          <span class="connecting">Connecting…</span>
+        </nav>
         <nav id="instances" class="instance-strip" aria-label="Herdr Hosts" role="tree">
           <span class="connecting">Connecting…</span>
         </nav>
@@ -398,17 +401,19 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   background: light-dark(#0000002e, #00000080);
   cursor: default;
 }
-.instance-strip {
+.host-switcher {
   display: flex;
   min-width: 0;
   flex: 1;
   align-items: center;
-  gap: .35rem;
+  gap: .3rem;
   overflow-x: auto;
   overscroll-behavior-x: contain;
+  padding: 0 .1rem;
   scrollbar-width: none;
 }
-.instance-strip::-webkit-scrollbar { display: none; }
+.host-switcher::-webkit-scrollbar { display: none; }
+.instance-strip { display: none; min-width: 0; }
 .host-tree { display: contents; }
 .tree-children { display: none; }
 .tree-chevron, .tree-pane-dot, .tree-hint { flex: none; }
@@ -696,7 +701,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 }
 .fleet-shell[data-tree-open="true"] .tree-inline-action:hover,
 .fleet-shell[data-tree-open="true"] .tree-inline-action:focus-visible { background: var(--accent); opacity: 1; }
-.fleet-shell[data-tree-open="true"] .instance-tab {
+.fleet-shell[data-tree-open="true"] .instance-strip .instance-tab {
   width: 100%;
   max-width: none;
   justify-content: flex-start;
@@ -803,8 +808,10 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   }
   .fleet-tree-toggle { display: none; }
   .fleet-home-mark { display: grid; align-self: flex-start; }
+  .host-switcher { display: none; }
   .tree-menu-backdrop { display: none !important; }
   .instance-strip {
+    display: flex;
     width: 100%;
     flex-direction: column;
     align-items: stretch;
@@ -1050,6 +1057,7 @@ const DESKTOP_MEDIA='(min-width: 1200px)';
 const FALLBACK_DESKTOP_MEDIA='(min-width: 1200px) and (hover: hover) and (pointer: fine)';
 const RAIL_WIDTHS={leftDefault:${FLEET_RAIL_WIDTHS.leftDefault},leftMin:${FLEET_RAIL_WIDTHS.leftMin},leftMax:${FLEET_RAIL_WIDTHS.leftMax},rightDefault:${FLEET_RAIL_WIDTHS.rightDefault},rightMin:${FLEET_RAIL_WIDTHS.rightMin},rightMax:${FLEET_RAIL_WIDTHS.rightMax},centreMin:${FLEET_RAIL_WIDTHS.centreMin}};
 const shell=document.querySelector('.fleet-shell');
+const hostSwitcher=document.querySelector('#host-switcher');
 const instances=document.querySelector('#instances');
 const treeMenuToggle=document.querySelector('#tree-menu-toggle');
 const treeMenuBackdrop=document.querySelector('#tree-menu-backdrop');
@@ -1527,7 +1535,7 @@ function focusTreeKey(key){
 
 function toggleTree(key){
  if(expandedTreeKeys.has(key))expandedTreeKeys.delete(key);else expandedTreeKeys.add(key);
- renderTabs();focusTreeKey(key);
+ renderTree(key);
 }
 
 function handleDisclosureKey(event,key){
@@ -1564,7 +1572,18 @@ function appendPaneTreatment(row,pane,label){
  row.append(paneDot,element('span','tree-label',label),element('span','tree-hint',paneState));return paneState;
 }
 
-function renderTabs(focusSelected=false){
+function renderHostSwitcher(focusSelected=false){
+ hostSwitcher.replaceChildren();
+ for(const node of nodes){
+   const button=element('button','instance-tab host-switcher-tab');button.type='button';button.setAttribute('role','tab');button.dataset.instance=node.id;button.dataset.health=node.health;
+   const selected=node.id===selectedId;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;button.setAttribute('aria-label',node.name+' · '+healthLabel(node.health));
+   const dot=element('span','status-dot');dot.setAttribute('aria-hidden','true');button.append(dot,element('span','instance-name',node.name));
+   button.addEventListener('click',()=>selectNode(node.id,{focusTab:true}));hostSwitcher.append(button);
+ }
+ if(focusSelected){const active=hostSwitcher.querySelector('[data-instance][aria-selected="true"]');if(active){active.scrollIntoView({block:'nearest',inline:'nearest'});active.focus()}}
+}
+
+function renderTree(focusKey=null){
  instances.replaceChildren();const liveKeys=new Set();
  const route=activeEntry()?.route||requestedRoute();
  for(const node of nodes){
@@ -1645,9 +1664,12 @@ function renderTabs(focusSelected=false){
    wrapper.append(hostRowWrap,hostChildren);instances.append(wrapper);
  }
  for(const key of [...expandedTreeKeys]){if(!liveKeys.has(key))expandedTreeKeys.delete(key)}
- const focusKey=focusSelected&&typeof focusSelected==='string'?focusSelected:null;
  const active=focusKey?[...instances.querySelectorAll('[data-tree-key]')].find((entry)=>entry.dataset.treeKey===focusKey):instances.querySelector('[data-instance][aria-selected="true"]');
- if(active){active.scrollIntoView({block:'nearest',inline:'nearest'});if(focusSelected)active.focus()}
+ if(active){active.scrollIntoView({block:'nearest',inline:'nearest'});if(focusKey)active.focus()}
+}
+
+function renderTabs(focusSelected=false){
+ renderTree(typeof focusSelected==='string'?focusSelected:null);renderHostSwitcher(focusSelected===true);
 }
 
 function updateHealth(node){
@@ -1699,7 +1721,7 @@ function selectTreeNode(id,options={}){
 
 function showEmpty(title,copy){
  for(const id of [...frameRegistry.keys()])releaseFrame(id,true);
- selectedId=null;instances.replaceChildren();openNode.hidden=true;notice.hidden=true;loading.hidden=true;
+ selectedId=null;hostSwitcher.replaceChildren();instances.replaceChildren();openNode.hidden=true;notice.hidden=true;loading.hidden=true;
  syncFallbackEntry();
  emptyTitle.textContent=title;emptyCopy.textContent=copy;empty.hidden=false;announce(title+'. '+copy);
 }
@@ -1802,7 +1824,7 @@ function closeTreeMenu(options={}){
 
 function openTreeMenu(){
  if(desktopMedia.matches)return;
- closeAgentMenu({syncActivity:false});treeOpen=true;shell.dataset.treeOpen='true';treeMenuBackdrop.hidden=false;treeMenuToggle.setAttribute('aria-expanded','true');treeMenuToggle.setAttribute('aria-label','Close Host tree');renderTabs();broadcastFrameActivity();
+ closeAgentMenu({syncActivity:false});treeOpen=true;shell.dataset.treeOpen='true';treeMenuBackdrop.hidden=false;treeMenuToggle.setAttribute('aria-expanded','true');treeMenuToggle.setAttribute('aria-label','Close Host tree');broadcastFrameActivity();
 }
 
 function closeAgentMenu(options={}){if(desktopMedia.matches)return;agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false');if(options.syncActivity!==false)broadcastFrameActivity()}
@@ -1852,8 +1874,8 @@ async function refresh(options={}){
  }
 }
 
-instances.addEventListener('keydown',(event)=>{
- if(desktopMedia.matches||treeOpen||!event.target.closest('[data-instance]'))return;
+hostSwitcher.addEventListener('keydown',(event)=>{
+ if(desktopMedia.matches||!event.target.closest('.host-switcher-tab'))return;
  if(event.key!=='ArrowLeft'&&event.key!=='ArrowRight')return;
  const index=nodes.findIndex((node)=>node.id===selectedId);if(index<0)return;
  event.preventDefault();const delta=event.key==='ArrowRight'?1:-1;const next=nodes[(index+delta+nodes.length)%nodes.length];if(next)selectNode(next.id,{focusTab:true});
@@ -1903,7 +1925,7 @@ addEventListener('message',(event)=>{
  }else return;
  entry.route=route;entry.frameKey=routeKey(entry.origin,route);
  if(entry.id!==selectedId)return;
- replaceUrl(entry.id,route);openNode.href=frameHref(entry.origin,route);renderTabs();
+ replaceUrl(entry.id,route);openNode.href=frameHref(entry.origin,route);renderTree();
 });
 document.querySelector('#retry-frame').addEventListener('click',()=>loadSelected(true));
 document.querySelector('#retry-inventory').addEventListener('click',()=>refresh({manual:true}));

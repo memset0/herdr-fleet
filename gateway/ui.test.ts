@@ -40,6 +40,9 @@ describe("Fleet iframe shell", () => {
     expect(fleetPage(1, '<script>alert("x")</script>')).toContain('data-plugin-version="unknown"');
     expect(fleetPage(5)).toContain('data-iframe-cache-size="5"');
     expect(fleetPage(99)).toContain('data-iframe-cache-size="1"');
+    expect(page).toContain('id="host-switcher"');
+    expect(page).toContain('aria-label="Herdr Host switcher"');
+    expect(page).toContain('role="tablist"');
     expect(page).toContain('id="instances"');
     expect(page).toContain('role="tree"');
     expect(page).toContain('aria-label="Herdr Hosts"');
@@ -90,7 +93,11 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toContain('.fleet-shell[data-resizing="true"] .node-frame { pointer-events: none; }');
     expect(FLEET_CSS).toContain(".tree-row-level-4");
     expect(FLEET_CSS).toContain('@media (max-width: 1199px)');
+    expect(FLEET_CSS).toMatch(/\.host-switcher \{[^}]*display: flex;[^}]*gap: \.3rem;[^}]*overflow-x: auto;[^}]*padding: 0 \.1rem/);
+    expect(FLEET_CSS).toMatch(/\.instance-strip \{ display: none; min-width: 0; \}/);
     expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*position: fixed;[^}]*overflow-y: auto/);
+    expect(FLEET_CSS).toContain('.fleet-shell[data-tree-open="true"] .instance-strip .instance-tab {');
+    expect(FLEET_CSS).not.toContain('.fleet-shell[data-tree-open="true"] .instance-tab {');
     expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*bottom: calc\(3\.35rem \+ env\(safe-area-inset-bottom\)\)/);
     expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.host-rail-footer \{[^}]*position: fixed;[^}]*display: flex/);
     expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.fleet-settings \{[^}]*bottom: calc\(100% \+ \.5rem\);[^}]*display: block/);
@@ -421,5 +428,34 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("if(nextDesktop){closeTreeMenu()");
     expect(FLEET_JS).toContain("if(compactTree)closeTreeMenu({restoreFocus:true})");
     expect(FLEET_JS).toContain("if(desktopMedia.matches||treeOpen){selectTreeNode(node.id");
+  });
+
+  test("keeps the compact Host switcher structurally independent from the tree drawer", () => {
+    expect(FLEET_JS).toContain("const hostSwitcher=document.querySelector('#host-switcher')");
+    expect(FLEET_JS).toContain("function renderHostSwitcher(focusSelected=false)");
+    expect(FLEET_JS).toContain("function renderTree(focusKey=null)");
+    expect(FLEET_JS).toContain("element('button','instance-tab host-switcher-tab')");
+    expect(FLEET_JS).toContain("button.setAttribute('role','tab')");
+    expect(FLEET_JS).toContain("button.addEventListener('click',()=>selectNode(node.id,{focusTab:true}))");
+    expect(FLEET_JS).toContain("renderTree(typeof focusSelected==='string'?focusSelected:null);renderHostSwitcher(focusSelected===true)");
+    expect(FLEET_JS).toContain("hostSwitcher.addEventListener('keydown'");
+    expect(FLEET_JS).toContain("selectedId=null;hostSwitcher.replaceChildren();instances.replaceChildren()");
+
+    const toggleStart = FLEET_JS.indexOf("function toggleTree(key)");
+    const toggleEnd = FLEET_JS.indexOf("function handleDisclosureKey", toggleStart);
+    const toggleSource = FLEET_JS.slice(toggleStart, toggleEnd);
+    expect(toggleSource).toContain("renderTree(key)");
+    expect(toggleSource).not.toContain("renderTabs(");
+    expect(toggleSource).not.toContain("renderHostSwitcher(");
+
+    const openStart = FLEET_JS.indexOf("function openTreeMenu()");
+    const openEnd = FLEET_JS.indexOf("function closeAgentMenu", openStart);
+    const openSource = FLEET_JS.slice(openStart, openEnd);
+    expect(openSource).not.toContain("renderTabs(");
+    expect(openSource).not.toContain("renderHostSwitcher(");
+
+    const treeStart = FLEET_JS.indexOf("function renderTree(focusKey=null)");
+    const treeEnd = FLEET_JS.indexOf("function renderTabs", treeStart);
+    expect(FLEET_JS.slice(treeStart, treeEnd)).not.toContain("hostSwitcher");
   });
 });

@@ -66,10 +66,13 @@ Space/Tab/Pane tree fields from those same snapshot responses; tree disclosure a
 Pane contents, histories, device authorization, update metadata, credentials, and unknown response
 fields never enter the aggregate.
 
-At phone widths Fleet uses that projection for a horizontal instance switcher, a bounded cross-host
-Agent menu, and one selected node. Its AppBar `H` toggles the shared hierarchy as a bounded left
-drawer; the drawer and Agent menu are mutually exclusive, disclosure remains local, and route
-selection closes the drawer without replacing the selected iframe. At 1200 px the same tree state
+At phone widths Fleet uses that projection for an independent Host-only horizontal switcher, a
+bounded cross-host Agent menu, and one selected node. Its AppBar `H` toggles a separately rendered
+copy of the shared hierarchy as a bounded left drawer. The switcher and tree consume the same node
+inventory and selected id, but drawer visibility and disclosure rerender only the tree, so AppBar
+bounds, button identity, spacing, and horizontal scroll remain stable. The drawer and Agent menu are
+mutually exclusive, disclosure remains local, and route selection closes the drawer without
+replacing the selected iframe. At 1200 px the same tree state
 becomes a Collie-styled collapsible Host/Space/Tab/Pane rail, a full-height centre iframe with no
 AppBar, and the same Agent panel as a persistent right rail. The left rail stacks vertically without
 a visible `Hosts` title, retains the new-tab action at its top right, and splits Host-home activation

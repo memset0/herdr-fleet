@@ -17,10 +17,12 @@ https://node.herdr.example.com/?session=<session-name>
 https://node.herdr.example.com/pane/<pane-id>?session=<session-name>
 ```
 
-The Fleet page is a responsive Collie shell. Phone widths keep the compact Host row and expandable
-Agent menu. The AppBar `H` opens the same Host tree in a bounded left drawer; it is mutually
-exclusive with the Agent menu and closes after tree navigation without disturbing the selected
-iframe. Wider intermediate windows remove the old 640 px shell limit; at 1200 px, Fleet reflows
+The Fleet page is a responsive Collie shell. Phone widths keep an independent Host-only AppBar
+switcher and expandable Agent menu. The AppBar `H` opens the hierarchical Host tree in a separate
+bounded left drawer; both views share inventory and selection state, but opening or disclosing the
+tree does not move, rebuild, or reset the AppBar switcher. The drawer is mutually exclusive with the
+Agent menu and closes after tree navigation without disturbing the selected iframe. Wider
+intermediate windows remove the old 640 px shell limit; at 1200 px, Fleet reflows
 into a Collie-styled `Host → Space → Tab → Pane` Explorer, one full-height native iframe, and the
 existing Agent sections as a persistent right rail. The left rail omits a redundant `Hosts` title
 and keeps the new-tab action at its top right; the right rail omits the redundant `FLEET / All
