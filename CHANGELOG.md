@@ -6,6 +6,23 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.6] - 2026-08-22
+
+### Changed
+
+- Move fallback navigation from separate per-node TLS hostnames to canonical paths on the existing Fleet origin: `https://<fleet-host>/ttyd/<node-id>/` (2c2fcf3).
+- Accept only each inventory node's exact Fleet-origin path, keep the desktop link navigation-only, and retain compact/phone/tablet DOM omission (2c2fcf3).
+
+### Security
+
+- Replace same-origin HTTP Basic with activation-scoped local verification of the existing signed Fleet session cookie; the helper uses protected Gateway configuration without calling Gateway and never puts cookie/signing material in argv, state, URLs, node payloads, or diagnostics (2c2fcf3).
+- Strip `Authorization`, forged trusted identity, and the Fleet cookie before ttyd; require exact Fleet Host, node path, Origin, deadline, and one-client boundaries. Shared synthetic vectors keep Python verification aligned with Gateway's TypeScript HMAC contract (2c2fcf3).
+
+### Upgrading
+
+- Add the companion's nested active-fragment import and permanent closed `/ttyd/*` 404 before the normal Gateway proxy, then change `fallbackUrl` values and companion inventory together. Closed links retain valid Fleet TLS and start nothing.
+- This patch does not change the Collie protocol, Herdr attachment, or existing local/direct-SSH/jump transport contracts. Reinstall managed companion payloads for exact-release consistency before live activation.
+
 ## [2.5.5] - 2026-08-22
 
 ### Fixed
