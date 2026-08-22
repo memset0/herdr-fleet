@@ -6,6 +6,12 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.9] - 2026-08-22
+
+### Fixed
+
+- Export the no-bytecode policy from the fallback CLI so activation-scoped Python children, including the local relay that imports `node.py`, also leave an exact Git checkout clean across enable/status/disable (1ea9b02).
+
 ## [2.5.8] - 2026-08-22
 
 ### Fixed
