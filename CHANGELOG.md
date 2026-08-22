@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.7] - 2026-08-22
+
+### Fixed
+
+- Separate the compact AppBar's Host-only switcher from the hierarchical Host tree so opening the `H` drawer no longer removes a shared element from AppBar flow, shifts its sibling actions, or resets horizontal Host scrolling (9ae8b07).
+- Give compact Host buttons an explicit Collie-styled gap and scope drawer-only full-width row styling to the tree container, preserving identical AppBar bounds and button identity across drawer disclosure (9ae8b07).
+
+### Upgrading
+
+- This is a central-only Fleet presentation patch. Upgrade the central Gateway plugin to `2.5.7`; compatible remote `2.5.x` nodes do not need to be reinstalled or restarted.
+
 ## [2.5.6] - 2026-08-22
 
 ### Changed
