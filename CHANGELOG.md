@@ -6,6 +6,12 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.8] - 2026-08-22
+
+### Fixed
+
+- Run the fallback controller with Python bytecode writes disabled so an activation from an exact Git checkout cannot create `__pycache__` and trip the adapter's clean-release guard on the next lifecycle command (252620c).
+
 ## [2.5.7] - 2026-08-22
 
 ### Fixed
