@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.4] - 2026-08-22
+
+### Security
+
+- Reject a mismatched HTTP Host explicitly inside every generated fallback route before authentication or proxying, instead of relying only on the Caddy site label under every ingress/protocol combination (93dd754).
+- Cover the exact Host matcher/response in the companion contract test and validate the generated fragment through the installed Caddyfile adapter (93dd754).
+
+### Upgrading
+
+- Upgrade the trusted ingress/controller to `2.5.4` before the next activation. Node payload protocol and normal Collie/Gateway behavior are unchanged.
+
 ## [2.5.3] - 2026-08-22
 
 ### Fixed
