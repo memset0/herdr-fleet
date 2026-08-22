@@ -269,6 +269,7 @@ while True:
         self.assertNotIn("fetch(", page)
         self.assertNotIn("WebSocket(", page)
         cli = (ROOT / "ttyd-fallback").read_text()
+        self.assertIn("export PYTHONDONTWRITEBYTECODE=1", cli)
         self.assertIn('exec "$python_bin" -B "$service_dir/controller.py" "$@"', cli)
 
     def test_unknown_inventory_never_defaults(self) -> None:

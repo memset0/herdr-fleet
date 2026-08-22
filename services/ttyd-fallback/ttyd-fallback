@@ -7,4 +7,5 @@ if [[ "${1:-}" == install ]]; then
   exec "$service_dir/install.sh" "$@"
 fi
 python_bin="${HERDR_WEB_TTYD_PYTHON:-python3}"
+export PYTHONDONTWRITEBYTECODE=1
 exec "$python_bin" -B "$service_dir/controller.py" "$@"
