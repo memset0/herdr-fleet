@@ -205,12 +205,17 @@ export function fleetRailWidthPreferences(serialized: string | null): FleetRailW
 }
 
 /** Fleet creates the emergency entry only for the wide desktop presentation. */
-export function fleetDesktopFallbackUrl(value: unknown, desktop: boolean): string | null {
-  if (!desktop || typeof value !== "string") return null;
+export function fleetDesktopFallbackUrl(
+  value: unknown,
+  desktop: boolean,
+  fleetOrigin: string,
+  nodeId: string,
+): string | null {
+  if (!desktop || typeof value !== "string" || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(nodeId)) return null;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password && !url.port
-      && url.pathname === "/" && !url.search && !url.hash
+    return url.protocol === "https:" && url.origin === fleetOrigin && !url.username && !url.password && !url.port
+      && url.pathname === `/ttyd/${nodeId}/` && !url.search && !url.hash
       ? url.href
       : null;
   } catch {
@@ -1112,7 +1117,7 @@ const nodeOrigin=(node)=>new URL('https://'+node.publicHost+'/').origin;
 const selectedNode=()=>nodes.find((node)=>node.id===selectedId)||null;
 const fallbackHref=(node)=>{
  if(!node||typeof node.fallbackUrl!=='string')return null;
- try{const url=new URL(node.fallbackUrl);return url.protocol==='https:'&&!url.username&&!url.password&&!url.port&&url.pathname==='/'&&!url.search&&!url.hash?url.href:null}catch{return null}
+ try{const url=new URL(node.fallbackUrl);return url.protocol==='https:'&&url.origin===location.origin&&!url.username&&!url.password&&!url.port&&url.pathname==='/ttyd/'+node.id+'/'&&!url.search&&!url.hash?url.href:null}catch{return null}
 };
 const announce=(message)=>{fleetStatus.textContent=message};
 const validPane=(value)=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)?value:null;

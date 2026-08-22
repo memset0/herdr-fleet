@@ -40,7 +40,8 @@ stdio proxy only. A transport becomes ready only after that forward accepts a lo
 Transport processes, bridge HTTP health, and Herdr/session health are separate states, so one failed
 node never blocks another.
 
-Each inventory node may additionally project one exact HTTPS `fallbackUrl`. It contains no
+Each inventory node may additionally project one exact Fleet-origin HTTPS `fallbackUrl` at
+`/ttyd/<node-id>/`. It contains no
 credential, lease state, private transport, or activation primitive. Fleet creates its navigation
 link only when the presentation is both at least 1200 px wide and reports hover plus a fine pointer;
 compact, phone, tablet, and coarse-pointer DOMs omit it. Rendering and hovering perform no network
@@ -228,11 +229,12 @@ its stable CLI with an external owner-protected inventory.
 An activation resolves one selected or focused Pane through the already running Herdr server and
 binds ttyd to the resulting fixed terminal id. The browser cannot supply a command, Herdr socket,
 session, Pane, or terminal. The listener is an owner-only Unix socket; a local or restricted-SSH
-stdio broker, independent Basic-auth verifier, and temporary reverse-proxy route are created only
-after preflight and remain bounded by one lease. Cleanup removes those components without touching
+stdio broker, independent Fleet-session verifier, and temporary `/ttyd/<node-id>/` handler are created only
+after preflight and remain bounded by one lease. The helper reads protected central signing config
+and validates the cookie locally without calling Gateway. Cleanup removes those components without touching
 the normal supervisor, Gateway, Collie, Herdr server, or existing Panes.
 
-Real inventory, relay keys, credentials, Caddy layout, and runtime state are external deployment
+Real inventory, relay keys, session-signing config, Caddy layout, and runtime state are external deployment
 inputs. The generic repository contains only a synthetic example and the pinned upstream ttyd
 artifacts. This preserves an independent recovery path while keeping the normal Remote product as
 the single release and ownership boundary.
@@ -240,8 +242,9 @@ the single release and ownership boundary.
 ## Trust boundaries
 
 1. The TLS reverse proxy is the only public listener.
-2. Gateway is the normal Fleet/Collie authentication boundary; an active ttyd companion uses a
-   separate activation-scoped verifier so Gateway failure does not become fallback failure.
+2. Gateway issues the normal Fleet/Collie session; an active ttyd companion independently verifies
+   that signed cookie so an already-authenticated browser survives Gateway process failure without
+   introducing same-origin HTTP Basic credentials.
 3. Loopback is a host boundary, not per-Unix-user isolation.
 4. The Herdr socket is the terminal-control authority.
 5. The Fleet password verifier, cookie-signing secret, inventory, pinned target/jump host keys, and

@@ -13,13 +13,13 @@ arguments cannot select a command, host, session, Pane, or terminal.
 ## Public product versus private deployment
 
 The service implementation, synthetic inventory example, ttyd pin, and tests live here. A real
-deployment supplies an external owner-protected inventory and keeps its hostnames, socket/session
-names, SSH identities, Caddy layout, credential verifier, generated state, and runtime findings
+deployment supplies an external owner-protected inventory and keeps its shared Fleet origin/path,
+socket/session names, SSH identities, Caddy layout, signed-session configuration, generated state, and runtime findings
 outside this repository. See `inventory.example.json` for the schema; do not turn it into a real
 inventory.
 
 Each enabled node requires an explicit architecture, owner, Python and Herdr executable, Herdr
-session/socket namespace, node-local runtime and install paths, public fallback hostname, and local
+session/socket namespace, node-local runtime and install paths, exact Fleet origin/node path, and local
 or SSH transport. SSH control uses an explicit absolute `control_identity`; the companion never
 reads ambient SSH config or chooses a default key. Its separate relay identity is resolved beneath
 the controller's live config root and should be installed remotely with `restrict` plus one fixed
@@ -48,37 +48,42 @@ explicitly when it differs from the generic defaults:
 services/ttyd-fallback/ttyd-fallback \
   --inventory /absolute/private/inventory.json \
   --live-root /absolute/private/config/ttyd-fallback \
-  --caddy-import 'import /etc/caddy/herdr-web-remote.d/*.caddy' \
-  prepare --username operator
+  --caddy-import 'import /etc/caddy/herdr-web-remote-ttyd/*.caddy' \
+  --session-config /absolute/private/gateway.json \
+  prepare
 
 services/ttyd-fallback/ttyd-fallback \
   --inventory /absolute/private/inventory.json \
   --live-root /absolute/private/config/ttyd-fallback \
+  --session-config /absolute/private/gateway.json \
   enable local-a --lease 1800
 
 services/ttyd-fallback/ttyd-fallback \
   --inventory /absolute/private/inventory.json \
   --live-root /absolute/private/config/ttyd-fallback \
+  --session-config /absolute/private/gateway.json \
   status
 
 services/ttyd-fallback/ttyd-fallback \
   --inventory /absolute/private/inventory.json \
   --live-root /absolute/private/config/ttyd-fallback \
+  --session-config /absolute/private/gateway.json \
   disable
 ```
 
-Preparation creates only owner-protected credentials/configuration, relay keys for configured SSH
-nodes, the static landing asset, and an empty fragment directory. Activation is a separate explicit
+Preparation validates the protected Fleet session configuration and creates only node configuration,
+relay keys for configured SSH nodes, the static landing asset, and an empty fragment directory. Activation is a separate explicit
 operation with a 30-second to two-hour lease. It starts an owner-only node Unix socket, a local or
-restricted-SSH stdio broker, an independent Basic-auth helper, and a temporary Caddy route in that
+restricted-SSH stdio broker, an independent Fleet-session verification helper, and a temporary shared-origin Caddy path handler in that
 order. Failure unwinds in reverse order. Manual disable, lease expiry, lost component health, or a
 later cleanup removes the route, broker, helper, ttyd process, socket, and ephemeral state without
 stopping Herdr or changing Panes.
 
-The authentication verifier stays only on the ingress host. ttyd requires the trusted header that
-Caddy injects after authentication, validates the exact Origin, accepts one writable client, never
-enables URL arguments, and writes no terminal transcript. Same-UID processes remain outside the
-claimed security boundary.
+The helper reads the owner-only Gateway config, verifies its signed HttpOnly cookie locally, and
+never calls the Gateway process. Caddy removes `Authorization`, the session cookie, and any forged
+trusted header before the private ttyd upstream. ttyd validates the exact Fleet Origin, accepts one
+writable client, never enables URL arguments, and writes no terminal transcript. Same-UID processes
+remain outside the claimed security boundary.
 
 ## Tests
 

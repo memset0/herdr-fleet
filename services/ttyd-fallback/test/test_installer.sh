@@ -24,11 +24,12 @@ base = {
     "session": None,
     "server_socket": str(pathlib.Path(root) / "herdr.sock"),
     "runtime_dir": str(pathlib.Path(root) / "runtime"),
-    "public_host": "terminal-a.example.com",
+    "public_origin": "https://fleet.example.com",
+    "public_path": "/ttyd/local-a",
     "transport": {"kind": "local"},
 }
 good = dict(base, architecture=current, install_root=str(pathlib.Path(root) / "install"))
-bad = dict(base, architecture=wrong, install_root=str(pathlib.Path(root) / "wrong"))
+bad = dict(base, architecture=wrong, install_root=str(pathlib.Path(root) / "wrong"), public_path="/ttyd/wrong-arch")
 pathlib.Path(root, "inventory.json").write_text(json.dumps({"schema": 1, "nodes": {"local-a": good, "wrong-arch": bad}}))
 ' "$test_root" "$current_arch" "$wrong_arch"
 inventory="$test_root/inventory.json"

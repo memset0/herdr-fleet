@@ -12,7 +12,8 @@
       "server_socket": "/home/operator/.config/herdr/herdr.sock",
       "runtime_dir": "/run/user/1000/herdr-web-remote-ttyd",
       "install_root": "/home/operator/.local/libexec/herdr-web-remote/ttyd-fallback",
-      "public_host": "terminal-a.herdr.example.com",
+      "public_origin": "https://fleet.herdr.example.com",
+      "public_path": "/ttyd/local-a",
       "transport": {
         "kind": "local"
       }
@@ -29,7 +30,8 @@
       "server_socket": "/tmp/cluster-a-herdr/herdr.sock",
       "runtime_dir": "/tmp/herdr-web-remote-ttyd-operator",
       "install_root": "/home/operator/.local/libexec/herdr-web-remote/ttyd-fallback",
-      "public_host": "terminal-cluster-a.herdr.example.com",
+      "public_origin": "https://fleet.herdr.example.com",
+      "public_path": "/ttyd/cluster-a",
       "transport": {
         "kind": "ssh",
         "host": "cluster-a.internal.example",

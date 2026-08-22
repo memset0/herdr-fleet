@@ -104,14 +104,18 @@ describe("Fleet iframe shell", () => {
   });
 
   test("creates the non-activating fallback entry only for a desktop computer presentation", () => {
-    const fallback = "https://terminal-local.example.com/";
-    expect(fleetDesktopFallbackUrl(fallback, true)).toBe(fallback);
-    expect(fleetDesktopFallbackUrl(fallback, false)).toBeNull();
-    expect(fleetDesktopFallbackUrl("javascript:alert(1)", true)).toBeNull();
-    expect(fleetDesktopFallbackUrl("https://operator:secret@terminal-local.example.com/", true)).toBeNull();
+    const fallback = "https://fleet.example.com/ttyd/local/";
+    expect(fleetDesktopFallbackUrl(fallback, true, "https://fleet.example.com", "local")).toBe(fallback);
+    expect(fleetDesktopFallbackUrl(fallback, false, "https://fleet.example.com", "local")).toBeNull();
+    expect(fleetDesktopFallbackUrl("javascript:alert(1)", true, "https://fleet.example.com", "local")).toBeNull();
+    expect(fleetDesktopFallbackUrl("https://operator:secret@fleet.example.com/ttyd/local/", true, "https://fleet.example.com", "local")).toBeNull();
+    expect(fleetDesktopFallbackUrl("https://other.example.com/ttyd/local/", true, "https://fleet.example.com", "local")).toBeNull();
+    expect(fleetDesktopFallbackUrl("https://fleet.example.com/ttyd/other/", true, "https://fleet.example.com", "local")).toBeNull();
     expect(FLEET_CSS).toContain("@media (min-width: 1200px) and (hover: hover) and (pointer: fine)");
     expect(FLEET_JS).toContain("FALLBACK_DESKTOP_MEDIA='(min-width: 1200px) and (hover: hover) and (pointer: fine)'");
     expect(FLEET_JS).toContain("const href=fallbackDesktopMedia.matches?fallbackHref(node):null");
+    expect(FLEET_JS).toContain("url.origin===location.origin");
+    expect(FLEET_JS).toContain("url.pathname==='/ttyd/'+node.id+'/'");
     expect(FLEET_JS).toContain("if(!href){if(link)link.remove();return}");
     expect(FLEET_JS).toContain("element('a','desktop-fallback-entry','Emergency terminal')");
     expect(FLEET_JS).toContain("link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer'");

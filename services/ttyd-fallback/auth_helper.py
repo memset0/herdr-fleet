@@ -1,94 +1,123 @@
 #!/usr/bin/env python3
-"""Activation-scoped Basic authentication and bounded failure throttling."""
+"""Activation-scoped verification of Web Remote's signed Fleet session cookie."""
 
 from __future__ import annotations
 
 import argparse
 import base64
-import binascii
-import collections
 import hashlib
 import hmac
 import http.server
 import json
+import math
 import os
 import pathlib
+import re
 import socketserver
 import threading
 import time
 from typing import Any
 
+BASE64URL = re.compile(r"^[A-Za-z0-9_-]+$")
+COOKIE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+USERNAME = re.compile(r"^[A-Za-z0-9_.-]{3,64}$")
+MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
-class AuthState:
-    def __init__(self, verifier_path: str, username: str) -> None:
-        verifier = json.loads(pathlib.Path(verifier_path).read_text())
-        self.username = username
-        self.iterations = int(verifier["iterations"])
-        self.salt = bytes.fromhex(verifier["salt"])
-        self.digest = bytes.fromhex(verifier["digest"])
-        if verifier.get("algorithm") != "pbkdf2-sha256" or self.iterations < 200_000:
-            raise ValueError("unsupported verifier")
-        self.failures: dict[str, collections.deque[float]] = collections.defaultdict(collections.deque)
-        self.blocked_until: dict[str, float] = {}
-        self.lock = threading.Lock()
-        self.workers = threading.BoundedSemaphore(4)
 
-    def reject(self, source: str, now: float) -> tuple[bool, bool]:
-        queue = self.failures[source]
-        while queue and queue[0] <= now - 60:
-            queue.popleft()
-        queue.append(now)
-        if len(queue) >= 5:
-            self.blocked_until[source] = now + 300
-            queue.clear()
-            return False, True
-        return False, False
+def base64url_decode(value: str) -> bytes:
+    if not value or not BASE64URL.fullmatch(value):
+        raise ValueError("invalid base64url value")
+    padding = "=" * ((4 - len(value) % 4) % 4)
+    return base64.b64decode(value + padding, altchars=b"-_", validate=True)
 
-    def verify(self, authorization: str, source: str) -> tuple[bool, bool]:
-        now = time.monotonic()
-        with self.lock:
-            if self.blocked_until.get(source, 0) > now:
-                return False, True
+
+def base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def safe_integer(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and int(value) == value
+        and abs(value) <= MAX_SAFE_INTEGER
+    )
+
+
+def cookie_value(header: str, name: str) -> str | None:
+    for part in header.split(";"):
+        key, separator, value = part.partition("=")
+        if separator and key.strip() == name:
+            return value.strip()
+    return None
+
+
+class SessionAuth:
+    def __init__(self, gateway_config: str) -> None:
+        path = pathlib.Path(gateway_config)
+        metadata = path.stat()
+        if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+            raise ValueError("Gateway config must be owner-only")
+        data = json.loads(path.read_text())
+        public = data.get("public")
+        auth = data.get("auth")
+        if not isinstance(public, dict) or not isinstance(auth, dict):
+            raise ValueError("Gateway config lacks public/auth sections")
+        self.cookie_name = public.get("cookieName", "__Secure-herdr_web_session")
+        self.username = auth.get("username")
+        secret_value = auth.get("sessionSecret")
+        if not isinstance(self.cookie_name, str) or not COOKIE_NAME.fullmatch(self.cookie_name):
+            raise ValueError("Gateway cookie name is invalid")
+        if not isinstance(self.username, str) or not USERNAME.fullmatch(self.username):
+            raise ValueError("Gateway username is invalid")
+        if not isinstance(secret_value, str):
+            raise ValueError("Gateway session secret is invalid")
+        self.secret = base64url_decode(secret_value)
+        if len(self.secret) < 32:
+            raise ValueError("Gateway session secret is too short")
+
+    def verify_token(self, token: str, now_ms: int | None = None) -> bool:
+        parts = token.split(".")
+        if len(parts) != 2 or not all(parts):
+            return False
+        encoded, supplied_signature = parts
+        if not BASE64URL.fullmatch(encoded) or not BASE64URL.fullmatch(supplied_signature):
+            return False
+        expected = base64url_encode(hmac.new(self.secret, encoded.encode("ascii"), hashlib.sha256).digest())
+        if not hmac.compare_digest(supplied_signature.encode(), expected.encode()):
+            return False
         try:
-            scheme, payload = authorization.split(" ", 1)
-            raw = base64.b64decode(payload, validate=True).decode("utf-8")
-            username, password = raw.split(":", 1)
-        except (ValueError, UnicodeError, binascii.Error):
-            with self.lock:
-                return self.reject(source, now)
-        if scheme.lower() != "basic" or not self.workers.acquire(blocking=False):
-            with self.lock:
-                return self.reject(source, now)
-        try:
-            candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), self.salt, self.iterations)
-            valid = hmac.compare_digest(username.encode(), self.username.encode()) & hmac.compare_digest(candidate, self.digest)
-        finally:
-            self.workers.release()
-        with self.lock:
-            if valid:
-                self.failures[source].clear()
-                self.blocked_until.pop(source, None)
-                return True, False
-            return self.reject(source, now)
+            payload = json.loads(base64url_decode(encoded))
+        except (ValueError, UnicodeError, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        issued_at = payload.get("issuedAt")
+        expires_at = payload.get("expiresAt")
+        now = int(time.time() * 1000) if now_ms is None else now_ms
+        return (
+            payload.get("username") == self.username
+            and safe_integer(issued_at)
+            and safe_integer(expires_at)
+            and issued_at <= now + 60_000
+            and expires_at > now
+        )
+
+    def verify_cookie(self, header: str, now_ms: int | None = None) -> bool:
+        token = cookie_value(header, self.cookie_name)
+        return bool(token and self.verify_token(token, now_ms))
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     server: Any
 
     def do_GET(self) -> None:
-        source = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip() or "unknown"
-        valid, limited = self.server.auth.verify(self.headers.get("Authorization", ""), source)
-        if valid:
+        if self.server.auth.verify_cookie(self.headers.get("Cookie", "")):
             self.send_response(200)
             self.send_header("X-Herdr-Fallback-User", self.server.auth.username)
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            return
-        self.send_response(429 if limited else 401)
-        if limited:
-            self.send_header("Retry-After", "300")
         else:
-            self.send_header("WWW-Authenticate", 'Basic realm="Herdr emergency terminal", charset="UTF-8"')
+            self.send_response(401)
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
@@ -106,8 +135,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", required=True)
     parser.add_argument("--socket-gid", type=int, required=True)
-    parser.add_argument("--verifier", required=True)
-    parser.add_argument("--username", required=True)
+    parser.add_argument("--gateway-config", required=True)
     parser.add_argument("--deadline", type=int, required=True)
     args = parser.parse_args()
     path = pathlib.Path(args.socket)
@@ -116,7 +144,7 @@ def main() -> int:
     except FileNotFoundError:
         pass
     server = UnixHTTPServer(str(path), Handler)
-    server.auth = AuthState(args.verifier, args.username)
+    server.auth = SessionAuth(args.gateway_config)
     os.chown(path, os.geteuid(), args.socket_gid)
     os.chmod(path, 0o660)
     remaining = max(0, args.deadline - int(time.time()))

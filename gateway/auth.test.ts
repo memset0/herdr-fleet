@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import {
   clearSessionCookie,
@@ -12,6 +13,15 @@ import {
 import { gatewayConfig } from "./test-helpers.ts";
 
 const config = gatewayConfig();
+const sessionVectors = JSON.parse(
+  readFileSync(new URL("../services/ttyd-fallback/test/session-vectors.json", import.meta.url), "utf8"),
+) as {
+  nowMs: number;
+  username: string;
+  cookieName: string;
+  sessionSecret: string;
+  vectors: Array<{ name: string; token: string; valid: boolean }>;
+};
 beforeAll(async () => {
   config.auth.passwordHash = await Bun.password.hash("correct horse battery staple", {
     algorithm: "argon2id",
@@ -33,6 +43,16 @@ describe("single-account authentication", () => {
     expect(verifySessionToken(token, config, now + 10)).toBeTrue();
     expect(verifySessionToken(`${token}x`, config, now + 10)).toBeFalse();
     expect(verifySessionToken(token, config, now + config.public.sessionTtlSeconds * 1_000)).toBeFalse();
+  });
+
+  test("matches the fallback helper's public synthetic session vectors", () => {
+    const vectorConfig = gatewayConfig();
+    vectorConfig.auth.username = sessionVectors.username;
+    vectorConfig.auth.sessionSecret = sessionVectors.sessionSecret;
+    vectorConfig.public.cookieName = sessionVectors.cookieName;
+    for (const vector of sessionVectors.vectors) {
+      expect(verifySessionToken(vector.token, vectorConfig, sessionVectors.nowMs), vector.name).toBe(vector.valid);
+    }
   });
 
   test("issues and clears a hardened cross-subdomain cookie", () => {

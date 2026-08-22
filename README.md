@@ -51,8 +51,9 @@ When a Gateway inventory node has a validated `fallbackUrl`, Fleet creates a sec
 terminal** link only in its wide fine-pointer desktop-computer presentation. Phone, tablet, compact,
 and coarse-pointer presentations do not create the link in the DOM. The link performs a plain
 top-level navigation with no prefetch, status probe, WebSocket, or activation request. A closed
-fallback therefore stays unreachable; its separate authentication and active lease remain
-authoritative even for an already authenticated Fleet browser.
+fallback path therefore returns a normal TLS-valid 404 and starts nothing. During an explicit
+lease, the independent helper validates the existing Fleet session cookie locally without calling
+Gateway or exposing another password.
 
 Fleet derives this tree from the `workspaces`, `tabs`, Agent panes, and shell panes already present in
 the same Collie snapshot fetched for Agent state. Expanding rows makes no request, and the projection
@@ -95,7 +96,7 @@ browser ──HTTPS── reverse proxy ──loopback── Fleet Gateway
 
 explicit operator activation only:
 
-browser ──HTTPS── temporary route ── independent auth ── fixed ttyd/Herdr attachment
+browser ──HTTPS── /ttyd/<node>/ ── local Fleet-session verification ── fixed ttyd/Herdr attachment
 ```
 
 - One Argon2id-backed username/password; no registration, users, roles, or tenant isolation.
@@ -178,23 +179,23 @@ completed PWA into place.
 
 The generic service, verified ttyd pin, synthetic inventory, and CLI are in
 [`services/ttyd-fallback/`](./services/ttyd-fallback/). Real node mappings, SSH identities,
-credentials, reverse-proxy paths, and runtime findings must remain in an owner-protected external
+session-signing configuration, reverse-proxy paths, and runtime findings must remain in an owner-protected external
 deployment overlay. The plugin manifest stays the only Herdr registration and deliberately has no
 fallback startup action or event.
 
-The public Gateway inventory may expose only an optional exact HTTPS origin root:
+The public Gateway inventory may expose only the canonical node path on the exact Fleet HTTPS origin:
 
 ```json
 {
   "id": "local",
   "name": "Local",
   "publicHost": "local.herdr.example.com",
-  "fallbackUrl": "https://terminal-local.herdr.example.com/"
+  "fallbackUrl": "https://herdr.example.com/ttyd/local/"
 }
 ```
 
-Gateway rejects credentials, ports, paths, queries, fragments, foreign domains, and hosts reserved
-by Fleet or Collie. This value is navigation metadata only. See the companion README for dormant
+Gateway rejects credentials, ports, wrong-node paths, queries, fragments, and every non-Fleet
+host. This value is navigation metadata only. See the companion README for dormant
 installation and explicit prepare/enable/status/disable commands.
 
 ## Node configuration

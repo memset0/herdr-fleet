@@ -140,12 +140,13 @@ install -m 0644 "$service_dir/VERSION" "$service_dir/SHA256SUMS" "$service_dir/U
 install -m 0644 "$service_dir/web/index.html" "$install_root/web/index.html"
 
 "$node_python" -c '
-import json, pathlib, sys
+import json, pathlib, sys, urllib.parse
 inventory = json.loads(pathlib.Path(sys.argv[1]).read_text())
 node_id, ttyd, version_output, target = sys.argv[2:]
 node = inventory["nodes"][node_id]
-keys = ("owner", "herdr", "session", "server_socket", "runtime_dir", "public_host", "host_exact", "host_prefix", "reject_slurm", "environment")
-result = {"id": node_id, "ttyd": ttyd, "ttyd_version_output": version_output}
+keys = ("owner", "herdr", "session", "server_socket", "runtime_dir", "host_exact", "host_prefix", "reject_slurm", "environment")
+result = {"id": node_id, "ttyd": ttyd, "ttyd_version_output": version_output,
+          "public_host": urllib.parse.urlsplit(node["public_origin"]).hostname}
 result.update({key: node[key] for key in keys if key in node})
 path = pathlib.Path(target)
 path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
