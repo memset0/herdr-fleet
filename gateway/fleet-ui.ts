@@ -54,6 +54,55 @@ export function fleetAttentionResetEligible(agent: FleetAgentTriageInput): boole
   return bucket === "ready" || bucket === "needs";
 }
 
+export const FLEET_AGENT_FAVORITES_MAX = 256;
+
+export interface FleetAgentFavoriteIdentity {
+  nodeId: string;
+  herdrSession: string;
+  paneId: string;
+  agent: string;
+}
+
+function validFavoritePart(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 128 && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+export function fleetAgentFavoriteKey(identity: FleetAgentFavoriteIdentity): string | null {
+  const parts = [identity.nodeId, identity.herdrSession, identity.paneId, identity.agent];
+  return parts.every(validFavoritePart) ? JSON.stringify(parts) : null;
+}
+
+function validFavoriteKey(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 600) return false;
+  try {
+    const parts: unknown = JSON.parse(value);
+    return Array.isArray(parts) && parts.length === 4 && parts.every(validFavoritePart);
+  } catch {
+    return false;
+  }
+}
+
+export function fleetAgentFavoritePreference(serialized: string | null): Set<string> {
+  if (!serialized) return new Set();
+  try {
+    const value: unknown = JSON.parse(serialized);
+    if (!value || typeof value !== "object") return new Set();
+    const record = value as Record<string, unknown>;
+    if (record.version !== 1 || !Array.isArray(record.keys) || record.keys.length > FLEET_AGENT_FAVORITES_MAX) {
+      return new Set();
+    }
+    const keys = record.keys;
+    if (!keys.every(validFavoriteKey) || new Set(keys).size !== keys.length) return new Set();
+    return new Set(keys);
+  } catch {
+    return new Set();
+  }
+}
+
+export function fleetAgentFavoriteCompare(leftKey: string, rightKey: string, favorites: ReadonlySet<string>): number {
+  return Number(favorites.has(rightKey)) - Number(favorites.has(leftKey));
+}
+
 export type FleetTreeTabMode = "empty" | "direct" | "branch";
 
 export function fleetTreeTabMode(panes: readonly { paneId?: unknown }[]): FleetTreeTabMode {
@@ -549,21 +598,48 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 .agent-section[data-attention="true"] .agent-card-list, .agent-section[data-section="offline"] .agent-card-list { gap: .5rem; }
 .agent-section:not([data-attention="true"]):not([data-section="offline"]) .agent-card + .agent-card { border-top: 1px solid color-mix(in oklch, var(--border) 65%, transparent); }
 .agent-card {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  transition: background .15s ease;
+}
+.agent-card-main {
   display: flex;
   width: 100%;
   min-width: 0;
   align-items: center;
   gap: .7rem;
   border: 0;
+  border-radius: inherit;
   background: transparent;
-  padding: .65rem .7rem;
+  padding: .65rem 3rem .65rem .7rem;
   color: var(--foreground);
   text-align: left;
   cursor: pointer;
   transition: background .15s ease, transform .08s ease;
 }
-.agent-card:hover { background: color-mix(in oklch, var(--muted) 65%, transparent); }
-.agent-card:active { transform: scale(.99); }
+.agent-card-main:hover { background: color-mix(in oklch, var(--muted) 65%, transparent); }
+.agent-card-main:active { transform: scale(.99); }
+.agent-favorite {
+  position: absolute;
+  z-index: 2;
+  top: .45rem;
+  right: .5rem;
+  display: grid;
+  width: 1.9rem;
+  height: 1.9rem;
+  place-items: center;
+  border: 0;
+  border-radius: calc(var(--radius) - 3px);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.agent-favorite:hover, .agent-favorite:focus-visible { background: var(--accent); color: var(--foreground); }
+.agent-favorite[aria-pressed="true"] { color: var(--status-working); }
+.agent-favorite[aria-pressed="true"] .agent-favorite-icon { fill: currentColor; }
+.agent-favorite-icon { width: .95rem; height: .95rem; fill: none; }
 .agent-section[data-attention="true"] .agent-card {
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) + 2px);
@@ -1051,7 +1127,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 }
 @media (prefers-reduced-motion: reduce) {
   .loading-mark { animation: none; }
-  .agent-card { transition: none; }
+  .agent-card, .agent-card-main { transition: none; }
   .instance-strip, .host-rail-footer, .tree-children, .tree-chevron { transition: none !important; }
 }
 `;
@@ -1060,6 +1136,8 @@ export const FLEET_JS = `
 const STORAGE_KEY='herdr-web-remote:selected-instance';
 const RAIL_STORAGE_KEY='herdr-web-remote:fleet-rail-widths:v1';
 const CACHE_STORAGE_KEY='herdr-web-remote:fleet-iframe-cache:v1';
+const AGENT_FAVORITES_STORAGE_KEY='herdr-web-remote:fleet-agent-favorites:v1';
+const AGENT_FAVORITES_MAX=${FLEET_AGENT_FAVORITES_MAX};
 const ROUTE_MESSAGE='herdr-web-remote:route';
 const FRAME_ACTIVITY_MESSAGE='herdr-web-remote:activity';
 const FRAME_ACTIVITY_VERSION=1;
@@ -1116,6 +1194,7 @@ const fallbackDesktopMedia=matchMedia(FALLBACK_DESKTOP_MEDIA);
 const configuredCacheSize=Number(shell.dataset.iframeCacheSize);
 const defaultCacheSize=Number.isSafeInteger(configuredCacheSize)&&configuredCacheSize>=1&&configuredCacheSize<=10?configuredCacheSize:1;
 let iframeCacheSize=readIframeCachePreference();
+let agentFavorites=readAgentFavorites();
 const frameRegistry=new Map();
 const expandedTreeKeys=new Set();
 const initializedHostKeys=new Set();
@@ -1171,6 +1250,25 @@ function readIframeCachePreference(){
 
 function persistIframeCachePreference(size){
  try{localStorage.setItem(CACHE_STORAGE_KEY,JSON.stringify({version:1,size}))}catch{}
+}
+
+function agentFavoriteKey(node,agent){return JSON.stringify([node.id,agent.herdrSession,agent.paneId,agent.agent])}
+
+function validAgentFavoriteKey(value){
+ if(typeof value!=='string'||value.length>600)return false;
+ try{const parts=JSON.parse(value);return Array.isArray(parts)&&parts.length===4&&parts.every((part)=>typeof part==='string'&&part.length>=1&&part.length<=128&&!/[\u0000-\u001f\u007f]/.test(part))}catch{return false}
+}
+
+function readAgentFavorites(){
+ try{
+   const value=JSON.parse(localStorage.getItem(AGENT_FAVORITES_STORAGE_KEY)||'null');
+   if(!value||value.version!==1||!Array.isArray(value.keys)||value.keys.length>AGENT_FAVORITES_MAX||!value.keys.every(validAgentFavoriteKey)||new Set(value.keys).size!==value.keys.length)return new Set();
+   return new Set(value.keys);
+ }catch{return new Set()}
+}
+
+function persistAgentFavorites(){
+ try{localStorage.setItem(AGENT_FAVORITES_STORAGE_KEY,JSON.stringify({version:1,keys:[...agentFavorites]}))}catch{}
 }
 
 function showTreeActionStatus(message,kind='success'){
@@ -1775,8 +1873,10 @@ function bucket(agent){
 
 function sortAgentEntries(key,entries){
  const copy=[...entries];
- if(key==='needs'||key==='ready'||key==='working')copy.sort((a,b)=>(b.agent.lastActiveAt||0)-(a.agent.lastActiveAt||0));
- else copy.sort((a,b)=>(b.agent.lastSeenAt||0)-(a.agent.lastSeenAt||0));
+ copy.sort((a,b)=>{
+   const favoriteOrder=Number(agentFavorites.has(agentFavoriteKey(b.node,b.agent)))-Number(agentFavorites.has(agentFavoriteKey(a.node,a.agent)));if(favoriteOrder)return favoriteOrder;
+   return key==='needs'||key==='ready'||key==='working'?(b.agent.lastActiveAt||0)-(a.agent.lastActiveAt||0):(b.agent.lastSeenAt||0)-(a.agent.lastSeenAt||0);
+ });
  return copy;
 }
 
@@ -1789,10 +1889,22 @@ function selectAgent(node,agent){
  if(resetAttention)void refresh({manual:true});
 }
 
+function agentFavoriteIcon(){
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('class','agent-favorite-icon');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','2');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');svg.dataset.icon='star';
+ const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z');svg.append(path);return svg;
+}
+
+function toggleAgentFavorite(node,agent){
+ const key=agentFavoriteKey(node,agent);const removing=agentFavorites.has(key);
+ if(removing)agentFavorites.delete(key);else{if(agentFavorites.size>=AGENT_FAVORITES_MAX){const oldest=agentFavorites.values().next().value;if(oldest!==undefined)agentFavorites.delete(oldest)}agentFavorites.add(key)}
+ persistAgentFavorites();renderAgents(key);announce((removing?'Removed favorite ':'Favorited ')+(agentParts(agent).project||agent.agent)+'.');
+}
+
 function renderAgentCard(node,agent){
  const parts=agentParts(agent);
- const card=element('button','agent-card');card.type='button';card.dataset.live=String(Boolean(agent.reachable));card.dataset.status=agent.status;
- card.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status));
+ const favoriteKey=agentFavoriteKey(node,agent);const isFavorite=agentFavorites.has(favoriteKey);
+ const card=element('div','agent-card');card.dataset.live=String(Boolean(agent.reachable));card.dataset.status=agent.status;card.dataset.favorite=String(isFavorite);
+ const main=element('button','agent-card-main');main.type='button';main.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status));
  const avatar=element('span','agent-avatar',initials(agent.agent));avatar.dataset.brand=brand(agent.agent);avatar.setAttribute('aria-hidden','true');
  const dot=element('span','agent-status-dot');dot.style.setProperty('--agent-status-color',statusColor(agent.status));avatar.append(dot);
  const copy=element('span','agent-card-copy');
@@ -1805,10 +1917,11 @@ function renderAgentCard(node,agent){
  const host=element('span','host-chip',node.name);host.title=node.publicHost;meta.append(host);
  if(agent.reachable){const stamp=agent.status==='done'?agent.lastSeenAt:agent.lastActiveAt;if(Number.isSafeInteger(stamp))meta.append(element('span','agent-age',timeAgo(stamp)))}
  else{meta.append(element('span','offline-chip','offline'));if(Number.isSafeInteger(agent.observedAt))meta.append(element('span','agent-age',timeAgo(agent.observedAt)))}
- copy.append(title,meta);card.append(avatar,copy);card.addEventListener('click',()=>selectAgent(node,agent));return card;
+ const favorite=element('button','agent-favorite');favorite.type='button';favorite.dataset.favoriteKey=favoriteKey;favorite.setAttribute('aria-pressed',String(isFavorite));favorite.setAttribute('aria-label',(isFavorite?'Remove favorite ':'Favorite ')+parts.project+(parts.tab?' · '+parts.tab:''));favorite.title=isFavorite?'Remove from favorites':'Add to favorites';favorite.append(agentFavoriteIcon());favorite.addEventListener('click',()=>toggleAgentFavorite(node,agent));
+ copy.append(title,meta);main.append(avatar,copy);main.addEventListener('click',()=>selectAgent(node,agent));card.append(main,favorite);return card;
 }
 
-function renderAgents(){
+function renderAgents(focusFavoriteKey=null){
  agentSections.replaceChildren();
  const entries=[];
  for(const node of nodes){for(const agent of Array.isArray(node.agentEntries)?node.agentEntries:[])entries.push({node,agent})}
@@ -1835,6 +1948,7 @@ function renderAgents(){
    for(const entry of matching)list.append(renderAgentCard(entry.node,entry.agent));
    wrapper.append(heading,list);agentSections.append(wrapper);
  }
+ if(focusFavoriteKey){const target=[...agentSections.querySelectorAll('[data-favorite-key]')].find((entry)=>entry.dataset.favoriteKey===focusFavoriteKey);if(target)target.focus()}
 }
 
 function renderInventory(data){
@@ -1971,6 +2085,7 @@ document.querySelector('#retry-inventory').addEventListener('click',()=>refresh(
 addEventListener('popstate',()=>{const id=requested();if(nodes.some((node)=>node.id===id))selectNode(id,{routeFromUrl:true})});
 bindRailResizer(hostRailResizer,'left');bindRailResizer(agentRailResizer,'right');
 addEventListener('resize',applyRailWidthPreferences);
+addEventListener('storage',(event)=>{if(event.key===AGENT_FAVORITES_STORAGE_KEY){agentFavorites=readAgentFavorites();renderAgents()}});
 document.addEventListener('visibilitychange',broadcastFrameActivity);
 desktopMedia.addEventListener('change',syncAgentMenuLayout);fallbackDesktopMedia.addEventListener('change',syncFallbackEntry);syncAgentMenuLayout();
 void refresh();

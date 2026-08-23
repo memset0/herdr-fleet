@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  FLEET_AGENT_FAVORITES_MAX,
   FLEET_CSS,
   FLEET_JS,
+  fleetAgentFavoriteCompare,
+  fleetAgentFavoriteKey,
+  fleetAgentFavoritePreference,
   fleetAttentionResetEligible,
   fleetAgentBucket,
   fleetDesktopFallbackUrl,
@@ -278,6 +282,54 @@ describe("Fleet iframe shell", () => {
     ).toBe(3);
     expect(FLEET_JS).toContain("entries.filter(({agent})=>bucket(agent)!=='recent').length");
     expect(FLEET_JS).toContain("outside Recent");
+  });
+
+  test("persists bounded browser-local Agent favorites and sorts them first within each bucket", () => {
+    const alpha = fleetAgentFavoriteKey({ nodeId: "alpha", herdrSession: "default", paneId: "w0:p1", agent: "codex" });
+    const beta = fleetAgentFavoriteKey({ nodeId: "beta", herdrSession: "batch", paneId: "w1:p2", agent: "claude" });
+    expect(alpha).toBe('["alpha","default","w0:p1","codex"]');
+    expect(beta).toBe('["beta","batch","w1:p2","claude"]');
+    expect(fleetAgentFavoriteKey({ nodeId: "", herdrSession: "default", paneId: "w0:p1", agent: "codex" })).toBeNull();
+    expect(fleetAgentFavoriteKey({ nodeId: "alpha", herdrSession: "bad\nname", paneId: "w0:p1", agent: "codex" })).toBeNull();
+
+    expect([...fleetAgentFavoritePreference(null)]).toEqual([]);
+    expect([...fleetAgentFavoritePreference(JSON.stringify({ version: 1, keys: [alpha!, beta!] }))]).toEqual([alpha!, beta!]);
+    expect([...fleetAgentFavoritePreference(JSON.stringify({ version: 1, keys: [alpha!, alpha!] }))]).toEqual([]);
+    expect([...fleetAgentFavoritePreference(JSON.stringify({ version: 2, keys: [alpha!] }))]).toEqual([]);
+    expect([...fleetAgentFavoritePreference("not json")]).toEqual([]);
+    const oversized = Array.from({ length: FLEET_AGENT_FAVORITES_MAX + 1 }, (_, index) =>
+      fleetAgentFavoriteKey({ nodeId: "alpha", herdrSession: "default", paneId: `w0:p${index}`, agent: "codex" }),
+    );
+    expect([...fleetAgentFavoritePreference(JSON.stringify({ version: 1, keys: oversized }))]).toEqual([]);
+    const favorites = new Set([beta!]);
+    expect(fleetAgentFavoriteCompare(alpha!, beta!, favorites)).toBe(1);
+    expect(fleetAgentFavoriteCompare(beta!, alpha!, favorites)).toBe(-1);
+    expect(fleetAgentFavoriteCompare(alpha!, alpha!, favorites)).toBe(0);
+
+    expect(FLEET_JS).toContain("AGENT_FAVORITES_STORAGE_KEY='herdr-web-remote:fleet-agent-favorites:v1'");
+    expect(FLEET_JS).toContain(`const AGENT_FAVORITES_MAX=${FLEET_AGENT_FAVORITES_MAX}`);
+    expect(FLEET_JS).toContain("JSON.stringify([node.id,agent.herdrSession,agent.paneId,agent.agent])");
+    expect(FLEET_JS).toContain("localStorage.setItem(AGENT_FAVORITES_STORAGE_KEY,JSON.stringify({version:1,keys:[...agentFavorites]}))");
+    expect(FLEET_JS).toContain("if(agentFavorites.size>=AGENT_FAVORITES_MAX)");
+    expect(FLEET_JS).toContain("agentFavorites.values().next().value");
+    expect(FLEET_JS).toContain("event.key===AGENT_FAVORITES_STORAGE_KEY");
+    expect(FLEET_JS).toContain("Number(agentFavorites.has(agentFavoriteKey(b.node,b.agent)))-Number(agentFavorites.has(agentFavoriteKey(a.node,a.agent)))");
+    expect(FLEET_JS).toContain("element('div','agent-card')");
+    expect(FLEET_JS).toContain("element('button','agent-card-main')");
+    expect(FLEET_JS).toContain("element('button','agent-favorite')");
+    expect(FLEET_JS).toContain("favorite.setAttribute('aria-pressed',String(isFavorite))");
+    expect(FLEET_JS).toContain("svg.dataset.icon='star'");
+    expect(FLEET_CSS).toContain(".agent-favorite[aria-pressed=\"true\"]");
+    expect(FLEET_CSS).toContain(".agent-favorite-icon { width: .95rem; height: .95rem; fill: none; }");
+
+    const toggleStart = FLEET_JS.indexOf("function toggleAgentFavorite(node,agent)");
+    const toggleEnd = FLEET_JS.indexOf("function renderAgentCard", toggleStart);
+    const toggleSource = FLEET_JS.slice(toggleStart, toggleEnd);
+    expect(toggleSource).toContain("persistAgentFavorites();renderAgents(key)");
+    expect(toggleSource).not.toContain("selectAgent(");
+    expect(toggleSource).not.toContain("selectNode(");
+    expect(toggleSource).not.toContain("refresh(");
+    expect(toggleSource).not.toContain("fetch(");
   });
 
   test("opens cards through validated canonical instance, Pane, and session selectors", () => {

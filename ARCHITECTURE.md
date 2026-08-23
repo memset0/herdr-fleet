@@ -107,6 +107,10 @@ the same exact-child action contract as desktop.
 The Agent panel follows Collie's triage/card vocabulary, adds the owning Host, and turns a card
 selection into the existing canonical instance/session/Pane route. The iframe still owns the complete native
 Collie route stack and every terminal operation; Fleet does not reproduce Pane views or actions.
+Each card is a container with sibling navigation and favorite buttons, avoiding nested interactive
+controls. Favorites live in one bounded versioned localStorage Set keyed by Host/Herdr-session/Pane/
+Agent, survive status/label/offline changes, and wrap rather than replace the bucket timestamp
+comparator. Storage failure remains in-memory and creates no Gateway write or recovery request.
 The shared native Header omits its complete Collie home/logo affordance when framed, releasing that
 space to the breadcrumb, while the same top-level page retains the mark, connection animation, and
 home action. This presentation decision lives in each node Web bundle, so an older compatible node

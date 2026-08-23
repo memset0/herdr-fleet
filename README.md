@@ -73,6 +73,11 @@ when later revealed.
 
 The compact header identifies the Agent menu with an Agent symbol and an inline count covering
 `Needs you`, `Ready · unseen`, and `Working`; `Recent` cards do not contribute to that number. An
+upper-right Lucide star on every Agent card stores a versioned browser-local favorite keyed by exact
+Host, Herdr session, Pane, and Agent implementation. Within each existing status section favorites
+sort first, then both favorite/non-favorite partitions retain the same activity ordering. Toggling
+does not navigate or refresh, and favorites are intentionally not synchronized through Gateway or
+Collie.
 offline card keeps the section and count treatment implied by its last successfully observed state
 while remaining visibly stale. The adjacent arrow-leaving-a-square control opens the selected
 Collie in a new tab. Fleet intentionally exposes no logout button in this header.
