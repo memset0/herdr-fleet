@@ -318,6 +318,8 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("element('button','agent-card-main')");
     expect(FLEET_JS).toContain("element('button','agent-favorite')");
     expect(FLEET_JS).toContain("favorite.setAttribute('aria-pressed',String(isFavorite))");
+    expect(FLEET_JS).toContain("const favoriteFocusKey=focusFavoriteKey||document.activeElement?.dataset?.favoriteKey||pendingFavoriteFocusKey");
+    expect(FLEET_JS).toContain("if(pendingFavoriteFocusKey===favoriteFocusKey)pendingFavoriteFocusKey=null");
     expect(FLEET_JS).toContain("svg.dataset.icon='star'");
     expect(FLEET_CSS).toContain(".agent-favorite[aria-pressed=\"true\"]");
     expect(FLEET_CSS).toContain(".agent-favorite-icon { width: .95rem; height: .95rem; fill: none; }");

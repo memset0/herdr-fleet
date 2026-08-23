@@ -1213,6 +1213,7 @@ let railDrag=null;
 let pendingAction=null;
 let renameTarget=null;
 let actionStatusTimer=null;
+let pendingFavoriteFocusKey=null;
 
 const healthLabel=(health)=>({online:'Online','herdr-down':'Herdr unavailable','bridge-down':'Collie unavailable','transport-down':'Transport unavailable'}[health]||'Unavailable');
 const statusLabel=(status)=>({blocked:'needs you',working:'working',done:'done',idle:'idle',unknown:'unknown'}[status]||'unknown');
@@ -1897,7 +1898,7 @@ function agentFavoriteIcon(){
 function toggleAgentFavorite(node,agent){
  const key=agentFavoriteKey(node,agent);const removing=agentFavorites.has(key);
  if(removing)agentFavorites.delete(key);else{if(agentFavorites.size>=AGENT_FAVORITES_MAX){const oldest=agentFavorites.values().next().value;if(oldest!==undefined)agentFavorites.delete(oldest)}agentFavorites.add(key)}
- persistAgentFavorites();renderAgents(key);announce((removing?'Removed favorite ':'Favorited ')+(agentParts(agent).project||agent.agent)+'.');
+ pendingFavoriteFocusKey=key;persistAgentFavorites();renderAgents(key);announce((removing?'Removed favorite ':'Favorited ')+(agentParts(agent).project||agent.agent)+'.');
 }
 
 function renderAgentCard(node,agent){
@@ -1922,6 +1923,7 @@ function renderAgentCard(node,agent){
 }
 
 function renderAgents(focusFavoriteKey=null){
+ const favoriteFocusKey=focusFavoriteKey||document.activeElement?.dataset?.favoriteKey||pendingFavoriteFocusKey;
  agentSections.replaceChildren();
  const entries=[];
  for(const node of nodes){for(const agent of Array.isArray(node.agentEntries)?node.agentEntries:[])entries.push({node,agent})}
@@ -1948,7 +1950,7 @@ function renderAgents(focusFavoriteKey=null){
    for(const entry of matching)list.append(renderAgentCard(entry.node,entry.agent));
    wrapper.append(heading,list);agentSections.append(wrapper);
  }
- if(focusFavoriteKey){const target=[...agentSections.querySelectorAll('[data-favorite-key]')].find((entry)=>entry.dataset.favoriteKey===focusFavoriteKey);if(target)target.focus()}
+ if(favoriteFocusKey){const target=[...agentSections.querySelectorAll('[data-favorite-key]')].find((entry)=>entry.dataset.favoriteKey===favoriteFocusKey);if(target)requestAnimationFrame(()=>{if(target.isConnected)target.focus();if(pendingFavoriteFocusKey===favoriteFocusKey)pendingFavoriteFocusKey=null})}
 }
 
 function renderInventory(data){
