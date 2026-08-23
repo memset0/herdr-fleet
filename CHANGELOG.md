@@ -6,6 +6,16 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.12] - 2026-08-23
+
+### Fixed
+
+- Preserve keyboard focus on the same Agent favorite control when an already in-flight Fleet refresh rerenders the list after a favorite reorder, without stealing focus back after the operator has moved elsewhere (068816d).
+
+### Upgrading
+
+- This is a central-only Fleet accessibility patch following 2.5.11. Upgrade the central Gateway plugin to `2.5.12`; remote `2.5.x` nodes remain compatible.
+
 ## [2.5.11] - 2026-08-23
 
 ### Added
