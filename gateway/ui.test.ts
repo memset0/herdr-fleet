@@ -364,7 +364,7 @@ describe("Fleet iframe shell", () => {
     expect(fleetShortcutCycleIndex([], "a", 1)).toBeNull();
     expect(fleetShortcutCycleIndex(["a"], "missing", 1)).toBeNull();
 
-    const page = fleetPage(1, "2.5.13");
+    const page = fleetPage(1, "2.5.14");
     expect(page).toContain('id="fleet-shortcuts-heading">Shortcuts</h2>');
     expect(page).toContain("<span>Resize current Pane</span><kbd>Alt+S</kbd>");
     expect(page).toContain("<span>Select Agent 9</span><kbd>Alt+9</kbd>");
@@ -401,7 +401,7 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("const shortcut=matchShortcut(event);if(shortcut){event.preventDefault();dispatchShortcut(shortcut);return}");
     expect(FLEET_JS).toContain("if(!desktopMedia.matches||event.repeat)return null");
     expect(FLEET_JS).toContain("shortcut.ctrlKey===event.ctrlKey&&shortcut.metaKey===event.metaKey&&shortcut.shiftKey===event.shiftKey");
-    expect(fleetPage(1, "2.5.13")).toContain('id="shortcut-toast"');
+    expect(fleetPage(1, "2.5.14")).toContain('id="shortcut-toast"');
     expect(FLEET_CSS).toContain('.shortcut-toast[data-visible="true"]');
     expect(FLEET_JS).toContain("shortcutToast.textContent=shortcut.keyLabel+' · '+shortcut.label");
     expect(FLEET_JS).toContain("showShortcutToast(shortcut)");

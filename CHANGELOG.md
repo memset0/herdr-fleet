@@ -6,6 +6,21 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.14] - 2026-08-23
+
+### Added
+
+- Show a bottom-centre fading `<key> · <action>` confirmation whenever desktop Fleet accepts a supported exact shortcut from either the outer document or selected iframe (be63014).
+
+### Fixed
+
+- Close the iframe document-load/React Pane-mount race by capturing delivered shortcuts and waiting one bounded interval for the existing Resize handler, while preserving one command and one API invocation with no retry (be63014).
+- Keep the first nine Agent hints to a single `Alt+N` keycap and reserve its extra width on the title row so Host/age metadata returns to its original lower-right alignment (be63014).
+
+### Upgrading
+
+- Update central Fleet and each node Web bundle to `2.5.14` for immediate iframe `Alt+S` reliability and consistent shortcut feedback. The patch remains compatible with `2.5.x`, changes no Herdr/Gateway protocol or configuration, and needs only the existing plugin-owned hot switch.
+
 ## [2.5.13] - 2026-08-23
 
 ### Added
