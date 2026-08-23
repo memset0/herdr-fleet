@@ -31,9 +31,10 @@ chord and label; the child accepts bounded active binding configuration from its
 forwards shortcut ids only, and exposes an allowlisted command handler that registers AgentChat's
 existing `resizeToMirror()` callback. Keep the controller startup, strict config/intent/command/
 result schemas, correlation/de-duplication, and AgentChat registration together during an upstream
-import. Do not move the registry into Collie, duplicate the resize measurement, forward raw key
-events, or activate the bridge in standalone Collie. A future existing-action binding belongs in
-Fleet's single registry and tests; a new action requires a deliberate allowlist adapter.
+import, including its capture listener and bounded document-load/Pane-handler registration grace.
+Do not move the registry into Collie, duplicate the resize measurement, forward raw key events,
+retry the API, or activate the bridge in standalone Collie. A future existing-action binding belongs
+in Fleet's single registry and tests; a new action requires a deliberate allowlist adapter.
 
 When importing a later Collie release, start from clean synchronized checkouts with one writer,
 preflight a named stable tag, and merge that tag's dereferenced commit from the `upstream` remote so

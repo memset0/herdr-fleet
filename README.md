@@ -85,12 +85,15 @@ Collie in a new tab. Fleet intentionally exposes no logout button in this header
 Desktop Fleet also owns one discoverable keyboard-shortcut registry, shown in the left-footer
 settings popup: `Alt+S` resizes the current Pane to Collie's measured mirror, `Alt+K` / `Alt+J`
 cycle through the complete left-tree Pane order, and `Alt+1`…`Alt+9` open the first nine Agent cards
-in their current rendered order. Those cards show matching ordinal/key badges. Physical key codes,
-exact modifiers, and auto-repeat are checked centrally; compact/mobile Fleet and standalone Collie
-install no active binding. When focus is inside the selected cross-origin iframe, its Web bundle
-forwards only a registered shortcut id. Fleet still owns the mapping and navigation, while the one
-child action invokes the exact same `Resize` callback as Collie's Display settings. Older compatible
-node bundles continue to work but cannot forward iframe-focused shortcuts until updated.
+in their current rendered order. Those cards show only the matching `Alt+N` keycap, leaving their
+Host/age metadata on the original lower row. Every accepted desktop binding shows a short fading
+bottom-centre `<key> · <action>` confirmation. Physical key codes, exact modifiers, and auto-repeat
+are checked centrally; compact/mobile Fleet and standalone Collie install no active binding or
+confirmation. When focus is inside the selected cross-origin iframe, its Web bundle forwards only a
+registered shortcut id. Fleet still owns the mapping and navigation, while the one child action
+invokes the exact same `Resize` callback as Collie's Display settings. A bounded handler-registration
+grace closes the document-load/Pane-mount race without retrying the command or resize API. Older
+compatible node bundles continue to work but cannot forward iframe-focused shortcuts until updated.
 
 ### Collie node controls
 

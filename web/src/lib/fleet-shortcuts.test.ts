@@ -145,9 +145,40 @@ describe("Fleet framed shortcut bridge", () => {
     expect(environment.posted[1]).toEqual(environment.posted[0]);
   });
 
+  it("waits briefly for the mounted Pane handler without retrying the command", async () => {
+    const environment = new FakeShortcutEnvironment();
+    const handlers = new Map<"resize-current-pane", () => void | Promise<void>>();
+    const handler = vi.fn();
+    createFleetShortcutController(environment, handlers, 1_000, 100)();
+    environment.message(environment.parent, config);
+    environment.message(environment.parent, command);
+    setTimeout(() => handlers.set("resize-current-pane", handler), 10);
+
+    await vi.waitFor(() => expect(environment.posted).toHaveLength(1));
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(environment.posted[0]).toMatchObject({ ok: true, requestId: command.requestId });
+  });
+
+  it("abandons a waiting command when the selected child becomes inactive", async () => {
+    const environment = new FakeShortcutEnvironment();
+    const handlers = new Map<"resize-current-pane", () => void | Promise<void>>();
+    const handler = vi.fn();
+    createFleetShortcutController(environment, handlers, 1_000, 100)();
+    environment.message(environment.parent, config);
+    environment.message(environment.parent, command);
+    setTimeout(() => {
+      environment.message(environment.parent, { ...config, generation: 2, active: false });
+      handlers.set("resize-current-pane", handler);
+    }, 10);
+
+    await vi.waitFor(() => expect(environment.posted).toHaveLength(1));
+    expect(handler).not.toHaveBeenCalled();
+    expect(environment.posted[0]).toMatchObject({ ok: false, error: "Shortcut action is unavailable" });
+  });
+
   it("fails closed for inactive, missing, throwing, and timed-out handlers", async () => {
     const missing = new FakeShortcutEnvironment();
-    createFleetShortcutController(missing, new Map())();
+    createFleetShortcutController(missing, new Map(), 1_000, 0)();
     missing.message(missing.parent, config);
     missing.message(missing.parent, command);
     await vi.waitFor(() => expect(missing.posted).toHaveLength(1));

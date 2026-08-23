@@ -120,9 +120,13 @@ One typed Fleet registry owns desktop shortcut chords, labels, scope, and allowl
 outer document matches exact physical codes and modifiers without repeat; it snapshots Pane targets
 from the same complete validated tree traversal and Agent targets from the same rendered section
 order. Thus collapsed branches remain reachable, a flattened one-Pane Tab appears once, cycling
-wraps, and favorite/status rerenders atomically reassign `Alt+1`…`Alt+9` badges. All navigation goes
-through the existing tree/card selectors, including attention resets and canonical Host/session
-routes. Compact Fleet neither creates Agent shortcut targets nor exposes shortcut hints.
+wraps, and favorite/status rerenders atomically reassign `Alt+1`…`Alt+9` keycaps. The keycap-only
+hint reserves space on the title row, leaving Host/age metadata at the card's original lower-right
+edge. Every accepted dispatch also renders one bounded bottom-centre fading confirmation from the
+registry's key label/action label; it confirms recognition rather than asynchronous action success.
+All navigation goes through the existing tree/card selectors, including attention resets and
+canonical Host/session routes. Compact Fleet neither creates Agent shortcut targets nor exposes
+shortcut hints or confirmations.
 
 Iframe focus crosses a dedicated version-1 exact-child shortcut boundary. Fleet sends bounded
 id/code/modifier definitions only to registered node origins, activating only the selected visible
@@ -133,9 +137,12 @@ standalone. Fleet accepts intents/results only from the selected WindowProxy and
 de-duplicates bounded ids, permits one resize command in flight, and fails closed on malformed,
 stale, unavailable, or timed-out messages without retry. `Alt+S` registers AgentChat's existing
 `resizeToMirror()` callback, so Collie alone measures its browser-local scrollport and calls the
-existing read-only/session-scoped resize API. To add a binding for an existing action, extend the
-single registry plus discovery/protocol tests; a new action kind also requires an explicit
-allowlisted Fleet or Collie adapter.
+existing read-only/session-scoped resize API. Because iframe `load` can precede the Pane route's
+React effects, a valid command may wait up to one short bounded registration interval for that
+handler and then invokes it at most once; timeout/inactivity still fails closed and no command/API
+retry is introduced. The child captures delivered chords before inner controls can consume them.
+To add a binding for an existing action, extend the single registry plus discovery/protocol tests;
+a new action kind also requires an explicit allowlisted Fleet or Collie adapter.
 
 Each browser requests Fleet immediately on load and sends a manual reset when the menu is opened.
 A click on a live `Ready · unseen` or `Needs You` card performs its validated Pane navigation first

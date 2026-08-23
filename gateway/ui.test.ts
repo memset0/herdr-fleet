@@ -386,11 +386,13 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("desktopMedia.matches&&nextAgentShortcutTargets.length<9");
     expect(FLEET_JS).toContain("agentShortcutTargets=nextAgentShortcutTargets");
     expect(FLEET_JS).toContain("desktopMode=nextDesktop;renderAgents();syncTreePresentation()");
-    expect(FLEET_JS).toContain("element('span','agent-shortcut-ordinal',ordinal)");
     expect(FLEET_JS).toContain("element('kbd','agent-shortcut-key','Alt+'+ordinal)");
+    expect(FLEET_JS).not.toContain("agent-shortcut-ordinal");
     expect(FLEET_JS).toContain("Shortcut Alt+'+ordinal");
     expect(FLEET_CSS).toContain(".agent-shortcut-hint { display: none; }");
     expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.agent-shortcut-hint \{ display: flex/);
+    expect(FLEET_CSS).toContain(".agent-title-line { padding-right: 2.9rem; }");
+    expect(FLEET_CSS).not.toContain(".agent-card-main { padding-right: 5.9rem; }");
 
     expect(FLEET_JS).toContain("function dispatchShortcut(shortcut,{childOriginated=false}={})");
     expect(FLEET_JS).toContain("selectTreeNode(target.nodeId,{route:target.route,focusTreeKey:target.treeKey})");
@@ -399,6 +401,11 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("const shortcut=matchShortcut(event);if(shortcut){event.preventDefault();dispatchShortcut(shortcut);return}");
     expect(FLEET_JS).toContain("if(!desktopMedia.matches||event.repeat)return null");
     expect(FLEET_JS).toContain("shortcut.ctrlKey===event.ctrlKey&&shortcut.metaKey===event.metaKey&&shortcut.shiftKey===event.shiftKey");
+    expect(fleetPage(1, "2.5.13")).toContain('id="shortcut-toast"');
+    expect(FLEET_CSS).toContain('.shortcut-toast[data-visible="true"]');
+    expect(FLEET_JS).toContain("shortcutToast.textContent=shortcut.keyLabel+' · '+shortcut.label");
+    expect(FLEET_JS).toContain("showShortcutToast(shortcut)");
+    expect(FLEET_JS).toContain("shortcutToastTimer=setTimeout");
   });
 
   test("bridges only the exact selected desktop iframe with correlated allowlisted messages", () => {

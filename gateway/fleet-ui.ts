@@ -470,6 +470,7 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
           </div>
         </form>
       </section>
+      <div id="shortcut-toast" class="shortcut-toast" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true"></div>
       <p id="fleet-status" class="sr-only" role="status">Connecting to Fleet.</p>
     </main>`,
     ["/fleet-assets/fleet.css", "/fleet-assets/fleet.js"],
@@ -800,6 +801,28 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 .host-chip { max-width: 8.5rem; overflow: hidden; background: var(--accent); color: var(--foreground); text-overflow: ellipsis; white-space: nowrap; }
 .offline-chip { border-color: color-mix(in oklch, var(--status-blocked) 35%, var(--border)); color: var(--status-blocked); text-transform: uppercase; }
 .agent-age { flex: none; color: var(--muted-foreground); font-size: .66rem; font-variant-numeric: tabular-nums; }
+.shortcut-toast {
+  position: fixed;
+  z-index: 30;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  left: 50%;
+  max-width: min(32rem, calc(100vw - 2rem));
+  visibility: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--card) 94%, transparent);
+  padding: .42rem .72rem;
+  box-shadow: 0 8px 24px light-dark(#00000018, #00000070);
+  color: var(--foreground);
+  font-size: .7rem;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, .35rem);
+  transition: opacity .2s ease, transform .2s ease, visibility 0s linear .2s;
+  backdrop-filter: blur(12px);
+}
+.shortcut-toast[data-visible="true"] { visibility: visible; opacity: 1; transform: translate(-50%, 0); transition-delay: 0s; }
 .frame-stage { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; background: var(--background); }
 .node-frame { display: block; width: 100%; height: 100%; border: 0; background: var(--background); }
 .frame-loading { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; gap: .8rem; background: var(--background); color: var(--muted-foreground); font-size: .8rem; }
@@ -1132,9 +1155,8 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   .fleet-shortcuts ul { display: grid; gap: .28rem; margin: 0; padding: 0; list-style: none; }
   .fleet-shortcuts li { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .65rem; color: var(--muted-foreground); font-size: .65rem; }
   .fleet-shortcuts kbd, .agent-shortcut-key { flex: none; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: calc(var(--radius) - 4px); background: var(--background); padding: .13rem .32rem; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .6rem; line-height: 1.2; }
-  .agent-card-main { padding-right: 5.9rem; }
+  .agent-title-line { padding-right: 2.9rem; }
   .agent-shortcut-hint { display: flex; align-items: center; gap: .22rem; color: var(--muted-foreground); font-size: .58rem; }
-  .agent-shortcut-ordinal { font-variant-numeric: tabular-nums; }
   .tree-action-status {
     display: block;
     flex: none;
@@ -1292,6 +1314,7 @@ const settingsPopover=document.querySelector('#fleet-settings');
 const cacheSizeSelect=document.querySelector('#iframe-cache-size');
 const cacheReset=document.querySelector('#iframe-cache-reset');
 const treeActionStatus=document.querySelector('#tree-action-status');
+const shortcutToast=document.querySelector('#shortcut-toast');
 const renamePopover=document.querySelector('#tree-rename');
 const renameForm=document.querySelector('#tree-rename-form');
 const renameTitle=document.querySelector('#tree-rename-title');
@@ -1323,6 +1346,7 @@ let railDrag=null;
 let pendingAction=null;
 let renameTarget=null;
 let actionStatusTimer=null;
+let shortcutToastTimer=null;
 let pendingFavoriteFocusKey=null;
 let paneShortcutTargets=[];
 let agentShortcutTargets=[];
@@ -1397,6 +1421,12 @@ function showTreeActionStatus(message,kind='success'){
  if(actionStatusTimer!==null){clearTimeout(actionStatusTimer);actionStatusTimer=null}
  treeActionStatus.textContent=message;treeActionStatus.dataset.kind=kind;treeActionStatus.hidden=false;announce(message);
  actionStatusTimer=setTimeout(()=>{actionStatusTimer=null;treeActionStatus.hidden=true;delete treeActionStatus.dataset.kind},5000);
+}
+
+function showShortcutToast(shortcut){
+ if(shortcutToastTimer!==null){clearTimeout(shortcutToastTimer);shortcutToastTimer=null}
+ shortcutToast.textContent=shortcut.keyLabel+' · '+shortcut.label;shortcutToast.dataset.visible='true';shortcutToast.setAttribute('aria-hidden','false');
+ shortcutToastTimer=setTimeout(()=>{shortcutToastTimer=null;delete shortcutToast.dataset.visible;shortcutToast.setAttribute('aria-hidden','true')},1800);
 }
 
 function shrinkFrameCache(){
@@ -2091,6 +2121,7 @@ function selectAgentShortcut(ordinal,childOriginated=false){
 
 function dispatchShortcut(shortcut,{childOriginated=false}={}){
  if(!shortcut||shortcut.scope!=='desktop'||!desktopMedia.matches||document.hidden)return false;
+ showShortcutToast(shortcut);
  if(shortcut.action.kind==='cycle-pane'){cyclePaneShortcut(shortcut.action.delta,childOriginated);return true}
  if(shortcut.action.kind==='select-agent'){selectAgentShortcut(shortcut.action.ordinal,childOriginated);return true}
  if(shortcut.action.kind==='resize-current-pane'){void dispatchSelectedShortcutAction(shortcut.action.kind);return true}
@@ -2128,7 +2159,7 @@ function renderAgentCard(node,agent,ordinal=null){
  else{meta.append(element('span','offline-chip','offline'));if(Number.isSafeInteger(agent.observedAt))meta.append(element('span','agent-age',timeAgo(agent.observedAt)))}
  const favorite=element('button','agent-favorite');favorite.type='button';favorite.dataset.favoriteKey=favoriteKey;favorite.setAttribute('aria-pressed',String(isFavorite));favorite.setAttribute('aria-label',(isFavorite?'Remove favorite ':'Favorite ')+parts.project+(parts.tab?' · '+parts.tab:''));favorite.title=isFavorite?'Remove from favorites':'Add to favorites';favorite.append(agentFavoriteIcon());favorite.addEventListener('click',()=>toggleAgentFavorite(node,agent));
  const tools=element('div','agent-card-tools');
- if(ordinal){const hint=element('span','agent-shortcut-hint');hint.setAttribute('aria-hidden','true');hint.append(element('span','agent-shortcut-ordinal',ordinal),element('kbd','agent-shortcut-key','Alt+'+ordinal));tools.append(hint)}
+ if(ordinal){const hint=element('span','agent-shortcut-hint');hint.setAttribute('aria-hidden','true');hint.append(element('kbd','agent-shortcut-key','Alt+'+ordinal));tools.append(hint)}
  tools.append(favorite);copy.append(title,meta);main.append(avatar,copy);main.addEventListener('click',()=>selectAgent(node,agent));card.append(main,tools);return card;
 }
 

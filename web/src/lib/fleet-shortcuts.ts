@@ -143,6 +143,7 @@ export function createFleetShortcutController(
   environment: FleetShortcutEnvironment,
   handlers: ReadonlyMap<FleetShortcutChildAction, FleetShortcutHandler>,
   commandTimeoutMs = COMMAND_TIMEOUT_MS,
+  handlerWaitMs = 2_000,
 ): () => () => void {
   let started = false;
   let generation = -1;
@@ -151,8 +152,25 @@ export function createFleetShortcutController(
   const results = new Map<string, Promise<FleetShortcutResult>>();
   const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
-  const runCommand = (command: FleetShortcutCommand): Promise<FleetShortcutResult> => {
-    const handler = active && !environment.documentHidden() ? handlers.get(command.action) : undefined;
+  const waitForHandler = async (action: FleetShortcutChildAction): Promise<FleetShortcutHandler | undefined> => {
+    const deadline = Date.now() + Math.max(0, Math.min(handlerWaitMs, 5_000));
+    let handler = active && !environment.documentHidden() ? handlers.get(action) : undefined;
+    while (!handler && started && active && !environment.documentHidden() && Date.now() < deadline) {
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          pendingTimers.delete(timeout);
+          resolve();
+        }, Math.min(25, Math.max(1, deadline - Date.now())));
+        pendingTimers.add(timeout);
+      });
+      if (!started || !active || environment.documentHidden()) return undefined;
+      handler = handlers.get(action);
+    }
+    return handler;
+  };
+
+  const runCommand = async (command: FleetShortcutCommand): Promise<FleetShortcutResult> => {
+    const handler = await waitForHandler(command.action);
     if (!handler) {
       return Promise.resolve({
         type: FLEET_SHORTCUT_RESULT_TYPE,
@@ -251,8 +269,8 @@ const startBrowserFleetShortcuts = createFleetShortcutController({
   documentHidden: () => document.hidden,
   addMessageListener: (listener) => window.addEventListener("message", listener),
   removeMessageListener: (listener) => window.removeEventListener("message", listener),
-  addKeyListener: (listener) => window.addEventListener("keydown", listener),
-  removeKeyListener: (listener) => window.removeEventListener("keydown", listener),
+  addKeyListener: (listener) => window.addEventListener("keydown", listener, { capture: true }),
+  removeKeyListener: (listener) => window.removeEventListener("keydown", listener, true),
   // Gateway frame-ancestors and Fleet's exact WindowProxy/Origin checks complete this boundary.
   postParent: (message) => window.parent.postMessage(message, "*"),
   randomId: () => typeof crypto.randomUUID === "function"
