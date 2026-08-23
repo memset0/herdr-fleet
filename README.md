@@ -32,6 +32,11 @@ disclosure; Space and multi-Pane Tab rows remain disclosure-only. A one-Pane Tab
 single direct row labelled by the Tab and decorated with the Pane's Agent status or `shell`, while
 multi-Pane Tabs retain explicit Pane children. There is no desktop AppBar above the iframe.
 
+The compact drawer/footer slide together, and Host/Space/multi-Pane Tab groups animate bounded
+height/opacity disclosure. Branches use Collie's Lucide `ChevronRight` in the same centred `.5rem`
+leading slot as direct Pane status dots, keeping sibling labels aligned; reduced-motion preference
+removes the transitions without changing state or accessibility.
+
 Both desktop rail boundaries are pointer- and keyboard-resizable. Fleet remembers bounded left and
 right preferences in that browser, clamps them to preserve the 40rem centre after viewport changes,
 and uses the shipped widths when storage is missing or invalid. The separators and preferences do

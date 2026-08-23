@@ -95,12 +95,12 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toContain('@media (max-width: 1199px)');
     expect(FLEET_CSS).toMatch(/\.host-switcher \{[^}]*display: flex;[^}]*gap: \.3rem;[^}]*overflow-x: auto;[^}]*padding: 0 \.1rem/);
     expect(FLEET_CSS).toMatch(/\.instance-strip \{ display: none; min-width: 0; \}/);
-    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*position: fixed;[^}]*overflow-y: auto/);
+    expect(FLEET_CSS).toMatch(/@media \(max-width: 1199px\)[\s\S]*?\.instance-strip \{[^}]*position: fixed;[^}]*overflow-y: auto/);
     expect(FLEET_CSS).toContain('.fleet-shell[data-tree-open="true"] .instance-strip .instance-tab {');
     expect(FLEET_CSS).not.toContain('.fleet-shell[data-tree-open="true"] .instance-tab {');
-    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*bottom: calc\(3\.35rem \+ env\(safe-area-inset-bottom\)\)/);
-    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.host-rail-footer \{[^}]*position: fixed;[^}]*display: flex/);
-    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.fleet-settings \{[^}]*bottom: calc\(100% \+ \.5rem\);[^}]*display: block/);
+    expect(FLEET_CSS).toMatch(/@media \(max-width: 1199px\)[\s\S]*?\.instance-strip \{[^}]*bottom: calc\(3\.35rem \+ env\(safe-area-inset-bottom\)\)/);
+    expect(FLEET_CSS).toMatch(/@media \(max-width: 1199px\)[\s\S]*?\.host-rail-footer \{[^}]*position: fixed;[^}]*display: flex/);
+    expect(FLEET_CSS).toMatch(/@media \(max-width: 1199px\)[\s\S]*?\.fleet-settings \{[^}]*bottom: calc\(100% \+ \.5rem\);[^}]*display: block/);
     expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.tree-inline-action \{[^}]*display: grid;[^}]*opacity: \.82/);
     expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.tree-action-status \{[^}]*position: fixed;[^}]*display: block/);
     expect(FLEET_CSS).toContain('.fleet-tree-toggle { display: none; }');
@@ -444,7 +444,8 @@ describe("Fleet iframe shell", () => {
     const toggleStart = FLEET_JS.indexOf("function toggleTree(key)");
     const toggleEnd = FLEET_JS.indexOf("function handleDisclosureKey", toggleStart);
     const toggleSource = FLEET_JS.slice(toggleStart, toggleEnd);
-    expect(toggleSource).toContain("renderTree(key)");
+    expect(toggleSource).toContain("if(!row||!group){renderTree(key);return}");
+    expect(toggleSource).toContain("group.dataset.expanded=String(expanded)");
     expect(toggleSource).not.toContain("renderTabs(");
     expect(toggleSource).not.toContain("renderHostSwitcher(");
 
@@ -457,5 +458,31 @@ describe("Fleet iframe shell", () => {
     const treeStart = FLEET_JS.indexOf("function renderTree(focusKey=null)");
     const treeEnd = FLEET_JS.indexOf("function renderTabs", treeStart);
     expect(FLEET_JS.slice(treeStart, treeEnd)).not.toContain("hostSwitcher");
+  });
+
+  test("animates disclosure and aligns Lucide chevrons with Pane state dots", () => {
+    const page = fleetPage(1, "2.5.10");
+    expect(page).toContain('id="instances"');
+    expect(page).toContain('aria-hidden="true" inert');
+    expect(FLEET_CSS).toContain("--tree-indicator-size: .5rem");
+    expect(FLEET_CSS).toMatch(/\.tree-chevron \{[^}]*width: var\(--tree-indicator-size\);[^}]*height: var\(--tree-indicator-size\);[^}]*transform-origin: 50% 50%/);
+    expect(FLEET_CSS).toMatch(/\.tree-pane-dot \{[^}]*width: var\(--tree-indicator-size\);[^}]*height: var\(--tree-indicator-size\)/);
+    expect(FLEET_CSS).toMatch(/\.tree-children \{[^}]*display: grid;[^}]*grid-template-rows: 0fr;[^}]*transition: grid-template-rows/);
+    expect(FLEET_CSS).toContain('.tree-children[data-expanded="true"] { grid-template-rows: 1fr; opacity: 1; }');
+    expect(FLEET_CSS).toContain(".tree-children-inner { min-height: 0; overflow: hidden; }");
+    expect(FLEET_CSS).toMatch(/@media \(max-width: 1199px\)[\s\S]*?\.instance-strip \{[^}]*transform: translateX\(calc\(-100% - 1rem\)\);[^}]*transition: transform \.2s/);
+    expect(FLEET_CSS).toMatch(/\.fleet-shell\[data-tree-open="true"\] \.instance-strip \{[^}]*transform: translateX\(0\)/);
+    expect(FLEET_CSS).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.instance-strip, \.host-rail-footer, \.tree-children, \.tree-chevron \{ transition: none !important; \}/);
+
+    expect(FLEET_JS).toContain("document.createElementNS('http://www.w3.org/2000/svg','svg')");
+    expect(FLEET_JS).toContain("path.setAttribute('d','m9 18 6-6-6-6')");
+    expect(FLEET_JS).toContain("svg.dataset.icon='chevron-right'");
+    expect(FLEET_JS).toContain("function treeChildrenGroup(key,expanded)");
+    expect(FLEET_JS).toContain("group.inert=!expanded;group.setAttribute('aria-hidden',String(!expanded))");
+    expect(FLEET_JS).toContain("group.dataset.treeChildren=key;group.dataset.expanded=String(expanded)");
+    expect(FLEET_JS).toContain("function syncTreePresentation()");
+    expect(FLEET_JS).toContain("const hidden=!desktopMedia.matches&&!treeOpen;instances.inert=hidden");
+    expect(FLEET_JS).not.toContain("element('span','tree-chevron','›')");
+    expect(FLEET_JS).not.toMatch(/\.hidden=!.*Open/);
   });
 });

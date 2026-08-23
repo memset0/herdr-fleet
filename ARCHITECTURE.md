@@ -83,6 +83,12 @@ state at the bottom, below its scrolling sections. Intermediate widths are no lo
 640 px. Expansion state is local and survives
 aggregate refreshes; cached topology is marked stale with its source.
 
+Compact tree/footer visibility uses an off-canvas transform with immediate inert/ARIA gating, while
+stable keyed child groups transition a `0fr → 1fr` grid track and opacity around one clipped inner
+wrapper. Disclosure mutates only the matching row/group and falls back to a tree render only if the
+keyed DOM is missing. The standard Lucide `ChevronRight` SVG and Pane state dot share one `.5rem`
+leading slot; reduced-motion media disables all drawer/group/chevron transitions.
+
 Two overlaid desktop separators update only bounded parent-grid CSS variables. Pointer and keyboard
 adjustments share one path, and a versioned browser-local record stores finite pixel preferences;
 each viewport reapplies them while protecting a 40rem centre. A temporary drag shield prevents the

@@ -241,7 +241,7 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
         <nav id="host-switcher" class="host-switcher" aria-label="Herdr Host switcher" role="tablist">
           <span class="connecting">Connecting…</span>
         </nav>
-        <nav id="instances" class="instance-strip" aria-label="Herdr Hosts" role="tree">
+        <nav id="instances" class="instance-strip" aria-label="Herdr Hosts" role="tree" aria-hidden="true" inert>
           <span class="connecting">Connecting…</span>
         </nav>
         <button id="agent-menu-toggle" class="header-action agent-menu-toggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="agent-menu" aria-label="Open all Agents" title="All Agents">
@@ -348,6 +348,7 @@ export const FLEET_CSS = `${GATEWAY_THEME_CSS}
   --status-unknown: light-dark(oklch(.43 .02 250), oklch(.6 .02 250));
   --status-online: var(--status-done);
   --status-down: var(--status-blocked);
+  --tree-indicator-size: .5rem;
 }
 html, body { height: 100%; overflow: hidden; }
 body { margin: 0; background: var(--muted); color: var(--foreground); }
@@ -415,13 +416,21 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 .host-switcher::-webkit-scrollbar { display: none; }
 .instance-strip { display: none; min-width: 0; }
 .host-tree { display: contents; }
-.tree-children { display: none; }
+.tree-children {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows .18s cubic-bezier(.2, .8, .2, 1), opacity .14s ease;
+}
+.tree-children[data-expanded="true"] { grid-template-rows: 1fr; opacity: 1; }
+.tree-children-inner { min-height: 0; overflow: hidden; }
 .tree-chevron, .tree-pane-dot, .tree-hint { flex: none; }
-.tree-chevron { display: none; width: 1rem; height: 100%; place-items: center; color: var(--muted-foreground); font-size: 1rem; line-height: 1; transition: transform .12s ease; }
+.tree-chevron { display: none; width: var(--tree-indicator-size); height: var(--tree-indicator-size); overflow: visible; color: var(--muted-foreground); transform-origin: 50% 50%; transition: transform .16s cubic-bezier(.2, .8, .2, 1); }
 .tree-row[aria-expanded="true"] > .tree-chevron { transform: rotate(90deg); }
 .tree-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-hint { max-width: 5.5rem; overflow: hidden; color: var(--muted-foreground); font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
-.tree-pane-dot { width: .45rem; height: .45rem; border-radius: 999px; background: var(--tree-pane-color); box-shadow: 0 0 0 2px color-mix(in oklch, var(--tree-pane-color) 16%, transparent); }
+.tree-pane-dot { width: var(--tree-indicator-size); height: var(--tree-indicator-size); border-radius: 999px; background: var(--tree-pane-color); box-shadow: 0 0 0 2px color-mix(in oklch, var(--tree-pane-color) 16%, transparent); }
 .tree-row-wrap { position: relative; min-width: 0; }
 .tree-inline-action { display: none; }
 .desktop-fallback-entry { display: none; }
@@ -637,7 +646,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 [hidden] { display: none !important; }
 @keyframes pulse { 50% { opacity: .45; transform: scale(.96); } }
 @media (max-width: 1199px) {
-.fleet-shell[data-tree-open="true"] .instance-strip {
+.instance-strip {
   position: fixed;
   z-index: 25;
   top: calc(3.75rem + env(safe-area-inset-top));
@@ -653,10 +662,15 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   background: var(--background);
   padding: .65rem .55rem;
   box-shadow: 18px 0 42px light-dark(#00000024, #000000a0);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(-100% - 1rem));
+  visibility: hidden;
+  transition: transform .2s cubic-bezier(.2, .8, .2, 1), opacity .16s ease, visibility 0s linear .2s;
 }
+.fleet-shell[data-tree-open="true"] .instance-strip { opacity: 1; pointer-events: auto; transform: translateX(0); visibility: visible; transition-delay: 0s; }
 .fleet-shell[data-tree-open="true"] .host-tree { display: block; }
-.fleet-shell[data-tree-open="true"] .tree-children:not([hidden]) { display: block; }
-.fleet-shell[data-tree-open="true"] .tree-chevron { display: grid; }
+.fleet-shell[data-tree-open="true"] .tree-chevron { display: block; }
 .fleet-shell[data-tree-open="true"] .tree-row {
   display: flex;
   width: 100%;
@@ -708,7 +722,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   border-radius: calc(var(--radius) - 1px);
   padding: 0 .5rem;
 }
-.fleet-shell[data-tree-open="true"] .host-rail-footer {
+.host-rail-footer {
   position: fixed;
   z-index: 26;
   bottom: 0;
@@ -723,9 +737,15 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   background: var(--muted);
   padding: .45rem .65rem calc(.45rem + env(safe-area-inset-bottom));
   box-shadow: 18px 0 42px light-dark(#00000024, #000000a0);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(-100% - 1rem));
+  visibility: hidden;
+  transition: transform .2s cubic-bezier(.2, .8, .2, 1), opacity .16s ease, visibility 0s linear .2s;
 }
-.fleet-shell[data-tree-open="true"] .host-rail-version { color: var(--muted-foreground); font-size: .66rem; font-variant-numeric: tabular-nums; }
-.fleet-shell[data-tree-open="true"] .host-rail-settings {
+.fleet-shell[data-tree-open="true"] .host-rail-footer { opacity: 1; pointer-events: auto; transform: translateX(0); visibility: visible; transition-delay: 0s; }
+.host-rail-version { color: var(--muted-foreground); font-size: .66rem; font-variant-numeric: tabular-nums; }
+.host-rail-settings {
   display: grid;
   width: 2rem;
   height: 2rem;
@@ -736,10 +756,10 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   color: var(--muted-foreground);
   cursor: pointer;
 }
-.fleet-shell[data-tree-open="true"] .host-rail-settings:hover,
-.fleet-shell[data-tree-open="true"] .host-rail-settings[aria-expanded="true"] { background: var(--accent); color: var(--foreground); }
-.fleet-shell[data-tree-open="true"] .fleet-settings-anchor { position: relative; }
-.fleet-shell[data-tree-open="true"] .fleet-settings {
+.host-rail-settings:hover,
+.host-rail-settings[aria-expanded="true"] { background: var(--accent); color: var(--foreground); }
+.fleet-settings-anchor { position: relative; }
+.fleet-settings {
   position: absolute;
   z-index: 60;
   right: 0;
@@ -753,16 +773,16 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   padding: .8rem;
   box-shadow: 0 16px 42px light-dark(#00000020, #000000a0);
 }
-.fleet-shell[data-tree-open="true"] .fleet-settings-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; font-size: .78rem; }
-.fleet-shell[data-tree-open="true"] .fleet-settings-heading span { color: var(--muted-foreground); font-size: .62rem; }
-.fleet-shell[data-tree-open="true"] .fleet-setting-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-top: .85rem; }
-.fleet-shell[data-tree-open="true"] .fleet-setting-row > span { display: grid; min-width: 0; gap: .15rem; }
-.fleet-shell[data-tree-open="true"] .fleet-setting-row strong { font-size: .72rem; }
-.fleet-shell[data-tree-open="true"] .fleet-setting-row small { color: var(--muted-foreground); font-size: .62rem; line-height: 1.35; }
-.fleet-shell[data-tree-open="true"] .fleet-setting-row select { min-width: 3.5rem; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: .35rem .45rem; color: var(--foreground); }
-.fleet-shell[data-tree-open="true"] .fleet-settings-foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .75rem; color: var(--muted-foreground); font-size: .62rem; }
-.fleet-shell[data-tree-open="true"] .fleet-settings-foot button { border: 0; background: transparent; padding: .25rem; color: var(--muted-foreground); font-size: .64rem; cursor: pointer; }
-.fleet-shell[data-tree-open="true"] .fleet-settings-foot button:hover { color: var(--foreground); }
+.fleet-settings-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; font-size: .78rem; }
+.fleet-settings-heading span { color: var(--muted-foreground); font-size: .62rem; }
+.fleet-setting-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-top: .85rem; }
+.fleet-setting-row > span { display: grid; min-width: 0; gap: .15rem; }
+.fleet-setting-row strong { font-size: .72rem; }
+.fleet-setting-row small { color: var(--muted-foreground); font-size: .62rem; line-height: 1.35; }
+.fleet-setting-row select { min-width: 3.5rem; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: .35rem .45rem; color: var(--foreground); }
+.fleet-settings-foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .75rem; color: var(--muted-foreground); font-size: .62rem; }
+.fleet-settings-foot button { border: 0; background: transparent; padding: .25rem; color: var(--muted-foreground); font-size: .64rem; cursor: pointer; }
+.fleet-settings-foot button:hover { color: var(--foreground); }
 .fleet-shell[data-tree-open="true"] .tree-action-status {
   position: fixed;
   z-index: 27;
@@ -821,8 +841,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
     padding-bottom: .5rem;
   }
   .host-tree { display: block; }
-  .tree-children:not([hidden]) { display: block; }
-  .tree-chevron { display: grid; }
+  .tree-chevron { display: block; }
   .tree-row {
     display: flex;
     width: 100%;
@@ -1033,6 +1052,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 @media (prefers-reduced-motion: reduce) {
   .loading-mark { animation: none; }
   .agent-card { transition: none; }
+  .instance-strip, .host-rail-footer, .tree-children, .tree-chevron { transition: none !important; }
 }
 `;
 
@@ -1534,8 +1554,11 @@ function focusTreeKey(key){
 }
 
 function toggleTree(key){
- if(expandedTreeKeys.has(key))expandedTreeKeys.delete(key);else expandedTreeKeys.add(key);
- renderTree(key);
+ const expanded=!expandedTreeKeys.has(key);if(expanded)expandedTreeKeys.add(key);else expandedTreeKeys.delete(key);
+ const row=[...instances.querySelectorAll('[data-tree-key]')].find((entry)=>entry.dataset.treeKey===key);
+ const group=[...instances.querySelectorAll('[data-tree-children]')].find((entry)=>entry.dataset.treeChildren===key);
+ if(!row||!group){renderTree(key);return}
+ row.setAttribute('aria-expanded',String(expanded));group.dataset.expanded=String(expanded);group.inert=!expanded;group.setAttribute('aria-hidden',String(!expanded));row.focus();
 }
 
 function handleDisclosureKey(event,key){
@@ -1544,11 +1567,21 @@ function handleDisclosureKey(event,key){
  event.preventDefault();toggleTree(key);
 }
 
+function treeChevron(){
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('class','tree-chevron');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','2');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');svg.dataset.icon='chevron-right';
+ const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','m9 18 6-6-6-6');svg.append(path);return svg;
+}
+
+function treeChildrenGroup(key,expanded){
+ const group=element('div','tree-children');group.setAttribute('role','group');group.dataset.treeChildren=key;group.dataset.expanded=String(expanded);group.inert=!expanded;group.setAttribute('aria-hidden',String(!expanded));
+ const inner=element('div','tree-children-inner');group.append(inner);return {group,inner};
+}
+
 function disclosureRow(level,key,label,expanded,options={}){
  const button=element('button','tree-row tree-row-level-'+level);button.type='button';button.dataset.treeKey=key;
  button.setAttribute('role','treeitem');button.setAttribute('aria-level',String(level));button.setAttribute('aria-expanded',String(expanded));
  if(options.stale)button.dataset.stale='true';
- const chevron=element('span','tree-chevron','›');chevron.setAttribute('aria-hidden','true');
+ const chevron=treeChevron();
  const name=element('span','tree-label',label);button.append(chevron,name);
  if(options.hint)button.append(element('span','tree-hint',options.hint));
  button.addEventListener('click',()=>toggleTree(key));button.addEventListener('keydown',(event)=>handleDisclosureKey(event,key));return button;
@@ -1596,7 +1629,7 @@ function renderTree(focusKey=null){
    button.type='button';button.setAttribute('role','treeitem');button.setAttribute('aria-level','1');button.setAttribute('aria-expanded',String(expandedTreeKeys.has(hostKey)));
    button.dataset.instance=node.id;button.dataset.treeKey=hostKey;button.dataset.health=node.health;
    button.setAttribute('aria-selected',String(node.id===selectedId));button.setAttribute('aria-label',node.name+' · '+healthLabel(node.health));
-   const chevron=element('span','tree-chevron','›');chevron.setAttribute('aria-hidden','true');
+   const chevron=treeChevron();
    const dot=element('span','status-dot');dot.setAttribute('aria-hidden','true');
    const label=element('span','instance-name tree-label',node.name);button.append(chevron,dot,label);
    button.addEventListener('click',(event)=>{
@@ -1609,7 +1642,7 @@ function renderTree(focusKey=null){
    const addSpace=element('button','tree-inline-action','+');addSpace.type='button';addSpace.setAttribute('aria-label','New Space on '+node.name);addSpace.title='New Space';
    addSpace.hidden=node.health!=='online'||primaryTree?.reachable!==true;addSpace.addEventListener('click',(event)=>{event.stopPropagation();void createSpaceFromHost(node,{reachable:primaryTree?.reachable===true},addSpace)});
    hostRowWrap.append(button,addSpace);
-   const hostChildren=element('div','tree-children');hostChildren.setAttribute('role','group');hostChildren.hidden=!expandedTreeKeys.has(hostKey);
+   const {group:hostChildren,inner:hostChildrenInner}=treeChildrenGroup(hostKey,expandedTreeKeys.has(hostKey));
    for(const tree of trees){
      const session=typeof tree.herdrSession==='string'?tree.herdrSession:'';const sessionHint=trees.length>1&&!tree.primarySession?session:'';
      for(const space of Array.isArray(tree.spaces)?tree.spaces:[]){
@@ -1621,7 +1654,7 @@ function renderTree(focusKey=null){
        const addPane=element('button','tree-inline-action','+');addPane.type='button';addPane.setAttribute('aria-label','New Pane in '+(space.label||'Space '+space.number));addPane.title='New Pane';
        addPane.hidden=!tree.reachable;addPane.addEventListener('click',(event)=>{event.stopPropagation();void createPaneFromSpace(node,{workspaceId:spaceId,session:!tree.primarySession&&session?session:'',reachable:tree.reachable},addPane)});
        spaceRowWrap.append(spaceRow,addPane);
-       const spaceChildren=element('div','tree-children');spaceChildren.setAttribute('role','group');spaceChildren.hidden=!spaceOpen;
+       const {group:spaceChildren,inner:spaceChildrenInner}=treeChildrenGroup(spaceKey,spaceOpen);
        for(const tab of Array.isArray(space.tabs)?space.tabs:[]){
          const tabId=validPane(tab.tabId);if(!tabId)continue;
          const tabKey=treeKey(node.id,session,'tab',tabId);liveKeys.add(tabKey);
@@ -1630,7 +1663,7 @@ function renderTree(focusKey=null){
          if(validPanes.length===0){
            const tabRow=element('button','tree-row tree-row-level-3');tabRow.type='button';tabRow.dataset.treeKey=tabKey;tabRow.dataset.disabled='true';
            tabRow.setAttribute('role','treeitem');tabRow.setAttribute('aria-level','3');tabRow.setAttribute('aria-disabled','true');if(!tree.reachable)tabRow.dataset.stale='true';
-           tabRow.append(element('span','tree-label',tabLabel));if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});spaceChildren.append(tabRow);continue;
+           tabRow.append(element('span','tree-label',tabLabel));if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});spaceChildrenInner.append(tabRow);continue;
          }
          if(validPanes.length===1){
            const {pane,paneId}=validPanes[0];const tabRow=element('button','tree-row tree-row-level-3 direct-pane-tree-row');tabRow.type='button';tabRow.dataset.treeKey=tabKey;
@@ -1639,12 +1672,12 @@ function renderTree(focusKey=null){
            tabRow.setAttribute('aria-selected',String(selected));const paneState=appendPaneTreatment(tabRow,pane,tabLabel);tabRow.setAttribute('aria-label',tabLabel+' · '+paneState);
            tabRow.addEventListener('click',()=>selectTreeNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:tabKey}));
            if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});
-           spaceChildren.append(tabRow);continue;
+           spaceChildrenInner.append(tabRow);continue;
          }
          const tabOpen=expandedTreeKeys.has(tabKey);
          const tabRow=disclosureRow(3,tabKey,tabLabel,tabOpen,{stale:!tree.reachable});
          if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});
-         const tabChildren=element('div','tree-children');tabChildren.setAttribute('role','group');tabChildren.hidden=!tabOpen;
+         const {group:tabChildren,inner:tabChildrenInner}=treeChildrenGroup(tabKey,tabOpen);
          for(const {pane,paneId} of validPanes){
            const paneKey=treeKey(node.id,session,'pane',paneId);liveKeys.add(paneKey);
            const paneRow=element('button','tree-row tree-row-level-4 pane-tree-row');paneRow.type='button';paneRow.dataset.treeKey=paneKey;
@@ -1654,11 +1687,11 @@ function renderTree(focusKey=null){
            appendPaneTreatment(paneRow,pane,paneLabel(pane));
            paneRow.addEventListener('click',()=>selectTreeNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:paneKey}));
            if(tree.reachable)bindRename(paneRow,{nodeId:node.id,action:'rename-pane',targetId:paneId,label:pane.label||'',session:!tree.primarySession&&session?session:'',reachable:true});
-           tabChildren.append(paneRow);
+           tabChildrenInner.append(paneRow);
          }
-         spaceChildren.append(tabRow,tabChildren);
+         spaceChildrenInner.append(tabRow,tabChildren);
        }
-       hostChildren.append(spaceRowWrap,spaceChildren);
+       hostChildrenInner.append(spaceRowWrap,spaceChildren);
      }
    }
    wrapper.append(hostRowWrap,hostChildren);instances.append(wrapper);
@@ -1815,9 +1848,14 @@ function renderInventory(data){
  else{renderTabs();loadSelected(false)}
 }
 
+function syncTreePresentation(){
+ const hidden=!desktopMedia.matches&&!treeOpen;instances.inert=hidden;instances.setAttribute('aria-hidden',String(hidden));
+}
+
 function closeTreeMenu(options={}){
  if(!desktopMedia.matches&&!settingsPopover.hidden)closeSettings();
  treeOpen=false;delete shell.dataset.treeOpen;treeMenuBackdrop.hidden=true;treeMenuToggle.setAttribute('aria-expanded','false');treeMenuToggle.setAttribute('aria-label','Open Host tree');
+ syncTreePresentation();
  if(options.restoreFocus&&!desktopMedia.matches)treeMenuToggle.focus();
  if(options.syncActivity!==false)broadcastFrameActivity();
 }
@@ -1825,6 +1863,7 @@ function closeTreeMenu(options={}){
 function openTreeMenu(){
  if(desktopMedia.matches)return;
  closeAgentMenu({syncActivity:false});treeOpen=true;shell.dataset.treeOpen='true';treeMenuBackdrop.hidden=false;treeMenuToggle.setAttribute('aria-expanded','true');treeMenuToggle.setAttribute('aria-label','Close Host tree');broadcastFrameActivity();
+ syncTreePresentation();
 }
 
 function closeAgentMenu(options={}){if(desktopMedia.matches)return;agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false');if(options.syncActivity!==false)broadcastFrameActivity()}
@@ -1838,7 +1877,7 @@ function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
  if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false');renderAgents()}
  else if(desktopMode){closeSettings();closeRename();agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
- desktopMode=nextDesktop;renderTabs();syncFallbackEntry();applyRailWidthPreferences();broadcastFrameActivity();
+ desktopMode=nextDesktop;syncTreePresentation();renderTabs();syncFallbackEntry();applyRailWidthPreferences();broadcastFrameActivity();
 }
 
 function clearRefreshTimer(){if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null}}
