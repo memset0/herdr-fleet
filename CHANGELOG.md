@@ -6,6 +6,21 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.13] - 2026-08-23
+
+### Added
+
+- Add a single discoverable desktop Fleet shortcut registry for `Alt+S`, `Alt+K/J`, and `Alt+1…9`, including exact physical-code/modifier matching, left-tree Pane cycling, and first-nine Agent card badges in current rendered order (5f13b20).
+- Add a strict versioned selected-iframe bridge that forwards registered shortcut ids only and delegates `Alt+S` to the exact existing Collie Display Resize callback without exposing raw keys or adding an HTTP/CORS surface (5f13b20).
+
+### Fixed
+
+- Rebuild shortcut targets and hints atomically across live Agent reorder and desktop/compact breakpoint changes, while keeping hidden cached frames and standalone Collie inactive (5f13b20).
+
+### Upgrading
+
+- Central `2.5.13` remains compatible with older `2.5.x` nodes and immediately provides outer-focus navigation. Update each node Web bundle to `2.5.13` to enable shortcuts while focus is inside that iframe and to enable Fleet `Alt+S`; no Herdr restart, protocol migration, or new service is required.
+
 ## [2.5.12] - 2026-08-23
 
 ### Fixed

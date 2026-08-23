@@ -364,7 +364,7 @@ describe("Fleet iframe shell", () => {
     expect(fleetShortcutCycleIndex([], "a", 1)).toBeNull();
     expect(fleetShortcutCycleIndex(["a"], "missing", 1)).toBeNull();
 
-    const page = fleetPage(1, "2.5.12");
+    const page = fleetPage(1, "2.5.13");
     expect(page).toContain('id="fleet-shortcuts-heading">Shortcuts</h2>');
     expect(page).toContain("<span>Resize current Pane</span><kbd>Alt+S</kbd>");
     expect(page).toContain("<span>Select Agent 9</span><kbd>Alt+9</kbd>");
