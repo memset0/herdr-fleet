@@ -11,6 +11,7 @@ import { isConnecting } from "@/lib/connection";
 import * as api from "@/lib/api";
 import { setStatus } from "@/lib/status";
 import { measureTerminalColumns } from "@/lib/terminal-resize";
+import { registerFleetShortcutHandler } from "@/lib/fleet-shortcuts";
 import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/chat/chat-message-list";
 import { BottomSheet } from "@/components/ui/sheet";
 import { AppHeader } from "@/components/app-header";
@@ -159,6 +160,13 @@ export function AgentChat({
       setStatus(cause instanceof Error ? cause.message : String(cause), "error");
     }
   }, [paneId, prefs.fontSize, readOnly, revalidator, session]);
+
+  // Fleet delegates its framed Alt+S action to this exact callback. The Display button below keeps
+  // using the same reference, so neither path can drift in measurement, session scope, or status.
+  useEffect(
+    () => registerFleetShortcutHandler("resize-current-pane", resizeToMirror),
+    [resizeToMirror],
+  );
 
   const gone = !agent;
 

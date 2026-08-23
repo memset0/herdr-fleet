@@ -82,6 +82,16 @@ offline card keeps the section and count treatment implied by its last successfu
 while remaining visibly stale. The adjacent arrow-leaving-a-square control opens the selected
 Collie in a new tab. Fleet intentionally exposes no logout button in this header.
 
+Desktop Fleet also owns one discoverable keyboard-shortcut registry, shown in the left-footer
+settings popup: `Alt+S` resizes the current Pane to Collie's measured mirror, `Alt+K` / `Alt+J`
+cycle through the complete left-tree Pane order, and `Alt+1`…`Alt+9` open the first nine Agent cards
+in their current rendered order. Those cards show matching ordinal/key badges. Physical key codes,
+exact modifiers, and auto-repeat are checked centrally; compact/mobile Fleet and standalone Collie
+install no active binding. When focus is inside the selected cross-origin iframe, its Web bundle
+forwards only a registered shortcut id. Fleet still owns the mapping and navigation, while the one
+child action invokes the exact same `Resize` callback as Collie's Display settings. Older compatible
+node bundles continue to work but cannot forward iframe-focused shortcuts until updated.
+
 ### Collie node controls
 
 The node UI includes Collie v0.28.0's safer remote-input path. A free-text reply refreshes the Pane,

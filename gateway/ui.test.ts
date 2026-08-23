@@ -20,6 +20,10 @@ import {
   fleetRailWidthPreferences,
   fleetRailWidths,
   fleetRefreshWaitMs,
+  FLEET_SHORTCUTS,
+  fleetShortcutCycleIndex,
+  fleetShortcutMatch,
+  fleetShortcutRegistryValid,
   fleetTreeTabMode,
 } from "./fleet-ui.ts";
 
@@ -332,6 +336,97 @@ describe("Fleet iframe shell", () => {
     expect(toggleSource).not.toContain("selectNode(");
     expect(toggleSource).not.toContain("refresh(");
     expect(toggleSource).not.toContain("fetch(");
+  });
+
+  test("matches one collision-free desktop shortcut registry by physical code and exact modifiers", () => {
+    expect(FLEET_SHORTCUTS).toHaveLength(12);
+    expect(fleetShortcutRegistryValid(FLEET_SHORTCUTS)).toBeTrue();
+    expect(new Set(FLEET_SHORTCUTS.map((shortcut) => shortcut.id)).size).toBe(FLEET_SHORTCUTS.length);
+    expect(new Set(FLEET_SHORTCUTS.map((shortcut) => [shortcut.code, shortcut.altKey, shortcut.ctrlKey, shortcut.metaKey, shortcut.shiftKey].join("|"))).size).toBe(FLEET_SHORTCUTS.length);
+
+    const delivered = { code: "KeyS", altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false };
+    expect(fleetShortcutMatch(delivered, true)?.id).toBe("resize-current-pane");
+    expect(fleetShortcutMatch({ ...delivered, code: "KeyJ" }, true)?.id).toBe("next-pane");
+    expect(fleetShortcutMatch({ ...delivered, code: "Digit9" }, true)?.id).toBe("select-agent-9");
+    expect(fleetShortcutMatch(delivered, false)).toBeNull();
+    expect(fleetShortcutMatch({ ...delivered, repeat: true }, true)).toBeNull();
+    expect(fleetShortcutMatch({ ...delivered, ctrlKey: true }, true)).toBeNull();
+    expect(fleetShortcutMatch({ ...delivered, shiftKey: true }, true)).toBeNull();
+    expect(fleetShortcutMatch({ ...delivered, metaKey: true }, true)).toBeNull();
+    expect(fleetShortcutMatch({ ...delivered, altKey: false }, true)).toBeNull();
+    expect(fleetShortcutMatch({ ...delivered, code: "KeyQ" }, true)).toBeNull();
+    expect(fleetShortcutRegistryValid([...FLEET_SHORTCUTS, FLEET_SHORTCUTS[0]!])).toBeFalse();
+    expect(fleetShortcutRegistryValid(FLEET_SHORTCUTS.map((shortcut, index) => index === 1 ? { ...shortcut, id: FLEET_SHORTCUTS[0]!.id } : shortcut))).toBeFalse();
+
+    expect(fleetShortcutCycleIndex(["a", "b", "c"], "a", -1)).toBe(2);
+    expect(fleetShortcutCycleIndex(["a", "b", "c"], "c", 1)).toBe(0);
+    expect(fleetShortcutCycleIndex(["a"], "a", 1)).toBe(0);
+    expect(fleetShortcutCycleIndex([], "a", 1)).toBeNull();
+    expect(fleetShortcutCycleIndex(["a"], "missing", 1)).toBeNull();
+
+    const page = fleetPage(1, "2.5.12");
+    expect(page).toContain('id="fleet-shortcuts-heading">Shortcuts</h2>');
+    expect(page).toContain("<span>Resize current Pane</span><kbd>Alt+S</kbd>");
+    expect(page).toContain("<span>Select Agent 9</span><kbd>Alt+9</kbd>");
+    expect(FLEET_CSS).toContain(".fleet-shortcuts { display: none; }");
+    expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.fleet-shortcuts \{ display: block/);
+    expect(FLEET_JS).toContain(`const SHORTCUT_REGISTRY=${JSON.stringify(FLEET_SHORTCUTS)}`);
+  });
+
+  test("captures current Pane and Agent display order and dispatches desktop shortcuts canonically", () => {
+    expect(FLEET_JS).toContain("const nextPaneShortcutTargets=[]");
+    expect(FLEET_JS).toContain("nextPaneShortcutTargets.push({key:shortcutPaneKey(node.id,paneId,tree.primarySession?'':session)");
+    expect(FLEET_JS).toContain("paneShortcutTargets=nextPaneShortcutTargets");
+    const directStart = FLEET_JS.indexOf("if(validPanes.length===1)");
+    const branchStart = FLEET_JS.indexOf("for(const {pane,paneId} of validPanes)", directStart);
+    expect(FLEET_JS.slice(directStart, branchStart)).toContain("nextPaneShortcutTargets.push");
+    expect(FLEET_JS.slice(branchStart, FLEET_JS.indexOf("spaceChildrenInner.append(tabRow,tabChildren)", branchStart))).toContain("nextPaneShortcutTargets.push");
+
+    expect(FLEET_JS).toContain("const nextAgentShortcutTargets=[]");
+    expect(FLEET_JS).toContain("desktopMedia.matches&&nextAgentShortcutTargets.length<9");
+    expect(FLEET_JS).toContain("agentShortcutTargets=nextAgentShortcutTargets");
+    expect(FLEET_JS).toContain("desktopMode=nextDesktop;renderAgents();syncTreePresentation()");
+    expect(FLEET_JS).toContain("element('span','agent-shortcut-ordinal',ordinal)");
+    expect(FLEET_JS).toContain("element('kbd','agent-shortcut-key','Alt+'+ordinal)");
+    expect(FLEET_JS).toContain("Shortcut Alt+'+ordinal");
+    expect(FLEET_CSS).toContain(".agent-shortcut-hint { display: none; }");
+    expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.agent-shortcut-hint \{ display: flex/);
+
+    expect(FLEET_JS).toContain("function dispatchShortcut(shortcut,{childOriginated=false}={})");
+    expect(FLEET_JS).toContain("selectTreeNode(target.nodeId,{route:target.route,focusTreeKey:target.treeKey})");
+    expect(FLEET_JS).toContain("selectAgent(target.node,target.agent)");
+    expect(FLEET_JS).toContain("if(childOriginated)focusSelectedFrame()");
+    expect(FLEET_JS).toContain("const shortcut=matchShortcut(event);if(shortcut){event.preventDefault();dispatchShortcut(shortcut);return}");
+    expect(FLEET_JS).toContain("if(!desktopMedia.matches||event.repeat)return null");
+    expect(FLEET_JS).toContain("shortcut.ctrlKey===event.ctrlKey&&shortcut.metaKey===event.metaKey&&shortcut.shiftKey===event.shiftKey");
+  });
+
+  test("bridges only the exact selected desktop iframe with correlated allowlisted messages", () => {
+    expect(FLEET_JS).toContain("SHORTCUT_CONFIG_MESSAGE='herdr-web-remote:shortcut-config'");
+    expect(FLEET_JS).toContain("SHORTCUT_INTENT_MESSAGE='herdr-web-remote:shortcut-intent'");
+    expect(FLEET_JS).toContain("SHORTCUT_COMMAND_MESSAGE='herdr-web-remote:shortcut-command'");
+    expect(FLEET_JS).toContain("SHORTCUT_RESULT_MESSAGE='herdr-web-remote:shortcut-result'");
+    expect(FLEET_JS).toContain("target.postMessage({type:SHORTCUT_CONFIG_MESSAGE,version:SHORTCUT_VERSION,generation:shortcutGeneration,active:shortcutFrameActive(entry),bindings},entry.origin)");
+    expect(FLEET_JS).toContain("desktopMedia.matches&&!document.hidden&&entry.id===selectedId&&!entry.frame.hidden");
+    expect(FLEET_JS).toContain("event.source!==entry.frame.contentWindow||event.origin!==entry.origin");
+    expect(FLEET_JS).toContain("exactMessageKeys(data,['type','version','intentId','shortcutId'])");
+    expect(FLEET_JS).toContain("recentShortcutIntents.has(data.intentId)");
+    expect(FLEET_JS).toContain("dispatchShortcut(shortcut,{childOriginated:true})");
+    expect(FLEET_JS).toContain("route?.view!=='pane'");
+    expect(FLEET_JS).toContain("target.postMessage({type:SHORTCUT_COMMAND_MESSAGE,version:SHORTCUT_VERSION,requestId,action},entry.origin)");
+    expect(FLEET_JS).toContain("if(pendingShortcutCommand){showTreeActionStatus('Another Pane shortcut is still running.'");
+    expect(FLEET_JS).toContain("Collie did not confirm the shortcut");
+    expect(FLEET_JS).toContain("if(handleShortcutMessage(event))return");
+
+    const shortcutBridgeStart = FLEET_JS.indexOf("function dispatchSelectedShortcutAction(action)");
+    const shortcutBridgeEnd = FLEET_JS.indexOf("function exactMessageKeys", shortcutBridgeStart);
+    const shortcutBridge = FLEET_JS.slice(shortcutBridgeStart, shortcutBridgeEnd);
+    expect(shortcutBridge).not.toContain("getBoundingClientRect");
+    expect(shortcutBridge).not.toContain("measureTerminalColumns");
+    expect(shortcutBridge).not.toContain("resizePane");
+    expect(shortcutBridge).not.toContain("cols");
+    expect(shortcutBridge).not.toContain("fetch(");
+    expect(shortcutBridge).not.toContain("keydown");
   });
 
   test("opens cards through validated canonical instance, Pane, and session selectors", () => {

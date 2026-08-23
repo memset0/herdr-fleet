@@ -103,6 +103,87 @@ export function fleetAgentFavoriteCompare(leftKey: string, rightKey: string, fav
   return Number(favorites.has(rightKey)) - Number(favorites.has(leftKey));
 }
 
+export type FleetShortcutAction =
+  | { kind: "resize-current-pane" }
+  | { kind: "cycle-pane"; delta: -1 | 1 }
+  | { kind: "select-agent"; ordinal: number };
+
+export interface FleetShortcutDefinition {
+  id: string;
+  code: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  scope: "desktop";
+  label: string;
+  keyLabel: string;
+  action: FleetShortcutAction;
+}
+
+const exactAlt = { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, scope: "desktop" as const };
+
+export const FLEET_SHORTCUTS: readonly FleetShortcutDefinition[] = [
+  { id: "resize-current-pane", code: "KeyS", ...exactAlt, label: "Resize current Pane", keyLabel: "Alt+S", action: { kind: "resize-current-pane" } },
+  { id: "previous-pane", code: "KeyK", ...exactAlt, label: "Previous Pane", keyLabel: "Alt+K", action: { kind: "cycle-pane", delta: -1 } },
+  { id: "next-pane", code: "KeyJ", ...exactAlt, label: "Next Pane", keyLabel: "Alt+J", action: { kind: "cycle-pane", delta: 1 } },
+  ...Array.from({ length: 9 }, (_, index): FleetShortcutDefinition => {
+    const ordinal = index + 1;
+    return { id: `select-agent-${ordinal}`, code: `Digit${ordinal}`, ...exactAlt, label: `Select Agent ${ordinal}`, keyLabel: `Alt+${ordinal}`, action: { kind: "select-agent", ordinal } };
+  }),
+];
+
+export function fleetShortcutRegistryValid(registry: readonly FleetShortcutDefinition[]): boolean {
+  const ids = new Set<string>();
+  const chords = new Set<string>();
+  for (const shortcut of registry) {
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(shortcut.id) || ids.has(shortcut.id)) return false;
+    if (!/^(?:Key[A-Z]|Digit[1-9])$/.test(shortcut.code) || shortcut.scope !== "desktop") return false;
+    const chord = [shortcut.code, shortcut.altKey, shortcut.ctrlKey, shortcut.metaKey, shortcut.shiftKey].join("|");
+    if (chords.has(chord) || !shortcut.label || !shortcut.keyLabel) return false;
+    ids.add(shortcut.id);
+    chords.add(chord);
+  }
+  return registry.length > 0;
+}
+
+export interface FleetShortcutEventLike {
+  code: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  repeat: boolean;
+}
+
+export function fleetShortcutMatch(
+  event: FleetShortcutEventLike,
+  desktop: boolean,
+  registry: readonly FleetShortcutDefinition[] = FLEET_SHORTCUTS,
+): FleetShortcutDefinition | null {
+  if (!desktop || event.repeat) return null;
+  return registry.find((shortcut) =>
+    shortcut.code === event.code
+    && shortcut.altKey === event.altKey
+    && shortcut.ctrlKey === event.ctrlKey
+    && shortcut.metaKey === event.metaKey
+    && shortcut.shiftKey === event.shiftKey
+  ) ?? null;
+}
+
+if (!fleetShortcutRegistryValid(FLEET_SHORTCUTS)) throw new Error("invalid Fleet shortcut registry");
+
+export function fleetShortcutCycleIndex(
+  targetKeys: readonly string[],
+  currentKey: string,
+  delta: -1 | 1,
+): number | null {
+  if (targetKeys.length === 0) return null;
+  const currentIndex = targetKeys.indexOf(currentKey);
+  if (currentIndex < 0) return null;
+  return (currentIndex + delta + targetKeys.length) % targetKeys.length;
+}
+
 export type FleetTreeTabMode = "empty" | "direct" | "branch";
 
 export function fleetTreeTabMode(panes: readonly { paneId?: unknown }[]): FleetTreeTabMode {
@@ -281,6 +362,9 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
     const size = index + 1;
     return `<option value="${size}">${size}</option>`;
   }).join("");
+  const shortcutRows = FLEET_SHORTCUTS.map((shortcut) =>
+    `<li><span>${shortcut.label}</span><kbd>${shortcut.keyLabel}</kbd></li>`,
+  ).join("");
   return documentShell(
     "Fleet · Collie",
     `<main class="fleet-shell" data-iframe-cache-size="${boundedCacheSize}" data-plugin-version="${safeVersion}">
@@ -337,6 +421,10 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
                 <span id="iframe-cache-default">Default: ${boundedCacheSize}</span>
                 <button id="iframe-cache-reset" type="button">Use default</button>
               </div>
+              <section class="fleet-shortcuts" aria-labelledby="fleet-shortcuts-heading">
+                <h2 id="fleet-shortcuts-heading">Shortcuts</h2>
+                <ul>${shortcutRows}</ul>
+              </section>
             </section>
           </div>
         </footer>
@@ -484,6 +572,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 .tree-inline-action { display: none; }
 .desktop-fallback-entry { display: none; }
 .host-rail-footer, .tree-action-status, .fleet-settings, .tree-rename { display: none; }
+.fleet-shortcuts { display: none; }
 .connecting { padding: 0 .6rem; color: var(--muted-foreground); font-size: .8rem; }
 .instance-tab {
   display: flex;
@@ -621,11 +710,17 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 }
 .agent-card-main:hover { background: color-mix(in oklch, var(--muted) 65%, transparent); }
 .agent-card-main:active { transform: scale(.99); }
-.agent-favorite {
+.agent-card-tools {
   position: absolute;
   z-index: 2;
   top: .45rem;
   right: .5rem;
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+}
+.agent-shortcut-hint { display: none; }
+.agent-favorite {
   display: grid;
   width: 1.9rem;
   height: 1.9rem;
@@ -1032,6 +1127,14 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   .fleet-settings-foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .75rem; color: var(--muted-foreground); font-size: .62rem; }
   .fleet-settings-foot button { border: 0; background: transparent; padding: .25rem; color: var(--muted-foreground); font-size: .64rem; cursor: pointer; }
   .fleet-settings-foot button:hover { color: var(--foreground); }
+  .fleet-shortcuts { display: block; margin-top: .85rem; border-top: 1px solid var(--border); padding-top: .7rem; }
+  .fleet-shortcuts h2 { margin: 0 0 .45rem; font-size: .72rem; }
+  .fleet-shortcuts ul { display: grid; gap: .28rem; margin: 0; padding: 0; list-style: none; }
+  .fleet-shortcuts li { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .65rem; color: var(--muted-foreground); font-size: .65rem; }
+  .fleet-shortcuts kbd, .agent-shortcut-key { flex: none; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: calc(var(--radius) - 4px); background: var(--background); padding: .13rem .32rem; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .6rem; line-height: 1.2; }
+  .agent-card-main { padding-right: 5.9rem; }
+  .agent-shortcut-hint { display: flex; align-items: center; gap: .22rem; color: var(--muted-foreground); font-size: .58rem; }
+  .agent-shortcut-ordinal { font-variant-numeric: tabular-nums; }
   .tree-action-status {
     display: block;
     flex: none;
@@ -1138,6 +1241,7 @@ const RAIL_STORAGE_KEY='herdr-web-remote:fleet-rail-widths:v1';
 const CACHE_STORAGE_KEY='herdr-web-remote:fleet-iframe-cache:v1';
 const AGENT_FAVORITES_STORAGE_KEY='herdr-web-remote:fleet-agent-favorites:v1';
 const AGENT_FAVORITES_MAX=${FLEET_AGENT_FAVORITES_MAX};
+const SHORTCUT_REGISTRY=${JSON.stringify(FLEET_SHORTCUTS)};
 const ROUTE_MESSAGE='herdr-web-remote:route';
 const FRAME_ACTIVITY_MESSAGE='herdr-web-remote:activity';
 const FRAME_ACTIVITY_VERSION=1;
@@ -1148,6 +1252,12 @@ const ACTION_RESULT_MESSAGE='herdr-web-remote:action-result';
 const ACTION_VERSION=1;
 const ACTION_PROBE_TIMEOUT_MS=8000;
 const ACTION_RESULT_TIMEOUT_MS=25000;
+const SHORTCUT_CONFIG_MESSAGE='herdr-web-remote:shortcut-config';
+const SHORTCUT_INTENT_MESSAGE='herdr-web-remote:shortcut-intent';
+const SHORTCUT_COMMAND_MESSAGE='herdr-web-remote:shortcut-command';
+const SHORTCUT_RESULT_MESSAGE='herdr-web-remote:shortcut-result';
+const SHORTCUT_VERSION=1;
+const SHORTCUT_COMMAND_TIMEOUT_MS=18000;
 const DEFAULT_REFRESH_MS=5000;
 const MIN_REFRESH_TIMER_MS=250;
 const FRAME_CACHE_QUIET_MS=1800000;
@@ -1214,6 +1324,11 @@ let pendingAction=null;
 let renameTarget=null;
 let actionStatusTimer=null;
 let pendingFavoriteFocusKey=null;
+let paneShortcutTargets=[];
+let agentShortcutTargets=[];
+let shortcutGeneration=0;
+let pendingShortcutCommand=null;
+const recentShortcutIntents=new Set();
 
 const healthLabel=(health)=>({online:'Online','herdr-down':'Herdr unavailable','bridge-down':'Collie unavailable','transport-down':'Transport unavailable'}[health]||'Unavailable');
 const statusLabel=(status)=>({blocked:'needs you',working:'working',done:'done',idle:'idle',unknown:'unknown'}[status]||'unknown');
@@ -1241,6 +1356,12 @@ const baseName=(value)=>String(value||'').replace(/[\\/\\\\]+$/,'').split(/[\\/\
 const shortCwd=(value)=>{const parts=String(value||'').split(/[\\/\\\\]/).filter(Boolean);return parts.length>2?'…/'+parts.slice(-2).join('/'):String(value||'')};
 const formatDelay=(ms)=>ms>=3600000?'1h':ms>=60000?Math.round(ms/60000)+'m':Math.round(ms/1000)+'s';
 const timeAgo=(at)=>{const seconds=Math.max(0,Math.floor((Date.now()-at)/1000));if(seconds<60)return seconds+'s';const minutes=Math.floor(seconds/60);if(minutes<60)return minutes+'m';const hours=Math.floor(minutes/60);if(hours<24)return hours+'h';return Math.floor(hours/24)+'d'};
+const shortcutPaneKey=(nodeId,paneId,session)=>[nodeId,paneId,session||''].join('|');
+
+function matchShortcut(event){
+ if(!desktopMedia.matches||event.repeat)return null;
+ return SHORTCUT_REGISTRY.find((shortcut)=>shortcut.code===event.code&&shortcut.altKey===event.altKey&&shortcut.ctrlKey===event.ctrlKey&&shortcut.metaKey===event.metaKey&&shortcut.shiftKey===event.shiftKey)||null;
+}
 
 function readIframeCachePreference(){
  try{
@@ -1441,11 +1562,23 @@ function postFrameActivity(entry){
  target.postMessage({type:FRAME_ACTIVITY_MESSAGE,version:FRAME_ACTIVITY_VERSION,active:frameActivityActive(entry)},entry.origin);return true;
 }
 
-function broadcastFrameActivity(){for(const entry of frameRegistry.values())postFrameActivity(entry)}
+function shortcutFrameActive(entry){
+ return desktopMedia.matches&&!document.hidden&&entry.id===selectedId&&!entry.frame.hidden;
+}
+
+function postFrameShortcutConfig(entry){
+ const target=entry.frame.contentWindow;if(!target)return false;
+ shortcutGeneration=shortcutGeneration>=Number.MAX_SAFE_INTEGER?0:shortcutGeneration+1;
+ const bindings=SHORTCUT_REGISTRY.map(({id,code,altKey,ctrlKey,metaKey,shiftKey})=>({id,code,altKey,ctrlKey,metaKey,shiftKey}));
+ target.postMessage({type:SHORTCUT_CONFIG_MESSAGE,version:SHORTCUT_VERSION,generation:shortcutGeneration,active:shortcutFrameActive(entry),bindings},entry.origin);return true;
+}
+
+function broadcastFrameActivity(){for(const entry of frameRegistry.values()){postFrameActivity(entry);postFrameShortcutConfig(entry)}}
 
 function releaseFrame(id,allowSelected=false){
  if(!allowSelected&&id===selectedId)return false;
  const entry=frameRegistry.get(id);if(!entry)return false;
+ if(pendingShortcutCommand?.frame===entry.frame)finishPendingShortcutCommand(null,'Selected Collie page was released.');
  entry.frame.remove();frameRegistry.delete(id);return true;
 }
 
@@ -1465,6 +1598,7 @@ function makeFrame(node){
    entry.loaded=true;entry.loading=false;
    if(selectedId===entry.id){loading.hidden=true;announce(node.name+' Collie loaded.')}
    postFrameActivity(entry);
+   postFrameShortcutConfig(entry);
  });
  frameStage.prepend(value);frameRegistry.set(entry.id,entry);return entry;
 }
@@ -1509,6 +1643,48 @@ function reconcileFrames(){
 function actionRequestId(){
  if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
  return Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,18);
+}
+
+function validCorrelationId(value){return typeof value==='string'&&/^[A-Za-z0-9_-]{8,128}$/.test(value)}
+
+function finishPendingShortcutCommand(result,error=null){
+ const state=pendingShortcutCommand;if(!state)return;
+ clearTimeout(state.timeout);pendingShortcutCommand=null;
+ if(error){showTreeActionStatus(error,'error');state.resolve(false);return}
+ if(!result.ok){showTreeActionStatus(result.error,'error');state.resolve(false);return}
+ announce('Resize current Pane shortcut completed.');state.resolve(true);
+}
+
+function validShortcutResult(data,state){
+ if(!data||typeof data!=='object'||data.type!==SHORTCUT_RESULT_MESSAGE||data.version!==SHORTCUT_VERSION||data.requestId!==state.requestId||data.action!==state.action||typeof data.ok!=='boolean')return false;
+ return data.ok?exactMessageKeys(data,['type','version','requestId','action','ok']):exactMessageKeys(data,['type','version','requestId','action','ok','error'])&&typeof data.error==='string'&&data.error.length>0&&data.error.length<=240;
+}
+
+function dispatchSelectedShortcutAction(action){
+ if(action!=='resize-current-pane'||!desktopMedia.matches||document.hidden)return Promise.resolve(false);
+ const entry=activeEntry();const route=entry?.route;
+ if(!entry||entry.frame.hidden||!entry.loaded||route?.view!=='pane'){showTreeActionStatus('Resize current Pane is unavailable.','error');return Promise.resolve(false)}
+ if(pendingShortcutCommand){showTreeActionStatus('Another Pane shortcut is still running.','error');return Promise.resolve(false)}
+ const target=entry.frame.contentWindow;if(!target){showTreeActionStatus('Selected Collie page is unavailable.','error');return Promise.resolve(false)}
+ const requestId=actionRequestId();
+ return new Promise((resolve)=>{
+   pendingShortcutCommand={frame:entry.frame,origin:entry.origin,requestId,action,resolve,timeout:setTimeout(()=>finishPendingShortcutCommand(null,'Collie did not confirm the shortcut. Check this node before trying again.'),SHORTCUT_COMMAND_TIMEOUT_MS)};
+   target.postMessage({type:SHORTCUT_COMMAND_MESSAGE,version:SHORTCUT_VERSION,requestId,action},entry.origin);
+ });
+}
+
+function handleShortcutMessage(event){
+ const entry=activeEntry();if(!entry||event.source!==entry.frame.contentWindow||event.origin!==entry.origin)return false;
+ const data=event.data;
+ if(data&&typeof data==='object'&&data.type===SHORTCUT_RESULT_MESSAGE){
+   const state=pendingShortcutCommand;if(!state||state.frame!==entry.frame||state.origin!==entry.origin)return true;
+   if(validShortcutResult(data,state))finishPendingShortcutCommand(data);return true;
+ }
+ if(!shortcutFrameActive(entry)||!data||typeof data!=='object'||data.type!==SHORTCUT_INTENT_MESSAGE)return false;
+ if(!exactMessageKeys(data,['type','version','intentId','shortcutId'])||data.version!==SHORTCUT_VERSION||!validCorrelationId(data.intentId)||typeof data.shortcutId!=='string')return true;
+ const shortcut=SHORTCUT_REGISTRY.find((candidate)=>candidate.id===data.shortcutId);if(!shortcut||recentShortcutIntents.has(data.intentId))return true;
+ recentShortcutIntents.add(data.intentId);if(recentShortcutIntents.size>64)recentShortcutIntents.delete(recentShortcutIntents.values().next().value);
+ dispatchShortcut(shortcut,{childOriginated:true});return true;
 }
 
 function exactMessageKeys(value,allowed){return Object.keys(value).every((key)=>allowed.includes(key))}
@@ -1716,7 +1892,7 @@ function renderHostSwitcher(focusSelected=false){
 }
 
 function renderTree(focusKey=null){
- instances.replaceChildren();const liveKeys=new Set();
+ instances.replaceChildren();const liveKeys=new Set();const nextPaneShortcutTargets=[];
  const route=activeEntry()?.route||requestedRoute();
  for(const node of nodes){
    const hostKey=treeKey(node.id,'','host',node.id);liveKeys.add(hostKey);
@@ -1743,7 +1919,7 @@ function renderTree(focusKey=null){
    hostRowWrap.append(button,addSpace);
    const {group:hostChildren,inner:hostChildrenInner}=treeChildrenGroup(hostKey,expandedTreeKeys.has(hostKey));
    for(const tree of trees){
-     const session=typeof tree.herdrSession==='string'?tree.herdrSession:'';const sessionHint=trees.length>1&&!tree.primarySession?session:'';
+     const session=tree.primarySession?'':validSession(tree.herdrSession);if(!tree.primarySession&&!session)continue;const sessionHint=trees.length>1&&!tree.primarySession?session:'';
      for(const space of Array.isArray(tree.spaces)?tree.spaces:[]){
        const spaceId=validPane(space.workspaceId);if(!spaceId)continue;
        const spaceKey=treeKey(node.id,session,'space',spaceId);liveKeys.add(spaceKey);
@@ -1766,6 +1942,7 @@ function renderTree(focusKey=null){
          }
          if(validPanes.length===1){
            const {pane,paneId}=validPanes[0];const tabRow=element('button','tree-row tree-row-level-3 direct-pane-tree-row');tabRow.type='button';tabRow.dataset.treeKey=tabKey;
+           nextPaneShortcutTargets.push({key:shortcutPaneKey(node.id,paneId,tree.primarySession?'':session),nodeId:node.id,treeKey:tabKey,route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})}});
            tabRow.setAttribute('role','treeitem');tabRow.setAttribute('aria-level','3');if(!tree.reachable)tabRow.dataset.stale='true';
            const selected=node.id===selectedId&&route.view==='pane'&&route.paneId===paneId&&(route.session||'')===(tree.primarySession?'':session);
            tabRow.setAttribute('aria-selected',String(selected));const paneState=appendPaneTreatment(tabRow,pane,tabLabel);tabRow.setAttribute('aria-label',tabLabel+' · '+paneState);
@@ -1779,6 +1956,7 @@ function renderTree(focusKey=null){
          const {group:tabChildren,inner:tabChildrenInner}=treeChildrenGroup(tabKey,tabOpen);
          for(const {pane,paneId} of validPanes){
            const paneKey=treeKey(node.id,session,'pane',paneId);liveKeys.add(paneKey);
+           nextPaneShortcutTargets.push({key:shortcutPaneKey(node.id,paneId,tree.primarySession?'':session),nodeId:node.id,treeKey:paneKey,route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})}});
            const paneRow=element('button','tree-row tree-row-level-4 pane-tree-row');paneRow.type='button';paneRow.dataset.treeKey=paneKey;
            paneRow.setAttribute('role','treeitem');paneRow.setAttribute('aria-level','4');if(!tree.reachable)paneRow.dataset.stale='true';
            const selected=node.id===selectedId&&route.view==='pane'&&route.paneId===paneId&&(route.session||'')===(tree.primarySession?'':session);
@@ -1795,6 +1973,7 @@ function renderTree(focusKey=null){
    }
    wrapper.append(hostRowWrap,hostChildren);instances.append(wrapper);
  }
+ paneShortcutTargets=nextPaneShortcutTargets;
  for(const key of [...expandedTreeKeys]){if(!liveKeys.has(key))expandedTreeKeys.delete(key)}
  const active=focusKey?[...instances.querySelectorAll('[data-tree-key]')].find((entry)=>entry.dataset.treeKey===focusKey):instances.querySelector('[data-instance][aria-selected="true"]');
  if(active){active.scrollIntoView({block:'nearest',inline:'nearest'});if(focusKey)active.focus()}
@@ -1890,6 +2069,34 @@ function selectAgent(node,agent){
  if(resetAttention)void refresh({manual:true});
 }
 
+function focusSelectedFrame(){
+ requestAnimationFrame(()=>requestAnimationFrame(()=>{const entry=activeEntry();if(!entry||entry.frame.hidden)return;try{entry.frame.focus({preventScroll:true})}catch{entry.frame.focus()}}));
+}
+
+function cyclePaneShortcut(delta,childOriginated=false){
+ const entry=activeEntry();const route=entry?.route;
+ if(!entry||route?.view!=='pane'){showTreeActionStatus('No current Pane is available for keyboard navigation.','error');return}
+ const currentKey=shortcutPaneKey(entry.id,route.paneId,route.session||'');const index=paneShortcutTargets.findIndex((target)=>target.key===currentKey);
+ if(index<0||paneShortcutTargets.length===0){showTreeActionStatus('The current Pane is not in the Fleet tree.','error');return}
+ const target=paneShortcutTargets[(index+delta+paneShortcutTargets.length)%paneShortcutTargets.length];
+ selectTreeNode(target.nodeId,{route:target.route,focusTreeKey:target.treeKey});
+ if(childOriginated)focusSelectedFrame();
+}
+
+function selectAgentShortcut(ordinal,childOriginated=false){
+ const target=agentShortcutTargets[ordinal-1];
+ if(!target){showTreeActionStatus('Agent shortcut '+ordinal+' is unavailable.','error');return}
+ selectAgent(target.node,target.agent);if(childOriginated)focusSelectedFrame();
+}
+
+function dispatchShortcut(shortcut,{childOriginated=false}={}){
+ if(!shortcut||shortcut.scope!=='desktop'||!desktopMedia.matches||document.hidden)return false;
+ if(shortcut.action.kind==='cycle-pane'){cyclePaneShortcut(shortcut.action.delta,childOriginated);return true}
+ if(shortcut.action.kind==='select-agent'){selectAgentShortcut(shortcut.action.ordinal,childOriginated);return true}
+ if(shortcut.action.kind==='resize-current-pane'){void dispatchSelectedShortcutAction(shortcut.action.kind);return true}
+ return false;
+}
+
 function agentFavoriteIcon(){
  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('class','agent-favorite-icon');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','2');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');svg.dataset.icon='star';
  const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z');svg.append(path);return svg;
@@ -1901,11 +2108,12 @@ function toggleAgentFavorite(node,agent){
  pendingFavoriteFocusKey=key;persistAgentFavorites();renderAgents(key);announce((removing?'Removed favorite ':'Favorited ')+(agentParts(agent).project||agent.agent)+'.');
 }
 
-function renderAgentCard(node,agent){
+function renderAgentCard(node,agent,ordinal=null){
  const parts=agentParts(agent);
  const favoriteKey=agentFavoriteKey(node,agent);const isFavorite=agentFavorites.has(favoriteKey);
  const card=element('div','agent-card');card.dataset.live=String(Boolean(agent.reachable));card.dataset.status=agent.status;card.dataset.favorite=String(isFavorite);
- const main=element('button','agent-card-main');main.type='button';main.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status));
+ const shortcutLabel=ordinal?' · Shortcut Alt+'+ordinal:'';
+ const main=element('button','agent-card-main');main.type='button';main.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status)+shortcutLabel);
  const avatar=element('span','agent-avatar',initials(agent.agent));avatar.dataset.brand=brand(agent.agent);avatar.setAttribute('aria-hidden','true');
  const dot=element('span','agent-status-dot');dot.style.setProperty('--agent-status-color',statusColor(agent.status));avatar.append(dot);
  const copy=element('span','agent-card-copy');
@@ -1919,12 +2127,14 @@ function renderAgentCard(node,agent){
  if(agent.reachable){const stamp=agent.status==='done'?agent.lastSeenAt:agent.lastActiveAt;if(Number.isSafeInteger(stamp))meta.append(element('span','agent-age',timeAgo(stamp)))}
  else{meta.append(element('span','offline-chip','offline'));if(Number.isSafeInteger(agent.observedAt))meta.append(element('span','agent-age',timeAgo(agent.observedAt)))}
  const favorite=element('button','agent-favorite');favorite.type='button';favorite.dataset.favoriteKey=favoriteKey;favorite.setAttribute('aria-pressed',String(isFavorite));favorite.setAttribute('aria-label',(isFavorite?'Remove favorite ':'Favorite ')+parts.project+(parts.tab?' · '+parts.tab:''));favorite.title=isFavorite?'Remove from favorites':'Add to favorites';favorite.append(agentFavoriteIcon());favorite.addEventListener('click',()=>toggleAgentFavorite(node,agent));
- copy.append(title,meta);main.append(avatar,copy);main.addEventListener('click',()=>selectAgent(node,agent));card.append(main,favorite);return card;
+ const tools=element('div','agent-card-tools');
+ if(ordinal){const hint=element('span','agent-shortcut-hint');hint.setAttribute('aria-hidden','true');hint.append(element('span','agent-shortcut-ordinal',ordinal),element('kbd','agent-shortcut-key','Alt+'+ordinal));tools.append(hint)}
+ tools.append(favorite);copy.append(title,meta);main.append(avatar,copy);main.addEventListener('click',()=>selectAgent(node,agent));card.append(main,tools);return card;
 }
 
 function renderAgents(focusFavoriteKey=null){
  const favoriteFocusKey=focusFavoriteKey||document.activeElement?.dataset?.favoriteKey||pendingFavoriteFocusKey;
- agentSections.replaceChildren();
+ agentSections.replaceChildren();const nextAgentShortcutTargets=[];
  const entries=[];
  for(const node of nodes){for(const agent of Array.isArray(node.agentEntries)?node.agentEntries:[])entries.push({node,agent})}
  const live=entries.filter(({agent})=>agent.reachable).length;
@@ -1933,7 +2143,7 @@ function renderAgents(focusFavoriteKey=null){
  agentMenuCount.textContent=String(counted);
  agentMenuToggle.title='All Agents · '+counted+' outside Recent';
  agentMenuToggle.setAttribute('aria-label','Open all Agents · '+counted+' outside Recent · '+live+' live'+(offline?' · '+offline+' offline':''));
- if(!entries.length){agentSections.append(element('p','agent-empty','No agents running.'));return}
+ if(!entries.length){agentShortcutTargets=[];agentSections.append(element('p','agent-empty','No agents running.'));return}
  const sections=[
    {key:'needs',label:'Needs you',color:'var(--status-blocked)',attention:true},
    {key:'ready',label:'Ready · unseen',color:'var(--status-done)',attention:true},
@@ -1947,9 +2157,10 @@ function renderAgents(focusFavoriteKey=null){
    const heading=element('h2','agent-section-heading');heading.dataset.section=section.key;heading.style.setProperty('--section-color',section.color);
    heading.append(element('span','section-dot'),element('span','',section.label),element('span','section-count',matching.length));
    const list=element('div','agent-card-list');
-   for(const entry of matching)list.append(renderAgentCard(entry.node,entry.agent));
+   for(const entry of matching){const ordinal=desktopMedia.matches&&nextAgentShortcutTargets.length<9?nextAgentShortcutTargets.length+1:null;if(ordinal)nextAgentShortcutTargets.push(entry);list.append(renderAgentCard(entry.node,entry.agent,ordinal))}
    wrapper.append(heading,list);agentSections.append(wrapper);
  }
+ agentShortcutTargets=nextAgentShortcutTargets;
  if(favoriteFocusKey){const target=[...agentSections.querySelectorAll('[data-favorite-key]')].find((entry)=>entry.dataset.favoriteKey===favoriteFocusKey);if(target)requestAnimationFrame(()=>{if(target.isConnected)target.focus();if(pendingFavoriteFocusKey===favoriteFocusKey)pendingFavoriteFocusKey=null})}
 }
 
@@ -1991,9 +2202,9 @@ function openAgentMenu(){
 
 function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
- if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false');renderAgents()}
+ if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false')}
  else if(desktopMode){closeSettings();closeRename();agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
- desktopMode=nextDesktop;syncTreePresentation();renderTabs();syncFallbackEntry();applyRailWidthPreferences();broadcastFrameActivity();
+ desktopMode=nextDesktop;renderAgents();syncTreePresentation();renderTabs();syncFallbackEntry();applyRailWidthPreferences();broadcastFrameActivity();
 }
 
 function clearRefreshTimer(){if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null}}
@@ -2050,6 +2261,7 @@ document.addEventListener('pointerdown',(event)=>{
  if(desktopMedia.matches&&!renamePopover.hidden&&!renamePopover.contains(event.target)&&!event.target.closest('[data-tree-key]'))closeRename();
 });
 document.addEventListener('keydown',(event)=>{
+ const shortcut=matchShortcut(event);if(shortcut){event.preventDefault();dispatchShortcut(shortcut);return}
  if(event.key!=='Escape')return;
  if(!settingsPopover.hidden){closeSettings({restoreFocus:true});return}
  if(desktopMedia.matches&&!renamePopover.hidden){closeRename({restoreFocus:true});return}
@@ -2058,6 +2270,7 @@ document.addEventListener('keydown',(event)=>{
  if(!agentMenu.hidden){closeAgentMenu();agentMenuToggle.focus()}
 });
 addEventListener('message',(event)=>{
+ if(handleShortcutMessage(event))return;
  if(handleActionMessage(event))return;
  const entry=[...frameRegistry.values()].find((candidate)=>event.source===candidate.frame.contentWindow);if(!entry||event.origin!==entry.origin)return;
  const data=event.data;

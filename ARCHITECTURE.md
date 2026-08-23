@@ -116,6 +116,27 @@ space to the breadcrumb, while the same top-level page retains the mark, connect
 home action. This presentation decision lives in each node Web bundle, so an older compatible node
 may retain the old embedded mark until its normal upgrade.
 
+One typed Fleet registry owns desktop shortcut chords, labels, scope, and allowlisted actions. The
+outer document matches exact physical codes and modifiers without repeat; it snapshots Pane targets
+from the same complete validated tree traversal and Agent targets from the same rendered section
+order. Thus collapsed branches remain reachable, a flattened one-Pane Tab appears once, cycling
+wraps, and favorite/status rerenders atomically reassign `Alt+1`…`Alt+9` badges. All navigation goes
+through the existing tree/card selectors, including attention resets and canonical Host/session
+routes. Compact Fleet neither creates Agent shortcut targets nor exposes shortcut hints.
+
+Iframe focus crosses a dedicated version-1 exact-child shortcut boundary. Fleet sends bounded
+id/code/modifier definitions only to registered node origins, activating only the selected visible
+desktop child; cached, hidden, compact, and top-document-hidden children receive inactive state.
+The framed Web controller accepts configuration and allowlisted commands only from its exact parent,
+forwards only a correlated shortcut id (never raw keys, input, URLs, or Pane ids), and is inert when
+standalone. Fleet accepts intents/results only from the selected WindowProxy and exact node Origin,
+de-duplicates bounded ids, permits one resize command in flight, and fails closed on malformed,
+stale, unavailable, or timed-out messages without retry. `Alt+S` registers AgentChat's existing
+`resizeToMirror()` callback, so Collie alone measures its browser-local scrollport and calls the
+existing read-only/session-scoped resize API. To add a binding for an existing action, extend the
+single registry plus discovery/protocol tests; a new action kind also requires an explicit
+allowlisted Fleet or Collie adapter.
+
 Each browser requests Fleet immediately on load and sends a manual reset when the menu is opened.
 A click on a live `Ready · unseen` or `Needs You` card performs its validated Pane navigation first
 and then feeds the same manual-reset path; Working, Recent, unreachable/stale, and tree navigation do

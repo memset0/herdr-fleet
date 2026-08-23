@@ -8,6 +8,7 @@ import { useIdleLock } from "@/hooks/use-idle-lock";
 import { useCatchingUp } from "@/lib/idle";
 import { startFleetActivity } from "@/lib/fleet-activity";
 import { startFleetActions } from "@/lib/fleet-actions";
+import { startFleetShortcuts } from "@/lib/fleet-shortcuts";
 
 // The idle lock COVERS the app rather than replacing it. It used to render instead of the router,
 // which unmounted the whole route tree — and with it every piece of local component state, including
@@ -24,7 +25,9 @@ export function App() {
   useLayoutEffect(() => {
     const stopActivity = startFleetActivity();
     const stopActions = startFleetActions();
+    const stopShortcuts = startFleetShortcuts();
     return () => {
+      stopShortcuts();
       stopActions();
       stopActivity();
     };

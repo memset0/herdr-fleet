@@ -18,6 +18,13 @@ vi.mock("@/lib/wizard-action", () => ({
 vi.mock("@/lib/terminal-resize", () => ({
   measureTerminalColumns: vi.fn(() => 64),
 }));
+const shortcutMock = vi.hoisted(() => ({ handler: null as null | (() => void | Promise<void>) }));
+vi.mock("@/lib/fleet-shortcuts", () => ({
+  registerFleetShortcutHandler: vi.fn((_action: string, handler: () => void | Promise<void>) => {
+    shortcutMock.handler = handler;
+    return () => { if (shortcutMock.handler === handler) shortcutMock.handler = null; };
+  }),
+}));
 
 import { server } from "@/test/setup";
 import { clearStatus } from "@/lib/status";
@@ -91,6 +98,31 @@ describe("AgentChat — reply flow", () => {
 });
 
 describe("AgentChat — custom manual Pane resize", () => {
+  it("uses the exact same measured, session-scoped resize callback for Fleet Alt+S and Display", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/resize$/, async ({ request }) => {
+        requests.push({ url: request.url, body: await request.json() });
+        return HttpResponse.json({ ok: true, cols: 64, rows: 31 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderChat({ session: "shortcut-session" });
+    await waitFor(() => expect(shortcutMock.handler).not.toBeNull());
+
+    await act(async () => { await shortcutMock.handler?.(); });
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(measureTerminalColumns).toHaveBeenCalledTimes(1);
+    expect(requests[0]!.url).toContain("/api/pane/w1%3Ap1/resize?session=shortcut-session");
+    expect(requests[0]!.body).toEqual({ cols: 64 });
+
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    await user.click(screen.getByRole("button", { name: "Resize pane to this view" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(measureTerminalColumns).toHaveBeenCalledTimes(2);
+    expect(requests[1]).toEqual(requests[0]);
+  });
+
   it("measures and posts only after the Display Resize button is clicked", async () => {
     const requests: Array<{ url: string; body: unknown }> = [];
     server.use(
