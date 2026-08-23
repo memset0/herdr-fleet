@@ -6,6 +6,18 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.10] - 2026-08-23
+
+### Changed
+
+- Slide/fade the independent compact Host drawer and footer, and animate stable keyed Host/Space/Tab child groups through bounded grid-track and opacity transitions without rebuilding the AppBar switcher (fe7fbd8).
+- Replace font-dependent text arrows with Collie's standard Lucide `ChevronRight`, using the same centred `.5rem` leading slot as direct Pane status dots so sibling labels align exactly (fe7fbd8).
+- Make collapsed drawer/groups immediately inert and accessibility-hidden, and disable every new drawer/group/chevron transition when reduced motion is requested (fe7fbd8).
+
+### Upgrading
+
+- This is a central-only Fleet presentation patch. Upgrade the central Gateway plugin to `2.5.10`; compatible remote `2.5.x` nodes do not need to be reinstalled or restarted.
+
 ## [2.5.9] - 2026-08-22
 
 ### Fixed
