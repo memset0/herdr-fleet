@@ -6,6 +6,21 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.11] - 2026-08-23
+
+### Added
+
+- Add an upper-right Collie/Lucide favorite star to every Agent card in the desktop rail and compact/mobile overlay, with accessible pressed state, focus restoration, and no navigation or refresh side effect (04a5578).
+- Persist a bounded browser-local favorite Set keyed by exact Host, Herdr session, Pane, and Agent implementation; malformed/unavailable storage falls back to in-memory state and never creates a Gateway or Collie write (04a5578).
+
+### Changed
+
+- Sort favorites before ordinary cards inside each existing Agent status section while preserving the original last-activity/last-seen ordering within both partitions and leaving group membership/counts unchanged (04a5578).
+
+### Upgrading
+
+- This is a central-only Fleet presentation patch. Upgrade the central Gateway plugin to `2.5.11`; compatible remote `2.5.x` nodes do not need to be reinstalled or restarted.
+
 ## [2.5.10] - 2026-08-23
 
 ### Changed
