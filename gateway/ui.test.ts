@@ -386,13 +386,16 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("desktopMedia.matches&&nextAgentShortcutTargets.length<9");
     expect(FLEET_JS).toContain("agentShortcutTargets=nextAgentShortcutTargets");
     expect(FLEET_JS).toContain("desktopMode=nextDesktop;renderAgents();syncTreePresentation()");
-    expect(FLEET_JS).toContain("element('kbd','agent-shortcut-key','Alt+'+ordinal)");
+    expect(FLEET_JS).toContain("element('span','agent-ordinal-badge',String(ordinal))");
     expect(FLEET_JS).not.toContain("agent-shortcut-ordinal");
+    expect(FLEET_JS).not.toContain("agent-shortcut-hint");
+    expect(FLEET_JS).not.toContain("agent-shortcut-key");
     expect(FLEET_JS).toContain("Shortcut Alt+'+ordinal");
-    expect(FLEET_CSS).toContain(".agent-shortcut-hint { display: none; }");
-    expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.agent-shortcut-hint \{ display: flex/);
+    expect(FLEET_CSS).toContain(".agent-ordinal-badge {");
+    expect(FLEET_CSS).toMatch(/\.agent-ordinal-badge \{[^}]+border-radius: 999px;/);
+    expect(FLEET_CSS).not.toContain(".agent-shortcut-hint");
     expect(FLEET_CSS).toContain(".agent-title-line { padding-right: 2.4rem; }");
-    expect(FLEET_CSS).toContain(".agent-meta-line { padding-right: .5rem; }");
+    expect(FLEET_CSS).toContain(".agent-meta-line { padding-right: .75rem; }");
     expect(FLEET_CSS).toMatch(/\.agent-card-main \{[^}]+padding: \.65rem 0 \.65rem \.7rem;/);
 
     expect(FLEET_JS).toContain("function dispatchShortcut(shortcut,{childOriginated=false}={})");

@@ -6,6 +6,16 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.17] - 2026-08-24
+
+### Fixed
+
+- Render the desktop Agent card ordinal as a small circular numeric badge on the avatar's bottom-left instead of an inline `Alt+N` keycap next to the favorite button, so the shortcut position is legible without spending extra card width and the title row stays balanced. Bump the desktop meta row's right inset from `.5rem` to `.75rem` so the bottom row text sits visibly further from the card's right edge than the favorite button does (fleet-agent-ordinal-badge).
+
+### Upgrading
+
+- Update the central Fleet Web bundle to `2.5.17` for the avatar ordinal badge and the bumped meta row right inset. The patch remains compatible with `2.5.x`, changes no Herdr/Gateway protocol or configuration, and needs only the existing plugin-owned hot switch. Remote nodes may continue on any `2.5.x`.
+
 ## [2.5.16] - 2026-08-24
 
 ### Fixed

@@ -720,7 +720,6 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   align-items: center;
   gap: .3rem;
 }
-.agent-shortcut-hint { display: none; }
 .agent-favorite {
   display: grid;
   width: 1.9rem;
@@ -780,7 +779,24 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   border-radius: 999px;
   background: var(--agent-status-color);
 }
-.agent-card[data-live="false"] .agent-avatar, .agent-card[data-live="false"] .agent-status-dot { opacity: .45; }
+.agent-ordinal-badge {
+  position: absolute;
+  left: -.2rem;
+  bottom: -.2rem;
+  display: grid;
+  width: .65rem;
+  height: .65rem;
+  place-items: center;
+  border: 2px solid var(--card);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: .5rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.agent-card[data-live="false"] .agent-avatar, .agent-card[data-live="false"] .agent-status-dot, .agent-card[data-live="false"] .agent-ordinal-badge { opacity: .45; }
 .agent-card-copy { min-width: 0; flex: 1; }
 .agent-title-line, .agent-meta-line { display: flex; min-width: 0; align-items: baseline; gap: .3rem; }
 .agent-project { max-width: 45%; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
@@ -1156,10 +1172,9 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   .fleet-shortcuts h2 { margin: 0 0 .45rem; font-size: .72rem; }
   .fleet-shortcuts ul { display: grid; gap: .28rem; margin: 0; padding: 0; list-style: none; }
   .fleet-shortcuts li { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .65rem; color: var(--muted-foreground); font-size: .65rem; }
-  .fleet-shortcuts kbd, .agent-shortcut-key { flex: none; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: calc(var(--radius) - 4px); background: var(--background); padding: .13rem .32rem; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .6rem; line-height: 1.2; }
+  .fleet-shortcuts kbd { flex: none; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: calc(var(--radius) - 4px); background: var(--background); padding: .13rem .32rem; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .6rem; line-height: 1.2; }
   .agent-title-line { padding-right: 2.4rem; }
-  .agent-meta-line { padding-right: .5rem; }
-  .agent-shortcut-hint { display: flex; align-items: center; gap: .22rem; color: var(--muted-foreground); font-size: .58rem; }
+  .agent-meta-line { padding-right: .75rem; }
   .tree-action-status {
     display: block;
     flex: none;
@@ -2150,6 +2165,7 @@ function renderAgentCard(node,agent,ordinal=null){
  const main=element('button','agent-card-main');main.type='button';main.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status)+shortcutLabel);
  const avatar=element('span','agent-avatar',initials(agent.agent));avatar.dataset.brand=brand(agent.agent);avatar.setAttribute('aria-hidden','true');
  const dot=element('span','agent-status-dot');dot.style.setProperty('--agent-status-color',statusColor(agent.status));avatar.append(dot);
+ if(ordinal){const badge=element('span','agent-ordinal-badge',String(ordinal));badge.setAttribute('aria-hidden','true');avatar.append(badge)}
  const copy=element('span','agent-card-copy');
  const title=element('span','agent-title-line');title.dataset.hasTab=String(Boolean(parts.tab));
  title.append(element('span','agent-project',parts.project));
@@ -2162,7 +2178,6 @@ function renderAgentCard(node,agent,ordinal=null){
  else{meta.append(element('span','offline-chip','offline'));if(Number.isSafeInteger(agent.observedAt))meta.append(element('span','agent-age',timeAgo(agent.observedAt)))}
  const favorite=element('button','agent-favorite');favorite.type='button';favorite.dataset.favoriteKey=favoriteKey;favorite.setAttribute('aria-pressed',String(isFavorite));favorite.setAttribute('aria-label',(isFavorite?'Remove favorite ':'Favorite ')+parts.project+(parts.tab?' · '+parts.tab:''));favorite.title=isFavorite?'Remove from favorites':'Add to favorites';favorite.append(agentFavoriteIcon());favorite.addEventListener('click',()=>toggleAgentFavorite(node,agent));
  const tools=element('div','agent-card-tools');
- if(ordinal){const hint=element('span','agent-shortcut-hint');hint.setAttribute('aria-hidden','true');hint.append(element('kbd','agent-shortcut-key','Alt+'+ordinal));tools.append(hint)}
  tools.append(favorite);copy.append(title,meta);main.append(avatar,copy);main.addEventListener('click',()=>selectAgent(node,agent));card.append(main,tools);return card;
 }
 
