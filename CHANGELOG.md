@@ -6,6 +6,16 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.16] - 2026-08-24
+
+### Fixed
+
+- Give the Fleet agent card meta row (Host chip + last-active timestamp) the same horizontal right inset as the favorite button on the card's top row, so the bottom-row text no longer runs flush against the card's right edge and visually aligns with the favorite button instead.
+
+### Upgrading
+
+- Update the central Fleet Web bundle to `2.5.16` for the aligned Fleet agent card meta row. The patch remains compatible with `2.5.x`, changes no Herdr/Gateway protocol or configuration, and needs only the existing plugin-owned hot switch. Remote nodes may continue on any `2.5.x`.
+
 ## [2.5.15] - 2026-08-24
 
 ### Fixed

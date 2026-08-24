@@ -1158,6 +1158,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   .fleet-shortcuts li { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .65rem; color: var(--muted-foreground); font-size: .65rem; }
   .fleet-shortcuts kbd, .agent-shortcut-key { flex: none; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: calc(var(--radius) - 4px); background: var(--background); padding: .13rem .32rem; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .6rem; line-height: 1.2; }
   .agent-title-line { padding-right: 2.4rem; }
+  .agent-meta-line { padding-right: .5rem; }
   .agent-shortcut-hint { display: flex; align-items: center; gap: .22rem; color: var(--muted-foreground); font-size: .58rem; }
   .tree-action-status {
     display: block;
