@@ -339,7 +339,7 @@ describe("Fleet iframe shell", () => {
   });
 
   test("matches one collision-free desktop shortcut registry by physical code and exact modifiers", () => {
-    expect(FLEET_SHORTCUTS).toHaveLength(12);
+    expect(FLEET_SHORTCUTS).toHaveLength(14);
     expect(fleetShortcutRegistryValid(FLEET_SHORTCUTS)).toBeTrue();
     expect(new Set(FLEET_SHORTCUTS.map((shortcut) => shortcut.id)).size).toBe(FLEET_SHORTCUTS.length);
     expect(new Set(FLEET_SHORTCUTS.map((shortcut) => [shortcut.code, shortcut.altKey, shortcut.ctrlKey, shortcut.metaKey, shortcut.shiftKey].join("|"))).size).toBe(FLEET_SHORTCUTS.length);
@@ -347,6 +347,8 @@ describe("Fleet iframe shell", () => {
     const delivered = { code: "KeyS", altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false };
     expect(fleetShortcutMatch(delivered, true)?.id).toBe("resize-current-pane");
     expect(fleetShortcutMatch({ ...delivered, code: "KeyJ" }, true)?.id).toBe("next-pane");
+    expect(fleetShortcutMatch({ ...delivered, code: "KeyH" }, true)?.id).toBe("previous-agent");
+    expect(fleetShortcutMatch({ ...delivered, code: "KeyL" }, true)?.id).toBe("next-agent");
     expect(fleetShortcutMatch({ ...delivered, code: "Digit9" }, true)?.id).toBe("select-agent-9");
     expect(fleetShortcutMatch(delivered, false)).toBeNull();
     expect(fleetShortcutMatch({ ...delivered, repeat: true }, true)).toBeNull();
@@ -363,6 +365,24 @@ describe("Fleet iframe shell", () => {
     expect(fleetShortcutCycleIndex(["a"], "a", 1)).toBe(0);
     expect(fleetShortcutCycleIndex([], "a", 1)).toBeNull();
     expect(fleetShortcutCycleIndex(["a"], "missing", 1)).toBeNull();
+
+    const previousAgent = FLEET_SHORTCUTS.find((shortcut) => shortcut.id === "previous-agent");
+    const nextAgent = FLEET_SHORTCUTS.find((shortcut) => shortcut.id === "next-agent");
+    expect(previousAgent).toBeDefined();
+    expect(nextAgent).toBeDefined();
+    expect(previousAgent?.code).toBe("KeyH");
+    expect(previousAgent?.keyLabel).toBe("Alt+H");
+    expect(previousAgent?.label).toBe("Previous Agent");
+    expect(previousAgent?.action).toEqual({ kind: "cycle-agent", delta: -1 });
+    expect(nextAgent?.code).toBe("KeyL");
+    expect(nextAgent?.keyLabel).toBe("Alt+L");
+    expect(nextAgent?.label).toBe("Next Agent");
+    expect(nextAgent?.action).toEqual({ kind: "cycle-agent", delta: 1 });
+
+    expect(FLEET_JS).toContain("function cycleAgentShortcut(delta,childOriginated=false)");
+    expect(FLEET_JS).toContain("if(shortcut.action.kind==='cycle-agent'){cycleAgentShortcut(shortcut.action.delta,childOriginated);return true}");
+    expect(FLEET_JS).toMatch(/cycleAgentShortcut[\s\S]*agentShortcutTargets\[/);
+    expect(FLEET_JS).toMatch(/cycleAgentShortcut[\s\S]*selectAgent\(target\.node,target\.agent\)/);
 
     const page = fleetPage(1, "2.5.14");
     expect(page).toContain('id="fleet-shortcuts-heading">Shortcuts</h2>');

@@ -106,6 +106,7 @@ export function fleetAgentFavoriteCompare(leftKey: string, rightKey: string, fav
 export type FleetShortcutAction =
   | { kind: "resize-current-pane" }
   | { kind: "cycle-pane"; delta: -1 | 1 }
+  | { kind: "cycle-agent"; delta: -1 | 1 }
   | { kind: "select-agent"; ordinal: number };
 
 export interface FleetShortcutDefinition {
@@ -127,6 +128,8 @@ export const FLEET_SHORTCUTS: readonly FleetShortcutDefinition[] = [
   { id: "resize-current-pane", code: "KeyS", ...exactAlt, label: "Resize current Pane", keyLabel: "Alt+S", action: { kind: "resize-current-pane" } },
   { id: "previous-pane", code: "KeyK", ...exactAlt, label: "Previous Pane", keyLabel: "Alt+K", action: { kind: "cycle-pane", delta: -1 } },
   { id: "next-pane", code: "KeyJ", ...exactAlt, label: "Next Pane", keyLabel: "Alt+J", action: { kind: "cycle-pane", delta: 1 } },
+  { id: "previous-agent", code: "KeyH", ...exactAlt, label: "Previous Agent", keyLabel: "Alt+H", action: { kind: "cycle-agent", delta: -1 } },
+  { id: "next-agent", code: "KeyL", ...exactAlt, label: "Next Agent", keyLabel: "Alt+L", action: { kind: "cycle-agent", delta: 1 } },
   ...Array.from({ length: 9 }, (_, index): FleetShortcutDefinition => {
     const ordinal = index + 1;
     return { id: `select-agent-${ordinal}`, code: `Digit${ordinal}`, ...exactAlt, label: `Select Agent ${ordinal}`, keyLabel: `Alt+${ordinal}`, action: { kind: "select-agent", ordinal } };
@@ -2137,10 +2140,22 @@ function selectAgentShortcut(ordinal,childOriginated=false){
  selectAgent(target.node,target.agent);if(childOriginated)focusSelectedFrame();
 }
 
+function cycleAgentShortcut(delta,childOriginated=false){
+ if(!agentShortcutTargets.length){showTreeActionStatus('No Agents are available for keyboard navigation.','error');return}
+ const route=activeEntry()?.route||requestedRoute();
+ const currentKey=route?.view==='pane'?(route.nodeId||selectedId)+'|'+(route.paneId||'')+'|'+(route.session||''):null;
+ const index=currentKey?agentShortcutTargets.findIndex((entry)=>entry.node.id+'|'+entry.agent.paneId+'|'+(entry.agent.primarySession?'':entry.agent.herdrSession)===currentKey):-1;
+ let target;
+ if(index>=0)target=agentShortcutTargets[(index+delta+agentShortcutTargets.length)%agentShortcutTargets.length];
+ else target=delta>0?agentShortcutTargets[0]:agentShortcutTargets[agentShortcutTargets.length-1];
+ selectAgent(target.node,target.agent);if(childOriginated)focusSelectedFrame();
+}
+
 function dispatchShortcut(shortcut,{childOriginated=false}={}){
  if(!shortcut||shortcut.scope!=='desktop'||!desktopMedia.matches||document.hidden)return false;
  showShortcutToast(shortcut);
  if(shortcut.action.kind==='cycle-pane'){cyclePaneShortcut(shortcut.action.delta,childOriginated);return true}
+ if(shortcut.action.kind==='cycle-agent'){cycleAgentShortcut(shortcut.action.delta,childOriginated);return true}
  if(shortcut.action.kind==='select-agent'){selectAgentShortcut(shortcut.action.ordinal,childOriginated);return true}
  if(shortcut.action.kind==='resize-current-pane'){void dispatchSelectedShortcutAction(shortcut.action.kind);return true}
  return false;

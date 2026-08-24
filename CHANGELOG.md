@@ -6,6 +6,16 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.18] - 2026-08-24
+
+### Added
+
+- Register two new desktop Fleet shortcuts `Alt+H` ("Previous Agent") and `Alt+L` ("Next Agent") that walk the right Agent menu's current rendered order, with each press resolving its target against the `agentShortcutTargets` snapshot at the moment of the press and falling back to the first/last Agent when the current selection is not in the snapshot (fleet-alt-h-l-cycle-agent).
+
+### Upgrading
+
+- Minor release. Update the central Fleet Web bundle to `2.5.18` for the new `Alt+H` / `Alt+L` cycle bindings. Remote nodes may continue on any `2.5.x`; the new bindings are additive and only fire when both the binding and the Fleet iframe shell are present.
+
 ## [2.5.17] - 2026-08-24
 
 ### Fixed
