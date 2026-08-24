@@ -417,6 +417,12 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toContain(".agent-title-line { padding-right: 2.4rem; }");
     expect(FLEET_CSS).toContain(".agent-meta-line { padding-right: .75rem; }");
     expect(FLEET_CSS).toMatch(/\.agent-card-main \{[^}]+padding: \.65rem 0 \.65rem \.7rem;/);
+    expect(FLEET_CSS).toContain("--fleet-selected-foreground: light-dark(oklch(.985 0 0), oklch(.985 0 0))");
+    expect(FLEET_CSS).toContain(".agent-card[data-current-pane=\"true\"] {");
+    expect(FLEET_CSS).toContain(".tree-row[aria-selected=\"true\"] { background: var(--accent); color: var(--fleet-selected-foreground); }");
+    expect(FLEET_CSS).toContain(".fleet-shell[data-tree-open=\"true\"] .tree-row[aria-selected=\"true\"] { background: var(--accent); color: var(--fleet-selected-foreground); }");
+    expect(FLEET_JS).toContain("card.dataset.currentPane='true'");
+    expect(FLEET_JS).toContain("if(route?.view==='pane'&&route.spaceId&&route.tabId&&route.paneId&&selectedId){");
 
     expect(FLEET_JS).toContain("function dispatchShortcut(shortcut,{childOriginated=false}={})");
     expect(FLEET_JS).toContain("selectTreeNode(target.nodeId,{route:target.route,focusTreeKey:target.treeKey})");

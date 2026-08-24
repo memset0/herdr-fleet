@@ -6,6 +6,21 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.19] - 2026-08-24
+
+### Added
+
+- Auto-open the left Host tree's disclosure chain to the currently selected Pane on every render so the selected row is always visible without operator action (fleet-highlight-current-pane-in-rails).
+- Paint the right Agent card whose `(node, pane, session)` matches the current Fleet route with a distinct `data-current-pane="true"` ring so the operator can pivot between the two rails without losing track of the center Pane (fleet-highlight-current-pane-in-rails).
+
+### Changed
+
+- Introduce `--fleet-selected-foreground` and use it for the left Host tree's selected row text in both desktop and mobile surfaces, so the selected row reads at a glance against the accent background (fleet-highlight-current-pane-in-rails).
+
+### Upgrading
+
+- Minor release. Update the central Fleet Web bundle to `2.5.19` for the auto-disclose / selected-foreground / current-pane ring treatment. Remote nodes may continue on any `2.5.x`; the new visual treatment is additive and renders only inside the Fleet iframe shell.
+
 ## [2.5.18] - 2026-08-24
 
 ### Added

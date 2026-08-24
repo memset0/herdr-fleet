@@ -490,6 +490,7 @@ export const FLEET_CSS = `${GATEWAY_THEME_CSS}
   --status-online: var(--status-done);
   --status-down: var(--status-blocked);
   --tree-indicator-size: .5rem;
+  --fleet-selected-foreground: light-dark(oklch(.985 0 0), oklch(.985 0 0));
 }
 html, body { height: 100%; overflow: hidden; }
 body { margin: 0; background: var(--muted); color: var(--foreground); }
@@ -800,6 +801,11 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   line-height: 1;
 }
 .agent-card[data-live="false"] .agent-avatar, .agent-card[data-live="false"] .agent-status-dot, .agent-card[data-live="false"] .agent-ordinal-badge { opacity: .45; }
+.agent-card[data-current-pane="true"] {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+  border-color: var(--ring);
+}
 .agent-card-copy { min-width: 0; flex: 1; }
 .agent-title-line, .agent-meta-line { display: flex; min-width: 0; align-items: baseline; gap: .3rem; }
 .agent-project { max-width: 45%; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
@@ -901,7 +907,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   cursor: pointer;
 }
 .fleet-shell[data-tree-open="true"] .tree-row:hover { background: color-mix(in oklch, var(--accent) 60%, transparent); color: var(--foreground); }
-.fleet-shell[data-tree-open="true"] .tree-row[aria-selected="true"] { background: var(--accent); color: var(--foreground); }
+.fleet-shell[data-tree-open="true"] .tree-row[aria-selected="true"] { background: var(--accent); color: var(--fleet-selected-foreground); }
 .fleet-shell[data-tree-open="true"] .tree-row[data-stale="true"] { opacity: .58; }
 .fleet-shell[data-tree-open="true"] .tree-row[data-disabled="true"] { cursor: default; }
 .fleet-shell[data-tree-open="true"] .tree-row-level-2 { padding-left: 1.25rem; }
@@ -1074,7 +1080,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
     cursor: pointer;
   }
   .tree-row:hover { background: color-mix(in oklch, var(--accent) 60%, transparent); color: var(--foreground); }
-  .tree-row[aria-selected="true"] { background: var(--accent); color: var(--foreground); }
+  .tree-row[aria-selected="true"] { background: var(--accent); color: var(--fleet-selected-foreground); }
   .tree-row[data-stale="true"] { opacity: .58; }
   .tree-row[data-disabled="true"] { cursor: default; }
   .tree-row-level-2 { padding-left: 1.25rem; }
@@ -1945,6 +1951,12 @@ function renderHostSwitcher(focusSelected=false){
 function renderTree(focusKey=null){
  instances.replaceChildren();const liveKeys=new Set();const nextPaneShortcutTargets=[];
  const route=activeEntry()?.route||requestedRoute();
+ if(route?.view==='pane'&&route.spaceId&&route.tabId&&route.paneId&&selectedId){
+  const hostKey=treeKey(selectedId,route.session||'','host',selectedId);
+  const spaceKey=treeKey(selectedId,route.session||'','space',route.spaceId);
+  const tabKey=treeKey(selectedId,route.session||'','tab',route.tabId);
+  expandedTreeKeys.add(hostKey);expandedTreeKeys.add(spaceKey);expandedTreeKeys.add(tabKey);
+ }
  for(const node of nodes){
    const hostKey=treeKey(node.id,'','host',node.id);liveKeys.add(hostKey);
    if(!initializedHostKeys.has(hostKey)){initializedHostKeys.add(hostKey);expandedTreeKeys.add(hostKey)}
@@ -2176,6 +2188,9 @@ function renderAgentCard(node,agent,ordinal=null){
  const parts=agentParts(agent);
  const favoriteKey=agentFavoriteKey(node,agent);const isFavorite=agentFavorites.has(favoriteKey);
  const card=element('div','agent-card');card.dataset.live=String(Boolean(agent.reachable));card.dataset.status=agent.status;card.dataset.favorite=String(isFavorite);
+ const route=activeEntry()?.route||requestedRoute();
+ const cardSession=agent.primarySession?'':agent.herdrSession;
+ if(route?.view==='pane'&&route.paneId===agent.paneId&&(route.session||'')===cardSession&&selectedId===node.id)card.dataset.currentPane='true';
  const shortcutLabel=ordinal?' · Shortcut Alt+'+ordinal:'';
  const main=element('button','agent-card-main');main.type='button';main.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status)+shortcutLabel);
  const avatar=element('span','agent-avatar',initials(agent.agent));avatar.dataset.brand=brand(agent.agent);avatar.setAttribute('aria-hidden','true');
