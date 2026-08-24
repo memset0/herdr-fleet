@@ -391,8 +391,8 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("Shortcut Alt+'+ordinal");
     expect(FLEET_CSS).toContain(".agent-shortcut-hint { display: none; }");
     expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.agent-shortcut-hint \{ display: flex/);
-    expect(FLEET_CSS).toContain(".agent-title-line { padding-right: 2.9rem; }");
-    expect(FLEET_CSS).not.toContain(".agent-card-main { padding-right: 5.9rem; }");
+    expect(FLEET_CSS).toContain(".agent-title-line { padding-right: 2.4rem; }");
+    expect(FLEET_CSS).toMatch(/\.agent-card-main \{[^}]+padding: \.65rem 0 \.65rem \.7rem;/);
 
     expect(FLEET_JS).toContain("function dispatchShortcut(shortcut,{childOriginated=false}={})");
     expect(FLEET_JS).toContain("selectTreeNode(target.nodeId,{route:target.route,focusTreeKey:target.treeKey})");

@@ -6,6 +6,17 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.5.15] - 2026-08-24
+
+### Fixed
+
+- Drop the global right-side reservation from the Fleet agent card so the bottom meta row (Host chip and last-active timestamp) now reaches the card's true right edge on both desktop and phone-width surfaces; keep only the title row reserved for the favorite button and desktop keyboard-shortcut hint (fleet-agent-card-right-edge).
+- Pin the desktop Fleet left rail footer (version + settings) to the bottom edge when the Host tree is shorter than the available rail height, by giving `.instance-strip` `flex: 1; min-height: 0;` inside the `min-width: 1200px` media query (fleet-agent-card-right-edge).
+
+### Upgrading
+
+- Update the central Fleet Web bundle to `2.5.15` for the corrected agent-card alignment and the pinned left-rail footer. The patch remains compatible with `2.5.x`, changes no Herdr/Gateway protocol or configuration, and needs only the existing plugin-owned hot switch. Remote nodes may continue on any `2.5.x`.
+
 ## [2.5.14] - 2026-08-23
 
 ### Added
