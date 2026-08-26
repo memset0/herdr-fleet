@@ -153,9 +153,13 @@ controls. Favorites live in one bounded versioned localStorage Set keyed by Host
 Agent, survive status/label/offline changes, and wrap rather than replace the bucket timestamp
 comparator. Storage failure remains in-memory and creates no Gateway write or recovery request.
 The shared native Header omits its complete Collie home/logo affordance when framed, releasing that
-space to the breadcrumb, while the same top-level page retains the mark, connection animation, and
-home action. This presentation decision lives in each node Web bundle, so an older compatible node
-may retain the old embedded mark until its normal upgrade.
+space to the breadcrumb. The child entrypoint also marks the framed document before React mounts;
+root-scoped static CSS hides the redundant Pane-switch trigger/hit area and decorative Controls
+label reservation through purpose-built data hooks. The underlying switch sheet and every composer
+action stay mounted and unchanged. The same top-level page receives no marker and retains the mark,
+connection animation, home action, switch trigger/sheet, label, and spacing. Fleet never inspects
+the cross-origin DOM or injects style/protocol state; older compatible nodes may retain the old
+embedded chrome until their normal upgrade.
 
 One typed Fleet registry owns desktop shortcut chords, labels, scope, and allowlisted actions. The
 outer document matches exact physical codes and modifiers without repeat; it snapshots Pane targets

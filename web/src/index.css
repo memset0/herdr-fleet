@@ -347,3 +347,16 @@
     animation: busy-bar-pulse 1.1s ease-in-out infinite;
   }
 }
+
+/* Fleet already owns Pane navigation around its cross-origin Collie iframe. Hide only the child
+   affordances that duplicate that shell; a standalone Collie document has no root marker and keeps
+   its complete switch trigger, Controls label, and spacing. Purpose-built hooks keep this cosmetic
+   contract independent of translated text and generated utility-class order. */
+:root[data-fleet-frame] [data-fleet-pane-switch-trigger],
+:root[data-fleet-frame] [data-fleet-controls-label] {
+  display: none;
+}
+
+:root[data-fleet-frame] [data-fleet-controls-row] {
+  padding-top: 0;
+}

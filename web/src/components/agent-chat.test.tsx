@@ -97,6 +97,18 @@ describe("AgentChat — reply flow", () => {
   });
 });
 
+describe("AgentChat — Fleet-framed presentation hooks", () => {
+  it("keeps the standalone Switch pane control and unchanged sheet behind the exact hook", async () => {
+    const user = userEvent.setup();
+    renderChat();
+    const trigger = screen.getByRole("button", { name: "Switch pane" });
+    expect(trigger).toHaveAttribute("data-fleet-pane-switch-trigger");
+
+    await user.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Switch pane" })).toBeInTheDocument();
+  });
+});
+
 describe("AgentChat — custom manual Pane resize", () => {
   it("uses the exact same measured, session-scoped resize callback for Fleet Alt+S and Display", async () => {
     const requests: Array<{ url: string; body: unknown }> = [];

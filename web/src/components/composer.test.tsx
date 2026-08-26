@@ -59,6 +59,23 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
   return props;
 }
 
+describe("Composer — Fleet-framed presentation hooks", () => {
+  it("marks only the label and padding owner while standalone actions remain available", () => {
+    renderComposer();
+    const label = screen.getByText("Controls");
+    const row = label.parentElement;
+
+    expect(label).toHaveAttribute("data-fleet-controls-label");
+    expect(row).toHaveAttribute("data-fleet-controls-row");
+    expect(row).toHaveClass("pt-3");
+    expect(screen.getByRole("button", { name: "Keys" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Type into terminal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Quick" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Display settings" })).toBeInTheDocument();
+  });
+});
+
 /**
  * Wait for a send that can never verify to reach its terminal `stalled` outcome.
  *

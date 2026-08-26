@@ -15,6 +15,10 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
   `/status`, `/fast`, and other exact slash commands after two stable reads; partial filters,
   renderer-free lookalikes, mismatched selections, dialogs, and output below the palette still
   withhold Enter.
+- Mark only framed Collie documents before React mounts and use root-scoped static CSS plus exact
+  data hooks to hide the redundant `Switch pane` trigger/hit area and `Controls` label reservation
+  inside Fleet. The switch sheet and every composer action remain implemented, while top-level
+  Collie retains the complete trigger, label, spacing, gestures, keyboard, and accessibility.
 
 ## [2.7.3] - 2026-08-26
 

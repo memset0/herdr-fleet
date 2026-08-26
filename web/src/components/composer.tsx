@@ -796,8 +796,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             which is what squeezed the toggles; absolute costs nothing and the row gets the width
             back. `pt-3` on the row reserves the space it occupies so it can't collide with whatever
             sits above. */}
-        <div className="relative mb-2 flex items-center gap-2 pt-3">
-          <SectionLabel className="absolute left-0 top-0 text-[10px] leading-none opacity-80">
+        <div data-fleet-controls-row className="relative mb-2 flex items-center gap-2 pt-3">
+          <SectionLabel
+            data-fleet-controls-label
+            className="absolute left-0 top-0 text-[10px] leading-none opacity-80"
+          >
             Controls
           </SectionLabel>
           {/* Keys and Quick are TOGGLES for the in-flow dock above (not overlays): tap to open, tap

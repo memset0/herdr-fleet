@@ -849,6 +849,7 @@ export function AgentChat({
           {agents.length + shellPanes.length > 0 && (
             <button
               type="button"
+              data-fleet-pane-switch-trigger
               aria-label="Switch pane"
               {...swipe}
               onClick={() => setDrawer("switcher")}

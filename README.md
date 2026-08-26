@@ -66,7 +66,12 @@ Fleet derives this tree from the `workspaces`, `tabs`, Agent panes, and shell pa
 the same Collie snapshot fetched for Agent state. Expanding rows makes no request, and the projection
 never includes Pane contents or histories. Inside the unchanged iframe, Collie's
 redundant home/logo affordance is omitted so the native breadcrumb can use the released header
-space; a direct or new-tab Collie page retains the logo and its normal home action.
+space. The Pane page also hides its child-owned `Switch pane` trigger row and decorative `Controls`
+label/gap because Fleet already owns Pane navigation and surrounding chrome; Keys, Type, Quick,
+Agent, Display, the underlying switch sheet, and all behavior remain intact. These cosmetic rules
+come from the child's static stylesheet and exact framed root marker—Fleet never reads the
+cross-origin DOM. A direct or new-tab Collie page receives no marker and retains the logo, home
+action, switch trigger/sheet, Controls label, and original spacing.
 Rail resizing never recreates or renavigates a resident iframe. If Collie navigates after initial
 load, its exact-window/origin route report remains attached to that cached document while hidden and
 when later revealed.
