@@ -6,7 +6,7 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
-## Unreleased — Codex guarded-submit reliability
+## [2.7.3] - 2026-08-26
 
 ### Fixed
 
@@ -23,7 +23,12 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 - Extend Codex's read-only verification window without retyping, require two consecutive identical
   verified prompt/draft tails, and bind the final Enter to that stable region. This rejects a repaint
   or dialog race without refusing a long draft whose first `›` row wrapped above the bridge's tail
-  window.
+  window (7edc779).
+
+### Upgrading
+
+- Install this guarded-submit patch on every v2.7.x node whose Codex page accepts remote replies.
+  It changes no configuration or public API and retains v2.7.2 as the immediate rollback.
 
 ## [2.7.2] - 2026-08-26
 
