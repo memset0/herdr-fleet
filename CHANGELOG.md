@@ -6,7 +6,7 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
-## Unreleased — Codex slash-command guard
+## [2.7.4] - 2026-08-26
 
 ### Fixed
 
@@ -14,11 +14,18 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
   `/command` query matches the first cyan/bold selected option. Guarded replies can now execute
   `/status`, `/fast`, and other exact slash commands after two stable reads; partial filters,
   renderer-free lookalikes, mismatched selections, dialogs, and output below the palette still
-  withhold Enter.
+  withhold Enter (bae50cf).
 - Mark only framed Collie documents before React mounts and use root-scoped static CSS plus exact
   data hooks to hide the redundant `Switch pane` trigger/hit area and `Controls` label reservation
   inside Fleet. The switch sheet and every composer action remain implemented, while top-level
-  Collie retains the complete trigger, label, spacing, gestures, keyboard, and accessibility.
+  Collie retains the complete trigger, label, spacing, gestures, keyboard, and accessibility
+  (a531272).
+
+### Upgrading
+
+- Install this compatible Web patch on all three nodes for consistent slash-command sending and
+  framed Pane presentation. It changes no configuration, API, Gateway proxy, transport, service,
+  Herdr, or Pane state; retain exact v2.7.3 as the immediate rollback.
 
 ## [2.7.3] - 2026-08-26
 
