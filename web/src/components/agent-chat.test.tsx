@@ -177,6 +177,12 @@ describe("AgentChat — header title block", () => {
     expect(screen.getByRole("button", { name: /open webapp overview/i })).toBeInTheDocument();
   });
 
+  it("uses a sanitized terminal title only when stable Pane/session names are absent", () => {
+    const base = fixtureAgents[0]!;
+    renderChat({ agent: { ...base, terminalTitle: "Reviewing the diff" } });
+    expect(screen.getByText("Reviewing the diff")).toBeInTheDocument();
+  });
+
   it("opens the space overview (all tabs + panes) when the title block is tapped", async () => {
     const user = userEvent.setup();
     const agent = fixtureAgents[0]!; // workspaceId w1
@@ -249,6 +255,37 @@ describe("AgentChat — raw-terminal escape hatch", () => {
     expect(screen.queryByRole("button", { name: "Yes" })).not.toBeInTheDocument();
     // …and the menu is rendered verbatim in the mirror, drivable by the keys pad.
     expect(screen.getByText(/1\. Yes/)).toBeInTheDocument();
+  });
+
+  // "Tap to type" — on, the mirror is one big "start typing" target; off, it is a document. The
+  // pref must gate ONLY the focus, never the mirror's own controls: someone who turned it off to
+  // stop the keyboard appearing has not asked to lose the prompt buttons.
+  it("focuses the composer on a mirror tap by default", async () => {
+    renderChat({ text: "just some output\n" });
+    const line = screen.getByText(/just some output/);
+    fireEvent.click(line);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByPlaceholderText(/Type a reply/i)));
+  });
+
+  it("leaves focus alone on a mirror tap when Tap to type is off", async () => {
+    localStorage.setItem(
+      "collie:display-prefs:v4",
+      JSON.stringify({ wrap: true, fontSize: 11, rawTerminal: false, tapToFocus: false }),
+    );
+    renderChat({ text: "just some output\n" });
+    const before = document.activeElement;
+    fireEvent.click(screen.getByText(/just some output/));
+    expect(document.activeElement).toBe(before);
+    expect(document.activeElement).not.toBe(screen.getByPlaceholderText(/Type a reply/i));
+  });
+
+  it("still lifts a menu into buttons with Tap to type off — it gates focus, not the grammars", async () => {
+    localStorage.setItem(
+      "collie:display-prefs:v4",
+      JSON.stringify({ wrap: true, fontSize: 11, rawTerminal: false, tapToFocus: false }),
+    );
+    renderChat({ text: MENU_TEXT });
+    expect(await screen.findByRole("button", { name: "Yes" })).toBeInTheDocument();
   });
 
   it("lifts a multi-question wizard into native controls by default (grammars on)", async () => {
@@ -410,14 +447,15 @@ describe("AgentChat — prompt-select race guard wiring (frozen {text, revision}
 // The block grammars are provably scoped to the pane's own adapter (spec T8): an agent with no
 // adapter gets the plain raw mirror — no prompt-select buttons, no chrome stripping, no re-surfaced
 // status strip — because running Claude-tuned matchers on an unverified TUI could mis-lift or
-// mis-strip its output. codex is such an agent; omp has an adapter but lifts no dialog kind at all.
+// mis-strip its output. opencode is such an agent (codex graduated to its own adapter); omp has an
+// adapter but lifts no dialog kind at all.
 describe("AgentChat — block-grammar scoping (an agent with no adapter)", () => {
-  // A codex agent sharing the Claude fixture's ids, so only the agent kind differs from the default.
-  const codexAgent = { ...fixtureAgents[0]!, agent: "codex" };
+  // An opencode agent sharing the Claude fixture's ids, so only the agent kind differs from the default.
+  const opencodeAgent = { ...fixtureAgents[0]!, agent: "opencode" };
 
-  it("does NOT lift a codex tail menu into buttons — it stays raw mirror text", () => {
-    renderChat({ text: MENU_TEXT, agent: codexAgent });
-    // No native prompt buttons: the Claude prompt-select grammar never runs for codex…
+  it("does NOT lift an adapterless agent's tail menu into buttons — it stays raw mirror text", () => {
+    renderChat({ text: MENU_TEXT, agent: opencodeAgent });
+    // No native prompt buttons: the Claude prompt-select grammar never runs without an adapter…
     expect(screen.queryByRole("button", { name: "Yes" })).not.toBeInTheDocument();
     // …and the menu row shows verbatim in the raw mirror instead (drivable by the keys pad).
     expect(screen.getByText(/1\. Yes/)).toBeInTheDocument();
@@ -438,13 +476,32 @@ describe("AgentChat — block-grammar scoping (an agent with no adapter)", () =>
     expect(screen.queryByText(/❯/)).toBeNull(); // the input box was stripped off the mirror
   });
 
-  it("leaves a codex input-box buffer fully raw — no status strip, box kept in the mirror", () => {
-    renderChat({ text: STATUS_TEXT, agent: codexAgent });
+  it("leaves an adapterless agent's input-box buffer fully raw — no status strip, box kept in the mirror", () => {
+    renderChat({ text: STATUS_TEXT, agent: opencodeAgent });
     // The statusline is NOT hoisted into an app strip — it stays inside the raw <pre> mirror…
     const status = screen.getByText(/\[Opus 4\.8\] ~\/webapp · main/);
     expect(status.closest("pre")).not.toBeNull();
     // …and the input box itself is preserved verbatim (no chrome stripping for a non-Claude agent).
     expect(screen.getByText(/❯/)).toBeInTheDocument();
+  });
+
+  it("strips Grok's composer box and hoists the bottom-border status into the app strip", () => {
+    const grokBox = [
+      "Sandbox transcript",
+      "",
+      `  ╭${"─".repeat(60)}╮`,
+      "  │ ❯ testing stuff                                                     │",
+      `  ╰${"─".repeat(28)} Local Llama (xhigh) · plan ─╯`,
+      "",
+      "  Shift+Tab:mode  │  Ctrl+.:shortcuts",
+    ].join("\n");
+    const grokAgent = { ...opencodeAgent, agent: "grok", paneId: "w9:p5" };
+    renderChat({ text: grokBox, agent: grokAgent });
+    const strip = screen.getByText("Local Llama (xhigh) · plan");
+    expect(strip.closest("pre")).toBeNull();
+    expect(strip.textContent).toBe("Local Llama (xhigh) · plan");
+    expect(screen.queryByText(/Shift\+Tab:mode/)).toBeNull();
+    expect(screen.queryByText("╭")).toBeNull();
   });
 });
 

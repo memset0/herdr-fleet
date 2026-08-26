@@ -26,6 +26,7 @@ interface DisplayPrefsContentProps {
   setRawTerminal: (raw: boolean) => void;
   onResize: () => Promise<void>;
   resizeDisabled: boolean;
+  setTapToFocus: (tapToFocus: boolean) => void;
 }
 
 // One settings row: name (+ optional explanation) on the left, control on the right. Module-level so
@@ -61,6 +62,7 @@ export function DisplayPrefsContent({
   setRawTerminal,
   onResize,
   resizeDisabled,
+  setTapToFocus,
 }: DisplayPrefsContentProps) {
   const [resizing, setResizing] = useState(false);
 
@@ -86,6 +88,19 @@ export function DisplayPrefsContent({
             checked={prefs.wrap}
             onCheckedChange={setWrap}
             aria-label="Wrap lines"
+          />
+        }
+      />
+      <Row
+        label="Tap to type"
+        hint="On, tapping the mirror anywhere opens the keyboard. Off, the mirror behaves like a document — taps land on the text and only the composer opens the keyboard."
+        htmlFor="pref-tap-to-focus"
+        control={
+          <Switch
+            id="pref-tap-to-focus"
+            checked={prefs.tapToFocus}
+            onCheckedChange={setTapToFocus}
+            aria-label="Tap to type"
           />
         }
       />

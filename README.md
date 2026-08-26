@@ -97,20 +97,37 @@ compatible node bundles continue to work but cannot forward iframe-focused short
 
 ### Collie node controls
 
-The node UI includes Collie v0.28.0's safer remote-input path. A free-text reply refreshes the Pane,
+The node UI includes Collie v0.34.0's safer remote-input path. A free-text reply refreshes the Pane,
 refuses supported harnesses whose composer is hidden by a dialog, types first, and sends Enter only
 after the fresh Pane verifies the text. The explicit type-anyway path still withholds Enter when it
 cannot verify the draft. Direct terminal typing is a separate ordered queue: it adds no implicit
-Enter and drops pending keys when the selected Pane or page context changes. Claude Code and OMP
-receive structured menu controls; unsupported or ambiguous terminal states stay on the generic
-direct-typing path.
+Enter, drains long socket writes, and drops pending keys when the selected Pane or page context
+changes. Claude Code, Codex, Grok Build, and OMP receive first-class structured controls;
+unsupported or ambiguous terminal states stay on the generic direct-typing path. Password/no-echo
+prompts remove recoverable drafts and hand control to explicit direct typing without caching their
+Pane text.
 
 Pane history can search several comma-separated roots per harness, which supports mixed agent
 profiles on one Herdr host. A session is resolved in the first matching root and every later read is
-realpath-contained within that same root. The PWA also carries the v0.28.0 multiline, CJK-width,
-narrow-Pane, Markdown-table, Ctrl+C, and idle-scroll fixes plus lazy bundled Nerd Font symbols.
+realpath-contained within that same root. Per-root diagnostics cover Claude, Codex, Grok Build, Pi,
+and OpenCode stores without relaxing containment. The PWA also carries Collie's multiline,
+CJK-width, narrow-Pane, Markdown-table, Ctrl+C, OMP-suggestion, and idle-scroll fixes plus lazy
+bundled Nerd Font symbols. Sanitized terminal OSC titles may identify an otherwise unnamed Pane,
+but never rename its Tab, route, Fleet notification hierarchy, or explicit Pane/session label.
 HTML navigation remains network-first through the Gateway; only validated same-origin font
 responses enter the lazy cache.
+
+Optional owner-only `commands.toml` and `keys.toml` files replace the shipped rows only for their
+matching Agent scopes and are validated with last-good hot reload. The fixed keys tray includes
+F1–F12, and a browser-local Display preference controls whether tapping the mirror focuses the
+composer. `COLLIE_AUDIT_CONTENT=none` redacts free-form write content from the action audit while
+retaining allowlisted structural fields. The example `.env` also documents the generic one-shot
+VAPID key generator; none of these options creates a service or updater.
+
+Successful snapshot and Pane reads write dated, per-Herdr-session mirrors to this tab's
+`sessionStorage`, bounded to the four newest Panes. They are used only when transport recovery needs
+the last good screen; ordinary navigation remains network-first. No-echo prompts are never stored,
+and any definitive 401/403 clears every Collie mirror before the unauthenticated state is rendered.
 
 ## Architecture
 

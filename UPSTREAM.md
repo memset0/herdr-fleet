@@ -1,14 +1,27 @@
 # Upstream provenance
 
 The node bridge and React PWA are derived from
-[AltanS/collie](https://github.com/AltanS/collie), version **v0.28.0**, commit
-`2910f40278f3ca1646fc472dd3589da4a47776e4`.
+[AltanS/collie](https://github.com/AltanS/collie), version **v0.34.0**, commit
+`0c647372d89d50ec62dfe8b569e9109a830660e5`. The exact annotated release tag is retained through
+the second parent of Web Remote's v0.34.0 adoption merge; later Collie commits and releases are not
+part of this provenance boundary.
 
 The upstream Git history and MIT `LICENSE` are retained. Web Remote adds the Fleet Gateway,
 single-account authentication, multi-instance routing, SSH transports, and a Herdr-coupled
 plugin-owned supervisor. Upstream's Tailscale/system-service control path is intentionally not part
 of this derivative's supported workflow. Windows Task Scheduler, QR lifecycle tooling, and
-upstream's moving self-update path are likewise excluded.
+upstream's moving self-update/major-update path are likewise excluded. Web Remote also does not
+adopt v0.34.0's `COLLIE_PUBLIC_URL`, `COLLIE_SERVE_PORT`, `collie-ctl.sh`, Tailscale publication, or
+OS-service lifecycle; its Herdr plugin manifest, Gateway, and supervisor remain the only supported
+runtime ownership path.
+
+The v0.34.0 import does retain Collie's guarded plan-feedback and password/no-echo input handling,
+complete and partial draft safeguards, socket write draining, Codex and Grok Build harnesses,
+per-root journal diagnostics, operator-owned `commands.toml` / `keys.toml`, F1–F12 support,
+tap-to-type preference, optional audit-content redaction, sanitized terminal titles, Push
+subscription maintenance, and bounded dated `sessionStorage` mirrors. Web Remote-specific tests
+keep those additions inside the existing Host/Origin, text-only, History-containment, framed-seen,
+Fleet-projection, and manual-resize boundaries.
 
 The dormant `services/ttyd-fallback/` companion is Web Remote-owned generic code, not Collie-derived
 source. Its separate ttyd provenance and artifact integrity record live in that directory's

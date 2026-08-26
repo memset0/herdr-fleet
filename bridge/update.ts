@@ -37,15 +37,36 @@ export function parseSemverTag(tag: string): [number, number, number] | null {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-/** Compare two dotted `X.Y.Z` versions (no leading `v`). Returns -1 / 0 / 1. */
+/** The numeric triple of a dotted version, with any `-prerelease` / `+build` tail dropped. The tail
+ *  is reported separately because a prerelease sorts BELOW the release it leads to. */
+function versionParts(v: string) {
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:-([^+]*))?/.exec(v.trim());
+  if (!m) return { triple: [0, 0, 0] as const, prerelease: false };
+  return {
+    triple: [Number(m[1]), Number(m[2]), Number(m[3])] as const,
+    prerelease: m[4] !== undefined && m[4] !== "",
+  };
+}
+
+/**
+ * Compare two dotted `X.Y.Z` versions (no leading `v`). Returns -1 / 0 / 1.
+ *
+ * The running version can be a PRERELEASE (`1.0.0-beta.5`) while every tag we compare it against is
+ * strict, so the tail is parsed rather than fed to `Number` — and `1.0.0-beta.5` sorts below
+ * `1.0.0`, which is what makes the release that follows a beta read as an upgrade.
+ */
 export function compareSemver(a: string, b: string): number {
-  const pa = a.split(".").map(Number);
-  const pb = b.split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d < 0 ? -1 : 1;
+  const pa = versionParts(a);
+  const pb = versionParts(b);
+  for (const [x, y] of [
+    [pa.triple[0], pb.triple[0]],
+    [pa.triple[1], pb.triple[1]],
+    [pa.triple[2], pb.triple[2]],
+  ] as const) {
+    if (x !== y) return x < y ? -1 : 1;
   }
-  return 0;
+  if (pa.prerelease === pb.prerelease) return 0;
+  return pa.prerelease ? -1 : 1;
 }
 
 /** The newest release among `tags`, as a dotted `X.Y.Z` (leading `v` stripped to match

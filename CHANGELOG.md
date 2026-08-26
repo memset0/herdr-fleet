@@ -6,6 +6,30 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## Unreleased candidate — Collie v0.34.0 sync
+
+### Added
+
+- Merge the exact Collie v0.34.0 release commit as Git ancestry and adopt its guarded plan-feedback,
+  password/no-echo, complete/partial draft, direct-typing cancellation, and socket-drain behavior.
+- Add first-class Codex and Grok Build composer, dialog, status, and journal harnesses; retain the
+  OMP inline-suggestion and tall Codex prompt fixes with byte-faithful fixtures.
+- Add hot-reloaded operator `commands.toml` and `keys.toml`, F1–F12, tap-to-type preference,
+  optional audit-content redaction, sanitized OSC terminal titles, and Push subscription upkeep.
+- Keep up to four dated, per-session Pane mirrors in `sessionStorage` for transport-only recovery;
+  password prompts are excluded and a definitive 401/403 clears every persisted Collie mirror.
+
+### Preserved boundaries
+
+- Keep Web Remote's product identity, Gateway, plugin-owned supervisor, ttyd fallback companion,
+  manual Pane resize, exact Host/Origin policy, framed seen-attribution, Fleet actions/shortcuts, and
+  no-central-Pane-content projection.
+- Do not adopt Collie's service/Tailscale/QR lifecycle, `collie-ctl.sh`, `COLLIE_PUBLIC_URL`,
+  `COLLIE_SERVE_PORT`, or moving self-update/major-update behavior.
+
+This section describes an untagged acceptance candidate. The installed version remains `2.5.19`
+until the owner approves the exact node-affecting minor release and rollout.
+
 ## [2.5.19] - 2026-08-24
 
 ### Added
@@ -199,7 +223,9 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 
 ### Upgrading
 
-- Upgrade the repo-less H20 rollout to `2.5.3`: gpu-7 performs the normal frozen Web Remote build and backend tests, then node-1 runs the exact companion suite with its existing Python 3.12 before the atomic plugin switch. Runtime behavior remains unchanged.
+- Upgrade a repo-less split-host rollout to `2.5.3`: the build host performs the normal frozen Web
+  Remote build and backend tests, then the runtime host runs the exact companion suite with its
+  existing Python 3.12 before the atomic plugin switch. Runtime behavior remains unchanged.
 
 ## [2.5.2] - 2026-08-22
 

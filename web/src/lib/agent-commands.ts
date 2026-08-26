@@ -11,6 +11,9 @@
 //
 // To regenerate: re-run the per-agent doc-fetch agents (see CHANGELOG) and replace the arrays.
 
+import { canonicalAgent, rowsFor } from "@/lib/operator-scope";
+import type { OperatorCommand } from "@/lib/types";
+
 export interface AgentCommand {
   /** Includes the leading slash, e.g. "/compact". */
   command: string;
@@ -219,35 +222,87 @@ const OMP: readonly AgentCommand[] = [
   { command: "/resume", description: "Open the session picker", takesArg: false, argHint: "", common: false, dangerous: false },
 ];
 
+// ── Grok ─────────────────────────────────────────────────────────────────────
+// Sourced from Grok's published slash-command reference, not from pane captures.
+const GROK: readonly AgentCommand[] = [
+  { command: "/new", description: "Start a fresh session and clear the conversation", takesArg: false, argHint: "", common: true, dangerous: true },
+  { command: "/compact", description: "Compress history to reclaim context; optional focus note", takesArg: true, argHint: "[context]", common: true, dangerous: false },
+  { command: "/resume", description: "Open the session picker to reload a previous session", takesArg: false, argHint: "", common: true, dangerous: false },
+  { command: "/model", description: "Switch model; optional effort as a second argument", takesArg: true, argHint: "[name] [effort]", common: true, dangerous: false },
+  { command: "/copy", description: "Copy the most recent response, or the Nth, or write a file", takesArg: true, argHint: "[N|file]", common: true, dangerous: false },
+  { command: "/context", description: "Show how the context window is being used", takesArg: false, argHint: "", common: true, dangerous: false },
+  { command: "/rewind", description: "Roll the conversation back to an earlier turn", takesArg: false, argHint: "", common: true, dangerous: true },
+  { command: "/help", description: "Show help and list available commands", takesArg: false, argHint: "", common: true, dangerous: false },
+  { command: "/effort", description: "Set reasoning effort on the current model", takesArg: true, argHint: "[low|medium|high|xhigh]", common: false, dangerous: false },
+  { command: "/plan", description: "Enter plan mode; optionally seed a description", takesArg: true, argHint: "[description]", common: false, dangerous: false },
+  { command: "/always-approve", description: "Skip permission prompts, or turn that mode back off", takesArg: false, argHint: "", common: false, dangerous: true },
+  { command: "/auto", description: "Classifier-approve safe tools, or turn that mode back off", takesArg: false, argHint: "", common: false, dangerous: true },
+  { command: "/rename", description: "Rename the current session", takesArg: true, argHint: "[title]", common: false, dangerous: false },
+  { command: "/doctor", description: "Diagnose the terminal session and list available fixes", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/export", description: "Export the conversation to a file or the clipboard", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/delete", description: "Delete this session's history after confirm", takesArg: false, argHint: "", common: false, dangerous: true },
+  { command: "/quit", description: "Quit the application", takesArg: false, argHint: "", common: false, dangerous: true },
+];
+
 const CATALOG: Record<string, readonly AgentCommand[]> = {
   claude: CLAUDE,
   codex: CODEX,
   pi: PI,
   opencode: OPENCODE,
   omp: OMP,
+  grok: GROK,
 };
 
 /**
- * Commands for a Herdr-detected agent (`pane.agent`, e.g. "claude" / "codex"). Returns [] for
- * unknown/absent agents — the UI then hides the command button.
+ * Commands for a Herdr-detected agent (`pane.agent`, e.g. "claude" / "codex") — the operator's own
+ * `commands.toml` rows if any of them address this pane, otherwise the shipped catalog. Returns
+ * [] when neither has anything, and the UI hides the command button.
  *
  * `Object.hasOwn`, not a truthy index: `CATALOG` is a plain object, so an agent string that spells
  * an inherited `Object.prototype` member ("constructor", "toString", "valueOf", …) indexes to that
  * member — a FUNCTION — which is truthy and would be handed back as if it were a command array.
  * command-palette.tsx then calls `.filter` on it and throws, taking the palette down. Same hardening
  * quick-replies.ts applies to its twin lookup, and adapterFor() to the registry.
+ *
+ * Which of your rows address a pane is decided in lib/operator-scope.ts (`keys.toml` resolves the
+ * same way, ADR 0018). What that leaves to this function is the CATALOG half:
+ *
+ * 1. YOUR LIST IS THE PALETTE. A pane addressed by even one of your rows shows your rows for that
+ *    pane and nothing else. This surface is a handful of one-thumb shortcuts, and the value of the
+ *    shipped catalog is that someone chose those ten; a list half-chosen by you and half-guessed
+ *    for you is worse than either. Discovery is not lost by this — the agent's own `/` completion
+ *    renders in the mirrored pane, complete and live, which no copy here could stay.
+ * 2. DANGER IS INHERITED, NOT RESET. A row naming a shipped command keeps that row's `dangerous`
+ *    classification, so re-describing a session wipe cannot turn a two-tap command into a one-tap
+ *    one. A row that names nothing shipped is not dangerous — nothing out here knows otherwise.
  */
-export function commandsFor(agent: string | undefined | null): readonly AgentCommand[] {
+export function commandsFor(
+  agent: string | undefined | null,
+  mine: readonly OperatorCommand[] = [],
+): readonly AgentCommand[] {
+  const shipped = catalogFor(agent);
+  const aimed = rowsFor(mine, agent, (row) => row.command);
+  // Rule 2: nothing of yours points here, so this pane was never part of what you were choosing.
+  if (aimed.length === 0) return shipped;
+  const byName = new Map(shipped.map((c) => [c.command, c] as const));
+  return aimed.map((row) => ({
+    command: row.command,
+    description: row.description,
+    takesArg: row.takesArg,
+    argHint: row.argHint,
+    // A row you typed into your own config is by definition one you want on the first screen.
+    common: true,
+    // Inheriting is a FLOOR, never a default: `confirm = false` on a row that names a shipped
+    // dangerous command still confirms, so the only direction this field moves is up.
+    dangerous: (byName.get(row.command)?.dangerous ?? false) || row.confirm === true,
+  }));
+}
+
+/** The agent names the shipped catalog is filed under — pinned against AGENT_FAMILIES in the tests. */
+export const CATALOG_AGENTS: readonly string[] = Object.keys(CATALOG);
+
+function catalogFor(agent: string | undefined | null): readonly AgentCommand[] {
   if (!agent) return [];
-  const key = agent.toLowerCase().trim();
-  if (Object.hasOwn(CATALOG, key)) return CATALOG[key];
-  // Tolerate variants like "claude-code" / "opencode-dev".
-  if (key.startsWith("claude")) return CLAUDE;
-  if (key.startsWith("codex")) return CODEX;
-  if (key.startsWith("opencode")) return OPENCODE;
-  if (key === "pi" || key.startsWith("pi-") || key.startsWith("pi.")) return PI;
-  // `omp` is its own prefix — no other agent string in this file starts with it, and it must NOT be
-  // reached by the `pi` rules above: oh-my-pi ships a different command set from pi.dev's.
-  if (key.startsWith("omp")) return OMP;
-  return [];
+  const key = canonicalAgent(agent.toLowerCase().trim());
+  return Object.hasOwn(CATALOG, key) ? CATALOG[key] : [];
 }

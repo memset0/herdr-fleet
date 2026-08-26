@@ -61,7 +61,7 @@ describe("decidePush", () => {
       decidePush(
         {
           title: "Collie 0.12.0 available",
-          body: "collie-ctl.sh update",
+          body: "herdr plugin action invoke restart --plugin memset0.web-remote",
           data: { target: "settings" },
         },
         false,

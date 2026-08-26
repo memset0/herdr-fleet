@@ -60,7 +60,9 @@ await activity.load();
 
 // Append-only audit trail of write-level actions (see audit.ts). A write failure here is swallowed
 // inside record() so it can never break the user action it's auditing.
-const audit = new AuditLog(fileAuditAppender(join(cfg.stateDir, "audit.log")));
+const audit = new AuditLog(fileAuditAppender(join(cfg.stateDir, "audit.log")), {
+  content: cfg.auditContent,
+});
 // Display → Resize holds one controller per manually resized Pane. One process-global manager can
 // key those leases by exact session socket + Pane id across every runtime this bridge fronts.
 const terminalResize = new TerminalResizeManager();

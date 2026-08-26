@@ -74,7 +74,7 @@ describe("Fleet aggregation", () => {
         return response([agent("w1:p2", "working", { workspaceLabel: "Batch" })]);
       }
       return response(
-        [agent("w0:p1", "blocked", { terminal: "must not be exposed", authorization: "synthetic-secret" })],
+        [agent("w0:p1", "blocked", { terminal: "must not be exposed", terminalTitle: "private current task", authorization: "synthetic-secret" })],
         [
           session("default", { isPrimary: true, blocked: 1 }),
           session("batch demo", { working: 1 }),
@@ -119,6 +119,7 @@ describe("Fleet aggregation", () => {
       observedAt: 100,
     });
     expect(JSON.stringify(state)).not.toContain("must not be exposed");
+    expect(JSON.stringify(state)).not.toContain("private current task");
     expect(JSON.stringify(state)).not.toContain("synthetic-secret");
   });
 

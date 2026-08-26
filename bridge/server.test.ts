@@ -54,9 +54,13 @@ function cfg(overrides: Partial<Config> = {}): Config {
       codex: ["/nope/codex"],
       pi: ["/nope/pi"],
       opencode: ["/nope/opencode"],
+      grok: ["/nope/grok"],
     },
     submitKeys: ["Enter"],
+    commandsFile: "/nope/commands.toml",
+    keysFile: "/nope/keys.toml",
     trustedUser: "",
+    auditContent: "preview",
     deviceHeader: "",
     deviceAllowlist: [],
     allowedOrigins: [],
@@ -292,7 +296,7 @@ describe("resizePane — width-only manual PTY resize", () => {
       resize: async (socketPath, paneId, size) => void calls.push({ socketPath, paneId, size }),
     };
     const lines: string[] = [];
-    const audit = new AuditLog((line) => void lines.push(line), () => 0);
+    const audit = new AuditLog((line) => void lines.push(line), { now: () => 0 });
     const response = await resizePane(
       controller,
       { current: () => ({ agents: [pane(37)], shellPanes: [] }) } as never,
@@ -856,7 +860,7 @@ describe("startupWarnings — security-posture nags", () => {
     const ws = startupWarnings(cfg({ skipServe: true, trustedUser: "me@example.com" }));
     expect(has(ws, "COLLIE_TRUSTED_USER has no effect")).toBe(true);
     expect(has(ws, "COLLIE_DEVICE_HEADER")).toBe(true);
-    expect(has(ws, "Variant C")).toBe(true);
+    expect(has(ws, "README security guidance")).toBe(true);
     // The Variant-A empty-trustedUser nag must NOT also fire (it's meaningless behind a proxy).
     expect(has(ws, "any tailnet device/user")).toBe(false);
   });
@@ -869,7 +873,7 @@ describe("startupWarnings — security-posture nags", () => {
   test("no skipServe + empty trustedUser: the existing Variant-A warning still fires", () => {
     const ws = startupWarnings(cfg({ skipServe: false, trustedUser: "" }));
     expect(has(ws, "COLLIE_TRUSTED_USER is empty")).toBe(true);
-    expect(has(ws, "Variant A")).toBe(true);
+    expect(has(ws, "README → Variant A")).toBe(true);
   });
 
   test("no skipServe + trustedUser set: no identity warning (correctly configured)", () => {

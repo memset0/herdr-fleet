@@ -20,6 +20,15 @@ describe("compareSemver", () => {
     expect(compareSemver("0.11.0", "0.11.0")).toBe(0);
     expect(compareSemver("0.11.2", "0.11.10")).toBe(-1); // numeric, not lexical
   });
+
+  it("sorts a prerelease below the release it leads to", () => {
+    // The running version can be `1.0.0-beta.5` while every tag is strict, so the tail must be
+    // parsed rather than handed to `Number` (which yielded NaN and an arbitrary answer).
+    expect(compareSemver("1.0.0-beta.5", "1.0.0")).toBe(-1);
+    expect(compareSemver("1.0.0", "1.0.0-beta.5")).toBe(1);
+    expect(compareSemver("1.0.0-beta.5", "0.31.1")).toBe(1);
+    expect(compareSemver("1.0.0-beta.5+ab12cd3", "1.0.1")).toBe(-1);
+  });
 });
 
 describe("parseSemverTag / latestReleaseTag", () => {

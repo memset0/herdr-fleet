@@ -15,7 +15,10 @@ snapshot, fails closed when a supported harness positively lacks a visible compo
 draft, and emits its submit keys only after a second read verifies that text. A deliberate
 type-anyway override skips only the composer refusal, not submit verification. Direct terminal
 typing uses an ordered queue with no implicit Enter and invalidates pending input on Pane changes,
-page lock/backgrounding, or failure, so old keys cannot spill into a later context.
+page lock/backgrounding, or failure, so old keys cannot spill into a later context. Socket writes
+drain under backpressure before success is reported. Claude, Codex, Grok Build, and OMP each use an
+explicit harness adapter; a dialog or draft that cannot be classified stays on the fail-closed raw
+path. Password/no-echo recognition removes persisted drafts and never stores that Pane mirror.
 
 Harness transcript settings accept several ordered roots. Discovery selects the first root that
 contains the reported session and binds subsequent reads to its realpath; the existing containment
@@ -23,6 +26,20 @@ check is applied relative to that selected root rather than to a caller-derived 
 keeps every HTML navigation network-first so an expired Gateway session cannot be bypassed by the
 PWA. Lazy Nerd Font responses use a separate cache and are stored only when the same-origin fetch is
 an unredirected 200 with a font content type; obsolete named font entries are swept on activation.
+
+Successful snapshot and Pane reads also update dated `sessionStorage` mirrors keyed by exact Herdr
+session and Pane. The store is tab-scoped, keeps at most four Pane texts, and is consulted only by
+the existing degraded transport branch; fresh navigation remains network-first. A definitive
+401/403 clears all snapshot and Pane entries plus in-memory last-good data before returning the auth
+error. This prevents a resident iframe or discarded mobile page from rendering protected stale
+content after its Gateway session expires.
+
+Operator `commands.toml` and `keys.toml` are parsed into bounded Agent-scoped rows and hot-reloaded
+with last-good semantics. They replace, rather than merge with, matching shipped rows. Optional
+audit redaction removes free-form content but keeps structural action fields. Sanitized OSC titles
+remain a lowest-priority display hint after explicit Pane/session names and never alter Tab or route
+identity. These controls remain inside the node's existing authenticated API and plugin supervisor;
+they introduce no Gateway write endpoint or lifecycle process.
 
 An optional Pane-context action turns the focused Space, Tab, and Pane ids plus public Fleet
 origin/instance metadata into the canonical outer deep link. Because plugin-action stdout is logged rather than connected to
