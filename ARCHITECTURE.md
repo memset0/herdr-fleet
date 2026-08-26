@@ -28,11 +28,14 @@ The fixed running `tab to queue message` footer is a separate tail-chrome varian
 blank composer height; its prompt draft is recovered, while ask/wizard/notes footers are excluded.
 Codex presentation hides the whole native composer only when its extracted draft is empty. Its
 exact empty-placeholder wording also requires the captured dim style, so a non-dim user draft with
-the same words is retained. A
-non-empty prompt/draft remains in the raw mirror with every blank layout row preserved and only the
+the same words is retained. A non-empty prompt/draft remains in the raw mirror with every blank layout row preserved and only the
 located status/footer removed; dialogs have no located composer and remain raw. Extraction is
 independent of that presentation policy, and the separate status strip still renders the removed
 styled row immediately above the app composer.
+An exact Codex slash palette is a second guarded input state, not ordinary composer chrome. It stays
+raw and qualifies only with the background-painted `› /command` row plus the exact cyan/bold first
+option at the buffer tail. The adapter extracts the complete command and binds the full palette
+region; partial filters, mismatches, unstyled lookalikes, and scrolled-away palettes remain refused.
 Codex guarded send additionally accepts its exact character-counted large-paste token, polls longer
 without rewriting text, requires two consecutive identical verified prompt/draft tails, and binds
 submit to that stable region; these are evidence/race controls, not retries of the input operation.

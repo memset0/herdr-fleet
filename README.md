@@ -118,11 +118,15 @@ taller blank composer. That bounded footer remains chrome, and any half-written 
 recovered and verified like a Claude draft; request-user-input footers remain dialogs.
 An empty Codex `›` input box—including the dim `Ask Codex to do anything` placeholder—is hidden
 because Collie's own composer already represents it. The same literal words in ordinary draft style
-remain user input. A
-non-empty draft remains visible for recovery and diagnosis, with every native blank layout row
+remain user input. A non-empty draft remains visible for recovery and diagnosis, with every native blank layout row
 preserved; only its status/footer row is removed and re-surfaced as the app strip above Collie's
 composer. A selection, approval, or trust dialog is not a composer and remains visible in the raw
 terminal mirror alongside its structured controls.
+Typing an exact slash command temporarily replaces Codex's status row with its filtered palette.
+That state remains raw and is accepted for guarded submit only when the complete `/command` query
+equals the first cyan/bold selected option. Partial filters and palette-shaped prose remain
+unwritable, while `/status`, `/fast`, and other exact commands use the same two-stable-read and
+prompt-binding rules as ordinary replies.
 Large Codex pastes may appear as `[Pasted Content N chars]`; guarded send accepts that token only
 when its Unicode count exactly matches the current message. Codex also receives a longer read-only
 verification window and must show the same verified prompt/draft tail on two consecutive reads

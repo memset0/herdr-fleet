@@ -13,6 +13,29 @@ const BOX_RULE = "─".repeat(40); // clears the 20-glyph border threshold in ha
 const paneWithDraft = (draft: string) => `some output\n${BOX_RULE}\n❯ ${draft}\n${BOX_RULE}`;
 // A focused permission dialog: no input box at the tail at all, so extractInputDraft sees nothing.
 const paneWithDialog = "Do you want to proceed?\n ❯ 1. Yes\n   2. No\n\n Esc to cancel";
+const CODEX_PALETTE_BG = "\x1b[48;2;61;64;64m";
+const CODEX_PALETTE_RESET = "\x1b[0m";
+
+function codexSlashPalette(command: "/status" | "/fast"): string {
+  const options =
+    command === "/status"
+      ? [
+          ["/status", "show current session configuration and token usage"],
+          ["/statusline", "configure which items appear in the status line"],
+        ]
+      : [["/fast", "1.5x speed, increased usage"]];
+  return [
+    "some output",
+    `${CODEX_PALETTE_BG}${" ".repeat(80)}${CODEX_PALETTE_RESET}`,
+    `${CODEX_PALETTE_BG}\x1b[1m›${CODEX_PALETTE_RESET}${CODEX_PALETTE_BG} ${command}${" ".repeat(60)}${CODEX_PALETTE_RESET}`,
+    `${CODEX_PALETTE_BG}${" ".repeat(80)}${CODEX_PALETTE_RESET}`,
+    ...options.map(([name, description], index) =>
+      index === 0
+        ? `  \x1b[1m\x1b[38;5;6m${name}  ${description}${CODEX_PALETTE_RESET}`
+        : `  /\x1b[1m${name.slice(1, command.length)}${CODEX_PALETTE_RESET}${name.slice(command.length)}  \x1b[2m${description}${CODEX_PALETTE_RESET}`,
+    ),
+  ].join("\n");
+}
 
 /** Record every reply POST, and let the fake pane's screen be swapped per test. */
 function harness(screen: () => string) {
@@ -393,6 +416,56 @@ describe("sendGuardedReply", () => {
       { text: "", submit: true, expected_prompt: "› ship it\n  please" },
     ]);
   });
+
+  it.each(["/status", "/fast"] as const)(
+    "submits exact Codex slash command %s only after its stable palette verifies it",
+    async (command) => {
+      const calls: Array<{ text: string; submit: boolean; expected_prompt?: string }> = [];
+      const idle = [
+        "› Ask Codex to do anything",
+        "",
+        "  model-example · demo-project · Context 99% left",
+      ].join("\n");
+      server.use(
+        http.get(/\/api\/pane\/[^/]+$/, () =>
+          HttpResponse.json({
+            paneId: "w1:p1",
+            text: calls.length === 0 ? idle : codexSlashPalette(command),
+            truncated: false,
+            revision: calls.length,
+          }),
+        ),
+        http.post(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
+          calls.push((await request.json()) as (typeof calls)[number]);
+          return HttpResponse.json({ ok: true });
+        }),
+      );
+
+      const out = await sendGuardedReply({
+        paneId: "w1:p1",
+        text: command,
+        agent: "codex",
+        ...instant,
+      });
+
+      const descriptions =
+        command === "/status"
+          ? [
+              "  /status  show current session configuration and token usage",
+              "  /statusline  configure which items appear in the status line",
+            ]
+          : ["  /fast  1.5x speed, increased usage"];
+      expect(out).toEqual({ status: "sent" });
+      expect(calls).toEqual([
+        { text: command, submit: false },
+        {
+          text: "",
+          submit: true,
+          expected_prompt: [`› ${command}`, "", ...descriptions].join("\n"),
+        },
+      ]);
+    },
+  );
 
   it("gives Codex a longer read-only verification window without retyping", async () => {
     let sleeps = 0;

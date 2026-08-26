@@ -6,6 +6,16 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## Unreleased — Codex slash-command guard
+
+### Fixed
+
+- Recognize Codex's exact tail slash palette as a writable command state only when the complete
+  `/command` query matches the first cyan/bold selected option. Guarded replies can now execute
+  `/status`, `/fast`, and other exact slash commands after two stable reads; partial filters,
+  renderer-free lookalikes, mismatched selections, dialogs, and output below the palette still
+  withhold Enter.
+
 ## [2.7.3] - 2026-08-26
 
 ### Fixed

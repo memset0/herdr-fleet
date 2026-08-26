@@ -16,9 +16,9 @@
 import type { Block, StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
 import {
-  composerPrompt,
-  composerReady,
-  extractInputDraft,
+  composerPrompt as chromeComposerPrompt,
+  composerReady as chromeComposerReady,
+  extractInputDraft as extractChromeInputDraft,
   extractStatusLines,
   presentChrome,
 } from "./chrome";
@@ -26,6 +26,19 @@ import { detectApprovalRegion } from "./approval";
 import { detectAskRegion } from "./ask";
 import { detectTrustRegion } from "./trust";
 import { codexDraftCarriesSend } from "./paste";
+import { slashComposerReady, slashInputDraft, slashPromptRegion } from "./slash";
+
+export function extractInputDraft(lines: StyledLine[]): string | null {
+  return extractChromeInputDraft(lines) ?? slashInputDraft(lines);
+}
+
+function composerReady(lines: StyledLine[]): boolean {
+  return chromeComposerReady(lines) || slashComposerReady(lines);
+}
+
+function composerPrompt(lines: StyledLine[]): string | null {
+  return chromeComposerPrompt(lines) ?? slashPromptRegion(lines);
+}
 
 export function codexBuildBlocks(lines: StyledLine[]): Block[] {
   const trust = detectTrustRegion(lines);
@@ -59,7 +72,7 @@ export function codexBuildBlocks(lines: StyledLine[]): Block[] {
   return [{ kind: "raw", lines: presentChrome(lines) }];
 }
 
-export { extractStatusLines, extractInputDraft };
+export { extractStatusLines };
 
 export const codexAdapter: HarnessAdapter = {
   agent: "codex",
