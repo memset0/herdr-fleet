@@ -22,6 +22,13 @@ path. Password/no-echo recognition removes persisted drafts and never stores tha
 Codex composer detection accepts either its exact default status signature or a bounded multi-field
 custom status row, but only as the final row beneath the existing column-zero tail prompt/draft run;
 a lone prompt, disabled status, transcript echo, or dialog remains insufficient evidence.
+The generic text path keeps a three-field minimum. A two-field row needs the stricter four-segment
+Codex renderer signature, preventing the known plain-text status lookalike from widening the gate.
+The fixed running `tab to queue message` footer is a separate tail-chrome variant with a bounded
+blank composer height; its prompt draft is recovered, while ask/wizard/notes footers are excluded.
+Codex rendering retains the native prompt/draft rows in the raw mirror and strips only the located
+status/footer row. Extraction still reads the same visible prompt, and the separate status strip
+still renders the removed styled row immediately above the app composer.
 
 Harness transcript settings accept several ordered roots. Discovery selects the first root that
 contains the reported session and binds subsequent reads to its realpath; the existing containment

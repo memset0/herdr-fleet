@@ -259,6 +259,34 @@ describe("sendGuardedReply", () => {
     expect(calls).toEqual([{ text: "please do not approve anything", submit: false }]);
   });
 
+  it("verifies and submits once with Codex's strict styled two-field status row", async () => {
+    let calls: Array<{ text: string; submit: boolean }> = [];
+    const pane = (draft: string) =>
+      [
+        "some output",
+        "",
+        `› ${draft}`,
+        "",
+        "  \x1b[38;5;6mmodel-example\x1b[0m\x1b[2m · \x1b[0m\x1b[38;5;3mdemo-project\x1b[0m",
+      ].join("\n");
+    calls = harness(() =>
+      pane(calls.some((call) => !call.submit) ? "ship it please" : "Ask Codex to do anything"),
+    );
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: "ship it please",
+      agent: "codex",
+      ...instant,
+    });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text: "ship it please", submit: false },
+      { text: "", submit: true },
+    ]);
+  });
+
   // omp paints an inline completion suggestion after the operator's text, in its own colour. It is
   // not in the input buffer, but it IS on the row the guard reads back, so before `composerGhost`
   // (harness/omp/markers.ts) the verification could never match and EVERY send omp suggested for

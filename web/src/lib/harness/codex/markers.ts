@@ -9,6 +9,7 @@
 // Pure functions, no I/O, no React.
 
 import { isBlank, lineText, type StyledLine } from "../../blocks";
+import type { AnsiSegment } from "../../ansi";
 
 // `lineText` / `isBlank` are properties of a StyledLine, not of any grammar, so they live in the
 // neutral core (lib/blocks.ts). Re-exported here so the Codex grammars keep their single import
@@ -44,6 +45,7 @@ const CUSTOM_STATUS_MAX_FIELDS = 12;
 const CUSTOM_STATUS_MAX_FIELD_CHARS = 160;
 const CUSTOM_STATUS_MAX_CHARS = 512;
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+const QUEUE_HINT = /^ {2}tab to queue(?: message)?(?: · [^·\r\n]{1,160})?(?: {2,}\d+% context left)?$/;
 
 function codePointLength(value: string): number {
   return [...value].length;
@@ -72,11 +74,80 @@ function isCustomStatusRow(text: string): boolean {
   );
 }
 
+function hasNoStyle(segment: AnsiSegment, exceptDim = false): boolean {
+  return (
+    segment.fg === undefined &&
+    segment.bg === undefined &&
+    segment.bold !== true &&
+    (exceptDim || segment.dim !== true) &&
+    segment.italic !== true &&
+    segment.underline !== true &&
+    segment.strike !== true
+  );
+}
+
+function isStyledStatusField(segment: AnsiSegment, allowTrailingPadding = false): boolean {
+  const value = allowTrailingPadding ? rstrip(segment.text) : segment.text;
+  return (
+    segment.fg !== undefined &&
+    segment.bg === undefined &&
+    segment.bold !== true &&
+    segment.dim !== true &&
+    segment.italic !== true &&
+    segment.underline !== true &&
+    segment.strike !== true &&
+    value.length > 0 &&
+    value === value.trim() &&
+    codePointLength(value) <= CUSTOM_STATUS_MAX_FIELD_CHARS
+  );
+}
+
+/**
+ * The compact two-field renderer observed on older/custom Codex builds. Text alone is insufficient:
+ * `  model · Context 50% left` is an existing transcript-lookalike repro. The real widget paints
+ * four exact SGR segments: unstyled two-space indent, coloured field, dim separator, coloured field.
+ */
+function isStyledTwoFieldStatusRow(text: string, line: StyledLine | undefined): boolean {
+  const row = rstrip(text);
+  if (
+    line === undefined ||
+    line.segments.length !== 4 ||
+    CONTROL.test(row) ||
+    codePointLength(row) > CUSTOM_STATUS_MAX_CHARS
+  ) {
+    return false;
+  }
+  const [indent, first, separator, second] = line.segments;
+  return (
+    indent!.text === "  " &&
+    hasNoStyle(indent!) &&
+    isStyledStatusField(first!) &&
+    separator!.text === " · " &&
+    separator!.dim === true &&
+    hasNoStyle(separator!, true) &&
+    isStyledStatusField(second!, true) &&
+    rstrip(lineText(line)) === row
+  );
+}
+
+/** Codex replaces its normal status summary with this fixed running-composer footer while a draft
+ *  can be queued. The prefix is official TUI chrome, not a user status field; ask/question footers
+ *  use different wording (`tab to add notes`, `enter to submit…`) and remain dialogs. */
+export function isQueueHintRow(text: string): boolean {
+  const row = rstrip(text);
+  return !CONTROL.test(row) && codePointLength(row) <= CUSTOM_STATUS_MAX_CHARS && QUEUE_HINT.test(row);
+}
+
 /** True when the row could be the composer's status line. Never decisive alone — the composer
  *  is located by the prompt-row-above-status shape at the buffer tail, not by any single row. */
-export function isStatusRow(text: string): boolean {
+export function isStatusRow(text: string, line?: StyledLine): boolean {
   const row = rstrip(text);
-  return STATUS_ROW.test(row) || isCustomStatusRow(row);
+  return (
+    STATUS_ROW.test(row) ||
+    isCustomStatusRow(row) ||
+    isStyledTwoFieldStatusRow(row, line) ||
+    isQueueHintRow(row)
+  );
 }
 
 // The `› ` prompt row. Column 0 — but transcript ECHOES of submitted messages paint the same
@@ -105,11 +176,11 @@ export function lastNonBlankIndex(texts: string[]): number {
 const MAX_SECTION_GAP = 2;
 
 /** The nearest non-blank row at or above `i`, or -1 when the blank gap exceeds the bound. */
-export function skipBlanksUp(texts: string[], i: number): number {
+export function skipBlanksUp(texts: string[], i: number, maxGap = MAX_SECTION_GAP): number {
   let gap = 0;
   while (i >= 0 && isBlank(texts[i]!)) {
     i--;
-    if (++gap > MAX_SECTION_GAP) return -1;
+    if (++gap > maxGap) return -1;
   }
   return i;
 }

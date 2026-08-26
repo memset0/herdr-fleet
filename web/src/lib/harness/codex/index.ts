@@ -1,5 +1,6 @@
-// The Codex adapter. Chrome/status/draft are Tier 1: the boxless `› ` composer plus its
-// dot-separated status row are stripped from the mirror and re-surfaced natively. Interactive
+// The Codex adapter. Chrome/status/draft are Tier 1: the boxless `› ` composer remains visible in
+// the mirror for diagnosis, while its trailing status/footer row is stripped and re-surfaced
+// natively. Interactive
 // kinds with dated captures and notes (all under this directory): the folder-trust prompt
 // (`prompt-select`, family trust), exec approvals (`prompt-select`, family permission —
 // classified by row: the one-shot Yes and the reject become buttons, persistent rows never do),
@@ -19,7 +20,7 @@ import {
   composerReady,
   extractInputDraft,
   extractStatusLines,
-  stripChrome,
+  stripStatusChrome,
 } from "./chrome";
 import { detectApprovalRegion } from "./approval";
 import { detectAskRegion } from "./ask";
@@ -57,7 +58,7 @@ export function codexBuildBlocks(lines: StyledLine[]): Block[] {
     return blocks;
   }
 
-  return [{ kind: "raw", lines: stripChrome(lines) }];
+  return [{ kind: "raw", lines: stripStatusChrome(lines) }];
 }
 
 export { extractStatusLines, extractInputDraft };

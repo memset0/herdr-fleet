@@ -6,7 +6,7 @@
 // on the STATUS row at the tail and only then looks up for the prompt row: an echo higher in
 // the transcript never has the status row directly beneath it. Pure; no pane access.
 
-import type { StyledLine } from "../../blocks";
+import { trimTrailingBlank, type StyledLine } from "../../blocks";
 import {
   isBlank,
   isStatusRow,
@@ -15,6 +15,7 @@ import {
   PLACEHOLDER,
   promptText,
   rstrip,
+  isQueueHintRow,
   skipBlanksUp,
 } from "./markers";
 
@@ -31,6 +32,12 @@ export interface ComposerBox {
 // Claude. A run deeper than this is not a composer (fail closed — locateComposer returns null).
 const MAX_DRAFT_ROWS = 100;
 
+// While a task runs, Codex lets the composer occupy several blank visual rows and replaces the
+// normal status summary with `tab to queue message …` at the bottom. Official TUI snapshots use six
+// blank rows for the ordinary height. Keep a little repaint/viewport slack, still far below the
+// draft-row bound and only on the exact fixed queue-footer path.
+const MAX_QUEUE_HINT_GAP = 12;
+
 // Continuation rows are exactly two-space-indented text. Deeper indents belong to dialogs and
 // transcript blocks; a `› ` or `• ` row is never a continuation.
 const CONTINUATION = /^ {2}\S/;
@@ -39,17 +46,21 @@ const CONTINUATION = /^ {2}\S/;
 export function locateComposer(lines: StyledLine[]): ComposerBox | null {
   const texts = lines.map((l) => rstrip(lineText(l)));
   const statusRow = lastNonBlankIndex(texts);
-  if (statusRow < 0 || !isStatusRow(texts[statusRow]!)) return null;
+  if (statusRow < 0 || !isStatusRow(texts[statusRow]!, lines[statusRow])) return null;
 
   // One blank row separates the prompt/draft run from the status row (every capture); above the
   // gap the run is CONTIGUOUS non-blank rows — wrapped-draft continuations under the `› ` prompt.
-  const top = skipBlanksUp(texts, statusRow - 1);
+  const top = skipBlanksUp(
+    texts,
+    statusRow - 1,
+    isQueueHintRow(texts[statusRow]!) ? MAX_QUEUE_HINT_GAP : undefined,
+  );
   if (top < 0) return null;
   for (let i = top; i >= 0 && top - i < MAX_DRAFT_ROWS; i--) {
     const t = texts[i]!;
     if (promptText(t) !== null) return { promptRow: i, statusRow };
     // A blank or foreign-shaped row inside the run means this status row is not under a composer.
-    if (isBlank(t) || !CONTINUATION.test(t) || isStatusRow(t)) return null;
+    if (isBlank(t) || !CONTINUATION.test(t) || isStatusRow(t, lines[i])) return null;
   }
   return null;
 }
@@ -62,6 +73,17 @@ export function stripChrome(lines: StyledLine[]): StyledLine[] {
   const box = locateComposer(lines);
   if (box === null) return lines;
   return lines.slice(0, box.promptRow);
+}
+
+/**
+ * Web Remote keeps Codex's input box visible for diagnosis and direct comparison with the native
+ * composer. Remove only the trailing status/queue-footer row (plus layout blanks before it), while
+ * leaving the `›` prompt and every draft continuation in the raw mirror.
+ */
+export function stripStatusChrome(lines: StyledLine[]): StyledLine[] {
+  const box = locateComposer(lines);
+  if (box === null) return lines;
+  return trimTrailingBlank(lines.slice(0, box.statusRow));
 }
 
 /** The status row, styled, for the strip above the phone composer. Empty when no composer. */

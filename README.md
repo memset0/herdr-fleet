@@ -111,6 +111,14 @@ Codex's composer remains guarded when an operator customizes its status row: the
 the bounded tail `›` prompt/status structure, not the optional default `Context` field or the meaning
 of model/project/branch/rate/permission/session labels. A disabled, missing, malformed, or ambiguous
 status row still fails closed, so no submit key is inferred from a lone transcript-shaped prompt.
+Compact two-field rows require Codex's exact styled field/separator signature; plain two-field prose
+does not qualify.
+While Codex is working, its official `tab to queue message` footer may replace the summary below a
+taller blank composer. That bounded footer remains chrome, and any half-written `›` draft is still
+recovered and verified like a Claude draft; request-user-input footers remain dialogs.
+Unlike the other adapted chrome, Codex's native `›` input box is intentionally kept visible in the
+terminal mirror so a failed or changing TUI shape can be inspected. Only its status/footer row is
+removed from the mirror and re-surfaced as the app strip above the Collie composer.
 
 Pane history can search several comma-separated roots per harness, which supports mixed agent
 profiles on one Herdr host. A session is resolved in the first matching root and every later read is

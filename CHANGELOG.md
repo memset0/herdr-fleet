@@ -6,6 +6,31 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.7.1] - 2026-08-26
+
+### Fixed
+
+- Support the compact two-field status renderer only when its four ANSI segments match Codex's
+  strict indent/coloured-field/dim-separator/coloured-field signature; the same two-field text
+  without renderer evidence remains rejected.
+- Recover half-written drafts while Codex is working and replaces its summary with the official
+  `tab to queue message` footer, including the bounded blank composer height. Ask/question/notes
+  footers remain dialog-owned and composer-unready.
+- Taking over such a working draft clears the terminal composer with a prompt-bound
+  `ctrl+k`/Backspace sweep before retyping, verifies the replacement, and queues exactly once rather
+  than appending or duplicating the recovered text.
+- Keep Codex's native `›` input box and draft visible in the terminal mirror for diagnosis; remove
+  only the trailing status/queue-footer row and continue re-surfacing that row in the app status
+  strip. Dialog cards retain their existing native controls.
+
+The queue fixture is synthetic from official Codex TUI snapshots and was structurally validated
+against a disposable local Codex 0.149.1 Pane; no live Pane/session/device content is retained.
+
+### Upgrading
+
+- Install this final adapter patch on every node that received v2.7.0. It is configuration/API
+  compatible and preserves each node's v2.7.0 tree as the immediate rollback.
+
 ## [2.7.0] - 2026-08-26
 
 ### Fixed
