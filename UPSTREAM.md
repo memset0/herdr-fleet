@@ -27,11 +27,13 @@ Web Remote temporarily fixes v0.34.0's documented Codex custom-status limitation
 multi-field customized status row may anchor the existing tail composer without containing the
 optional default `Context` field. It also recognizes Codex's exact renderer-owned slash palette so
 complete commands remain guarded after the ordinary status row disappears. These downstream
-decisions are recorded in the changelog and tests. No public fork branch is created until the
-deployed fix is verified. Before the next Collie migration, inspect Collie `main` and any later submitted PR for an
-independent or accepted upstream correction. Prefer that upstream implementation and remove or
-reconcile the overlapping local predicates instead of carrying both or blindly reapplying the
-downstream patches.
+decisions are recorded in the changelog and tests. After three-node deployment and owner acceptance,
+the generic Codex-only fix was rebased onto Collie v0.35.0 and pushed as the single-commit fork branch
+[`memset0:fix/codex-guarded-input`](https://github.com/memset0/collie/tree/fix/codex-guarded-input),
+commit `d57b9a53141693b88cde7d37a2aa4389d77c5c4e`; the owner submits the upstream PR separately.
+Before the next Collie migration, inspect Collie `main`, that branch/PR, and any independent later
+fix. Prefer the accepted upstream implementation and remove or reconcile overlapping local
+predicates instead of carrying both or blindly reapplying downstream patches.
 
 The dormant `services/ttyd-fallback/` companion is Web Remote-owned generic code, not Collie-derived
 source. Its separate ttyd provenance and artifact integrity record live in that directory's
