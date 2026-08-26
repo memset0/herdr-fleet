@@ -23,6 +23,14 @@ subscription maintenance, and bounded dated `sessionStorage` mirrors. Web Remote
 keep those additions inside the existing Host/Origin, text-only, History-containment, framed-seen,
 Fleet-projection, and manual-resize boundaries.
 
+Web Remote temporarily fixes v0.34.0's documented Codex custom-status limitation: a bounded
+multi-field customized status row may anchor the existing tail composer without containing the
+optional default `Context` field. The downstream decision is recorded in this release's changelog
+and tests. No public fork branch is created until the deployed fix is verified. Before the next
+Collie migration, inspect Collie `main` and any later submitted PR for an
+independent or accepted upstream correction. Prefer that upstream implementation and remove or
+reconcile this local predicate instead of carrying both or blindly reapplying the downstream patch.
+
 The dormant `services/ttyd-fallback/` companion is Web Remote-owned generic code, not Collie-derived
 source. Its separate ttyd provenance and artifact integrity record live in that directory's
 `UPSTREAM.md`, `VERSION`, and `SHA256SUMS`; do not mix its lifecycle into a future Collie import.

@@ -30,16 +30,53 @@ export function rstrip(text: string): string {
 // leading fields keeps a transcript line that merely mentions a context percentage from
 // claiming the row (review repro: `model · Context 50% left` at column 0 must not match).
 //
-// KNOWN LIMIT: Codex's status line is operator-configurable (`tui.status_line`, including
-// `null` to disable it). A custom or disabled status line never matches, so the composer is
-// never located and the pane falls back to the raw mirror with replies refused — safe, but
-// this adapter's lift only engages on the DEFAULT status line.
+// Codex's status line is operator-configurable (`tui.status_line`, including `null`). The default
+// signature remains the strongest fast path. A configured row cannot be keyed on field NAMES,
+// though: every field is optional and an ordinary valid row may omit `Context` entirely. Its stable
+// renderer grammar is the two-space indent plus bounded, non-empty ` · `-separated fields. This is
+// only one link in locateComposer's evidence chain — the row must still be the buffer tail beneath
+// a bounded column-zero `›` prompt/draft run. A disabled line deliberately remains unsupported: a
+// lone transcript echo and a live empty composer would otherwise be indistinguishable.
 const STATUS_ROW = /^ {2}\S.* · .* · .*Context \d+% (left|used)\b/;
+
+const CUSTOM_STATUS_MIN_FIELDS = 3;
+const CUSTOM_STATUS_MAX_FIELDS = 12;
+const CUSTOM_STATUS_MAX_FIELD_CHARS = 160;
+const CUSTOM_STATUS_MAX_CHARS = 512;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+
+function codePointLength(value: string): number {
+  return [...value].length;
+}
+
+function isCustomStatusRow(text: string): boolean {
+  const row = rstrip(text);
+  if (
+    !row.startsWith("  ") ||
+    row.startsWith("   ") ||
+    CONTROL.test(row) ||
+    codePointLength(row) > CUSTOM_STATUS_MAX_CHARS
+  ) {
+    return false;
+  }
+
+  const fields = row.slice(2).split(" · ");
+  if (fields.length < CUSTOM_STATUS_MIN_FIELDS || fields.length > CUSTOM_STATUS_MAX_FIELDS) {
+    return false;
+  }
+  return fields.every(
+    (field) =>
+      field.length > 0 &&
+      field === field.trim() &&
+      codePointLength(field) <= CUSTOM_STATUS_MAX_FIELD_CHARS,
+  );
+}
 
 /** True when the row could be the composer's status line. Never decisive alone — the composer
  *  is located by the prompt-row-above-status shape at the buffer tail, not by any single row. */
 export function isStatusRow(text: string): boolean {
-  return STATUS_ROW.test(rstrip(text));
+  const row = rstrip(text);
+  return STATUS_ROW.test(row) || isCustomStatusRow(row);
 }
 
 // The `› ` prompt row. Column 0 — but transcript ECHOES of submitted messages paint the same

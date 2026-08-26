@@ -19,6 +19,9 @@ page lock/backgrounding, or failure, so old keys cannot spill into a later conte
 drain under backpressure before success is reported. Claude, Codex, Grok Build, and OMP each use an
 explicit harness adapter; a dialog or draft that cannot be classified stays on the fail-closed raw
 path. Password/no-echo recognition removes persisted drafts and never stores that Pane mirror.
+Codex composer detection accepts either its exact default status signature or a bounded multi-field
+custom status row, but only as the final row beneath the existing column-zero tail prompt/draft run;
+a lone prompt, disabled status, transcript echo, or dialog remains insufficient evidence.
 
 Harness transcript settings accept several ordered roots. Discovery selects the first root that
 contains the reported session and binds subsequent reads to its realpath; the existing containment

@@ -202,6 +202,63 @@ describe("sendGuardedReply", () => {
     ]);
   });
 
+  it("types, verifies, and submits once with a bounded customized Codex status row", async () => {
+    let calls: Array<{ text: string; submit: boolean }> = [];
+    const codexPane = (draft: string) =>
+      [
+        "some output",
+        "",
+        `› ${draft}`,
+        "",
+        "  model-example balanced · demo-project · feature/demo · weekly 80% left · Workspace Write · demo-session",
+      ].join("\n");
+    calls = harness(() =>
+      codexPane(calls.some((call) => !call.submit) ? "ship it please" : "Ask Codex to do anything"),
+    );
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: "ship it please",
+      agent: "codex",
+      ...instant,
+    });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text: "ship it please", submit: false },
+      { text: "", submit: true },
+    ]);
+  });
+
+  it("withholds submit when a dialog replaces a customized Codex composer after typing", async () => {
+    let calls: Array<{ text: string; submit: boolean }> = [];
+    const composer = [
+      "some output",
+      "",
+      "› Ask Codex to do anything",
+      "",
+      "  model-example · demo-project · weekly 80% left · Workspace Write",
+    ].join("\n");
+    const dialog = [
+      "  Would you like to run the following command?",
+      "  $ synthetic-command",
+      "› 1. Yes, proceed (y)",
+      "  2. No, and tell Codex what to do differently (esc)",
+      "  Press enter to confirm or esc to cancel",
+    ].join("\n");
+    calls = harness(() => (calls.length === 0 ? composer : dialog));
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: "please do not approve anything",
+      agent: "codex",
+      ...instant,
+    });
+
+    expect(out.status).toBe("stalled");
+    expect(calls).toEqual([{ text: "please do not approve anything", submit: false }]);
+  });
+
   // omp paints an inline completion suggestion after the operator's text, in its own colour. It is
   // not in the input buffer, but it IS on the row the guard reads back, so before `composerGhost`
   // (harness/omp/markers.ts) the verification could never match and EVERY send omp suggested for

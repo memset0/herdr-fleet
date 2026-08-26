@@ -6,6 +6,29 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.7.0] - 2026-08-26
+
+### Fixed
+
+- Recognize a normal tail Codex composer when its bounded, multi-field customized status row omits
+  the default `Context N% left/used` field. Guarded replies once again type, verify the visible
+  draft, and submit exactly once instead of permanently reporting that the message did not reach
+  the input box.
+- Keep disabled, missing, malformed, torn, overlong, transcript-lookalike, and dialog-owned status
+  regions fail-closed. The fix changes only Codex status-row evidence and does not weaken the
+  existing type-before-submit or dialog race guards.
+
+The fixture is wholly synthetic and contains no live Pane/session/device data.
+
+### Upgrading
+
+- This node-affecting minor release must be installed on the central Fleet host and every managed
+  Collie node. The rollout replaces only Web Remote-owned supervisor/bridge/Gateway children and
+  leaves Herdr, Panes, live config, reverse proxies, transports, notifications, and fallback state
+  unchanged.
+- Preserve v2.6.0 on each node as the immediate rollback. No configuration or API migration is
+  required.
+
 ## [2.6.0] - 2026-08-26
 
 ### Added

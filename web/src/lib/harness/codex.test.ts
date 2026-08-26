@@ -33,6 +33,7 @@ const PINNED = [
   "codex--ask-notes-focused.txt",
   "codex--ask-wizard-q1.txt",
   "codex--ask-wizard-q2.txt",
+  "codex--custom-status-draft.txt",
   "codex--draft-wrapped.txt",
   "codex--draft.txt",
   "codex--fresh-idle.txt",
@@ -71,7 +72,7 @@ function fixtureLines(name: string) {
 }
 
 describe("composerReady — the gate the reply path pre-flights on", () => {
-  it.each(["codex--fresh-idle.txt", "codex--draft.txt", "codex--draft-wrapped.txt", "codex--working.txt"])(
+  it.each(["codex--fresh-idle.txt", "codex--draft.txt", "codex--draft-wrapped.txt", "codex--working.txt", "codex--custom-status-draft.txt"])(
     "%s: the composer is on screen ⇒ true",
     (name) => {
       expect(codexAdapter.composerReady!(fixtureLines(name))).toBe(true);
@@ -95,7 +96,21 @@ describe("chrome", () => {
 
   it("extracts a one-line draft, and null for the placeholder", () => {
     expect(codexAdapter.extractInputDraft(fixtureLines("codex--draft.txt"))).toBe("hi there");
+    expect(codexAdapter.extractInputDraft(fixtureLines("codex--custom-status-draft.txt"))).toBe(
+      "ship it please",
+    );
     expect(codexAdapter.extractInputDraft(fixtureLines("codex--fresh-idle.txt"))).toBeNull();
+  });
+
+  it("recognises a bounded customized status row without assigning meaning to its fields", () => {
+    const lines = fixtureLines("codex--custom-status-draft.txt");
+    const box = locateComposer(lines);
+    expect(box).not.toBeNull();
+    expect(codexAdapter.composerReady!(lines)).toBe(true);
+    const status = codexAdapter.extractStatusLines(lines);
+    expect(status).toHaveLength(1);
+    expect(lineText(status[0]!)).not.toContain("Context");
+    expect(lineText(status[0]!)).toContain(" · ");
   });
 
   it("joins a wrapped draft back into the typed sentence", () => {
@@ -128,6 +143,34 @@ describe("chrome", () => {
     // The real row shape (two fields before the token) still locates.
     const real = ["› draft text", "", "  model x · /some/dir · Context 50% left"].join("\n");
     expect(locateComposer(splitLines(parseAnsi(real)))).not.toBeNull();
+  });
+
+  it("rejects ambiguous or unbounded customized status rows", () => {
+    const locate = (status: string) =>
+      locateComposer(splitLines(parseAnsi(["› draft text", "", status].join("\n"))));
+
+    expect(locate("model · project · branch")).toBeNull(); // no two-space status indent
+    expect(locate("   model · project · branch")).toBeNull(); // continuation/deeper indent
+    expect(locate("  model · project")).toBeNull(); // too few fields
+    expect(locate("  model ·  · branch")).toBeNull(); // empty field
+    expect(locate("  model · project · branch\tname")).toBeNull(); // terminal control
+    expect(locate(`  model · ${"x".repeat(161)} · branch`)).toBeNull(); // one field too long
+    expect(locate(`  ${Array.from({ length: 13 }, (_, i) => `field-${i}`).join(" · ")}`)).toBeNull();
+    expect(locate(`  ${Array.from({ length: 4 }, () => "x".repeat(130)).join(" · ")}`)).toBeNull();
+  });
+
+  it("keeps disabled, missing, torn, and transcript-only status evidence fail-closed", () => {
+    const screens = [
+      ["› draft text"],
+      ["› draft text", "", "  model · project"],
+      ["› earlier transcript echo", "• Working (3s • esc to interrupt)"],
+      ["  model · project · branch", "", "› draft text"],
+    ];
+    for (const screen of screens) {
+      const lines = splitLines(parseAnsi(screen.join("\n")));
+      expect(locateComposer(lines), screen.join(" | ")).toBeNull();
+      expect(codexAdapter.composerReady!(lines), screen.join(" | ")).toBe(false);
+    }
   });
 
   it("a draft that wraps past 8 rows is still a composer", () => {

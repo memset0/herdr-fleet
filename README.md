@@ -107,6 +107,11 @@ unsupported or ambiguous terminal states stay on the generic direct-typing path.
 prompts remove recoverable drafts and hand control to explicit direct typing without caching their
 Pane text.
 
+Codex's composer remains guarded when an operator customizes its status row: the detector relies on
+the bounded tail `›` prompt/status structure, not the optional default `Context` field or the meaning
+of model/project/branch/rate/permission/session labels. A disabled, missing, malformed, or ambiguous
+status row still fails closed, so no submit key is inferred from a lone transcript-shaped prompt.
+
 Pane history can search several comma-separated roots per harness, which supports mixed agent
 profiles on one Herdr host. A session is resolved in the first matching root and every later read is
 realpath-contained within that same root. Per-root diagnostics cover Claude, Codex, Grok Build, Pi,
