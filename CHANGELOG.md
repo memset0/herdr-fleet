@@ -6,7 +6,7 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
-## Unreleased candidate — Collie v0.34.0 sync
+## [2.6.0] - 2026-08-26
 
 ### Added
 
@@ -27,8 +27,14 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 - Do not adopt Collie's service/Tailscale/QR lifecycle, `collie-ctl.sh`, `COLLIE_PUBLIC_URL`,
   `COLLIE_SERVE_PORT`, or moving self-update/major-update behavior.
 
-This section describes an untagged acceptance candidate. The installed version remains `2.5.19`
-until the owner approves the exact node-affecting minor release and rollout.
+### Upgrading
+
+- This node-affecting minor release must replace the Web Remote plugin on the central Fleet host and
+  every managed Collie node. The hot switch replaces only plugin-owned supervisor/bridge/Gateway
+  children; it does not restart Herdr, terminate Panes, activate ttyd fallback, or change live
+  routing and credentials.
+- Existing Web Remote configuration remains valid. The new `commands.toml`, `keys.toml`, Grok
+  transcript root, and audit-content policy are optional and default to the prior behavior.
 
 ## [2.5.19] - 2026-08-24
 
