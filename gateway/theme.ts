@@ -20,6 +20,7 @@ export const GATEWAY_THEME_CSS = `
   --muted: light-dark(oklch(.94 0 0), oklch(.269 0 0));
   --muted-foreground: light-dark(oklch(.48 0 0), oklch(.708 0 0));
   --accent: light-dark(oklch(.92 0 0), oklch(.269 0 0));
+  --accent-foreground: light-dark(oklch(.205 0 0), oklch(.985 0 0));
   --border: light-dark(oklch(.922 0 0), oklch(1 0 0 / 12%));
   --input: light-dark(oklch(.922 0 0), oklch(1 0 0 / 15%));
   --ring: light-dark(oklch(.62 0 0), oklch(.556 0 0));

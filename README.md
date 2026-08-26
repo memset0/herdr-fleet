@@ -49,10 +49,13 @@ shrinking it evicts only the oldest non-selected frames. Reachable Host and Spac
 separate `+` actions in both presentations: Host creates a Space in its primary Herdr session, while
 Space creates a Tab; both open the fresh shell Pane. Compact controls stay visible for touch instead
 of requiring hover.
-Right-clicking a Tab or an explicit Pane opens a compact rename editor; the keyboard context-menu
-gesture does the same. A flattened one-Pane row renames its visible
-Tab label, while a blank explicit Pane label clears it. Host and Space rename remain intentionally
-absent because Fleet does not add a new central or node HTTP action for this patch.
+Right-clicking a reachable Tab or explicit Pane opens one compact action menu; the Context Menu key
+and `Shift+F10` expose the same keyboard-navigable surface. Rename hands off to the existing bounded
+editor. Close uses Collie's three-second, two-activation confirmation and includes the known Tab
+Pane count. A flattened one-Pane row always targets its visible Tab, while an explicit Pane child
+targets only that Pane. Successful closure of the displayed Pane/Tab returns the selected Host to
+Home; background closure preserves the current iframe and route. Host and Space rename/close remain
+intentionally absent.
 
 When a Gateway inventory node has a validated `fallbackUrl`, Fleet creates a secondary **Emergency
 terminal** link only in its wide fine-pointer desktop-computer presentation. Phone, tablet, compact,
@@ -83,6 +86,10 @@ Host, Herdr session, Pane, and Agent implementation. Within each existing status
 sort first, then both favorite/non-favorite partitions retain the same activity ordering. Toggling
 does not navigate or refresh, and favorites are intentionally not synchronized through Gateway or
 Collie.
+The exact Agent navigation control matching the selected Host, normalized Herdr session, and Pane
+has `aria-current="page"` and a rounded accent-filled selected surface. Fleet moves this state in
+the same route commit as card/tree/shortcut/history/child navigation, without waiting for an iframe
+load or aggregate refresh; keyboard focus and Needs-you/Ready-unseen attention remain independent.
 offline card keeps the section and count treatment implied by its last successfully observed state
 while remaining visibly stale. The adjacent arrow-leaving-a-square control opens the selected
 Collie in a new tab. Fleet intentionally exposes no logout button in this header.
@@ -408,11 +415,15 @@ Desktop tree mutations reuse those native Collie pages rather than adding a cros
 write proxy. A Host-row `+` creates a Space in that Host's primary Herdr session, while a Space-row
 `+` creates a Tab and its first Pane in that exact session. Fleet performs a versioned readiness
 handshake with the exact configured child window/origin, sends only one allowlisted
-`create-workspace`, `create-tab`, `rename-tab`, or `rename-pane` command, and accepts only the
+`create-workspace`, `create-tab`, `rename-tab`, `rename-pane`, `close-tab`, or `close-pane` command,
+and accepts only the
 correlated result. An uncached Host gets one temporary inactive child for the
 explicit action; it is removed afterward and never joins cache LRU. A timeout is never retried
-automatically, so a lost create result cannot duplicate a Tab. Older compatible nodes remain fully
-navigable but report the quick action as unsupported until their Web bundle is updated.
+automatically, so a lost create result cannot duplicate a Tab and an ambiguous close cannot become
+a second destructive mutation. A successful current-target close moves to Host Home before the
+bounded aggregate refresh; a lost close response waits for authoritative topology disappearance.
+Older compatible nodes remain fully navigable but report an unknown close as unsupported until
+their Web bundle is updated, while their create/rename actions keep the same version-1 contract.
 
 ### Discord Agent notifications
 

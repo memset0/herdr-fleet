@@ -45,9 +45,10 @@ standalone Collie keeps upstream behavior. Keep this small protocol, API-header 
 revalidation together when importing a later upstream release; it owns no persisted state and must
 not be replaced by Fleet-side observation storage.
 
-The framed Web bundle additionally accepts four exact-parent, versioned Fleet Explorer actions and
+The framed Web bundle additionally accepts six exact-parent, versioned Fleet Explorer actions and
 delegates them to Collie's existing typed `createWorkspace`, `createTab`, `renameTab`, and
-`renamePane` clients. Keep that allowlist, readiness/result correlation, and request de-duplication
+`renamePane`, `closeTab`, and `closePane` clients. Keep that allowlist, readiness/result correlation,
+and request de-duplication
 together during an upstream
 import. It adds no node HTTP route or CORS surface, and standalone Collie never accepts the protocol.
 

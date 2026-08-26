@@ -148,6 +148,11 @@ the same exact-child action contract as desktop.
 The Agent panel follows Collie's triage/card vocabulary, adds the owning Host, and turns a card
 selection into the existing canonical instance/session/Pane route. The iframe still owns the complete native
 Collie route stack and every terminal operation; Fleet does not reproduce Pane views or actions.
+The selected route is also the sole current-Agent authority: one presentation helper compares exact
+Host, normalized primary-or-named session, and Pane identities, sets `aria-current="page"` on only
+the matching navigation control, and paints its container with the accent surface. Every accepted
+route commit invokes that helper synchronously, while an Agent-list render invokes it again as a
+reconciliation backstop. Focus-ring and attention cues remain separate CSS channels.
 Each card is a container with sibling navigation and favorite buttons, avoiding nested interactive
 controls. Favorites live in one bounded versioned localStorage Set keyed by Host/Herdr-session/Pane/
 Agent, survive status/label/offline changes, and wrap rather than replace the bucket timestamp
@@ -228,15 +233,24 @@ state rather than falsely clearing one, and the existing node `lastSeenAt` remai
 for Collie, Fleet triage, and Discord confirmation. Snapshot reads, write-side activity, iframe
 identity/routes, cache policy, and notification persistence are unchanged.
 
-Four explicit Explorer mutations use a sibling exact-parent message contract. Fleet probes an
+Six explicit Explorer mutations use a sibling exact-parent message contract. Fleet probes an
 exact configured Collie WindowProxy for protocol support, then sends one bounded `create-workspace`,
-`create-tab`, `rename-tab`, or `rename-pane` request; the child validates its exact parent and
+`create-tab`, `rename-tab`, `rename-pane`, `close-tab`, or `close-pane` request; the child validates
+its exact parent and
 delegates to the existing same-origin typed API client. The result carries only correlation/action state and, for a
 create, the three returned hierarchy ids. Fleet validates exact source, origin, request id, version,
 keys, ids, and action before navigating or refreshing. It may create one temporary inactive child
 for an uncached Host, removes that child at completion/timeout, and never retries the mutation.
 Consequently the existing bridge authorization/audit/session semantics remain authoritative and
 node APIs gain no CORS or Gateway-proxy write surface.
+
+Desktop Tab and explicit-Pane context gestures open one viewport-clamped `role="menu"`; flattened
+one-Pane rows retain Tab identity. Rename reuses the bounded editor, while close requires two
+activations inside three seconds and carries only the exact validated Tab/Pane/session identity.
+A correlated successful close of the displayed Pane or containing Tab commits Host Home before the
+manual aggregate refresh; background targets leave route and iframe residency untouched. A lost
+result is never resent or optimistically removed. Only a later reachable authoritative tree that
+no longer contains the selected Pane may reconcile that ambiguous route to Home.
 
 When central Discord alerts are configured, a second memory-only ledger consumes completed live
 collector cycles. It silently baselines first-seen Pane identities and creates a candidate when a

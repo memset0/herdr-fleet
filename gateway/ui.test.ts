@@ -9,6 +9,8 @@ import {
   fleetAgentFavoritePreference,
   fleetAttentionResetEligible,
   fleetAgentBucket,
+  fleetCloseAffectsRoute,
+  fleetCurrentAgentMatch,
   fleetDesktopFallbackUrl,
   fleetFrameActivityActive,
   fleetHeaderAgentCount,
@@ -159,7 +161,7 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("while(frameRegistry.size>iframeCacheSize)");
     expect(FLEET_JS).toContain("setIframeCacheSize(cacheSizeSelect.value)");
     expect(FLEET_JS).toContain("setIframeCacheSize(defaultCacheSize,{persist:false})");
-    expect(FLEET_JS).toContain("if(!desktopMedia.matches&&!treeOpen)return;closeRename()");
+    expect(FLEET_JS).toContain("if(!desktopMedia.matches&&!treeOpen)return;closeTreeContextMenu();closeRename()");
     expect(FLEET_JS).toContain("if(!desktopMedia.matches&&!settingsPopover.hidden)closeSettings()");
     expect(FLEET_JS).toContain("if((desktopMedia.matches||treeOpen)&&!settingsPopover.hidden");
     expect(FLEET_JS).toContain("if(!settingsPopover.hidden){closeSettings({restoreFocus:true});return}");
@@ -418,10 +420,17 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toContain(".agent-meta-line { padding-right: .75rem; }");
     expect(FLEET_CSS).toMatch(/\.agent-card-main \{[^}]+padding: \.65rem 0 \.65rem \.7rem;/);
     expect(FLEET_CSS).toContain("--fleet-selected-foreground: light-dark(oklch(.985 0 0), oklch(.985 0 0))");
-    expect(FLEET_CSS).toContain(".agent-card[data-current-pane=\"true\"] {");
+    const currentRule = FLEET_CSS.slice(FLEET_CSS.indexOf('.agent-card[data-current-pane="true"] {'), FLEET_CSS.indexOf(".agent-card-copy"));
+    expect(currentRule).toContain("border-radius: calc(var(--radius) + 2px)");
+    expect(currentRule).toContain("background: var(--accent)");
+    expect(currentRule).toContain("color: var(--accent-foreground)");
+    expect(currentRule).not.toContain("outline:");
+    expect(currentRule).not.toContain("var(--ring)");
     expect(FLEET_CSS).toContain(".tree-row[aria-selected=\"true\"] { background: var(--accent); color: var(--fleet-selected-foreground); }");
     expect(FLEET_CSS).toContain(".fleet-shell[data-tree-open=\"true\"] .tree-row[aria-selected=\"true\"] { background: var(--accent); color: var(--fleet-selected-foreground); }");
-    expect(FLEET_JS).toContain("card.dataset.currentPane='true'");
+    expect(FLEET_JS).toContain("control.setAttribute('aria-current','page')");
+    expect(FLEET_JS).toContain("if(card)card.dataset.currentPane='true'");
+    expect(FLEET_JS).toContain("control.removeAttribute('aria-current')");
     expect(FLEET_JS).toContain("if(route?.view==='pane'&&route.spaceId&&route.tabId&&route.paneId&&selectedId){");
 
     expect(FLEET_JS).toContain("function dispatchShortcut(shortcut,{childOriginated=false}={})");
@@ -436,6 +445,28 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("shortcutToast.textContent=shortcut.keyLabel+' · '+shortcut.label");
     expect(FLEET_JS).toContain("showShortcutToast(shortcut)");
     expect(FLEET_JS).toContain("shortcutToastTimer=setTimeout");
+  });
+
+  test("matches the current Agent by exact node, normalized session, and Pane identity", () => {
+    const primary = { nodeId: "alpha", paneId: "w1:p1", herdrSession: "alpha", primarySession: true };
+    const named = { nodeId: "alpha", paneId: "w1:p1", herdrSession: "demo", primarySession: false };
+    expect(fleetCurrentAgentMatch({ nodeId: "alpha", view: "pane", paneId: "w1:p1" }, primary)).toBeTrue();
+    expect(fleetCurrentAgentMatch({ nodeId: "alpha", view: "pane", paneId: "w1:p1", session: "demo" }, named)).toBeTrue();
+    expect(fleetCurrentAgentMatch({ nodeId: "beta", view: "pane", paneId: "w1:p1" }, primary)).toBeFalse();
+    expect(fleetCurrentAgentMatch({ nodeId: "alpha", view: "pane", paneId: "w1:p2" }, primary)).toBeFalse();
+    expect(fleetCurrentAgentMatch({ nodeId: "alpha", view: "pane", paneId: "w1:p1", session: "other" }, named)).toBeFalse();
+    expect(fleetCurrentAgentMatch({ nodeId: "alpha", view: "home" }, primary)).toBeFalse();
+
+    const syncStart = FLEET_JS.indexOf("function syncCurrentAgentControl()");
+    const syncEnd = FLEET_JS.indexOf("function frameActivityActive", syncStart);
+    const syncSource = FLEET_JS.slice(syncStart, syncEnd);
+    expect(syncSource).toContain("route?.view==='pane'");
+    expect(syncSource).toContain("control.dataset.agentNode===selectedId");
+    expect(syncSource).toContain("control.dataset.agentPane===route.paneId");
+    expect(syncSource).toContain("(control.dataset.agentSession||'')===(route.session||'')");
+    expect(FLEET_JS).toContain("entry.route=route;visitFrame(entry);replaceUrl(id,route);syncCurrentAgentControl()");
+    expect(FLEET_JS).toContain("replaceUrl(entry.id,route);syncCurrentAgentControl();openNode.href");
+    expect(FLEET_JS).toContain("agentShortcutTargets=nextAgentShortcutTargets;\n syncCurrentAgentControl()");
   });
 
   test("bridges only the exact selected desktop iframe with correlated allowlisted messages", () => {
@@ -593,14 +624,52 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("primaryTree=trees.find((tree)=>tree&&tree.primarySession===true)");
     expect(FLEET_JS).toContain("addSpace.hidden=node.health!=='online'||primaryTree?.reachable!==true");
     expect(FLEET_JS).toContain("action:'create-tab',workspaceId:target.workspaceId");
-    expect(FLEET_JS).toContain("bindRename(tabRow,{nodeId:node.id,action:'rename-tab'");
-    expect(FLEET_JS).toContain("bindRename(paneRow,{nodeId:node.id,action:'rename-pane'");
+    expect(FLEET_JS).toContain("bindTreeContextActions(tabRow,{nodeId:node.id,kind:'tab',action:'rename-tab'");
+    expect(FLEET_JS).toContain("bindTreeContextActions(paneRow,{nodeId:node.id,kind:'pane',action:'rename-pane'");
+    expect(FLEET_JS).not.toContain("function bindRename(");
     expect(FLEET_JS).toContain("event.key!=='ContextMenu'&&!(event.shiftKey&&event.key==='F10')");
     expect(FLEET_JS).not.toContain("action:'rename-space'");
     expect(FLEET_JS).not.toContain("action:'rename-host'");
     expect(FLEET_JS).not.toContain("contentWindow.fetch");
     expect(FLEET_CSS).toContain(".tree-inline-action");
     expect(FLEET_CSS).toContain(".tree-rename {");
+    expect(fleetPage()).toContain('id="tree-context-menu" class="tree-context-menu" role="menu"');
+    expect(fleetPage()).toContain('id="tree-context-rename" type="button" role="menuitem"');
+    expect(fleetPage()).toContain('id="tree-context-close" class="tree-context-destructive" type="button" role="menuitem"');
+    expect(FLEET_JS).toContain("treeContextRename.focus()");
+    expect(FLEET_JS).toContain("row.setAttribute('aria-haspopup','menu')");
+    expect(FLEET_JS).toContain("event.key==='ArrowDown'||event.key==='ArrowUp'");
+    expect(FLEET_JS).toContain("event.key==='Home'||event.key==='End'");
+    expect(FLEET_JS).toContain("if(event.key==='Tab'){setTimeout(()=>closeTreeContextMenu(),0);return}");
+    expect(FLEET_JS).toContain("closeTreeContextMenu({restoreFocus:true})");
+    expect(FLEET_JS).toContain("addEventListener('resize',()=>closeTreeContextMenu())");
+    expect(FLEET_JS).toContain("const CLOSE_CONFIRM_MS=3000");
+    expect(FLEET_JS).toContain("treeContextClose.dataset.armed!=='true'");
+    expect(FLEET_JS).toContain("action:'close-tab'");
+    expect(FLEET_JS).toContain("action:'close-pane'");
+    expect(FLEET_JS).toContain("if(affectsCurrent)selectNode(node.id,{route:{view:'home'}})");
+    expect(FLEET_JS).toContain("void refresh({manual:true})");
+  });
+
+  test("computes exact close route effects and defers ambiguous reconciliation", () => {
+    const primaryRoute = { nodeId: "alpha", view: "pane" as const, paneId: "w1:p2", tabId: "w1:t1" };
+    expect(fleetCloseAffectsRoute(primaryRoute, { nodeId: "alpha", kind: "pane", targetId: "w1:p2" })).toBeTrue();
+    expect(fleetCloseAffectsRoute(primaryRoute, { nodeId: "alpha", kind: "pane", targetId: "w1:p3" })).toBeFalse();
+    expect(fleetCloseAffectsRoute(primaryRoute, { nodeId: "alpha", kind: "tab", targetId: "w1:t1", paneIds: [] })).toBeTrue();
+    expect(fleetCloseAffectsRoute(primaryRoute, { nodeId: "alpha", kind: "tab", targetId: "renamed", paneIds: ["w1:p2"] })).toBeTrue();
+    expect(fleetCloseAffectsRoute(primaryRoute, { nodeId: "beta", kind: "tab", targetId: "w1:t1", paneIds: ["w1:p2"] })).toBeFalse();
+    expect(fleetCloseAffectsRoute({ ...primaryRoute, session: "demo" }, { nodeId: "alpha", kind: "pane", targetId: "w1:p2" })).toBeFalse();
+
+    expect(FLEET_JS).toContain("function currentRouteAuthoritativelyMissing()");
+    expect(FLEET_JS).toContain("if(!tree||tree.reachable!==true)return false");
+    expect(FLEET_JS).toContain("if(currentRouteAuthoritativelyMissing())");
+    expect(FLEET_JS).toContain("entry.route={view:'home'};entry.frameKey=null;replaceUrl(entry.id,entry.route)");
+    const closeStart = FLEET_JS.indexOf("async function activateTreeContextClose()");
+    const closeEnd = FLEET_JS.indexOf("async function createPaneFromSpace", closeStart);
+    const closeSource = FLEET_JS.slice(closeStart, closeEnd);
+    expect(closeSource).toContain("await dispatchNodeAction(node");
+    expect(closeSource).not.toContain("retry");
+    expect(closeSource).not.toContain("setInterval");
   });
 
   test("uses the compact H mark as a mutually exclusive, dismissible tree drawer", () => {

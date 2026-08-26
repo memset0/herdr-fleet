@@ -60,6 +60,8 @@ function client(overrides: Partial<FleetActionApi> = {}): FleetActionApi {
     })),
     renameTab: vi.fn(async () => ({ ok: true as const })),
     renamePane: vi.fn(async () => ({ ok: true as const })),
+    closeTab: vi.fn(async () => ({ ok: true as const })),
+    closePane: vi.fn(async () => ({ ok: true as const })),
     ...overrides,
   };
 }
@@ -89,6 +91,22 @@ describe("Fleet sidebar child actions", () => {
       paneId: "w1:p1",
       label: "",
     })).not.toBeNull();
+    expect(parseFleetActionRequest({
+      type: FLEET_ACTION_REQUEST_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId,
+      action: "close-tab",
+      tabId: "w1:t1",
+      session: "demo",
+    })).not.toBeNull();
+    expect(parseFleetActionRequest({
+      type: FLEET_ACTION_REQUEST_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId,
+      action: "close-pane",
+      paneId: "w1:p1",
+      body: {},
+    })).toBeNull();
   });
 
   it("answers probes and maps create to the existing session-scoped API", async () => {
@@ -210,5 +228,46 @@ describe("Fleet sidebar child actions", () => {
       expect(failure.error.length).toBeLessThanOrEqual(240);
       expect(failure.error).not.toContain("\n");
     }
+  });
+
+  it("maps close variants to the exact native API and deduplicates destructive requests", async () => {
+    let finish: ((value: { ok: true }) => void) | undefined;
+    const closeTab = vi.fn(() => new Promise<{ ok: true }>((resolve) => { finish = resolve; }));
+    const closePane = vi.fn(async () => ({ ok: true as const }));
+    const environment = new FakeActionEnvironment();
+    const api = client({ closeTab, closePane });
+    createFleetActionController(environment, api)();
+    const tabRequest = {
+      type: FLEET_ACTION_REQUEST_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId: "close_tab_12345",
+      action: "close-tab" as const,
+      tabId: "w1:t1",
+      session: "demo",
+    };
+    environment.message(environment.parent, tabRequest);
+    environment.message(environment.parent, tabRequest);
+    expect(closeTab).toHaveBeenCalledTimes(1);
+    expect(closeTab).toHaveBeenCalledWith("w1:t1", "demo");
+    finish?.({ ok: true });
+    await vi.waitFor(() => expect(environment.posted).toHaveLength(2));
+    expect(environment.posted[0]).toEqual(environment.posted[1]);
+    expect(environment.posted[0]).toEqual({
+      type: FLEET_ACTION_RESULT_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId: "close_tab_12345",
+      action: "close-tab",
+      ok: true,
+    });
+
+    environment.message(environment.parent, {
+      type: FLEET_ACTION_REQUEST_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId: "close_pane_1234",
+      action: "close-pane",
+      paneId: "w1:p1",
+    });
+    await vi.waitFor(() => expect(environment.posted).toHaveLength(3));
+    expect(closePane).toHaveBeenCalledWith("w1:p1", undefined);
   });
 });

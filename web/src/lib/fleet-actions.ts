@@ -6,7 +6,13 @@ export const FLEET_ACTION_REQUEST_TYPE = "herdr-web-remote:action-request";
 export const FLEET_ACTION_RESULT_TYPE = "herdr-web-remote:action-result";
 export const FLEET_ACTION_VERSION = 1;
 
-export type FleetActionName = "create-workspace" | "create-tab" | "rename-tab" | "rename-pane";
+export type FleetActionName =
+  | "create-workspace"
+  | "create-tab"
+  | "rename-tab"
+  | "rename-pane"
+  | "close-tab"
+  | "close-pane";
 
 export interface FleetActionProbe {
   type: typeof FLEET_ACTION_PROBE_TYPE;
@@ -52,6 +58,22 @@ export type FleetActionRequest =
       paneId: string;
       label: string;
       session?: string;
+    }
+  | {
+      type: typeof FLEET_ACTION_REQUEST_TYPE;
+      version: typeof FLEET_ACTION_VERSION;
+      requestId: string;
+      action: "close-tab";
+      tabId: string;
+      session?: string;
+    }
+  | {
+      type: typeof FLEET_ACTION_REQUEST_TYPE;
+      version: typeof FLEET_ACTION_VERSION;
+      requestId: string;
+      action: "close-pane";
+      paneId: string;
+      session?: string;
     };
 
 export type FleetActionResult =
@@ -75,7 +97,7 @@ export type FleetActionResult =
       type: typeof FLEET_ACTION_RESULT_TYPE;
       version: typeof FLEET_ACTION_VERSION;
       requestId: string;
-      action: "rename-tab" | "rename-pane";
+      action: "rename-tab" | "rename-pane" | "close-tab" | "close-pane";
       ok: true;
     };
 
@@ -94,6 +116,8 @@ export interface FleetActionApi {
   createTab(workspaceId: string, opts: Record<string, never>, session?: string): ReturnType<typeof api.createTab>;
   renameTab(tabId: string, label: string, session?: string): ReturnType<typeof api.renameTab>;
   renamePane(paneId: string, label: string, session?: string): ReturnType<typeof api.renamePane>;
+  closeTab(tabId: string, session?: string): ReturnType<typeof api.closeTab>;
+  closePane(paneId: string, session?: string): ReturnType<typeof api.closePane>;
 }
 
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,128}$/;
@@ -178,6 +202,18 @@ export function parseFleetActionRequest(value: unknown): FleetActionRequest | nu
       ? (record as unknown as FleetActionRequest)
       : null;
   }
+  if (record.action === "close-tab") {
+    const keys = new Set([...common, "tabId"]);
+    return exactKeys(record, keys) && validObjectId(record.tabId)
+      ? (record as unknown as FleetActionRequest)
+      : null;
+  }
+  if (record.action === "close-pane") {
+    const keys = new Set([...common, "paneId"]);
+    return exactKeys(record, keys) && validObjectId(record.paneId)
+      ? (record as unknown as FleetActionRequest)
+      : null;
+  }
   return null;
 }
 
@@ -220,7 +256,11 @@ async function runAction(request: FleetActionRequest, client: FleetActionApi): P
     }
     const result = request.action === "rename-tab"
       ? await client.renameTab(request.tabId, request.label.trim(), request.session)
-      : await client.renamePane(request.paneId, request.label.trim(), request.session);
+      : request.action === "rename-pane"
+        ? await client.renamePane(request.paneId, request.label.trim(), request.session)
+        : request.action === "close-tab"
+          ? await client.closeTab(request.tabId, request.session)
+          : await client.closePane(request.paneId, request.session);
     return result.ok
       ? {
           type: FLEET_ACTION_RESULT_TYPE,

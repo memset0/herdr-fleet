@@ -199,6 +199,47 @@ export function fleetTreeTabMode(panes: readonly { paneId?: unknown }[]): FleetT
   return ids.size === 1 ? "direct" : "branch";
 }
 
+export interface FleetPaneRouteIdentity {
+  nodeId: string;
+  view: "home" | "pane";
+  paneId?: string;
+  tabId?: string;
+  session?: string;
+}
+
+export interface FleetAgentRouteIdentity {
+  nodeId: string;
+  paneId: string;
+  herdrSession?: string;
+  primarySession?: boolean;
+}
+
+/** Exact current-row identity. Primary sessions normalize to the empty wire/session value. */
+export function fleetCurrentAgentMatch(
+  route: FleetPaneRouteIdentity | null,
+  agent: FleetAgentRouteIdentity,
+): boolean {
+  return route?.view === "pane"
+    && route.nodeId === agent.nodeId
+    && route.paneId === agent.paneId
+    && (route.session ?? "") === (agent.primarySession ? "" : (agent.herdrSession ?? ""));
+}
+
+export type FleetCloseTargetIdentity =
+  | { nodeId: string; kind: "pane"; targetId: string; session?: string }
+  | { nodeId: string; kind: "tab"; targetId: string; paneIds: readonly string[]; session?: string };
+
+export function fleetCloseAffectsRoute(
+  route: FleetPaneRouteIdentity | null,
+  target: FleetCloseTargetIdentity,
+): boolean {
+  if (route?.view !== "pane" || route.nodeId !== target.nodeId || (route.session ?? "") !== (target.session ?? "")) {
+    return false;
+  }
+  if (target.kind === "pane") return route.paneId === target.targetId;
+  return route.tabId === target.targetId || Boolean(route.paneId && target.paneIds.includes(route.paneId));
+}
+
 export const FLEET_IFRAME_CACHE_QUIET_MS = 30 * 60 * 1_000;
 
 export interface FleetIframeCacheEntry {
@@ -473,6 +514,11 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
           </div>
         </form>
       </section>
+      <div id="tree-context-menu" class="tree-context-menu" role="menu" aria-label="Tab and Pane actions" hidden>
+        <button id="tree-context-rename" type="button" role="menuitem">Rename</button>
+        <button id="tree-context-close" class="tree-context-destructive" type="button" role="menuitem">Close Pane</button>
+        <p id="tree-context-error" class="tree-context-error" role="status" hidden></p>
+      </div>
       <div id="shortcut-toast" class="shortcut-toast" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true"></div>
       <p id="fleet-status" class="sr-only" role="status">Connecting to Fleet.</p>
     </main>`,
@@ -576,7 +622,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 .tree-row-wrap { position: relative; min-width: 0; }
 .tree-inline-action { display: none; }
 .desktop-fallback-entry { display: none; }
-.host-rail-footer, .tree-action-status, .fleet-settings, .tree-rename { display: none; }
+.host-rail-footer, .tree-action-status, .fleet-settings, .tree-rename, .tree-context-menu { display: none; }
 .fleet-shortcuts { display: none; }
 .connecting { padding: 0 .6rem; color: var(--muted-foreground); font-size: .8rem; }
 .instance-tab {
@@ -802,10 +848,17 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 }
 .agent-card[data-live="false"] .agent-avatar, .agent-card[data-live="false"] .agent-status-dot, .agent-card[data-live="false"] .agent-ordinal-badge { opacity: .45; }
 .agent-card[data-current-pane="true"] {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
-  border-color: var(--ring);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
+.agent-card[data-current-pane="true"] .agent-card-main { color: var(--accent-foreground); }
+.agent-card[data-current-pane="true"] .agent-project,
+.agent-card[data-current-pane="true"] .agent-meta-line,
+.agent-card[data-current-pane="true"] .agent-favorite { color: color-mix(in oklch, var(--accent-foreground) 72%, transparent); }
+.agent-card[data-current-pane="true"] .agent-favorite[aria-pressed="true"] { color: var(--status-working); }
+.agent-card[data-current-pane="true"] .agent-card-main:hover { background: color-mix(in oklch, var(--accent-foreground) 7%, transparent); }
+.agent-section:not([data-attention="true"]):not([data-section="offline"]) .agent-card[data-current-pane="true"] + .agent-card { border-top-color: transparent; }
 .agent-card-copy { min-width: 0; flex: 1; }
 .agent-title-line, .agent-meta-line { display: flex; min-width: 0; align-items: baseline; gap: .3rem; }
 .agent-project { max-width: 45%; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
@@ -1217,6 +1270,36 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   .tree-rename-actions button { min-height: 1.85rem; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: 0 .65rem; color: var(--foreground); font-size: .68rem; cursor: pointer; }
   #tree-rename-save { background: var(--accent); font-weight: 700; }
   .tree-rename-actions button:disabled { cursor: wait; opacity: .55; }
+  .tree-context-menu {
+    position: fixed;
+    z-index: 75;
+    display: grid;
+    width: min(13.5rem, calc(var(--fleet-host-rail-width) - 1rem));
+    min-width: 10rem;
+    gap: .18rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    padding: .3rem;
+    box-shadow: 0 16px 42px light-dark(#00000020, #000000a0);
+  }
+  .tree-context-menu > button {
+    width: 100%;
+    min-height: 2rem;
+    border: 0;
+    border-radius: calc(var(--radius) - 3px);
+    background: transparent;
+    padding: .35rem .55rem;
+    color: var(--foreground);
+    font-size: .7rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .tree-context-menu > button:hover, .tree-context-menu > button:focus-visible { background: var(--accent); }
+  .tree-context-destructive { color: var(--destructive) !important; }
+  .tree-context-destructive[data-armed="true"] { background: color-mix(in oklch, var(--destructive) 13%, transparent); font-weight: 750; }
+  .tree-context-menu[data-pending="true"] > button { cursor: wait; opacity: .55; }
+  .tree-context-error { margin: .15rem .5rem .35rem; color: var(--destructive); font-size: .64rem; line-height: 1.35; }
   .agent-menu {
     position: relative;
     z-index: 10;
@@ -1301,6 +1384,7 @@ const ACTION_RESULT_MESSAGE='herdr-web-remote:action-result';
 const ACTION_VERSION=1;
 const ACTION_PROBE_TIMEOUT_MS=8000;
 const ACTION_RESULT_TIMEOUT_MS=25000;
+const CLOSE_CONFIRM_MS=3000;
 const SHORTCUT_CONFIG_MESSAGE='herdr-web-remote:shortcut-config';
 const SHORTCUT_INTENT_MESSAGE='herdr-web-remote:shortcut-intent';
 const SHORTCUT_COMMAND_MESSAGE='herdr-web-remote:shortcut-command';
@@ -1349,6 +1433,10 @@ const renameInput=document.querySelector('#tree-rename-input');
 const renameError=document.querySelector('#tree-rename-error');
 const renameCancel=document.querySelector('#tree-rename-cancel');
 const renameSave=document.querySelector('#tree-rename-save');
+const treeContextMenu=document.querySelector('#tree-context-menu');
+const treeContextRename=document.querySelector('#tree-context-rename');
+const treeContextClose=document.querySelector('#tree-context-close');
+const treeContextError=document.querySelector('#tree-context-error');
 const desktopMedia=matchMedia(DESKTOP_MEDIA);
 const fallbackDesktopMedia=matchMedia(FALLBACK_DESKTOP_MEDIA);
 const configuredCacheSize=Number(shell.dataset.iframeCacheSize);
@@ -1372,6 +1460,9 @@ let appliedRailWidths={left:RAIL_WIDTHS.leftDefault,right:RAIL_WIDTHS.rightDefau
 let railDrag=null;
 let pendingAction=null;
 let renameTarget=null;
+let treeContextTarget=null;
+let treeContextInvoker=null;
+let treeContextArmedTimer=null;
 let actionStatusTimer=null;
 let shortcutToastTimer=null;
 let pendingFavoriteFocusKey=null;
@@ -1471,7 +1562,7 @@ function closeSettings({restoreFocus=false}={}){
 }
 
 function openSettings(){
- if(!desktopMedia.matches&&!treeOpen)return;closeRename();settingsPopover.hidden=false;settingsToggle.setAttribute('aria-expanded','true');cacheSizeSelect.value=String(iframeCacheSize);cacheSizeSelect.focus();
+ if(!desktopMedia.matches&&!treeOpen)return;closeTreeContextMenu();closeRename();settingsPopover.hidden=false;settingsToggle.setAttribute('aria-expanded','true');cacheSizeSelect.value=String(iframeCacheSize);cacheSizeSelect.focus();
 }
 
 function clampRail(value,minimum,maximum){return Math.min(maximum,Math.max(minimum,Math.round(value)))}
@@ -1609,6 +1700,16 @@ function replaceUrl(id,route){
 }
 
 const activeEntry=()=>selectedId?frameRegistry.get(selectedId)||null:null;
+
+function syncCurrentAgentControl(){
+ const route=activeEntry()?.route||null;let matched=false;
+ for(const control of agentSections.querySelectorAll('.agent-card-main[data-agent-node]')){
+   const current=!matched&&route?.view==='pane'&&control.dataset.agentNode===selectedId&&control.dataset.agentPane===route.paneId&&(control.dataset.agentSession||'')===(route.session||'');
+   const card=control.closest('.agent-card');
+   if(current){matched=true;control.setAttribute('aria-current','page');if(card)card.dataset.currentPane='true'}
+   else{control.removeAttribute('aria-current');if(card)delete card.dataset.currentPane}
+ }
+}
 
 function frameActivityActive(entry){
  return entry.id===selectedId&&!entry.frame.hidden&&!document.hidden&&(desktopMedia.matches||(!treeOpen&&agentMenu.hidden));
@@ -1822,15 +1923,77 @@ function closeRename({restoreFocus=false}={}){
 
 function openRename(row,target){
  if(!desktopMedia.matches||target.reachable!==true)return;
- closeSettings();renameTarget={...target,row};renameTitle.textContent='Rename '+(target.action==='rename-tab'?'Tab':'Pane');renameInput.value=target.label||'';
+ closeTreeContextMenu();closeSettings();renameTarget={...target,row};renameTitle.textContent='Rename '+(target.action==='rename-tab'?'Tab':'Pane');renameInput.value=target.label||'';
  renameError.hidden=true;renameError.textContent='';renamePopover.hidden=false;
  const bounds=row.getBoundingClientRect();const popupHeight=150;const below=bounds.bottom+6;const top=below+popupHeight<=innerHeight-12?below:Math.max(12,bounds.top-popupHeight-6);
  renamePopover.style.top=Math.round(top)+'px';requestAnimationFrame(()=>{renameInput.focus();renameInput.select()});
 }
 
-function bindRename(row,target){
- row.addEventListener('contextmenu',(event)=>{if(!desktopMedia.matches)return;event.preventDefault();openRename(row,target)});
- row.addEventListener('keydown',(event)=>{if(!desktopMedia.matches||(event.key!=='ContextMenu'&&!(event.shiftKey&&event.key==='F10')))return;event.preventDefault();openRename(row,target)});
+function contextCloseLabel(target,armed=false){
+ const kind=target?.kind==='tab'?'Tab':'Pane';
+ if(!armed)return'Close '+kind;
+ const count=target?.kind==='tab'&&Number.isSafeInteger(target.paneCount)?' · '+target.paneCount+' '+(target.paneCount===1?'Pane':'Panes'):'';
+ return'Confirm Close '+kind+count;
+}
+
+function disarmTreeContextClose(){
+ if(treeContextArmedTimer!==null){clearTimeout(treeContextArmedTimer);treeContextArmedTimer=null}
+ treeContextClose.dataset.armed='false';treeContextClose.textContent=contextCloseLabel(treeContextTarget,false);
+}
+
+function closeTreeContextMenu({restoreFocus=false}={}){
+ const invoker=treeContextInvoker;disarmTreeContextClose();treeContextTarget=null;treeContextInvoker=null;
+ treeContextMenu.hidden=true;delete treeContextMenu.dataset.pending;treeContextRename.disabled=false;treeContextClose.disabled=false;treeContextError.hidden=true;treeContextError.textContent='';
+ if(restoreFocus&&invoker?.isConnected)invoker.focus();
+}
+
+function placeTreeContextMenu(left,top){
+ const gap=8;const bounds=treeContextMenu.getBoundingClientRect();
+ treeContextMenu.style.left=Math.round(Math.max(gap,Math.min(left,innerWidth-bounds.width-gap)))+'px';
+ treeContextMenu.style.top=Math.round(Math.max(gap,Math.min(top,innerHeight-bounds.height-gap)))+'px';
+}
+
+function openTreeContextMenu(row,target,anchor){
+ if(!desktopMedia.matches||target.reachable!==true||!row.isConnected)return;
+ closeRename();closeSettings();closeTreeContextMenu();treeContextTarget={...target,row};treeContextInvoker=row;
+ treeContextClose.textContent=contextCloseLabel(target,false);treeContextClose.dataset.armed='false';treeContextMenu.hidden=false;
+ const bounds=row.getBoundingClientRect();const left=anchor?.x??bounds.left+18;const top=anchor?.y??bounds.bottom+4;
+ requestAnimationFrame(()=>{if(treeContextTarget?.row!==row)return;placeTreeContextMenu(left,top);treeContextRename.focus()});
+}
+
+function bindTreeContextActions(row,target){
+ row.setAttribute('aria-haspopup','menu');
+ row.addEventListener('contextmenu',(event)=>{if(!desktopMedia.matches)return;event.preventDefault();openTreeContextMenu(row,target,{x:event.clientX,y:event.clientY})});
+ row.addEventListener('keydown',(event)=>{if(!desktopMedia.matches||(event.key!=='ContextMenu'&&!(event.shiftKey&&event.key==='F10')))return;event.preventDefault();openTreeContextMenu(row,target,null)});
+}
+
+function contextTargetAffectsCurrent(target){
+ const route=activeEntry()?.route;
+ if(!route||route.view!=='pane'||selectedId!==target.nodeId||(route.session||'')!==(target.session||''))return false;
+ if(target.kind==='pane')return route.paneId===target.targetId;
+ return route.tabId===target.targetId||target.paneIds.includes(route.paneId);
+}
+
+async function activateTreeContextClose(){
+ const target=treeContextTarget;if(!target||treeContextMenu.dataset.pending==='true')return;
+ if(treeContextClose.dataset.armed!=='true'){
+   treeContextClose.dataset.armed='true';treeContextClose.textContent=contextCloseLabel(target,true);
+   treeContextArmedTimer=setTimeout(()=>{treeContextArmedTimer=null;if(treeContextTarget===target)disarmTreeContextClose()},CLOSE_CONFIRM_MS);return;
+ }
+ disarmTreeContextClose();const node=nodes.find((candidate)=>candidate.id===target.nodeId);
+ if(!node||node.health!=='online'||target.reachable!==true){treeContextError.textContent='This node is currently unavailable.';treeContextError.hidden=false;return}
+ treeContextMenu.dataset.pending='true';treeContextRename.disabled=true;treeContextClose.disabled=true;treeContextClose.textContent='Closing '+(target.kind==='tab'?'Tab':'Pane')+'…';treeContextError.hidden=true;
+ const affectsCurrent=contextTargetAffectsCurrent(target);const payload=target.kind==='tab'?{action:'close-tab',tabId:target.targetId}:{action:'close-pane',paneId:target.targetId};
+ try{
+   const result=await dispatchNodeAction(node,{...payload,...(target.session?{session:target.session}:{})});
+   if(!result.ok){treeContextError.textContent=result.error;treeContextError.hidden=false;return}
+   closeTreeContextMenu();showTreeActionStatus((target.kind==='tab'?'Tab':'Pane')+' closed.');
+   if(affectsCurrent)selectNode(node.id,{route:{view:'home'}});
+   void refresh({manual:true});
+ }catch(error){treeContextError.textContent=error instanceof Error?error.message:String(error);treeContextError.hidden=false}
+ finally{
+   if(treeContextTarget===target){delete treeContextMenu.dataset.pending;treeContextRename.disabled=false;treeContextClose.disabled=false;treeContextClose.textContent=contextCloseLabel(target,false)}
+ }
 }
 
 async function createPaneFromSpace(node,target,button){
@@ -1949,7 +2112,7 @@ function renderHostSwitcher(focusSelected=false){
 }
 
 function renderTree(focusKey=null){
- instances.replaceChildren();const liveKeys=new Set();const nextPaneShortcutTargets=[];
+ closeTreeContextMenu();instances.replaceChildren();const liveKeys=new Set();const nextPaneShortcutTargets=[];
  const route=activeEntry()?.route||requestedRoute();
  if(route?.view==='pane'&&route.spaceId&&route.tabId&&route.paneId&&selectedId){
   const hostKey=treeKey(selectedId,route.session||'','host',selectedId);
@@ -2001,7 +2164,7 @@ function renderTree(focusKey=null){
          if(validPanes.length===0){
            const tabRow=element('button','tree-row tree-row-level-3');tabRow.type='button';tabRow.dataset.treeKey=tabKey;tabRow.dataset.disabled='true';
            tabRow.setAttribute('role','treeitem');tabRow.setAttribute('aria-level','3');tabRow.setAttribute('aria-disabled','true');if(!tree.reachable)tabRow.dataset.stale='true';
-           tabRow.append(element('span','tree-label',tabLabel));if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});spaceChildrenInner.append(tabRow);continue;
+           tabRow.append(element('span','tree-label',tabLabel));if(tree.reachable)bindTreeContextActions(tabRow,{nodeId:node.id,kind:'tab',action:'rename-tab',targetId:tabId,label:tabLabel,paneIds:[],paneCount:0,session:!tree.primarySession&&session?session:'',reachable:true});spaceChildrenInner.append(tabRow);continue;
          }
          if(validPanes.length===1){
            const {pane,paneId}=validPanes[0];const tabRow=element('button','tree-row tree-row-level-3 direct-pane-tree-row');tabRow.type='button';tabRow.dataset.treeKey=tabKey;
@@ -2010,12 +2173,12 @@ function renderTree(focusKey=null){
            const selected=node.id===selectedId&&route.view==='pane'&&route.paneId===paneId&&(route.session||'')===(tree.primarySession?'':session);
            tabRow.setAttribute('aria-selected',String(selected));const paneState=appendPaneTreatment(tabRow,pane,tabLabel);tabRow.setAttribute('aria-label',tabLabel+' · '+paneState);
            tabRow.addEventListener('click',()=>selectTreeNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:tabKey}));
-           if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});
+           if(tree.reachable)bindTreeContextActions(tabRow,{nodeId:node.id,kind:'tab',action:'rename-tab',targetId:tabId,label:tabLabel,paneIds:[paneId],paneCount:1,session:!tree.primarySession&&session?session:'',reachable:true});
            spaceChildrenInner.append(tabRow);continue;
          }
          const tabOpen=expandedTreeKeys.has(tabKey);
          const tabRow=disclosureRow(3,tabKey,tabLabel,tabOpen,{stale:!tree.reachable});
-         if(tree.reachable)bindRename(tabRow,{nodeId:node.id,action:'rename-tab',targetId:tabId,label:tabLabel,session:!tree.primarySession&&session?session:'',reachable:true});
+         if(tree.reachable)bindTreeContextActions(tabRow,{nodeId:node.id,kind:'tab',action:'rename-tab',targetId:tabId,label:tabLabel,paneIds:validPanes.map((entry)=>entry.paneId),paneCount:validPanes.length,session:!tree.primarySession&&session?session:'',reachable:true});
          const {group:tabChildren,inner:tabChildrenInner}=treeChildrenGroup(tabKey,tabOpen);
          for(const {pane,paneId} of validPanes){
            const paneKey=treeKey(node.id,session,'pane',paneId);liveKeys.add(paneKey);
@@ -2026,7 +2189,7 @@ function renderTree(focusKey=null){
            paneRow.setAttribute('aria-selected',String(selected));
            appendPaneTreatment(paneRow,pane,paneLabel(pane));
            paneRow.addEventListener('click',()=>selectTreeNode(node.id,{route:{view:'pane',spaceId,tabId,paneId,...(!tree.primarySession&&session?{session}:{})},focusTreeKey:paneKey}));
-           if(tree.reachable)bindRename(paneRow,{nodeId:node.id,action:'rename-pane',targetId:paneId,label:pane.label||'',session:!tree.primarySession&&session?session:'',reachable:true});
+           if(tree.reachable)bindTreeContextActions(paneRow,{nodeId:node.id,kind:'pane',action:'rename-pane',targetId:paneId,tabId,label:pane.label||'',session:!tree.primarySession&&session?session:'',reachable:true});
            tabChildrenInner.append(paneRow);
          }
          spaceChildrenInner.append(tabRow,tabChildren);
@@ -2066,7 +2229,7 @@ function loadSelected(force=false,routeOverride=null){
  if(route.invalid)route={view:'home'};
  else if(route.view==='pane')route=canonicalPaneRoute(route.paneId,route.session,route.spaceId,route.tabId);
  const href=frameHref(entry.origin,route);const nextFrameKey=routeKey(entry.origin,route);
- entry.route=route;entry.frame.title='Collie · '+node.name;
+ entry.route=route;syncCurrentAgentControl();entry.frame.title='Collie · '+node.name;
  openNode.href=href;openNode.hidden=false;updateHealth(node);
  syncFallbackEntry();
  if(force||entry.frameKey!==nextFrameKey){entry.frameKey=nextFrameKey;entry.loading=true;entry.frame.src=href}
@@ -2081,7 +2244,7 @@ function selectNode(id,options={}){
  selectedId=id;remember(id);
  const entry=ensureFrame(node);
  route=route.invalid?{view:'home'}:route.view==='pane'?canonicalPaneRoute(route.paneId,route.session,route.spaceId,route.tabId):route;
- entry.route=route;visitFrame(entry);replaceUrl(id,route);
+ entry.route=route;visitFrame(entry);replaceUrl(id,route);syncCurrentAgentControl();
  renderTabs(options.focusTreeKey||Boolean(options.focusTab));
  loadSelected(Boolean(options.forceFrame),route);
  announce('Selected '+node.name+'. '+healthLabel(node.health)+'.');
@@ -2095,7 +2258,7 @@ function selectTreeNode(id,options={}){
 
 function showEmpty(title,copy){
  for(const id of [...frameRegistry.keys()])releaseFrame(id,true);
- selectedId=null;hostSwitcher.replaceChildren();instances.replaceChildren();openNode.hidden=true;notice.hidden=true;loading.hidden=true;
+ selectedId=null;hostSwitcher.replaceChildren();instances.replaceChildren();syncCurrentAgentControl();openNode.hidden=true;notice.hidden=true;loading.hidden=true;
  syncFallbackEntry();
  emptyTitle.textContent=title;emptyCopy.textContent=copy;empty.hidden=false;announce(title+'. '+copy);
 }
@@ -2188,11 +2351,9 @@ function renderAgentCard(node,agent,ordinal=null){
  const parts=agentParts(agent);
  const favoriteKey=agentFavoriteKey(node,agent);const isFavorite=agentFavorites.has(favoriteKey);
  const card=element('div','agent-card');card.dataset.live=String(Boolean(agent.reachable));card.dataset.status=agent.status;card.dataset.favorite=String(isFavorite);
- const route=activeEntry()?.route||requestedRoute();
  const cardSession=agent.primarySession?'':agent.herdrSession;
- if(route?.view==='pane'&&route.paneId===agent.paneId&&(route.session||'')===cardSession&&selectedId===node.id)card.dataset.currentPane='true';
  const shortcutLabel=ordinal?' · Shortcut Alt+'+ordinal:'';
- const main=element('button','agent-card-main');main.type='button';main.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status)+shortcutLabel);
+ const main=element('button','agent-card-main');main.type='button';main.dataset.agentNode=node.id;main.dataset.agentPane=agent.paneId;main.dataset.agentSession=cardSession;main.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status)+shortcutLabel);
  const avatar=element('span','agent-avatar',initials(agent.agent));avatar.dataset.brand=brand(agent.agent);avatar.setAttribute('aria-hidden','true');
  const dot=element('span','agent-status-dot');dot.style.setProperty('--agent-status-color',statusColor(agent.status));avatar.append(dot);
  if(ordinal){const badge=element('span','agent-ordinal-badge',String(ordinal));badge.setAttribute('aria-hidden','true');avatar.append(badge)}
@@ -2222,7 +2383,7 @@ function renderAgents(focusFavoriteKey=null){
  agentMenuCount.textContent=String(counted);
  agentMenuToggle.title='All Agents · '+counted+' outside Recent';
  agentMenuToggle.setAttribute('aria-label','Open all Agents · '+counted+' outside Recent · '+live+' live'+(offline?' · '+offline+' offline':''));
- if(!entries.length){agentShortcutTargets=[];agentSections.append(element('p','agent-empty','No agents running.'));return}
+ if(!entries.length){agentShortcutTargets=[];agentSections.append(element('p','agent-empty','No agents running.'));syncCurrentAgentControl();return}
  const sections=[
    {key:'needs',label:'Needs you',color:'var(--status-blocked)',attention:true},
    {key:'ready',label:'Ready · unseen',color:'var(--status-done)',attention:true},
@@ -2240,12 +2401,27 @@ function renderAgents(focusFavoriteKey=null){
    wrapper.append(heading,list);agentSections.append(wrapper);
  }
  agentShortcutTargets=nextAgentShortcutTargets;
+ syncCurrentAgentControl();
  if(favoriteFocusKey){const target=[...agentSections.querySelectorAll('[data-favorite-key]')].find((entry)=>entry.dataset.favoriteKey===favoriteFocusKey);if(target)requestAnimationFrame(()=>{if(target.isConnected)target.focus();if(pendingFavoriteFocusKey===favoriteFocusKey)pendingFavoriteFocusKey=null})}
+}
+
+function currentRouteAuthoritativelyMissing(){
+ const entry=activeEntry();const route=entry?.route;const node=selectedNode();if(!entry||!node||route?.view!=='pane')return false;
+ const session=route.session||'';const tree=(Array.isArray(node.treeSessions)?node.treeSessions:[]).find((candidate)=>candidate&&((candidate.primarySession===true&&session==='')||(candidate.primarySession!==true&&candidate.herdrSession===session)));
+ if(!tree||tree.reachable!==true)return false;
+ for(const space of Array.isArray(tree.spaces)?tree.spaces:[]){
+   for(const tab of Array.isArray(space.tabs)?space.tabs:[]){
+     if(route.tabId&&tab.tabId!==route.tabId)continue;
+     if((Array.isArray(tab.panes)?tab.panes:[]).some((pane)=>pane?.paneId===route.paneId))return false;
+   }
+ }
+ return true;
 }
 
 function renderInventory(data){
  nodes=Array.isArray(data.nodes)?data.nodes.filter((node)=>node&&typeof node.id==='string'&&typeof node.name==='string'&&typeof node.publicHost==='string'):[];
  reconcileFrames();
+ if(currentRouteAuthoritativelyMissing()){const entry=activeEntry();if(entry){entry.route={view:'home'};entry.frameKey=null;replaceUrl(entry.id,entry.route)}}
  renderAgents();
  if(!nodes.length){showEmpty('No instances','No enabled Herdr instances are configured.');return}
  const choice=chooseNode();
@@ -2282,7 +2458,7 @@ function openAgentMenu(){
 function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
  if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false')}
- else if(desktopMode){closeSettings();closeRename();agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
+ else if(desktopMode){closeSettings();closeRename();closeTreeContextMenu();agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
  desktopMode=nextDesktop;renderAgents();syncTreePresentation();renderTabs();syncFallbackEntry();applyRailWidthPreferences();broadcastFrameActivity();
 }
 
@@ -2334,16 +2510,28 @@ cacheSizeSelect.addEventListener('change',()=>setIframeCacheSize(cacheSizeSelect
 cacheReset.addEventListener('click',()=>{try{localStorage.removeItem(CACHE_STORAGE_KEY)}catch{}setIframeCacheSize(defaultCacheSize,{persist:false})});
 renameCancel.addEventListener('click',()=>closeRename({restoreFocus:true}));
 renameForm.addEventListener('submit',(event)=>{event.preventDefault();void submitRename()});
+treeContextRename.addEventListener('click',()=>{const target=treeContextTarget;const row=treeContextInvoker;if(!target||!row)return;closeTreeContextMenu();openRename(row,target)});
+treeContextClose.addEventListener('click',()=>{void activateTreeContextClose()});
+treeContextMenu.addEventListener('keydown',(event)=>{
+ const items=[treeContextRename,treeContextClose].filter((item)=>!item.disabled);const index=items.indexOf(document.activeElement);
+ if(event.key==='Escape'){event.preventDefault();closeTreeContextMenu({restoreFocus:true});return}
+ if(event.key==='Tab'){setTimeout(()=>closeTreeContextMenu(),0);return}
+ if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();const delta=event.key==='ArrowDown'?1:-1;items[(Math.max(0,index)+delta+items.length)%items.length]?.focus();return}
+ if(event.key==='Home'||event.key==='End'){event.preventDefault();items[event.key==='Home'?0:items.length-1]?.focus();return}
+ if((event.key==='Enter'||event.key===' ')&&index>=0){event.preventDefault();items[index].click()}
+});
 document.addEventListener('pointerdown',(event)=>{
  if(!desktopMedia.matches&&!agentMenu.hidden&&!agentMenu.contains(event.target)&&!agentMenuToggle.contains(event.target))closeAgentMenu();
  if((desktopMedia.matches||treeOpen)&&!settingsPopover.hidden&&!settingsPopover.contains(event.target)&&!settingsToggle.contains(event.target))closeSettings();
  if(desktopMedia.matches&&!renamePopover.hidden&&!renamePopover.contains(event.target)&&!event.target.closest('[data-tree-key]'))closeRename();
+ if(desktopMedia.matches&&!treeContextMenu.hidden&&!treeContextMenu.contains(event.target))closeTreeContextMenu();
 });
 document.addEventListener('keydown',(event)=>{
  const shortcut=matchShortcut(event);if(shortcut){event.preventDefault();dispatchShortcut(shortcut);return}
  if(event.key!=='Escape')return;
  if(!settingsPopover.hidden){closeSettings({restoreFocus:true});return}
  if(desktopMedia.matches&&!renamePopover.hidden){closeRename({restoreFocus:true});return}
+ if(desktopMedia.matches&&!treeContextMenu.hidden){closeTreeContextMenu({restoreFocus:true});return}
  if(desktopMedia.matches)return;
  if(treeOpen){closeTreeMenu({restoreFocus:true});return}
  if(!agentMenu.hidden){closeAgentMenu();agentMenuToggle.focus()}
@@ -2372,13 +2560,14 @@ addEventListener('message',(event)=>{
  }else return;
  entry.route=route;entry.frameKey=routeKey(entry.origin,route);
  if(entry.id!==selectedId)return;
- replaceUrl(entry.id,route);openNode.href=frameHref(entry.origin,route);renderTree();
+ replaceUrl(entry.id,route);syncCurrentAgentControl();openNode.href=frameHref(entry.origin,route);renderTree();
 });
 document.querySelector('#retry-frame').addEventListener('click',()=>loadSelected(true));
 document.querySelector('#retry-inventory').addEventListener('click',()=>refresh({manual:true}));
 addEventListener('popstate',()=>{const id=requested();if(nodes.some((node)=>node.id===id))selectNode(id,{routeFromUrl:true})});
 bindRailResizer(hostRailResizer,'left');bindRailResizer(agentRailResizer,'right');
 addEventListener('resize',applyRailWidthPreferences);
+addEventListener('resize',()=>closeTreeContextMenu());
 addEventListener('storage',(event)=>{if(event.key===AGENT_FAVORITES_STORAGE_KEY){agentFavorites=readAgentFavorites();renderAgents()}});
 document.addEventListener('visibilitychange',broadcastFrameActivity);
 desktopMedia.addEventListener('change',syncAgentMenuLayout);fallbackDesktopMedia.addEventListener('change',syncFallbackEntry);syncAgentMenuLayout();
