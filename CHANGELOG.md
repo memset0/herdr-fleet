@@ -6,6 +6,19 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.7.2] - 2026-08-26
+
+### Fixed
+
+- Remove exactly Codex's final status/footer row from the terminal mirror and preserve every native
+  input-box row above it, including ANSI-empty separator/layout rows. The visible `›` prompt and
+  draft now retain the same vertical shape as the TUI instead of losing one extra blank line.
+
+### Upgrading
+
+- Install this presentation patch on every node running v2.7.1. It changes no parser, API,
+  configuration, or runtime boundary; retain v2.7.1 as the immediate rollback.
+
 ## [2.7.1] - 2026-08-26
 
 ### Fixed

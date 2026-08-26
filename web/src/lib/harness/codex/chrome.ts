@@ -6,7 +6,7 @@
 // on the STATUS row at the tail and only then looks up for the prompt row: an echo higher in
 // the transcript never has the status row directly beneath it. Pure; no pane access.
 
-import { trimTrailingBlank, type StyledLine } from "../../blocks";
+import type { StyledLine } from "../../blocks";
 import {
   isBlank,
   isStatusRow,
@@ -77,13 +77,13 @@ export function stripChrome(lines: StyledLine[]): StyledLine[] {
 
 /**
  * Web Remote keeps Codex's input box visible for diagnosis and direct comparison with the native
- * composer. Remove only the trailing status/queue-footer row (plus layout blanks before it), while
- * leaving the `›` prompt and every draft continuation in the raw mirror.
+ * composer. Remove exactly the trailing status/queue-footer row while leaving the `›` prompt, every
+ * draft continuation, and the native blank composer layout above that footer in the raw mirror.
  */
 export function stripStatusChrome(lines: StyledLine[]): StyledLine[] {
   const box = locateComposer(lines);
   if (box === null) return lines;
-  return trimTrailingBlank(lines.slice(0, box.statusRow));
+  return lines.slice(0, box.statusRow);
 }
 
 /** The status row, styled, for the strip above the phone composer. Empty when no composer. */

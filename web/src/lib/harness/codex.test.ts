@@ -288,6 +288,18 @@ describe("codexBuildBlocks", () => {
     const visible = blocks[0].lines.map(lineText).join("\n");
     expect(visible).toContain(`› ${draft}`);
     expect(visible).not.toContain(status);
+    expect(lineText(blocks[0].lines.at(-1)!).trim()).toBe("");
+  });
+
+  it("keeps every native blank composer row and removes exactly the queue footer", () => {
+    const lines = fixtureLines("codex--working-draft-queue-hint.txt");
+    const blocks = codexAdapter.buildBlocks(lines);
+    expect(blocks[0]?.kind).toBe("raw");
+    if (blocks[0]?.kind !== "raw") return;
+    const prompt = blocks[0].lines.findIndex((line) => lineText(line).startsWith("› "));
+    expect(prompt).toBeGreaterThanOrEqual(0);
+    expect(blocks[0].lines.slice(prompt + 1).filter((line) => lineText(line) === "")).toHaveLength(6);
+    expect(blocks[0].lines.map(lineText).join("\n")).not.toContain("tab to queue message");
   });
 
   it("lifts the trust prompt with digit keys — both probed on the captured widget", () => {
