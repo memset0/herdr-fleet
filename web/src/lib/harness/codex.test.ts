@@ -276,11 +276,68 @@ describe("codexBuildBlocks", () => {
     }
   });
 
+  it("hides an empty input box and its status row", () => {
+    const lines = fixtureLines("codex--fresh-idle.txt");
+    const placeholder = lines
+      .flatMap((line) => line.segments)
+      .find((segment) => segment.text.includes("Ask Codex to do anything"));
+    expect(placeholder?.dim).toBe(true);
+    expect(codexAdapter.extractInputDraft(lines)).toBeNull();
+
+    const blocks = codexAdapter.buildBlocks(lines);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.kind).toBe("raw");
+    if (blocks[0]?.kind !== "raw") return;
+    const visible = blocks[0].lines.map(lineText).join("\n");
+    expect(visible).not.toContain("› Ask Codex to do anything");
+    expect(visible).not.toContain("Context");
+    expect(
+      blocks[0].lines.at(-1)!.segments.every(
+        (segment) => segment.style.backgroundColor === undefined,
+      ),
+    ).toBe(true);
+  });
+
+  it("hides the whole empty three-row composer while Codex is working", () => {
+    const blocks = codexAdapter.buildBlocks(fixtureLines("codex--working.txt"));
+    expect(blocks[0]?.kind).toBe("raw");
+    if (blocks[0]?.kind !== "raw") return;
+    const visible = blocks[0].lines.map(lineText).join("\n");
+    expect(visible).toContain("Working");
+    expect(visible).not.toContain("› Ask Codex to do anything");
+    expect(visible).not.toContain("Context");
+    expect(
+      blocks[0].lines.at(-1)!.segments.every(
+        (segment) => segment.style.backgroundColor === undefined,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the same words when they are an ordinary non-dim draft", () => {
+    const lines = splitLines(
+      parseAnsi(
+        [
+          "some output",
+          "",
+          "› Ask Codex to do anything",
+          "",
+          "  model-example · demo-project · Context 99% left",
+        ].join("\n"),
+      ),
+    );
+    expect(codexAdapter.extractInputDraft(lines)).toBe("Ask Codex to do anything");
+    const blocks = codexAdapter.buildBlocks(lines);
+    expect(blocks[0]?.kind).toBe("raw");
+    if (blocks[0]?.kind === "raw") {
+      expect(blocks[0].lines.map(lineText).join("\n")).toContain("› Ask Codex to do anything");
+    }
+  });
+
   it.each([
-    ["codex--fresh-idle.txt", "Ask Codex to do anything", "Context"],
+    ["codex--draft.txt", "hi there", "Context"],
     ["codex--custom-status-draft.txt", "ship it please", "weekly 80% left"],
     ["codex--working-draft-queue-hint.txt", "finish the current review", "tab to queue message"],
-  ])("%s: keeps the input box visible but removes the status/footer row", (name, draft, status) => {
+  ])("%s: keeps a non-empty input box visible but removes the status/footer row", (name, draft, status) => {
     const blocks = codexAdapter.buildBlocks(fixtureLines(name));
     expect(blocks).toHaveLength(1);
     expect(blocks[0]?.kind).toBe("raw");
@@ -289,6 +346,20 @@ describe("codexBuildBlocks", () => {
     expect(visible).toContain(`› ${draft}`);
     expect(visible).not.toContain(status);
     expect(lineText(blocks[0].lines.at(-1)!).trim()).toBe("");
+  });
+
+  it("preserves the background-painted row above a non-empty native composer", () => {
+    const lines = fixtureLines("codex--draft.txt");
+    const box = locateComposer(lines)!;
+    const blocks = codexAdapter.buildBlocks(lines);
+    expect(blocks[0]?.kind).toBe("raw");
+    if (blocks[0]?.kind !== "raw") return;
+    expect(blocks[0].lines[box.promptRow - 1]).toBe(lines[box.promptRow - 1]);
+    expect(
+      blocks[0].lines[box.promptRow - 1]!.segments.some(
+        (segment) => segment.style.backgroundColor !== undefined,
+      ),
+    ).toBe(true);
   });
 
   it("keeps every native blank composer row and removes exactly the queue footer", () => {
@@ -303,7 +374,8 @@ describe("codexBuildBlocks", () => {
   });
 
   it("lifts the trust prompt with digit keys — both probed on the captured widget", () => {
-    const prompt = codexAdapter.buildBlocks(fixtureLines("codex--trust-prompt.txt")).find(
+    const blocks = codexAdapter.buildBlocks(fixtureLines("codex--trust-prompt.txt"));
+    const prompt = blocks.find(
       (b) => b.kind === "prompt-select",
     );
     expect(prompt?.kind).toBe("prompt-select");
@@ -311,6 +383,10 @@ describe("codexBuildBlocks", () => {
     expect(prompt.prompt.family).toBe("trust");
     expect(prompt.prompt.options.map((o) => o.label)).toEqual(["Yes, continue", "No, quit"]);
     expect(prompt.prompt.options.map((o) => o.keys)).toEqual([["1"], ["2"]]);
+    expect(blocks[0]?.kind).toBe("raw");
+    if (blocks[0]?.kind === "raw") {
+      expect(blocks[0].lines.map(lineText).join("\n")).toContain("Do you trust the contents");
+    }
   });
 
   it("lifts the exec approval from its one-shot Yes / reject pair only", () => {

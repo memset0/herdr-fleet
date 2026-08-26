@@ -116,10 +116,22 @@ does not qualify.
 While Codex is working, its official `tab to queue message` footer may replace the summary below a
 taller blank composer. That bounded footer remains chrome, and any half-written `›` draft is still
 recovered and verified like a Claude draft; request-user-input footers remain dialogs.
-Unlike the other adapted chrome, Codex's native `›` input box is intentionally kept visible in the
-terminal mirror so a failed or changing TUI shape can be inspected. Only its status/footer row is
-removed from the mirror and re-surfaced as the app strip above the Collie composer; native blank
-composer rows are preserved rather than trimmed with the footer.
+An empty Codex `›` input box—including the dim `Ask Codex to do anything` placeholder—is hidden
+because Collie's own composer already represents it. The same literal words in ordinary draft style
+remain user input. A
+non-empty draft remains visible for recovery and diagnosis, with every native blank layout row
+preserved; only its status/footer row is removed and re-surfaced as the app strip above Collie's
+composer. A selection, approval, or trust dialog is not a composer and remains visible in the raw
+terminal mirror alongside its structured controls.
+Large Codex pastes may appear as `[Pasted Content N chars]`; guarded send accepts that token only
+when its Unicode count exactly matches the current message. Codex also receives a longer read-only
+verification window and must show the same verified prompt/draft tail on two consecutive reads
+before Enter. The final Enter is bound to that stable region. Including wrapped continuations keeps
+long drafts inside the bridge's bounded binding window instead of binding only a first `›` row that
+may sit too high.
+Codex input is emitted as Unicode-safe 900-byte-or-smaller writes because a live Herdr 0.8.0 probe
+retained only the first 1,024 bytes of a larger single write. Chunks are never retried; a partial
+failure leaves the existing terminal draft for inspection and withholds Enter.
 
 Pane history can search several comma-separated roots per harness, which supports mixed agent
 profiles on one Herdr host. A session is resolved in the first matching root and every later read is

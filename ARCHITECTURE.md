@@ -26,10 +26,20 @@ The generic text path keeps a three-field minimum. A two-field row needs the str
 Codex renderer signature, preventing the known plain-text status lookalike from widening the gate.
 The fixed running `tab to queue message` footer is a separate tail-chrome variant with a bounded
 blank composer height; its prompt draft is recovered, while ask/wizard/notes footers are excluded.
-Codex rendering retains the native prompt/draft rows in the raw mirror and strips only the located
-status/footer row. It preserves blank composer layout rows above that footer. Extraction still reads
-the same visible prompt, and the separate status strip renders the removed styled row immediately
-above the app composer.
+Codex presentation hides the whole native composer only when its extracted draft is empty. Its
+exact empty-placeholder wording also requires the captured dim style, so a non-dim user draft with
+the same words is retained. A
+non-empty prompt/draft remains in the raw mirror with every blank layout row preserved and only the
+located status/footer removed; dialogs have no located composer and remain raw. Extraction is
+independent of that presentation policy, and the separate status strip still renders the removed
+styled row immediately above the app composer.
+Codex guarded send additionally accepts its exact character-counted large-paste token, polls longer
+without rewriting text, requires two consecutive identical verified prompt/draft tails, and binds
+submit to that stable region; these are evidence/race controls, not retries of the input operation.
+Its one logical input operation is transported as
+ordered Unicode-safe sub-1,024-byte writes with a bounded inter-chunk settle, avoiding Herdr 0.8.0's
+live-probed single-write 1,024-byte retention boundary. A partial chunk failure is terminal and
+marked delivered; it cannot fall through to verification, submit, or retry.
 
 Harness transcript settings accept several ordered roots. Discovery selects the first root that
 contains the reported session and binds subsequent reads to its realpath; the existing containment

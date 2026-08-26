@@ -6,6 +6,25 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## Unreleased — Codex guarded-submit reliability
+
+### Fixed
+
+- Hide Codex's native composer only when it is positively located and empty, including its exact
+  dim placeholder; the same non-dim words remain a real draft. Preserve non-empty drafts and their
+  blank layout rows, while keeping trust/approval/question dialogs visible in the raw mirror
+  alongside the structured controls.
+- Treat Codex's official exact `[Pasted Content N chars]` token as supplemental composer evidence
+  only when `N` equals this send's Unicode character count; mismatches and surrounding text remain
+  rejected.
+- Split Codex input into Unicode-safe sub-1,024-byte writes with a bounded inter-chunk settle, after
+  a live Herdr 0.8.0 probe showed one larger `pane.send_text` retained exactly its first 1,024
+  bytes. A later chunk failure is reported as partial delivery and never submits or retries.
+- Extend Codex's read-only verification window without retyping, require two consecutive identical
+  verified prompt/draft tails, and bind the final Enter to that stable region. This rejects a repaint
+  or dialog race without refusing a long draft whose first `›` row wrapped above the bridge's tail
+  window.
+
 ## [2.7.2] - 2026-08-26
 
 ### Fixed

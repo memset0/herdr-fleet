@@ -13,52 +13,50 @@
 // the captured screen. Registered as `agent: "codex"`; variant folding belongs in
 // `canonicalAgent`, never here.
 
-import { trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
+import type { Block, StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
 import {
   composerPrompt,
   composerReady,
   extractInputDraft,
   extractStatusLines,
-  stripStatusChrome,
+  presentChrome,
 } from "./chrome";
 import { detectApprovalRegion } from "./approval";
 import { detectAskRegion } from "./ask";
 import { detectTrustRegion } from "./trust";
+import { codexDraftCarriesSend } from "./paste";
 
 export function codexBuildBlocks(lines: StyledLine[]): Block[] {
   const trust = detectTrustRegion(lines);
   if (trust) {
-    const before = trimTrailingBlank(lines.slice(0, trust.startLine));
-    const blocks: Block[] = [];
-    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
-    blocks.push({ kind: "prompt-select", prompt: trust.model, lines: lines.slice(trust.startLine) });
-    return blocks;
+    return [
+      { kind: "raw", lines },
+      { kind: "prompt-select", prompt: trust.model, lines: lines.slice(trust.startLine) },
+    ];
   }
 
   const approval = detectApprovalRegion(lines);
   if (approval) {
-    const before = trimTrailingBlank(lines.slice(0, approval.startLine));
-    const blocks: Block[] = [];
-    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
-    blocks.push({
-      kind: "prompt-select",
-      prompt: approval.model,
-      lines: lines.slice(approval.startLine),
-    });
-    return blocks;
+    return [
+      { kind: "raw", lines },
+      {
+        kind: "prompt-select",
+        prompt: approval.model,
+        lines: lines.slice(approval.startLine),
+      },
+    ];
   }
 
   const ask = detectAskRegion(lines);
   if (ask) {
-    const before = trimTrailingBlank(lines.slice(0, ask.startLine));
-    const blocks: Block[] = [];
-    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
-    blocks.push({ kind: "prompt-select", prompt: ask.model, lines: lines.slice(ask.startLine) });
-    return blocks;
+    return [
+      { kind: "raw", lines },
+      { kind: "prompt-select", prompt: ask.model, lines: lines.slice(ask.startLine) },
+    ];
   }
 
-  return [{ kind: "raw", lines: stripStatusChrome(lines) }];
+  return [{ kind: "raw", lines: presentChrome(lines) }];
 }
 
 export { extractStatusLines, extractInputDraft };
@@ -70,4 +68,5 @@ export const codexAdapter: HarnessAdapter = {
   extractInputDraft,
   composerReady,
   composerPrompt,
+  draftCarriesSend: codexDraftCarriesSend,
 };
