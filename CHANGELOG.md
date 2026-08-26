@@ -6,6 +6,35 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.8.0] - 2026-08-26
+
+### Added
+
+- Replace desktop Fleet's direct Tab/Pane rename gesture with one viewport-bounded, keyboard-
+  accessible context menu. Rename retains the existing editor and exact flattened-Tab identity;
+  Close Tab and Close Pane use a three-second, two-activation confirmation and show a known Tab's
+  Pane count.
+- Extend the exact-parent browser action allowlist with `close-tab` and `close-pane`, delegating to
+  Collie's existing native `closeTab` and `closePane` clients. The additive version-1 envelope keeps
+  create/rename compatible, validates exact ids/session/source/origin/result correlation, and never
+  retries an ambiguous destructive request.
+
+### Changed
+
+- Mark the exact right-rail Agent navigation control for Fleet's current Host/session/Pane route
+  with `aria-current="page"` and a rounded Collie accent surface instead of a square focus-like ring.
+  Card, tree, shortcut, history, initial URL, and exact-child route changes move that state
+  synchronously without rebuilding or waiting for Agent inventory.
+- A correlated successful close of the displayed Pane or containing Tab routes the selected Host to
+  Home before the bounded aggregate refresh. Background closes preserve the current route and iframe;
+  a lost result waits for authoritative topology disappearance instead of optimistic removal.
+
+### Upgrading
+
+- Install this minor release on every Fleet node whose left-tree Close actions must work. No new
+  bridge HTTP API, configuration, service, Herdr restart, or Pane migration is required; the node
+  update supplies the Collie Web bundle's new close-action allowlist. Retain v2.7.4 as rollback.
+
 ## [2.7.4] - 2026-08-26
 
 ### Fixed
