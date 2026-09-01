@@ -127,7 +127,9 @@ describe("SSH transports", () => {
     const remote = { ...local, id: "remote", publicHost: "remote.example.com", transport: sshConfig() };
     const registry = new TransportRegistry([local, remote], failing, async () => false);
     registry.start();
-    await Bun.sleep(100);
+    for (let attempt = 0; attempt < 50 && registry.status(remote).state === "starting"; attempt += 1) {
+      await Bun.sleep(20);
+    }
     expect(registry.status(local).state).toBe("up");
     expect(registry.status(remote).state).toBe("down");
     expect(registry.status(remote).message).toContain("synthetic failure");

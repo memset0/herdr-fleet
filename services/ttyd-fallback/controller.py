@@ -25,6 +25,8 @@ import time
 import urllib.parse
 from typing import Any
 
+import platform_support
+
 FEATURE_DIR = pathlib.Path(__file__).resolve().parent
 DEFAULT_LIVE_ROOT = pathlib.Path(os.environ.get(
     "XDG_CONFIG_HOME", pathlib.Path.home() / ".config"
@@ -41,6 +43,11 @@ DEFAULT_CADDY_IMPORT = "import /etc/caddy/herdr-web-remote-ttyd/*.caddy"
 DEFAULT_LANDING_ROOT = pathlib.Path("/var/lib/herdr-web-remote/ttyd-fallback")
 TTYD_VERSION = (FEATURE_DIR / "VERSION").read_text().strip()
 TTYD_VERSION_OUTPUT = f"ttyd version {TTYD_VERSION}-40e79c7"
+TTYD_CHECKSUMS = {
+    parts[1]: parts[0]
+    for line in (FEATURE_DIR / "SHA256SUMS").read_text().splitlines()
+    if len(parts := line.split()) == 2
+}
 MIN_LEASE = 30
 MAX_LEASE = 7200
 NODE_ID = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -130,7 +137,7 @@ def session_probe_cookie(config: dict[str, Any], now_ms: int | None = None) -> s
 
 def load_inventory(path: pathlib.Path) -> dict[str, Any]:
     data = json.loads(path.read_text())
-    if set(data) != {"schema", "nodes"} or data.get("schema") != 1 or not isinstance(data.get("nodes"), dict):
+    if set(data) != {"schema", "nodes"} or data.get("schema") != 2 or not isinstance(data.get("nodes"), dict):
         raise ControllerError("unsupported inventory schema")
     if not data["nodes"]:
         raise ControllerError("inventory must contain at least one node")
@@ -140,8 +147,9 @@ def load_inventory(path: pathlib.Path) -> dict[str, Any]:
             raise ControllerError(f"{label} has an invalid node id")
         if not isinstance(raw_node, dict):
             raise ControllerError(f"{label} must be an object")
-        required = {"enabled", "architecture", "owner", "python", "herdr", "session", "server_socket",
-                    "runtime_dir", "install_root", "public_origin", "public_path", "transport"}
+        required = {"enabled", "platform", "architecture", "owner", "herdr_owner", "python",
+                    "herdr", "session", "server_socket", "runtime_dir", "install_root", "binary",
+                    "public_origin", "public_path", "transport"}
         allowed = required | {"host_exact", "host_prefix", "reject_slurm", "environment"}
         missing = sorted(required - raw_node.keys())
         if missing:
@@ -151,11 +159,16 @@ def load_inventory(path: pathlib.Path) -> dict[str, Any]:
             raise ControllerError(f"{label} contains unknown fields: {', '.join(extra)}")
         if raw_node["enabled"] is not True and raw_node["enabled"] is not False:
             raise ControllerError(f"{label}.enabled must be boolean")
+        if raw_node["platform"] not in {"linux", "darwin"}:
+            raise ControllerError(f"{label}.platform is unsupported")
         if raw_node["architecture"] not in {"x86_64", "aarch64"}:
             raise ControllerError(f"{label}.architecture is unsupported")
         owner = nonempty(raw_node["owner"], f"{label}.owner")
         if not USER.fullmatch(owner):
             raise ControllerError(f"{label}.owner is invalid")
+        herdr_owner = nonempty(raw_node["herdr_owner"], f"{label}.herdr_owner")
+        if not USER.fullmatch(herdr_owner):
+            raise ControllerError(f"{label}.herdr_owner is invalid")
         for key in ("python", "herdr", "server_socket", "runtime_dir", "install_root"):
             absolute_path(raw_node[key], f"{label}.{key}")
         public_origin = urllib.parse.urlsplit(nonempty(raw_node["public_origin"], f"{label}.public_origin"))
@@ -183,6 +196,24 @@ def load_inventory(path: pathlib.Path) -> dict[str, Any]:
                     raise ControllerError(f"{label}.environment contains an invalid entry")
         if "reject_slurm" in raw_node and not isinstance(raw_node["reject_slurm"], bool):
             raise ControllerError(f"{label}.reject_slurm must be boolean")
+        binary = raw_node["binary"]
+        if not isinstance(binary, dict) or binary.get("source") not in {"release_asset", "local_path"}:
+            raise ControllerError(f"{label}.binary.source must be release_asset or local_path")
+        if binary["source"] == "release_asset":
+            if set(binary) != {"source"}:
+                raise ControllerError(f"{label}.binary release_asset contains unknown fields")
+            if raw_node["platform"] != "linux":
+                raise ControllerError(f"{label}.binary release_asset is supported only on Linux")
+        else:
+            if set(binary) != {"source", "path", "sha256", "version_output"}:
+                raise ControllerError(f"{label}.binary local_path has an invalid shape")
+            absolute_path(binary["path"], f"{label}.binary.path")
+            digest = nonempty(binary["sha256"], f"{label}.binary.sha256")
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise ControllerError(f"{label}.binary.sha256 is invalid")
+            version_output = nonempty(binary["version_output"], f"{label}.binary.version_output")
+            if not version_output.startswith("ttyd version ") or "\n" in version_output:
+                raise ControllerError(f"{label}.binary.version_output is invalid")
         transport = raw_node["transport"]
         if not isinstance(transport, dict) or transport.get("kind") not in {"local", "ssh"}:
             raise ControllerError(f"{label}.transport.kind must be local or ssh")
@@ -246,22 +277,9 @@ def atomic_json(path: pathlib.Path, value: dict[str, Any], mode: int = 0o600) ->
     os.chmod(path, mode)
 
 
-def process_start(pid: int) -> str | None:
-    try:
-        return pathlib.Path(f"/proc/{pid}/stat").read_text().split()[21]
-    except (OSError, IndexError):
-        return None
-
-
 def process_matches(component: dict[str, Any], marker: str) -> bool:
     pid = int(component.get("pid", -1))
-    if process_start(pid) != str(component.get("start", "")):
-        return False
-    try:
-        cmdline = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ")
-    except OSError:
-        return False
-    return marker.encode() in cmdline
+    return platform_support.process_matches(pid, str(component.get("start", "")), (marker,))
 
 
 def stop_component(component: dict[str, Any] | None, marker: str) -> None:
@@ -285,9 +303,9 @@ def stop_component(component: dict[str, Any] | None, marker: str) -> None:
 
 def component(process: subprocess.Popen[bytes], marker: str) -> dict[str, Any]:
     for _ in range(20):
-        start = process_start(process.pid)
-        if start:
-            return {"pid": process.pid, "start": start, "marker": marker}
+        identity = platform_support.process_identity(process.pid)
+        if identity and marker in identity[1]:
+            return {"pid": process.pid, "start": identity[0], "marker": marker}
         time.sleep(0.01)
     raise ControllerError(f"{marker} did not start")
 
@@ -318,13 +336,27 @@ def ssh_base(node: dict[str, Any], live_root: pathlib.Path, *, forced: bool) -> 
     return command
 
 
+def binary_runtime_identity(node: dict[str, Any]) -> tuple[str, str]:
+    binary = node["binary"]
+    if binary["source"] == "local_path":
+        return binary["sha256"], binary["version_output"]
+    asset = {"x86_64": "ttyd.x86_64", "aarch64": "ttyd.aarch64"}[node["architecture"]]
+    digest = TTYD_CHECKSUMS.get(asset, "")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ControllerError(f"missing checksum for {asset}")
+    return digest, TTYD_VERSION_OUTPUT
+
+
 def node_config(node: dict[str, Any]) -> dict[str, Any]:
-    return {key: node[key] for key in ("id", "owner", "herdr", "session", "server_socket",
+    digest, version_output = binary_runtime_identity(node)
+    return {key: node[key] for key in ("id", "owner", "herdr_owner", "platform", "architecture",
+                                        "herdr", "session", "server_socket",
                                         "runtime_dir", "host_exact", "host_prefix",
                                         "reject_slurm", "environment") if key in node} | {
         "public_host": urllib.parse.urlsplit(node["public_origin"]).hostname,
         "ttyd": f"{node['install_root']}/bin/ttyd",
-        "ttyd_version_output": TTYD_VERSION_OUTPUT,
+        "ttyd_sha256": digest,
+        "ttyd_version_output": version_output,
     }
 
 

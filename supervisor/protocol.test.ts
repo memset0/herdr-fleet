@@ -8,7 +8,9 @@ import { sendControl } from "./protocol.ts";
 
 const temporary: string[] = [];
 const servers: net.Server[] = [];
+const sockets: net.Socket[] = [];
 afterEach(async () => {
+  for (const socket of sockets.splice(0)) socket.destroy();
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
   await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
@@ -18,6 +20,7 @@ async function listen(handler: (socket: net.Socket) => void): Promise<string> {
   temporary.push(root);
   const path = join(root, "control.sock");
   const server = net.createServer(handler);
+  server.on("connection", (socket) => sockets.push(socket));
   servers.push(server);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);

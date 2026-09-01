@@ -12,6 +12,7 @@ import os
 import pathlib
 import pwd
 import socket
+import struct
 import threading
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 def load(name: str):
@@ -33,9 +35,11 @@ def load(name: str):
     return module
 
 
+platform_support = load("platform_support")
+controller = load("controller")
 node = load("node")
 auth_helper = load("auth_helper")
-controller = load("controller")
+installer = load("installer")
 
 
 class FallbackTests(unittest.TestCase):
@@ -44,7 +48,9 @@ class FallbackTests(unittest.TestCase):
         self.root = pathlib.Path(self.temp.name)
         self.runtime = self.root / "runtime"
         self.server_socket = self.root / "existing-herdr.sock"
-        self.server_socket.touch()
+        self.server_listener = socket.socket(socket.AF_UNIX)
+        self.server_listener.bind(str(self.server_socket))
+        self.server_listener.listen(1)
         self.args_log = self.root / "ttyd-args.json"
         self.herdr = self.root / "herdr"
         self.ttyd = self.root / "ttyd"
@@ -91,20 +97,27 @@ while True:
 ''')
         os.chmod(self.herdr, 0o755)
         os.chmod(self.ttyd, 0o755)
-        config = {"id": "synthetic", "owner": pwd.getpwuid(os.geteuid()).pw_name,
+        current_owner = pwd.getpwuid(os.geteuid()).pw_name
+        current_platform = platform_support.platform_name()
+        current_arch = platform_support.architecture()
+        ttyd_digest = platform_support.sha256_file(self.ttyd)
+        config = {"id": "synthetic", "owner": current_owner, "herdr_owner": current_owner,
+                  "platform": current_platform, "architecture": current_arch,
                   "host_exact": socket.gethostname().split(".")[0], "herdr": str(self.herdr),
                   "session": None, "server_socket": str(self.server_socket),
                   "runtime_dir": str(self.runtime), "public_host": "synthetic.invalid",
-                  "ttyd": str(self.ttyd),
+                  "ttyd": str(self.ttyd), "ttyd_sha256": ttyd_digest,
                   "ttyd_version_output": "ttyd version 1.7.7-40e79c7"}
         self.config.write_text(json.dumps(config))
         self.inventory.write_text(json.dumps({
-            "schema": 1,
+            "schema": 2,
             "nodes": {
                 "local-a": {
                     "enabled": True,
-                    "architecture": "x86_64",
-                    "owner": pwd.getpwuid(os.geteuid()).pw_name,
+                    "platform": current_platform,
+                    "architecture": current_arch,
+                    "owner": current_owner,
+                    "herdr_owner": current_owner,
                     "python": sys.executable,
                     "host_exact": socket.gethostname().split(".")[0],
                     "herdr": str(self.herdr),
@@ -112,6 +125,9 @@ while True:
                     "server_socket": str(self.server_socket),
                     "runtime_dir": str(self.runtime),
                     "install_root": str(self.root / "install"),
+                    "binary": {"source": "local_path", "path": str(self.ttyd),
+                               "sha256": ttyd_digest,
+                               "version_output": "ttyd version 1.7.7-40e79c7"},
                     "public_origin": "https://fleet.example.com",
                     "public_path": "/ttyd/local-a",
                     "transport": {"kind": "local"},
@@ -129,6 +145,7 @@ while True:
     def tearDown(self) -> None:
         subprocess.run([sys.executable, str(ROOT / "node.py"), "--config", str(self.config), "stop"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        self.server_listener.close()
         self.temp.cleanup()
 
     def run_node(self, *arguments: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
@@ -178,6 +195,127 @@ while True:
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
         self.assertEqual(result.returncode, 1)
         self.assertIn("scheduler-job", result.stderr)
+
+    def test_portable_process_identity_contract(self) -> None:
+        proc = self.root / "proc"
+        pid_root = proc / "123"
+        pid_root.mkdir(parents=True)
+        fields = ["S", *(["0"] * 18), "4242", *(["0"] * 5)]
+        (pid_root / "stat").write_text(f"123 (synthetic command) {' '.join(fields)}\n")
+        (pid_root / "cmdline").write_bytes(b"python\0node.py\0_run_lease\0lease-a\0")
+        self.assertEqual(
+            platform_support.process_identity(123, system="linux", proc_root=proc),
+            ("4242", "python node.py _run_lease lease-a"),
+        )
+        self.assertTrue(platform_support.process_matches(
+            123, "4242", ("node.py", "lease-a"), system="linux", proc_root=proc
+        ))
+        self.assertFalse(platform_support.process_matches(
+            123, "9999", ("node.py",), system="linux", proc_root=proc
+        ))
+        self.assertFalse(platform_support.process_matches(
+            123, "4242", ("node.py", "lease-other"), system="linux", proc_root=proc
+        ))
+        self.assertIsNone(platform_support.process_identity(
+            999, system="linux", proc_root=proc
+        ))
+
+        def ps_runner(command, **_kwargs):
+            value = "Mon Sep  1 12:34:56 2026\n" if "lstart=" in command else "python node.py _run_lease lease-a\n"
+            return subprocess.CompletedProcess(command, 0, value, "")
+
+        self.assertEqual(
+            platform_support.process_identity(123, system="darwin", runner=ps_runner),
+            ("Mon Sep  1 12:34:56 2026", "python node.py _run_lease lease-a"),
+        )
+
+        def malformed_ps_runner(command, **_kwargs):
+            value = "\n" if "lstart=" in command else "python node.py\n"
+            return subprocess.CompletedProcess(command, 0, value, "")
+
+        self.assertIsNone(platform_support.process_identity(
+            123, system="darwin", runner=malformed_ps_runner
+        ))
+
+    def test_stale_process_state_never_signals_an_unrelated_process(self) -> None:
+        state = {"runner_pid": 123, "runner_start": "old-start", "activation_id": "lease-a"}
+        with mock.patch.object(node, "process_matches", return_value=False):
+            self.assertFalse(node.state_live(state))
+        component = {"pid": 123, "start": "old-start", "marker": "node.py"}
+        with mock.patch.object(controller, "process_matches", return_value=False), \
+                mock.patch.object(controller.os, "killpg") as killpg:
+            controller.stop_component(component, "node.py")
+        killpg.assert_not_called()
+
+    def test_native_executable_identity_parses_elf_and_macho(self) -> None:
+        elf = self.root / "synthetic.elf"
+        elf_header = bytearray(64)
+        elf_header[:4] = b"\x7fELF"
+        elf_header[4] = 2
+        elf_header[5] = 1
+        elf_header[18:20] = struct.pack("<H", 62)
+        elf.write_bytes(elf_header)
+        self.assertEqual(platform_support.executable_identity(elf), ("elf", {"x86_64"}))
+
+        macho = self.root / "synthetic.macho"
+        macho_header = bytearray(64)
+        macho_header[:4] = b"\xcf\xfa\xed\xfe"
+        macho_header[4:8] = struct.pack("<I", 0x0100000C)
+        macho.write_bytes(macho_header)
+        self.assertEqual(platform_support.executable_identity(macho), ("macho", {"aarch64"}))
+
+    def test_installer_common_validation_and_atomic_payload(self) -> None:
+        identity = {
+            "source": "local_path",
+            "path": str(self.ttyd),
+            "sha256": platform_support.sha256_file(self.ttyd),
+            "version_output": "ttyd version 1.7.7-40e79c7",
+        }
+        inventory = controller.load_inventory(self.inventory)
+        selected = controller.select_node(inventory, "local-a")
+        with mock.patch.object(installer.platform_support, "verify_executable", return_value="synthetic"):
+            self.assertEqual(installer.verify_candidate(self.ttyd, selected, identity), "synthetic")
+        wrong = dict(identity, sha256="0" * 64)
+        with self.assertRaisesRegex(installer.InstallerError, "checksum mismatch"):
+            installer.verify_candidate(self.ttyd, selected, wrong)
+
+        wrong_version = dict(identity, version_output="ttyd version 9.9.9-synthetic")
+        with mock.patch.object(installer.platform_support, "verify_executable", return_value="synthetic"):
+            with self.assertRaisesRegex(installer.InstallerError, "unexpected ttyd version"):
+                installer.verify_candidate(self.ttyd, selected, wrong_version)
+
+        missing_flag = self.root / "ttyd-missing-flag"
+        missing_flag.write_text(self.ttyd.read_text().replace(" --base-path", ""))
+        os.chmod(missing_flag, 0o755)
+        missing_identity = dict(identity, path=str(missing_flag),
+                                sha256=platform_support.sha256_file(missing_flag))
+        with mock.patch.object(installer.platform_support, "verify_executable", return_value="synthetic"):
+            with self.assertRaisesRegex(installer.InstallerError, "required option missing"):
+                installer.verify_candidate(missing_flag, selected, missing_identity)
+
+        target = self.root / "atomic-install"
+        target.mkdir()
+        (target / "old-marker").write_text("old")
+        installer.install_payload(self.ttyd, selected, target, identity)
+        self.assertFalse((target / "old-marker").exists())
+        installed = json.loads((target / "node.json").read_text())
+        self.assertEqual(installed["ttyd_sha256"], identity["sha256"])
+        self.assertTrue((target / "platform_support.py").is_file())
+
+        (target / "rollback-marker").write_text("preserve")
+        real_replace = installer.os.replace
+
+        def fail_new_install(source, destination):
+            source_path = pathlib.Path(source)
+            destination_path = pathlib.Path(destination)
+            if destination_path == target and source_path.name.startswith(f".{target.name}.new."):
+                raise OSError("synthetic atomic replacement failure")
+            return real_replace(source, destination)
+
+        with mock.patch.object(installer.os, "replace", side_effect=fail_new_install):
+            with self.assertRaisesRegex(OSError, "synthetic atomic replacement failure"):
+                installer.install_payload(self.ttyd, selected, target, identity)
+        self.assertEqual((target / "rollback-marker").read_text(), "preserve")
 
     def session_token(self, payload: dict[str, object], secret: bytes | None = None) -> str:
         encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).rstrip(b"=").decode()

@@ -20,6 +20,8 @@ import sys
 import time
 from typing import Any
 
+import platform_support
+
 MIN_LEASE = 30
 MAX_LEASE = 7200
 STATE_NAME = "lease.json"
@@ -33,7 +35,8 @@ class FallbackError(RuntimeError):
 def load_config(path: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as handle:
         cfg = json.load(handle)
-    required = {"id", "owner", "herdr", "server_socket", "runtime_dir", "public_host", "ttyd",
+    required = {"id", "owner", "herdr_owner", "platform", "architecture", "herdr",
+                "server_socket", "runtime_dir", "public_host", "ttyd", "ttyd_sha256",
                 "ttyd_version_output"}
     missing = sorted(required - cfg.keys())
     if missing:
@@ -45,6 +48,13 @@ def load_config(path: str) -> dict[str, Any]:
             raise FallbackError(f"{key} must be an absolute path")
     if not isinstance(cfg.get("ttyd_version_output"), str) or not cfg["ttyd_version_output"].startswith("ttyd version "):
         raise FallbackError("ttyd_version_output is invalid")
+    if (not isinstance(cfg.get("ttyd_sha256"), str) or len(cfg["ttyd_sha256"]) != 64
+            or any(char not in "0123456789abcdef" for char in cfg["ttyd_sha256"])):
+        raise FallbackError("ttyd_sha256 is invalid")
+    if cfg.get("platform") not in {"linux", "darwin"}:
+        raise FallbackError("platform is invalid")
+    if cfg.get("architecture") not in {"x86_64", "aarch64"}:
+        raise FallbackError("architecture is invalid")
     if not isinstance(cfg.get("environment", {}), dict):
         raise FallbackError("environment must be an object")
     return cfg
@@ -56,20 +66,12 @@ def runtime_paths(cfg: dict[str, Any]) -> tuple[pathlib.Path, pathlib.Path, path
 
 
 def process_start(pid: int) -> str | None:
-    try:
-        return pathlib.Path(f"/proc/{pid}/stat").read_text().split()[21]
-    except (OSError, IndexError):
-        return None
+    identity = platform_support.process_identity(pid)
+    return identity[0] if identity else None
 
 
 def process_matches(pid: int, start: str, activation: str) -> bool:
-    if process_start(pid) != start:
-        return False
-    try:
-        cmdline = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ")
-    except OSError:
-        return False
-    return b"node.py" in cmdline and b"_run_lease" in cmdline and activation.encode() in cmdline
+    return platform_support.process_matches(pid, start, ("node.py", "_run_lease", activation))
 
 
 def gate(cfg: dict[str, Any]) -> None:
@@ -109,6 +111,14 @@ def herdr_json(cfg: dict[str, Any], args: list[str]) -> dict[str, Any]:
 
 def inspect_server(cfg: dict[str, Any], pane_id: str | None) -> tuple[str, str]:
     gate(cfg)
+    socket_path = pathlib.Path(cfg["server_socket"])
+    try:
+        socket_metadata = socket_path.stat()
+        expected_uid = pwd.getpwnam(cfg["herdr_owner"]).pw_uid
+    except (OSError, KeyError) as exc:
+        raise FallbackError("documented Herdr socket identity is unavailable") from exc
+    if not stat.S_ISSOCK(socket_metadata.st_mode) or socket_metadata.st_uid != expected_uid:
+        raise FallbackError("documented Herdr socket owner or type mismatch")
     status_data = herdr_json(cfg, ["status", "server", "--json"])
     if status_data.get("running") is not True or status_data.get("compatible") is not True:
         raise FallbackError("documented Herdr server is not running and compatible")
@@ -202,9 +212,11 @@ def preflight(cfg: dict[str, Any], pane_id: str | None) -> dict[str, Any]:
     ttyd = pathlib.Path(cfg["ttyd"])
     if not ttyd.is_file() or not os.access(ttyd, os.X_OK):
         raise FallbackError("verified ttyd binary is unavailable")
+    if platform_support.sha256_file(ttyd) != cfg["ttyd_sha256"]:
+        raise FallbackError("ttyd digest does not match the audited pin")
     output = subprocess.run([str(ttyd), "--version"], stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, check=False).stdout
-    if cfg["ttyd_version_output"] not in output:
+    if cfg["ttyd_version_output"] != output.strip():
         raise FallbackError("ttyd version does not match the audited pin")
     return {"node": cfg["id"], "healthy": True, "pane_id": pane}
 

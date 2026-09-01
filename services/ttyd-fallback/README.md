@@ -18,16 +18,20 @@ socket/session names, SSH identities, Caddy layout, signed-session configuration
 outside this repository. See `inventory.example.json` for the schema; do not turn it into a real
 inventory.
 
-Each enabled node requires an explicit architecture, owner, Python and Herdr executable, Herdr
-session/socket namespace, node-local runtime and install paths, exact Fleet origin/node path, and local
-or SSH transport. SSH control uses an explicit absolute `control_identity`; the companion never
+Each enabled node requires an explicit platform and architecture, client owner and Herdr owner,
+Python and Herdr executable, Herdr session/socket namespace, binary-source descriptor, node-local
+runtime and install paths, exact Fleet origin/node path, and local or SSH transport. The client owner
+may differ from the Herdr owner only when it can access the exact configured socket; the node endpoint
+verifies that socket's owner before attachment and never starts another server. SSH control uses an
+explicit absolute `control_identity`; the companion never
 reads ambient SSH config or chooses a default key. Its separate relay identity is resolved beneath
 the controller's live config root and should be installed remotely with `restrict` plus one fixed
 `stdio_unix_relay.py --config .../node.json` command.
 
 ## Install without starting
 
-Linux x86_64 and aarch64 use the pinned ttyd release and checksum in this directory:
+Every platform uses the same installer, validation pipeline, node endpoint, and lifecycle. Linux
+x86_64 and aarch64 can use the pinned release asset and checksum in this directory:
 
 ```bash
 services/ttyd-fallback/ttyd-fallback install \
@@ -35,9 +39,14 @@ services/ttyd-fallback/ttyd-fallback install \
   --node local-a
 ```
 
+Darwin uses the same command with a `local_path` binary descriptor containing an absolute candidate,
+exact SHA-256, and exact expected version output. This supports an explicitly reviewed package-manager
+binary without trusting `PATH` or changing the package-manager-owned source. Both source kinds pass
+the same native ELF/Mach-O architecture, digest, version-output, required-flag, atomic-replacement,
+and dormant-state checks. A node or platform never selects a different script or lifecycle.
+
 The inventory's `install_root` receives the verified binary and companion controls. Installation
-does not activate them. Python 3.9 or newer is required for the runtime controls; the Web Remote
-plugin itself continues to support macOS, but this ttyd companion is Linux-only.
+does not activate them. Python 3.9 or newer is required for the runtime controls on Linux and macOS.
 
 ## Central preparation and bounded activation
 

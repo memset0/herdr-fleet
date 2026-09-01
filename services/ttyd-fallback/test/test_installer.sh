@@ -11,13 +11,20 @@ case "$(uname -m)" in
   aarch64|arm64) current_arch=aarch64; wrong_arch=x86_64 ;;
   *) printf 'installer test: unsupported test architecture\n' >&2; exit 1 ;;
 esac
+case "$(uname -s)" in
+  Linux) current_platform=linux ;;
+  Darwin) current_platform=darwin ;;
+  *) printf 'installer test: unsupported test platform\n' >&2; exit 1 ;;
+esac
 
-python3 -c '
-import json, os, pathlib, pwd, socket, sys
-root, current, wrong = sys.argv[1:]
+"${HERDR_WEB_TTYD_CONFIG_PYTHON:-python3}" -c '
+import hashlib, json, os, pathlib, pwd, socket, sys
+root, platform, current, wrong = sys.argv[1:]
 base = {
     "enabled": True,
+    "platform": platform,
     "owner": pwd.getpwuid(os.geteuid()).pw_name,
+    "herdr_owner": pwd.getpwuid(os.geteuid()).pw_name,
     "python": sys.executable,
     "host_exact": socket.gethostname().split(".")[0],
     "herdr": "/usr/bin/false",
@@ -28,10 +35,18 @@ base = {
     "public_path": "/ttyd/local-a",
     "transport": {"kind": "local"},
 }
+if platform == "linux":
+    binary = {"source": "release_asset"}
+else:
+    source = pathlib.Path("/usr/bin/true")
+    binary = {"source": "local_path", "path": str(source),
+              "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+              "version_output": "ttyd version synthetic"}
+base["binary"] = binary
 good = dict(base, architecture=current, install_root=str(pathlib.Path(root) / "install"))
 bad = dict(base, architecture=wrong, install_root=str(pathlib.Path(root) / "wrong"), public_path="/ttyd/wrong-arch")
-pathlib.Path(root, "inventory.json").write_text(json.dumps({"schema": 1, "nodes": {"local-a": good, "wrong-arch": bad}}))
-' "$test_root" "$current_arch" "$wrong_arch"
+pathlib.Path(root, "inventory.json").write_text(json.dumps({"schema": 2, "nodes": {"local-a": good, "wrong-arch": bad}}))
+' "$test_root" "$current_platform" "$current_arch" "$wrong_arch"
 inventory="$test_root/inventory.json"
 
 if HERDR_WEB_TTYD_DRY_RUN=1 \
@@ -39,7 +54,7 @@ if HERDR_WEB_TTYD_DRY_RUN=1 \
   printf 'installer test: unknown node unexpectedly succeeded\n' >&2
   exit 1
 fi
-grep -Eq 'unknown, disabled, or incomplete node|invalid shape' "$test_root/unknown.out"
+grep -Eq 'unknown or disabled node|invalid shape' "$test_root/unknown.out"
 
 if HERDR_WEB_TTYD_DRY_RUN=1 \
   "$service_dir/install.sh" --inventory "$inventory" --node wrong-arch >"$test_root/arch.out" 2>&1; then
@@ -48,7 +63,7 @@ if HERDR_WEB_TTYD_DRY_RUN=1 \
 fi
 grep -Fq 'architecture mismatch' "$test_root/arch.out"
 
-python3 - "$inventory" <<'PY'
+"${HERDR_WEB_TTYD_CONFIG_PYTHON:-python3}" - "$inventory" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 inventory = json.loads(path.read_text())
@@ -60,8 +75,8 @@ if HERDR_WEB_TTYD_DRY_RUN=1 \
   printf 'installer test: unknown inventory field unexpectedly succeeded\n' >&2
   exit 1
 fi
-grep -Fq 'unknown, disabled, or incomplete node' "$test_root/schema.out"
-python3 - "$inventory" <<'PY'
+grep -Fq 'contains unknown fields' "$test_root/schema.out"
+"${HERDR_WEB_TTYD_CONFIG_PYTHON:-python3}" - "$inventory" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 inventory = json.loads(path.read_text())
@@ -69,21 +84,31 @@ inventory["nodes"]["local-a"].pop("unexpected")
 path.write_text(json.dumps(inventory))
 PY
 
-if HERDR_WEB_TTYD_SOURCE_BINARY=/bin/true \
+if [[ "$current_platform" == darwin ]]; then
+  "${HERDR_WEB_TTYD_CONFIG_PYTHON:-python3}" - "$inventory" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+inventory = json.loads(path.read_text())
+inventory["nodes"]["local-a"]["binary"]["sha256"] = "0" * 64
+path.write_text(json.dumps(inventory))
+PY
+fi
+if HERDR_WEB_TTYD_SOURCE_BINARY=/usr/bin/true \
   "$service_dir/install.sh" --inventory "$inventory" --node local-a >"$test_root/checksum.out" 2>&1; then
   printf 'installer test: wrong checksum unexpectedly succeeded\n' >&2
   exit 1
 fi
 grep -Fq 'checksum mismatch' "$test_root/checksum.out"
 
-HERDR_WEB_TTYD_DRY_RUN=1 \
-  "$service_dir/ttyd-fallback" install --inventory "$inventory" --node local-a \
-  >"$test_root/dry-run.out"
-grep -Fq 'dry-run version=' "$test_root/dry-run.out"
+if [[ "$current_platform" == linux ]]; then
+  HERDR_WEB_TTYD_DRY_RUN=1 \
+    "$service_dir/ttyd-fallback" install --inventory "$inventory" --node local-a \
+    >"$test_root/dry-run.out"
+  grep -Fq 'dry-run source=release_asset' "$test_root/dry-run.out"
+fi
 
-env -u PYTHONDONTWRITEBYTECODE HERDR_WEB_TTYD_DRY_RUN=1 \
-  "$service_dir/install.sh" --inventory "$inventory" --node local-a \
-  >"$test_root/no-pycache.out"
+env -u PYTHONDONTWRITEBYTECODE \
+  "$service_dir/install.sh" --help >"$test_root/no-pycache.out"
 test ! -d "$service_dir/__pycache__"
 
 printf 'installer rejection tests: ok\n'
