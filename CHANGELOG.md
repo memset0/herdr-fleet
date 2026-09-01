@@ -6,6 +6,30 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.9.0] - 2026-09-01
+
+### Added
+
+- Ship one descriptor-driven ttyd fallback installer for Linux release assets and explicitly pinned
+  Darwin package-manager binaries. Both sources now pass the same digest, native format and
+  architecture, exact version, required-interface, atomic replacement, and dormant-state gates
+  (32ecfde).
+- Add a narrow Linux procfs / Darwin `ps` process-identity adapter so lease cleanup retains the same
+  PID, start-token, and command-marker safety contract on both platforms (32ecfde).
+
+### Changed
+
+- Require inventory schema 2 to declare platform, client owner, Herdr socket owner, and a binary
+  source descriptor. Every supported node continues to use the same controller, node endpoint,
+  bounded lease, same-origin authentication, and normally closed lifecycle (32ecfde).
+
+### Upgrading
+
+- Reinstall this plugin on each node that will use the shared ttyd companion, then migrate its
+  private inventory to schema 2. Normal Fleet nodes may remain on 2.8.0 because the companion is an
+  opt-in side path and changes no bridge or Gateway protocol. Installation does not start ttyd or
+  require a Herdr restart; retain exact v2.8.0 as rollback.
+
 ## [2.8.0] - 2026-08-26
 
 ### Added
