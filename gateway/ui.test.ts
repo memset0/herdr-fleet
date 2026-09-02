@@ -11,7 +11,7 @@ import {
   fleetAgentBucket,
   fleetCloseAffectsRoute,
   fleetCurrentAgentMatch,
-  fleetDesktopFallbackUrl,
+  fleetDesktopTerminalUrl,
   fleetFrameActivityActive,
   fleetHeaderAgentCount,
   fleetIframeCacheQuietExpired,
@@ -120,24 +120,30 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_CSS).toContain('bottom: calc(100% + .5rem)');
   });
 
-  test("creates the non-activating fallback entry only for a desktop computer presentation", () => {
-    const fallback = "https://fleet.example.com/ttyd/local/";
-    expect(fleetDesktopFallbackUrl(fallback, true, "https://fleet.example.com", "local")).toBe(fallback);
-    expect(fleetDesktopFallbackUrl(fallback, false, "https://fleet.example.com", "local")).toBeNull();
-    expect(fleetDesktopFallbackUrl("javascript:alert(1)", true, "https://fleet.example.com", "local")).toBeNull();
-    expect(fleetDesktopFallbackUrl("https://operator:secret@fleet.example.com/ttyd/local/", true, "https://fleet.example.com", "local")).toBeNull();
-    expect(fleetDesktopFallbackUrl("https://other.example.com/ttyd/local/", true, "https://fleet.example.com", "local")).toBeNull();
-    expect(fleetDesktopFallbackUrl("https://fleet.example.com/ttyd/other/", true, "https://fleet.example.com", "local")).toBeNull();
+  test("derives the terminal entry from Fleet node and current Pane only on desktop", () => {
+    expect(fleetDesktopTerminalUrl(true, "https://fleet.example.com", "local")).toBe(
+      "https://fleet.example.com/ttyd/local/",
+    );
+    expect(fleetDesktopTerminalUrl(true, "https://fleet.example.com", "local", "w1:p1", "batch-a")).toBe(
+      "https://fleet.example.com/ttyd/local/?pane=w1%3Ap1&session=batch-a",
+    );
+    expect(fleetDesktopTerminalUrl(false, "https://fleet.example.com", "local")).toBeNull();
+    expect(fleetDesktopTerminalUrl(true, "http://fleet.example.com", "local")).toBeNull();
+    expect(fleetDesktopTerminalUrl(true, "https://operator:secret@fleet.example.com", "local")).toBeNull();
+    expect(fleetDesktopTerminalUrl(true, "https://fleet.example.com", "../other")).toBeNull();
+    expect(fleetDesktopTerminalUrl(true, "https://fleet.example.com", "local", "../pane")).toBeNull();
+    expect(fleetDesktopTerminalUrl(true, "https://fleet.example.com", "local", "w1:p1", "batch demo")).toBeNull();
     expect(FLEET_CSS).toContain("@media (min-width: 1200px) and (hover: hover) and (pointer: fine)");
-    expect(FLEET_JS).toContain("FALLBACK_DESKTOP_MEDIA='(min-width: 1200px) and (hover: hover) and (pointer: fine)'");
-    expect(FLEET_JS).toContain("const href=fallbackDesktopMedia.matches?fallbackHref(node):null");
-    expect(FLEET_JS).toContain("url.origin===location.origin");
-    expect(FLEET_JS).toContain("url.pathname==='/ttyd/'+node.id+'/'");
+    expect(FLEET_JS).toContain("TERMINAL_DESKTOP_MEDIA='(min-width: 1200px) and (hover: hover) and (pointer: fine)'");
+    expect(FLEET_JS).toContain("const href=terminalDesktopMedia.matches?terminalHref(node):null");
+    expect(FLEET_JS).toContain("new URL('/ttyd/'+encodeURIComponent(node.id)+'/',location.origin)");
+    expect(FLEET_JS).toContain("url.searchParams.set('pane',pane)");
+    expect(FLEET_JS).toContain("url.searchParams.set('session',session)");
     expect(FLEET_JS).toContain("if(!href){if(link)link.remove();return}");
-    expect(FLEET_JS).toContain("element('a','desktop-fallback-entry','Emergency terminal')");
-    expect(FLEET_JS).toContain("link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer'");
-    expect(FLEET_JS).toContain("fallbackDesktopMedia.addEventListener('change',syncFallbackEntry)");
-    const handlerStart = FLEET_JS.indexOf("function syncFallbackEntry()");
+    expect(FLEET_JS).toContain("element('a','desktop-terminal-entry','Emergency terminal')");
+    expect(FLEET_JS).toContain("link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='same-origin'");
+    expect(FLEET_JS).toContain("terminalDesktopMedia.addEventListener('change',syncTerminalEntry)");
+    const handlerStart = FLEET_JS.indexOf("function syncTerminalEntry()");
     const handlerEnd = FLEET_JS.indexOf("function loadSelected", handlerStart);
     const handler = FLEET_JS.slice(handlerStart, handlerEnd);
     expect(handler).not.toContain("fetch(");

@@ -378,20 +378,25 @@ export function fleetRailWidthPreferences(serialized: string | null): FleetRailW
   }
 }
 
-/** Fleet creates the emergency entry only for the wide desktop presentation. */
-export function fleetDesktopFallbackUrl(
-  value: unknown,
+/** Fleet derives the emergency entry from its own origin and current exact Pane route. */
+export function fleetDesktopTerminalUrl(
   desktop: boolean,
   fleetOrigin: string,
   nodeId: string,
+  paneId?: string,
+  session?: string,
 ): string | null {
-  if (!desktop || typeof value !== "string" || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(nodeId)) return null;
+  if (!desktop || !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(nodeId)) return null;
+  if (paneId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/.test(paneId)) return null;
+  if (session !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(session)) return null;
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.origin === fleetOrigin && !url.username && !url.password && !url.port
-      && url.pathname === `/ttyd/${nodeId}/` && !url.search && !url.hash
-      ? url.href
-      : null;
+    const origin = new URL(fleetOrigin);
+    if (origin.protocol !== "https:" || origin.username || origin.password || origin.port
+        || origin.pathname !== "/" || origin.search || origin.hash) return null;
+    const url = new URL(`/ttyd/${encodeURIComponent(nodeId)}/`, origin);
+    if (paneId) url.searchParams.set("pane", paneId);
+    if (session) url.searchParams.set("session", session);
+    return url.href;
   } catch {
     return null;
   }
@@ -621,7 +626,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 .tree-pane-dot { width: var(--tree-indicator-size); height: var(--tree-indicator-size); border-radius: 999px; background: var(--tree-pane-color); box-shadow: 0 0 0 2px color-mix(in oklch, var(--tree-pane-color) 16%, transparent); }
 .tree-row-wrap { position: relative; min-width: 0; }
 .tree-inline-action { display: none; }
-.desktop-fallback-entry { display: none; }
+.desktop-terminal-entry { display: none; }
 .host-rail-footer, .tree-action-status, .fleet-settings, .tree-rename, .tree-context-menu { display: none; }
 .fleet-shortcuts { display: none; }
 .connecting { padding: 0 .6rem; color: var(--muted-foreground); font-size: .8rem; }
@@ -1182,7 +1187,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
     background: var(--muted);
   }
   .host-rail-version { color: var(--muted-foreground); font-size: .66rem; font-variant-numeric: tabular-nums; }
-  .desktop-fallback-entry {
+  .desktop-terminal-entry {
     min-width: 0;
     align-items: center;
     border-radius: calc(var(--radius) - 4px);
@@ -1192,7 +1197,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
     text-decoration: none;
     white-space: nowrap;
   }
-  .desktop-fallback-entry:hover, .desktop-fallback-entry:focus-visible { background: var(--accent); color: var(--foreground); }
+  .desktop-terminal-entry:hover, .desktop-terminal-entry:focus-visible { background: var(--accent); color: var(--foreground); }
   .host-rail-settings {
     display: grid;
     width: 2rem;
@@ -1358,7 +1363,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   .fleet-shell[data-resizing="true"] .node-frame { pointer-events: none; }
 }
 @media (min-width: 1200px) and (hover: hover) and (pointer: fine) {
-  .desktop-fallback-entry { display: inline-flex; }
+  .desktop-terminal-entry { display: inline-flex; }
 }
 @media (prefers-reduced-motion: reduce) {
   .loading-mark { animation: none; }
@@ -1395,7 +1400,7 @@ const DEFAULT_REFRESH_MS=5000;
 const MIN_REFRESH_TIMER_MS=250;
 const FRAME_CACHE_QUIET_MS=1800000;
 const DESKTOP_MEDIA='(min-width: 1200px)';
-const FALLBACK_DESKTOP_MEDIA='(min-width: 1200px) and (hover: hover) and (pointer: fine)';
+const TERMINAL_DESKTOP_MEDIA='(min-width: 1200px) and (hover: hover) and (pointer: fine)';
 const RAIL_WIDTHS={leftDefault:${FLEET_RAIL_WIDTHS.leftDefault},leftMin:${FLEET_RAIL_WIDTHS.leftMin},leftMax:${FLEET_RAIL_WIDTHS.leftMax},rightDefault:${FLEET_RAIL_WIDTHS.rightDefault},rightMin:${FLEET_RAIL_WIDTHS.rightMin},rightMax:${FLEET_RAIL_WIDTHS.rightMax},centreMin:${FLEET_RAIL_WIDTHS.centreMin}};
 const shell=document.querySelector('.fleet-shell');
 const hostSwitcher=document.querySelector('#host-switcher');
@@ -1438,7 +1443,7 @@ const treeContextRename=document.querySelector('#tree-context-rename');
 const treeContextClose=document.querySelector('#tree-context-close');
 const treeContextError=document.querySelector('#tree-context-error');
 const desktopMedia=matchMedia(DESKTOP_MEDIA);
-const fallbackDesktopMedia=matchMedia(FALLBACK_DESKTOP_MEDIA);
+const terminalDesktopMedia=matchMedia(TERMINAL_DESKTOP_MEDIA);
 const configuredCacheSize=Number(shell.dataset.iframeCacheSize);
 const defaultCacheSize=Number.isSafeInteger(configuredCacheSize)&&configuredCacheSize>=1&&configuredCacheSize<=10?configuredCacheSize:1;
 let iframeCacheSize=readIframeCachePreference();
@@ -1480,12 +1485,9 @@ const remember=(id)=>{try{localStorage.setItem(STORAGE_KEY,id)}catch{}};
 const requested=()=>new URL(location.href).searchParams.get('instance');
 const nodeOrigin=(node)=>new URL('https://'+node.publicHost+'/').origin;
 const selectedNode=()=>nodes.find((node)=>node.id===selectedId)||null;
-const fallbackHref=(node)=>{
- if(!node||typeof node.fallbackUrl!=='string')return null;
- try{const url=new URL(node.fallbackUrl);return url.protocol==='https:'&&url.origin===location.origin&&!url.username&&!url.password&&!url.port&&url.pathname==='/ttyd/'+node.id+'/'&&!url.search&&!url.hash?url.href:null}catch{return null}
-};
 const announce=(message)=>{fleetStatus.textContent=message};
 const validPane=(value)=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)?value:null;
+const validTerminalSession=(value)=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)?value:null;
 const validSession=(value)=>{
  if(typeof value!=='string')return null;
  const trimmed=value.trim();
@@ -2215,11 +2217,22 @@ function updateHealth(node){
  if(!healthy){const detail=node.message?' · '+node.message:'';noticeText.textContent=node.name+' · '+healthLabel(node.health)+detail}
 }
 
-function syncFallbackEntry(){
- let link=hostRailFooter.querySelector('[data-fallback-entry]');
- const node=selectedNode();const href=fallbackDesktopMedia.matches?fallbackHref(node):null;
+function terminalHref(node){
+ if(!node||typeof node.id!=='string'||!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(node.id))return null;
+ const url=new URL('/ttyd/'+encodeURIComponent(node.id)+'/',location.origin);const route=frameRegistry.get(node.id)?.route;
+ if(route?.view==='pane'){
+   const pane=validPane(route.paneId);const session=route.session?validTerminalSession(route.session):null;
+   if(!pane||(route.session&&!session))return null;
+   url.searchParams.set('pane',pane);if(session)url.searchParams.set('session',session);
+ }
+ return url.href;
+}
+
+function syncTerminalEntry(){
+ let link=hostRailFooter.querySelector('[data-terminal-entry]');
+ const node=selectedNode();const href=terminalDesktopMedia.matches?terminalHref(node):null;
  if(!href){if(link)link.remove();return}
- if(!link){link=element('a','desktop-fallback-entry','Emergency terminal');link.dataset.fallbackEntry='true';link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='no-referrer';hostRailFooter.insertBefore(link,settingsAnchor)}
+ if(!link){link=element('a','desktop-terminal-entry','Emergency terminal');link.dataset.terminalEntry='true';link.target='_blank';link.rel='noopener noreferrer';link.referrerPolicy='same-origin';hostRailFooter.insertBefore(link,settingsAnchor)}
  link.href=href;link.title='Open '+node.name+' emergency terminal';link.setAttribute('aria-label','Open '+node.name+' emergency terminal in a new tab');
 }
 
@@ -2231,7 +2244,7 @@ function loadSelected(force=false,routeOverride=null){
  const href=frameHref(entry.origin,route);const nextFrameKey=routeKey(entry.origin,route);
  entry.route=route;syncCurrentAgentControl();entry.frame.title='Collie · '+node.name;
  openNode.href=href;openNode.hidden=false;updateHealth(node);
- syncFallbackEntry();
+ syncTerminalEntry();
  if(force||entry.frameKey!==nextFrameKey){entry.frameKey=nextFrameKey;entry.loading=true;entry.frame.src=href}
  showOnlyFrame(entry);replaceUrl(node.id,route);
 }
@@ -2259,7 +2272,7 @@ function selectTreeNode(id,options={}){
 function showEmpty(title,copy){
  for(const id of [...frameRegistry.keys()])releaseFrame(id,true);
  selectedId=null;hostSwitcher.replaceChildren();instances.replaceChildren();syncCurrentAgentControl();openNode.hidden=true;notice.hidden=true;loading.hidden=true;
- syncFallbackEntry();
+ syncTerminalEntry();
  emptyTitle.textContent=title;emptyCopy.textContent=copy;empty.hidden=false;announce(title+'. '+copy);
 }
 
@@ -2459,7 +2472,7 @@ function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
  if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false')}
  else if(desktopMode){closeSettings();closeRename();closeTreeContextMenu();agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
- desktopMode=nextDesktop;renderAgents();syncTreePresentation();renderTabs();syncFallbackEntry();applyRailWidthPreferences();broadcastFrameActivity();
+ desktopMode=nextDesktop;renderAgents();syncTreePresentation();renderTabs();syncTerminalEntry();applyRailWidthPreferences();broadcastFrameActivity();
 }
 
 function clearRefreshTimer(){if(refreshTimer!==null){clearTimeout(refreshTimer);refreshTimer=null}}
@@ -2570,6 +2583,6 @@ addEventListener('resize',applyRailWidthPreferences);
 addEventListener('resize',()=>closeTreeContextMenu());
 addEventListener('storage',(event)=>{if(event.key===AGENT_FAVORITES_STORAGE_KEY){agentFavorites=readAgentFavorites();renderAgents()}});
 document.addEventListener('visibilitychange',broadcastFrameActivity);
-desktopMedia.addEventListener('change',syncAgentMenuLayout);fallbackDesktopMedia.addEventListener('change',syncFallbackEntry);syncAgentMenuLayout();
+desktopMedia.addEventListener('change',syncAgentMenuLayout);terminalDesktopMedia.addEventListener('change',syncTerminalEntry);syncAgentMenuLayout();
 void refresh();
 `;

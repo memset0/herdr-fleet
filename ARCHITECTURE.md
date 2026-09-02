@@ -81,13 +81,13 @@ stdio proxy only. A transport becomes ready only after that forward accepts a lo
 Transport processes, bridge HTTP health, and Herdr/session health are separate states, so one failed
 node never blocks another.
 
-Each inventory node may additionally project one exact Fleet-origin HTTPS `fallbackUrl` at
-`/ttyd/<node-id>/`. It contains no
-credential, lease state, private transport, or activation primitive. Fleet creates its navigation
-link only when the presentation is both at least 1200 px wide and reports hover plus a fine pointer;
-compact, phone, tablet, and coarse-pointer DOMs omit it. Rendering and hovering perform no network
-operation, and the link opens a new top-level document without a referrer. This presentation rule
-is not an authorization boundary.
+Fleet derives `/ttyd/<node-id>/` from every enabled inventory id rather than accepting a second URL
+field. When an exact Pane route is selected it adds only that Pane and its validated named session.
+The navigation link exists only when the presentation is at least 1200 px wide and reports hover
+plus a fine pointer; compact, phone, tablet, and coarse-pointer DOMs omit it. Rendering and hovering
+perform no terminal request. The ingress still enforces the signed Fleet session, exact origin,
+top-level user-navigation metadata, node id, and one-client state, so presentation is not an
+authorization boundary.
 
 The Gateway has exactly one operator credential. Argon2id verifies the password; HMAC-SHA256 signs
 an expiring cross-subdomain cookie. Browser navigations without a session enter `/auth/`; APIs get
@@ -310,41 +310,32 @@ Herdr startup and selected low-volume lifecycle events run the same one-shot con
 node-local Unix socket and atomic launch directory converge races on one supervisor. A source
 generation digest lets a new checkout ask the old supervisor to relinquish ownership.
 
-The supervisor owns Collie and optional Gateway children, restarts crashes with capped exponential
-backoff, rotates bounded process logs, and periodically checks both `herdr status server` and the
-plugin's enabled registration. Sustained failed ownership health triggers graceful child shutdown
-and control-socket removal. A hostname prefix and scheduler-environment gate prevent shared-home
-jobs or non-designated login nodes from claiming listeners.
+The supervisor owns Collie and the dormant terminal node-control child on every node. On the Fleet
+host it also owns Gateway and the permanent terminal ingress child. It restarts crashes with capped
+exponential backoff, rotates bounded process logs, and periodically checks both `herdr status
+server` and the plugin's enabled registration. Sustained failed ownership health triggers graceful
+child shutdown and control-socket removal. A hostname prefix and scheduler-environment gate prevent
+shared-home jobs or non-designated login nodes from claiming listeners.
 
 This layer deliberately does not create an OS service. Complete supervisor death is recovered by
 the next Herdr hook or manual `ensure`; child death is recovered immediately by the supervisor.
 
-## Dormant ttyd companion
+## Emergency terminal
 
-`services/ttyd-fallback/` is release payload owned by `memset0.web-remote`, but it is not a
-supervisor child, startup hook, event action, or another manifest. A normal build validates it; a
-normal install merely makes the exact-version files available. The operator must separately invoke
-its stable CLI with an external owner-protected inventory.
-
-An activation resolves one selected or focused Pane through the already running Herdr server and
-binds ttyd to the resulting fixed terminal id. The browser cannot supply a command, Herdr socket,
-session, Pane, or terminal. The listener is an owner-only Unix socket; a local or restricted-SSH
-stdio broker, independent Fleet-session verifier, and temporary `/ttyd/<node-id>/` handler are created only
-after preflight and remain bounded by one lease. The helper reads protected central signing config
-and validates the cookie locally without calling Gateway. Cleanup removes those components without touching
-the normal supervisor, Gateway, Collie, Herdr server, or existing Panes.
-
-Real inventory, relay keys, session-signing config, Caddy layout, and runtime state are external deployment
-inputs. The generic repository contains only a synthetic example and the pinned upstream ttyd
-artifacts. This preserves an independent recovery path while keeping the normal Remote product as
-the single release and ownership boundary.
+The release-owned terminal has one supervisor lifecycle, schema-3 inventory, strict node protocol,
+permanent authenticated ingress, fixed 1,800-second visible-page renewal, and idempotent cleanup.
+Idle node control and Fleet ingress sockets do not start ttyd, an attachment, or SSH data transport.
+The complete public architecture, installation inputs, status/disable recovery surface, and tests
+are maintained once in the [`services/ttyd-fallback` guide](./services/ttyd-fallback/README.md).
+Private inventory, relay keys, signing configuration, Caddy layout, and runtime state remain
+deployment inputs outside this public repository.
 
 ## Trust boundaries
 
 1. The TLS reverse proxy is the only public listener.
-2. Gateway issues the normal Fleet/Collie session; an active ttyd companion independently verifies
-   that signed cookie so an already-authenticated browser survives Gateway process failure without
-   introducing same-origin HTTP Basic credentials.
+2. Gateway issues the normal Fleet/Collie session; the permanent terminal ingress independently
+   verifies that signed cookie, so an already-authenticated browser survives Gateway process failure
+   without same-origin HTTP Basic credentials.
 3. Loopback is a host boundary, not per-Unix-user isolation.
 4. The Herdr socket is the terminal-control authority.
 5. The Fleet password verifier, cookie-signing secret, inventory, pinned target/jump host keys, and

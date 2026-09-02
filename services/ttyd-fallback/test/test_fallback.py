@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import grp
 import hashlib
 import hmac
 import importlib.util
@@ -19,7 +18,6 @@ import sys
 import tempfile
 import time
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -36,10 +34,12 @@ def load(name: str):
 
 
 platform_support = load("platform_support")
+protocol = load("protocol")
 controller = load("controller")
 node = load("node")
-auth_helper = load("auth_helper")
+ingress = load("ingress")
 installer = load("installer")
+stdio_unix_relay = load("stdio_unix_relay")
 
 
 class FallbackTests(unittest.TestCase):
@@ -105,15 +105,14 @@ while True:
                   "platform": current_platform, "architecture": current_arch,
                   "host_exact": socket.gethostname().split(".")[0], "herdr": str(self.herdr),
                   "session": None, "server_socket": str(self.server_socket),
-                  "runtime_dir": str(self.runtime), "public_host": "synthetic.invalid",
+                  "runtime_dir": str(self.runtime),
                   "ttyd": str(self.ttyd), "ttyd_sha256": ttyd_digest,
                   "ttyd_version_output": "ttyd version 1.7.7-40e79c7"}
         self.config.write_text(json.dumps(config))
         self.inventory.write_text(json.dumps({
-            "schema": 2,
+            "schema": 3,
             "nodes": {
                 "local-a": {
-                    "enabled": True,
                     "platform": current_platform,
                     "architecture": current_arch,
                     "owner": current_owner,
@@ -128,73 +127,267 @@ while True:
                     "binary": {"source": "local_path", "path": str(self.ttyd),
                                "sha256": ttyd_digest,
                                "version_output": "ttyd version 1.7.7-40e79c7"},
-                    "public_origin": "https://fleet.example.com",
-                    "public_path": "/ttyd/local-a",
                     "transport": {"kind": "local"},
                 }
             },
         }))
         self.gateway_config.write_text(json.dumps({
-            "public": {"fleetHost": "fleet.example.com", "baseDomain": "example.com",
+            "public": {"scheme": "https", "fleetHost": "fleet.example.com", "baseDomain": "example.com",
                        "cookieName": "__Secure-synthetic", "sessionTtlSeconds": 3600},
             "auth": {"username": "owner", "passwordHash": "$argon2id$synthetic",
                      "sessionSecret": base64.urlsafe_b64encode(self.session_secret).rstrip(b"=").decode()},
+            "nodes": [{"id": "local-a", "enabled": True}],
         }))
         os.chmod(self.gateway_config, 0o600)
 
     def tearDown(self) -> None:
-        subprocess.run([sys.executable, str(ROOT / "node.py"), "--config", str(self.config), "stop"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        try:
+            node.reconcile_node(node.load_config(str(self.config)))
+        except (node.FallbackError, OSError):
+            pass
         self.server_listener.close()
         self.temp.cleanup()
 
-    def run_node(self, *arguments: str, expected: int = 0) -> subprocess.CompletedProcess[str]:
-        result = subprocess.run([sys.executable, str(ROOT / "node.py"), "--config", str(self.config), *arguments],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-        self.assertEqual(result.returncode, expected, result.stderr)
-        return result
+    def start_node_control(self) -> tuple[subprocess.Popen[bytes], pathlib.Path]:
+        process = subprocess.Popen(
+            [sys.executable, str(ROOT / "node.py"), "--config", str(self.config),
+             "serve"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        path = protocol.socket_path(self.runtime, "node-control", "synthetic")
+        for _ in range(100):
+            if process.poll() is not None:
+                _stdout, stderr = process.communicate()
+                self.fail(f"node control exited before listening: {stderr.decode()}")
+            if path.exists():
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                    probe.settimeout(0.1)
+                    try:
+                        probe.connect(str(path))
+                    except OSError:
+                        pass
+                    else:
+                        return process, path
+            time.sleep(0.02)
+        process.terminate()
+        process.wait(timeout=3)
+        self.fail("node control socket did not appear")
+
+    def control_request(self, path: pathlib.Path, request_id: str, action: str,
+                        payload: dict[str, object]) -> dict[str, object]:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(10)
+            client.connect(str(path))
+            client.sendall(protocol.encode_request(
+                "node-control", request_id, "synthetic", action, payload,
+            ))
+            response = b""
+            while not response.endswith(b"\n"):
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+        return protocol.decode_response(response, request_id)
 
     def test_preflight_resolves_only_existing_terminal(self) -> None:
-        data = json.loads(self.run_node("preflight", "--pane", "w1:p1").stdout)
+        cfg = node.load_config(str(self.config))
+        data = node.preflight(cfg, "w1:p1")
         self.assertEqual(data["pane_id"], "w1:p1")
-        bad = self.run_node("preflight", "--pane", "w9:p9", expected=1)
-        self.assertIn("does not resolve", bad.stderr)
+        with self.assertRaisesRegex(node.FallbackError, "does not resolve"):
+            node.preflight(cfg, "w9:p9")
 
-    def test_start_is_fixed_one_client_client_only_and_stops(self) -> None:
-        self.run_node("start", "--activation-id", "synthetic-lease", "--lease", "30")
-        status = json.loads(self.run_node("status").stdout)
-        self.assertTrue(status["active"])
-        arguments = json.loads(self.args_log.read_text())
-        self.assertIn("--auth-header", arguments)
-        self.assertIn("--check-origin", arguments)
-        self.assertEqual(arguments[arguments.index("--max-clients") + 1], "1")
-        self.assertNotIn("--url-arg", arguments)
-        self.assertEqual(arguments[-3:], ["terminal", "attach", "term_synthetic1"])
-        self.run_node("stop")
-        self.assertFalse((self.runtime / "ttyd.sock").exists())
-        self.run_node("status", expected=3)
+    def test_private_control_protocol_is_strict_versioned_and_node_bound(self) -> None:
+        request_id = "1" * 32
+        raw = protocol.encode_request("node-control", request_id, "local-a", "activate", {
+            "activation_id": "2" * 24,
+            "pane_id": "w1:p1",
+            "session": None,
+            "lease_seconds": 1800,
+        })
+        decoded = protocol.decode_request(
+            raw,
+            expected_channel="node-control",
+            expected_node="local-a",
+        )
+        self.assertEqual(decoded["payload"]["pane_id"], "w1:p1")
+        self.assertEqual(
+            protocol.decode_response(
+                protocol.encode_response(request_id, result={"ready": True}),
+                request_id,
+            ),
+            {"ready": True},
+        )
+
+        wrong_schema = json.loads(raw)
+        wrong_schema["schema"] = 99
+        with self.assertRaisesRegex(protocol.ProtocolError, "unsupported protocol schema"):
+            protocol.decode_request(json.dumps(wrong_schema))
+        with self.assertRaisesRegex(protocol.ProtocolError, "not valid JSON"):
+            protocol.decode_request("{malformed")
+        unsupported = json.loads(raw)
+        unsupported["action"] = "shell"
+        with self.assertRaisesRegex(protocol.ProtocolError, "unsupported protocol action"):
+            protocol.decode_request(json.dumps(unsupported))
+        wrong_node = json.loads(raw)
+        wrong_node["node_id"] = "other-a"
+        with self.assertRaisesRegex(protocol.ProtocolError, "different node"):
+            protocol.decode_request(json.dumps(wrong_node), expected_node="local-a")
+        extra = json.loads(raw)
+        extra["payload"]["command"] = "/bin/sh"
+        with self.assertRaisesRegex(protocol.ProtocolError, "unknown fields"):
+            protocol.decode_request(json.dumps(extra))
+        with self.assertRaisesRegex(protocol.ProtocolError, "wrong protocol channel"):
+            protocol.decode_request(raw, expected_channel="central-ingress")
+
+        replay = protocol.ReplayWindow(limit=2)
+        replay.accept(request_id)
+        with self.assertRaisesRegex(protocol.ProtocolError, "already used"):
+            replay.accept(request_id)
+
+    def test_private_control_socket_addresses_are_contained_and_portable(self) -> None:
+        root = pathlib.Path("/tmp/herdr-web-remote-synthetic")
+        self.assertEqual(
+            protocol.socket_path(root, "node-control", "local-a"),
+            root / "terminal-node-local-a.sock",
+        )
+        self.assertEqual(
+            protocol.socket_path(root, "central-ingress"),
+            root / "terminal-ingress.sock",
+        )
+        with self.assertRaisesRegex(protocol.ProtocolError, "valid node id"):
+            protocol.socket_path(root, "node-control", "../other")
+        with self.assertRaisesRegex(protocol.ProtocolError, "too long"):
+            protocol.socket_path(pathlib.Path("/tmp") / ("x" * 100), "central-ingress")
+
+    def test_forced_stdio_relay_routes_only_strict_control_or_active_http(self) -> None:
+        cfg = node.load_config(str(self.config))
+        request = protocol.encode_request(
+            "node-control", "b" * 32, "synthetic", "status", {},
+        )
+        self.assertEqual(
+            stdio_unix_relay.select_upstream(cfg, request),
+            self.runtime / "terminal-node-synthetic.sock",
+        )
+        with self.assertRaises(protocol.ProtocolError):
+            stdio_unix_relay.select_upstream(cfg, b'{"malformed":true}\n')
+        with self.assertRaisesRegex(node.FallbackError, "no active terminal lease"):
+            stdio_unix_relay.select_upstream(cfg, b"GET /terminal/ HTTP/1.1\r\n")
+
+    def test_node_control_activates_exact_pane_and_disables_atomically(self) -> None:
+        process, control_socket = self.start_node_control()
+        try:
+            ready = self.control_request(control_socket, "3" * 32, "ready", {})
+            self.assertTrue(ready["control"])
+            self.assertFalse(ready["active"])
+            active = self.control_request(control_socket, "4" * 32, "activate", {
+                "activation_id": "5" * 24,
+                "pane_id": "w1:p1",
+                "session": None,
+                "lease_seconds": 1800,
+            })
+            self.assertTrue(active["active"])
+            self.assertEqual(active["pane_id"], "w1:p1")
+            self.assertEqual(active["activation_id"], "5" * 24)
+            self.assertEqual(active["data_socket"], str(self.runtime / "ttyd.sock"))
+            arguments = json.loads(self.args_log.read_text())
+            self.assertEqual(arguments[-3:], ["terminal", "attach", "term_synthetic1"])
+            self.assertEqual(arguments[arguments.index("--max-clients") + 1], "1")
+
+            before = active["deadline"]
+            time.sleep(1.05)
+            renewed = self.control_request(control_socket, "c" * 32, "heartbeat", {
+                "activation_id": "5" * 24,
+            })
+            self.assertGreater(renewed["deadline"], before)
+            self.assertEqual(
+                json.loads((self.runtime / "lease.json").read_text())["deadline"],
+                renewed["deadline"],
+            )
+
+            disabled = self.control_request(control_socket, "6" * 32, "disable", {})
+            self.assertFalse(disabled["active"])
+            self.assertTrue(disabled["stopped"])
+            self.assertFalse((self.runtime / "lease.json").exists())
+            self.assertFalse((self.runtime / "ttyd.sock").exists())
+        finally:
+            process.terminate()
+            process.communicate(timeout=5)
+        self.assertFalse(control_socket.exists())
+
+    def test_node_control_partial_start_failure_cleans_state_and_socket(self) -> None:
+        failing = self.ttyd.read_text().replace(
+            'pathlib.Path(' + repr(str(self.args_log)) + ').write_text(json.dumps(sys.argv[1:]))',
+            'raise SystemExit(7)',
+        )
+        self.ttyd.write_text(failing)
+        cfg = json.loads(self.config.read_text())
+        cfg["ttyd_sha256"] = platform_support.sha256_file(self.ttyd)
+        self.config.write_text(json.dumps(cfg))
+        process, control_socket = self.start_node_control()
+        try:
+            with self.assertRaisesRegex(protocol.ProtocolError, "failed to become ready"):
+                self.control_request(control_socket, "7" * 32, "activate", {
+                    "activation_id": "8" * 24,
+                    "pane_id": "w1:p1",
+                    "session": None,
+                    "lease_seconds": 1800,
+                })
+            self.assertFalse((self.runtime / "lease.json").exists())
+            self.assertFalse((self.runtime / "ttyd.sock").exists())
+            status = self.control_request(control_socket, "9" * 32, "status", {})
+            self.assertFalse(status["active"])
+        finally:
+            process.terminate()
+            process.communicate(timeout=5)
 
     def test_missing_server_fails_before_runtime(self) -> None:
         text = self.herdr.read_text().replace('"running": True', '"running": False')
         self.herdr.write_text(text)
-        result = self.run_node("start", "--activation-id", "missing", "--lease", "30", expected=1)
-        self.assertIn("not running", result.stderr)
+        with self.assertRaisesRegex(node.FallbackError, "not running"):
+            node.start_activation(
+                node.load_config(str(self.config)), str(self.config), "d" * 24,
+                protocol.LEASE_SECONDS, None,
+            )
         self.assertFalse(self.runtime.exists())
 
     def test_host_and_scheduler_gates(self) -> None:
         cfg = json.loads(self.config.read_text())
         cfg["host_exact"] = "wrong-host"
         self.config.write_text(json.dumps(cfg))
-        self.assertIn("host gate", self.run_node("preflight", expected=1).stderr)
+        with self.assertRaisesRegex(node.FallbackError, "host gate"):
+            node.preflight(node.load_config(str(self.config)), None)
         cfg["host_exact"] = socket.gethostname().split(".")[0]
         cfg["reject_slurm"] = True
         self.config.write_text(json.dumps(cfg))
         env = os.environ.copy()
         env["SLURM_JOB_ID"] = "synthetic"
-        result = subprocess.run([sys.executable, str(ROOT / "node.py"), "--config", str(self.config), "preflight"],
-                                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("scheduler-job", result.stderr)
+        with mock.patch.dict(os.environ, env, clear=True), \
+                self.assertRaisesRegex(node.FallbackError, "scheduler-job"):
+            node.preflight(node.load_config(str(self.config)), None)
+
+    def test_root_supervisor_drops_once_to_declared_client_owner(self) -> None:
+        account = mock.Mock(pw_uid=501, pw_gid=20)
+        with mock.patch.object(node.pwd, "getpwnam", return_value=account), \
+                mock.patch.object(node.os, "geteuid", return_value=0), \
+                mock.patch.object(node.os, "initgroups") as initgroups, \
+                mock.patch.object(node.os, "setgid") as setgid, \
+                mock.patch.object(node.os, "setuid") as setuid:
+            node.drop_to_owner({"owner": "operator"})
+        initgroups.assert_called_once_with("operator", 20)
+        setgid.assert_called_once_with(20)
+        setuid.assert_called_once_with(501)
+        with mock.patch.dict(os.environ, {**os.environ, "USER": "root", "LOGNAME": "root"}), \
+                mock.patch.object(node.os, "geteuid", return_value=501), \
+                mock.patch.object(node.pwd, "getpwuid", return_value=mock.Mock(pw_name="operator")), \
+                mock.patch.object(node.socket, "gethostname", return_value="operator-host"):
+            node.gate({"owner": "operator"})
+
+        with mock.patch.object(node.pwd, "getpwnam", return_value=account), \
+                mock.patch.object(node.os, "geteuid", return_value=1000), \
+                self.assertRaisesRegex(node.FallbackError, "cannot change"):
+            node.drop_to_owner({"owner": "operator"})
 
     def test_portable_process_identity_contract(self) -> None:
         proc = self.root / "proc"
@@ -241,11 +434,32 @@ while True:
         state = {"runner_pid": 123, "runner_start": "old-start", "activation_id": "lease-a"}
         with mock.patch.object(node, "process_matches", return_value=False):
             self.assertFalse(node.state_live(state))
-        component = {"pid": 123, "start": "old-start", "marker": "node.py"}
-        with mock.patch.object(controller, "process_matches", return_value=False), \
-                mock.patch.object(controller.os, "killpg") as killpg:
-            controller.stop_component(component, "node.py")
-        killpg.assert_not_called()
+        self.runtime.mkdir(mode=0o700)
+        (self.runtime / "lease.json").write_text(json.dumps(state))
+        (self.runtime / "ttyd.sock").touch()
+        with mock.patch.object(node, "process_matches", return_value=False), \
+                mock.patch.object(node.os, "killpg") as node_killpg:
+            self.assertFalse(node.reconcile_node(node.load_config(str(self.config))))
+            self.assertFalse(node.reconcile_node(node.load_config(str(self.config))))
+        node_killpg.assert_not_called()
+        self.assertFalse((self.runtime / "lease.json").exists())
+        self.assertFalse((self.runtime / "ttyd.sock").exists())
+    def test_node_control_restart_reconciles_live_lease_before_ready(self) -> None:
+        node.start_activation(
+            node.load_config(str(self.config)), str(self.config), "restart-lease",
+            protocol.LEASE_SECONDS, None,
+        )
+        self.assertTrue((self.runtime / "lease.json").exists())
+        self.assertTrue((self.runtime / "ttyd.sock").exists())
+        process, control_socket = self.start_node_control()
+        try:
+            state = self.control_request(control_socket, "a" * 32, "ready", {})
+            self.assertFalse(state["active"])
+            self.assertFalse((self.runtime / "lease.json").exists())
+            self.assertFalse((self.runtime / "ttyd.sock").exists())
+        finally:
+            process.terminate()
+            process.communicate(timeout=5)
 
     def test_native_executable_identity_parses_elf_and_macho(self) -> None:
         elf = self.root / "synthetic.elf"
@@ -301,6 +515,7 @@ while True:
         installed = json.loads((target / "node.json").read_text())
         self.assertEqual(installed["ttyd_sha256"], identity["sha256"])
         self.assertTrue((target / "platform_support.py").is_file())
+        self.assertTrue((target / "protocol.py").is_file())
 
         (target / "rollback-marker").write_text("preserve")
         real_replace = installer.os.replace
@@ -324,8 +539,209 @@ while True:
         ).rstrip(b"=").decode()
         return f"{encoded}.{signature}"
 
+    def test_ingress_requires_authenticated_user_navigation_and_strips_selectors(self) -> None:
+        os.chmod(self.inventory, 0o600)
+        calls: list[dict[str, object]] = []
+
+        def sender(_node: dict[str, object], raw: bytes) -> bytes:
+            request = protocol.decode_request(
+                raw, expected_channel="node-control", expected_node="local-a",
+            )
+            calls.append(request)
+            payload = request["payload"]
+            if request["action"] == "activate":
+                result = {
+                    "node": "local-a",
+                    "active": True,
+                    "pane_id": payload["pane_id"] or "w1:p1",
+                    "activation_id": payload["activation_id"],
+                    "deadline": int(time.time()) + 1800,
+                    "data_socket": str(self.runtime / "ttyd.sock"),
+                }
+            elif request["action"] == "heartbeat":
+                result = {
+                    "node": "local-a", "active": True,
+                    "activation_id": payload["activation_id"],
+                    "deadline": int(time.time()) + 1800,
+                }
+            else:
+                result = {"node": "local-a", "active": False, "stopped": True}
+            return protocol.encode_response(request["request_id"], result=result)
+
+        state = ingress.IngressState(
+            self.inventory, self.gateway_config, self.root, sender,
+        )
+        path = self.root / "ingress.sock"
+        server = ingress.UnixHTTPServer(str(path), state)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        now = int(time.time() * 1000)
+        token = self.session_token({
+            "username": "owner", "issuedAt": now, "expiresAt": now + 60_000,
+        })
+        common = {
+            "Host": "fleet.example.com",
+            "Cookie": f"__Secure-synthetic={token}",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-User": "?1",
+            "Sec-Fetch-Site": "same-origin",
+            "Referer": "https://fleet.example.com/fleet",
+        }
+
+        def request(target: str, headers: dict[str, str], method: str = "GET") -> tuple[int, bytes]:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(str(path))
+            lines = [f"{method} {target} HTTP/1.1", *(f"{key}: {value}" for key, value in headers.items()),
+                     *([] if "Connection" in headers else ["Connection: close"]), "", ""]
+            client.sendall("\r\n".join(lines).encode())
+            response = b""
+            while True:
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                response += chunk
+            client.close()
+            status = int(response.split(b"\r\n", 1)[0].split()[1])
+            return status, response
+
+        try:
+            self.assertEqual(request("/ttyd/local-a/", {"Host": "fleet.example.com"})[0], 401)
+            self.assertEqual(request("/ttyd/local-a/", {**common, "Host": "other.example.com"})[0], 403)
+            self.assertEqual(request("/ttyd/local-a/", {
+                **common, "Origin": "https://other.example.com",
+            })[0], 403)
+            self.assertEqual(request("/ttyd/local-a/", {
+                **common, "Sec-Fetch-Site": "cross-site",
+            })[0], 403)
+            self.assertEqual(request("/ttyd/local-a/", {**common, "Purpose": "prefetch"})[0], 403)
+            self.assertEqual(request("/ttyd/local-a/", {
+                **common, "Sec-Fetch-Dest": "iframe",
+            })[0], 403)
+            self.assertEqual(request("/ttyd/unknown/", common)[0], 404)
+            self.assertEqual(request("/ttyd/local-a/?command=sh", common)[0], 400)
+            self.assertEqual(request("/ttyd/local-a/?pane=../other", common)[0], 400)
+            self.assertEqual(request("/ttyd/local-a/?session=other", common)[0], 400)
+            self.assertEqual(len(calls), 0)
+
+            status, response = request("/ttyd/local-a/?pane=w1%3Ap1", common)
+            self.assertEqual(status, 303)
+            self.assertIn(b"Location: /ttyd/local-a/", response)
+            self.assertNotIn(b"pane=", response)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]["payload"]["pane_id"], "w1:p1")
+            self.assertEqual(calls[0]["payload"]["session"], None)
+            clean_status, clean_response = request("/ttyd/local-a/", common)
+            self.assertEqual(clean_status, 200)
+            self.assertIn(b"Herdr emergency terminal", clean_response)
+            self.assertEqual(len(calls), 1)
+            heartbeat_status, _response = request("/ttyd/local-a/heartbeat", {
+                **common,
+                "Origin": "https://fleet.example.com",
+                "Content-Length": "0",
+            }, "POST")
+            self.assertEqual(heartbeat_status, 204)
+            self.assertEqual(calls[-1]["action"], "heartbeat")
+
+            state.nodes["other-a"] = {
+                **state.nodes["local-a"], "id": "other-a",
+            }
+            with self.assertRaisesRegex(ingress.Conflict, "already active"):
+                state.activate(state.nodes["other-a"], None, None)
+            state.begin_client("local-a")
+            with self.assertRaisesRegex(ingress.Conflict, "already connected"):
+                state.begin_client("local-a")
+            state.end_client("local-a")
+
+            self.runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+            data_socket = self.runtime / "ttyd.sock"
+            captured: list[bytes] = []
+
+            def upstream_once(response: bytes) -> threading.Thread:
+                try:
+                    data_socket.unlink()
+                except FileNotFoundError:
+                    pass
+                listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                listener.bind(str(data_socket))
+                listener.listen(1)
+
+                def serve_upstream() -> None:
+                    connection, _address = listener.accept()
+                    value = b""
+                    while b"\r\n\r\n" not in value:
+                        value += connection.recv(4096)
+                    captured.append(value)
+                    connection.sendall(response)
+                    connection.close()
+                    listener.close()
+
+                upstream_thread = threading.Thread(target=serve_upstream, daemon=True)
+                upstream_thread.start()
+                return upstream_thread
+
+            plain_thread = upstream_once(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
+            )
+            proxied_status, proxied = request("/ttyd/local-a/terminal/", {
+                **common,
+                "Authorization": "Basic forged",
+                "X-Herdr-Fallback-User": "forged",
+            })
+            plain_thread.join(timeout=2)
+            self.assertEqual(proxied_status, 200)
+            self.assertTrue(proxied.endswith(b"OK"))
+            forwarded = captured[-1]
+            self.assertNotIn(b"Authorization:", forwarded)
+            self.assertNotIn(b"Cookie:", forwarded)
+            self.assertNotIn(b"X-Herdr-Fallback-User: forged", forwarded)
+            self.assertIn(b"X-Herdr-Fallback-User: owner", forwarded)
+            self.assertIn(b"Origin: https://fleet.example.com", forwarded)
+
+            websocket_thread = upstream_once(
+                b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                b"Connection: Upgrade\r\n\r\n"
+            )
+            websocket_status, _response = request("/ttyd/local-a/terminal/ws", {
+                **common,
+                "Connection": "Upgrade",
+                "Upgrade": "websocket",
+            })
+            websocket_thread.join(timeout=2)
+            self.assertEqual(websocket_status, 101)
+            self.assertIsNone(state.active)
+            self.assertEqual(calls[-1]["action"], "disable")
+
+            state.activate(state.nodes["local-a"], None, None)
+            assert state.active
+            state.active["deadline"] = int(time.time()) - 1
+            self.assertTrue(state.expire_once())
+            self.assertIsNone(state.active)
+            self.assertEqual(calls[-1]["action"], "disable")
+
+            state.activate(state.nodes["local-a"], None, None)
+            try:
+                data_socket.unlink()
+            except FileNotFoundError:
+                pass
+
+            failed_status, _response = request("/ttyd/local-a/terminal/", common)
+            self.assertEqual(failed_status, 503)
+            self.assertIsNone(state.active)
+            self.assertEqual(calls[-1]["action"], "disable")
+
+            page = (ROOT / "web" / "index.html").read_text()
+            self.assertIn('document.visibilityState === "visible"', page)
+            self.assertIn('fetch("heartbeat"', page)
+            self.assertIn("setInterval(heartbeat, 60_000)", page)
+            self.assertNotIn("localStorage", page)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_fleet_session_verifier_matches_gateway_contract(self) -> None:
-        state = auth_helper.SessionAuth(str(self.gateway_config))
+        state = ingress.SessionAuth(str(self.gateway_config))
         now = 2_000_000_000_000
         valid = self.session_token({"username": "owner", "issuedAt": now, "expiresAt": now + 60_000})
         self.assertTrue(state.verify_token(valid, now))
@@ -343,6 +759,15 @@ while True:
         self.assertFalse(state.verify_cookie("", now))
         self.assertFalse(state.verify_cookie("Authorization=Basic synthetic", now))
 
+    def test_ingress_rejects_gateway_terminal_node_set_drift(self) -> None:
+        os.chmod(self.inventory, 0o600)
+        config = json.loads(self.gateway_config.read_text())
+        config["nodes"].append({"id": "remote-a", "enabled": True})
+        self.gateway_config.write_text(json.dumps(config))
+        os.chmod(self.gateway_config, 0o600)
+        with self.assertRaisesRegex(ingress.IngressError, "node set"):
+            ingress.IngressState(self.inventory, self.gateway_config, self.root)
+
     def test_fleet_session_verifier_matches_shared_vectors(self) -> None:
         vectors = json.loads((ROOT / "test" / "session-vectors.json").read_text())
         config = json.loads(self.gateway_config.read_text())
@@ -351,94 +776,52 @@ while True:
         config["auth"]["sessionSecret"] = vectors["sessionSecret"]
         self.gateway_config.write_text(json.dumps(config))
         os.chmod(self.gateway_config, 0o600)
-        state = auth_helper.SessionAuth(str(self.gateway_config))
+        state = ingress.SessionAuth(str(self.gateway_config))
         for vector in vectors["vectors"]:
             self.assertEqual(state.verify_token(vector["token"], vectors["nowMs"]), vector["valid"], vector["name"])
 
-    def test_auth_http_ignores_basic_and_accepts_only_fleet_cookie(self) -> None:
-        path = self.root / "auth.sock"
-        server = auth_helper.UnixHTTPServer(str(path), auth_helper.Handler)
-        server.auth = auth_helper.SessionAuth(str(self.gateway_config))
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-
-        def request(headers: str) -> bytes:
-            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            client.connect(str(path))
-            client.sendall(f"GET /verify HTTP/1.1\r\nHost: localhost\r\n{headers}\r\n".encode())
-            response = b""
-            while b"\r\n\r\n" not in response:
-                response += client.recv(4096)
-            client.close()
-            return response
-
-        try:
-            basic = request("Authorization: Basic c3ludGhldGljOnBhc3N3b3Jk\r\n")
-            self.assertTrue(basic.startswith(b"HTTP/1.0 401"))
-            self.assertNotIn(b"WWW-Authenticate", basic)
-            now = int(time.time() * 1000)
-            token = self.session_token({"username": "owner", "issuedAt": now, "expiresAt": now + 60_000})
-            accepted = request(f"Cookie: __Secure-synthetic={token}\r\nAuthorization: Basic ignored\r\n")
-            self.assertTrue(accepted.startswith(b"HTTP/1.0 200"))
-            self.assertIn(b"X-Herdr-Fallback-User: owner", accepted)
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=2)
-
-    def test_caddy_and_desktop_contract(self) -> None:
-        inventory = controller.load_inventory(self.inventory)
-        selected = controller.select_node(inventory, "local-a")
-        fragment = controller.caddy_fragment(selected, pathlib.Path("/run/synthetic"), pathlib.Path("/var/lib/synthetic"), 2000000000)
-        self.assertIn("forward_auth unix//", fragment)
-        self.assertIn("host fleet.example.com", fragment)
-        self.assertIn("path /ttyd/local-a/*", fragment)
-        self.assertIn("uri strip_prefix /ttyd/local-a", fragment)
-        self.assertIn("not header Origin https://fleet.example.com", fragment)
-        self.assertIn("int({time.now.unix}) >= 2000000000", fragment)
-        self.assertIn("request_header -Authorization", fragment)
-        self.assertIn("request_header -X-Herdr-Fallback-User", fragment)
-        self.assertIn("request_header -Cookie", fragment)
-        self.assertIn("request_header X-Forwarded-For {http.request.remote.host}", fragment)
-        self.assertIn("handle /terminal*", fragment)
+    def test_landing_and_recovery_cli_have_no_manual_activation_path(self) -> None:
         page = (ROOT / "web" / "index.html").read_text()
-        self.assertIn('href="terminal/"', page)
+        self.assertIn('terminal.setAttribute("src", "terminal/")', page)
         self.assertIn("(min-width: 1024px) and (hover: hover) and (pointer: fine)", page)
-        self.assertNotIn("fetch(", page)
+        self.assertIn('fetch("heartbeat"', page)
+        self.assertIn('document.visibilityState === "visible"', page)
         self.assertNotIn("WebSocket(", page)
         cli = (ROOT / "ttyd-fallback").read_text()
         self.assertIn("export PYTHONDONTWRITEBYTECODE=1", cli)
         self.assertIn('exec "$python_bin" -B "$service_dir/controller.py" "$@"', cli)
+        self.assertNotIn(" prepare", cli)
+        self.assertNotIn(" enable", cli)
 
     def test_unknown_inventory_never_defaults(self) -> None:
         inventory = controller.load_inventory(self.inventory)
         with self.assertRaises(controller.ControllerError):
             controller.select_node(inventory, "unknown")
 
-    def test_inventory_requires_exact_shared_origin_node_path(self) -> None:
-        for field, value, message in (
-            ("public_origin", "http://fleet.example.com", "exact HTTPS origin"),
-            ("public_origin", "https://fleet.example.com:8443", "exact HTTPS origin"),
-            ("public_origin", "https://operator@fleet.example.com", "exact HTTPS origin"),
-            ("public_origin", "https://fleet.example.com/path", "exact HTTPS origin"),
-            ("public_path", "/ttyd/other", "/ttyd/local-a"),
-            ("public_path", "/ttyd/local-a/../other", "/ttyd/local-a"),
+    def test_inventory_rejects_retired_enablement_and_url_fields(self) -> None:
+        for field, value in (
+            ("enabled", False),
+            ("public_origin", "https://fleet.example.com"),
+            ("public_path", "/ttyd/local-a"),
+            ("control_identity", "/tmp/general-purpose-key"),
         ):
             inventory = json.loads(self.inventory.read_text())
             inventory["nodes"]["local-a"][field] = value
             self.inventory.write_text(json.dumps(inventory))
-            with self.assertRaisesRegex(controller.ControllerError, message):
+            with self.assertRaisesRegex(controller.ControllerError, "unknown fields"):
                 controller.load_inventory(self.inventory)
-            inventory["nodes"]["local-a"][field] = (
-                "https://fleet.example.com" if field == "public_origin" else "/ttyd/local-a"
-            )
+            inventory["nodes"]["local-a"].pop(field)
             self.inventory.write_text(json.dumps(inventory))
+        inventory = json.loads(self.inventory.read_text())
+        inventory["schema"] = 2
+        self.inventory.write_text(json.dumps(inventory))
+        with self.assertRaisesRegex(controller.ControllerError, "unsupported inventory schema"):
+            controller.load_inventory(self.inventory)
 
-    def test_inventory_requires_explicit_control_identity_for_ssh(self) -> None:
+    def test_inventory_uses_one_forced_identity_for_ssh_control_and_data(self) -> None:
         inventory = json.loads(self.inventory.read_text())
         inventory["nodes"]["remote-a"] = {
             **inventory["nodes"]["local-a"],
-            "public_path": "/ttyd/remote-a",
             "transport": {
                 "kind": "ssh",
                 "host": "remote-a.example.com",
@@ -449,118 +832,9 @@ while True:
             },
         }
         self.inventory.write_text(json.dumps(inventory))
-        with self.assertRaisesRegex(controller.ControllerError, "control_identity"):
-            controller.load_inventory(self.inventory)
-
-    def test_disabled_inventory_entries_remain_dormant(self) -> None:
-        inventory = json.loads(self.inventory.read_text())
-        inventory["nodes"]["disabled-a"] = {**inventory["nodes"]["local-a"], "enabled": False,
-                                               "public_path": "/ttyd/disabled-a"}
-        self.inventory.write_text(json.dumps(inventory))
-        loaded = controller.load_inventory(pathlib.Path(self.inventory))
-        live_root = self.root / "live"
-        controller.write_node_configs(loaded, live_root)
-        self.assertTrue((live_root / "nodes" / "local-a.json").exists())
-        self.assertFalse((live_root / "nodes" / "disabled-a.json").exists())
-
-    def test_enable_cleans_node_when_central_setup_fails(self) -> None:
-        inventory = controller.load_inventory(self.inventory)
-        caddy = self.root / "Caddyfile"
-        caddy.write_text("import /synthetic/*.caddy\n")
-        calls: list[list[str]] = []
-
-        def node_call(_node, _live_root, arguments, timeout=20):
-            calls.append(arguments)
-            if arguments[0] == "preflight":
-                return subprocess.CompletedProcess([], 0, json.dumps({"pane_id": "w1:p1"}), "")
-            if arguments[0] == "start":
-                return subprocess.CompletedProcess([], 0, json.dumps({"deadline": int(time.time()) + 30}), "")
-            return subprocess.CompletedProcess([], 0, json.dumps({"active": False}), "")
-
-        args = SimpleNamespace(
-            lease=30, node="local-a", pane=None, live_root=str(self.root / "live"),
-            runtime_root=str(self.root / "central-runtime"), state_root=str(self.root / "state"),
-            caddy_config=str(caddy), caddy_import="import /synthetic/*.caddy",
-            caddy_fragment=str(self.root / "fragment.caddy"), landing_root=str(self.root / "landing"),
-            proxy_group="missing-synthetic-group", inventory=str(self.inventory),
-            session_config=str(self.gateway_config),
-        )
-        modules = subprocess.CompletedProcess([], 0, "http.handlers.headers\nhttp.handlers.reverse_proxy\n", "")
-        with mock.patch.object(controller, "node_command", side_effect=node_call), \
-             mock.patch.object(controller.subprocess, "run", return_value=modules), \
-             mock.patch.object(controller, "caddy_apply"):
-            with self.assertRaises(KeyError):
-                controller.enable(args, inventory)
-        self.assertEqual([call[0] for call in calls], ["preflight", "start", "stop"])
-
-    def test_enable_records_all_components_on_success(self) -> None:
-        inventory = controller.load_inventory(self.inventory)
-        caddy = self.root / "Caddyfile"
-        caddy.write_text("import /synthetic/*.caddy\n")
-        live = self.root / "live"
-        live.mkdir()
-        runtime = self.root / "central-runtime"
-        state_root = self.root / "state"
-        calls: list[list[str]] = []
-
-        def node_call(_node, _live_root, arguments, timeout=20):
-            calls.append(arguments)
-            if arguments[0] == "preflight":
-                payload = {"pane_id": "w1:p1"}
-            elif arguments[0] == "start":
-                payload = {"deadline": int(time.time()) + 30}
-            else:
-                payload = {"active": False}
-            return subprocess.CompletedProcess([], 0, json.dumps(payload), "")
-
-        processes = []
-        process_commands: list[list[str]] = []
-
-        def popen(command, **_kwargs):
-            process_commands.append(command)
-            process = mock.Mock(pid=1000 + len(processes))
-            process.poll.return_value = None
-            processes.append(process)
-            if "stdio_broker.py" in command[1]:
-                runtime.mkdir(parents=True, exist_ok=True)
-                (runtime / "upstream.sock").touch()
-            elif "auth_helper.py" in command[1]:
-                (runtime / "auth.sock").touch()
-            return process
-
-        components = iter([
-            {"pid": 1000, "start": "1", "marker": "stdio_broker.py"},
-            {"pid": 1001, "start": "2", "marker": "auth_helper.py"},
-            {"pid": 1002, "start": "3", "marker": "_expire"},
-        ])
-        args = SimpleNamespace(
-            lease=30, node="local-a", pane=None, live_root=str(live),
-            runtime_root=str(runtime), state_root=str(state_root),
-            caddy_config=str(caddy), caddy_import="import /synthetic/*.caddy",
-            caddy_fragment=str(self.root / "fragment.caddy"), landing_root=str(self.root / "landing"),
-            proxy_group=grp.getgrgid(os.getegid()).gr_name, inventory=str(self.inventory),
-            session_config=str(self.gateway_config),
-        )
-        modules = subprocess.CompletedProcess([], 0, "http.handlers.headers\nhttp.handlers.reverse_proxy\n", "")
-        with mock.patch.object(controller, "node_command", side_effect=node_call), \
-             mock.patch.object(controller.subprocess, "run", return_value=modules), \
-             mock.patch.object(controller.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(controller.os, "chown"), \
-             mock.patch.object(controller, "component", side_effect=lambda *_args: next(components)), \
-             mock.patch.object(controller, "unix_http_status", side_effect=[200, 401, 200]), \
-             mock.patch.object(controller, "caddy_apply"):
-            controller.enable(args, inventory)
-
-        state = json.loads((state_root / "active.json").read_text())
-        self.assertEqual(state["broker"]["marker"], "stdio_broker.py")
-        self.assertEqual(state["auth"]["marker"], "auth_helper.py")
-        self.assertEqual(state["guard"]["marker"], "_expire")
-        self.assertEqual([call[0] for call in calls], ["preflight", "start"])
-        auth_command = next(command for command in process_commands if "auth_helper.py" in command[1])
-        self.assertIn("--gateway-config", auth_command)
-        self.assertNotIn("--username", auth_command)
-        self.assertNotIn("--verifier", auth_command)
-
+        loaded = controller.load_inventory(self.inventory)
+        self.assertEqual(set(loaded["nodes"]), {"local-a", "remote-a"})
+        self.assertNotIn("control_identity", loaded["nodes"]["remote-a"]["transport"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

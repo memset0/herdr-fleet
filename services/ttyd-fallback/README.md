@@ -1,106 +1,122 @@
-# ttyd fallback companion
+# Emergency terminal companion
 
-This directory is the normally closed emergency-terminal service shipped with the
-`memset0.web-remote` Herdr plugin. It is not another plugin and has no startup or event hook. A
-normal plugin build, registration, `ensure`, restart, or update does not start ttyd, a transport,
-an authentication helper, a route, a lease timer, or another supervisor.
+This directory contains the cross-platform emergency terminal shipped by
+`memset0.web-remote`. It is part of the existing plugin release, not another plugin or operating
+system service.
 
-The companion attaches ttyd to one terminal that already belongs to a running Herdr Pane. It reads
-the configured Herdr snapshot, resolves an operator-selected or focused Pane to its fixed
-`terminal_id`, and executes only `herdr terminal attach <terminal_id>`. Browser paths and query
-arguments cannot select a command, host, session, Pane, or terminal.
+## Architecture and invariants
 
-## Public product versus private deployment
+Every enabled Fleet node has one matching terminal inventory record and one supervisor-owned node
+control socket. The Fleet host additionally runs one supervisor-owned ingress socket. These small
+control processes remain available while Web Remote is active; idle state has no ttyd process,
+writable Herdr attachment, SSH data connection, dynamic Caddy fragment, timer, or public terminal
+port.
 
-The service implementation, synthetic inventory example, ttyd pin, and tests live here. A real
-deployment supplies an external owner-protected inventory and keeps its shared Fleet origin/path,
-socket/session names, SSH identities, Caddy layout, signed-session configuration, generated state, and runtime findings
-outside this repository. See `inventory.example.json` for the schema; do not turn it into a real
-inventory.
+Fleet derives `/ttyd/<node-id>/` from the enabled node id. A top-level authenticated user navigation
+may add one validated `pane` and optional named `session` selector. Ingress validates the existing
+Fleet cookie locally, checks the exact Host, Origin and Fetch Metadata, activates the fixed node
+control protocol, then redirects to a selector-free URL. It never calls Gateway or Collie and the
+browser cannot choose a command, terminal id, socket, host, or undeclared session.
 
-Each enabled node requires an explicit platform and architecture, client owner and Herdr owner,
-Python and Herdr executable, Herdr session/socket namespace, binary-source descriptor, node-local
-runtime and install paths, exact Fleet origin/node path, and local or SSH transport. The client owner
-may differ from the Herdr owner only when it can access the exact configured socket; the node endpoint
-verifies that socket's owner before attachment and never starts another server. SSH control uses an
-explicit absolute `control_identity`; the companion never
-reads ambient SSH config or chooses a default key. Its separate relay identity is resolved beneath
-the controller's live config root and should be installed remotely with `restrict` plus one fixed
-`stdio_unix_relay.py --config .../node.json` command.
+The landing document embeds ttyd only in the wide fine-pointer presentation and renews a fixed
+1,800-second lease only while visible. One node and one terminal WebSocket client may be active.
+Another node receives a conflict. Disconnect, expiry, transport loss, supervisor replacement, or
+manual disable removes ttyd, its client-only `herdr terminal attach`, its Unix socket, and ephemeral
+state without restarting Herdr or changing a Pane.
 
-## Install without starting
+Local nodes use their owner-only Unix sockets directly. SSH nodes use one host-key-pinned identity
+resolved below the Fleet host's protected live root. That identity must be restricted to the fixed
+`stdio_unix_relay.py --config <absolute-node.json>` command. The relay distinguishes the strict
+versioned control message from authenticated HTTP/WebSocket data and cannot execute an SSH command,
+allocate a PTY, forward a port or choose another node.
 
-Every platform uses the same installer, validation pipeline, node endpoint, and lifecycle. Linux
-x86_64 and aarch64 can use the pinned release asset and checksum in this directory:
+## Inventory and installation
+
+[`inventory.example.json`](./inventory.example.json) is the schema-3 synthetic template. A real
+owner-only inventory contains every enabled Gateway node exactly once. There is no `enabled`,
+`pending`, public URL, fallback flag, general-purpose control key, or node-specific executable path.
+Differences are data only: platform, architecture, owner, Herdr socket/session, runtime/install
+paths, binary identity, host/job gate, and local or SSH transport.
+
+Install or verify a node payload without starting ttyd:
 
 ```bash
 services/ttyd-fallback/ttyd-fallback install \
-  --inventory /absolute/private/inventory.json \
+  --inventory /absolute/private/terminal-inventory.json \
   --node local-a
 ```
 
-Darwin uses the same command with a `local_path` binary descriptor containing an absolute candidate,
-exact SHA-256, and exact expected version output. This supports an explicitly reviewed package-manager
-binary without trusting `PATH` or changing the package-manager-owned source. Both source kinds pass
-the same native ELF/Mach-O architecture, digest, version-output, required-flag, atomic-replacement,
-and dormant-state checks. A node or platform never selects a different script or lifecycle.
+Linux x86_64/aarch64 nodes may use the pinned release asset. Darwin nodes use the same command with
+an explicit `local_path`, SHA-256 and version output for a reviewed package-manager binary. Both
+paths verify native format, architecture, digest, version, required ttyd flags and atomic replacement.
+Python 3.10 or newer is required. The installed node payload contains only ttyd, `node.py`,
+`protocol.py`, `platform_support.py`, `stdio_unix_relay.py`, and the protected derived `node.json`.
 
-The inventory's `install_root` receives the verified binary and companion controls. Installation
-does not activate them. Python 3.9 or newer is required for the runtime controls on Linux and macOS.
+Configure the existing plugin supervisor on every node:
 
-## Central preparation and bounded activation
+```dotenv
+HERDR_WEB_TERMINAL_NODE_CONFIG=/absolute/install/root/node.json
+HERDR_WEB_TERMINAL_PYTHON=/usr/bin/python3
+```
 
-Run the controller only on the trusted ingress host and pass every deployment-specific path
-explicitly when it differs from the generic defaults:
+The Fleet host also configures the protected terminal inventory, existing Gateway configuration and
+SSH live root:
+
+```dotenv
+HERDR_WEB_GATEWAY_CONFIG=/absolute/private/gateway.json
+HERDR_WEB_TERMINAL_FLEET_CONFIG=/absolute/private/terminal-inventory.json
+HERDR_WEB_TERMINAL_LIVE_ROOT=/absolute/private/terminal-live
+HERDR_WEB_TERMINAL_INGRESS_SOCKET=/absolute/caddy-traversable/terminal-ingress.sock
+HERDR_WEB_TERMINAL_INGRESS_GID=123
+```
+
+The supervisor refuses a partial central configuration. Ingress refuses startup unless both files
+are owner-only and the terminal node ids exactly equal the enabled Gateway ids. It owns a dedicated
+0710 parent and 0660 socket for the declared reverse-proxy GID; node control and ttyd sockets remain
+0600 elsewhere. A reverse proxy may then route the exact `/ttyd/<node-id>/` family to the stable
+ingress socket; route creation and Caddy reload are deployment operations, never activation steps.
+
+## Status and recovery
+
+Validate the inventory or inspect the dormant node-control services through the same bounded CLI:
 
 ```bash
 services/ttyd-fallback/ttyd-fallback \
-  --inventory /absolute/private/inventory.json \
-  --live-root /absolute/private/config/ttyd-fallback \
-  --caddy-import 'import /etc/caddy/herdr-web-remote-ttyd/*.caddy' \
-  --session-config /absolute/private/gateway.json \
-  prepare
+  --inventory /absolute/private/terminal-inventory.json \
+  --live-root /absolute/private/terminal-live \
+  validate
 
 services/ttyd-fallback/ttyd-fallback \
-  --inventory /absolute/private/inventory.json \
-  --live-root /absolute/private/config/ttyd-fallback \
-  --session-config /absolute/private/gateway.json \
-  enable local-a --lease 1800
-
-services/ttyd-fallback/ttyd-fallback \
-  --inventory /absolute/private/inventory.json \
-  --live-root /absolute/private/config/ttyd-fallback \
-  --session-config /absolute/private/gateway.json \
-  status
-
-services/ttyd-fallback/ttyd-fallback \
-  --inventory /absolute/private/inventory.json \
-  --live-root /absolute/private/config/ttyd-fallback \
-  --session-config /absolute/private/gateway.json \
-  disable
+  --inventory /absolute/private/terminal-inventory.json \
+  --live-root /absolute/private/terminal-live \
+  status [node-id]
 ```
 
-Preparation validates the protected Fleet session configuration and creates only node configuration,
-relay keys for configured SSH nodes, the static landing asset, and an empty fragment directory. Activation is a separate explicit
-operation with a 30-second to two-hour lease. It starts an owner-only node Unix socket, a local or
-restricted-SSH stdio broker, an independent Fleet-session verification helper, and a temporary shared-origin Caddy path handler in that
-order. Failure unwinds in reverse order. Manual disable, lease expiry, lost component health, or a
-later cleanup removes the route, broker, helper, ttyd process, socket, and ephemeral state without
-stopping Herdr or changing Panes.
+Close one node or the whole inventory without touching Herdr, Collie, Gateway, or Panes:
 
-The helper reads the owner-only Gateway config, verifies its signed HttpOnly cookie locally, and
-never calls the Gateway process. Caddy removes `Authorization`, the session cookie, and any forged
-trusted header before the private ttyd upstream. ttyd validates the exact Fleet Origin, accepts one
-writable client, never enables URL arguments, and writes no terminal transcript. Same-UID processes
-remain outside the claimed security boundary.
+```bash
+services/ttyd-fallback/ttyd-fallback \
+  --inventory /absolute/private/terminal-inventory.json \
+  --live-root /absolute/private/terminal-live \
+  disable [node-id]
+```
 
-## Tests
+Restarting the Web Remote supervisor also converges every node to dormant before publishing its
+control socket. Cleanup matches PID, process start token and command markers on Linux and Darwin, so
+stale metadata cannot signal a reused unrelated process.
+
+## Security and tests
+
+Ingress removes browser `Authorization`, Fleet cookies and forged trusted-identity headers before
+injecting the configured owner identity. ttyd listens only on an owner-protected Unix socket, checks
+the Fleet Origin, accepts one writable client, disables URL commands and records no transcript.
+Credentials, signing material, SSH keys, terminal content and runtime state must remain outside the
+public repository and logs.
+
+Run the synthetic protocol, installer, lifecycle, authentication and cleanup suite with:
 
 ```bash
 services/ttyd-fallback/test/run.sh
 ```
 
-The tests use only temporary synthetic identities, paths, sockets, and fake Herdr/ttyd executables.
-Normal Web Remote builds always run them. A managed split-host build may set
-`HERDR_WEB_TTYD_TEST_MODE=defer-to-activation` only when its activation gate runs this exact suite
-with a compatible Python before replacing the live plugin; unsupported values fail the build.
+The pinned upstream identity and audit record are in [`UPSTREAM.md`](./UPSTREAM.md).

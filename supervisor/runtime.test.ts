@@ -11,6 +11,7 @@ import {
   loadPluginEnv,
   positiveIntEnv,
   resolveRuntimePaths,
+  resolveTerminalRoles,
   sanitizedDaemonEnv,
 } from "./runtime.ts";
 
@@ -55,6 +56,46 @@ describe("supervisor runtime policy", () => {
     await ensurePrivateDirs(paths);
     expect((await stat(paths.runtimeDir)).mode & 0o777).toBe(0o700);
     expect((await stat(paths.stateDir)).mode & 0o777).toBe(0o700);
+  });
+
+  test("requires one node-control role and pairs central ingress with Gateway", () => {
+    const paths = resolveRuntimePaths({
+      HERDR_PLUGIN_ROOT: "/opt/web-remote",
+      HERDR_PLUGIN_CONFIG_DIR: "/tmp/config",
+      HERDR_PLUGIN_STATE_DIR: "/tmp/state",
+      HERDR_WEB_RUNTIME_DIR: "/tmp/runtime",
+    }, 42);
+    const nodeOnly = resolveTerminalRoles(paths, {
+      HERDR_WEB_TERMINAL_NODE_CONFIG: "/tmp/node.json",
+    });
+    expect(nodeOnly.nodeConfig).toBe("/tmp/node.json");
+    expect(nodeOnly.ingress).toBeNull();
+    expect(() => resolveTerminalRoles(paths, {})).toThrow("HERDR_WEB_TERMINAL_NODE_CONFIG");
+    expect(() => resolveTerminalRoles(paths, {
+      HERDR_WEB_TERMINAL_NODE_CONFIG: "/tmp/node.json",
+      HERDR_WEB_GATEWAY_CONFIG: "/tmp/gateway.json",
+    })).toThrow("configured together");
+    const central = resolveTerminalRoles(paths, {
+      HERDR_WEB_TERMINAL_NODE_CONFIG: "/tmp/node.json",
+      HERDR_WEB_GATEWAY_CONFIG: "/tmp/gateway.json",
+      HERDR_WEB_TERMINAL_FLEET_CONFIG: "/tmp/terminal.json",
+      HERDR_WEB_TERMINAL_LIVE_ROOT: "/tmp/terminal-live",
+      HERDR_WEB_TERMINAL_INGRESS_SOCKET: "/tmp/terminal-ingress/ingress.sock",
+      HERDR_WEB_TERMINAL_INGRESS_GID: "123",
+    });
+    expect(central.ingress).toEqual({
+      inventory: "/tmp/terminal.json",
+      gatewayConfig: "/tmp/gateway.json",
+      liveRoot: "/tmp/terminal-live",
+      socketPath: "/tmp/terminal-ingress/ingress.sock",
+      socketGid: 123,
+    });
+    expect(() => resolveTerminalRoles(paths, {
+      HERDR_WEB_TERMINAL_NODE_CONFIG: "/tmp/node.json",
+      HERDR_WEB_GATEWAY_CONFIG: "/tmp/gateway.json",
+      HERDR_WEB_TERMINAL_FLEET_CONFIG: "/tmp/terminal.json",
+      HERDR_WEB_TERMINAL_LIVE_ROOT: "/tmp/terminal-live",
+    })).toThrow("ingress socket and GID");
   });
 
   test("generation changes with managed source and hook variables are removed", async () => {

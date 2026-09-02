@@ -4,10 +4,10 @@ Herdr Web Remote adds a password-protected public Fleet dashboard and one native
 [Collie](https://github.com/AltanS/collie) UI per Herdr host. It is a Herdr 0.8+ plugin and does
 not install a system service, configure Tailscale, or expose a raw bridge port.
 
-The same plugin release also ships a Linux-only, normally closed ttyd emergency-terminal
-companion. It is not a second plugin, process managed by the normal supervisor, or replacement for
-Collie. Installation, startup hooks, and `ensure` leave every fallback process and route absent;
-only the operator-facing companion CLI can open one bounded lease.
+The same plugin release ships a Linux/Darwin, normally dormant ttyd emergency terminal. The normal
+Web Remote supervisor owns its lightweight node control on every Fleet node and its ingress on the
+Fleet host. Idle state contains no ttyd or writable attachment; an authenticated desktop navigation
+opens one bounded existing-Pane attachment. It is not a second plugin, service, or Collie path.
 
 The Collie-derived node UI can inspect and control panes, switch among every locally discovered
 named Herdr session, and keep its native deep links:
@@ -57,13 +57,12 @@ targets only that Pane. Successful closure of the displayed Pane/Tab returns the
 Home; background closure preserves the current iframe and route. Host and Space rename/close remain
 intentionally absent.
 
-When a Gateway inventory node has a validated `fallbackUrl`, Fleet creates a secondary **Emergency
-terminal** link only in its wide fine-pointer desktop-computer presentation. Phone, tablet, compact,
-and coarse-pointer presentations do not create the link in the DOM. The link performs a plain
-top-level navigation with no prefetch, status probe, WebSocket, or activation request. A closed
-fallback path therefore returns a normal TLS-valid 404 and starts nothing. During an explicit
-lease, the independent helper validates the existing Fleet session cookie locally without calling
-Gateway or exposing another password.
+Fleet derives an **Emergency terminal** link from every enabled node id and the currently selected
+Pane/session. It creates that link only in the wide fine-pointer desktop-computer presentation;
+phone, tablet, compact, and coarse-pointer presentations omit it from the DOM. Following the link is
+the only browser activation action. The permanent ingress rejects rendering, hover, preview,
+prefetch, subresource and cross-site requests, validates the existing Fleet cookie locally, and
+strips selectors after activation.
 
 Fleet derives this tree from the `workspaces`, `tabs`, Agent panes, and shell panes already present in
 the same Collie snapshot fetched for Agent state. Expanding rows makes no request, and the projection
@@ -178,9 +177,9 @@ browser ──HTTPS── reverse proxy ──loopback── Fleet Gateway
                                             ├── local Collie ── Unix socket ── Herdr
                                             └── SSH -L ── remote Collie ───── Herdr
 
-explicit operator activation only:
+authenticated desktop navigation only:
 
-browser ──HTTPS── /ttyd/<node>/ ── local Fleet-session verification ── fixed ttyd/Herdr attachment
+browser ──HTTPS── /ttyd/<node>/ ── permanent ingress ── node control ── bounded ttyd/Herdr attachment
 ```
 
 - One Argon2id-backed username/password; no registration, users, roles, or tenant isolation.
@@ -259,28 +258,14 @@ The build uses frozen Bun lockfiles, typechecks the bridge/Gateway/supervisor an
 a staging directory, runs the generic ttyd companion security/integration tests, then swaps the
 completed PWA into place.
 
-## Dormant ttyd companion
+## Emergency terminal
 
-The generic service, verified ttyd pin, synthetic inventory, and CLI are in
-[`services/ttyd-fallback/`](./services/ttyd-fallback/). Real node mappings, SSH identities,
-session-signing configuration, reverse-proxy paths, and runtime findings must remain in an owner-protected external
-deployment overlay. The plugin manifest stays the only Herdr registration and deliberately has no
-fallback startup action or event.
-
-The public Gateway inventory may expose only the canonical node path on the exact Fleet HTTPS origin:
-
-```json
-{
-  "id": "local",
-  "name": "Local",
-  "publicHost": "local.herdr.example.com",
-  "fallbackUrl": "https://herdr.example.com/ttyd/local/"
-}
-```
-
-Gateway rejects credentials, ports, wrong-node paths, queries, fragments, and every non-Fleet
-host. This value is navigation metadata only. See the companion README for dormant
-installation and explicit prepare/enable/status/disable commands.
+The authoritative public architecture, schema-3 inventory, installation inputs, supervisor
+variables, status/disable recovery commands, security invariants, and tests live in the
+[`services/ttyd-fallback` guide](./services/ttyd-fallback/README.md). Gateway carries no terminal URL
+or enablement flag: Fleet derives `/ttyd/<node-id>/`, and the protected terminal inventory must
+exactly match the enabled Gateway node ids. Real mappings, signing configuration, SSH identities,
+reverse-proxy configuration, and runtime findings remain in the deployment environment.
 
 ## Node configuration
 

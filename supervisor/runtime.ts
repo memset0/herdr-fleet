@@ -30,6 +30,18 @@ export interface HostGateResult {
   reason: string | null;
 }
 
+export interface TerminalRoleConfig {
+  python: string;
+  nodeConfig: string;
+  ingress: null | {
+    inventory: string;
+    gatewayConfig: string;
+    liveRoot: string;
+    socketPath: string;
+    socketGid: number;
+  };
+}
+
 export function parseEnvFile(source: string): Record<string, string> {
   const parsed: Record<string, string> = {};
   for (const rawLine of source.split(/\r?\n/)) {
@@ -103,12 +115,64 @@ export function computeGeneration(pluginRoot: string): string {
     ...productionTypeScriptFiles(pluginRoot, "bridge"),
     ...productionTypeScriptFiles(pluginRoot, "gateway"),
     ...productionTypeScriptFiles(pluginRoot, "supervisor"),
+    ...(existsSync(join(pluginRoot, "services", "ttyd-fallback"))
+      ? readdirSync(join(pluginRoot, "services", "ttyd-fallback"), { withFileTypes: true })
+        .filter((entry) => entry.isFile() && (entry.name.endsWith(".py") || ["VERSION", "SHA256SUMS"].includes(entry.name)))
+        .map((entry) => join("services", "ttyd-fallback", entry.name))
+        .sort()
+      : []),
   ]) {
     const path = join(pluginRoot, relative);
     hash.update(relative);
     hash.update(existsSync(path) ? readFileSync(path) : "missing");
   }
   return hash.digest("hex").slice(0, 16);
+}
+
+function requiredAbsoluteEnv(env: NodeJS.ProcessEnv, key: string): string {
+  const value = env[key]?.trim();
+  if (!value || !isAbsolute(value)) throw new Error(`${key} must be an absolute path`);
+  return resolve(value);
+}
+
+export function resolveTerminalRoles(_paths: RuntimePaths, env: NodeJS.ProcessEnv): TerminalRoleConfig {
+  const nodeConfig = requiredAbsoluteEnv(env, "HERDR_WEB_TERMINAL_NODE_CONFIG");
+  const gatewayConfig = env.HERDR_WEB_GATEWAY_CONFIG?.trim();
+  const inventory = env.HERDR_WEB_TERMINAL_FLEET_CONFIG?.trim();
+  if (Boolean(gatewayConfig) !== Boolean(inventory)) {
+    throw new Error("HERDR_WEB_GATEWAY_CONFIG and HERDR_WEB_TERMINAL_FLEET_CONFIG must be configured together");
+  }
+  if (gatewayConfig && (!isAbsolute(gatewayConfig) || !isAbsolute(inventory!))) {
+    throw new Error("terminal Fleet and Gateway configs must use absolute paths");
+  }
+  const liveRoot = gatewayConfig
+    ? requiredAbsoluteEnv(env, "HERDR_WEB_TERMINAL_LIVE_ROOT")
+    : null;
+  const ingressSocket = env.HERDR_WEB_TERMINAL_INGRESS_SOCKET?.trim();
+  const ingressGid = env.HERDR_WEB_TERMINAL_INGRESS_GID?.trim();
+  if (Boolean(gatewayConfig) !== Boolean(ingressSocket) || Boolean(gatewayConfig) !== Boolean(ingressGid)) {
+    throw new Error("central terminal configuration requires ingress socket and GID together");
+  }
+  if (ingressSocket && !isAbsolute(ingressSocket)) {
+    throw new Error("HERDR_WEB_TERMINAL_INGRESS_SOCKET must be an absolute path");
+  }
+  const socketGid = ingressGid && /^(0|[1-9][0-9]{0,9})$/.test(ingressGid)
+    ? Number(ingressGid)
+    : null;
+  if (ingressGid && (socketGid === null || !Number.isSafeInteger(socketGid) || socketGid > 2_147_483_647)) {
+    throw new Error("HERDR_WEB_TERMINAL_INGRESS_GID must be a bounded numeric GID");
+  }
+  return {
+    python: env.HERDR_WEB_TERMINAL_PYTHON?.trim() || "python3",
+    nodeConfig,
+    ingress: gatewayConfig && inventory ? {
+      inventory: resolve(inventory),
+      gatewayConfig: resolve(gatewayConfig),
+      liveRoot: liveRoot!,
+      socketPath: resolve(ingressSocket!),
+      socketGid: socketGid!,
+    } : null,
+  };
 }
 
 export function resolveRuntimePaths(

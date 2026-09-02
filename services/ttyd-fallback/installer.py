@@ -12,7 +12,6 @@ import shutil
 import socket
 import subprocess
 import tempfile
-import urllib.parse
 import urllib.request
 
 import controller
@@ -25,8 +24,7 @@ REQUIRED_OPTIONS = (
     "--max-clients", "--base-path",
 )
 RUNTIME_FILES = (
-    "node.py", "platform_support.py", "stdio_unix_relay.py", "stdio_broker.py",
-    "auth_helper.py", "controller.py", "installer.py", "ttyd-fallback", "install.sh",
+    "node.py", "platform_support.py", "protocol.py", "stdio_unix_relay.py",
 )
 
 
@@ -139,7 +137,6 @@ def node_config(node: dict[str, object], install_root: pathlib.Path,
     copied.update({
         "platform": node["platform"],
         "architecture": node["architecture"],
-        "public_host": urllib.parse.urlsplit(str(node["public_origin"])).hostname,
         "ttyd": str(install_root / "bin" / "ttyd"),
         "ttyd_sha256": identity["sha256"],
         "ttyd_version_output": identity["version_output"],
@@ -162,7 +159,6 @@ def install_payload(candidate: pathlib.Path, node: dict[str, object], install_ro
     try:
         os.chmod(stage, 0o700)
         (stage / "bin").mkdir(mode=0o700)
-        (stage / "web").mkdir(mode=0o700)
         shutil.copyfile(candidate, stage / "bin" / "ttyd")
         os.chmod(stage / "bin" / "ttyd", 0o755)
         for name in RUNTIME_FILES:
@@ -171,8 +167,6 @@ def install_payload(candidate: pathlib.Path, node: dict[str, object], install_ro
         for name in ("VERSION", "SHA256SUMS", "UPSTREAM.md"):
             shutil.copyfile(SERVICE_DIR / name, stage / name)
             os.chmod(stage / name, 0o644)
-        shutil.copyfile(SERVICE_DIR / "web" / "index.html", stage / "web" / "index.html")
-        os.chmod(stage / "web" / "index.html", 0o644)
         write_json(stage / "node.json", node_config(node, install_root, identity), 0o600)
         if backup.exists():
             raise InstallerError(f"reserved rollback path already exists: {backup}")

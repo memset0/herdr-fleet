@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import fcntl
-import getpass
 import grp
 import json
 import os
@@ -14,16 +13,17 @@ import pwd
 import shutil
 import signal
 import socket
+import socketserver
 import stat
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 
 import platform_support
+import protocol
 
-MIN_LEASE = 30
-MAX_LEASE = 7200
 STATE_NAME = "lease.json"
 SOCKET_NAME = "ttyd.sock"
 
@@ -36,7 +36,7 @@ def load_config(path: str) -> dict[str, Any]:
     with open(path, encoding="utf-8") as handle:
         cfg = json.load(handle)
     required = {"id", "owner", "herdr_owner", "platform", "architecture", "herdr",
-                "server_socket", "runtime_dir", "public_host", "ttyd", "ttyd_sha256",
+                "server_socket", "runtime_dir", "ttyd", "ttyd_sha256",
                 "ttyd_version_output"}
     missing = sorted(required - cfg.keys())
     if missing:
@@ -60,6 +60,22 @@ def load_config(path: str) -> dict[str, Any]:
     return cfg
 
 
+def drop_to_owner(cfg: dict[str, Any]) -> None:
+    """Let a root-owned supervisor start the declared unprivileged client role."""
+    desired = pwd.getpwnam(cfg["owner"])
+    current_uid = os.geteuid()
+    if current_uid == desired.pw_uid:
+        return
+    if current_uid != 0:
+        raise FallbackError("node endpoint cannot change to the declared owner")
+    try:
+        os.initgroups(cfg["owner"], desired.pw_gid)
+        os.setgid(desired.pw_gid)
+        os.setuid(desired.pw_uid)
+    except OSError as exc:
+        raise FallbackError("node endpoint could not drop to the declared owner") from exc
+
+
 def runtime_paths(cfg: dict[str, Any]) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
     root = pathlib.Path(cfg["runtime_dir"])
     return root, root / STATE_NAME, root / SOCKET_NAME
@@ -75,7 +91,7 @@ def process_matches(pid: int, start: str, activation: str) -> bool:
 
 
 def gate(cfg: dict[str, Any]) -> None:
-    if getpass.getuser() != cfg["owner"] or pwd.getpwuid(os.geteuid()).pw_name != cfg["owner"]:
+    if pwd.getpwuid(os.geteuid()).pw_name != cfg["owner"]:
         raise FallbackError(f"owner gate rejected; expected {cfg['owner']}")
     host = socket.gethostname().split(".")[0]
     if cfg.get("host_exact") and host != cfg["host_exact"]:
@@ -207,6 +223,16 @@ def stop_locked(cfg: dict[str, Any], state_path: pathlib.Path, socket_path: path
     return was_live
 
 
+def reconcile_node(cfg: dict[str, Any]) -> bool:
+    """Converge one node to dormant without trusting a recycled PID."""
+    root, state_path, socket_path = ensure_runtime(cfg)
+    lock_path = root / "control.lock"
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return stop_locked(cfg, state_path, socket_path)
+
+
 def preflight(cfg: dict[str, Any], pane_id: str | None) -> dict[str, Any]:
     pane, _terminal = inspect_server(cfg, pane_id)
     ttyd = pathlib.Path(cfg["ttyd"])
@@ -221,13 +247,14 @@ def preflight(cfg: dict[str, Any], pane_id: str | None) -> dict[str, Any]:
     return {"node": cfg["id"], "healthy": True, "pane_id": pane}
 
 
-def command_start(args: argparse.Namespace, cfg: dict[str, Any]) -> None:
-    lease = int(args.lease)
-    if lease < MIN_LEASE or lease > MAX_LEASE:
-        raise FallbackError(f"lease must be between {MIN_LEASE} and {MAX_LEASE} seconds")
-    if not args.activation_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in args.activation_id):
+def start_activation(cfg: dict[str, Any], config_path: str, activation_id: str,
+                     lease: int, pane_id: str | None) -> dict[str, Any]:
+    lease = int(lease)
+    if lease != protocol.LEASE_SECONDS:
+        raise FallbackError(f"lease must be exactly {protocol.LEASE_SECONDS} seconds")
+    if not activation_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in activation_id):
         raise FallbackError("invalid activation id")
-    pane, terminal = inspect_server(cfg, args.pane)
+    pane, terminal = inspect_server(cfg, pane_id)
     preflight(cfg, pane)
     root, state_path, socket_path = ensure_runtime(cfg)
     lock_path = root / "control.lock"
@@ -239,11 +266,11 @@ def command_start(args: argparse.Namespace, cfg: dict[str, Any]) -> None:
             raise FallbackError("a node fallback lease is already active")
         stop_locked(cfg, state_path, socket_path)
         deadline = int(time.time()) + lease
-        state_data = {"schema": 1, "node": cfg["id"], "activation_id": args.activation_id,
+        state_data = {"schema": 1, "node": cfg["id"], "activation_id": activation_id,
                       "pane_id": pane, "deadline": deadline, "status": "launching"}
         write_state(state_path, state_data)
-        command = [sys.executable, str(pathlib.Path(__file__).resolve()), "--config", args.config,
-                   "_run_lease", "--activation-id", args.activation_id,
+        command = [sys.executable, str(pathlib.Path(__file__).resolve()), "--config", config_path,
+                   "_run_lease", "--activation-id", activation_id,
                    "--deadline", str(deadline), "--terminal-id", terminal, "--pane-id", pane]
         log_path = root / "lease.log"
         log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -266,10 +293,12 @@ def command_start(args: argparse.Namespace, cfg: dict[str, Any]) -> None:
                 state_data = read_state(state_path) or {}
                 if state_data.get("status") == "listening" and socket_path.exists():
                     ready = True
-                    print(json.dumps({"node": cfg["id"], "active": True, "pane_id": pane,
-                                      "deadline": deadline}, sort_keys=True))
-                    return
-                if not process_matches(runner.pid, start, args.activation_id):
+                    threading.Thread(target=runner.wait, name="terminal-lease-reaper",
+                                     daemon=True).start()
+                    return {"node": cfg["id"], "active": True, "pane_id": pane,
+                            "activation_id": activation_id, "deadline": deadline,
+                            "data_socket": str(socket_path)}
+                if not process_matches(runner.pid, start, activation_id):
                     break
                 time.sleep(0.05)
             raise FallbackError("ttyd endpoint failed to become ready")
@@ -287,40 +316,11 @@ def command_start(args: argparse.Namespace, cfg: dict[str, Any]) -> None:
                 unlink_if_present(state_path)
 
 
-def command_status(cfg: dict[str, Any]) -> None:
-    gate(cfg)
-    _root, state_path, socket_path = runtime_paths(cfg)
-    state = read_state(state_path)
-    active = state_live(state) and socket_path.exists() and stat.S_ISSOCK(socket_path.stat().st_mode)
-    expired = bool(state and isinstance(state.get("deadline"), int) and state["deadline"] <= int(time.time()))
-    result: dict[str, Any] = {"node": cfg["id"], "active": bool(active and not expired)}
-    if state and not state.get("invalid"):
-        result.update({key: state[key] for key in ("activation_id", "pane_id", "deadline", "status") if key in state})
-        result["listener"] = bool(socket_path.exists())
-        result["runner"] = state_live(state)
-        result["expired"] = expired
-    print(json.dumps(result, sort_keys=True))
-    if active and not expired:
-        return
-    raise SystemExit(3)
-
-
-def command_stop(cfg: dict[str, Any]) -> None:
-    gate(cfg)
-    root, state_path, socket_path = ensure_runtime(cfg)
-    lock_path = root / "control.lock"
-    with lock_path.open("a+", encoding="utf-8") as lock:
-        os.chmod(lock_path, 0o600)
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        was_live = stop_locked(cfg, state_path, socket_path)
-    print(json.dumps({"node": cfg["id"], "active": False, "stopped_live_lease": was_live}, sort_keys=True))
-
-
 def run_lease(args: argparse.Namespace, cfg: dict[str, Any]) -> None:
     gate(cfg)
     root, state_path, socket_path = ensure_runtime(cfg)
     remaining = int(args.deadline) - int(time.time())
-    if remaining <= 0 or remaining > MAX_LEASE:
+    if remaining <= 0 or remaining > protocol.LEASE_SECONDS:
         raise FallbackError("lease deadline is invalid")
     state = None
     for _ in range(100):
@@ -351,9 +351,16 @@ def run_lease(args: argparse.Namespace, cfg: dict[str, Any]) -> None:
             raise FallbackError("ttyd socket did not appear")
         state.update({"status": "listening", "ttyd_pid": child.pid})
         write_state(state_path, state)
-        try:
-            child.wait(timeout=max(1, int(args.deadline) - int(time.time())))
-        except subprocess.TimeoutExpired:
+        while child.poll() is None:
+            current = read_state(state_path)
+            if (not current or current.get("activation_id") != args.activation_id
+                    or int(current.get("deadline", 0)) <= int(time.time())):
+                break
+            try:
+                child.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                continue
+        if child.poll() is None:
             child.terminate()
             try:
                 child.wait(timeout=3)
@@ -369,18 +376,144 @@ def run_lease(args: argparse.Namespace, cfg: dict[str, Any]) -> None:
             unlink_if_present(state_path)
 
 
+def control_status(cfg: dict[str, Any]) -> dict[str, Any]:
+    gate(cfg)
+    _root, state_path, socket_path = runtime_paths(cfg)
+    state = read_state(state_path)
+    active = bool(
+        state_live(state)
+        and socket_path.exists()
+        and stat.S_ISSOCK(socket_path.stat().st_mode)
+        and isinstance(state, dict)
+        and int(state.get("deadline", 0)) > int(time.time())
+    )
+    result: dict[str, Any] = {"node": cfg["id"], "control": True, "active": active}
+    if state and not state.get("invalid"):
+        result.update({key: state[key] for key in (
+            "activation_id", "pane_id", "deadline", "status",
+        ) if key in state})
+    return result
+
+
+def heartbeat_activation(cfg: dict[str, Any], activation_id: str) -> dict[str, Any]:
+    gate(cfg)
+    root, state_path, socket_path = ensure_runtime(cfg)
+    with (root / "control.lock").open("a+", encoding="utf-8") as lock:
+        os.chmod(lock.name, 0o600)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        state = read_state(state_path)
+        if (not state_live(state) or not state or state.get("activation_id") != activation_id
+                or not socket_path.exists() or not stat.S_ISSOCK(socket_path.stat().st_mode)):
+            raise FallbackError("activation is not active")
+        deadline = int(time.time()) + protocol.LEASE_SECONDS
+        state["deadline"] = deadline
+        state["status"] = "listening"
+        write_state(state_path, state)
+    return {"node": cfg["id"], "active": True, "activation_id": activation_id,
+            "deadline": deadline}
+
+
+class NodeControlServer(socketserver.UnixStreamServer):
+    allow_reuse_address = False
+
+    def __init__(self, path: str, cfg: dict[str, Any], config_path: str):
+        self.cfg = cfg
+        self.config_path = config_path
+        self.replay = protocol.ReplayWindow()
+        super().__init__(path, NodeControlHandler)
+
+
+class NodeControlHandler(socketserver.StreamRequestHandler):
+    def handle(self) -> None:
+        request_id = "0" * 32
+        try:
+            raw = self.rfile.readline(protocol.MAX_LINE_BYTES + 1)
+            if len(raw) > protocol.MAX_LINE_BYTES:
+                raise protocol.ProtocolError("request must be one bounded line")
+            server = self.server
+            if not isinstance(server, NodeControlServer):
+                raise protocol.ProtocolError("invalid node control server")
+            request = protocol.decode_request(
+                raw,
+                expected_channel="node-control",
+                expected_node=server.cfg["id"],
+            )
+            request_id = request["request_id"]
+            server.replay.accept(request_id)
+            action = request["action"]
+            if action == "ready":
+                result = {**control_status(server.cfg), **preflight(server.cfg, None)}
+            elif action == "status":
+                result = control_status(server.cfg)
+            elif action == "activate":
+                payload = request["payload"]
+                if payload["session"] != server.cfg["session"]:
+                    raise FallbackError("requested Herdr session does not match node configuration")
+                result = start_activation(
+                    server.cfg,
+                    server.config_path,
+                    payload["activation_id"],
+                    payload["lease_seconds"],
+                    payload["pane_id"],
+                )
+            elif action == "disable":
+                root, state_path, socket_path = ensure_runtime(server.cfg)
+                with (root / "control.lock").open("a+", encoding="utf-8") as lock:
+                    os.chmod(lock.name, 0o600)
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    stopped = stop_locked(server.cfg, state_path, socket_path)
+                result = {"node": server.cfg["id"], "control": True,
+                          "active": False, "stopped": stopped}
+            elif action == "heartbeat":
+                result = heartbeat_activation(
+                    server.cfg, request["payload"]["activation_id"],
+                )
+            else:
+                raise protocol.ProtocolError("unsupported node control action")
+            self.wfile.write(protocol.encode_response(request_id, result=result))
+        except (FallbackError, OSError, protocol.ProtocolError, ValueError) as exc:
+            message = str(exc)[:240] or "node control rejected the request"
+            try:
+                self.wfile.write(protocol.encode_response(request_id, error=message))
+            except protocol.ProtocolError:
+                return
+
+
+def serve_control(args: argparse.Namespace, cfg: dict[str, Any]) -> None:
+    gate(cfg)
+    reconcile_node(cfg)
+    runtime_root = pathlib.Path(cfg["runtime_dir"])
+    runtime_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(runtime_root, 0o700)
+    control_socket = protocol.socket_path(runtime_root, "node-control", cfg["id"])
+    unlink_if_present(control_socket)
+    stop_requested = False
+
+    def request_stop(_signum: int, _frame: Any) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+
+    previous_term = signal.signal(signal.SIGTERM, request_stop)
+    previous_int = signal.signal(signal.SIGINT, request_stop)
+    server = NodeControlServer(str(control_socket), cfg, args.config)
+    server.timeout = 0.25
+    os.chmod(control_socket, 0o600)
+    try:
+        while not stop_requested:
+            server.handle_request()
+    finally:
+        server.server_close()
+        unlink_if_present(control_socket)
+        signal.signal(signal.SIGTERM, previous_term)
+        signal.signal(signal.SIGINT, previous_int)
+        reconcile_node(cfg)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     sub = parser.add_subparsers(dest="command", required=True)
-    probe = sub.add_parser("preflight")
-    probe.add_argument("--pane")
-    start = sub.add_parser("start")
-    start.add_argument("--activation-id", required=True)
-    start.add_argument("--lease", required=True, type=int)
-    start.add_argument("--pane")
-    sub.add_parser("status")
-    sub.add_parser("stop")
+    sub.add_parser("serve")
     runner = sub.add_parser("_run_lease")
     runner.add_argument("--activation-id", required=True)
     runner.add_argument("--deadline", required=True, type=int)
@@ -394,14 +527,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         cfg = load_config(args.config)
-        if args.command == "preflight":
-            print(json.dumps(preflight(cfg, args.pane), sort_keys=True))
-        elif args.command == "start":
-            command_start(args, cfg)
-        elif args.command == "status":
-            command_status(cfg)
-        elif args.command == "stop":
-            command_stop(cfg)
+        drop_to_owner(cfg)
+        if args.command == "serve":
+            serve_control(args, cfg)
         elif args.command == "_run_lease":
             run_lease(args, cfg)
         return 0

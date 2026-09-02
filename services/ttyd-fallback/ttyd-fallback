@@ -2,10 +2,10 @@
 set -euo pipefail
 
 service_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-if [[ "${1:-}" == install ]]; then
-  shift
-  exec "$service_dir/install.sh" "$@"
-fi
 python_bin="${HERDR_WEB_TTYD_PYTHON:-python3}"
 export PYTHONDONTWRITEBYTECODE=1
+if [[ "${1:-}" == install ]]; then
+  shift
+  exec "$python_bin" -B "$service_dir/installer.py" "$@"
+fi
 exec "$python_bin" -B "$service_dir/controller.py" "$@"

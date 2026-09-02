@@ -34,7 +34,6 @@ export interface NodeConfig {
   id: string;
   name: string;
   publicHost: string;
-  fallbackUrl?: string;
   enabled: boolean;
   labels: string[];
   transport: NodeTransportConfig;
@@ -120,33 +119,6 @@ function absolutePath(value: unknown, label: string): string {
   const path = string(value, label);
   if (!isAbsolute(path)) throw new Error(`${label} must be absolute`);
   return path;
-}
-
-function fallbackUrl(value: unknown, label: string, fleetHost: string, nodeId: string): string | undefined {
-  if (value === undefined) return undefined;
-  let url: URL;
-  try {
-    url = new URL(string(value, label));
-  } catch {
-    throw new Error(`${label} must be an exact HTTPS URL`);
-  }
-  const host = hostname(url.hostname, `${label} hostname`);
-  const expectedPath = `/ttyd/${nodeId}/`;
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    url.port ||
-    url.pathname !== expectedPath ||
-    url.search ||
-    url.hash
-  ) {
-    throw new Error(`${label} must be the exact Fleet HTTPS node path ${expectedPath}`);
-  }
-  if (host !== fleetHost) {
-    throw new Error(`${label} must use the Fleet host ${fleetHost}`);
-  }
-  return `https://${host}${expectedPath}`;
 }
 
 function optionalSelector(value: unknown, label: string, max: number): string | undefined {
@@ -245,17 +217,16 @@ function parseSshTransport(raw: JsonObject, label: string): SshTransportConfig {
   };
 }
 
-function parseNode(value: unknown, index: number, baseDomain: string, fleetHost: string): NodeConfig {
+function parseNode(value: unknown, index: number, baseDomain: string): NodeConfig {
   const label = `nodes[${index}]`;
   const raw = object(value, label);
-  keys(raw, ["id", "name", "publicHost", "fallbackUrl", "enabled", "labels", "transport"], label);
+  keys(raw, ["id", "name", "publicHost", "enabled", "labels", "transport"], label);
   const id = string(raw.id, `${label}.id`);
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(id)) throw new Error(`${label}.id is invalid`);
   const publicHost = hostname(raw.publicHost, `${label}.publicHost`);
   if (publicHost === baseDomain || !publicHost.endsWith(`.${baseDomain}`)) {
     throw new Error(`${label}.publicHost must be a subdomain of ${baseDomain}`);
   }
-  const parsedFallbackUrl = fallbackUrl(raw.fallbackUrl, `${label}.fallbackUrl`, fleetHost, id);
   const rawLabels = raw.labels ?? [];
   if (!Array.isArray(rawLabels) || rawLabels.some((entry) => typeof entry !== "string" || !entry.trim())) {
     throw new Error(`${label}.labels must be an array of non-empty strings`);
@@ -274,7 +245,6 @@ function parseNode(value: unknown, index: number, baseDomain: string, fleetHost:
     id,
     name: string(raw.name, `${label}.name`),
     publicHost,
-    ...(parsedFallbackUrl ? { fallbackUrl: parsedFallbackUrl } : {}),
     enabled:
       raw.enabled === undefined
         ? true
@@ -324,11 +294,10 @@ export function parseGatewayConfig(value: unknown): GatewayConfig {
   }
 
   if (!Array.isArray(raw.nodes) || raw.nodes.length === 0) throw new Error("nodes must contain at least one instance");
-  const nodes = raw.nodes.map((node, index) => parseNode(node, index, baseDomain, fleetHost));
+  const nodes = raw.nodes.map((node, index) => parseNode(node, index, baseDomain));
   if (!nodes.some((node) => node.enabled)) throw new Error("nodes must contain at least one enabled instance");
   const ids = new Set<string>();
   const hosts = new Set<string>();
-  const fallbackPaths = new Set<string>();
   const localPorts = new Set<number>([listenPort]);
   const sshIdentityPaths = new Map<string, string>();
   for (const node of nodes) {
@@ -336,13 +305,6 @@ export function parseGatewayConfig(value: unknown): GatewayConfig {
     if (hosts.has(node.publicHost) || node.publicHost === fleetHost) throw new Error(`duplicate public host: ${node.publicHost}`);
     ids.add(node.id);
     hosts.add(node.publicHost);
-    if (node.fallbackUrl) {
-      const path = new URL(node.fallbackUrl).pathname;
-      if (fallbackPaths.has(path)) {
-        throw new Error(`duplicate fallback path: ${path}`);
-      }
-      fallbackPaths.add(path);
-    }
     if (node.transport.type === "ssh") {
       if (node.enabled) {
         const existingNode = sshIdentityPaths.get(node.transport.identityFile);

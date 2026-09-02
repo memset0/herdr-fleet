@@ -12,7 +12,6 @@ command -v "$python_bin" >/dev/null 2>&1 || {
 }
 PYTHONPYCACHEPREFIX="$compile_root" "$python_bin" -m py_compile "$feature_dir"/*.py
 export PYTHONDONTWRITEBYTECODE=1
-bash -n "$feature_dir/install.sh"
 bash -n "$feature_dir/ttyd-fallback"
 HERDR_WEB_TTYD_CONFIG_PYTHON="$python_bin" "$feature_dir/test/test_installer.sh"
 "$python_bin" "$feature_dir/test/test_fallback.py"

@@ -21,30 +21,10 @@ describe("gateway configuration", () => {
     expect(config.nodes[0]?.transport).toEqual({ type: "local", url: "http://127.0.0.1:18788" });
   });
 
-  test("accepts only the exact Fleet HTTPS fallback path for that node", () => {
+  test("rejects the retired independently configured terminal URL", () => {
     const configured = rawGatewayConfig();
     nodes(configured)[0]!.fallbackUrl = "https://fleet.example.com/ttyd/local/";
-    expect(parseGatewayConfig(configured).nodes[0]?.fallbackUrl).toBe("https://fleet.example.com/ttyd/local/");
-
-    for (const candidate of [
-      "http://fleet.example.com/ttyd/local/",
-      "https://operator:secret@fleet.example.com/ttyd/local/",
-      "https://fleet.example.com:8443/ttyd/local/",
-      "https://fleet.example.com/ttyd/other/",
-      "https://fleet.example.com/ttyd/local",
-      "https://fleet.example.com/ttyd/local/terminal/",
-      "https://fleet.example.com/ttyd/local/?activate=1",
-      "https://fleet.example.com/ttyd/local/#terminal",
-      "https://local.example.com/ttyd/local/",
-    ]) {
-      const invalid = rawGatewayConfig();
-      nodes(invalid)[0]!.fallbackUrl = candidate;
-      expect(() => parseGatewayConfig(invalid)).toThrow("fallbackUrl");
-    }
-
-    const wrongNode = rawGatewayConfig();
-    nodes(wrongNode)[0]!.fallbackUrl = "https://fleet.example.com/ttyd/other/";
-    expect(() => parseGatewayConfig(wrongNode)).toThrow("exact Fleet HTTPS node path");
+    expect(() => parseGatewayConfig(configured)).toThrow("unknown field(s): fallbackUrl");
   });
 
   test("accepts a bounded Fleet iframe cache size and rejects invalid Fleet UI settings", () => {

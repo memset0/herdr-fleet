@@ -3,18 +3,12 @@
 
 from __future__ import annotations
 
-import argparse
-import json
 import os
 import pathlib
 import selectors
 import shlex
-import signal
 import socket
 import subprocess
-import sys
-import threading
-import time
 from typing import Any
 
 
@@ -30,11 +24,12 @@ def ssh_command(spec: dict[str, Any], live_root: pathlib.Path) -> list[str]:
     if spec.get("jump"):
         jump = spec["jump"]
         proxy_known = live_root / jump["known_hosts"]
+        proxy_identity = live_root / jump["identity"]
         proxy_args = ["ssh", "-F", "/dev/null", "-W", "%h:%p", "-o", "BatchMode=yes",
                       "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes",
                       "-o", f"UserKnownHostsFile={proxy_known}", "-o", "ForwardAgent=no",
                       "-o", "ForwardX11=no", "-o", "RequestTTY=no", "-o", "ControlMaster=no",
-                      "-i", jump["identity"], "-p", str(jump["port"]),
+                      "-i", str(proxy_identity), "-p", str(jump["port"]),
                       f"{jump['user']}@{jump['host']}"]
         command.extend(["-o", f"ProxyCommand={shlex.join(proxy_args)}"])
     command.append(f"{spec['user']}@{spec['host']}")
@@ -100,61 +95,3 @@ def pump_socket_process(client: socket.socket, process: subprocess.Popen[bytes])
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-
-
-def handle(client: socket.socket, spec: dict[str, Any], live_root: pathlib.Path) -> None:
-    if spec["kind"] == "local":
-        command = [sys.executable, str(pathlib.Path(__file__).with_name("stdio_unix_relay.py")),
-                   "--config", spec["node_config"]]
-    elif spec["kind"] == "ssh":
-        command = ssh_command(spec, live_root)
-    else:
-        client.close()
-        return
-    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, close_fds=True)
-    pump_socket_process(client, process)
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--spec", required=True)
-    parser.add_argument("--socket", required=True)
-    parser.add_argument("--live-root", required=True)
-    parser.add_argument("--socket-gid", type=int, required=True)
-    parser.add_argument("--deadline", type=int, required=True)
-    args = parser.parse_args()
-    spec = json.loads(pathlib.Path(args.spec).read_text())
-    path = pathlib.Path(args.socket)
-    path.parent.mkdir(mode=0o710, parents=True, exist_ok=True)
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        pass
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(str(path))
-    os.chown(path, os.geteuid(), args.socket_gid)
-    os.chmod(path, 0o660)
-    listener.listen(16)
-    stop = threading.Event()
-    signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    signal.signal(signal.SIGINT, lambda *_: stop.set())
-    listener.settimeout(1)
-    try:
-        while not stop.is_set() and int(time.time()) < args.deadline:
-            try:
-                client, _addr = listener.accept()
-            except socket.timeout:
-                continue
-            threading.Thread(target=handle, args=(client, spec, pathlib.Path(args.live_root)), daemon=True).start()
-    finally:
-        listener.close()
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

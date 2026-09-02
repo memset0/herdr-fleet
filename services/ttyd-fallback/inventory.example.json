@@ -1,8 +1,7 @@
 {
-  "schema": 2,
+  "schema": 3,
   "nodes": {
     "local-a": {
-      "enabled": true,
       "platform": "linux",
       "architecture": "x86_64",
       "owner": "operator",
@@ -17,14 +16,11 @@
       "binary": {
         "source": "release_asset"
       },
-      "public_origin": "https://fleet.herdr.example.com",
-      "public_path": "/ttyd/local-a",
       "transport": {
         "kind": "local"
       }
     },
     "cluster-a": {
-      "enabled": false,
       "platform": "linux",
       "architecture": "aarch64",
       "owner": "operator",
@@ -40,17 +36,13 @@
       "binary": {
         "source": "release_asset"
       },
-      "public_origin": "https://fleet.herdr.example.com",
-      "public_path": "/ttyd/cluster-a",
       "transport": {
         "kind": "ssh",
         "host": "cluster-a.internal.example",
         "port": 22,
         "user": "operator",
         "identity": "ssh/cluster-a-fallback",
-        "known_hosts": "ssh/cluster-a-known-hosts",
-        "control_identity": "/home/operator/.ssh/id_ed25519",
-        "control_known_hosts": "ssh/cluster-a-known-hosts"
+        "known_hosts": "ssh/cluster-a-known-hosts"
       }
     }
   }

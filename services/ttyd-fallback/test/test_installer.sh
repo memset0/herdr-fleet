@@ -21,7 +21,6 @@ esac
 import hashlib, json, os, pathlib, pwd, socket, sys
 root, platform, current, wrong = sys.argv[1:]
 base = {
-    "enabled": True,
     "platform": platform,
     "owner": pwd.getpwuid(os.geteuid()).pw_name,
     "herdr_owner": pwd.getpwuid(os.geteuid()).pw_name,
@@ -31,8 +30,6 @@ base = {
     "session": None,
     "server_socket": str(pathlib.Path(root) / "herdr.sock"),
     "runtime_dir": str(pathlib.Path(root) / "runtime"),
-    "public_origin": "https://fleet.example.com",
-    "public_path": "/ttyd/local-a",
     "transport": {"kind": "local"},
 }
 if platform == "linux":
@@ -44,20 +41,20 @@ else:
               "version_output": "ttyd version synthetic"}
 base["binary"] = binary
 good = dict(base, architecture=current, install_root=str(pathlib.Path(root) / "install"))
-bad = dict(base, architecture=wrong, install_root=str(pathlib.Path(root) / "wrong"), public_path="/ttyd/wrong-arch")
-pathlib.Path(root, "inventory.json").write_text(json.dumps({"schema": 2, "nodes": {"local-a": good, "wrong-arch": bad}}))
+bad = dict(base, architecture=wrong, install_root=str(pathlib.Path(root) / "wrong"))
+pathlib.Path(root, "inventory.json").write_text(json.dumps({"schema": 3, "nodes": {"local-a": good, "wrong-arch": bad}}))
 ' "$test_root" "$current_platform" "$current_arch" "$wrong_arch"
 inventory="$test_root/inventory.json"
 
 if HERDR_WEB_TTYD_DRY_RUN=1 \
-  "$service_dir/install.sh" --inventory "$inventory" --node unknown >"$test_root/unknown.out" 2>&1; then
+  "$service_dir/ttyd-fallback" install --inventory "$inventory" --node unknown >"$test_root/unknown.out" 2>&1; then
   printf 'installer test: unknown node unexpectedly succeeded\n' >&2
   exit 1
 fi
-grep -Eq 'unknown or disabled node|invalid shape' "$test_root/unknown.out"
+grep -Eq 'unknown node|invalid shape' "$test_root/unknown.out"
 
 if HERDR_WEB_TTYD_DRY_RUN=1 \
-  "$service_dir/install.sh" --inventory "$inventory" --node wrong-arch >"$test_root/arch.out" 2>&1; then
+  "$service_dir/ttyd-fallback" install --inventory "$inventory" --node wrong-arch >"$test_root/arch.out" 2>&1; then
   printf 'installer test: wrong architecture unexpectedly succeeded\n' >&2
   exit 1
 fi
@@ -71,7 +68,7 @@ inventory["nodes"]["local-a"]["unexpected"] = "must-fail-closed"
 path.write_text(json.dumps(inventory))
 PY
 if HERDR_WEB_TTYD_DRY_RUN=1 \
-  "$service_dir/install.sh" --inventory "$inventory" --node local-a >"$test_root/schema.out" 2>&1; then
+  "$service_dir/ttyd-fallback" install --inventory "$inventory" --node local-a >"$test_root/schema.out" 2>&1; then
   printf 'installer test: unknown inventory field unexpectedly succeeded\n' >&2
   exit 1
 fi
@@ -94,7 +91,7 @@ path.write_text(json.dumps(inventory))
 PY
 fi
 if HERDR_WEB_TTYD_SOURCE_BINARY=/usr/bin/true \
-  "$service_dir/install.sh" --inventory "$inventory" --node local-a >"$test_root/checksum.out" 2>&1; then
+  "$service_dir/ttyd-fallback" install --inventory "$inventory" --node local-a >"$test_root/checksum.out" 2>&1; then
   printf 'installer test: wrong checksum unexpectedly succeeded\n' >&2
   exit 1
 fi
@@ -108,7 +105,7 @@ if [[ "$current_platform" == linux ]]; then
 fi
 
 env -u PYTHONDONTWRITEBYTECODE \
-  "$service_dir/install.sh" --help >"$test_root/no-pycache.out"
+  "$service_dir/ttyd-fallback" install --help >"$test_root/no-pycache.out"
 test ! -d "$service_dir/__pycache__"
 
 printf 'installer rejection tests: ok\n'

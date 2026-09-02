@@ -13,6 +13,7 @@ import {
   loadPluginEnv,
   positiveIntEnv,
   resolveRuntimePaths,
+  resolveTerminalRoles,
   sanitizedDaemonEnv,
 } from "./runtime.ts";
 
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
   const collieHost = loadedEnv.COLLIE_HOST?.trim() || "127.0.0.1";
   if (!isLoopback(collieHost)) throw new Error(`COLLIE_HOST must be loopback, got ${collieHost}`);
   const bun = process.execPath;
+  const terminalRoles = resolveTerminalRoles(paths, loadedEnv);
   const collieStateDir = join(paths.stateDir, "collie");
   await mkdir(collieStateDir, { recursive: true, mode: 0o700 });
   await chmod(collieStateDir, 0o700);
@@ -71,6 +73,7 @@ async function main(): Promise<void> {
     HERDR_PLUGIN_STATE_DIR: collieStateDir,
     HERDR_PLUGIN_ROOT: paths.pluginRoot,
     HERDR_WEB_GENERATION: paths.generation,
+    PYTHONDONTWRITEBYTECODE: "1",
   };
   const children = [
     new ManagedChild({
@@ -79,6 +82,19 @@ async function main(): Promise<void> {
       cwd: paths.pluginRoot,
       env: childEnv,
       logPath: join(paths.stateDir, "collie.log"),
+    }),
+    new ManagedChild({
+      name: "terminal-node",
+      command: [
+        terminalRoles.python,
+        join(paths.pluginRoot, "services", "ttyd-fallback", "node.py"),
+        "--config",
+        terminalRoles.nodeConfig,
+        "serve",
+      ],
+      cwd: paths.pluginRoot,
+      env: childEnv,
+      logPath: join(paths.stateDir, "terminal-node.log"),
     }),
   ];
   const gatewayConfig = loadedEnv.HERDR_WEB_GATEWAY_CONFIG?.trim();
@@ -90,6 +106,30 @@ async function main(): Promise<void> {
         cwd: paths.pluginRoot,
         env: { ...loadedEnv, HERDR_WEB_GENERATION: paths.generation },
         logPath: join(paths.stateDir, "gateway.log"),
+      }),
+    );
+  }
+  if (terminalRoles.ingress) {
+    children.push(
+      new ManagedChild({
+        name: "terminal-ingress",
+        command: [
+          terminalRoles.python,
+          join(paths.pluginRoot, "services", "ttyd-fallback", "ingress.py"),
+          "--socket",
+          terminalRoles.ingress.socketPath,
+          "--socket-gid",
+          String(terminalRoles.ingress.socketGid),
+          "--inventory",
+          terminalRoles.ingress.inventory,
+          "--gateway-config",
+          terminalRoles.ingress.gatewayConfig,
+          "--live-root",
+          terminalRoles.ingress.liveRoot,
+        ],
+        cwd: paths.pluginRoot,
+        env: childEnv,
+        logPath: join(paths.stateDir, "terminal-ingress.log"),
       }),
     );
   }

@@ -12,6 +12,34 @@ import socket
 import sys
 
 import node
+import protocol
+
+
+def select_upstream(cfg: dict[str, object], prelude: bytes) -> pathlib.Path:
+    root, state_path, data_socket = node.runtime_paths(cfg)
+    if prelude.lstrip().startswith(b"{"):
+        protocol.decode_request(
+            prelude,
+            expected_channel="node-control",
+            expected_node=str(cfg["id"]),
+        )
+        return protocol.socket_path(root, "node-control", str(cfg["id"]))
+    status = node.read_state(state_path)
+    if not node.state_live(status) or not data_socket.exists():
+        raise node.FallbackError("no active terminal lease")
+    return data_socket
+
+
+def read_prelude() -> bytes:
+    value = bytearray()
+    while b"\n" not in value and len(value) <= protocol.MAX_LINE_BYTES:
+        block = os.read(sys.stdin.fileno(), min(4096, protocol.MAX_LINE_BYTES + 1 - len(value)))
+        if not block:
+            break
+        value.extend(block)
+    if not value or len(value) > protocol.MAX_LINE_BYTES or b"\n" not in value:
+        raise node.FallbackError("relay request prelude is invalid")
+    return bytes(value)
 
 
 def main() -> int:
@@ -23,12 +51,11 @@ def main() -> int:
         node.gate(cfg)
         if os.environ.get("SSH_ORIGINAL_COMMAND"):
             raise node.FallbackError("SSH command arguments are not permitted")
-        _root, _state_path, socket_path = node.runtime_paths(cfg)
-        status = node.read_state(_state_path)
-        if not node.state_live(status) or not socket_path.exists():
-            raise node.FallbackError("no active fallback lease")
+        prelude = read_prelude()
+        socket_path = select_upstream(cfg, prelude)
         upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         upstream.connect(str(socket_path))
+        upstream.sendall(prelude)
         upstream.setblocking(False)
         os.set_blocking(sys.stdin.fileno(), False)
         os.set_blocking(sys.stdout.fileno(), False)
