@@ -14,7 +14,8 @@
   },
   "pollIntervalMs": 5000,
   "fleetUi": {
-    "iframeCacheSize": 5
+    "iframeCacheSize": 5,
+    "shortcutsFile": "/etc/herdr-web-remote/shortcuts.json"
   },
   "discordNotifications": {
     "enabled": false,

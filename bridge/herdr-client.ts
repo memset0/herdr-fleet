@@ -472,6 +472,11 @@ export class HerdrClient {
     return this.request<void>("tab.rename", { tab_id: tabId, label });
   }
 
+  /** Set a workspace/Space label. Herdr requires a non-null string. */
+  renameWorkspace(workspaceId: string, label: string): Promise<void> {
+    return this.request<void>("workspace.rename", { workspace_id: workspaceId, label });
+  }
+
   /**
    * Close a tab, terminating EVERY pane inside it (live-verified 2026-07-19: the tab's shell/agent
    * panes all disappear with it — closing a tab is a bulk pane-close). Resolves on herdr's
@@ -480,6 +485,11 @@ export class HerdrClient {
    */
   closeTab(tabId: string): Promise<void> {
     return this.request<void>("tab.close", { tab_id: tabId });
+  }
+
+  /** Close a workspace/Space, terminating every Tab and Pane it owns. */
+  closeWorkspace(workspaceId: string): Promise<void> {
+    return this.request<void>("workspace.close", { workspace_id: workspaceId });
   }
 
   /** Reachability check for the connected/disconnected banner. */

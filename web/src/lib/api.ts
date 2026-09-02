@@ -393,6 +393,25 @@ export function closeTab(tabId: string, session?: string): Promise<ActionRespons
   });
 }
 
+/** Set a Space label. Non-empty required. */
+export function renameWorkspace(
+  workspaceId: string,
+  label: string,
+  session?: string,
+): Promise<ActionResponse> {
+  return req<ActionResponse>(withSession(`/api/workspace/${encodeURIComponent(workspaceId)}/rename`, session), {
+    method: "POST",
+    body: JSON.stringify({ label }),
+  });
+}
+
+/** Close a Space, terminating all of its Tabs and Panes. */
+export function closeWorkspace(workspaceId: string, session?: string): Promise<ActionResponse> {
+  return req<ActionResponse>(withSession(`/api/workspace/${encodeURIComponent(workspaceId)}/close`, session), {
+    method: "POST",
+  });
+}
+
 /** Create a new tab in a space, opening a fresh shell pane. `cwd` omitted = inherits the space dir. */
 export function createTab(
   workspaceId: string,

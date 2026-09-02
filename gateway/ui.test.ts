@@ -22,12 +22,14 @@ import {
   fleetRailWidthPreferences,
   fleetRailWidths,
   fleetRefreshWaitMs,
-  FLEET_SHORTCUTS,
   fleetShortcutCycleIndex,
-  fleetShortcutMatch,
-  fleetShortcutRegistryValid,
   fleetTreeTabMode,
 } from "./fleet-ui.ts";
+import {
+  FLEET_COMMANDS,
+  parseFleetShortcutDocument,
+  publicFleetShortcutDocument,
+} from "../shared/fleet-commands.ts";
 
 describe("Fleet iframe shell", () => {
   test("renders a lazy frame stage, responsive Host tree, and reused Agent surface", () => {
@@ -167,7 +169,7 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("while(frameRegistry.size>iframeCacheSize)");
     expect(FLEET_JS).toContain("setIframeCacheSize(cacheSizeSelect.value)");
     expect(FLEET_JS).toContain("setIframeCacheSize(defaultCacheSize,{persist:false})");
-    expect(FLEET_JS).toContain("if(!desktopMedia.matches&&!treeOpen)return;closeTreeContextMenu();closeRename()");
+    expect(FLEET_JS).toContain("if(!desktopMedia.matches&&!treeOpen)return false;if(sidebarsCollapsed)setSidebarsCollapsed(false);closeTreeContextMenu();closeCommandDialog();cancelSpaceClose()");
     expect(FLEET_JS).toContain("if(!desktopMedia.matches&&!settingsPopover.hidden)closeSettings()");
     expect(FLEET_JS).toContain("if((desktopMedia.matches||treeOpen)&&!settingsPopover.hidden");
     expect(FLEET_JS).toContain("if(!settingsPopover.hidden){closeSettings({restoreFocus:true});return}");
@@ -253,7 +255,7 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("value.addEventListener('load'");
     expect(FLEET_JS).toContain("postFrameActivity(entry)");
     expect(FLEET_JS).toContain("broadcastFrameActivity()");
-    expect(FLEET_JS).toContain("document.addEventListener('visibilitychange',broadcastFrameActivity)");
+    expect(FLEET_JS).toContain("document.addEventListener('visibilitychange',()=>{cancelShortcutPrefix();broadcastFrameActivity()})");
     expect(FLEET_JS).not.toContain("contentWindow.document");
   });
 
@@ -346,59 +348,77 @@ describe("Fleet iframe shell", () => {
     expect(toggleSource).not.toContain("fetch(");
   });
 
-  test("matches one collision-free desktop shortcut registry by physical code and exact modifiers", () => {
-    expect(FLEET_SHORTCUTS).toHaveLength(14);
-    expect(fleetShortcutRegistryValid(FLEET_SHORTCUTS)).toBeTrue();
-    expect(new Set(FLEET_SHORTCUTS.map((shortcut) => shortcut.id)).size).toBe(FLEET_SHORTCUTS.length);
-    expect(new Set(FLEET_SHORTCUTS.map((shortcut) => [shortcut.code, shortcut.altKey, shortcut.ctrlKey, shortcut.metaKey, shortcut.shiftKey].join("|"))).size).toBe(FLEET_SHORTCUTS.length);
-
-    const delivered = { code: "KeyS", altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false };
-    expect(fleetShortcutMatch(delivered, true)?.id).toBe("resize-current-pane");
-    expect(fleetShortcutMatch({ ...delivered, code: "KeyJ" }, true)?.id).toBe("next-pane");
-    expect(fleetShortcutMatch({ ...delivered, code: "KeyH" }, true)?.id).toBe("previous-agent");
-    expect(fleetShortcutMatch({ ...delivered, code: "KeyL" }, true)?.id).toBe("next-agent");
-    expect(fleetShortcutMatch({ ...delivered, code: "Digit9" }, true)?.id).toBe("select-agent-9");
-    expect(fleetShortcutMatch(delivered, false)).toBeNull();
-    expect(fleetShortcutMatch({ ...delivered, repeat: true }, true)).toBeNull();
-    expect(fleetShortcutMatch({ ...delivered, ctrlKey: true }, true)).toBeNull();
-    expect(fleetShortcutMatch({ ...delivered, shiftKey: true }, true)).toBeNull();
-    expect(fleetShortcutMatch({ ...delivered, metaKey: true }, true)).toBeNull();
-    expect(fleetShortcutMatch({ ...delivered, altKey: false }, true)).toBeNull();
-    expect(fleetShortcutMatch({ ...delivered, code: "KeyQ" }, true)).toBeNull();
-    expect(fleetShortcutRegistryValid([...FLEET_SHORTCUTS, FLEET_SHORTCUTS[0]!])).toBeFalse();
-    expect(fleetShortcutRegistryValid(FLEET_SHORTCUTS.map((shortcut, index) => index === 1 ? { ...shortcut, id: FLEET_SHORTCUTS[0]!.id } : shortcut))).toBeFalse();
-
+  test("renders the complete effective shortcut catalog and unified recognizer metadata", () => {
     expect(fleetShortcutCycleIndex(["a", "b", "c"], "a", -1)).toBe(2);
     expect(fleetShortcutCycleIndex(["a", "b", "c"], "c", 1)).toBe(0);
     expect(fleetShortcutCycleIndex(["a"], "a", 1)).toBe(0);
     expect(fleetShortcutCycleIndex([], "a", 1)).toBeNull();
     expect(fleetShortcutCycleIndex(["a"], "missing", 1)).toBeNull();
 
-    const previousAgent = FLEET_SHORTCUTS.find((shortcut) => shortcut.id === "previous-agent");
-    const nextAgent = FLEET_SHORTCUTS.find((shortcut) => shortcut.id === "next-agent");
-    expect(previousAgent).toBeDefined();
-    expect(nextAgent).toBeDefined();
-    expect(previousAgent?.code).toBe("KeyH");
-    expect(previousAgent?.keyLabel).toBe("Alt+H");
-    expect(previousAgent?.label).toBe("Previous Agent");
-    expect(previousAgent?.action).toEqual({ kind: "cycle-agent", delta: -1 });
-    expect(nextAgent?.code).toBe("KeyL");
-    expect(nextAgent?.keyLabel).toBe("Alt+L");
-    expect(nextAgent?.label).toBe("Next Agent");
-    expect(nextAgent?.action).toEqual({ kind: "cycle-agent", delta: 1 });
-
     expect(FLEET_JS).toContain("function cycleAgentShortcut(delta,childOriginated=false)");
-    expect(FLEET_JS).toContain("if(shortcut.action.kind==='cycle-agent'){cycleAgentShortcut(shortcut.action.delta,childOriginated);return true}");
+    expect(FLEET_JS).toContain("else if(commandId==='previous-agent')accepted=cycleAgentShortcut(-1,childOriginated)");
     expect(FLEET_JS).toMatch(/cycleAgentShortcut[\s\S]*agentShortcutTargets\[/);
     expect(FLEET_JS).toMatch(/cycleAgentShortcut[\s\S]*selectAgent\(target\.node,target\.agent\)/);
 
     const page = fleetPage(1, "2.5.14");
     expect(page).toContain('id="fleet-shortcuts-heading">Shortcuts</h2>');
-    expect(page).toContain("<span>Resize current Pane</span><kbd>Alt+S</kbd>");
-    expect(page).toContain("<span>Select Agent 9</span><kbd>Alt+9</kbd>");
+    expect(page).toContain('data-shortcut-prefix-label="Ctrl+B"');
+    expect(page).toContain('data-command-id="fit-pane-width"');
+    expect(page).toContain('>Ctrl+B R</kbd><kbd data-binding-kind="direct"');
+    expect(page).toContain('>Alt+S</kbd>');
+    expect(page).toContain('data-command-id="select-agent-9"');
+    expect(page).toContain('>Alt+9</kbd>');
+    expect(page).toContain('data-command-id="last-pane"');
+    expect(page).toContain('fleet-shortcut-unbound">Unbound</span>');
+    expect((page.match(/data-command-id=/g) ?? [])).toHaveLength(FLEET_COMMANDS.length);
     expect(FLEET_CSS).toContain(".fleet-shortcuts { display: none; }");
     expect(FLEET_CSS).toMatch(/@media \(min-width: 1200px\)[\s\S]*?\.fleet-shortcuts \{ display: block/);
-    expect(FLEET_JS).toContain(`const SHORTCUT_REGISTRY=${JSON.stringify(FLEET_SHORTCUTS)}`);
+    expect(FLEET_JS).toContain("const COMMAND_CATALOG=shortcutRows.map");
+    expect(FLEET_JS).toContain("function recognizeShortcut(event)");
+    expect(FLEET_JS).toContain("const SHORTCUT_PREFIX_TIMEOUT_MS=2000");
+
+    const unbound = publicFleetShortcutDocument();
+    unbound.bindings["open-command-palette"] = [];
+    const overridden = fleetPage(1, "development", parseFleetShortcutDocument(unbound));
+    const paletteRow = overridden.slice(overridden.indexOf('data-command-id="open-command-palette"'));
+    expect(paletteRow.slice(0, paletteRow.indexOf("</li>"))).toContain("Unbound");
+    expect(overridden).not.toContain("shortcuts.default.json");
+  });
+
+  test("uses one accessible palette shell for command discovery and Fleet-owned renames", () => {
+    const page = fleetPage(1, "development");
+    expect(page).toContain('id="command-dialog" class="command-dialog" role="dialog" aria-modal="true"');
+    expect(page).toContain('id="command-dialog-input" type="text"');
+    expect(page).toContain('aria-controls="command-dialog-results" aria-autocomplete="list"');
+    expect(page).toContain('id="command-dialog-results" class="command-dialog-results" role="listbox"');
+    expect(FLEET_JS).toContain("function paletteMatches(command,query)");
+    expect(FLEET_JS).toContain("terms.every((term)=>haystack.includes(term))");
+    expect(FLEET_JS).toContain("if(value&&value[0]!=='/')");
+    expect(FLEET_JS).toContain("This input mode is reserved for a future Fleet feature.");
+    expect(FLEET_JS).toContain("const query=value.startsWith('/')?value.slice(1):''");
+    expect(FLEET_JS).toContain("if(commandDialogState?.mode==='palette'&&event.key==='Enter')");
+    expect(FLEET_JS).toContain("if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeCommandDialog");
+    expect(FLEET_JS).toContain("commandDialogInput.focus();commandDialogInput.select()");
+    expect(FLEET_JS).toContain("kind==='Pane'?'Submit an empty value to clear the Pane label.'");
+    expect(FLEET_JS).toContain("if((target.action==='rename-workspace'||target.action==='rename-tab')&&!label)");
+    expect(FLEET_JS).not.toContain("window.prompt");
+    expect(page).not.toContain("tree-rename");
+  });
+
+  test("collapses both desktop rails without replacing the resident frame", () => {
+    expect(FLEET_CSS).toContain('.fleet-shell[data-sidebars-collapsed="true"]');
+    expect(FLEET_CSS).toContain("transition: grid-template-columns .22s cubic-bezier(.2, .8, .2, 1)");
+    expect(FLEET_CSS).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*transition: none !important/);
+    expect(FLEET_JS).toContain("function setSidebarsCollapsed(collapsed)");
+    expect(FLEET_JS).toContain("hostRail.inert=sidebarsCollapsed");
+    expect(FLEET_JS).toContain("agentMenu.inert=sidebarsCollapsed");
+    const collapseStart = FLEET_JS.indexOf("function setSidebarsCollapsed(collapsed)");
+    const collapseEnd = FLEET_JS.indexOf("function acknowledgeCommand", collapseStart);
+    const collapseSource = FLEET_JS.slice(collapseStart, collapseEnd);
+    expect(collapseSource).not.toContain("frame.src");
+    expect(collapseSource).not.toContain("releaseFrame");
+    expect(collapseSource).not.toContain("fetch(");
+    expect(collapseSource).not.toContain("resize");
   });
 
   test("captures current Pane and Agent display order and dispatches desktop shortcuts canonically", () => {
@@ -411,14 +431,14 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS.slice(branchStart, FLEET_JS.indexOf("spaceChildrenInner.append(tabRow,tabChildren)", branchStart))).toContain("nextPaneShortcutTargets.push");
 
     expect(FLEET_JS).toContain("const nextAgentShortcutTargets=[]");
-    expect(FLEET_JS).toContain("desktopMedia.matches&&nextAgentShortcutTargets.length<9");
+    expect(FLEET_JS).toContain("const position=nextAgentShortcutTargets.length+1;nextAgentShortcutTargets.push(entry)");
     expect(FLEET_JS).toContain("agentShortcutTargets=nextAgentShortcutTargets");
     expect(FLEET_JS).toContain("desktopMode=nextDesktop;renderAgents();syncTreePresentation()");
     expect(FLEET_JS).toContain("element('span','agent-ordinal-badge',String(ordinal))");
     expect(FLEET_JS).not.toContain("agent-shortcut-ordinal");
     expect(FLEET_JS).not.toContain("agent-shortcut-hint");
     expect(FLEET_JS).not.toContain("agent-shortcut-key");
-    expect(FLEET_JS).toContain("Shortcut Alt+'+ordinal");
+    expect(FLEET_JS).toContain("const shortcutLabel=shortcutBinding?' · Shortcut '+shortcutBinding:''");
     expect(FLEET_CSS).toContain(".agent-ordinal-badge {");
     expect(FLEET_CSS).toMatch(/\.agent-ordinal-badge \{[^}]+border-radius: 999px;/);
     expect(FLEET_CSS).not.toContain(".agent-shortcut-hint");
@@ -439,17 +459,17 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("control.removeAttribute('aria-current')");
     expect(FLEET_JS).toContain("if(route?.view==='pane'&&route.spaceId&&route.tabId&&route.paneId&&selectedId){");
 
-    expect(FLEET_JS).toContain("function dispatchShortcut(shortcut,{childOriginated=false}={})");
+    expect(FLEET_JS).toContain("function dispatchCommand(commandId,{source='ui',bindingLabel=null,childOriginated=false}={})");
     expect(FLEET_JS).toContain("selectTreeNode(target.nodeId,{route:target.route,focusTreeKey:target.treeKey})");
     expect(FLEET_JS).toContain("selectAgent(target.node,target.agent)");
     expect(FLEET_JS).toContain("if(childOriginated)focusSelectedFrame()");
-    expect(FLEET_JS).toContain("const shortcut=matchShortcut(event);if(shortcut){event.preventDefault();dispatchShortcut(shortcut);return}");
-    expect(FLEET_JS).toContain("if(!desktopMedia.matches||event.repeat)return null");
-    expect(FLEET_JS).toContain("shortcut.ctrlKey===event.ctrlKey&&shortcut.metaKey===event.metaKey&&shortcut.shiftKey===event.shiftKey");
+    expect(FLEET_JS).toContain("const shortcut=recognizeShortcut(event)");
+    expect(FLEET_JS).toContain("if(!desktopMedia.matches||document.hidden||event.repeat||pureShortcutModifier(event.code))");
+    expect(FLEET_JS).toContain("SHORTCUT_BINDINGS.find((candidate)=>candidate.kind==='prefix'&&shortcutSignature(candidate)===signature)");
     expect(fleetPage(1, "2.5.14")).toContain('id="shortcut-toast"');
     expect(FLEET_CSS).toContain('.shortcut-toast[data-visible="true"]');
-    expect(FLEET_JS).toContain("shortcutToast.textContent=shortcut.keyLabel+' · '+shortcut.label");
-    expect(FLEET_JS).toContain("showShortcutToast(shortcut)");
+    expect(FLEET_JS).toContain("shortcutToast.textContent=(bindingLabel?bindingLabel+' · ':'')+command.name");
+    expect(FLEET_JS).toContain("function acknowledgeCommand(command,source,bindingLabel){showCommandToast(command,source==='shortcut'?bindingLabel:null)}");
     expect(FLEET_JS).toContain("shortcutToastTimer=setTimeout");
   });
 
@@ -480,14 +500,16 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).toContain("SHORTCUT_INTENT_MESSAGE='herdr-web-remote:shortcut-intent'");
     expect(FLEET_JS).toContain("SHORTCUT_COMMAND_MESSAGE='herdr-web-remote:shortcut-command'");
     expect(FLEET_JS).toContain("SHORTCUT_RESULT_MESSAGE='herdr-web-remote:shortcut-result'");
-    expect(FLEET_JS).toContain("target.postMessage({type:SHORTCUT_CONFIG_MESSAGE,version:SHORTCUT_VERSION,generation:shortcutGeneration,active:shortcutFrameActive(entry),bindings},entry.origin)");
+    expect(FLEET_JS).toContain("SHORTCUT_READY_MESSAGE='herdr-web-remote:shortcut-ready'");
+    expect(FLEET_JS).toContain("target.postMessage({type:SHORTCUT_CONFIG_MESSAGE,version:SHORTCUT_VERSION,generation:shortcutGeneration,active:shortcutFrameActive(entry),prefix,bindings},entry.origin)");
+    expect(FLEET_JS).toContain("version:LEGACY_SHORTCUT_VERSION");
     expect(FLEET_JS).toContain("desktopMedia.matches&&!document.hidden&&entry.id===selectedId&&!entry.frame.hidden");
     expect(FLEET_JS).toContain("event.source!==entry.frame.contentWindow||event.origin!==entry.origin");
-    expect(FLEET_JS).toContain("exactMessageKeys(data,['type','version','intentId','shortcutId'])");
+    expect(FLEET_JS).toContain("exactMessageKeys(data,['type','version','generation','intentId','commandId','bindingLabel'])");
     expect(FLEET_JS).toContain("recentShortcutIntents.has(data.intentId)");
-    expect(FLEET_JS).toContain("dispatchShortcut(shortcut,{childOriginated:true})");
+    expect(FLEET_JS).toContain("dispatchCommand(command.id,{source:'shortcut',bindingLabel:data.bindingLabel,childOriginated:true})");
     expect(FLEET_JS).toContain("route?.view!=='pane'");
-    expect(FLEET_JS).toContain("target.postMessage({type:SHORTCUT_COMMAND_MESSAGE,version:SHORTCUT_VERSION,requestId,action},entry.origin)");
+    expect(FLEET_JS).toContain("version===SHORTCUT_VERSION?{type:SHORTCUT_COMMAND_MESSAGE,version,generation:entry.shortcutGeneration,requestId,action:wireAction}");
     expect(FLEET_JS).toContain("if(pendingShortcutCommand){showTreeActionStatus('Another Pane shortcut is still running.'");
     expect(FLEET_JS).toContain("Collie did not confirm the shortcut");
     expect(FLEET_JS).toContain("if(handleShortcutMessage(event))return");
@@ -638,7 +660,9 @@ describe("Fleet iframe shell", () => {
     expect(FLEET_JS).not.toContain("action:'rename-host'");
     expect(FLEET_JS).not.toContain("contentWindow.fetch");
     expect(FLEET_CSS).toContain(".tree-inline-action");
-    expect(FLEET_CSS).toContain(".tree-rename {");
+    expect(FLEET_CSS).toContain(".command-dialog {");
+    expect(FLEET_CSS).not.toContain(".tree-rename {");
+    expect(fleetPage()).toContain('id="command-dialog" class="command-dialog" role="dialog" aria-modal="true"');
     expect(fleetPage()).toContain('id="tree-context-menu" class="tree-context-menu" role="menu"');
     expect(fleetPage()).toContain('id="tree-context-rename" type="button" role="menuitem"');
     expect(fleetPage()).toContain('id="tree-context-close" class="tree-context-destructive" type="button" role="menuitem"');

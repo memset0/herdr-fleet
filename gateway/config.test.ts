@@ -17,7 +17,9 @@ describe("gateway configuration", () => {
   test("accepts an exact loopback local inventory", () => {
     const config = parseGatewayConfig(rawGatewayConfig());
     expect(config.public.fleetHost).toBe("fleet.example.com");
-    expect(config.fleetUi).toEqual({ iframeCacheSize: 1 });
+    expect(config.fleetUi.iframeCacheSize).toBe(1);
+    expect(config.fleetUi.shortcuts.prefix.label).toBe("Ctrl+B");
+    expect(config.fleetUi.shortcuts.bindingsByCommand["copy-fleet-pane-link"]).toEqual([]);
     expect(config.nodes[0]?.transport).toEqual({ type: "local", url: "http://127.0.0.1:18788" });
   });
 
@@ -41,6 +43,63 @@ describe("gateway configuration", () => {
     const unknown = rawGatewayConfig();
     unknown.fleetUi = { iframeCacheSize: 5, prioritizeAttention: true };
     expect(() => parseGatewayConfig(unknown)).toThrow("fleetUi contains unknown field");
+  });
+
+  test("accepts only an absolute external Fleet shortcut path", () => {
+    const configured = rawGatewayConfig();
+    configured.fleetUi = { iframeCacheSize: 5, shortcutsFile: "/synthetic/config/shortcuts.json" };
+    expect(parseGatewayConfig(configured).fleetUi.shortcutsFile).toBe("/synthetic/config/shortcuts.json");
+
+    const relative = rawGatewayConfig();
+    relative.fleetUi = { shortcutsFile: "shortcuts.json" };
+    expect(() => parseGatewayConfig(relative)).toThrow("fleetUi.shortcutsFile must be absolute");
+  });
+
+  test("loads a complete external shortcut replacement with explicit empty bindings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "web-remote-shortcuts-test-"));
+    temporary.push(root);
+    const shortcutPath = join(root, "shortcuts.json");
+    const gatewayPath = join(root, "gateway.json");
+    const raw = rawGatewayConfig();
+    raw.fleetUi = { shortcutsFile: shortcutPath };
+    await writeFile(shortcutPath, JSON.stringify({
+      schemaVersion: 1,
+      prefix: "Ctrl+B",
+      bindings: {
+        "open-command-palette": [],
+        "copy-fleet-pane-link": ["Prefix+Ctrl+E"],
+      },
+    }));
+    await writeFile(gatewayPath, JSON.stringify(raw), { mode: 0o600 });
+
+    const config = await loadGatewayConfig(gatewayPath);
+    expect(config.fleetUi.shortcuts.bindingsByCommand["open-command-palette"]).toEqual([]);
+    expect(config.fleetUi.shortcuts.bindingsByCommand["open-fleet-settings"]).toEqual([]);
+    expect(config.fleetUi.shortcuts.bindingsByCommand["copy-fleet-pane-link"]?.[0]?.label).toBe("Prefix Ctrl+E");
+  });
+
+  test("fails visibly for missing, malformed, unknown, colliding, or oversized shortcut files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "web-remote-shortcuts-invalid-test-"));
+    temporary.push(root);
+    const gatewayPath = join(root, "gateway.json");
+    const shortcutPath = join(root, "shortcuts.json");
+    const raw = rawGatewayConfig();
+    raw.fleetUi = { shortcutsFile: shortcutPath };
+    await writeFile(gatewayPath, JSON.stringify(raw), { mode: 0o600 });
+
+    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("unavailable");
+    await writeFile(shortcutPath, "not json");
+    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("not valid JSON");
+    await writeFile(shortcutPath, JSON.stringify({ schemaVersion: 1, prefix: "Ctrl+B", bindings: { unknown: [] } }));
+    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("unknown command");
+    await writeFile(shortcutPath, JSON.stringify({
+      schemaVersion: 1,
+      prefix: "Ctrl+B",
+      bindings: { "next-pane": ["Alt+J"], "last-pane": ["Alt+J"] },
+    }));
+    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("collision");
+    await writeFile(shortcutPath, " ".repeat(1_048_577));
+    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("exceeds 1 MiB");
   });
 
   test("rejects unknown fields, non-boolean enablement, non-loopback URLs, and disabled-only inventory", () => {

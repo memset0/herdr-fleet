@@ -164,7 +164,7 @@ export function AgentChat({
   // Fleet delegates its framed Alt+S action to this exact callback. The Display button below keeps
   // using the same reference, so neither path can drift in measurement, session scope, or status.
   useEffect(
-    () => registerFleetShortcutHandler("resize-current-pane", resizeToMirror),
+    () => registerFleetShortcutHandler("fit-pane-width", resizeToMirror),
     [resizeToMirror],
   );
 

@@ -28,6 +28,55 @@ import { sendGuardedReply } from "@/lib/reply-action";
 import { TerminalDraftPreview } from "@/components/terminal-draft-preview";
 import { DirectTypingStrip } from "@/components/direct-typing-strip";
 import { NoEchoNotice } from "@/components/no-echo-notice";
+import {
+  registerFleetShortcutHandler,
+  type FleetShortcutChildAction,
+} from "@/lib/fleet-shortcuts";
+
+export const FLEET_FIXED_KEY_ACTIONS = {
+  "send-escape": ["Escape"],
+  "send-enter": ["Enter"],
+  "send-up-arrow": ["Up"],
+  "send-down-arrow": ["Down"],
+  "send-left-arrow": ["Left"],
+  "send-right-arrow": ["Right"],
+  "send-space": ["Space"],
+  "send-ctrl-c": ["ctrl+c"],
+} as const satisfies Partial<Record<FleetShortcutChildAction, readonly string[]>>;
+
+interface ComposerFleetHandlerOptions {
+  direct: { active: boolean; activate(): void; deactivate(): void };
+  locked(): boolean;
+  hasDraft(): boolean;
+  pressKeys(keys: string[]): Promise<boolean>;
+}
+
+export function createComposerFleetShortcutHandlers({
+  direct,
+  locked,
+  hasDraft,
+  pressKeys,
+}: ComposerFleetHandlerOptions): Map<FleetShortcutChildAction, () => void | Promise<void>> {
+  const handlers = new Map<FleetShortcutChildAction, () => void | Promise<void>>();
+  handlers.set("toggle-type-mode", () => {
+    if (direct.active) {
+      direct.deactivate();
+      return;
+    }
+    if (locked() || hasDraft()) {
+      throw new Error(locked()
+        ? "Type mode is unavailable"
+        : "Send or clear the draft before typing into the terminal");
+    }
+    direct.activate();
+  });
+  for (const [action, keys] of Object.entries(FLEET_FIXED_KEY_ACTIONS)) {
+    handlers.set(action as FleetShortcutChildAction, async () => {
+      if (!await pressKeys([...keys])) throw new Error("Key send failed");
+    });
+  }
+  return handlers;
+}
 
 export interface ComposerHandle {
   /** Focus the input and put the caret at the end — used by the mirror-tap-to-focus in AgentChat. */
@@ -669,6 +718,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return false;
     }
   }
+
+  // Fleet commands enter through the same direct-Type state and exact pane.send_keys path as the
+  // visible Type/Keys controls. The command id selects one compile-time constant; no parent message
+  // can supply text or an arbitrary key array.
+  useEffect(() => {
+    const handlers = createComposerFleetShortcutHandlers({
+      direct,
+      locked: () => locked,
+      hasDraft: () => inputValueRef.current.length > 0,
+      pressKeys,
+    });
+    const unregister = [...handlers].map(([action, handler]) => registerFleetShortcutHandler(action, handler));
+    return () => { for (const remove of unregister) remove(); };
+  }, [direct, locked]);
 
   // Insert "/cmd " into the composer (arg-taking commands) and focus it. Appends to any draft already
   // typed (with a separating space) rather than clobbering it; an empty draft just gets set.

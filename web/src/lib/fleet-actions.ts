@@ -9,6 +9,8 @@ export const FLEET_ACTION_VERSION = 1;
 export type FleetActionName =
   | "create-workspace"
   | "create-tab"
+  | "rename-workspace"
+  | "close-workspace"
   | "rename-tab"
   | "rename-pane"
   | "close-tab"
@@ -38,6 +40,23 @@ export type FleetActionRequest =
       version: typeof FLEET_ACTION_VERSION;
       requestId: string;
       action: "create-tab";
+      workspaceId: string;
+      session?: string;
+    }
+  | {
+      type: typeof FLEET_ACTION_REQUEST_TYPE;
+      version: typeof FLEET_ACTION_VERSION;
+      requestId: string;
+      action: "rename-workspace";
+      workspaceId: string;
+      label: string;
+      session?: string;
+    }
+  | {
+      type: typeof FLEET_ACTION_REQUEST_TYPE;
+      version: typeof FLEET_ACTION_VERSION;
+      requestId: string;
+      action: "close-workspace";
       workspaceId: string;
       session?: string;
     }
@@ -97,7 +116,7 @@ export type FleetActionResult =
       type: typeof FLEET_ACTION_RESULT_TYPE;
       version: typeof FLEET_ACTION_VERSION;
       requestId: string;
-      action: "rename-tab" | "rename-pane" | "close-tab" | "close-pane";
+      action: "rename-workspace" | "close-workspace" | "rename-tab" | "rename-pane" | "close-tab" | "close-pane";
       ok: true;
     };
 
@@ -114,6 +133,8 @@ export interface FleetActionEnvironment {
 export interface FleetActionApi {
   createWorkspace(opts: Record<string, never>, session?: string): ReturnType<typeof api.createWorkspace>;
   createTab(workspaceId: string, opts: Record<string, never>, session?: string): ReturnType<typeof api.createTab>;
+  renameWorkspace(workspaceId: string, label: string, session?: string): ReturnType<typeof api.renameWorkspace>;
+  closeWorkspace(workspaceId: string, session?: string): ReturnType<typeof api.closeWorkspace>;
   renameTab(tabId: string, label: string, session?: string): ReturnType<typeof api.renameTab>;
   renamePane(paneId: string, label: string, session?: string): ReturnType<typeof api.renamePane>;
   closeTab(tabId: string, session?: string): ReturnType<typeof api.closeTab>;
@@ -190,6 +211,18 @@ export function parseFleetActionRequest(value: unknown): FleetActionRequest | nu
       ? (record as unknown as FleetActionRequest)
       : null;
   }
+  if (record.action === "rename-workspace") {
+    const keys = new Set([...common, "workspaceId", "label"]);
+    return exactKeys(record, keys) && validObjectId(record.workspaceId) && validLabel(record.label, false)
+      ? (record as unknown as FleetActionRequest)
+      : null;
+  }
+  if (record.action === "close-workspace") {
+    const keys = new Set([...common, "workspaceId"]);
+    return exactKeys(record, keys) && validObjectId(record.workspaceId)
+      ? (record as unknown as FleetActionRequest)
+      : null;
+  }
   if (record.action === "rename-tab") {
     const keys = new Set([...common, "tabId", "label"]);
     return exactKeys(record, keys) && validObjectId(record.tabId) && validLabel(record.label, false)
@@ -254,13 +287,17 @@ async function runAction(request: FleetActionRequest, client: FleetActionApi): P
         pane: { paneId, workspaceId, tabId },
       };
     }
-    const result = request.action === "rename-tab"
-      ? await client.renameTab(request.tabId, request.label.trim(), request.session)
-      : request.action === "rename-pane"
-        ? await client.renamePane(request.paneId, request.label.trim(), request.session)
-        : request.action === "close-tab"
-          ? await client.closeTab(request.tabId, request.session)
-          : await client.closePane(request.paneId, request.session);
+    const result = request.action === "rename-workspace"
+      ? await client.renameWorkspace(request.workspaceId, request.label.trim(), request.session)
+      : request.action === "close-workspace"
+        ? await client.closeWorkspace(request.workspaceId, request.session)
+        : request.action === "rename-tab"
+          ? await client.renameTab(request.tabId, request.label.trim(), request.session)
+          : request.action === "rename-pane"
+            ? await client.renamePane(request.paneId, request.label.trim(), request.session)
+            : request.action === "close-tab"
+              ? await client.closeTab(request.tabId, request.session)
+              : await client.closePane(request.paneId, request.session);
     return result.ok
       ? {
           type: FLEET_ACTION_RESULT_TYPE,

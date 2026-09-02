@@ -214,7 +214,12 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
         return json(collector.snapshot());
       }
       if (url.pathname === "/" && request.method === "GET") {
-        const document = html(fleetPage(config.fleetUi.iframeCacheSize, pluginVersion), 200, {}, fleetDocumentCsp(config));
+        const document = html(
+          fleetPage(config.fleetUi.iframeCacheSize, pluginVersion, config.fleetUi.shortcuts),
+          200,
+          {},
+          fleetDocumentCsp(config),
+        );
         // Fetch serializes Origin as `null` for non-CORS POST navigations under `no-referrer`,
         // defeating logout's exact-origin CSRF check. Fleet needs same-origin referrers only for
         // that form POST; cross-origin navigations still disclose no referrer, and node documents

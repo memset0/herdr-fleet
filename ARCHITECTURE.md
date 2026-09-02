@@ -166,33 +166,54 @@ connection animation, home action, switch trigger/sheet, label, and spacing. Fle
 the cross-origin DOM or injects style/protocol state; older compatible nodes may retain the old
 embedded chrome until their normal upgrade.
 
-One typed Fleet registry owns desktop shortcut chords, labels, scope, and allowlisted actions. The
-outer document matches exact physical codes and modifiers without repeat; it snapshots Pane targets
-from the same complete validated tree traversal and Agent targets from the same rendered section
-order. Thus collapsed branches remain reachable, a flattened one-Pane Tab appears once, cycling
-wraps, and favorite/status rerenders atomically reassign `Alt+1`…`Alt+9` keycaps. The keycap-only
-hint reserves space on the title row, leaving Host/age metadata at the card's original lower-right
-edge. Every accepted dispatch also renders one bounded bottom-centre fading confirmation from the
-registry's key label/action label; it confirms recognition rather than asynchronous action success.
-All navigation goes through the existing tree/card selectors, including attention resets and
-canonical Host/session routes. Compact Fleet neither creates Agent shortcut targets nor exposes
-shortcut hints or confirmations.
+One typed Fleet command registry owns stable ids, English names, scopes, bindings, availability, and
+allowlisted actions. A strict parser normalizes simultaneous direct chords and sequential chords
+that begin with the configured prefix (default `Ctrl+B`). The injected-clock recognizer matches
+exact physical codes/modifiers without repeat, prevents handled events synchronously, and expires or
+cancels prefix capture after two seconds, Escape, unsupported input, blur, or document hiding.
+Direct chords can still be intercepted by the browser, operating system, or extensions.
 
-Iframe focus crosses a dedicated version-1 exact-child shortcut boundary. Fleet sends bounded
-id/code/modifier definitions only to registered node origins, activating only the selected visible
-desktop child; cached, hidden, compact, and top-document-hidden children receive inactive state.
-The framed Web controller accepts configuration and allowlisted commands only from its exact parent,
-forwards only a correlated shortcut id (never raw keys, input, URLs, or Pane ids), and is inert when
-standalone. Fleet accepts intents/results only from the selected WindowProxy and exact node Origin,
-de-duplicates bounded ids, permits one resize command in flight, and fails closed on malformed,
-stale, unavailable, or timed-out messages without retry. `Alt+S` registers AgentChat's existing
-`resizeToMirror()` callback, so Collie alone measures its browser-local scrollport and calls the
-existing read-only/session-scoped resize API. Because iframe `load` can precede the Pane route's
-React effects, a valid command may wait up to one short bounded registration interval for that
-handler and then invokes it at most once; timeout/inactivity still fails closed and no command/API
-retry is introduced. The child captures delivered chords before inner controls can consume them.
-To add a binding for an existing action, extend the single registry plus discovery/protocol tests;
-a new action kind also requires an explicit allowlisted Fleet or Collie adapter.
+The authenticated Fleet page receives only normalized prefix, catalog metadata, and effective
+bindings. With no external path the Gateway loads one complete packaged default document. An
+optional absolute `fleetUi.shortcutsFile` is strict, size-bounded, and a complete replacement: every
+catalog id occurs exactly once and an empty list means deliberately unbound. Source paths, secrets,
+and arbitrary action payloads never enter the rendered page. The settings view shows all aliases and
+unbound commands. The command palette lists available commands while blank, supports leading-`/`
+space-separated id/name/binding search, and visibly reserves other non-empty modes. The same
+accessible input shell owns Space/Tab/Pane renames.
+
+At invocation time Fleet snapshots Tab targets within the current Space, Pane targets within the
+current Tab, whole-tree Panes, or the complete rendered Agent order as required by the command.
+Collapsed branches remain reachable, cycles wrap, ordinals are bounded, and favorite/status
+rerenders atomically update Agent order and keycaps. A two-entry exact-Pane page-session MRU powers
+the optional last-Pane command. Every successful navigation goes through existing tree/card
+selectors, attention resets, canonical Host/session routes, and the resident iframe cache. The
+dual-sidebar command preserves rail DOM and iframe identity while width/opacity transitions run.
+Compact Fleet neither installs shortcut targets nor exposes shortcut hints or confirmations.
+
+Every accepted dispatch carries provenance. Shortcut invocation renders one bounded fading
+confirmation from the actual accepted binding plus English command name; palette, settings, and UI
+invocation omits the binding. Destructive Space close uses an outer modal with one correlated action
+and unmodified-Enter confirmation. Fixed send-key adapters carry only catalog constants, never
+arbitrary keys, text, prompt, submit fields, URLs, or Pane ids.
+
+Iframe focus crosses a dedicated version-2 exact-child shortcut boundary. Fleet sends the same
+normalized definitions only to registered node origins, activating only the selected visible desktop
+child; cached, hidden, compact, and top-document-hidden children receive inactive state. The framed
+Web controller advertises its configured command ids and static action capabilities for the current
+generation, accepts configuration and allowlisted actions only from its exact parent, and forwards
+only a correlated command intent. Fleet accepts readiness, intents, and results only from the
+selected WindowProxy and exact node Origin, rejects mismatched generations and malformed fields,
+de-duplicates bounded ids, and fails closed without retry.
+
+Pane fit registers AgentChat's existing `resizeToMirror()` callback; Type mode registers Composer's
+existing direct-typing lifecycle; Escape, Enter, arrows, Space, and `Ctrl+C` register constant
+`pane.send_keys` adapters. A valid command may wait through one bounded registration interval for
+the exact Pane/session route generation and then invokes at most once. Expiry, inactivity, unmount,
+or route change cannot replay it into another context. Older compatible Web bundles receive only a
+bounded version-1 subset of the original direct Alt configuration; unsupported newer actions fail
+closed. Adding a binding changes the complete document and its discovery tests, while a new action
+kind also requires an explicit allowlisted Fleet or Collie adapter and capability test.
 
 Each browser requests Fleet immediately on load and sends a manual reset when the menu is opened.
 A click on a live `Ready · unseen` or `Needs You` card performs its validated Pane navigation first

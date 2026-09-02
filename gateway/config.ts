@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
+import {
+  parseFleetShortcutDocument,
+  publicFleetShortcutDocument,
+  type FleetShortcutConfiguration,
+} from "../shared/fleet-commands.ts";
+
 export interface LocalTransportConfig {
   type: "local";
   url: string;
@@ -55,6 +61,8 @@ export type DiscordNotificationConfig =
 
 export interface FleetUiConfig {
   iframeCacheSize: number;
+  shortcuts: FleetShortcutConfiguration;
+  shortcutsFile?: string;
 }
 
 export interface GatewayConfig {
@@ -156,11 +164,17 @@ function parseDiscordNotifications(value: unknown): DiscordNotificationConfig | 
 }
 
 function parseFleetUi(value: unknown): FleetUiConfig {
-  if (value === undefined) return { iframeCacheSize: 1 };
+  const shortcuts = parseFleetShortcutDocument(publicFleetShortcutDocument(), { requireComplete: true });
+  if (value === undefined) return { iframeCacheSize: 1, shortcuts };
   const raw = object(value, "fleetUi");
-  keys(raw, ["iframeCacheSize"], "fleetUi");
+  keys(raw, ["iframeCacheSize", "shortcutsFile"], "fleetUi");
+  const shortcutsFile = raw.shortcutsFile === undefined
+    ? undefined
+    : absolutePath(raw.shortcutsFile, "fleetUi.shortcutsFile");
   return {
     iframeCacheSize: integer(raw.iframeCacheSize ?? 1, "fleetUi.iframeCacheSize", 1, 10),
+    shortcuts,
+    ...(shortcutsFile ? { shortcutsFile } : {}),
   };
 }
 
@@ -346,7 +360,25 @@ export async function loadGatewayConfig(path: string, enforcePermissions = proce
     const info = await stat(path);
     if ((info.mode & 0o077) !== 0) throw new Error("gateway config must not be accessible by group or other users (chmod 600)");
   }
-  const config = parseGatewayConfig(JSON.parse(await Bun.file(path).text()) as unknown);
+  let config = parseGatewayConfig(JSON.parse(await Bun.file(path).text()) as unknown);
+  const shortcutSource = config.fleetUi.shortcutsFile
+    ? Bun.file(config.fleetUi.shortcutsFile)
+    : Bun.file(new URL("./shortcuts.default.json", import.meta.url));
+  const shortcutInfo = await shortcutSource.stat().catch(() => null);
+  if (!shortcutInfo?.isFile()) {
+    throw new Error(config.fleetUi.shortcutsFile
+      ? "fleetUi.shortcutsFile is unavailable or is not a regular file"
+      : "packaged Fleet shortcut defaults are unavailable");
+  }
+  if (shortcutInfo.size > 1_048_576) throw new Error("Fleet shortcut config exceeds 1 MiB");
+  let shortcutValue: unknown;
+  try {
+    shortcutValue = JSON.parse(await shortcutSource.text()) as unknown;
+  } catch (error) {
+    throw new Error(`Fleet shortcut config is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const shortcuts = parseFleetShortcutDocument(shortcutValue);
+  config = { ...config, fleetUi: { ...config.fleetUi, shortcuts } };
   if (config.discordNotifications?.enabled) {
     const executable = await stat(config.discordNotifications.executable).catch(() => null);
     if (!executable) throw new Error("discordNotifications.executable is unavailable");

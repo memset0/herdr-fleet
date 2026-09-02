@@ -43,9 +43,10 @@ and uses the shipped widths when storage is missing or invalid. The separators a
 not affect compact layouts.
 
 The desktop Host rail and the open compact `H` drawer end in a small version/settings footer. Its
-upward popup currently controls only how many Host pages this browser keeps resident (1–10): a
-browser-local override applies immediately, can be reset to the Gateway-provided default, and
-shrinking it evicts only the oldest non-selected frames. Reachable Host and Space rows expose
+only mutable setting controls how many Host pages this browser keeps resident (1–10), while the same
+popup also discovers the effective command catalog and bindings. The browser-local cache override
+applies immediately, can be reset to the Gateway-provided default, and shrinking it evicts only the
+oldest non-selected frames. Reachable Host and Space rows expose
 separate `+` actions in both presentations: Host creates a Space in its primary Herdr session, while
 Space creates a Tab; both open the fresh shell Pane. Compact controls stay visible for touch instead
 of requiring hover.
@@ -54,8 +55,8 @@ and `Shift+F10` expose the same keyboard-navigable surface. Rename hands off to 
 editor. Close uses Collie's three-second, two-activation confirmation and includes the known Tab
 Pane count. A flattened one-Pane row always targets its visible Tab, while an explicit Pane child
 targets only that Pane. Successful closure of the displayed Pane/Tab returns the selected Host to
-Home; background closure preserves the current iframe and route. Host and Space rename/close remain
-intentionally absent.
+Home; background closure preserves the current iframe and route. Host rename/close remains absent;
+Space rename and confirmed close are available through the command catalog.
 
 Fleet derives an **Emergency terminal** link from every enabled node id and the currently selected
 Pane/session. It creates that link only in the wide fine-pointer desktop-computer presentation;
@@ -93,18 +94,41 @@ offline card keeps the section and count treatment implied by its last successfu
 while remaining visibly stale. The adjacent arrow-leaving-a-square control opens the selected
 Collie in a new tab. Fleet intentionally exposes no logout button in this header.
 
-Desktop Fleet also owns one discoverable keyboard-shortcut registry, shown in the left-footer
-settings popup: `Alt+S` resizes the current Pane to Collie's measured mirror, `Alt+K` / `Alt+J`
-cycle through the complete left-tree Pane order, and `Alt+1`…`Alt+9` open the first nine Agent cards
-in their current rendered order. Those cards show only the matching `Alt+N` keycap, leaving their
-Host/age metadata on the original lower row. Every accepted desktop binding shows a short fading
-bottom-centre `<key> · <action>` confirmation. Physical key codes, exact modifiers, and auto-repeat
-are checked centrally; compact/mobile Fleet and standalone Collie install no active binding or
-confirmation. When focus is inside the selected cross-origin iframe, its Web bundle forwards only a
-registered shortcut id. Fleet still owns the mapping and navigation, while the one child action
-invokes the exact same `Resize` callback as Collie's Display settings. A bounded handler-registration
-grace closes the document-load/Pane-mount race without retrying the command or resize API. Older
-compatible node bundles continue to work but cannot forward iframe-focused shortcuts until updated.
+Desktop Fleet owns one discoverable command catalog and its effective keyboard bindings. Bindings
+are either simultaneous direct chords such as `Alt+J` or sequential prefix chords such as
+`Ctrl+B`, release, then `J`; the default prefix is `Ctrl+B`. Prefix capture lasts two seconds and is
+cancelled by Escape, an unsupported key, blur, or a hidden document. Fleet matches physical key
+codes, exact modifiers, and no repeats. Direct chords remain subject to browser, operating-system,
+and extension interception, while prefix chords avoid most multi-modifier conflicts.
+
+`Ctrl+Shift+P` and `Ctrl+B`, then `?`, open the command palette. A blank input lists every available
+command. A leading `/` searches command ids, English names, and effective binding labels using
+space-separated terms; other non-empty input modes are visibly reserved. Arrow keys move the
+selection, Enter invokes it, and Escape dismisses the dialog. The same dialog shell supplies the
+Fleet-owned Space, Tab, and Pane rename inputs. The settings popup lists every command, all of its
+effective aliases, and commands that are explicitly unbound.
+
+The packaged defaults include prefix actions for settings, the palette, animated dual-sidebar
+collapse, Space/Tab/Pane creation, rename and close, current-Space Tab navigation, current-Tab Pane
+navigation, and Pane fit. The retained direct defaults are `Alt+K` / `Alt+J` for previous/next Pane
+in complete left-tree order, `Alt+H` / `Alt+L` for previous/next Agent in complete right-list order,
+`Alt+1`…`Alt+9` for the first nine Agents, and `Alt+S` for Pane fit. The catalog also exposes
+unbound commands for the last focused Pane, copying the current Fleet Pane link, toggling Collie's
+Type mode, and sending Escape, Enter, arrows, Space, or `Ctrl+C` to the selected Pane. See
+[`gateway/shortcuts.default.json`](./gateway/shortcuts.default.json) for the complete executable
+catalog and defaults.
+
+Every accepted shortcut shows a fading bottom-centre `<actual binding> · <English command name>`
+confirmation; invocation from the palette, settings, or another UI shows only the command name.
+Navigation always uses Fleet's canonical selectors and resident iframe cache. Compact/mobile Fleet
+and standalone Collie install no active binding or confirmation.
+
+When focus is inside the selected cross-origin iframe, the Web bundle recognizes the same normalized
+configuration and forwards only a registered command id. A version-2 exact-window/origin handshake
+advertises supported command and child-action capabilities; Fleet invokes only declared adapters for
+Pane fit, Type mode, or the fixed send-key actions. Handler registration is bounded and at most once
+for the current route generation. Older compatible node bundles retain a deliberately bounded
+version-1 subset of the original direct Alt bindings and fail unsupported actions closed.
 
 ### Collie node controls
 
@@ -386,6 +410,15 @@ selection or revisit, Fleet silently removes every non-selected iframe. The sele
 and Fleet does not invoke or change Collie's own idle lock. The live Gateway config must remain an
 absolute-path, owner-only file.
 
+Optional `fleetUi.shortcutsFile` is an absolute path to a complete versioned shortcut document. If
+it is omitted, Fleet loads the packaged defaults. If it is present, the external document completely
+replaces those defaults: every command id must appear exactly once, an empty array deliberately
+unbinds that command, and Fleet does not merge hidden fallback bindings. Invalid, relative,
+oversized, incomplete, duplicate, colliding, or unknown definitions fail Gateway startup visibly.
+Keep this file separate from the protected Gateway config and secrets. A synthetic complete example
+is available at [`gateway/shortcuts.external.example.json`](./gateway/shortcuts.external.example.json);
+the `gateway.example.json` path is illustrative and must be replaced with an absolute local path.
+
 A resident Collie page may continue its normal polling while hidden, but it cannot mark a Pane seen.
 Fleet sends a versioned browser-only activity message to every exact-origin child; only the selected
 iframe in a visible Fleet document, unobscured by a compact Host/Agent overlay, is active. Framed
@@ -400,15 +433,16 @@ Desktop tree mutations reuse those native Collie pages rather than adding a cros
 write proxy. A Host-row `+` creates a Space in that Host's primary Herdr session, while a Space-row
 `+` creates a Tab and its first Pane in that exact session. Fleet performs a versioned readiness
 handshake with the exact configured child window/origin, sends only one allowlisted
-`create-workspace`, `create-tab`, `rename-tab`, `rename-pane`, `close-tab`, or `close-pane` command,
-and accepts only the
-correlated result. An uncached Host gets one temporary inactive child for the
+`create-workspace`, `create-tab`, `rename-workspace`, `close-workspace`, `rename-tab`, `rename-pane`,
+`close-tab`, or `close-pane` command, and accepts only the correlated result. An uncached Host gets
+one temporary inactive child for the
 explicit action; it is removed afterward and never joins cache LRU. A timeout is never retried
 automatically, so a lost create result cannot duplicate a Tab and an ambiguous close cannot become
 a second destructive mutation. A successful current-target close moves to Host Home before the
 bounded aggregate refresh; a lost close response waits for authoritative topology disappearance.
-Older compatible nodes remain fully navigable but report an unknown close as unsupported until
-their Web bundle is updated, while their create/rename actions keep the same version-1 contract.
+Older compatible nodes remain fully navigable but report unknown version-2-only actions as
+unsupported until their Web bundle is updated; the bounded legacy contract is never expanded with
+new destructive or arbitrary-input payloads.
 
 ### Discord Agent notifications
 

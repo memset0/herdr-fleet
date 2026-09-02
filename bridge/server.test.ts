@@ -13,6 +13,7 @@ import {
   isReservedAuthPath,
   keysPane,
   normalizeTabLabel,
+  normalizeWorkspaceLabel,
   paneReadResponse,
   replyPane,
   resizePane,
@@ -930,6 +931,14 @@ describe("normalizeTabLabel", () => {
     expect(normalizeTabLabel(null)).toEqual({ ok: false, error: "bad label" });
     expect(normalizeTabLabel(42)).toEqual({ ok: false, error: "bad label" });
     expect(normalizeTabLabel(undefined)).toEqual({ ok: false, error: "bad label" });
+  });
+});
+
+describe("normalizeWorkspaceLabel", () => {
+  test("uses the same non-empty trimmed label contract as Tabs", () => {
+    expect(normalizeWorkspaceLabel("  research  ")).toEqual({ ok: true, label: "research" });
+    expect(normalizeWorkspaceLabel("   ")).toEqual({ ok: false, error: "label required" });
+    expect(normalizeWorkspaceLabel(null)).toEqual({ ok: false, error: "bad label" });
   });
 });
 

@@ -104,6 +104,7 @@ const MAX_HISTORY_LIMIT = 5000;
 // A tab supports rename + close — an action group like the pane route. The `/api/tab` POST above
 // (create) is an exact match on `/api/tab`, so it never collides with this `/api/tab/<id>/<action>`.
 const TAB_ACTION_ROUTE = /^\/api\/tab\/([^/]+)\/(rename|close)$/;
+const WORKSPACE_ACTION_ROUTE = /^\/api\/workspace\/([^/]+)\/(rename|close)$/;
 
 /**
  * Header the web app sets on its own pane reads, and the ONLY thing that lets a read mark a pane
@@ -237,6 +238,20 @@ export function startServer(opts: {
         const rt = registry.get(sessionName);
         if (!rt) return unknownSession();
         return createWorkspace(rt.herdr, req, audit, deviceAuth(req, cfg).device, rt.name);
+      }
+
+      // ── Space actions: rename / close every Tab and Pane in the exact workspace ──
+      const workspaceMatch = pathname.match(WORKSPACE_ACTION_ROUTE);
+      if (workspaceMatch && req.method === "POST") {
+        const denied = guard(req, cfg, "write");
+        if (denied) return denied;
+        const rt = registry.get(sessionName);
+        if (!rt) return unknownSession();
+        const workspaceId = decodeURIComponent(workspaceMatch[1]!);
+        const action = workspaceMatch[2];
+        const device = deviceAuth(req, cfg).device;
+        if (action === "close") return closeWorkspace(rt.herdr, workspaceId, req, audit, device, rt.name);
+        return renameWorkspace(rt.herdr, workspaceId, req, audit, device, rt.name);
       }
 
       // ── Tab actions: rename (set its label) / close (kill it + every pane in it) ──
@@ -988,6 +1003,53 @@ export function normalizeTabLabel(
   const label = v.trim();
   if (!label) return { ok: false, error: "label required" };
   return { ok: true, label };
+}
+
+/** Space labels follow the same non-empty, non-null rule as Tab labels. */
+export const normalizeWorkspaceLabel = normalizeTabLabel;
+
+async function renameWorkspace(
+  herdr: HerdrClient,
+  workspaceId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+): Promise<Response> {
+  const ae = req.headers.get("accept-encoding");
+  let body: { label?: unknown };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return text("bad body", 400);
+  }
+  const parsed = normalizeWorkspaceLabel(body.label);
+  if (!parsed.ok) return text(parsed.error, 400);
+  try {
+    await herdr.renameWorkspace(workspaceId, parsed.label);
+    audit.record({ action: "workspace.rename", session, device, detail: { workspaceId, label: parsed.label } });
+    return json({ ok: true } satisfies ActionResponse, ae);
+  } catch (err) {
+    return json({ ok: false, error: (err as Error).message } satisfies ActionResponse, ae);
+  }
+}
+
+async function closeWorkspace(
+  herdr: HerdrClient,
+  workspaceId: string,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+): Promise<Response> {
+  const ae = req.headers.get("accept-encoding");
+  try {
+    await herdr.closeWorkspace(workspaceId);
+    audit.record({ action: "workspace.close", session, device, detail: { workspaceId } });
+    return json({ ok: true } satisfies ActionResponse, ae);
+  } catch (err) {
+    return json({ ok: false, error: (err as Error).message } satisfies ActionResponse, ae);
+  }
 }
 
 // Set a tab's label. Structural metadata op — strictly less powerful than the text/keys injection the

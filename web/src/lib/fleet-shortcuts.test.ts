@@ -1,14 +1,21 @@
 import {
+  parseFleetShortcutDocument,
+  publicFleetShortcutDocument,
+} from "../../../shared/fleet-commands";
+import {
   createFleetShortcutController,
   FLEET_SHORTCUT_COMMAND_TYPE,
   FLEET_SHORTCUT_CONFIG_TYPE,
-  FLEET_SHORTCUT_INTENT_TYPE,
+  FLEET_SHORTCUT_READY_TYPE,
   FLEET_SHORTCUT_RESULT_TYPE,
   FLEET_SHORTCUT_VERSION,
   parseFleetShortcutCommand,
   parseFleetShortcutConfig,
+  type FleetShortcutChildAction,
+  type FleetShortcutConfig,
   type FleetShortcutEnvironment,
   type FleetShortcutIntent,
+  type FleetShortcutReady,
   type FleetShortcutResult,
 } from "./fleet-shortcuts";
 
@@ -18,7 +25,8 @@ class FakeShortcutEnvironment implements FleetShortcutEnvironment {
   readonly sibling = {} as MessageEventSource;
   readonly messages = new Set<(event: MessageEvent<unknown>) => void>();
   readonly keys = new Set<(event: KeyboardEvent) => void>();
-  readonly posted: Array<FleetShortcutIntent | FleetShortcutResult> = [];
+  readonly cancels = new Set<() => void>();
+  readonly posted: Array<FleetShortcutIntent | FleetShortcutReady | FleetShortcutResult> = [];
   hidden = false;
   ids = 0;
 
@@ -31,8 +39,11 @@ class FakeShortcutEnvironment implements FleetShortcutEnvironment {
   removeMessageListener = (listener: (event: MessageEvent<unknown>) => void) => this.messages.delete(listener);
   addKeyListener = (listener: (event: KeyboardEvent) => void) => this.keys.add(listener);
   removeKeyListener = (listener: (event: KeyboardEvent) => void) => this.keys.delete(listener);
-  postParent = (message: FleetShortcutIntent | FleetShortcutResult) => this.posted.push(message);
+  addCancelListener = (listener: () => void) => this.cancels.add(listener);
+  removeCancelListener = (listener: () => void) => this.cancels.delete(listener);
+  postParent = (message: FleetShortcutIntent | FleetShortcutReady | FleetShortcutResult) => this.posted.push(message);
   randomId = () => `intent_${String(++this.ids).padStart(8, "0")}`;
+  now = () => Date.now();
 
   message(source: MessageEventSource | null, data: unknown) {
     for (const listener of this.messages) listener({ source, data } as MessageEvent<unknown>);
@@ -43,78 +54,107 @@ class FakeShortcutEnvironment implements FleetShortcutEnvironment {
     for (const listener of this.keys) listener(event);
     return event;
   }
+
+  cancel() {
+    for (const listener of this.cancels) listener();
+  }
 }
 
-const binding = {
-  id: "resize-current-pane",
-  code: "KeyS",
-  altKey: true,
-  ctrlKey: false,
-  metaKey: false,
-  shiftKey: false,
-};
+function bridgeConfig(generation = 1, active = true): FleetShortcutConfig {
+  const parsed = parseFleetShortcutDocument(publicFleetShortcutDocument());
+  return {
+    type: FLEET_SHORTCUT_CONFIG_TYPE,
+    version: FLEET_SHORTCUT_VERSION,
+    generation,
+    active,
+    prefix: { ...parsed.prefix },
+    bindings: parsed.bindings.map((binding) => ({
+      commandId: binding.commandId,
+      kind: binding.kind,
+      ...binding.chord,
+    })),
+  };
+}
 
-const config = {
-  type: FLEET_SHORTCUT_CONFIG_TYPE,
-  version: FLEET_SHORTCUT_VERSION,
-  generation: 1,
-  active: true,
-  bindings: [binding],
-};
-
+const config = bridgeConfig();
 const command = {
   type: FLEET_SHORTCUT_COMMAND_TYPE,
   version: FLEET_SHORTCUT_VERSION,
+  generation: 1,
   requestId: "request_12345678",
-  action: "resize-current-pane" as const,
+  action: "fit-pane-width" as const,
 };
 
 describe("Fleet framed shortcut bridge", () => {
-  it("parses only strict versioned configuration and allowlisted commands", () => {
+  it("parses only strict v2 configuration and fixed allowlisted commands", () => {
     expect(parseFleetShortcutConfig(config)).toEqual(config);
-    expect(parseFleetShortcutConfig({ ...config, version: 2 })).toBeNull();
+    expect(parseFleetShortcutConfig({ ...config, version: 1 })).toBeNull();
     expect(parseFleetShortcutConfig({ ...config, url: "/pane/private" })).toBeNull();
-    expect(parseFleetShortcutConfig({ ...config, bindings: [{ ...binding, code: "Key1" }] })).toBeNull();
-    expect(parseFleetShortcutConfig({ ...config, bindings: [binding, { ...binding }] })).toBeNull();
-    expect(parseFleetShortcutConfig({ ...config, bindings: [binding, { ...binding, id: "other" }] })).toBeNull();
+    expect(parseFleetShortcutConfig({ ...config, prefix: { ...config.prefix, code: "F12", label: "F12" } })).toBeNull();
+    expect(parseFleetShortcutConfig({ ...config, bindings: [config.bindings[0], config.bindings[0]] })).toBeNull();
+    expect(parseFleetShortcutConfig({ ...config, bindings: [{ ...config.bindings[0], commandId: "unknown" }] })).toBeNull();
     expect(parseFleetShortcutCommand(command)).toEqual(command);
     expect(parseFleetShortcutCommand({ ...command, action: "terminal-input" })).toBeNull();
-    expect(parseFleetShortcutCommand({ ...command, cols: 120 })).toBeNull();
+    expect(parseFleetShortcutCommand({ ...command, keys: ["Escape"] })).toBeNull();
     expect(parseFleetShortcutCommand({ ...command, requestId: "short" })).toBeNull();
+    expect(parseFleetShortcutCommand({ ...command, generation: -1 })).toBeNull();
   });
 
-  it("forwards only a selected exact chord id without raw key data", () => {
+  it("recognizes direct and sequential prefix chords including Shift and Tab variants", () => {
     const environment = new FakeShortcutEnvironment();
-    const handler = vi.fn();
-    const stop = createFleetShortcutController(environment, new Map([["resize-current-pane", handler]]))();
+    const stop = createFleetShortcutController(environment, new Map())();
     environment.message(environment.sibling, config);
-    expect(environment.key({ code: "KeyS", altKey: true }).defaultPrevented).toBe(false);
+    expect(environment.key({ code: "KeyP", ctrlKey: true, shiftKey: true }).defaultPrevented).toBe(false);
     environment.message(environment.parent, config);
 
-    expect(environment.key({ code: "KeyS", altKey: true, ctrlKey: true }).defaultPrevented).toBe(false);
-    expect(environment.key({ code: "KeyS", altKey: true, repeat: true }).defaultPrevented).toBe(false);
-    const accepted = environment.key({ code: "KeyS", altKey: true });
-    expect(accepted.defaultPrevented).toBe(true);
-    expect(environment.posted).toEqual([{
-      type: FLEET_SHORTCUT_INTENT_TYPE,
-      version: FLEET_SHORTCUT_VERSION,
-      intentId: "intent_00000001",
-      shortcutId: "resize-current-pane",
-    }]);
-    expect(JSON.stringify(environment.posted)).not.toContain("KeyS");
-    expect(JSON.stringify(environment.posted)).not.toContain("altKey");
+    expect(environment.key({ code: "KeyP", ctrlKey: true, shiftKey: true }).defaultPrevented).toBe(true);
+    expect(environment.key({ code: "KeyB", ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(environment.key({ code: "ShiftLeft", shiftKey: true }).defaultPrevented).toBe(false);
+    expect(environment.key({ code: "KeyP", shiftKey: true }).defaultPrevented).toBe(true);
+    expect(environment.key({ code: "KeyB", ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(environment.key({ code: "Tab" }).defaultPrevented).toBe(true);
+    expect(environment.key({ code: "KeyB", ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(environment.key({ code: "Tab", shiftKey: true }).defaultPrevented).toBe(true);
 
-    environment.hidden = true;
-    expect(environment.key({ code: "KeyS", altKey: true }).defaultPrevented).toBe(false);
-    environment.hidden = false;
-    environment.message(environment.parent, { ...config, generation: 2, active: false });
-    expect(environment.key({ code: "KeyS", altKey: true }).defaultPrevented).toBe(false);
-    environment.message(environment.parent, { ...config, generation: 1, active: true });
-    expect(environment.key({ code: "KeyS", altKey: true }).defaultPrevented).toBe(false);
+    expect(environment.posted[0]).toMatchObject({
+      type: FLEET_SHORTCUT_READY_TYPE,
+      generation: 1,
+      actions: expect.arrayContaining(["fit-pane-width", "toggle-type-mode", "send-escape", "send-ctrl-c"]),
+    });
+    expect(environment.posted.slice(1)).toEqual([
+      expect.objectContaining({ commandId: "open-command-palette", bindingLabel: "Ctrl+Shift+P", generation: 1 }),
+      expect.objectContaining({ commandId: "rename-pane", bindingLabel: "Ctrl+B Shift+P", generation: 1 }),
+      expect.objectContaining({ commandId: "next-pane-in-tab", bindingLabel: "Ctrl+B Tab", generation: 1 }),
+      expect.objectContaining({ commandId: "previous-pane-in-tab", bindingLabel: "Ctrl+B Shift+Tab", generation: 1 }),
+    ]);
+    expect(JSON.stringify(environment.posted.slice(1))).not.toContain('"code"');
+    expect(JSON.stringify(environment.posted)).not.toContain('"keys"');
 
     stop();
     expect(environment.messages.size).toBe(0);
     expect(environment.keys.size).toBe(0);
+    expect(environment.cancels.size).toBe(0);
+  });
+
+  it("cancels prefix on context loss, hidden state, unsupported input, and newer generations", () => {
+    const environment = new FakeShortcutEnvironment();
+    createFleetShortcutController(environment, new Map())();
+    environment.message(environment.parent, config);
+    environment.key({ code: "KeyB", ctrlKey: true });
+    environment.cancel();
+    expect(environment.key({ code: "KeyS" }).defaultPrevented).toBe(false);
+
+    environment.key({ code: "KeyB", ctrlKey: true });
+    expect(environment.key({ code: "KeyQ" }).defaultPrevented).toBe(false);
+    expect(environment.key({ code: "KeyS" }).defaultPrevented).toBe(false);
+
+    environment.hidden = true;
+    expect(environment.key({ code: "KeyJ", altKey: true }).defaultPrevented).toBe(false);
+    environment.hidden = false;
+    environment.message(environment.parent, bridgeConfig(2, false));
+    expect(environment.key({ code: "KeyJ", altKey: true }).defaultPrevented).toBe(false);
+    environment.message(environment.parent, config);
+    expect(environment.key({ code: "KeyJ", altKey: true }).defaultPrevented).toBe(false);
   });
 
   it("does not install bridge behavior in standalone Collie", () => {
@@ -126,80 +166,72 @@ describe("Fleet framed shortcut bridge", () => {
     expect(environment.key({ code: "KeyS", altKey: true }).defaultPrevented).toBe(false);
   });
 
-  it("runs an allowlisted handler once and deduplicates request ids", async () => {
+  it("runs a fixed handler once and deduplicates correlated request ids", async () => {
     const environment = new FakeShortcutEnvironment();
     const handler = vi.fn(async () => {});
-    createFleetShortcutController(environment, new Map([["resize-current-pane", handler]]))();
+    createFleetShortcutController(environment, new Map([["fit-pane-width", handler]]))();
     environment.message(environment.parent, config);
     environment.message(environment.parent, command);
     environment.message(environment.parent, command);
-    await vi.waitFor(() => expect(environment.posted).toHaveLength(2));
+    await vi.waitFor(() => expect(environment.posted.filter((message) => message.type === FLEET_SHORTCUT_RESULT_TYPE)).toHaveLength(2));
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(environment.posted[0]).toEqual({
+    const results = environment.posted.filter((message): message is FleetShortcutResult => message.type === FLEET_SHORTCUT_RESULT_TYPE);
+    expect(results[0]).toEqual({
       type: FLEET_SHORTCUT_RESULT_TYPE,
       version: FLEET_SHORTCUT_VERSION,
+      generation: 1,
       requestId: command.requestId,
       action: command.action,
       ok: true,
     });
-    expect(environment.posted[1]).toEqual(environment.posted[0]);
+    expect(results[1]).toEqual(results[0]);
   });
 
-  it("waits briefly for the mounted Pane handler without retrying the command", async () => {
+  it("waits only briefly for a mounted handler and abandons it on route generation change", async () => {
     const environment = new FakeShortcutEnvironment();
-    const handlers = new Map<"resize-current-pane", () => void | Promise<void>>();
+    const handlers = new Map<FleetShortcutChildAction, () => void | Promise<void>>();
     const handler = vi.fn();
     createFleetShortcutController(environment, handlers, 1_000, 100)();
     environment.message(environment.parent, config);
     environment.message(environment.parent, command);
-    setTimeout(() => handlers.set("resize-current-pane", handler), 10);
-
-    await vi.waitFor(() => expect(environment.posted).toHaveLength(1));
+    setTimeout(() => handlers.set("fit-pane-width", handler), 10);
+    await vi.waitFor(() => expect(environment.posted.some((message) => message.type === FLEET_SHORTCUT_RESULT_TYPE)).toBe(true));
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(environment.posted[0]).toMatchObject({ ok: true, requestId: command.requestId });
-  });
+    expect(environment.posted.find((message) => message.type === FLEET_SHORTCUT_RESULT_TYPE)).toMatchObject({ ok: true, generation: 1 });
 
-  it("abandons a waiting command when the selected child becomes inactive", async () => {
-    const environment = new FakeShortcutEnvironment();
-    const handlers = new Map<"resize-current-pane", () => void | Promise<void>>();
-    const handler = vi.fn();
-    createFleetShortcutController(environment, handlers, 1_000, 100)();
-    environment.message(environment.parent, config);
-    environment.message(environment.parent, command);
+    environment.posted.length = 0;
+    handlers.delete("fit-pane-width");
+    const nextCommand = { ...command, requestId: "request_next_123", generation: 2 };
+    environment.message(environment.parent, bridgeConfig(2));
+    environment.message(environment.parent, nextCommand);
     setTimeout(() => {
-      environment.message(environment.parent, { ...config, generation: 2, active: false });
-      handlers.set("resize-current-pane", handler);
+      environment.message(environment.parent, bridgeConfig(3));
+      handlers.set("fit-pane-width", handler);
     }, 10);
-
-    await vi.waitFor(() => expect(environment.posted).toHaveLength(1));
-    expect(handler).not.toHaveBeenCalled();
-    expect(environment.posted[0]).toMatchObject({ ok: false, error: "Shortcut action is unavailable" });
+    await vi.waitFor(() => expect(environment.posted.some((message) => message.type === FLEET_SHORTCUT_RESULT_TYPE && message.generation === 2)).toBe(true));
+    expect(environment.posted.find((message) => message.type === FLEET_SHORTCUT_RESULT_TYPE && message.generation === 2)).toMatchObject({ ok: false, error: "Shortcut action is unavailable", generation: 2 });
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("fails closed for inactive, missing, throwing, and timed-out handlers", async () => {
-    const missing = new FakeShortcutEnvironment();
-    createFleetShortcutController(missing, new Map(), 1_000, 0)();
-    missing.message(missing.parent, config);
-    missing.message(missing.parent, command);
-    await vi.waitFor(() => expect(missing.posted).toHaveLength(1));
-    expect(missing.posted[0]).toMatchObject({ ok: false, error: "Shortcut action is unavailable" });
-
-    const throwing = new FakeShortcutEnvironment();
-    createFleetShortcutController(throwing, new Map([["resize-current-pane", async () => { throw new Error(`bad\n${"x".repeat(400)}`); }]]))();
-    throwing.message(throwing.parent, config);
-    throwing.message(throwing.parent, command);
-    await vi.waitFor(() => expect(throwing.posted).toHaveLength(1));
-    expect((throwing.posted[0] as Extract<FleetShortcutResult, { ok: false }>).error.length).toBeLessThanOrEqual(240);
-    expect((throwing.posted[0] as Extract<FleetShortcutResult, { ok: false }>).error).not.toContain("\n");
-
-    const timeout = new FakeShortcutEnvironment();
-    const stop = createFleetShortcutController(timeout, new Map([["resize-current-pane", () => new Promise(() => {})]]), 5)();
-    timeout.message(timeout.parent, config);
-    timeout.message(timeout.parent, command);
-    await vi.waitFor(() => expect(timeout.posted).toHaveLength(1));
-    expect(timeout.posted[0]).toMatchObject({ ok: false, error: "Shortcut action timed out" });
-    stop();
-    expect(timeout.messages.size).toBe(0);
-    expect(timeout.keys.size).toBe(0);
+  it("rejects arbitrary key payloads and bounds throwing or timed-out handler errors", async () => {
+    const environment = new FakeShortcutEnvironment();
+    const handlers = new Map<FleetShortcutChildAction, () => void | Promise<void>>([
+      ["send-escape", async () => { throw new Error(`offline\n${"x".repeat(400)}`); }],
+      ["send-enter", () => new Promise(() => {})],
+    ]);
+    createFleetShortcutController(environment, handlers, 5, 0)();
+    environment.message(environment.parent, config);
+    environment.message(environment.parent, { ...command, requestId: "request_escape_1", action: "send-escape" });
+    environment.message(environment.parent, { ...command, requestId: "request_enter_12", action: "send-enter" });
+    environment.message(environment.parent, { ...command, requestId: "request_keys_123", action: "send-enter", keys: ["x"] });
+    await vi.waitFor(() => expect(environment.posted.filter((message) => message.type === FLEET_SHORTCUT_RESULT_TYPE)).toHaveLength(2));
+    const failures = environment.posted.filter((message): message is FleetShortcutResult => message.type === FLEET_SHORTCUT_RESULT_TYPE);
+    expect(failures.every((result) => !result.ok)).toBe(true);
+    for (const result of failures) {
+      if (!result.ok) {
+        expect(result.error.length).toBeLessThanOrEqual(240);
+        expect(result.error).not.toContain("\n");
+      }
+    }
   });
 });

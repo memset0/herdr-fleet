@@ -58,6 +58,8 @@ function client(overrides: Partial<FleetActionApi> = {}): FleetActionApi {
       ok: true as const,
       pane: { paneId: "w1:p2", workspaceId: "w1", workspaceLabel: "Demo", tabId: "w1:t2", cwd: "/tmp" },
     })),
+    renameWorkspace: vi.fn(async () => ({ ok: true as const })),
+    closeWorkspace: vi.fn(async () => ({ ok: true as const })),
     renameTab: vi.fn(async () => ({ ok: true as const })),
     renamePane: vi.fn(async () => ({ ok: true as const })),
     closeTab: vi.fn(async () => ({ ok: true as const })),
@@ -91,6 +93,22 @@ describe("Fleet sidebar child actions", () => {
       paneId: "w1:p1",
       label: "",
     })).not.toBeNull();
+    expect(parseFleetActionRequest({
+      type: FLEET_ACTION_REQUEST_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId,
+      action: "rename-workspace",
+      workspaceId: "w1",
+      label: " Demo ",
+      session: "demo",
+    })).not.toBeNull();
+    expect(parseFleetActionRequest({
+      type: FLEET_ACTION_REQUEST_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId,
+      action: "close-workspace",
+      workspaceId: "../bad",
+    })).toBeNull();
     expect(parseFleetActionRequest({
       type: FLEET_ACTION_REQUEST_TYPE,
       version: FLEET_ACTION_VERSION,
@@ -228,6 +246,36 @@ describe("Fleet sidebar child actions", () => {
       expect(failure.error.length).toBeLessThanOrEqual(240);
       expect(failure.error).not.toContain("\n");
     }
+  });
+
+  it("maps Space rename and close to exact native APIs", async () => {
+    const environment = new FakeActionEnvironment();
+    const api = client();
+    createFleetActionController(environment, api)();
+    environment.message(environment.parent, {
+      type: FLEET_ACTION_REQUEST_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId: "rename_space_123",
+      action: "rename-workspace",
+      workspaceId: "w1",
+      label: " Demo ",
+      session: "demo",
+    });
+    environment.message(environment.parent, {
+      type: FLEET_ACTION_REQUEST_TYPE,
+      version: FLEET_ACTION_VERSION,
+      requestId: "close_space_1234",
+      action: "close-workspace",
+      workspaceId: "w1",
+      session: "demo",
+    });
+    await vi.waitFor(() => expect(environment.posted).toHaveLength(2));
+    expect(api.renameWorkspace).toHaveBeenCalledWith("w1", "Demo", "demo");
+    expect(api.closeWorkspace).toHaveBeenCalledWith("w1", "demo");
+    expect(environment.posted).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "rename-workspace", ok: true }),
+      expect.objectContaining({ action: "close-workspace", ok: true }),
+    ]));
   });
 
   it("maps close variants to the exact native API and deduplicates destructive requests", async () => {

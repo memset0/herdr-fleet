@@ -9,6 +9,8 @@ import {
   fetchHistory,
   fetchPane,
   fetchSnapshot,
+  closeWorkspace,
+  renameWorkspace,
   resizePane,
   sendKeys,
   sendReply,
@@ -29,6 +31,25 @@ describe("api client", () => {
   it("createTab posts and returns the created pane", async () => {
     const res = await createTab("w2");
     expect(res.ok).toBe(true);
+  });
+
+  it("renames and closes a Space through exact session-scoped routes", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    server.use(
+      http.post(/\/api\/workspace\/[^/]+\/(rename|close)$/, async ({ request }) => {
+        requests.push({
+          url: request.url,
+          body: request.url.includes("/rename") ? await request.json() : null,
+        });
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    await expect(renameWorkspace("w1", "Demo", "batch-a")).resolves.toEqual({ ok: true });
+    await expect(closeWorkspace("w1", "batch-a")).resolves.toEqual({ ok: true });
+    expect(requests).toEqual([
+      { url: expect.stringContaining("/api/workspace/w1/rename?session=batch-a"), body: { label: "Demo" } },
+      { url: expect.stringContaining("/api/workspace/w1/close?session=batch-a"), body: null },
+    ]);
   });
 
   it("resizePane posts columns to the session-scoped manual resize action", async () => {

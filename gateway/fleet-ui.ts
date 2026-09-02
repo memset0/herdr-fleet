@@ -1,4 +1,10 @@
 import { GATEWAY_THEME_CSS } from "./theme.ts";
+import {
+  FLEET_COMMANDS,
+  parseFleetShortcutDocument,
+  publicFleetShortcutDocument,
+  type FleetShortcutConfiguration,
+} from "../shared/fleet-commands.ts";
 
 function documentShell(title: string, body: string, assets: string[]): string {
   const tags = assets
@@ -102,79 +108,6 @@ export function fleetAgentFavoritePreference(serialized: string | null): Set<str
 export function fleetAgentFavoriteCompare(leftKey: string, rightKey: string, favorites: ReadonlySet<string>): number {
   return Number(favorites.has(rightKey)) - Number(favorites.has(leftKey));
 }
-
-export type FleetShortcutAction =
-  | { kind: "resize-current-pane" }
-  | { kind: "cycle-pane"; delta: -1 | 1 }
-  | { kind: "cycle-agent"; delta: -1 | 1 }
-  | { kind: "select-agent"; ordinal: number };
-
-export interface FleetShortcutDefinition {
-  id: string;
-  code: string;
-  altKey: boolean;
-  ctrlKey: boolean;
-  metaKey: boolean;
-  shiftKey: boolean;
-  scope: "desktop";
-  label: string;
-  keyLabel: string;
-  action: FleetShortcutAction;
-}
-
-const exactAlt = { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, scope: "desktop" as const };
-
-export const FLEET_SHORTCUTS: readonly FleetShortcutDefinition[] = [
-  { id: "resize-current-pane", code: "KeyS", ...exactAlt, label: "Resize current Pane", keyLabel: "Alt+S", action: { kind: "resize-current-pane" } },
-  { id: "previous-pane", code: "KeyK", ...exactAlt, label: "Previous Pane", keyLabel: "Alt+K", action: { kind: "cycle-pane", delta: -1 } },
-  { id: "next-pane", code: "KeyJ", ...exactAlt, label: "Next Pane", keyLabel: "Alt+J", action: { kind: "cycle-pane", delta: 1 } },
-  { id: "previous-agent", code: "KeyH", ...exactAlt, label: "Previous Agent", keyLabel: "Alt+H", action: { kind: "cycle-agent", delta: -1 } },
-  { id: "next-agent", code: "KeyL", ...exactAlt, label: "Next Agent", keyLabel: "Alt+L", action: { kind: "cycle-agent", delta: 1 } },
-  ...Array.from({ length: 9 }, (_, index): FleetShortcutDefinition => {
-    const ordinal = index + 1;
-    return { id: `select-agent-${ordinal}`, code: `Digit${ordinal}`, ...exactAlt, label: `Select Agent ${ordinal}`, keyLabel: `Alt+${ordinal}`, action: { kind: "select-agent", ordinal } };
-  }),
-];
-
-export function fleetShortcutRegistryValid(registry: readonly FleetShortcutDefinition[]): boolean {
-  const ids = new Set<string>();
-  const chords = new Set<string>();
-  for (const shortcut of registry) {
-    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(shortcut.id) || ids.has(shortcut.id)) return false;
-    if (!/^(?:Key[A-Z]|Digit[1-9])$/.test(shortcut.code) || shortcut.scope !== "desktop") return false;
-    const chord = [shortcut.code, shortcut.altKey, shortcut.ctrlKey, shortcut.metaKey, shortcut.shiftKey].join("|");
-    if (chords.has(chord) || !shortcut.label || !shortcut.keyLabel) return false;
-    ids.add(shortcut.id);
-    chords.add(chord);
-  }
-  return registry.length > 0;
-}
-
-export interface FleetShortcutEventLike {
-  code: string;
-  altKey: boolean;
-  ctrlKey: boolean;
-  metaKey: boolean;
-  shiftKey: boolean;
-  repeat: boolean;
-}
-
-export function fleetShortcutMatch(
-  event: FleetShortcutEventLike,
-  desktop: boolean,
-  registry: readonly FleetShortcutDefinition[] = FLEET_SHORTCUTS,
-): FleetShortcutDefinition | null {
-  if (!desktop || event.repeat) return null;
-  return registry.find((shortcut) =>
-    shortcut.code === event.code
-    && shortcut.altKey === event.altKey
-    && shortcut.ctrlKey === event.ctrlKey
-    && shortcut.metaKey === event.metaKey
-    && shortcut.shiftKey === event.shiftKey
-  ) ?? null;
-}
-
-if (!fleetShortcutRegistryValid(FLEET_SHORTCUTS)) throw new Error("invalid Fleet shortcut registry");
 
 export function fleetShortcutCycleIndex(
   targetKeys: readonly string[],
@@ -402,7 +335,11 @@ export function fleetDesktopTerminalUrl(
   }
 }
 
-export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): string {
+export function fleetPage(
+  iframeCacheSize = 1,
+  pluginVersion = "development",
+  shortcuts: FleetShortcutConfiguration = parseFleetShortcutDocument(publicFleetShortcutDocument(), { requireComplete: true }),
+): string {
   const boundedCacheSize = Number.isSafeInteger(iframeCacheSize) && iframeCacheSize >= 1 && iframeCacheSize <= 10
     ? iframeCacheSize
     : 1;
@@ -411,12 +348,20 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
     const size = index + 1;
     return `<option value="${size}">${size}</option>`;
   }).join("");
-  const shortcutRows = FLEET_SHORTCUTS.map((shortcut) =>
-    `<li><span>${shortcut.label}</span><kbd>${shortcut.keyLabel}</kbd></li>`,
-  ).join("");
+  const shortcutRows = FLEET_COMMANDS.map((command) => {
+    const bindings = shortcuts.bindingsByCommand[command.id] ?? [];
+    const bindingMarkup = bindings.length
+      ? bindings.map((binding) => {
+          const chord = binding.chord;
+          const label = binding.kind === "prefix" ? `${shortcuts.prefix.label} ${chord.label}` : chord.label;
+          return `<kbd data-binding-kind="${binding.kind}" data-binding-code="${chord.code}" data-binding-alt="${Number(chord.altKey)}" data-binding-ctrl="${Number(chord.ctrlKey)}" data-binding-meta="${Number(chord.metaKey)}" data-binding-shift="${Number(chord.shiftKey)}" data-binding-label="${chord.label}">${label}</kbd>`;
+        }).join("")
+      : `<span class="fleet-shortcut-unbound">Unbound</span>`;
+    return `<li data-command-id="${command.id}" data-command-name="${command.name}" data-command-scope="${command.scope}"><span>${command.name}</span><span class="fleet-shortcut-bindings">${bindingMarkup}</span></li>`;
+  }).join("");
   return documentShell(
     "Fleet · Collie",
-    `<main class="fleet-shell" data-iframe-cache-size="${boundedCacheSize}" data-plugin-version="${safeVersion}">
+    `<main class="fleet-shell" data-iframe-cache-size="${boundedCacheSize}" data-plugin-version="${safeVersion}" data-shortcut-prefix-code="${shortcuts.prefix.code}" data-shortcut-prefix-alt="${Number(shortcuts.prefix.altKey)}" data-shortcut-prefix-ctrl="${Number(shortcuts.prefix.ctrlKey)}" data-shortcut-prefix-meta="${Number(shortcuts.prefix.metaKey)}" data-shortcut-prefix-shift="${Number(shortcuts.prefix.shiftKey)}" data-shortcut-prefix-label="${shortcuts.prefix.label}">
       <header id="host-rail" class="fleet-header">
         <button id="tree-menu-toggle" class="fleet-mark fleet-tree-toggle" type="button" aria-expanded="false" aria-controls="instances" aria-label="Open Host tree" title="Hosts">H</button>
         <a class="fleet-mark fleet-home-mark" href="/" aria-label="Fleet home" title="Herdr Fleet">H</a>
@@ -508,16 +453,33 @@ export function fleetPage(iframeCacheSize = 1, pluginVersion = "development"): s
           <button id="retry-inventory" class="primary-action" type="button">Try again</button>
         </div>
       </section>
-      <section id="tree-rename" class="tree-rename" role="dialog" aria-labelledby="tree-rename-title" hidden>
-        <form id="tree-rename-form">
-          <label id="tree-rename-title" for="tree-rename-input">Rename</label>
-          <input id="tree-rename-input" type="text" maxlength="256" autocomplete="off" spellcheck="false">
-          <p id="tree-rename-error" class="tree-rename-error" role="status" hidden></p>
-          <div class="tree-rename-actions">
-            <button id="tree-rename-cancel" type="button">Cancel</button>
-            <button id="tree-rename-save" type="submit">Save</button>
+      <section id="command-dialog" class="command-dialog" role="dialog" aria-modal="true" aria-labelledby="command-dialog-title" hidden>
+        <button id="command-dialog-backdrop" class="command-dialog-backdrop" type="button" tabindex="-1" aria-label="Close dialog"></button>
+        <div class="command-dialog-panel">
+          <form id="command-dialog-form" class="command-dialog-form">
+            <label id="command-dialog-title" for="command-dialog-input">Command Palette</label>
+            <input id="command-dialog-input" type="text" maxlength="256" autocomplete="off" spellcheck="false" aria-controls="command-dialog-results" aria-autocomplete="list">
+            <p id="command-dialog-hint" class="command-dialog-hint">Type / to search commands.</p>
+            <p id="command-dialog-error" class="command-dialog-error" role="status" hidden></p>
+            <div id="command-dialog-results" class="command-dialog-results" role="listbox" aria-label="Fleet commands"></div>
+            <div id="command-dialog-actions" class="command-dialog-actions" hidden>
+              <button id="command-dialog-cancel" type="button">Cancel</button>
+              <button id="command-dialog-save" type="submit">Save</button>
+            </div>
+          </form>
+        </div>
+      </section>
+      <section id="space-close-dialog" class="command-dialog destructive-dialog" role="alertdialog" aria-modal="true" aria-labelledby="space-close-title" aria-describedby="space-close-impact" hidden>
+        <button id="space-close-backdrop" class="command-dialog-backdrop" type="button" tabindex="-1" aria-label="Cancel closing Space"></button>
+        <div class="command-dialog-panel">
+          <h2 id="space-close-title">Close Space?</h2>
+          <p id="space-close-impact" class="command-dialog-hint"></p>
+          <p id="space-close-error" class="command-dialog-error" role="status" hidden></p>
+          <div class="command-dialog-actions">
+            <button id="space-close-cancel" type="button">Cancel</button>
+            <button id="space-close-confirm" class="destructive-action" type="button">Press Enter to confirm</button>
           </div>
-        </form>
+        </div>
       </section>
       <div id="tree-context-menu" class="tree-context-menu" role="menu" aria-label="Tab and Pane actions" hidden>
         <button id="tree-context-rename" type="button" role="menuitem">Rename</button>
@@ -627,7 +589,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 .tree-row-wrap { position: relative; min-width: 0; }
 .tree-inline-action { display: none; }
 .desktop-terminal-entry { display: none; }
-.host-rail-footer, .tree-action-status, .fleet-settings, .tree-rename, .tree-context-menu { display: none; }
+.host-rail-footer, .tree-action-status, .fleet-settings, .tree-context-menu { display: none; }
 .fleet-shortcuts { display: none; }
 .connecting { padding: 0 .6rem; color: var(--muted-foreground); font-size: .8rem; }
 .instance-tab {
@@ -906,6 +868,81 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   backdrop-filter: blur(12px);
 }
 .shortcut-toast[data-visible="true"] { visibility: visible; opacity: 1; transform: translate(-50%, 0); transition-delay: 0s; }
+.command-dialog {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding: max(10vh, 3rem) 1rem 1rem;
+}
+.command-dialog[hidden] { display: none; }
+.command-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: light-dark(#00000042, #00000096);
+  cursor: default;
+  backdrop-filter: blur(4px);
+}
+.command-dialog-panel {
+  position: relative;
+  z-index: 1;
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: min(76vh, 44rem);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--card);
+  padding: .85rem;
+  box-shadow: 0 24px 80px light-dark(#00000035, #000000d0);
+}
+.command-dialog-form { display: grid; min-height: 0; gap: .65rem; }
+.command-dialog-form > label, .destructive-dialog h2 { margin: 0; font-size: .8rem; font-weight: 800; }
+.command-dialog-form > input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--background);
+  padding: .7rem .75rem;
+  color: var(--foreground);
+  font: 500 .84rem/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  outline: none;
+}
+.command-dialog-form > input:focus { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 24%, transparent); }
+.command-dialog-hint, .command-dialog-error { margin: 0; color: var(--muted-foreground); font-size: .7rem; line-height: 1.4; }
+.command-dialog-error { color: var(--destructive); }
+.command-dialog-results { display: grid; min-height: 0; max-height: min(56vh, 32rem); gap: .2rem; overflow-y: auto; }
+.command-dialog-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .75rem;
+  width: 100%;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  padding: .55rem .65rem;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.command-dialog-result:hover, .command-dialog-result[aria-selected="true"] { background: var(--accent); }
+.command-dialog-result:disabled { cursor: not-allowed; opacity: .48; }
+.command-result-copy { display: grid; min-width: 0; gap: .1rem; }
+.command-result-name { overflow: hidden; font-size: .78rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.command-result-id { overflow: hidden; color: var(--muted-foreground); font: .62rem/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.command-result-bindings { display: flex; max-width: 18rem; flex-wrap: wrap; justify-content: flex-end; gap: .25rem; }
+.command-result-bindings kbd, .fleet-shortcut-bindings kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: calc(var(--radius) - 4px); background: var(--background); padding: .13rem .32rem; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .6rem; line-height: 1.2; }
+.command-result-unbound, .fleet-shortcut-unbound { color: var(--muted-foreground); font-size: .62rem; font-style: italic; }
+.command-dialog-actions { display: flex; justify-content: flex-end; gap: .45rem; }
+.command-dialog-actions button { min-height: 2rem; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: 0 .75rem; color: var(--foreground); font-size: .7rem; cursor: pointer; }
+.command-dialog-actions button[type="submit"] { background: var(--accent); font-weight: 750; }
+.command-dialog-actions button:disabled { cursor: wait; opacity: .55; }
+.destructive-dialog .command-dialog-panel { width: min(30rem, calc(100vw - 2rem)); }
+.destructive-dialog h2 { color: var(--destructive); }
+.command-dialog-actions .destructive-action { border-color: color-mix(in oklch, var(--destructive) 45%, var(--border)); color: var(--destructive); font-weight: 750; }
 .frame-stage { position: relative; display: flex; min-height: 0; flex: 1; overflow: hidden; background: var(--background); }
 .node-frame { display: block; width: 100%; height: 100%; border: 0; background: var(--background); }
 .frame-loading { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; gap: .8rem; background: var(--background); color: var(--muted-foreground); font-size: .8rem; }
@@ -1091,7 +1128,13 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
     grid-template: minmax(0, 1fr) / var(--fleet-host-rail-width) minmax(40rem, 1fr) var(--fleet-agent-rail-width);
     grid-template-areas: "hosts frame agents";
     box-shadow: none;
+    transition: grid-template-columns .22s cubic-bezier(.2, .8, .2, 1);
   }
+  .fleet-shell[data-sidebars-collapsed="true"] { grid-template-columns: 0 minmax(40rem, 1fr) 0; }
+  .fleet-header, .agent-menu { transition: opacity .16s ease, visibility 0s linear 0s; }
+  .fleet-shell[data-sidebars-collapsed="true"] > .fleet-header,
+  .fleet-shell[data-sidebars-collapsed="true"] > .agent-menu { visibility: hidden; opacity: 0; transition: opacity .16s ease, visibility 0s linear .22s; }
+  .fleet-shell[data-sidebars-collapsed="true"] > .rail-resizer { visibility: hidden; pointer-events: none; opacity: 0; }
   .fleet-header {
     position: relative;
     grid-area: hosts;
@@ -1238,8 +1281,8 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
   .fleet-shortcuts { display: block; margin-top: .85rem; border-top: 1px solid var(--border); padding-top: .7rem; }
   .fleet-shortcuts h2 { margin: 0 0 .45rem; font-size: .72rem; }
   .fleet-shortcuts ul { display: grid; gap: .28rem; margin: 0; padding: 0; list-style: none; }
-  .fleet-shortcuts li { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .65rem; color: var(--muted-foreground); font-size: .65rem; }
-  .fleet-shortcuts kbd { flex: none; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: calc(var(--radius) - 4px); background: var(--background); padding: .13rem .32rem; color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .6rem; line-height: 1.2; }
+  .fleet-shortcuts li { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: .65rem; color: var(--muted-foreground); font-size: .65rem; }
+  .fleet-shortcut-bindings { display: flex; flex: none; max-width: 10rem; flex-wrap: wrap; justify-content: flex-end; gap: .2rem; }
   .agent-title-line { padding-right: 2.4rem; }
   .agent-meta-line { padding-right: .75rem; }
   .tree-action-status {
@@ -1255,26 +1298,6 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
     line-height: 1.35;
   }
   .tree-action-status[data-kind="error"] { border-color: color-mix(in oklch, var(--status-blocked) 38%, var(--border)); color: var(--status-blocked); }
-  .tree-rename {
-    position: fixed;
-    z-index: 70;
-    left: .65rem;
-    display: block;
-    width: min(18rem, calc(var(--fleet-host-rail-width) - 1.3rem));
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--card);
-    padding: .7rem;
-    box-shadow: 0 16px 42px light-dark(#00000020, #000000a0);
-  }
-  .tree-rename form { display: grid; gap: .55rem; }
-  .tree-rename label { font-size: .72rem; font-weight: 750; }
-  .tree-rename input { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: .48rem .55rem; color: var(--foreground); }
-  .tree-rename-error { margin: 0; color: var(--status-blocked); font-size: .64rem; line-height: 1.35; }
-  .tree-rename-actions { display: flex; justify-content: flex-end; gap: .4rem; }
-  .tree-rename-actions button { min-height: 1.85rem; border: 1px solid var(--border); border-radius: calc(var(--radius) - 3px); background: var(--background); padding: 0 .65rem; color: var(--foreground); font-size: .68rem; cursor: pointer; }
-  #tree-rename-save { background: var(--accent); font-weight: 700; }
-  .tree-rename-actions button:disabled { cursor: wait; opacity: .55; }
   .tree-context-menu {
     position: fixed;
     z-index: 75;
@@ -1368,7 +1391,7 @@ body { margin: 0; background: var(--muted); color: var(--foreground); }
 @media (prefers-reduced-motion: reduce) {
   .loading-mark { animation: none; }
   .agent-card, .agent-card-main { transition: none; }
-  .instance-strip, .host-rail-footer, .tree-children, .tree-chevron { transition: none !important; }
+  .fleet-shell, .fleet-header, .agent-menu, .instance-strip, .host-rail-footer, .tree-children, .tree-chevron { transition: none !important; }
 }
 `;
 
@@ -1378,7 +1401,6 @@ const RAIL_STORAGE_KEY='herdr-web-remote:fleet-rail-widths:v1';
 const CACHE_STORAGE_KEY='herdr-web-remote:fleet-iframe-cache:v1';
 const AGENT_FAVORITES_STORAGE_KEY='herdr-web-remote:fleet-agent-favorites:v1';
 const AGENT_FAVORITES_MAX=${FLEET_AGENT_FAVORITES_MAX};
-const SHORTCUT_REGISTRY=${JSON.stringify(FLEET_SHORTCUTS)};
 const ROUTE_MESSAGE='herdr-web-remote:route';
 const FRAME_ACTIVITY_MESSAGE='herdr-web-remote:activity';
 const FRAME_ACTIVITY_VERSION=1;
@@ -1394,7 +1416,10 @@ const SHORTCUT_CONFIG_MESSAGE='herdr-web-remote:shortcut-config';
 const SHORTCUT_INTENT_MESSAGE='herdr-web-remote:shortcut-intent';
 const SHORTCUT_COMMAND_MESSAGE='herdr-web-remote:shortcut-command';
 const SHORTCUT_RESULT_MESSAGE='herdr-web-remote:shortcut-result';
-const SHORTCUT_VERSION=1;
+const SHORTCUT_READY_MESSAGE='herdr-web-remote:shortcut-ready';
+const SHORTCUT_VERSION=2;
+const LEGACY_SHORTCUT_VERSION=1;
+const SHORTCUT_PREFIX_TIMEOUT_MS=2000;
 const SHORTCUT_COMMAND_TIMEOUT_MS=18000;
 const DEFAULT_REFRESH_MS=5000;
 const MIN_REFRESH_TIMER_MS=250;
@@ -1421,6 +1446,7 @@ const agentMenuToggle=document.querySelector('#agent-menu-toggle');
 const agentMenuCount=document.querySelector('#agent-menu-count');
 const agentSections=document.querySelector('#agent-sections');
 const agentRefreshState=document.querySelector('#agent-refresh-state');
+const hostRail=document.querySelector('#host-rail');
 const hostRailFooter=document.querySelector('#host-rail-footer');
 const settingsAnchor=document.querySelector('.fleet-settings-anchor');
 const hostRailResizer=document.querySelector('#host-rail-resizer');
@@ -1431,19 +1457,44 @@ const cacheSizeSelect=document.querySelector('#iframe-cache-size');
 const cacheReset=document.querySelector('#iframe-cache-reset');
 const treeActionStatus=document.querySelector('#tree-action-status');
 const shortcutToast=document.querySelector('#shortcut-toast');
-const renamePopover=document.querySelector('#tree-rename');
-const renameForm=document.querySelector('#tree-rename-form');
-const renameTitle=document.querySelector('#tree-rename-title');
-const renameInput=document.querySelector('#tree-rename-input');
-const renameError=document.querySelector('#tree-rename-error');
-const renameCancel=document.querySelector('#tree-rename-cancel');
-const renameSave=document.querySelector('#tree-rename-save');
+const commandDialog=document.querySelector('#command-dialog');
+const commandDialogBackdrop=document.querySelector('#command-dialog-backdrop');
+const commandDialogForm=document.querySelector('#command-dialog-form');
+const commandDialogTitle=document.querySelector('#command-dialog-title');
+const commandDialogInput=document.querySelector('#command-dialog-input');
+const commandDialogHint=document.querySelector('#command-dialog-hint');
+const commandDialogError=document.querySelector('#command-dialog-error');
+const commandDialogResults=document.querySelector('#command-dialog-results');
+const commandDialogActions=document.querySelector('#command-dialog-actions');
+const commandDialogCancel=document.querySelector('#command-dialog-cancel');
+const commandDialogSave=document.querySelector('#command-dialog-save');
+const spaceCloseDialog=document.querySelector('#space-close-dialog');
+const spaceCloseBackdrop=document.querySelector('#space-close-backdrop');
+const spaceCloseTitle=document.querySelector('#space-close-title');
+const spaceCloseImpact=document.querySelector('#space-close-impact');
+const spaceCloseError=document.querySelector('#space-close-error');
+const spaceCloseCancel=document.querySelector('#space-close-cancel');
+const spaceCloseConfirm=document.querySelector('#space-close-confirm');
 const treeContextMenu=document.querySelector('#tree-context-menu');
 const treeContextRename=document.querySelector('#tree-context-rename');
 const treeContextClose=document.querySelector('#tree-context-close');
 const treeContextError=document.querySelector('#tree-context-error');
 const desktopMedia=matchMedia(DESKTOP_MEDIA);
 const terminalDesktopMedia=matchMedia(TERMINAL_DESKTOP_MEDIA);
+const shortcutRows=[...document.querySelectorAll('.fleet-shortcuts [data-command-id]')];
+const COMMAND_CATALOG=shortcutRows.map((row)=>({id:row.dataset.commandId,name:row.dataset.commandName,scope:row.dataset.commandScope,bindings:[...row.querySelectorAll('kbd[data-binding-kind]')].map((binding)=>({commandId:row.dataset.commandId,kind:binding.dataset.bindingKind,code:binding.dataset.bindingCode,altKey:binding.dataset.bindingAlt==='1',ctrlKey:binding.dataset.bindingCtrl==='1',metaKey:binding.dataset.bindingMeta==='1',shiftKey:binding.dataset.bindingShift==='1',label:binding.dataset.bindingLabel||''}))}));
+const COMMANDS_BY_ID=new Map(COMMAND_CATALOG.map((command)=>[command.id,command]));
+const SHORTCUT_BINDINGS=COMMAND_CATALOG.flatMap((command)=>command.bindings);
+const SHORTCUT_PREFIX={code:shell.dataset.shortcutPrefixCode,altKey:shell.dataset.shortcutPrefixAlt==='1',ctrlKey:shell.dataset.shortcutPrefixCtrl==='1',metaKey:shell.dataset.shortcutPrefixMeta==='1',shiftKey:shell.dataset.shortcutPrefixShift==='1',label:shell.dataset.shortcutPrefixLabel||'Prefix'};
+const LEGACY_SHORTCUTS=[
+ {id:'resize-current-pane',commandId:'fit-pane-width',code:'KeyS',label:'Alt+S'},
+ {id:'previous-pane',commandId:'previous-pane',code:'KeyK',label:'Alt+K'},
+ {id:'next-pane',commandId:'next-pane',code:'KeyJ',label:'Alt+J'},
+ {id:'previous-agent',commandId:'previous-agent',code:'KeyH',label:'Alt+H'},
+ {id:'next-agent',commandId:'next-agent',code:'KeyL',label:'Alt+L'},
+ ...Array.from({length:9},(_,index)=>({id:'select-agent-'+(index+1),commandId:'select-agent-'+(index+1),code:'Digit'+(index+1),label:'Alt+'+(index+1)})),
+];
+const CHILD_SHORTCUT_ACTIONS=new Set(['fit-pane-width','toggle-type-mode','send-escape','send-enter','send-up-arrow','send-down-arrow','send-left-arrow','send-right-arrow','send-space','send-ctrl-c']);
 const configuredCacheSize=Number(shell.dataset.iframeCacheSize);
 const defaultCacheSize=Number.isSafeInteger(configuredCacheSize)&&configuredCacheSize>=1&&configuredCacheSize<=10?configuredCacheSize:1;
 let iframeCacheSize=readIframeCachePreference();
@@ -1463,8 +1514,11 @@ let treeOpen=false;
 let preferredRailWidths=readRailWidthPreferences();
 let appliedRailWidths={left:RAIL_WIDTHS.leftDefault,right:RAIL_WIDTHS.rightDefault};
 let railDrag=null;
+let sidebarsCollapsed=false;
 let pendingAction=null;
-let renameTarget=null;
+let commandDialogState=null;
+let spaceCloseState=null;
+let spaceCloseTimer=null;
 let treeContextTarget=null;
 let treeContextInvoker=null;
 let treeContextArmedTimer=null;
@@ -1473,8 +1527,11 @@ let shortcutToastTimer=null;
 let pendingFavoriteFocusKey=null;
 let paneShortcutTargets=[];
 let agentShortcutTargets=[];
+let paneMru=[];
 let shortcutGeneration=0;
 let pendingShortcutCommand=null;
+let shortcutPendingAt=null;
+let shortcutPrefixTimer=null;
 const recentShortcutIntents=new Set();
 
 const healthLabel=(health)=>({online:'Online','herdr-down':'Herdr unavailable','bridge-down':'Collie unavailable','transport-down':'Transport unavailable'}[health]||'Unavailable');
@@ -1502,9 +1559,25 @@ const formatDelay=(ms)=>ms>=3600000?'1h':ms>=60000?Math.round(ms/60000)+'m':Math
 const timeAgo=(at)=>{const seconds=Math.max(0,Math.floor((Date.now()-at)/1000));if(seconds<60)return seconds+'s';const minutes=Math.floor(seconds/60);if(minutes<60)return minutes+'m';const hours=Math.floor(minutes/60);if(hours<24)return hours+'h';return Math.floor(hours/24)+'d'};
 const shortcutPaneKey=(nodeId,paneId,session)=>[nodeId,paneId,session||''].join('|');
 
-function matchShortcut(event){
- if(!desktopMedia.matches||event.repeat)return null;
- return SHORTCUT_REGISTRY.find((shortcut)=>shortcut.code===event.code&&shortcut.altKey===event.altKey&&shortcut.ctrlKey===event.ctrlKey&&shortcut.metaKey===event.metaKey&&shortcut.shiftKey===event.shiftKey)||null;
+const shortcutSignature=(value)=>[value.code,Boolean(value.altKey),Boolean(value.ctrlKey),Boolean(value.metaKey),Boolean(value.shiftKey)].join('|');
+const pureShortcutModifier=(code)=>/^(?:Alt|AltLeft|AltRight|Control|ControlLeft|ControlRight|Meta|MetaLeft|MetaRight|Shift|ShiftLeft|ShiftRight)$/.test(code);
+function cancelShortcutPrefix(){shortcutPendingAt=null;if(shortcutPrefixTimer!==null){clearTimeout(shortcutPrefixTimer);shortcutPrefixTimer=null}}
+function recognizeShortcut(event){
+ if(!desktopMedia.matches||document.hidden||event.repeat||pureShortcutModifier(event.code))return{kind:'ignored'};
+ const now=Date.now();if(shortcutPendingAt!==null&&now-shortcutPendingAt>=SHORTCUT_PREFIX_TIMEOUT_MS)cancelShortcutPrefix();
+ const signature=shortcutSignature(event);
+ if(shortcutPendingAt!==null){
+   cancelShortcutPrefix();
+   if(event.code==='Escape'&&!event.altKey&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey)return{kind:'cancelled'};
+   const binding=SHORTCUT_BINDINGS.find((candidate)=>candidate.kind==='prefix'&&shortcutSignature(candidate)===signature);
+   return binding?{kind:'command',command:COMMANDS_BY_ID.get(binding.commandId),bindingLabel:SHORTCUT_PREFIX.label+' '+binding.label}:{kind:'cancelled'};
+ }
+ const direct=SHORTCUT_BINDINGS.find((candidate)=>candidate.kind==='direct'&&shortcutSignature(candidate)===signature);
+ if(direct)return{kind:'command',command:COMMANDS_BY_ID.get(direct.commandId),bindingLabel:direct.label};
+ if(signature===shortcutSignature(SHORTCUT_PREFIX)){
+   shortcutPendingAt=now;shortcutPrefixTimer=setTimeout(cancelShortcutPrefix,SHORTCUT_PREFIX_TIMEOUT_MS);return{kind:'prefix'};
+ }
+ return{kind:'ignored'};
 }
 
 function readIframeCachePreference(){
@@ -1543,9 +1616,9 @@ function showTreeActionStatus(message,kind='success'){
  actionStatusTimer=setTimeout(()=>{actionStatusTimer=null;treeActionStatus.hidden=true;delete treeActionStatus.dataset.kind},5000);
 }
 
-function showShortcutToast(shortcut){
+function showCommandToast(command,bindingLabel=null){
  if(shortcutToastTimer!==null){clearTimeout(shortcutToastTimer);shortcutToastTimer=null}
- shortcutToast.textContent=shortcut.keyLabel+' · '+shortcut.label;shortcutToast.dataset.visible='true';shortcutToast.setAttribute('aria-hidden','false');
+ shortcutToast.textContent=(bindingLabel?bindingLabel+' · ':'')+command.name;shortcutToast.dataset.visible='true';shortcutToast.setAttribute('aria-hidden','false');
  shortcutToastTimer=setTimeout(()=>{shortcutToastTimer=null;delete shortcutToast.dataset.visible;shortcutToast.setAttribute('aria-hidden','true')},1800);
 }
 
@@ -1564,7 +1637,7 @@ function closeSettings({restoreFocus=false}={}){
 }
 
 function openSettings(){
- if(!desktopMedia.matches&&!treeOpen)return;closeTreeContextMenu();closeRename();settingsPopover.hidden=false;settingsToggle.setAttribute('aria-expanded','true');cacheSizeSelect.value=String(iframeCacheSize);cacheSizeSelect.focus();
+ if(!desktopMedia.matches&&!treeOpen)return false;if(sidebarsCollapsed)setSidebarsCollapsed(false);closeTreeContextMenu();closeCommandDialog();cancelSpaceClose();settingsPopover.hidden=false;settingsToggle.setAttribute('aria-expanded','true');cacheSizeSelect.value=String(iframeCacheSize);cacheSizeSelect.focus();return true;
 }
 
 function clampRail(value,minimum,maximum){return Math.min(maximum,Math.max(minimum,Math.round(value)))}
@@ -1729,8 +1802,12 @@ function shortcutFrameActive(entry){
 function postFrameShortcutConfig(entry){
  const target=entry.frame.contentWindow;if(!target)return false;
  shortcutGeneration=shortcutGeneration>=Number.MAX_SAFE_INTEGER?0:shortcutGeneration+1;
- const bindings=SHORTCUT_REGISTRY.map(({id,code,altKey,ctrlKey,metaKey,shiftKey})=>({id,code,altKey,ctrlKey,metaKey,shiftKey}));
- target.postMessage({type:SHORTCUT_CONFIG_MESSAGE,version:SHORTCUT_VERSION,generation:shortcutGeneration,active:shortcutFrameActive(entry),bindings},entry.origin);return true;
+ entry.shortcutGeneration=shortcutGeneration;entry.shortcutProtocol=null;entry.shortcutActions=new Set();
+ const prefix={code:SHORTCUT_PREFIX.code,altKey:SHORTCUT_PREFIX.altKey,ctrlKey:SHORTCUT_PREFIX.ctrlKey,metaKey:SHORTCUT_PREFIX.metaKey,shiftKey:SHORTCUT_PREFIX.shiftKey,label:SHORTCUT_PREFIX.label};
+ const bindings=SHORTCUT_BINDINGS.map(({commandId,kind,code,altKey,ctrlKey,metaKey,shiftKey,label})=>({commandId,kind,code,altKey,ctrlKey,metaKey,shiftKey,label}));
+ target.postMessage({type:SHORTCUT_CONFIG_MESSAGE,version:SHORTCUT_VERSION,generation:shortcutGeneration,active:shortcutFrameActive(entry),prefix,bindings},entry.origin);
+ const legacyBindings=LEGACY_SHORTCUTS.filter((legacy)=>COMMANDS_BY_ID.get(legacy.commandId)?.bindings.some((binding)=>binding.kind==='direct'&&binding.code===legacy.code&&binding.altKey===true&&!binding.ctrlKey&&!binding.metaKey&&!binding.shiftKey)).map((legacy)=>({id:legacy.id,code:legacy.code,altKey:true,ctrlKey:false,metaKey:false,shiftKey:false}));
+ target.postMessage({type:SHORTCUT_CONFIG_MESSAGE,version:LEGACY_SHORTCUT_VERSION,generation:shortcutGeneration,active:shortcutFrameActive(entry),bindings:legacyBindings},entry.origin);return true;
 }
 
 function broadcastFrameActivity(){for(const entry of frameRegistry.values()){postFrameActivity(entry);postFrameShortcutConfig(entry)}}
@@ -1753,7 +1830,7 @@ function makeFrame(node){
  const origin=nodeOrigin(node);
  const value=document.createElement('iframe');
  value.className='node-frame';value.title='Collie · '+node.name;value.allow='clipboard-read; clipboard-write';value.hidden=true;
- const entry={id:node.id,origin,frame:value,route:{view:'home'},frameKey:null,lastVisitedAt:0,loaded:false,loading:false};
+ const entry={id:node.id,origin,frame:value,route:{view:'home'},frameKey:null,lastVisitedAt:0,loaded:false,loading:false,shortcutGeneration:-1,shortcutProtocol:null,shortcutActions:new Set()};
  value.addEventListener('load',()=>{
    entry.loaded=true;entry.loading=false;
    if(selectedId===entry.id){loading.hidden=true;announce(node.name+' Collie loaded.')}
@@ -1812,24 +1889,29 @@ function finishPendingShortcutCommand(result,error=null){
  clearTimeout(state.timeout);pendingShortcutCommand=null;
  if(error){showTreeActionStatus(error,'error');state.resolve(false);return}
  if(!result.ok){showTreeActionStatus(result.error,'error');state.resolve(false);return}
- announce('Resize current Pane shortcut completed.');state.resolve(true);
+ announce('Selected Pane command completed.');state.resolve(true);
 }
 
 function validShortcutResult(data,state){
- if(!data||typeof data!=='object'||data.type!==SHORTCUT_RESULT_MESSAGE||data.version!==SHORTCUT_VERSION||data.requestId!==state.requestId||data.action!==state.action||typeof data.ok!=='boolean')return false;
- return data.ok?exactMessageKeys(data,['type','version','requestId','action','ok']):exactMessageKeys(data,['type','version','requestId','action','ok','error'])&&typeof data.error==='string'&&data.error.length>0&&data.error.length<=240;
+ if(!data||typeof data!=='object'||data.type!==SHORTCUT_RESULT_MESSAGE||data.version!==state.version||data.requestId!==state.requestId||data.action!==state.wireAction||typeof data.ok!=='boolean')return false;
+ if(state.version===SHORTCUT_VERSION&&data.generation!==state.generation)return false;
+ const keys=state.version===SHORTCUT_VERSION?['type','version','generation','requestId','action','ok']:['type','version','requestId','action','ok'];
+ return data.ok?exactMessageKeys(data,keys):exactMessageKeys(data,[...keys,'error'])&&typeof data.error==='string'&&data.error.length>0&&data.error.length<=240;
 }
 
 function dispatchSelectedShortcutAction(action){
- if(action!=='resize-current-pane'||!desktopMedia.matches||document.hidden)return Promise.resolve(false);
+ if(!desktopMedia.matches||document.hidden)return Promise.resolve(false);
  const entry=activeEntry();const route=entry?.route;
- if(!entry||entry.frame.hidden||!entry.loaded||route?.view!=='pane'){showTreeActionStatus('Resize current Pane is unavailable.','error');return Promise.resolve(false)}
+ if(!entry||entry.frame.hidden||!entry.loaded||route?.view!=='pane'){showTreeActionStatus('The selected Pane command is unavailable.','error');return Promise.resolve(false)}
  if(pendingShortcutCommand){showTreeActionStatus('Another Pane shortcut is still running.','error');return Promise.resolve(false)}
  const target=entry.frame.contentWindow;if(!target){showTreeActionStatus('Selected Collie page is unavailable.','error');return Promise.resolve(false)}
+ const legacy=entry.shortcutProtocol===LEGACY_SHORTCUT_VERSION&&action==='fit-pane-width';
+ if(!legacy&&(entry.shortcutProtocol!==SHORTCUT_VERSION||!entry.shortcutActions.has(action))){showTreeActionStatus('This Collie version does not support '+action+'.','error');return Promise.resolve(false)}
  const requestId=actionRequestId();
  return new Promise((resolve)=>{
-   pendingShortcutCommand={frame:entry.frame,origin:entry.origin,requestId,action,resolve,timeout:setTimeout(()=>finishPendingShortcutCommand(null,'Collie did not confirm the shortcut. Check this node before trying again.'),SHORTCUT_COMMAND_TIMEOUT_MS)};
-   target.postMessage({type:SHORTCUT_COMMAND_MESSAGE,version:SHORTCUT_VERSION,requestId,action},entry.origin);
+   const version=legacy?LEGACY_SHORTCUT_VERSION:SHORTCUT_VERSION;const wireAction=legacy?'resize-current-pane':action;
+   pendingShortcutCommand={frame:entry.frame,origin:entry.origin,version,generation:entry.shortcutGeneration,requestId,action,wireAction,resolve,timeout:setTimeout(()=>finishPendingShortcutCommand(null,'Collie did not confirm the shortcut. Check this node before trying again.'),SHORTCUT_COMMAND_TIMEOUT_MS)};
+   target.postMessage(version===SHORTCUT_VERSION?{type:SHORTCUT_COMMAND_MESSAGE,version,generation:entry.shortcutGeneration,requestId,action:wireAction}:{type:SHORTCUT_COMMAND_MESSAGE,version,requestId,action:wireAction},entry.origin);
  });
 }
 
@@ -1840,11 +1922,22 @@ function handleShortcutMessage(event){
    const state=pendingShortcutCommand;if(!state||state.frame!==entry.frame||state.origin!==entry.origin)return true;
    if(validShortcutResult(data,state))finishPendingShortcutCommand(data);return true;
  }
+ if(data&&typeof data==='object'&&data.type===SHORTCUT_READY_MESSAGE){
+   if(!exactMessageKeys(data,['type','version','generation','commands','actions'])||data.version!==SHORTCUT_VERSION||data.generation!==entry.shortcutGeneration||!Array.isArray(data.commands)||!Array.isArray(data.actions)||data.commands.length>256||data.actions.length>CHILD_SHORTCUT_ACTIONS.size||new Set(data.commands).size!==data.commands.length||new Set(data.actions).size!==data.actions.length||data.commands.some((id)=>!COMMANDS_BY_ID.has(id))||data.actions.some((action)=>!CHILD_SHORTCUT_ACTIONS.has(action)))return true;
+   entry.shortcutProtocol=SHORTCUT_VERSION;entry.shortcutActions=new Set(data.actions);if(commandDialogState?.mode==='palette')renderCommandPalette();return true;
+ }
  if(!shortcutFrameActive(entry)||!data||typeof data!=='object'||data.type!==SHORTCUT_INTENT_MESSAGE)return false;
- if(!exactMessageKeys(data,['type','version','intentId','shortcutId'])||data.version!==SHORTCUT_VERSION||!validCorrelationId(data.intentId)||typeof data.shortcutId!=='string')return true;
- const shortcut=SHORTCUT_REGISTRY.find((candidate)=>candidate.id===data.shortcutId);if(!shortcut||recentShortcutIntents.has(data.intentId))return true;
+ if(data.version===LEGACY_SHORTCUT_VERSION){
+   if(!exactMessageKeys(data,['type','version','intentId','shortcutId'])||!validCorrelationId(data.intentId)||typeof data.shortcutId!=='string')return true;
+   const legacy=LEGACY_SHORTCUTS.find((candidate)=>candidate.id===data.shortcutId);const command=legacy&&COMMANDS_BY_ID.get(legacy.commandId);const enabled=command?.bindings.some((binding)=>binding.kind==='direct'&&commandBindingLabel(binding)===legacy.label);
+   if(!legacy||!command||!enabled||recentShortcutIntents.has(data.intentId))return true;entry.shortcutProtocol=LEGACY_SHORTCUT_VERSION;entry.shortcutActions=new Set(['fit-pane-width']);
+   recentShortcutIntents.add(data.intentId);if(recentShortcutIntents.size>64)recentShortcutIntents.delete(recentShortcutIntents.values().next().value);dispatchCommand(command.id,{source:'shortcut',bindingLabel:legacy.label,childOriginated:true});return true;
+ }
+ if(!exactMessageKeys(data,['type','version','generation','intentId','commandId','bindingLabel'])||data.version!==SHORTCUT_VERSION||entry.shortcutProtocol!==SHORTCUT_VERSION||data.generation!==entry.shortcutGeneration||!validCorrelationId(data.intentId)||typeof data.commandId!=='string'||typeof data.bindingLabel!=='string')return true;
+ const command=COMMANDS_BY_ID.get(data.commandId);const validBinding=command?.bindings.some((binding)=>data.bindingLabel===commandBindingLabel(binding));
+ if(!command||!validBinding||recentShortcutIntents.has(data.intentId))return true;
  recentShortcutIntents.add(data.intentId);if(recentShortcutIntents.size>64)recentShortcutIntents.delete(recentShortcutIntents.values().next().value);
- dispatchShortcut(shortcut,{childOriginated:true});return true;
+ dispatchCommand(command.id,{source:'shortcut',bindingLabel:data.bindingLabel,childOriginated:true});return true;
 }
 
 function exactMessageKeys(value,allowed){return Object.keys(value).every((key)=>allowed.includes(key))}
@@ -1917,18 +2010,97 @@ function dispatchNodeAction(node,payload){
  });
 }
 
-function closeRename({restoreFocus=false}={}){
- const target=renameTarget;renameTarget=null;renamePopover.hidden=true;renameError.hidden=true;renameError.textContent='';
- renameSave.disabled=false;renameCancel.disabled=false;
- if(restoreFocus&&target?.row?.isConnected)target.row.focus();
+function currentTreeContext(){
+ const entry=activeEntry();const route=entry?.route;const node=selectedNode();
+ if(!entry||!node||route?.view!=='pane'||!route.spaceId||!route.tabId||!route.paneId)return null;
+ const session=route.session||'';
+ const tree=(Array.isArray(node.treeSessions)?node.treeSessions:[]).find((candidate)=>candidate&&((candidate.primarySession===true&&session==='')||(candidate.primarySession!==true&&candidate.herdrSession===session)));
+ if(!tree)return null;
+ const space=(Array.isArray(tree.spaces)?tree.spaces:[]).find((candidate)=>candidate?.workspaceId===route.spaceId);if(!space)return null;
+ const tab=(Array.isArray(space.tabs)?space.tabs:[]).find((candidate)=>candidate?.tabId===route.tabId);if(!tab)return null;
+ const pane=(Array.isArray(tab.panes)?tab.panes:[]).find((candidate)=>candidate?.paneId===route.paneId);if(!pane)return null;
+ return{entry,node,route,tree,space,tab,pane,session,reachable:tree.reachable===true&&node.health==='online'};
+}
+
+const dialogTargetKey=(target)=>[target.nodeId,target.session||'',target.kind,target.targetId].join('|');
+const routeTargetKey=(nodeId,route,kind)=>{if(!nodeId||route?.view!=='pane')return null;const id=kind==='space'?route.spaceId:kind==='tab'?route.tabId:route.paneId;return id?[nodeId,route.session||'',kind,id].join('|'):null};
+const currentRouteTargetKey=(kind)=>routeTargetKey(selectedId,activeEntry()?.route,kind);
+const commandBindingLabel=(binding)=>binding.kind==='prefix'?SHORTCUT_PREFIX.label+' '+binding.label:binding.label;
+const commandBindingLabels=(command)=>command.bindings.map(commandBindingLabel);
+const commandHasBinding=(commandId)=>Boolean(COMMANDS_BY_ID.get(commandId)?.bindings.length);
+
+function selectedPaneCommandAvailable(action){
+ const context=currentTreeContext();if(!context||!context.entry.loaded||context.entry.frame.hidden||!context.reachable)return false;
+ return context.entry.shortcutProtocol===SHORTCUT_VERSION&&context.entry.shortcutActions.has(action)||(action==='fit-pane-width'&&context.entry.shortcutProtocol===LEGACY_SHORTCUT_VERSION);
+}
+
+function commandAvailable(commandId){
+ if(!desktopMedia.matches||document.hidden)return false;
+ if(commandId==='open-fleet-settings'||commandId==='open-command-palette'||commandId==='toggle-fleet-sidebars')return true;
+ if(commandId==='previous-pane'||commandId==='next-pane')return Boolean(currentTreeContext()&&paneShortcutTargets.length);
+ if(commandId==='previous-agent'||commandId==='next-agent')return agentShortcutTargets.length>0;
+ const agentOrdinal=/^select-agent-([1-9])$/.exec(commandId);if(agentOrdinal)return Boolean(agentShortcutTargets[Number(agentOrdinal[1])-1]);
+ const tabOrdinal=/^select-tab-([1-9])$/.exec(commandId);if(tabOrdinal){const context=currentTreeContext();return Boolean(context&&Array.isArray(context.space.tabs)&&context.space.tabs[Number(tabOrdinal[1])-1])}
+ if(commandId==='next-tab'||commandId==='previous-tab'||commandId==='next-pane-in-tab'||commandId==='previous-pane-in-tab'||commandId==='create-tab'||commandId==='rename-space'||commandId==='close-space'||commandId==='rename-tab'||commandId==='close-tab'||commandId==='rename-pane'||commandId==='close-pane'||commandId==='copy-fleet-pane-link')return Boolean(currentTreeContext()?.reachable);
+ if(commandId==='last-pane'){prunePaneMru();return paneMru.length>=2}
+ return CHILD_SHORTCUT_ACTIONS.has(commandId)&&selectedPaneCommandAvailable(commandId);
+}
+
+function closeCommandDialog({restoreFocus=false}={}){
+ const state=commandDialogState;commandDialogState=null;commandDialog.hidden=true;commandDialogError.hidden=true;commandDialogError.textContent='';commandDialogResults.replaceChildren();commandDialogSave.disabled=false;commandDialogCancel.disabled=false;
+ if(restoreFocus&&state?.invoker?.isConnected)state.invoker.focus();
+}
+
+function cancelDialogsForRoute(nodeId,route){
+ if(commandDialogState?.mode==='rename'&&commandDialogState.target.enforceRoute&&routeTargetKey(nodeId,route,commandDialogState.target.kind)!==commandDialogState.target.key)closeCommandDialog();
+ if(spaceCloseState&&routeTargetKey(nodeId,route,'space')!==spaceCloseState.key)cancelSpaceClose();
+}
+
+function paletteMatches(command,query){
+ const terms=query.trim().toLowerCase().split(/\s+/).filter(Boolean);if(!terms.length)return true;
+ const haystack=[command.id,command.name,...commandBindingLabels(command)].join(' ').toLowerCase();return terms.every((term)=>haystack.includes(term));
+}
+
+function paletteResultButton(command,selected){
+ const button=element('button','command-dialog-result');button.type='button';button.id='command-option-'+command.id;button.dataset.commandId=command.id;button.setAttribute('role','option');button.setAttribute('aria-selected',String(selected));button.disabled=!commandAvailable(command.id);
+ const copy=element('span','command-result-copy');copy.append(element('span','command-result-name',command.name),element('span','command-result-id',command.id));
+ const bindings=element('span','command-result-bindings');const labels=commandBindingLabels(command);
+ if(labels.length){for(const label of labels)bindings.append(element('kbd','',label))}else bindings.append(element('span','command-result-unbound','Unbound'));
+ button.append(copy,bindings);button.addEventListener('click',()=>activatePaletteCommand(command.id));return button;
+}
+
+function renderCommandPalette(){
+ const state=commandDialogState;if(state?.mode!=='palette')return;commandDialogResults.replaceChildren();commandDialogError.hidden=true;commandDialogError.textContent='';
+ const value=commandDialogInput.value;
+ if(value&&value[0]!=='/'){
+   commandDialogHint.textContent='This input mode is reserved for a future Fleet feature.';state.commands=[];state.selectedIndex=-1;return;
+ }
+ commandDialogHint.textContent=value?'Search command id, English name, or effective binding.':'Type / to search commands.';
+ const query=value.startsWith('/')?value.slice(1):'';state.commands=COMMAND_CATALOG.filter((command)=>paletteMatches(command,query));
+ const enabled=state.commands.map((command,index)=>commandAvailable(command.id)?index:-1).filter((index)=>index>=0);
+ if(!enabled.includes(state.selectedIndex))state.selectedIndex=enabled[0]??-1;
+ if(!state.commands.length){commandDialogResults.append(element('p','command-dialog-hint','No matching Fleet commands.'));return}
+ state.commands.forEach((command,index)=>commandDialogResults.append(paletteResultButton(command,index===state.selectedIndex)));
+ const active=commandDialogResults.querySelector('[aria-selected="true"]');if(active)commandDialogInput.setAttribute('aria-activedescendant',active.id);else commandDialogInput.removeAttribute('aria-activedescendant');
+}
+
+function openCommandPalette(invoker=document.activeElement){
+ closeTreeContextMenu();closeSettings();closeCommandDialog();cancelSpaceClose();
+ commandDialogState={mode:'palette',invoker,commands:[],selectedIndex:-1};commandDialogTitle.textContent='Command Palette';commandDialogInput.value='';commandDialogHint.hidden=false;commandDialogResults.hidden=false;commandDialogActions.hidden=true;commandDialog.hidden=false;renderCommandPalette();
+ requestAnimationFrame(()=>commandDialogInput.focus());return true;
+}
+
+function activatePaletteCommand(commandId){
+ const state=commandDialogState;if(state?.mode!=='palette'||!commandAvailable(commandId))return;
+ closeCommandDialog();dispatchCommand(commandId,{source:'palette'});
 }
 
 function openRename(row,target){
- if(!desktopMedia.matches||target.reachable!==true)return;
- closeTreeContextMenu();closeSettings();renameTarget={...target,row};renameTitle.textContent='Rename '+(target.action==='rename-tab'?'Tab':'Pane');renameInput.value=target.label||'';
- renameError.hidden=true;renameError.textContent='';renamePopover.hidden=false;
- const bounds=row.getBoundingClientRect();const popupHeight=150;const below=bounds.bottom+6;const top=below+popupHeight<=innerHeight-12?below:Math.max(12,bounds.top-popupHeight-6);
- renamePopover.style.top=Math.round(top)+'px';requestAnimationFrame(()=>{renameInput.focus();renameInput.select()});
+ if(!desktopMedia.matches||target.reachable!==true)return false;
+ closeTreeContextMenu();closeSettings();closeCommandDialog();cancelSpaceClose();
+ const kind=target.action==='rename-workspace'?'Space':target.action==='rename-tab'?'Tab':'Pane';
+ commandDialogState={mode:'rename',target:{...target,row,key:dialogTargetKey(target)},invoker:row};commandDialogTitle.textContent='Rename '+kind;commandDialogInput.value=target.label||'';commandDialogHint.textContent=kind==='Pane'?'Submit an empty value to clear the Pane label.':'Enter a non-empty '+kind+' name.';commandDialogHint.hidden=false;commandDialogResults.hidden=true;commandDialogActions.hidden=false;commandDialogError.hidden=true;commandDialogError.textContent='';commandDialog.hidden=false;
+ requestAnimationFrame(()=>{commandDialogInput.focus();commandDialogInput.select()});return true;
 }
 
 function contextCloseLabel(target,armed=false){
@@ -1957,7 +2129,7 @@ function placeTreeContextMenu(left,top){
 
 function openTreeContextMenu(row,target,anchor){
  if(!desktopMedia.matches||target.reachable!==true||!row.isConnected)return;
- closeRename();closeSettings();closeTreeContextMenu();treeContextTarget={...target,row};treeContextInvoker=row;
+ closeCommandDialog();cancelSpaceClose();closeSettings();closeTreeContextMenu();treeContextTarget={...target,row};treeContextInvoker=row;
  treeContextClose.textContent=contextCloseLabel(target,false);treeContextClose.dataset.armed='false';treeContextMenu.hidden=false;
  const bounds=row.getBoundingClientRect();const left=anchor?.x??bounds.left+18;const top=anchor?.y??bounds.bottom+4;
  requestAnimationFrame(()=>{if(treeContextTarget?.row!==row)return;placeTreeContextMenu(left,top);treeContextRename.focus()});
@@ -1990,6 +2162,7 @@ async function activateTreeContextClose(){
    const result=await dispatchNodeAction(node,{...payload,...(target.session?{session:target.session}:{})});
    if(!result.ok){treeContextError.textContent=result.error;treeContextError.hidden=false;return}
    closeTreeContextMenu();showTreeActionStatus((target.kind==='tab'?'Tab':'Pane')+' closed.');
+   if(!target.fromCommand){const command=COMMANDS_BY_ID.get(target.kind==='tab'?'close-tab':'close-pane');if(command)showCommandToast(command)}
    if(affectsCurrent)selectNode(node.id,{route:{view:'home'}});
    void refresh({manual:true});
  }catch(error){treeContextError.textContent=error instanceof Error?error.message:String(error);treeContextError.hidden=false}
@@ -2025,17 +2198,44 @@ async function createSpaceFromHost(node,target,button){
 }
 
 async function submitRename(){
- const target=renameTarget;if(!target)return;
- const node=nodes.find((candidate)=>candidate.id===target.nodeId);if(!node||node.health!=='online'||target.reachable!==true){renameError.textContent='This node is currently unavailable.';renameError.hidden=false;return}
- const label=renameInput.value.trim();if(target.action==='rename-tab'&&!label){renameError.textContent='A Tab name is required.';renameError.hidden=false;return}
- renameError.hidden=true;renameSave.disabled=true;renameCancel.disabled=true;
- const idField=target.action==='rename-tab'?{tabId:target.targetId}:{paneId:target.targetId};
+ const state=commandDialogState;if(state?.mode!=='rename')return;const target=state.target;
+ if(target.enforceRoute&&currentRouteTargetKey(target.kind)!==target.key){closeCommandDialog();return}
+ const node=nodes.find((candidate)=>candidate.id===target.nodeId);if(!node||node.health!=='online'||target.reachable!==true){commandDialogError.textContent='This node is currently unavailable.';commandDialogError.hidden=false;return}
+ const label=commandDialogInput.value.trim();if((target.action==='rename-workspace'||target.action==='rename-tab')&&!label){commandDialogError.textContent='A '+(target.action==='rename-workspace'?'Space':'Tab')+' name is required.';commandDialogError.hidden=false;return}
+ commandDialogError.hidden=true;commandDialogSave.disabled=true;commandDialogCancel.disabled=true;
+ const idField=target.action==='rename-workspace'?{workspaceId:target.targetId}:target.action==='rename-tab'?{tabId:target.targetId}:{paneId:target.targetId};
  try{
    const result=await dispatchNodeAction(node,{action:target.action,...idField,label,...(target.session?{session:target.session}:{})});
-   if(!result.ok){renameError.textContent=result.error;renameError.hidden=false;return}
-   const kind=target.action==='rename-tab'?'Tab':'Pane';closeRename();showTreeActionStatus(label?kind+' renamed.':kind+' label cleared.');void refresh({manual:true});
- }catch(error){renameError.textContent=error instanceof Error?error.message:String(error);renameError.hidden=false}
- finally{renameSave.disabled=false;renameCancel.disabled=false}
+   if(!result.ok){commandDialogError.textContent=result.error;commandDialogError.hidden=false;return}
+   const kind=target.action==='rename-workspace'?'Space':target.action==='rename-tab'?'Tab':'Pane';closeCommandDialog();showTreeActionStatus(label?kind+' renamed.':kind+' label cleared.');if(target.commandId){const command=COMMANDS_BY_ID.get(target.commandId);if(command)acknowledgeCommand(command,target.invocation?.source||'ui',target.invocation?.bindingLabel||null)}void refresh({manual:true});
+ }catch(error){commandDialogError.textContent=error instanceof Error?error.message:String(error);commandDialogError.hidden=false}
+ finally{commandDialogSave.disabled=false;commandDialogCancel.disabled=false}
+}
+
+function cancelSpaceClose({restoreFocus=false}={}){
+ const state=spaceCloseState;spaceCloseState=null;if(spaceCloseTimer!==null){clearTimeout(spaceCloseTimer);spaceCloseTimer=null}
+ spaceCloseDialog.hidden=true;spaceCloseError.hidden=true;spaceCloseError.textContent='';spaceCloseConfirm.disabled=false;spaceCloseCancel.disabled=false;
+ if(restoreFocus&&state?.invoker?.isConnected)state.invoker.focus();
+}
+
+function openSpaceClose(context,invoker=document.activeElement){
+ if(!context?.reachable)return false;closeCommandDialog();closeTreeContextMenu();closeSettings();cancelSpaceClose();
+ const label=context.space.label||'Space '+context.space.number;const paneCount=(Array.isArray(context.space.tabs)?context.space.tabs:[]).reduce((count,tab)=>count+(Array.isArray(tab?.panes)?tab.panes.length:0),0);
+ spaceCloseState={nodeId:context.node.id,session:context.session,targetId:context.route.spaceId,key:[context.node.id,context.session,'space',context.route.spaceId].join('|'),invoker,pending:false};
+ spaceCloseTitle.textContent='Close '+label+'?';spaceCloseImpact.textContent='Closing this Space may terminate '+paneCount+' '+(paneCount===1?'Pane':'Panes')+'. Press Enter again to confirm.';spaceCloseConfirm.textContent='Press Enter to confirm';spaceCloseDialog.hidden=false;
+ spaceCloseTimer=setTimeout(()=>cancelSpaceClose({restoreFocus:true}),CLOSE_CONFIRM_MS);requestAnimationFrame(()=>spaceCloseConfirm.focus());return true;
+}
+
+async function confirmSpaceClose(){
+ const state=spaceCloseState;if(!state||state.pending)return;
+ if(currentRouteTargetKey('space')!==state.key){cancelSpaceClose();return}
+ const node=nodes.find((candidate)=>candidate.id===state.nodeId);if(!node||node.health!=='online'){spaceCloseError.textContent='This node is currently unavailable.';spaceCloseError.hidden=false;return}
+ state.pending=true;if(spaceCloseTimer!==null){clearTimeout(spaceCloseTimer);spaceCloseTimer=null}spaceCloseConfirm.disabled=true;spaceCloseCancel.disabled=true;spaceCloseConfirm.textContent='Closing Space…';
+ try{
+   const result=await dispatchNodeAction(node,{action:'close-workspace',workspaceId:state.targetId,...(state.session?{session:state.session}:{})});
+   if(!result.ok){spaceCloseError.textContent=result.error;spaceCloseError.hidden=false;state.pending=false;spaceCloseConfirm.disabled=false;spaceCloseCancel.disabled=false;spaceCloseConfirm.textContent='Press Enter to confirm';return}
+   cancelSpaceClose();showTreeActionStatus('Space closed.');selectNode(node.id,{route:{view:'home'}});void refresh({manual:true});
+ }catch(error){spaceCloseError.textContent=error instanceof Error?error.message:String(error);spaceCloseError.hidden=false;state.pending=false;spaceCloseConfirm.disabled=false;spaceCloseCancel.disabled=false;spaceCloseConfirm.textContent='Press Enter to confirm'}
 }
 
 function chooseNode(){
@@ -2254,10 +2454,11 @@ function selectNode(id,options={}){
  const existing=frameRegistry.get(id);
  const supplied=options.route&&(options.route.view==='pane'||options.route.view==='home')?options.route:null;
  let route=supplied||(options.routeFromUrl?requestedRoute():existing?.route||{view:'home'});
- selectedId=id;remember(id);
- const entry=ensureFrame(node);
  route=route.invalid?{view:'home'}:route.view==='pane'?canonicalPaneRoute(route.paneId,route.session,route.spaceId,route.tabId):route;
+ cancelDialogsForRoute(id,route);selectedId=id;remember(id);
+ const entry=ensureFrame(node);
  entry.route=route;visitFrame(entry);replaceUrl(id,route);syncCurrentAgentControl();
+ recordPaneFocus(id,route);
  renderTabs(options.focusTreeKey||Boolean(options.focusTab));
  loadSelected(Boolean(options.forceFrame),route);
  announce('Selected '+node.name+'. '+healthLabel(node.health)+'.');
@@ -2270,6 +2471,7 @@ function selectTreeNode(id,options={}){
 }
 
 function showEmpty(title,copy){
+ closeCommandDialog();cancelSpaceClose();closeTreeContextMenu();
  for(const id of [...frameRegistry.keys()])releaseFrame(id,true);
  selectedId=null;hostSwitcher.replaceChildren();instances.replaceChildren();syncCurrentAgentControl();openNode.hidden=true;notice.hidden=true;loading.hidden=true;
  syncTerminalEntry();
@@ -2312,41 +2514,146 @@ function focusSelectedFrame(){
  requestAnimationFrame(()=>requestAnimationFrame(()=>{const entry=activeEntry();if(!entry||entry.frame.hidden)return;try{entry.frame.focus({preventScroll:true})}catch{entry.frame.focus()}}));
 }
 
+function routeIdentity(nodeId,route){
+ if(!nodeId||route?.view!=='pane'||!route.spaceId||!route.tabId||!route.paneId)return null;
+ return{nodeId,route:{view:'pane',spaceId:route.spaceId,tabId:route.tabId,paneId:route.paneId,...(route.session?{session:route.session}:{})},key:[nodeId,route.session||'',route.spaceId,route.tabId,route.paneId].join('|')};
+}
+
+function recordPaneFocus(nodeId,route){
+ const identity=routeIdentity(nodeId,route);if(!identity)return;
+ paneMru=[identity,...paneMru.filter((entry)=>entry.key!==identity.key)].slice(0,2);
+}
+
+function paneIdentityState(identity){
+ const node=nodes.find((candidate)=>candidate.id===identity.nodeId);if(!node)return'missing';const route=identity.route;const session=route.session||'';
+ const tree=(Array.isArray(node.treeSessions)?node.treeSessions:[]).find((candidate)=>candidate&&((candidate.primarySession===true&&session==='')||(candidate.primarySession!==true&&candidate.herdrSession===session)));
+ if(!tree||tree.reachable!==true)return'unknown';
+ const space=(Array.isArray(tree.spaces)?tree.spaces:[]).find((candidate)=>candidate?.workspaceId===route.spaceId);const tab=(Array.isArray(space?.tabs)?space.tabs:[]).find((candidate)=>candidate?.tabId===route.tabId);
+ return(Array.isArray(tab?.panes)?tab.panes:[]).some((pane)=>pane?.paneId===route.paneId)?'present':'missing';
+}
+
+function prunePaneMru(){paneMru=paneMru.filter((identity)=>paneIdentityState(identity)!=='missing').slice(0,2)}
+
+function treeFocusKeyForRoute(nodeId,route,paneCount=2){return treeKey(nodeId,route.session||'',paneCount<=1?'tab':'pane',paneCount<=1?route.tabId:route.paneId)}
+
+function selectCanonicalPaneTarget(nodeId,route,paneCount=2,childOriginated=false){
+ const identity=routeIdentity(nodeId,route);if(!identity)return false;
+ selectTreeNode(nodeId,{route:identity.route,focusTreeKey:treeFocusKeyForRoute(nodeId,identity.route,paneCount)});if(childOriginated)focusSelectedFrame();return true;
+}
+
 function cyclePaneShortcut(delta,childOriginated=false){
  const entry=activeEntry();const route=entry?.route;
- if(!entry||route?.view!=='pane'){showTreeActionStatus('No current Pane is available for keyboard navigation.','error');return}
+ if(!entry||route?.view!=='pane'){showTreeActionStatus('No current Pane is available for keyboard navigation.','error');return false}
  const currentKey=shortcutPaneKey(entry.id,route.paneId,route.session||'');const index=paneShortcutTargets.findIndex((target)=>target.key===currentKey);
- if(index<0||paneShortcutTargets.length===0){showTreeActionStatus('The current Pane is not in the Fleet tree.','error');return}
+ if(index<0||paneShortcutTargets.length===0){showTreeActionStatus('The current Pane is not in the Fleet tree.','error');return false}
  const target=paneShortcutTargets[(index+delta+paneShortcutTargets.length)%paneShortcutTargets.length];
  selectTreeNode(target.nodeId,{route:target.route,focusTreeKey:target.treeKey});
- if(childOriginated)focusSelectedFrame();
+ if(childOriginated)focusSelectedFrame();return true;
 }
 
 function selectAgentShortcut(ordinal,childOriginated=false){
  const target=agentShortcutTargets[ordinal-1];
- if(!target){showTreeActionStatus('Agent shortcut '+ordinal+' is unavailable.','error');return}
- selectAgent(target.node,target.agent);if(childOriginated)focusSelectedFrame();
+ if(!target){showTreeActionStatus('Agent shortcut '+ordinal+' is unavailable.','error');return false}
+ selectAgent(target.node,target.agent);if(childOriginated)focusSelectedFrame();return true;
 }
 
 function cycleAgentShortcut(delta,childOriginated=false){
- if(!agentShortcutTargets.length){showTreeActionStatus('No Agents are available for keyboard navigation.','error');return}
+ if(!agentShortcutTargets.length){showTreeActionStatus('No Agents are available for keyboard navigation.','error');return false}
  const route=activeEntry()?.route||requestedRoute();
  const currentKey=route?.view==='pane'?(route.nodeId||selectedId)+'|'+(route.paneId||'')+'|'+(route.session||''):null;
  const index=currentKey?agentShortcutTargets.findIndex((entry)=>entry.node.id+'|'+entry.agent.paneId+'|'+(entry.agent.primarySession?'':entry.agent.herdrSession)===currentKey):-1;
  let target;
  if(index>=0)target=agentShortcutTargets[(index+delta+agentShortcutTargets.length)%agentShortcutTargets.length];
  else target=delta>0?agentShortcutTargets[0]:agentShortcutTargets[agentShortcutTargets.length-1];
- selectAgent(target.node,target.agent);if(childOriginated)focusSelectedFrame();
+ selectAgent(target.node,target.agent);if(childOriginated)focusSelectedFrame();return true;
 }
 
-function dispatchShortcut(shortcut,{childOriginated=false}={}){
- if(!shortcut||shortcut.scope!=='desktop'||!desktopMedia.matches||document.hidden)return false;
- showShortcutToast(shortcut);
- if(shortcut.action.kind==='cycle-pane'){cyclePaneShortcut(shortcut.action.delta,childOriginated);return true}
- if(shortcut.action.kind==='cycle-agent'){cycleAgentShortcut(shortcut.action.delta,childOriginated);return true}
- if(shortcut.action.kind==='select-agent'){selectAgentShortcut(shortcut.action.ordinal,childOriginated);return true}
- if(shortcut.action.kind==='resize-current-pane'){void dispatchSelectedShortcutAction(shortcut.action.kind);return true}
- return false;
+function navigateTab(commandId,childOriginated=false){
+ const context=currentTreeContext();if(!context)return false;const tabs=(Array.isArray(context.space.tabs)?context.space.tabs:[]).filter((tab)=>validPane(tab?.tabId)&&validTabPanes(tab).length);
+ if(!tabs.length)return false;let index;
+ const ordinal=/^select-tab-([1-9])$/.exec(commandId);if(ordinal)index=Number(ordinal[1])-1;
+ else{const current=tabs.findIndex((tab)=>tab.tabId===context.route.tabId);if(current<0)return false;index=(current+(commandId==='next-tab'?1:-1)+tabs.length)%tabs.length}
+ const tab=tabs[index];if(!tab)return false;const panes=validTabPanes(tab);const selected=panes.find(({pane})=>pane?.focused===true)||panes[0];if(!selected)return false;
+ return selectCanonicalPaneTarget(context.node.id,{view:'pane',spaceId:context.route.spaceId,tabId:tab.tabId,paneId:selected.paneId,...(context.session?{session:context.session}:{})},panes.length,childOriginated);
+}
+
+function navigatePaneInTab(delta,childOriginated=false){
+ const context=currentTreeContext();if(!context)return false;const panes=validTabPanes(context.tab);if(!panes.length)return false;const current=panes.findIndex(({paneId})=>paneId===context.route.paneId);if(current<0)return false;
+ const selected=panes[(current+delta+panes.length)%panes.length];return selectCanonicalPaneTarget(context.node.id,{...context.route,paneId:selected.paneId},panes.length,childOriginated);
+}
+
+function navigateLastPane(childOriginated=false){
+ prunePaneMru();const current=routeIdentity(selectedId,activeEntry()?.route);const target=paneMru.find((identity)=>identity.key!==current?.key);if(!target)return false;
+ return selectCanonicalPaneTarget(target.nodeId,target.route,2,childOriginated);
+}
+
+function currentRenameTarget(commandId,invocation){
+ const context=currentTreeContext();if(!context?.reachable)return null;
+ const shared={nodeId:context.node.id,session:context.session,reachable:true,enforceRoute:true,commandId,invocation};
+ if(commandId==='rename-space')return{...shared,kind:'space',action:'rename-workspace',targetId:context.route.spaceId,label:context.space.label||'Space '+context.space.number};
+ if(commandId==='rename-tab')return{...shared,kind:'tab',action:'rename-tab',targetId:context.route.tabId,label:context.tab.label||'Tab '+context.tab.number};
+ return{...shared,kind:'pane',action:'rename-pane',targetId:context.route.paneId,tabId:context.route.tabId,label:context.pane.label||''};
+}
+
+function currentTreeRow(context,kind){
+ const key=treeKey(context.node.id,context.session,kind,kind==='tab'?context.route.tabId:context.route.paneId);
+ return[...instances.querySelectorAll('[data-tree-key]')].find((row)=>row.dataset.treeKey===key)||instances.querySelector('[aria-selected="true"][data-tree-key]');
+}
+
+function openCurrentTreeClose(kind){
+ const context=currentTreeContext();if(!context?.reachable)return false;const row=currentTreeRow(context,kind);if(!row)return false;
+ const panes=validTabPanes(context.tab).map(({paneId})=>paneId);const target=kind==='tab'?{nodeId:context.node.id,kind:'tab',action:'rename-tab',targetId:context.route.tabId,label:context.tab.label||'Tab '+context.tab.number,paneIds:panes,paneCount:panes.length,session:context.session,reachable:true,fromCommand:true}:{nodeId:context.node.id,kind:'pane',action:'rename-pane',targetId:context.route.paneId,tabId:context.route.tabId,label:context.pane.label||'',session:context.session,reachable:true,fromCommand:true};
+ openTreeContextMenu(row,target,null);requestAnimationFrame(()=>{if(treeContextTarget?.targetId!==target.targetId)return;void activateTreeContextClose();treeContextClose.focus()});return true;
+}
+
+async function createCurrentTab(){
+ const context=currentTreeContext();if(!context?.reachable)return false;
+ try{
+   const result=await dispatchNodeAction(context.node,{action:'create-tab',workspaceId:context.route.spaceId,...(context.session?{session:context.session}:{})});if(!result.ok){showTreeActionStatus(result.error,'error');return false}
+   const pane=result.pane;selectCanonicalPaneTarget(context.node.id,{view:'pane',spaceId:pane.workspaceId,tabId:pane.tabId,paneId:pane.paneId,...(context.session?{session:context.session}:{})});void refresh({manual:true});return true;
+ }catch(error){showTreeActionStatus(error instanceof Error?error.message:String(error),'error');return false}
+}
+
+async function copyCurrentPaneLink(){
+ const context=currentTreeContext();if(!context||!navigator.clipboard?.writeText)return false;
+ const url=new URL('/',location.origin);url.searchParams.set('instance',context.node.id);url.searchParams.set('space',context.route.spaceId);url.searchParams.set('tab',context.route.tabId);url.searchParams.set('pane',context.route.paneId);if(context.session)url.searchParams.set('session',context.session);
+ try{await navigator.clipboard.writeText(url.href);return true}catch(error){showTreeActionStatus(error instanceof Error?error.message:'Could not copy the Fleet Pane link.','error');return false}
+}
+
+function setSidebarsCollapsed(collapsed){
+ if(collapsed&&!desktopMedia.matches)return false;sidebarsCollapsed=Boolean(collapsed);shell.dataset.sidebarsCollapsed=String(sidebarsCollapsed);hostRail.inert=sidebarsCollapsed;hostRail.setAttribute('aria-hidden',String(sidebarsCollapsed));agentMenu.inert=sidebarsCollapsed;agentMenu.setAttribute('aria-hidden',String(sidebarsCollapsed));
+ for(const handle of[hostRailResizer,agentRailResizer]){handle.inert=sidebarsCollapsed;handle.tabIndex=sidebarsCollapsed?-1:0;handle.setAttribute('aria-hidden',String(sidebarsCollapsed))}return true;
+}
+
+function acknowledgeCommand(command,source,bindingLabel){showCommandToast(command,source==='shortcut'?bindingLabel:null)}
+
+function dispatchCommand(commandId,{source='ui',bindingLabel=null,childOriginated=false}={}){
+ const command=COMMANDS_BY_ID.get(commandId);if(!command||!desktopMedia.matches||document.hidden)return false;
+ if(source==='shortcut'&&!command.bindings.some((binding)=>bindingLabel===commandBindingLabel(binding)))return false;
+ if(!commandAvailable(commandId)){showTreeActionStatus(command.name+' is unavailable.','error');return false}
+ let accepted=false;
+ if(commandId==='open-fleet-settings')accepted=openSettings();
+ else if(commandId==='open-command-palette')accepted=openCommandPalette();
+ else if(commandId==='toggle-fleet-sidebars')accepted=setSidebarsCollapsed(!sidebarsCollapsed);
+ else if(commandId==='previous-pane')accepted=cyclePaneShortcut(-1,childOriginated);
+ else if(commandId==='next-pane')accepted=cyclePaneShortcut(1,childOriginated);
+ else if(commandId==='previous-agent')accepted=cycleAgentShortcut(-1,childOriginated);
+ else if(commandId==='next-agent')accepted=cycleAgentShortcut(1,childOriginated);
+ else if(commandId==='next-tab'||commandId==='previous-tab'||/^select-tab-[1-9]$/.test(commandId))accepted=navigateTab(commandId,childOriginated);
+ else if(commandId==='next-pane-in-tab'||commandId==='previous-pane-in-tab')accepted=navigatePaneInTab(commandId==='next-pane-in-tab'?1:-1,childOriginated);
+ else if(commandId==='last-pane')accepted=navigateLastPane(childOriginated);
+ else if(commandId==='rename-space'||commandId==='rename-tab'||commandId==='rename-pane'){const target=currentRenameTarget(commandId,{source,bindingLabel});accepted=Boolean(target&&openRename(document.activeElement,target))}
+ else if(commandId==='close-space')accepted=openSpaceClose(currentTreeContext());
+ else if(commandId==='close-tab')accepted=openCurrentTreeClose('tab');
+ else if(commandId==='close-pane')accepted=openCurrentTreeClose('pane');
+ else if(commandId==='create-tab'){void createCurrentTab().then((ok)=>{if(ok)acknowledgeCommand(command,source,bindingLabel)});return true}
+ else if(commandId==='copy-fleet-pane-link'){void copyCurrentPaneLink().then((ok)=>{if(ok)acknowledgeCommand(command,source,bindingLabel)});return true}
+ else{
+   const childActions=new Set(['fit-pane-width','toggle-type-mode','send-escape','send-enter','send-up-arrow','send-down-arrow','send-left-arrow','send-right-arrow','send-space','send-ctrl-c']);
+   if(childActions.has(commandId)){void dispatchSelectedShortcutAction(commandId).then((ok)=>{if(ok)acknowledgeCommand(command,source,bindingLabel)});return true}
+ }
+ if(accepted&&commandId!=='rename-space'&&commandId!=='rename-tab'&&commandId!=='rename-pane')acknowledgeCommand(command,source,bindingLabel);
+ return accepted;
 }
 
 function agentFavoriteIcon(){
@@ -2360,12 +2667,12 @@ function toggleAgentFavorite(node,agent){
  pendingFavoriteFocusKey=key;persistAgentFavorites();renderAgents(key);announce((removing?'Removed favorite ':'Favorited ')+(agentParts(agent).project||agent.agent)+'.');
 }
 
-function renderAgentCard(node,agent,ordinal=null){
+function renderAgentCard(node,agent,ordinal=null,shortcutBinding=null){
  const parts=agentParts(agent);
  const favoriteKey=agentFavoriteKey(node,agent);const isFavorite=agentFavorites.has(favoriteKey);
  const card=element('div','agent-card');card.dataset.live=String(Boolean(agent.reachable));card.dataset.status=agent.status;card.dataset.favorite=String(isFavorite);
  const cardSession=agent.primarySession?'':agent.herdrSession;
- const shortcutLabel=ordinal?' · Shortcut Alt+'+ordinal:'';
+ const shortcutLabel=shortcutBinding?' · Shortcut '+shortcutBinding:'';
  const main=element('button','agent-card-main');main.type='button';main.dataset.agentNode=node.id;main.dataset.agentPane=agent.paneId;main.dataset.agentSession=cardSession;main.setAttribute('aria-label',(agent.reachable?'':'Offline · ')+node.name+' · '+parts.project+(parts.tab?' · '+parts.tab:'')+' · '+statusLabel(agent.status)+shortcutLabel);
  const avatar=element('span','agent-avatar',initials(agent.agent));avatar.dataset.brand=brand(agent.agent);avatar.setAttribute('aria-hidden','true');
  const dot=element('span','agent-status-dot');dot.style.setProperty('--agent-status-color',statusColor(agent.status));avatar.append(dot);
@@ -2410,7 +2717,11 @@ function renderAgents(focusFavoriteKey=null){
    const heading=element('h2','agent-section-heading');heading.dataset.section=section.key;heading.style.setProperty('--section-color',section.color);
    heading.append(element('span','section-dot'),element('span','',section.label),element('span','section-count',matching.length));
    const list=element('div','agent-card-list');
-   for(const entry of matching){const ordinal=desktopMedia.matches&&nextAgentShortcutTargets.length<9?nextAgentShortcutTargets.length+1:null;if(ordinal)nextAgentShortcutTargets.push(entry);list.append(renderAgentCard(entry.node,entry.agent,ordinal))}
+   for(const entry of matching){
+     const position=nextAgentShortcutTargets.length+1;nextAgentShortcutTargets.push(entry);
+     const command=position<=9?COMMANDS_BY_ID.get('select-agent-'+position):null;const labels=command?commandBindingLabels(command):[];const ordinal=desktopMedia.matches&&position<=9&&labels.length?position:null;
+     list.append(renderAgentCard(entry.node,entry.agent,ordinal,labels.join(' / ')||null));
+   }
    wrapper.append(heading,list);agentSections.append(wrapper);
  }
  agentShortcutTargets=nextAgentShortcutTargets;
@@ -2433,8 +2744,8 @@ function currentRouteAuthoritativelyMissing(){
 
 function renderInventory(data){
  nodes=Array.isArray(data.nodes)?data.nodes.filter((node)=>node&&typeof node.id==='string'&&typeof node.name==='string'&&typeof node.publicHost==='string'):[];
- reconcileFrames();
- if(currentRouteAuthoritativelyMissing()){const entry=activeEntry();if(entry){entry.route={view:'home'};entry.frameKey=null;replaceUrl(entry.id,entry.route)}}
+ reconcileFrames();prunePaneMru();
+ if(currentRouteAuthoritativelyMissing()){const entry=activeEntry();if(entry){cancelDialogsForRoute(entry.id,{view:'home'});entry.route={view:'home'};entry.frameKey=null;replaceUrl(entry.id,entry.route)}}
  renderAgents();
  if(!nodes.length){showEmpty('No instances','No enabled Herdr instances are configured.');return}
  const choice=chooseNode();
@@ -2471,7 +2782,7 @@ function openAgentMenu(){
 function syncAgentMenuLayout(){
  const nextDesktop=desktopMedia.matches;
  if(nextDesktop){closeTreeMenu();agentMenu.hidden=false;agentMenuToggle.setAttribute('aria-expanded','false')}
- else if(desktopMode){closeSettings();closeRename();closeTreeContextMenu();agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
+ else if(desktopMode){closeSettings();closeCommandDialog();cancelSpaceClose();closeTreeContextMenu();setSidebarsCollapsed(false);agentMenu.hidden=true;agentMenuToggle.setAttribute('aria-expanded','false')}
  desktopMode=nextDesktop;renderAgents();syncTreePresentation();renderTabs();syncTerminalEntry();applyRailWidthPreferences();broadcastFrameActivity();
 }
 
@@ -2517,13 +2828,18 @@ hostSwitcher.addEventListener('keydown',(event)=>{
 treeMenuToggle.addEventListener('click',()=>{if(treeOpen)closeTreeMenu({restoreFocus:true});else openTreeMenu()});
 treeMenuBackdrop.addEventListener('click',()=>closeTreeMenu({restoreFocus:true}));
 agentMenuToggle.addEventListener('click',()=>{if(agentMenu.hidden)openAgentMenu();else closeAgentMenu()});
-settingsToggle.addEventListener('click',()=>{if(settingsPopover.hidden)openSettings();else closeSettings({restoreFocus:true})});
+settingsToggle.addEventListener('click',()=>{if(settingsPopover.hidden)dispatchCommand('open-fleet-settings',{source:'ui'});else closeSettings({restoreFocus:true})});
 cacheSizeSelect.value=String(iframeCacheSize);
 cacheSizeSelect.addEventListener('change',()=>setIframeCacheSize(cacheSizeSelect.value));
 cacheReset.addEventListener('click',()=>{try{localStorage.removeItem(CACHE_STORAGE_KEY)}catch{}setIframeCacheSize(defaultCacheSize,{persist:false})});
-renameCancel.addEventListener('click',()=>closeRename({restoreFocus:true}));
-renameForm.addEventListener('submit',(event)=>{event.preventDefault();void submitRename()});
-treeContextRename.addEventListener('click',()=>{const target=treeContextTarget;const row=treeContextInvoker;if(!target||!row)return;closeTreeContextMenu();openRename(row,target)});
+commandDialogInput.addEventListener('input',()=>{if(commandDialogState?.mode==='palette')renderCommandPalette();else{commandDialogError.hidden=true;commandDialogError.textContent=''}});
+commandDialogCancel.addEventListener('click',()=>closeCommandDialog({restoreFocus:true}));
+commandDialogBackdrop.addEventListener('click',()=>closeCommandDialog({restoreFocus:true}));
+commandDialogForm.addEventListener('submit',(event)=>{event.preventDefault();if(commandDialogState?.mode==='rename')void submitRename();else if(commandDialogState?.mode==='palette'){const command=commandDialogState.commands[commandDialogState.selectedIndex];if(command)activatePaletteCommand(command.id)}});
+spaceCloseBackdrop.addEventListener('click',()=>cancelSpaceClose({restoreFocus:true}));
+spaceCloseCancel.addEventListener('click',()=>cancelSpaceClose({restoreFocus:true}));
+spaceCloseConfirm.addEventListener('click',()=>{void confirmSpaceClose()});
+treeContextRename.addEventListener('click',()=>{const target=treeContextTarget;const row=treeContextInvoker;if(!target||!row)return;closeTreeContextMenu();openRename(row,{...target,commandId:target.action,invocation:{source:'ui',bindingLabel:null}})});
 treeContextClose.addEventListener('click',()=>{void activateTreeContextClose()});
 treeContextMenu.addEventListener('keydown',(event)=>{
  const items=[treeContextRename,treeContextClose].filter((item)=>!item.disabled);const index=items.indexOf(document.activeElement);
@@ -2536,14 +2852,34 @@ treeContextMenu.addEventListener('keydown',(event)=>{
 document.addEventListener('pointerdown',(event)=>{
  if(!desktopMedia.matches&&!agentMenu.hidden&&!agentMenu.contains(event.target)&&!agentMenuToggle.contains(event.target))closeAgentMenu();
  if((desktopMedia.matches||treeOpen)&&!settingsPopover.hidden&&!settingsPopover.contains(event.target)&&!settingsToggle.contains(event.target))closeSettings();
- if(desktopMedia.matches&&!renamePopover.hidden&&!renamePopover.contains(event.target)&&!event.target.closest('[data-tree-key]'))closeRename();
  if(desktopMedia.matches&&!treeContextMenu.hidden&&!treeContextMenu.contains(event.target))closeTreeContextMenu();
 });
+function trapDialogFocus(event,root){
+ if(event.key!=='Tab')return false;const focusable=[...root.querySelectorAll('input,button:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter((item)=>!item.hidden&&item.offsetParent!==null);if(!focusable.length)return false;
+ const index=focusable.indexOf(document.activeElement);const next=event.shiftKey?(index<=0?focusable.length-1:index-1):(index<0||index===focusable.length-1?0:index+1);event.preventDefault();focusable[next].focus();return true;
+}
+function movePaletteSelection(key){
+ const state=commandDialogState;if(state?.mode!=='palette')return;const enabled=state.commands.map((command,index)=>commandAvailable(command.id)?index:-1).filter((index)=>index>=0);if(!enabled.length)return;
+ const position=enabled.indexOf(state.selectedIndex);if(key==='Home')state.selectedIndex=enabled[0];else if(key==='End')state.selectedIndex=enabled[enabled.length-1];else state.selectedIndex=enabled[(Math.max(0,position)+(key==='ArrowDown'?1:-1)+enabled.length)%enabled.length];renderCommandPalette();
+ const selected=commandDialogResults.querySelector('[aria-selected="true"]');if(selected)selected.scrollIntoView({block:'nearest'});
+}
 document.addEventListener('keydown',(event)=>{
- const shortcut=matchShortcut(event);if(shortcut){event.preventDefault();dispatchShortcut(shortcut);return}
+ if(!spaceCloseDialog.hidden){
+   if(event.key==='Escape'){event.preventDefault();event.stopPropagation();cancelSpaceClose({restoreFocus:true});return}
+   if(event.key==='Enter'&&!event.altKey&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey){event.preventDefault();event.stopPropagation();void confirmSpaceClose();return}
+   if(trapDialogFocus(event,spaceCloseDialog))event.stopPropagation();return;
+ }
+ if(!commandDialog.hidden){
+   if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeCommandDialog({restoreFocus:true});return}
+   if(commandDialogState?.mode==='palette'&&(event.key==='ArrowDown'||event.key==='ArrowUp'||event.key==='Home'||event.key==='End')){event.preventDefault();event.stopPropagation();movePaletteSelection(event.key);return}
+   if(commandDialogState?.mode==='palette'&&event.key==='Enter'){event.preventDefault();event.stopPropagation();const command=commandDialogState.commands[commandDialogState.selectedIndex];if(command)activatePaletteCommand(command.id);return}
+   if(trapDialogFocus(event,commandDialog)){event.stopPropagation();return}return;
+ }
+ const shortcut=recognizeShortcut(event);
+ if(shortcut.kind==='prefix'){event.preventDefault();event.stopPropagation();return}
+ if(shortcut.kind==='command'&&shortcut.command){event.preventDefault();event.stopPropagation();dispatchCommand(shortcut.command.id,{source:'shortcut',bindingLabel:shortcut.bindingLabel});return}
  if(event.key!=='Escape')return;
  if(!settingsPopover.hidden){closeSettings({restoreFocus:true});return}
- if(desktopMedia.matches&&!renamePopover.hidden){closeRename({restoreFocus:true});return}
  if(desktopMedia.matches&&!treeContextMenu.hidden){closeTreeContextMenu({restoreFocus:true});return}
  if(desktopMedia.matches)return;
  if(treeOpen){closeTreeMenu({restoreFocus:true});return}
@@ -2571,7 +2907,7 @@ addEventListener('message',(event)=>{
    if((hasSpace&&!spaceId)||(hasTab&&!tabId))return;
    route=canonicalPaneRoute(paneId,session,spaceId,tabId,entry.id);
  }else return;
- entry.route=route;entry.frameKey=routeKey(entry.origin,route);
+ cancelDialogsForRoute(entry.id,route);entry.route=route;entry.frameKey=routeKey(entry.origin,route);recordPaneFocus(entry.id,route);
  if(entry.id!==selectedId)return;
  replaceUrl(entry.id,route);syncCurrentAgentControl();openNode.href=frameHref(entry.origin,route);renderTree();
 });
@@ -2581,8 +2917,9 @@ addEventListener('popstate',()=>{const id=requested();if(nodes.some((node)=>node
 bindRailResizer(hostRailResizer,'left');bindRailResizer(agentRailResizer,'right');
 addEventListener('resize',applyRailWidthPreferences);
 addEventListener('resize',()=>closeTreeContextMenu());
+addEventListener('blur',cancelShortcutPrefix);
 addEventListener('storage',(event)=>{if(event.key===AGENT_FAVORITES_STORAGE_KEY){agentFavorites=readAgentFavorites();renderAgents()}});
-document.addEventListener('visibilitychange',broadcastFrameActivity);
+document.addEventListener('visibilitychange',()=>{cancelShortcutPrefix();broadcastFrameActivity()});
 desktopMedia.addEventListener('change',syncAgentMenuLayout);terminalDesktopMedia.addEventListener('change',syncTerminalEntry);syncAgentMenuLayout();
 void refresh();
 `;
