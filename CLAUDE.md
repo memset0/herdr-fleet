@@ -1,7 +1,17 @@
 # Working agreement
 
 Herdr Web Remote (`memset0.web-remote`) is a public-ready Herdr 0.8+ plugin derived from Collie.
-Read `README.md`, `ARCHITECTURE.md`, `UPSTREAM.md`, and `HERDR_API.md` before changing boundaries.
+Read `README.md`, `README.full.md`, `ARCHITECTURE.md`, `UPSTREAM.md`, and `HERDR_API.md` before
+changing boundaries.
+
+## Documentation
+
+`README.md` is the concise project landing page. `README.full.md` is the maintained comprehensive
+feature reference, not a frozen archive. Every change to user-visible Fleet or Collie behavior,
+shortcuts, topology, security boundaries, fallback behavior, or lifecycle MUST update
+`README.full.md` in the same change and preserve the links between the two documents. When
+`INSTALL.md` is present, keep it as the single installation authority; the full reference may
+explain operational context but must not become a second agent-install workflow.
 
 ## Non-negotiable boundaries
 
