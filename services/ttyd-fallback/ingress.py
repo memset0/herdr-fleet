@@ -476,9 +476,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise Forbidden("top-level user navigation required")
         origin = self.headers.get("Origin")
         referer = self.headers.get("Referer")
-        if site == "same-origin" and origin != state.origin:
-            if not referer or not referer.startswith(state.origin + "/"):
-                raise Forbidden("same-origin navigation evidence required")
+        # A browser top-level GET normally omits Origin, and Fleet deliberately uses
+        # no-referrer. Sec-Fetch-Site is therefore the positive same-origin signal;
+        # Origin/Referer are additional exact checks only when the browser sends them.
+        if referer is not None and not referer.startswith(state.origin + "/"):
+            raise Forbidden("navigation Referer rejected")
         if site == "none" and origin not in {None, state.origin}:
             raise Forbidden("direct navigation Origin rejected")
 

@@ -586,7 +586,6 @@ while True:
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-User": "?1",
             "Sec-Fetch-Site": "same-origin",
-            "Referer": "https://fleet.example.com/fleet",
         }
 
         def request(target: str, headers: dict[str, str], method: str = "GET") -> tuple[int, bytes]:
@@ -614,6 +613,9 @@ while True:
             self.assertEqual(request("/ttyd/local-a/", {
                 **common, "Sec-Fetch-Site": "cross-site",
             })[0], 403)
+            self.assertEqual(request("/ttyd/local-a/", {
+                **common, "Referer": "https://other.example.com/fleet",
+            })[0], 403)
             self.assertEqual(request("/ttyd/local-a/", {**common, "Purpose": "prefetch"})[0], 403)
             self.assertEqual(request("/ttyd/local-a/", {
                 **common, "Sec-Fetch-Dest": "iframe",
@@ -624,6 +626,8 @@ while True:
             self.assertEqual(request("/ttyd/local-a/?session=other", common)[0], 400)
             self.assertEqual(len(calls), 0)
 
+            # Real same-origin top-level GETs may omit both Origin and Referer,
+            # especially because Fleet deliberately sets no-referrer.
             status, response = request("/ttyd/local-a/?pane=w1%3Ap1", common)
             self.assertEqual(status, 303)
             self.assertIn(b"Location: /ttyd/local-a/", response)

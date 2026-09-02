@@ -14,8 +14,10 @@ port.
 
 Fleet derives `/ttyd/<node-id>/` from the enabled node id. A top-level authenticated user navigation
 may add one validated `pane` and optional named `session` selector. Ingress validates the existing
-Fleet cookie locally, checks the exact Host, Origin and Fetch Metadata, activates the fixed node
-control protocol, then redirects to a selector-free URL. It never calls Gateway or Collie and the
+Fleet cookie locally, checks the exact Host and browser-controlled Fetch Metadata, and checks Origin
+and Referer exactly when a top-level GET supplies them. Fleet's `no-referrer` navigation may omit
+both without weakening the same-origin Fetch Metadata gate. Ingress then activates the fixed node
+control protocol and redirects to a selector-free URL. It never calls Gateway or Collie and the
 browser cannot choose a command, terminal id, socket, host, or undeclared session.
 
 The landing document embeds ttyd only in the wide fine-pointer presentation and renews a fixed
