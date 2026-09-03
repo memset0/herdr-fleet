@@ -5,6 +5,15 @@ import { fleetAssetFile, fleetAssetResponse } from "./assets.ts";
 
 beforeAll(buildFleetAssets);
 
+const AGENT_STATUSES = ["blocked", "working", "done", "idle", "unknown"];
+
+function statusTokenValues(css: string, status: string): string[] {
+  return Array.from(
+    css.matchAll(new RegExp(`--status-${status}:([^;}]+)`, "g")),
+    (match) => match[1]?.trim() ?? "",
+  );
+}
+
 describe("Fleet build assets", () => {
   test("builds an exact non-empty JS/CSS pair", async () => {
     expect(await fleetAssetFile("fleet.css").exists()).toBeTrue();
@@ -39,5 +48,24 @@ describe("Fleet build assets", () => {
     expect(webPackage.scripts?.build).toStartWith(
       "bun run ../scripts/build-fleet-assets.ts && ",
     );
+  });
+
+  test("preserves visible Agent status colors in the production CSS", async () => {
+    const css = await fleetAssetFile("fleet.css").text();
+
+    expect(css).toContain(".agent-status-dot{");
+    expect(css).toContain("background:var(--agent-status-color)");
+    expect(css).toContain(
+      ".agent-card[data-live=false] .agent-status-dot",
+    );
+
+    for (const status of AGENT_STATUSES) {
+      const values = statusTokenValues(css, status);
+      expect(values).toHaveLength(2);
+      expect(
+        values.every((value) => /^oklch\([^)]*\)$/.test(value)),
+      ).toBeTrue();
+      expect(values.every((value) => !value.includes("--buncss-"))).toBeTrue();
+    }
   });
 });

@@ -1,13 +1,23 @@
 :root {
-  --status-blocked: light-dark(oklch(0.46 0.2 25), oklch(0.7 0.2 24));
-  --status-working: light-dark(oklch(0.46 0.12 72), oklch(0.82 0.15 82));
-  --status-done: light-dark(oklch(0.45 0.14 152), oklch(0.74 0.16 152));
-  --status-idle: light-dark(oklch(0.45 0.02 250), oklch(0.65 0.02 250));
-  --status-unknown: light-dark(oklch(0.43 0.02 250), oklch(0.6 0.02 250));
+  --status-blocked: oklch(0.46 0.2 25);
+  --status-working: oklch(0.46 0.12 72);
+  --status-done: oklch(0.45 0.14 152);
+  --status-idle: oklch(0.45 0.02 250);
+  --status-unknown: oklch(0.43 0.02 250);
   --status-online: var(--status-done);
   --status-down: var(--status-blocked);
   --tree-indicator-size: 0.5rem;
   --fleet-selected-foreground: light-dark(oklch(0.985 0 0), oklch(0.985 0 0));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --status-blocked: oklch(0.7 0.2 24);
+    --status-working: oklch(0.82 0.15 82);
+    --status-done: oklch(0.74 0.16 152);
+    --status-idle: oklch(0.65 0.02 250);
+    --status-unknown: oklch(0.6 0.02 250);
+  }
 }
 html,
 body {

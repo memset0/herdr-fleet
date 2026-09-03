@@ -101,9 +101,11 @@ The exact Agent navigation control matching the selected Host, normalized Herdr 
 has `aria-current="page"` and a rounded accent-filled selected surface. Fleet moves this state in
 the same route commit as card/tree/shortcut/history/child navigation, without waiting for an iframe
 load or aggregate refresh; keyboard focus and Needs-you/Ready-unseen attention remain independent.
-offline card keeps the section and count treatment implied by its last successfully observed state
-while remaining visibly stale. The adjacent arrow-leaving-a-square control opens the selected
-Collie in a new tab. Fleet intentionally exposes no logout button in this header.
+Each Agent avatar retains a compact colored dot for its blocked, working, done, idle, or unknown
+state in both light and dark presentation. An offline card keeps that dot visibly dimmed together
+with the section and count treatment implied by its last successfully observed state while
+remaining visibly stale. The adjacent arrow-leaving-a-square control opens the selected Collie in
+a new tab. Fleet intentionally exposes no logout button in this header.
 
 Desktop Fleet owns one discoverable command catalog and its effective keyboard bindings. Bindings
 are either simultaneous direct chords such as `Alt+J` or sequential prefix chords such as
