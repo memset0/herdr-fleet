@@ -95,8 +95,8 @@ describe("the header — the one shared shell", () => {
     const header = container.querySelector("header");
     expect(header).not.toBeNull();
     const fill = /(?:^|\s)bg-([a-z][a-z-]*)(?:\/\d+)?(?=\s|$)/.exec(header?.className ?? "");
-    // A bare token, no `/opacity`: chrome is the page colour outright, never a wash over content.
-    expect(fill?.[0].trim()).toBe("bg-background");
+    // A bare token, no `/opacity`: the fill is a colour outright, never a wash over content.
+    expect(fill?.[0].trim()).toBe("bg-chrome");
     expect(markPaper(container)).toBe(`var(--${fill?.[1]})`);
   });
 

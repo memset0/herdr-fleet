@@ -160,7 +160,8 @@ describe("NativeNavigationShell", () => {
     // The lone Tab is elided, so the Pane hangs directly off its Space — under the Tab's name,
     // because nobody named the Pane.
     await user.click(surface.getByRole("button", { name: "Expand Project" }));
-    await user.click(await surface.findByRole("button", { name: "Main" }));
+    // The row also carries its state, so its accessible name is the pair.
+    await user.click(await surface.findByRole("button", { name: /^Main/ }));
 
     expect(await screen.findByText("Pane route")).toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());

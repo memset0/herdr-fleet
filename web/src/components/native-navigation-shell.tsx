@@ -269,15 +269,16 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
   // through a session name, a terminal title and the Agent's own name; the model needs to know which
   // of the two values was chosen by a person, because an elided row is named by a person's choice.
   if (pane.paneLabel) result.ownLabel = pane.paneLabel;
+  if (pane.status) result.status = pane.status;
   if (pane.kind) result.kind = pane.kind;
   return result;
 }
 
 /**
- * A rail's own top strip carries the header's height recipe — the safe-area inset and the 60px
- * floor — so the three columns' content starts on one line across the viewport. It carries no rule
- * of its own: the title names the list directly beneath it, and a hairline between the two would cut
- * a label off the thing it labels (DESIGN.md §4 — a rule separates REGIONS).
+ * A rail's own top strip carries the safe-area inset and its title, and nothing else — no rule, and
+ * no floor borrowed from the header. Both were tried: the rule cut the label off the list it names
+ * (DESIGN.md §4 — a rule separates REGIONS, and these are one), and the floor spent 30px of blank
+ * under a 11px label to line up with a header edge that, without a rule, nobody can see.
  */
 function Rail({
   side,
@@ -295,12 +296,17 @@ function Rail({
       aria-label={title}
       style={{ width }}
       className={cn(
-        "hidden min-h-0 shrink-0 flex-col bg-background xl:flex",
+        // --chrome, the same raised ground the header and the composer dock stand on: the rails are
+        // chrome around the route, not more of the page.
+        "hidden min-h-0 shrink-0 flex-col bg-chrome xl:flex",
         side === "left" ? "border-r border-rule" : "border-l border-rule",
       )}
     >
       <div className="shrink-0 [padding-top:env(safe-area-inset-top)]">
-        <div className="flex min-h-15 items-center px-3 py-1">
+        {/* The title sits DIRECTLY over its list. It carried the header's 60px floor so the three
+            columns' first line agreed, but with no rule under it that agreement bought nothing and
+            spent 30px of blank between a label and the thing it labels. */}
+        <div className="flex items-center px-3 pb-1 pt-2">
           <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {title}
           </span>

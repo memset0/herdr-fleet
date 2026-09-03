@@ -45,6 +45,13 @@ interface HeaderClaim {
   /** The route has taken the whole row (Settings, Pack, and either find bar). The shell then draws
    *  no mark, no caption and no slots — see `RouteHeader`. */
   override: boolean;
+  /** DOWNSTREAM PORT — draw the Collie mark. True everywhere except the route that asks otherwise.
+   *
+   *  A route may decline the mark without taking the whole row: the pane's breadcrumb is the only
+   *  thing on that row the operator reads, and on a phone the mark spends 44px of it saying the name
+   *  of the app they are already in. Distinct from `override`, which replaces the row wholesale, and
+   *  from `wordmark`, which is the identity BESIDE the mark. */
+  mark: boolean;
   /** The route wants the row GONE, not merely empty — the pane's zen mode, and nothing else today.
    *
    *  It is a claim rather than a prop for the same reason the other three are: the shell owns the
@@ -61,14 +68,15 @@ interface HeaderClaim {
 // it is deliberately benign rather than empty — the mark, the strip, the rule and the 60px floor are
 // all the shell's own, so a route that renders no <RouteHeader/> at all still gets a real header of
 // the right height. The one thing it cannot get wrong is the thing the operator was looking at.
-const UNCLAIMED: HeaderClaim = { wordmark: false, width: "full", override: false, hidden: false };
+const UNCLAIMED: HeaderClaim = { wordmark: false, width: "full", override: false, hidden: false, mark: true };
 
 function sameClaim(a: HeaderClaim, b: HeaderClaim): boolean {
   return (
     a.wordmark === b.wordmark &&
     a.width === b.width &&
     a.override === b.override &&
-    a.hidden === b.hidden
+    a.hidden === b.hidden &&
+    a.mark === b.mark
   );
 }
 
@@ -202,7 +210,13 @@ export function AppHeaderHost({ bridge, error, leading, children }: AppHeaderHos
           state it — otherwise the dashboard's 640px rule would silently become the viewport's. */}
       <header
         className={cn(
-          "sticky top-0 z-20 flex flex-col border-b bg-background [padding-top:env(safe-area-inset-top)]",
+          // DOWNSTREAM PORT — `bg-chrome`, not `bg-background`. Upstream draws the header as the
+          // page colour separated by a rule, which is right when the header is the only chrome on
+          // screen. Under the Fleet shell it is one of three chrome surfaces around the content —
+          // two rails and this row — and a header the same colour as the route it heads read as
+          // part of it. --chrome is the raised ground the composer dock already stands on, so the
+          // three agree and the page and the mirror keep theirs.
+          "sticky top-0 z-20 flex flex-col border-b bg-chrome [padding-top:env(safe-area-inset-top)]",
           // The rule is RECOLOURED, never removed — DESIGN.md §2's own technique, and the width stays
           // reserved in the base string above. While a route has the row hidden (zen) there are no
           // two regions left to cut apart, so the edge goes transparent; nothing moves by a pixel
@@ -257,11 +271,16 @@ export function AppHeaderHost({ bridge, error, leading, children }: AppHeaderHos
                     can restart it. `onHome` is dispatched through the owner's ref, so the tap still does
                     the route's own thing (space → dashboard, pane → dashboard, history → the pane)
                     without the callback's identity re-rendering anything. */}
-                <CollieHome
-                  onHome={() => home.current?.fn?.()}
-                  trouble={trouble}
-                  lost={lost}
-                />
+                {claim.mark && (
+                  <CollieHome
+                    onHome={() => home.current?.fn?.()}
+                    trouble={trouble}
+                    lost={lost}
+                    // Coupled to the row's fill above, and app-header.test.tsx fails if the two ever
+                    // name different tokens.
+                    paper="var(--chrome)"
+                  />
+                )}
                 {/* THE IDENTITY, STACKED: the brand over the multiplexer this collie drives, both
                     beside the mark. It was ONE 18px line — "Collie on <mux>" — and on a phone that
                     line ran out of room inside the multiplexer's NAME, the one word here the reader
@@ -416,6 +435,9 @@ interface RouteHeaderProps {
   /** Take the header row off the screen entirely — the pane's zen mode, and nothing else today. See
    *  `HeaderClaim.hidden` for what survives (the element, its inset, its reserved rule) and why. */
   hidden?: boolean;
+
+  /** Draw the Collie mark at the head of the row. Defaults to true; see `HeaderClaim.mark`. */
+  mark?: boolean;
 }
 
 /**
@@ -439,7 +461,7 @@ interface RouteHeaderProps {
  *
  * TWO ROUTES DURING A TRANSITION. React commits the leaving route's teardown before the arriving
  * route's layout effects, so the ordinary sequence is release → claim and the arriving route wins.
- * `owner` in the shell makes the reverse order harmless too. And because the claim is four
+ * `owner` in the shell makes the reverse order harmless too. And because the claim is five
  * primitives, `setClaim` bails out when nothing actually changed, so a route re-rendering on every
  * poll does not re-render the header — which is the whole point of not remounting it.
  */
@@ -452,6 +474,7 @@ export function RouteHeader({
   rightTrail,
   override,
   hidden = false,
+  mark = true,
 }: RouteHeaderProps) {
   const slots = useContext(HeaderSlotContext);
   // Loud, not lenient. A <RouteHeader/> outside the host means a route was mounted with no header
@@ -466,9 +489,9 @@ export function RouteHeader({
   // effect, not a passive one: it lands in the same commit the portal's children do, before the
   // browser paints, so there is no frame in which the row's shape and its contents disagree.
   useLayoutEffect(() => {
-    claim(owner, { wordmark, width, override: overridden, hidden });
+    claim(owner, { wordmark, width, override: overridden, hidden, mark });
     return () => release(owner);
-  }, [claim, release, owner, wordmark, width, overridden, hidden]);
+  }, [claim, release, owner, wordmark, width, overridden, hidden, mark]);
 
   // The mark's tap. No deps: `onHome` is a new closure on every render and the shell reads this
   // through a ref at click time, so keeping it current costs one assignment and re-renders nothing.

@@ -1,12 +1,14 @@
 import { ChevronRight, Folder, TerminalSquare } from "lucide-react";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import type { NavigationRow, NavigationTree } from "../../../fleet/ui/native-navigation/model.ts";
 import type { NativeNavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { nativeNavigationPreferences } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { AgentIcon } from "@/components/agent-icon";
+import { StatusDot } from "@/components/status-badge";
 import { Collapse } from "@/components/ui/collapse";
 import { t } from "@/lib/i18n";
+import { statusLabel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -32,8 +34,20 @@ export function NativeNavigationTree({
     preferenceStore.snapshot,
   );
 
+  // AUTO-DISCLOSURE FIRES ON A CHANGE OF PANE, AND ON NOTHING ELSE.
+  //
+  // It used to run whenever the derived tree changed identity — which is every poll that moves any
+  // field on any row — so collapsing the branch you are standing in was undone by the next snapshot
+  // a second later. The operator collapses; the effect re-opens; nobody wins. Keyed on the selected
+  // Pane's id instead, it does the one job it was written for: arriving at a Pane (a deep link, a
+  // row in the Agent rail, a tap in this tree) reveals where you have arrived. Once you are there,
+  // the branch is yours.
+  const revealedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (tree.selection) preferenceStore.ensureDisclosed(tree.selection.ancestors);
+    const selection = tree.selection;
+    if (selection === null || selection.paneId === revealedFor.current) return;
+    revealedFor.current = selection.paneId;
+    preferenceStore.ensureDisclosed(selection.ancestors);
   }, [preferenceStore, tree.selection]);
 
   const empty = tree.rows.every((row) => row.children.length === 0);
@@ -137,7 +151,7 @@ function Row({
                 : t("fleet.navigation.expand", { name: row.label })
             }
             onClick={() => onToggle(disclosureId)}
-            className="grid w-7 shrink-0 place-items-center rounded-l-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+            className="grid w-5 shrink-0 place-items-center rounded-l-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
           >
             <ChevronRight
               className={cn(
@@ -148,7 +162,7 @@ function Row({
             />
           </button>
         ) : (
-          <span className="w-7 shrink-0" aria-hidden />
+          <span className="w-5 shrink-0" aria-hidden />
         )}
         <button
           type="button"
@@ -158,13 +172,23 @@ function Row({
         >
           <RowIcon row={row} />
           <span className="truncate">{row.label}</span>
+          {/* The Agent's own logo took the leading slot, so the state moved to the trailing one —
+              the SAME dot the Tab row draws (components/tab-strip.tsx), so one colour means one
+              thing wherever it appears. `surface` is the rail's ground, because a resting state is
+              a hollow ring and a ring filled with the wrong colour reads as a notch. */}
+          {row.status !== undefined && (
+            <>
+              <StatusDot status={row.status} surface="bg-chrome" className="ml-auto shrink-0" />
+              <span className="sr-only">{statusLabel(row.status)}</span>
+            </>
+          )}
         </button>
       </div>
 
       {row.children.length > 0 && (
         <div id={childrenId}>
           <Collapse open={open}>
-            <div className="ml-1.5 flex flex-col border-l border-border/70 pl-1">
+            <div className="ml-1 flex flex-col border-l border-border/70 pl-1">
               {row.children.map((child) => (
                 <Row
                   key={child.key}

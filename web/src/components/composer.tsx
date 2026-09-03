@@ -71,6 +71,15 @@ interface ComposerProps {
   status?: AgentStatus;
   /** The reading is the last snapshot's, not live — dims the word exactly as the header's dot dims. */
   stale?: boolean;
+  /**
+   * DOWNSTREAM PORT — false when a surface above this dock is already showing the state, which is
+   * where the Fleet shell puts it: a badge at the trailing end of the strip row, in pixels that row
+   * was spending anyway. The word does not move; it stands down HERE and comes back the moment that
+   * row is not on screen (folded, zen, or a pane with no strips at all), so there is no state in
+   * which the pane's condition is spelled nowhere. Defaults to showing it, which is Collie's own
+   * behavior unchanged.
+   */
+  showStatusWord?: boolean;
   /** Pane is gone (no agent) — locks the composer with a distinct placeholder. */
   gone: boolean;
   /** This device isn't authorised to type — locks the composer with a distinct placeholder. */
@@ -167,7 +176,7 @@ const CONTROL_OFF = "text-muted-foreground";
 // 10px size, so all six draw in full at 390px and only ja's longest ellipsises at 320px. A fix that
 // only reads in English is not a fix.
 const CONTROL_BUTTON =
-  "h-11 min-w-0 flex-1 shrink flex-col gap-0.5 px-1 has-[>svg]:px-1 text-[10px] font-medium leading-none [&>svg]:shrink-0";
+  "h-11 min-w-0 flex-1 shrink gap-1.5 px-1 has-[>svg]:px-1 text-[10px] font-medium leading-none [&>svg]:shrink-0";
 // The label inside that box. `truncate` needs a box of its own to clip against — a bare text node
 // in a flex button has none — and `max-w-full` is what keeps that box from simply being the text's
 // own width.
@@ -227,7 +236,7 @@ function ComposerDock({
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, status, stale, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, displayPrefsAfterTextSize, onSent },
+  { paneId, scope, agent, isShell, status, stale, showStatusWord = true, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, displayPrefsAfterTextSize, onSent },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -979,6 +988,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   return (
     <>
       <div
+        // Named so a caller can find the dock itself. Its first child used to be the status band and
+        // is now that band's presence wrapper, so "the band's parent" stopped being this element the
+        // moment the band learned to leave.
+        data-slot="composer-dock"
         className={cn(
           "bg-chrome px-3",
           // See `composing` on the props above: the inset reserves room for the home indicator, and
@@ -1168,13 +1181,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             sits between. `px-2.5` then puts the content back at the 10px inset the controls row
             asked for, so nothing on this line moved by a pixel: the band is what absorbs the old
             `-mx-0.5`, a 2px overhang that was invisible on this unpainted strip either way. */}
-        <div
-          data-slot="composer-status"
-          className="-mx-3 flex h-[14px] items-center justify-end gap-1.5 border-y border-border px-2.5 text-[10px]/3"
-        >
-          <HostChip host={writeHost} variant="caption" className="min-w-0" />
-          <StatusWordSlot status={statusWord} stale={stale} />
-        </div>
+        {/* …and the band LEAVES when it has nothing left to carry — through `Collapse`, so the dock
+            does not teleport by 16px the moment the strips fold. A solo install with the word
+            standing down has neither a host to name nor a state to spell, and a bordered 14px strip
+            of nothing is exactly the row the operator asked to get back. */}
+        <Collapse open={showStatusWord || writeHost !== undefined}>
+          <div
+            data-slot="composer-status"
+            className="-mx-3 flex h-[14px] items-center justify-end gap-1.5 border-y border-border px-2.5 text-[10px]/3"
+          >
+            <HostChip host={writeHost} variant="caption" className="min-w-0" />
+            {showStatusWord && <StatusWordSlot status={statusWord} stale={stale} />}
+          </div>
+        </Collapse>
         {/* `gap-1.5` rather than `gap-2`: four gaps at 8px is 32px of a 366px row, and 6px reads the
             same. The group still carries `aria-labelledby` to the word "Controls" — the word is now
             `sr-only` rather than deleted, because it was doing TWO jobs and only one of them was
@@ -1271,13 +1290,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               read-only device or a gone pane can still make its mirror readable. */}
           <Button
             variant="ghost"
-            size="icon"
-            className={cn("size-11 shrink-0", drawer === "display" ? CONTROL_ON : CONTROL_OFF)}
+            size="sm"
+            className={cn(CONTROL_BUTTON, drawer === "display" ? CONTROL_ON : CONTROL_OFF)}
             aria-label={translate("composer.controls.displayAria")}
             aria-expanded={drawer === "display"}
             onClick={() => requestDrawer(drawer === "display" ? null : "display")}
           >
             <Settings2 className="size-4" />
+            <span className={CONTROL_LABEL}>{translate("composer.controls.display")}</span>
           </Button>
         </div>
         {/* ── THE FOOTER'S NOTICE STRIPS, SORTED BY KIND (DESIGN.md §1, §2) ─────────────────────

@@ -44,6 +44,11 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The hierarchy's Host is a row you can collapse, a Space row discloses instead of navigating away, and an elided single-Pane Tab keeps the name its operator chose rather than a terminal title every sibling repeats.
 - The hierarchy indents less, and neither rail's title is cut off from its list by a rule.
 
+- The pane's state is a badge at the end of the strip row rather than a band of its own; the composer keeps the word only where that row is not on screen.
+- The five controls under the mirror put their icon beside their word, and the display control gains one, so all five read as one rank.
+- The Pane route draws no Collie mark, and the header and both rails stand on the raised chrome ground the composer dock already uses.
+- Hierarchy rows carry the Tab row's own status dot, automatic disclosure fires only when the selected Pane changes, and the rails spend less width and height on their own chrome.
+
 ### Fixed
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.

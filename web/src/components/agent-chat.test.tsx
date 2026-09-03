@@ -809,8 +809,7 @@ describe("AgentChat — block-grammar scoping (an agent with no adapter)", () =>
     for (const text of [STATUS_TEXT, MENU_TEXT]) {
       const { container } = renderChat({ text });
       const handle = screen.getByRole("button", { name: "Switch pane" });
-      const band = container.querySelector('[data-slot="composer-status"]')!;
-      const composer = band.parentElement!;
+      const composer = container.querySelector('[data-slot="composer-dock"]')!;
       // ROW IDENTITY, NOT ELEMENT IDENTITY. The handle now stands inside a `Collapse` — it stands
       // down while the soft keyboard is up — so its element is two wrappers deep. `Collapse` is a
       // presence animation and nothing else (it "styles NOTHING", per its header), so the ROW in
@@ -1600,7 +1599,7 @@ describe("the pane fits its viewport", () => {
       expect(container.querySelector('[data-slot="composer-status"]')).not.toBeNull();
       // The dock also stops paying the home-indicator inset twice: the keyboard covers the
       // indicator, so reserving for it as well is ~24px spent on the one screen that has none.
-      const dock = container.querySelector('[data-slot="composer-status"]')!.parentElement!;
+      const dock = container.querySelector('[data-slot="composer-dock"]')!;
       expect(dock.className).toMatch(/(?:^|\s)pb-2(?=\s|$)/);
       expect(dock.className).not.toMatch(/safe-area-inset-bottom/);
     } finally {

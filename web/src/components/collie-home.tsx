@@ -18,6 +18,14 @@ interface CollieHomeProps {
    *  the mark goes still again, muted — a mark that blooms forever reads as "still trying" when
    *  we've in fact given up; muted says "not connected" at a glance, matching the boot splash. */
   lost?: boolean;
+  /** DOWNSTREAM PORT — the ground this mark is knocked out against, as a CSS value.
+   *
+   *  The near-side beads are cut out in the header's own fill so they read as being in FRONT of the
+   *  head; a value that does not match the fill shows as a halo around them. It was `var(--background)`
+   *  written here, which is right for as long as the header is the page colour — and a shell that
+   *  fills that row differently has no way to say so. Defaults to the page, so a caller that says
+   *  nothing gets exactly Collie's own drawing. */
+  paper?: string;
   className?: string;
 }
 
@@ -114,7 +122,7 @@ export function spinRate(elapsedMs: number, totalMs = ORBIT_TURN_MS): number {
   return (1 - Math.cos(2 * Math.PI * u)) * du;
 }
 
-export function CollieHome({ onHome, trouble, lost = false, className }: CollieHomeProps) {
+export function CollieHome({ onHome, trouble, lost = false, paper = "var(--background)", className }: CollieHomeProps) {
   useLocale();
   const bloom = trouble && !lost;
 
@@ -322,8 +330,8 @@ export function CollieHome({ onHome, trouble, lost = false, className }: CollieH
           SIZES the header; it just stops being the short child. Keep the two numbers apart: 40 is the
           mark, 44 is the touchable box it is centred in.
 
-          `paper` is the header's own ground, which is `bg-background` (app-header.tsx — chrome is
-          the page colour, separated by a rule, not a fill). It is the colour of the knockout that
+          `paper` is the header's own ground, which the caller states because a downstream shell may
+          fill that row with something other than the page (app-header.tsx). It is the colour of the knockout that
           makes a near-side bead read as being IN FRONT of the head; anything else shows up as a
           halo around those beads, so this value tracks the ground and is not a taste choice. The
           two are COUPLED and the coupling is easy to forget, so app-header.test.tsx fails if the
@@ -339,7 +347,7 @@ export function CollieHome({ onHome, trouble, lost = false, className }: CollieH
           size={40}
           weight="header"
           loading={bloom || ((round || busy) && !lost)}
-          paper="var(--background)"
+          paper={paper}
           className={cn("transition-opacity", lost && "opacity-40 grayscale")}
         />
       </span>

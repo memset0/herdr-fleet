@@ -51,7 +51,7 @@ import { useHostHealth } from "@/components/pack-provider";
 import { writeRefusal } from "@/lib/host-health";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
-import { StatusDot } from "@/components/status-badge";
+import { StatusBadge, StatusDot } from "@/components/status-badge";
 import { submitPromptFeedback, submitPromptOption } from "@/lib/prompt-action";
 import { submitWizardKeys } from "@/lib/wizard-action";
 import { submitPreviewKeys, submitPreviewNote, submitPreviewOption } from "@/lib/preview-action";
@@ -482,6 +482,12 @@ export function AgentChat({
   const canFold = stripTabs.length > 0;
   const stripsExist = canFold || tabPanes.length > 1;
   const folded = canFold && stripsFolded;
+  // WHERE THE PANE'S STATE IS SPELLED, and it is spelled in exactly one place. The strip row already
+  // reserves 44px and ends in the fold control, so a badge pinned beside that control costs no
+  // height at all — which is the whole complaint about a 14px band of its own down in the dock. It
+  // can only carry the word while that row is actually drawn, so every state where it is not
+  // (folded to the bead bar, zen, or a pane with no strips) hands the word back to the composer.
+  const statusInStrips = agent !== undefined && stripsExist && !folded && !zen;
   // WHO OWNS THE 4px ABOVE THE MIRROR'S RULE.
   //
   // It reads as the mirror's own margin and it is not: it is the PAGE AN OPEN FOLDER TAB SITS ON,
@@ -1025,6 +1031,10 @@ export function AgentChat({
             the edge-to-edge one, which is this component's default. */}
         <RouteHeader
           onHome={onBack}
+          // DOWNSTREAM PORT — no Collie mark on this route. The row is the breadcrumb's: it is the
+          // only thing here the operator reads, and on a phone the mark spends 44px of it naming an
+          // app they are already inside. Every other route keeps it.
+          mark={false}
           // Zen takes the whole row off the screen — the one shell owns the <header> element, so
           // only the shell can stop drawing it, and this is how a route asks. See HeaderClaim.hidden
           // for what survives (the element, its safe-area inset, its reserved rule) and why.
@@ -1426,6 +1436,14 @@ export function AgentChat({
                     // anyway. Same 32px square recipe as the "+" beside it: they are two controls of the
                     // same rank in the same row, and drawing them differently would rank them.
                     trailing={
+                      <>
+                        {/* Right-aligned and INSIDE the trailing group, so it sits just left of the
+                            fold control and the two read as one cluster at the row's end. */}
+                        <StatusBadge
+                          status={agent.status}
+                          stale={connecting}
+                          className="mr-1 shrink-0"
+                        />
                       <button
                         type="button"
                         onClick={toggleStrips}
@@ -1438,6 +1456,7 @@ export function AgentChat({
                       >
                         <ChevronUp className="size-4" />
                       </button>
+                      </>
                     }
                   />
                 )}
@@ -1816,6 +1835,7 @@ export function AgentChat({
                   // `connecting` the dot reads, so the pair still dims as one.
                   status={agent?.status}
                   stale={connecting}
+                  showStatusWord={!statusInStrips}
                   // The one read of the keyboard, handed down. See `composing` above.
                   composing={composing}
                   gone={gone}

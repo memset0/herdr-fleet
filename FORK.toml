@@ -194,7 +194,7 @@ verify = [
   "web/src/lib/mux-capability.test.ts",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry."
+reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry. It carries a third for the same reason: the Pane screen's state badge in the strip row's existing trailing slot, the composer's status-word switch and its named dock, and the control row's one-rank layout (native-pane-chrome-port)."
 
 [[invasive]]
 id = "native-navigation-sidebars-port"
@@ -229,4 +229,16 @@ verify = [
   "web/src/components/agent-list.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list."
+reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list."
+[[invasive]]
+id = "native-pane-chrome-port"
+intent = "Let the Pane screen say its state in a row it already spends, rank its controls as one, and decline the shared mark, without moving product logic into Collie-owned files."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = ["web/src/components/collie-home.tsx#paper?: string"]
+verify = [
+  "web/src/components/app-header.test.tsx",
+  "web/src/components/agent-chat.test.tsx",
+  "web/src/components/composer.test.tsx"
+]
+reason = "Moving the header onto the chrome ground breaks the mark's knockout, which was written as the page colour inside the drawing. The mark takes the ground as a value with the page as its default, so a caller that says nothing gets Collie's own rendering and the existing coupling test keeps failing when the fill and the knockout disagree. The rest of this capability rides paths this manifest has already attributed once: the composer's status-word switch and dock anchor and the Pane page's badge and control row under native-manual-pane-fit-port, and the header's mark claim under native-navigation-sidebars-port."

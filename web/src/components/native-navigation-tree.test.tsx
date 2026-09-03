@@ -180,7 +180,7 @@ describe("NativeNavigationTree", () => {
       await screen.findByRole("button", { name: "Expand Main" }),
     ];
     for (const chevron of chevrons) {
-      expect(chevron.className).toContain("w-7");
+      expect(chevron.className).toContain("w-5");
       expect(chevron.querySelector("svg")?.getAttribute("class")).toContain("size-3.5");
     }
   });

@@ -30,6 +30,7 @@ export interface NavigationPaneInput {
    */
   ownLabel?: string;
   agent: string;
+  status?: NavigationStatus;
   kind?: "agent" | "shell";
 }
 
@@ -43,6 +44,15 @@ export interface NavigationPaneInput {
  */
 export type NavigationIcon = "group" | "agent" | "shell" | "none";
 
+/**
+ * The Pane state a row shows, carried through as data so the tree never asks a second source.
+ *
+ * Spelled here rather than imported from the web tree because this module stays React-free and
+ * import-free of the app; it is the same closed set Collie's own status palette is keyed on, and the
+ * component maps it to the exact dot the Tab row already draws.
+ */
+export type NavigationStatus = "idle" | "working" | "blocked" | "done" | "unknown";
+
 /** What activating a row does. A row without one only discloses. */
 export type NavigationTarget =
   | { kind: "space"; workspaceId: string }
@@ -55,6 +65,8 @@ export interface NavigationRow {
   icon: NavigationIcon;
   /** The Agent implementation behind an `agent` icon. */
   agent?: string;
+  /** The Pane state this row stands for, when it stands for a Pane. */
+  status?: NavigationStatus;
   /**
    * Browser-local disclosure identity. Present exactly when the row has children, so a leaf can
    * never occupy a disclosure slot and an elided level can never leave one behind.
@@ -116,6 +128,7 @@ function paneRow(pane: NavigationPaneInput, selected: boolean): NavigationRow {
     children: [],
   };
   if (pane.kind !== "shell") row.agent = pane.agent;
+  if (pane.status) row.status = pane.status;
   return row;
 }
 
