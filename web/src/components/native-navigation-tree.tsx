@@ -178,7 +178,7 @@ function Row({
               a hollow ring and a ring filled with the wrong colour reads as a notch. */}
           {row.status !== undefined && (
             <>
-              <StatusDot status={row.status} surface="bg-chrome" className="ml-auto shrink-0" />
+              <StatusDot status={row.status} surface="bg-chrome" className="ml-auto size-2 shrink-0" />
               <span className="sr-only">{statusLabel(row.status)}</span>
             </>
           )}

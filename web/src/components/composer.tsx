@@ -175,8 +175,14 @@ const CONTROL_OFF = "text-muted-foreground";
 // (`エージェント` is six full-width glyphs). Stacked, the word gets the button's whole width and a
 // 10px size, so all six draw in full at 390px and only ja's longest ellipsises at 320px. A fix that
 // only reads in English is not a fix.
+// `text-xs` and NOT `leading-none`, and the pair is the alignment fix rather than a taste change.
+// With the icon beside the word the two are flex items on one cross axis, and `leading-none` gave
+// the word a 10px line box against the icon's 16px one — centred boxes, but the glyphs inside them
+// sat high. `text-xs` is a 12px word in a 16px line box, which is the icon's own height, so the two
+// agree by construction and the row can lose the 8px `h-11` was spending on a second line it no
+// longer draws.
 const CONTROL_BUTTON =
-  "h-11 min-w-0 flex-1 shrink gap-1.5 px-1 has-[>svg]:px-1 text-[10px] font-medium leading-none [&>svg]:shrink-0";
+  "h-9 min-w-0 flex-1 shrink items-center gap-1.5 px-1 has-[>svg]:px-1 text-xs font-medium [&>svg]:shrink-0";
 // The label inside that box. `truncate` needs a box of its own to clip against — a bare text node
 // in a flex button has none — and `max-w-full` is what keeps that box from simply being the text's
 // own width.

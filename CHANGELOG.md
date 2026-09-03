@@ -49,6 +49,9 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The Pane route draws no Collie mark, and the header and both rails stand on the raised chrome ground the composer dock already uses.
 - Hierarchy rows carry the Tab row's own status dot, automatic disclosure fires only when the selected Pane changes, and the rails spend less width and height on their own chrome.
 
+- The hierarchy's state dot is one size smaller, the control row is shorter with larger type on one line box with its icons, and the rail separators no longer show a seam of page between the three columns.
+- A Pane label that is only digits is the multiplexer's ordinal, not a name, so an elided row keeps its Tab's name.
+
 ### Fixed
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.

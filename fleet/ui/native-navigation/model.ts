@@ -27,6 +27,10 @@ export interface NavigationPaneInput {
    * through a session name, a terminal title and finally the Agent's own name, and on a herd where
    * no Pane is named those values repeat across every sibling row. An elided row is named by this,
    * then by the Tab it replaced — see {@link deriveNavigationTree}.
+   *
+   * A value that is only digits is NOT one: a multiplexer numbers the panes nobody named, so `"1"`
+   * is the counter answering rather than a person, and letting it win would hide the Tab's real
+   * name behind an ordinal. {@link operatorChosen} is where that is decided.
    */
   ownLabel?: string;
   agent: string;
@@ -116,6 +120,20 @@ export function spaceDisclosureId(workspaceId: string): string {
 
 export function tabDisclosureId(workspaceId: string, tabId: string): string {
   return JSON.stringify(["tab", workspaceId, tabId]);
+}
+
+/**
+ * Whether a label is a NAME rather than a multiplexer's ordinal.
+ *
+ * Herdr labels an unnamed pane with its number, so a row that took that value would read `1` where
+ * its Tab carries the name the operator actually typed. Digits only — a name that merely CONTAINS a
+ * number (`v2`, `pass 3`) is still a name, and a person who deliberately names a pane `7` gets the
+ * same answer as the counter, which is the one collision this rule cannot tell apart and does not
+ * try to.
+ */
+function operatorChosen(label: string | undefined): string | undefined {
+  if (label === undefined || label.length === 0) return undefined;
+  return /^\d+$/.test(label) ? undefined : label;
 }
 
 function paneRow(pane: NavigationPaneInput, selected: boolean): NavigationRow {
@@ -219,7 +237,9 @@ export function deriveNavigationTree(input: {
           if (!only) return [];
           const selected = only.paneId === input.selectedPaneId;
           if (selected) remember(only.paneId, [spaceId]);
-          return [{ ...paneRow(only, selected), label: only.ownLabel ?? entry.tab.label }];
+          return [
+            { ...paneRow(only, selected), label: operatorChosen(only.ownLabel) ?? entry.tab.label },
+          ];
         }
 
         const paneRows = entry.panes.map((pane) => {

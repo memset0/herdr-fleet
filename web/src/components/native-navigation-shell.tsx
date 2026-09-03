@@ -364,7 +364,10 @@ function RailSeparator({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onKeyDown={onKeyDown}
-      className="group relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-transparent outline-none xl:block"
+      // `bg-chrome`, not transparent: the rails and the header share that ground now, and 4px of the
+      // PAGE showing between them read as a dark seam down each side of the route column. The grab
+      // affordance is still the hairline inside, which only appears on hover or focus.
+      className="group relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-chrome outline-none xl:block"
     >
       <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent group-hover:bg-ring group-focus-visible:w-0.5 group-focus-visible:bg-ring" />
     </div>

@@ -121,6 +121,25 @@ describe("native navigation hierarchy", () => {
       shellPanes: [],
     });
     expect(named.rows[0]?.children[0]?.children[0]?.label).toBe("guard work");
+
+    // …and a multiplexer's own ordinal is not a name, so the Tab's still wins.
+    const numbered = deriveNavigationTree({
+      ...HOST,
+      workspaces: [{ workspaceId: "w1", label: "One" }],
+      tabs: [{ workspaceId: "w1", tabId: "t1", label: "Rename the tree" }],
+      agents: [
+        {
+          workspaceId: "w1",
+          tabId: "t1",
+          paneId: "p1",
+          label: "root@host:~/repo",
+          ownLabel: "1",
+          agent: "claude",
+        },
+      ],
+      shellPanes: [],
+    });
+    expect(numbered.rows[0]?.children[0]?.children[0]?.label).toBe("Rename the tree");
   });
 
   test("keeps a group row and its folder only where more than one child survives", () => {
