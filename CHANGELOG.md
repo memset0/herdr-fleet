@@ -21,6 +21,11 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
   typed lifecycle/request/component/route/geometry ports, and enforce the boundary in CI-ready
   checks (54f2cf8).
 
+### Fixed
+
+- Make the direct receiving-node Web build generate the atomic Fleet JS/CSS pair before Vite, so a
+  process-healthy deployment cannot serve missing Fleet assets (a551bf7).
+
 ## [2.9.0] - 2026-09-01
 
 ### Added
