@@ -56,6 +56,6 @@
 
 ## 7. Reconcile and archive the source change
 
-- [ ] 7.1 After owner acceptance, re-read every artifact and implementation path, complete any reality-driven artifact correction, and strictly validate the change with all tasks and verification evidence complete.
-- [ ] 7.2 Sync the three delta specs into canonical source specs, verify their capability boundaries and public-safe content, and archive `reapply-authenticated-solo-gateway` through the generated workflow.
-- [ ] 7.3 Commit only the sync/archive paths in a separate OpenSpec commit, fetch/verify `origin/v3-dev`, push normally, and report all planning, implementation, candidate, archive, and deployment commit identities separately.
+- [x] 7.1 After owner acceptance, re-read every artifact and implementation path, complete any reality-driven artifact correction, and strictly validate the change with all tasks and verification evidence complete.
+- [x] 7.2 Sync the three delta specs into canonical source specs, verify their capability boundaries and public-safe content, and archive `reapply-authenticated-solo-gateway` through the generated workflow.
+- [x] 7.3 Commit only the sync/archive paths in a separate OpenSpec commit, fetch/verify `origin/v3-dev`, push normally, and report all planning, implementation, candidate, archive, and deployment commit identities separately.
