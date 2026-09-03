@@ -6,7 +6,7 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
-## Unreleased
+## [2.10.0] - 2026-09-03
 
 ### Changed
 
@@ -17,6 +17,9 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
   system, Tailscale, Windows scheduled, `collie-ctl`, or executable update lifecycle (7a14ba4).
 - Replace the generated Fleet UI monolith with typed Gateway page, model, client, style, and atomic
   asset-build modules while preserving the two public asset URLs and browser behavior (7ee3f77).
+- Move Collie Web and Bridge Fleet behavior behind owned barrels, reduce upstream paths to minimum
+  typed lifecycle/request/component/route/geometry ports, and enforce the boundary in CI-ready
+  checks (54f2cf8).
 
 ## [2.9.0] - 2026-09-01
 
