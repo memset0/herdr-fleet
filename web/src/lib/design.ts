@@ -35,7 +35,10 @@ const STORAGE_KEY = "collie:design:v1";
  * index.css's @theme block, which is the stack index.html preloads. A device that never opens the
  * setting runs no JavaScript before its first paint.
  */
-export const SHIPPED_FONTS = ["system", "grotesk", "aldrich"] as const;
+// `maple` is a DOWNSTREAM PORT and the one entry here that is not shipped: it is fetched from the
+// same provider as Fleet's CJK fallback, so choosing it costs a reader nothing they have not already
+// paid, and an unreachable provider leaves index.css's stack falling through to Aldrich.
+export const SHIPPED_FONTS = ["system", "grotesk", "aldrich", "maple"] as const;
 
 export type ShippedFont = (typeof SHIPPED_FONTS)[number];
 

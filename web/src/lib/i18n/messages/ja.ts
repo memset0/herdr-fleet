@@ -148,6 +148,7 @@ export const ja: Dictionary = {
   "settings.typeface.note.system": "OS標準のフォントを使用します。追加の通信は発生しません。",
   "settings.typeface.note.grotesk": "Collieのロゴに合わせて設計されたフォントです。",
   "settings.typeface.note.aldrich": "ウェイトが1種類のみのため、太字も標準テキストと同じ太さで表示されます。",
+  "settings.typeface.note.maple": "CJK が正確に 2:1 の等幅書体。同梱ではなく取得します。",
   "settings.typeface.note.operator": "ホストの管理者が設定したフォントです。",
 
   // --- settings.fonts ---
@@ -161,6 +162,14 @@ export const ja: Dictionary = {
   "settings.fonts.draftSize.decrease": "入力欄の文字サイズを縮小",
   "settings.fonts.draftSize.increase": "入力欄の文字サイズを拡大",
   "settings.fonts.system": "システム標準",
+
+  // --- settings.cjk ---
+  "settings.cjk.title": "CJK フォールバック",
+  "settings.cjk.description": "選んだ書体が描けない文字を、UI とミラーの両方で描きます。",
+  "settings.cjk.family": "書体",
+  "settings.cjk.none": "なし",
+  "settings.cjk.note.none": "中国語・日本語・韓国語はこの端末の書体にフォールバックします。",
+  "settings.cjk.note.provider": "描画された字だけを小さく分割して取得し、キャッシュします。",
 
   // --- settings.display (mirror display prefs, behind the composer's ⚙ dock) ---
   "settings.display.wrap.label": "行の折り返し",

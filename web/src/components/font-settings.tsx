@@ -49,6 +49,7 @@ const FAMILY_LABELS = {
   roboto: "Roboto Mono",
   dejavu: "DejaVu Sans Mono",
   courier: "Courier New",
+  maple: "Maple Mono NF CN",
 } satisfies Record<Exclude<FontFamily, "system">, string>;
 
 // A line with the shapes a monospace face is actually judged on: a shell prompt, the digit/letter

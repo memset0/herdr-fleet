@@ -151,6 +151,7 @@ export const es: Dictionary = {
   "settings.typeface.note.system": "Fuente del sistema del dispositivo. Sin descargas de red.",
   "settings.typeface.note.grotesk": "Tipografía propia de Collie, diseñada a juego con el logotipo.",
   "settings.typeface.note.aldrich": "Solo incluye un grosor, por lo que el texto en negrita se muestra igual que el normal.",
+  "settings.typeface.note.maple": "Una monoespaciada con CJK 2:1 real. Se descarga, no viene incluida.",
   "settings.typeface.note.operator": "Añadida por el operador de este collie.",
 
   // --- settings.fonts ---
@@ -164,6 +165,14 @@ export const es: Dictionary = {
   "settings.fonts.draftSize.decrease": "Reducir tamaño del texto de entrada",
   "settings.fonts.draftSize.increase": "Aumentar tamaño del texto de entrada",
   "settings.fonts.system": "Predeterminada del sistema",
+
+  // --- settings.cjk ---
+  "settings.cjk.title": "Reserva CJK",
+  "settings.cjk.description": "Dibuja lo que tus tipografías elegidas no dibujan, en la interfaz y en el espejo.",
+  "settings.cjk.family": "Tipografía",
+  "settings.cjk.none": "Ninguna",
+  "settings.cjk.note.none": "El chino, el japonés y el coreano recurren a las tipografías de este dispositivo.",
+  "settings.cjk.note.provider": "Se descarga por partes a medida que se dibujan los glifos, y se almacena en caché.",
 
   // --- settings.display (mirror display prefs, behind the composer's ⚙ dock) ---
   "settings.display.wrap.label": "Ajuste de línea",

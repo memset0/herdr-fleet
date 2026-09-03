@@ -52,6 +52,10 @@
     // else, including an `op:` value, falls through and leaves the element bare.
     if (d.font === "system") root.classList.add("font-system");
     else if (d.font === "grotesk") root.classList.add("font-grotesk");
+    // DOWNSTREAM PORT — the provider face. The class is added before paint like the others; the
+    // @font-face rules arrive with the stylesheet the app injects, so this face paints in the
+    // stack's next entry for one frame rather than in a wrong one forever.
+    else if (d.font === "maple") root.classList.add("font-maple");
   } catch {
     // A truncated write, a hand-edited blob, or private mode. The default face is the right answer
     // to all three, and it is the one already in the stylesheet.

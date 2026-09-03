@@ -32,12 +32,14 @@ import { t } from "@/lib/i18n";
 const FAMILY_LABELS = {
   grotesk: "Space Grotesk",
   aldrich: "Aldrich",
+  maple: "Maple Mono NF CN",
 } satisfies Record<Exclude<(typeof SHIPPED_FONTS)[number], "system">, string>;
 
 const NOTE_KEYS = {
   system: "settings.typeface.note.system",
   grotesk: "settings.typeface.note.grotesk",
   aldrich: "settings.typeface.note.aldrich",
+  maple: "settings.typeface.note.maple",
 } as const;
 
 /** Settings card: the app's own typeface. Device-local, like theme and language. */

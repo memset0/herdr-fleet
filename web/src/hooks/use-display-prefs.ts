@@ -68,6 +68,9 @@ export const FONT_FAMILIES = [
   "roboto",
   "dejavu",
   "courier",
+  // DOWNSTREAM PORT — the provider face Fleet already fetches for its CJK fallback. Maple Mono NF CN
+  // contains Maple Mono's Latin, so this entry and that fallback are one family and one download.
+  "maple",
 ] as const;
 
 export type FontFamily = (typeof FONT_FAMILIES)[number];
@@ -93,8 +96,12 @@ export function isFontFamily(value: string): value is FontFamily {
 // "system" below resolves to `undefined` and writes nothing, so the DEFAULT path reads the CSS and
 // this constant can never drift the untouched case.
 const NERD = '"Nerd Font Symbols"';
+// DOWNSTREAM PORT — `var(--font-cjk)` leads the tail, so every family below gets Fleet's CJK
+// fallback in the one position that adds coverage without changing the operator's choice: after
+// their face, before the system's. Off, it is a family name that matches nothing (index.css states
+// the whole argument), so these stacks are byte-for-byte what they were.
 const TAIL =
-  'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
+  'var(--font-cjk), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
 
 /** family key → `font-family` value, or undefined for "system" (leave the stylesheet alone). */
 export const FONT_STACKS = {
@@ -113,6 +120,9 @@ export const FONT_STACKS = {
   // The universal fallback face, and the only genuinely different silhouette on offer: thin,
   // wide-spaced, serifed. Present on Windows, macOS and iOS; Linux resolves it via fontconfig.
   courier: `${NERD}, "Courier New", Courier, ${TAIL}`,
+  // Fetched from a provider rather than found on the device, so it is the one entry that can be
+  // absent — and when it is, the tail answers exactly as it does for every other family.
+  maple: `${NERD}, "Maple Mono NF CN", ${TAIL}`,
 } satisfies Record<FontFamily, string | undefined>;
 
 /** A family's `font-family` value, or undefined for "system" — where the app default already

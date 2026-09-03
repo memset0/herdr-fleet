@@ -147,6 +147,7 @@ export const ko: Dictionary = {
   "settings.typeface.note.system": "디바이스 기본 글꼴을 사용합니다. 추가 다운로드는 없습니다.",
   "settings.typeface.note.grotesk": "Collie 로고 디자인에 맞춰 구성된 전용 글꼴입니다.",
   "settings.typeface.note.aldrich": "두께가 한 종류뿐이어서 굵은 글씨도 일반 텍스트와 동일하게 표시됩니다.",
+  "settings.typeface.note.maple": "CJK가 정확히 2:1인 고정폭 서체입니다. 내장이 아니라 내려받습니다.",
   "settings.typeface.note.operator": "서버 관리자가 직접 추가한 글꼴입니다.",
 
   // --- settings.fonts ---
@@ -160,6 +161,14 @@ export const ko: Dictionary = {
   "settings.fonts.draftSize.decrease": "입력창 글자 크기 축소",
   "settings.fonts.draftSize.increase": "입력창 글자 크기 확대",
   "settings.fonts.system": "시스템 기본값",
+
+  // --- settings.cjk ---
+  "settings.cjk.title": "CJK 대체 서체",
+  "settings.cjk.description": "선택한 서체가 그리지 못하는 글자를 UI와 미러 양쪽에서 그립니다.",
+  "settings.cjk.family": "서체",
+  "settings.cjk.none": "없음",
+  "settings.cjk.note.none": "중국어·일본어·한국어는 이 기기의 서체로 대체됩니다.",
+  "settings.cjk.note.provider": "그려지는 글자만 작게 나누어 내려받고 캐시합니다.",
 
   // --- settings.display (mirror display prefs, behind the composer's ⚙ dock) ---
   "settings.display.wrap.label": "자동 줄바꿈",

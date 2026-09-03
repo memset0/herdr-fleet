@@ -35,6 +35,8 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Restore explicit Herdr Pane width fitting in native Display Settings.
 - Restore persistent native Space/Tab/Pane and Agent navigation sidebars.
 - Add role-aware Fleet lifecycle selection backed only by Collie's native Pack trust authority.
+- Add a fetched CJK fallback face under every font stack, chosen in Settings from a closed catalog and delivered in `unicode-range` pieces, so a mirror stays a grid in Chinese without shipping a font.
+- Offer that face as a Latin choice in the app's typeface and the terminal font pickers; it is the same family and the same download.
 
 ### Changed
 

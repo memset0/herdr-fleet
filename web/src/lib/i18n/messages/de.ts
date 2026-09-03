@@ -152,6 +152,7 @@ export const de: Dictionary = {
   "settings.typeface.note.system": "Systemschrift des Geräts. Kein zusätzlicher Download.",
   "settings.typeface.note.grotesk": "Eigene Collie-Schrift, abgestimmt auf das Logo.",
   "settings.typeface.note.aldrich": "Nur eine Schriftstärke: Fetter Text wird wie normaler Text dargestellt.",
+  "settings.typeface.note.maple": "Eine dicktengleiche Schrift mit echtem 2:1-CJK. Wird geladen, nicht mitgeliefert.",
   "settings.typeface.note.operator": "Vom Betreiber dieser Collie-Instanz hinterlegt.",
 
   // --- settings.fonts ---
@@ -165,6 +166,14 @@ export const de: Dictionary = {
   "settings.fonts.draftSize.decrease": "Schriftgröße der Eingabe verringern",
   "settings.fonts.draftSize.increase": "Schriftgröße der Eingabe erhöhen",
   "settings.fonts.system": "Systemstandard",
+
+  // --- settings.cjk ---
+  "settings.cjk.title": "CJK-Ersatzschrift",
+  "settings.cjk.description": "Zeichnet, was die gewählten Schriften nicht können — in der Oberfläche und im Spiegel.",
+  "settings.cjk.family": "Schrift",
+  "settings.cjk.none": "Keine",
+  "settings.cjk.note.none": "Chinesisch, Japanisch und Koreanisch nutzen die Schriften dieses Geräts.",
+  "settings.cjk.note.provider": "Wird stückweise geladen, sobald Zeichen gezeichnet werden, und zwischengespeichert.",
 
   // --- settings.display (mirror display prefs, behind the composer's ⚙ dock) ---
   "settings.display.wrap.label": "Zeilenumbruch",

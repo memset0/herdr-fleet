@@ -43,6 +43,8 @@ describe("TypefaceControl", () => {
       "System default",
       "Space Grotesk",
       "Aldrich",
+      // DOWNSTREAM — the provider face Fleet also uses as its CJK fallback.
+      "Maple Mono NF CN",
     ]);
     expect(select).toHaveValue("aldrich");
     // The default wears no class — that is what keeps JavaScript off the first-paint path for a
@@ -84,6 +86,7 @@ describe("TypefaceControl", () => {
       "System default",
       "Space Grotesk",
       "Aldrich",
+      "Maple Mono NF CN",
       "Departure Mono",
     ]);
 
@@ -104,7 +107,8 @@ describe("TypefaceControl", () => {
     render(<TypefaceControl />);
 
     const select = await screen.findByLabelText("Family");
-    expect(within(select).getAllByRole("option")).toHaveLength(3);
+    // The four shipped keys and nothing the operator sent that this client refused.
+    expect(within(select).getAllByRole("option")).toHaveLength(4);
   });
 
   // The offline / deleted-row case. The select must not silently show its first option ("System

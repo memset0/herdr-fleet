@@ -360,8 +360,8 @@
 
   --font-mono:
     "Nerd Font Symbols", "JetBrains Mono", "Cascadia Mono", "Cascadia Code",
-    "Roboto Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    "Liberation Mono", monospace;
+    "Roboto Mono", var(--font-cjk), ui-monospace, SFMono-Regular, "SF Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
 
   /* The UI typeface — CHROME ONLY, and the DEFAULT one. Which face this actually is became a
      per-device setting in ADR 0033; this is the stack a device that has never touched the setting
@@ -369,15 +369,15 @@
      below hold the others. See the @font-face block for what "chrome only" means and why the
      stand-in family in the middle of the stack is not optional. */
   --font-sans:
-    "Aldrich", "Aldrich Fallback", ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    "Aldrich", "Aldrich Fallback", var(--font-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 
   /* The CONTENT stack: exactly what the app rendered in before the UI typeface arrived. Anything an
      agent or a machine authored wears this, so the custom face never dresses someone else's words
      (see the boundary note below). It is a plain system stack on purpose — it ships no bytes. */
   --font-content:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    var(--font-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 }
 
 /* Nerd Font symbols, bundled — the only webfont Collie ships.
@@ -559,18 +559,46 @@
  *
  * Specificity, since it is load-bearing: `:root.font-*` is (0,2,0) and unlayered, and the @theme
  * block emits (0,1,0) inside Tailwind's `theme` layer. These win on both counts. */
+/* DOWNSTREAM PORT — the one hole every stack above and below leaves for a fallback face.
+ *
+ * A monospace face chosen for code is chosen on its Latin shapes and usually draws no CJK, so a
+ * mirror that is a grid in English stops being one the moment a line has Chinese in it. Fleet names
+ * a face for those codepoints AFTER the operator's own and BEFORE the system's, which is the only
+ * position that adds coverage without changing anyone's choice.
+ *
+ * IT IS A NAME AND NEVER AN EMPTY VALUE. `var(--font-cjk)` resolving to nothing would put two commas
+ * side by side and invalidate the whole declaration, so "off" is spelled as a family name that
+ * matches nothing and the browser simply steps over it — which is byte-for-byte the behaviour every
+ * one of these stacks had before this line existed. `lib/fleet-webfonts.ts` writes the real name
+ * onto the root when a face is chosen. */
+:root {
+  --font-cjk: "Herdr Fleet CJK Unset";
+}
+
 :root.font-system {
   /* No webfont, no stand-in, no bytes: the phone's own interface face. This is the same stack
      --font-content uses, spelled out rather than aliased — the two are equal today by coincidence
      of both wanting "the system face", not because one is defined as the other. */
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    var(--font-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   --default-font-family: var(--font-sans);
 }
 :root.font-grotesk {
   --font-sans:
-    "Space Grotesk", "Space Grotesk Fallback", ui-sans-serif, system-ui,
+    "Space Grotesk", "Space Grotesk Fallback", var(--font-cjk), ui-sans-serif,
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --default-font-family: var(--font-sans);
+}
+/* DOWNSTREAM PORT — the provider face, as the app's own. It is a monospace family used as an
+   interface face on purpose: it is the same download the CJK fallback already pulls, so choosing it
+   here costs nothing a reader has not already paid, and its CJK is drawn at exactly twice the Latin
+   advance. Unreachable provider, unfetched face: the stack falls through to the shipped default,
+   never to a bare sans-serif — the same shape `:root.font-operator` below argues for. */
+:root.font-maple {
+  --font-sans:
+    "Maple Mono NF CN", "Aldrich", "Aldrich Fallback", ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
@@ -591,7 +619,7 @@
 :root.font-operator {
   --font-sans:
     var(--font-operator-family, "Aldrich"), "Aldrich", "Aldrich Fallback",
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    var(--font-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }

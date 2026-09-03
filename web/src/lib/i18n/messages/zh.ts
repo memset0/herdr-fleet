@@ -139,6 +139,7 @@ export const zh: Dictionary = {
   "settings.typeface.note.system": "使用系统自带字体，无需额外下载资源。",
   "settings.typeface.note.grotesk": "Collie 定制无衬线体，匹配产品标识风格。",
   "settings.typeface.note.aldrich": "仅提供一种字重，粗体文本显示效果与常规文本相同。",
+  "settings.typeface.note.maple": "中英宽度严格 2:1 的等宽字体。按需获取，不随安装分发。",
   "settings.typeface.note.operator": "由当前实例管理员配置添加。",
 
   // --- settings.fonts ---
@@ -152,6 +153,14 @@ export const zh: Dictionary = {
   "settings.fonts.draftSize.decrease": "减小输入框字号",
   "settings.fonts.draftSize.increase": "增大输入框字号",
   "settings.fonts.system": "系统默认",
+
+  // --- settings.cjk ---
+  "settings.cjk.title": "中日韩兜底字体",
+  "settings.cjk.description": "补齐所选字体画不出的字，界面和终端镜像都生效。",
+  "settings.cjk.family": "字体",
+  "settings.cjk.none": "不使用",
+  "settings.cjk.note.none": "中日韩文字回落到本机自带的字体。",
+  "settings.cjk.note.provider": "按实际用到的字分块获取并缓存，页面用不到就一个字节都不下载。",
 
   // --- settings.display (mirror display prefs, behind the composer's ⚙ dock) ---
   "settings.display.wrap.label": "自动换行",

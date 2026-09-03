@@ -19,6 +19,7 @@ import { ZenControl } from "@/components/zen-control";
 import { InstallControl } from "@/components/install-control";
 import { LanguageControl } from "@/components/language-control";
 import { FontSettingsControl } from "@/components/font-settings";
+import { FleetCjkFallbackControl } from "@/components/fleet-webfonts";
 import { TypefaceControl } from "@/components/typeface-control";
 import { UpdateCheckControl } from "@/components/update-check-control";
 import { Switch } from "@/components/ui/switch";
@@ -137,6 +138,9 @@ export function SettingsRoute() {
             own voice first, the thing it renders second. */}
         <TypefaceControl />
         <FontSettingsControl />
+        {/* DOWNSTREAM PORT — the third answer to "which face", directly under the two it completes:
+            the one that draws what neither of them does. */}
+        <FleetCjkFallbackControl />
 
         {/* Device behaviour sits with appearance — both are "how this phone treats you", as opposed
             to the herd/notification settings below. Renders nothing where vibrate is unsupported. */}

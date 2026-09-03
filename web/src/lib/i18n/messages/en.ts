@@ -164,6 +164,7 @@ export const en = {
   // Says the cost out loud rather than letting it be discovered: Aldrich ships one weight, and the
   // app suppresses synthesized bold, so bold text under it is not heavier than the rest.
   "settings.typeface.note.aldrich": "One weight, so bold text looks the same as regular.",
+  "settings.typeface.note.maple": "A monospace face with true 2:1 CJK. Fetched, not shipped.",
   "settings.typeface.note.operator": "Added by this collie's operator.",
 
   // --- settings.fonts (the terminal face: the mirror's size and the draft field's; NOT the app's own typeface) ---
@@ -177,6 +178,14 @@ export const en = {
   "settings.fonts.draftSize.decrease": "Decrease draft text size",
   "settings.fonts.draftSize.increase": "Increase draft text size",
   "settings.fonts.system": "System default",
+
+  // --- settings.cjk (the fallback face, fetched rather than shipped) ---
+  "settings.cjk.title": "CJK fallback",
+  "settings.cjk.description": "Draws what your chosen faces do not, in chrome and in the mirror.",
+  "settings.cjk.family": "Face",
+  "settings.cjk.none": "None",
+  "settings.cjk.note.none": "Chinese, Japanese and Korean fall through to this device's own faces.",
+  "settings.cjk.note.provider": "Fetched in small pieces as glyphs are drawn, and cached. Nothing is downloaded until a page needs it.",
 
   // --- settings.display (mirror display prefs, behind the composer's ⚙ dock) ---
   "settings.display.wrap.label": "Wrap lines",

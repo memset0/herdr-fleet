@@ -25,6 +25,7 @@ import {
   type NativeNavigationPreferenceStore,
   type SidebarSide,
 } from "../../../fleet/ui/native-navigation/preferences.ts";
+import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
@@ -217,7 +218,10 @@ export function NativeNavigationShell({
         data-slot="native-navigation-shell"
         className="relative flex min-h-0 flex-1 overflow-hidden"
       >
-        <Rail side="left" title={t("fleet.navigation.hierarchy")} width={preferences.left.preferredWidth}>
+        {/* Renders nothing; keeps the document's webfont state matching the three settings that can
+            name a face. Here rather than in a route because it must outlive every navigation. */}
+        <FleetWebfonts />
+        <Rail title={t("fleet.navigation.hierarchy")} width={preferences.left.preferredWidth}>
           {hierarchyOpen ? null : hierarchy}
         </Rail>
         <RailSeparator
@@ -241,7 +245,7 @@ export function NativeNavigationShell({
           onWidth={(width) => preferenceStore.setWidth("right", width)}
           label={t("fleet.navigation.resizeAgents")}
         />
-        <Rail side="right" title={t("fleet.navigation.agents")} width={preferences.right.preferredWidth}>
+        <Rail title={t("fleet.navigation.agents")} width={preferences.right.preferredWidth}>
           {agents}
         </Rail>
 
@@ -281,12 +285,10 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
  * under a 11px label to line up with a header edge that, without a rule, nobody can see.
  */
 function Rail({
-  side,
   title,
   width,
   children,
 }: {
-  side: SidebarSide;
   title: string;
   width: number;
   children: ReactNode;
@@ -295,12 +297,10 @@ function Rail({
     <aside
       aria-label={title}
       style={{ width }}
-      className={cn(
-        // --chrome, the same raised ground the header and the composer dock stand on: the rails are
-        // chrome around the route, not more of the page.
-        "hidden min-h-0 shrink-0 flex-col bg-chrome xl:flex",
-        side === "left" ? "border-r border-rule" : "border-l border-rule",
-      )}
+      // --chrome, the same raised ground the header and the composer dock stand on: the rails are
+      // chrome around the route, not more of the page. The rule between rail and route lives on the
+      // SEPARATOR, not here — see RailSeparator.
+      className="hidden min-h-0 shrink-0 flex-col bg-chrome xl:flex"
     >
       <div className="shrink-0 [padding-top:env(safe-area-inset-top)]">
         {/* The title sits DIRECTLY over its list. It carried the header's 60px floor so the three
@@ -365,9 +365,17 @@ function RailSeparator({
       onPointerCancel={onPointerUp}
       onKeyDown={onKeyDown}
       // `bg-chrome`, not transparent: the rails and the header share that ground now, and 4px of the
-      // PAGE showing between them read as a dark seam down each side of the route column. The grab
-      // affordance is still the hairline inside, which only appears on hover or focus.
-      className="group relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-chrome outline-none xl:block"
+      // PAGE showing between them read as a dark seam down each side of the route column.
+      //
+      // THE RULE IS ON THIS ELEMENT'S OUTER EDGE, and that is the whole of the fix. It used to sit on
+      // the rail, which put it four pixels INSIDE a continuous band of chrome — a line with the same
+      // colour on both sides, and then the real chrome-to-page edge four pixels further out with no
+      // line on it at all. Two visible boundaries where there is one region change. Drawn here, the
+      // rule lands exactly where the ground changes, which is what a rule is for (DESIGN.md §4).
+      className={cn(
+        "group relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-chrome outline-none xl:block",
+        side === "left" ? "border-r border-rule" : "border-l border-rule",
+      )}
     >
       <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent group-hover:bg-ring group-focus-visible:w-0.5 group-focus-visible:bg-ring" />
     </div>

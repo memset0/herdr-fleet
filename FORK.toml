@@ -45,8 +45,11 @@ paths = [
   "web/src/components/native-navigation-context.tsx",
   "web/src/components/native-navigation-shell.test.tsx",
   "web/src/components/native-navigation-shell.tsx",
+  "web/src/components/fleet-webfonts.tsx",
   "web/src/components/native-navigation-tree.test.tsx",
-  "web/src/components/native-navigation-tree.tsx"
+  "web/src/components/native-navigation-tree.tsx",
+  "web/src/lib/fleet-webfonts.test.ts",
+  "web/src/lib/fleet-webfonts.ts"
 ]
 contracts = [
   "private fleet.toml",
@@ -56,7 +59,8 @@ contracts = [
   "role-aware child lifecycle",
   "bounded browser-local Agent favorites",
   "explicit Herdr-only manual Pane fit",
-  "permanently expanded native navigation rails"
+  "permanently expanded native navigation rails",
+  "one fetched CJK fallback face"
 ]
 verify = [
   "fleet/auth.test.ts",
@@ -78,7 +82,8 @@ verify = [
   "fleet/manual-pane-fit/controller.test.ts",
   "fleet/ui/manual-pane-fit.test.ts",
   "fleet/ui/native-navigation/model.test.ts",
-  "fleet/ui/native-navigation/preferences.test.ts"
+  "fleet/ui/native-navigation/preferences.test.ts",
+  "fleet/ui/webfonts.test.ts"
 ]
 
 [[invasive]]
@@ -146,7 +151,7 @@ verify = [
   "web/src/routes/home.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "Collie's native rows own rendering and navigation, so they expose only favorite state and toggle ports while all identity, storage, and ordering behavior remains under fleet/ui. This entry also carries the dashboard route test's coverage of the content width the native navigation shell removes so the route fills its column (native-navigation-sidebars-port), because the manifest attributes web/src/routes/home.test.tsx to exactly one entry."
+reason = "Collie's native rows own rendering and navigation, so they expose only favorite state and toggle ports while all identity, storage, and ordering behavior remains under fleet/ui. This entry also carries the dashboard route test's coverage of the content width the native navigation shell removes so the route fills its column (native-navigation-sidebars-port), and the six typed dictionaries every downstream label lands in, including the CJK fallback card's (native-webfont-port), because the manifest attributes each of those paths to exactly one entry."
 
 [[invasive]]
 id = "authenticated-navigation-cache"
@@ -197,7 +202,7 @@ verify = [
   "web/src/lib/mux-capability.test.ts",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry. It carries a third for the same reason: the Pane screen's state badge in the strip row's existing trailing slot, the composer's status-word switch and its named dock, and the control row's one-rank layout (native-pane-chrome-port)."
+reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. It also carries the one relaxation of the app's Content-Security-Policy: the fetched CJK fallback (native-webfont-port) needs its provider origin in style-src and font-src, and script-src and connect-src are deliberately untouched, so that origin can serve no code and the app can open no channel to it. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry. It carries a third for the same reason: the Pane screen's state badge in the strip row's existing trailing slot, the composer's status-word switch and its named dock, and the control row's one-rank layout (native-pane-chrome-port)."
 
 [[invasive]]
 id = "native-navigation-sidebars-port"
@@ -232,7 +237,7 @@ verify = [
   "web/src/components/agent-list.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list."
+reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list."
 [[invasive]]
 id = "native-pane-chrome-port"
 intent = "Let the Pane screen say its state in a row it already spends, rank its controls as one, and decline the shared mark, without moving product logic into Collie-owned files."
@@ -245,3 +250,25 @@ verify = [
   "web/src/components/composer.test.tsx"
 ]
 reason = "Moving the header onto the chrome ground breaks the mark's knockout, which was written as the page colour inside the drawing. The mark takes the ground as a value with the page as its default, so a caller that says nothing gets Collie's own rendering and the existing coupling test keeps failing when the fill and the knockout disagree. The rest of this capability rides paths this manifest has already attributed once: the composer's status-word switch and dock anchor and the Pane page's badge and control row under native-manual-pane-fit-port, and the header's mark claim under native-navigation-sidebars-port."
+[[invasive]]
+id = "native-webfont-port"
+intent = "Put one fetched fallback face under every font stack, after the operator's own and before the system's, and offer it and its Latin twin in the existing pickers."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "web/src/index.css#--font-cjk",
+  "web/src/hooks/use-display-prefs.ts#maple",
+  "web/src/lib/design.ts#maple",
+  "web/public/theme-init.js#font-maple",
+  "web/src/components/typeface-control.tsx#maple",
+  "web/src/components/typeface-control.test.tsx#Maple Mono NF CN",
+  "web/src/components/font-settings.tsx#maple"
+]
+verify = [
+  "fleet/ui/webfonts.test.ts",
+  "web/src/lib/fleet-webfonts.test.ts",
+  "web/src/components/typeface-control.test.tsx",
+  "web/src/fonts.test.ts",
+  "web/src/lib/i18n/i18n.test.ts"
+]
+reason = "A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the CSP origin in bridge/server.ts rides native-manual-pane-fit-port, the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and the six typed dictionaries ride native-agent-favorites-port."

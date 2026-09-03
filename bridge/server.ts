@@ -103,9 +103,23 @@ const CONTENT_TYPES = new Map<string, string>([
 // Strict CSP. Scripts are external, hashed bundles (script-src 'self'); pane text is rendered by
 // React as text nodes, never markup, so terminal output can't inject. 'unsafe-inline' is allowed
 // for styles only (the toast library injects a <style> tag) — it can't execute code.
+// DOWNSTREAM PORT — one origin, for fonts and their stylesheet, and nothing else.
+//
+// Fleet's CJK fallback is fetched rather than shipped (fleet/ui/webfonts.ts says why a shipped CJK
+// face is not an option), so the document loads one third-party stylesheet and the `unicode-range`
+// chunks it names. That needs the origin in `style-src`, and `font-src` has to be spelled out at all
+// because it was inheriting `default-src 'self'`.
+//
+// WHAT IS NOT RELAXED, and this is the point: `script-src` and `connect-src` are untouched, so the
+// origin can serve no code and the app can open no channel to it. A compromised provider can change
+// which glyphs are drawn and nothing else. `referrer-policy: no-referrer` below already keeps this
+// deployment's own origin out of every request it makes.
+const FLEET_FONT_ORIGIN = "https://fontsapi.zeoseven.com";
 const CSP =
   "default-src 'self'; connect-src 'self'; img-src 'self' data:; " +
-  "style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'; " +
+  `style-src 'self' 'unsafe-inline' ${FLEET_FONT_ORIGIN}; ` +
+  `font-src 'self' ${FLEET_FONT_ORIGIN}; ` +
+  "script-src 'self'; worker-src 'self'; " +
   "manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 // Hardening headers set on EVERY response (static + API), applied centrally in the fetch wrapper.
