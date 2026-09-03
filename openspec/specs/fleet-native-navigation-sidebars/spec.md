@@ -121,11 +121,12 @@ or issue an API request.
 A level that holds exactly one child SHALL be elided: the child is presented in its place, the
 child's icon wins, and the elided level MUST NOT contribute a row, a disclosure control, or an
 indentation step. The elided row SHALL be named by the name the operator chose — the Pane's own
-name when it has one, and otherwise the name of the Tab it replaced — never by a value the terminal
-or the Agent supplied, which repeats across sibling rows and names none of them. A Pane inside a Tab
-that survives keeps its existing name, which is what distinguishes it from its siblings. A row SHALL
-present a group icon only when it still groups more than one child after elision; a Space row SHALL
-present no icon of its own.
+name when it has one, and otherwise the name of the Tab it replaced. A value the terminal or the
+Agent supplied is not such a name, because it repeats across sibling rows and names none of them;
+neither is a Pane label consisting only of digits, which is the multiplexer numbering a Pane nobody
+named. A Pane inside a Tab that survives keeps its existing name, which is what distinguishes it
+from its siblings. A row SHALL present a group icon only when it still groups more than one child
+after elision; a Space row SHALL present no icon of its own.
 
 Every level SHALL use the same disclosure control with the same size, hit area, and indentation
 step. The selected row's highlight SHALL cover the whole row including its disclosure control.
@@ -160,6 +161,10 @@ independent.
 #### Scenario: Neither the Pane nor its Tab was named by the operator
 - **WHEN** an elided Pane carries no name of its own
 - **THEN** the row is named by its Tab rather than by a terminal or Agent supplied value
+
+#### Scenario: The multiplexer numbered the Pane
+- **WHEN** an elided Pane's only label is a run of digits
+- **THEN** the row is named by its Tab, because the ordinal names nothing the operator chose
 
 #### Scenario: A level holds several children
 - **WHEN** a Tab holds more than one Pane
