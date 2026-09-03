@@ -12,6 +12,7 @@ import { SessionStore } from "./session-store.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
 
 let config: FleetConfig;
+const loginCsrfToken = "C".repeat(43);
 
 beforeAll(async () => {
   const base = fleetTestConfig();
@@ -40,7 +41,7 @@ async function setup(fetcher: FleetFetcher = fetch) {
   const limiter = new LoginRateLimiter(config.auth.rateLimit);
   return {
     sessions,
-    handler: createGatewayHandler({ config, sessions, limiter, fetcher, now: () => 1_000 }),
+    handler: createGatewayHandler({ config, sessions, limiter, fetcher, now: () => 1_000, loginCsrfToken }),
   };
 }
 
@@ -149,6 +150,28 @@ describe("authenticated solo Gateway", () => {
       { peerAddress: "127.0.0.1" },
     );
     expect(refererLogin.status).toBe(303);
+    const tokenLogin = await handler(
+      request("/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          username: "operator",
+          password: "gateway-test-password",
+          csrf_token: loginCsrfToken,
+        }),
+      }),
+      { peerAddress: "127.0.0.1" },
+    );
+    expect(tokenLogin.status).toBe(303);
+    const missingEvidence = await handler(
+      request("/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ username: "operator", password: "gateway-test-password" }),
+      }),
+      { peerAddress: "127.0.0.1" },
+    );
+    expect(missingEvidence.status).toBe(403);
     const cookie = await login(handler);
     const write = await handler(
       request("/api/pane/p1/reply", { method: "POST", headers: { cookie, origin: "https://evil.example" }, body: "x" }),
@@ -173,6 +196,7 @@ describe("authenticated solo Gateway", () => {
     const loginPage = await handler(request("/auth/login"), { peerAddress: "127.0.0.1" });
     expect(loginPage.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(loginPage.headers.get("referrer-policy")).toBe("same-origin");
+    expect(await loginPage.text()).toContain(`name="csrf_token" value="${loginCsrfToken}"`);
     expect(loginPage.headers.get("x-frame-options")).toBe("DENY");
     expect(loginPage.headers.get("cache-control")).toBe("no-store");
   });

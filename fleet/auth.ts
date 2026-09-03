@@ -10,6 +10,7 @@ export const LOGIN_FORM_LIMIT = 16_384;
 export const USERNAME_LIMIT = 64;
 export const PASSWORD_LIMIT = 512;
 export const RETURN_PATH_LIMIT = 4_096;
+export const LOGIN_CSRF_TOKEN_LIMIT = 128;
 const SESSION_VERSION = 1;
 const CLOCK_SKEW_MS = 60_000;
 
@@ -28,6 +29,7 @@ export interface LoginInput {
   readonly username: string;
   readonly password: string;
   readonly returnPath: string;
+  readonly csrfToken: string;
 }
 
 export type SessionIdSource = () => string;
@@ -213,6 +215,13 @@ export function sameOriginPost(request: Request, publicOrigin: string): boolean 
   }
 }
 
+export function validLoginCsrfToken(supplied: string, expected: string): boolean {
+  if (supplied.length === 0 || supplied.length > LOGIN_CSRF_TOKEN_LIMIT) return false;
+  const suppliedBytes = Buffer.from(supplied);
+  const expectedBytes = Buffer.from(expected);
+  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
+}
+
 export async function readLoginForm(request: Request): Promise<LoginInput | null> {
   const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "application/x-www-form-urlencoded") return null;
@@ -243,10 +252,12 @@ export async function readLoginForm(request: Request): Promise<LoginInput | null
   const form = new URLSearchParams(text);
   const username = form.get("username") ?? "";
   const password = form.get("password") ?? "";
+  const csrfToken = form.get("csrf_token") ?? "";
   const next = form.get("next");
   if (username.length === 0 || username.length > USERNAME_LIMIT || password.length === 0 || password.length > PASSWORD_LIMIT) {
     return null;
   }
+  if (csrfToken.length > LOGIN_CSRF_TOKEN_LIMIT) return null;
   if (next !== null && next.length > RETURN_PATH_LIMIT) return null;
-  return { username, password, returnPath: safeReturnPath(next) };
+  return { username, password, returnPath: safeReturnPath(next), csrfToken };
 }

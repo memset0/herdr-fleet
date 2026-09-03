@@ -7,7 +7,7 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-export function loginPage(returnPath: string, message = ""): string {
+export function loginPage(returnPath: string, csrfToken: string, message = ""): string {
   const alert = message === "" ? "" : `<p id="login-alert" class="alert" role="alert">${escapeHtml(message)}</p>`;
   return `<!doctype html>
 <html lang="en">
@@ -28,6 +28,7 @@ export function loginPage(returnPath: string, message = ""): string {
         ${alert}
         <form method="post" action="/auth/login" autocomplete="on" aria-describedby="login-description">
           <input type="hidden" name="next" value="${escapeHtml(returnPath)}">
+          <input type="hidden" name="csrf_token" value="${escapeHtml(csrfToken)}">
           <label for="username">Username</label>
           <input id="username" name="username" type="text" autocomplete="username" maxlength="64" required autofocus>
           <label for="password">Password</label>

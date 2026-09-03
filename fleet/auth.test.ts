@@ -70,7 +70,7 @@ describe("Fleet authentication", () => {
 
   test("does not spend Argon2 work while a source or aggregate budget is blocked", async () => {
     const limiter = new LoginRateLimiter(config.auth.rateLimit);
-    const input = { username: "operator", password: "wrong", returnPath: "/" };
+    const input = { username: "operator", password: "wrong", returnPath: "/", csrfToken: "" };
     let calls = 0;
     const verifier = async () => {
       calls += 1;
@@ -124,10 +124,16 @@ describe("Fleet authentication", () => {
             username: "operator",
             password: "correct horse battery staple",
             next: "/pane/p1",
+            csrf_token: "C".repeat(43),
           }),
         ),
       ),
-    ).resolves.toEqual({ username: "operator", password: "correct horse battery staple", returnPath: "/pane/p1" });
+    ).resolves.toEqual({
+      username: "operator",
+      password: "correct horse battery staple",
+      returnPath: "/pane/p1",
+      csrfToken: "C".repeat(43),
+    });
     await expect(readLoginForm(form(new URLSearchParams({ username: "x".repeat(65), password: "secret" })))).resolves.toBeNull();
     await expect(
       readLoginForm(

@@ -117,10 +117,13 @@ contract. Sliding renewal is deferred: the configured absolute lifetime remains 
 Both login and logout require POST plus exact configured Origin, falling back to an exact parsed
 Referer only when Origin is absent. Login HTML uses `Referrer-Policy: same-origin` so browsers that
 omit Origin can supply that exact fallback without disclosing navigation to another origin; other
-Gateway responses retain `no-referrer`. Safe return values are stored as normalized paths beginning
-with one `/`; values beginning with `//`, containing authority/userinfo/control/backslash ambiguity,
-or resolving outside the application origin fall back to `/`. No absolute user-provided destination
-is ever emitted.
+Gateway responses retain `no-referrer`. Because some browser containers omit both headers, the
+no-store login page also carries one random process-local CSRF token. Login accepts that token as the
+fallback evidence, compares it in constant time, and rotates it whenever the Gateway restarts;
+headerless requests without the token still fail before password verification. Safe return values
+are stored as normalized paths beginning with one `/`; values beginning with `//`, containing
+authority/userinfo/control/backslash ambiguity, or resolving outside the application origin fall
+back to `/`. No absolute user-provided destination is ever emitted.
 
 All form and credential lengths are checked before Argon2 work. Validly shaped failures run the same
 password verification and return the same message/status regardless of which credential was wrong.
@@ -183,6 +186,16 @@ Planning is committed separately. Apply then uses at least these normal, non-for
 
 If a stage cannot build independently, it is folded into the immediately preceding dependency rather
 than pushed broken. No commit contains a live configuration or deployment value.
+
+### 11. Extend native Collie routing in later stages
+
+This first stage keeps the stock Collie router and authenticated application document intact. Later
+Fleet navigation or multi-host work starts from Collie's React Router routes, loaders, data model,
+and resident UI. It does not restore the v2 outer Fleet shell, cross-origin iframe composition, or
+the split routing catalog that existed to stitch those surfaces together.
+
+Any future route extension belongs to its own source OpenSpec change and exposes only the smallest
+Collie-relative route/data addition required by that stage.
 
 ## Risks / Trade-offs
 

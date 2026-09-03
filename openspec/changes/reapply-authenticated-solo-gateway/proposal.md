@@ -36,8 +36,10 @@ Non-goals for this change:
 
 - SSH transport, Pack enrollment or routing, multi-host aggregation, peer-role runtime behavior,
   forward or reverse tunnel supervision, and center-driven peer updates.
-- Fleet navigation/sidebar/shortcut reapplication, Settings reapplication, iframe migration, ttyd,
-  Discord notifications, STT changes, deputy/failover, or any deployment-specific configuration.
+- Fleet navigation/sidebar/shortcut reapplication, Settings reapplication, ttyd, Discord
+  notifications, STT changes, deputy/failover, or any deployment-specific configuration. Future
+  routing work starts from Collie's native router and does not restore the v2 outer shell or iframe
+  composition.
 - Removing or redesigning Collie's upstream Tailscale deployment option, Pack trust protocol,
   native UI, multiplexer adapters, or existing feature behavior.
 - Cutting or tagging the public v3 release; staging remains pinned to reviewed `v3-dev` commits until

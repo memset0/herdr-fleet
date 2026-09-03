@@ -34,6 +34,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 ### Fixed
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.
+- Accept header-stripped browser login submissions through an unguessable no-store CSRF form token.
 
 ## [1.2.0] - 2026-09-02
 

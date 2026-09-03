@@ -42,7 +42,8 @@
 - [x] 5.4 Run the fork checker and tracked-tree privacy scan, verify no v2 multi-host/iframe/SSH/ttyd/Discord module or private deployment term entered the tree, and reconcile proposal/design/specs/tasks with the implementation.
 - [x] 5.5 Run all root and web tests, both typechecks, lint, version checks, production build, strict OpenSpec validation, and the exact staged diff review; resolve failures without weakening an existing upstream gate.
 - [x] 5.6 Update `FORK.toml` and `CHANGELOG.md`, commit the security/documentation candidate separately, fetch/verify `origin/v3-dev`, push normally, and verify the remote exact candidate commit is independently buildable.
-- [x] 5.7 Fix the staging-discovered browser form compatibility bug without weakening exact-origin CSRF checks: preserve a same-origin Referer fallback when Origin is omitted, add focused Gateway coverage, update the authentication spec/design and Changelog, and keep cross-origin referrers suppressed.
+- [x] 5.7 Fix the staging-discovered browser form compatibility bug without weakening CSRF checks: preserve the same-origin Referer fallback and add a random no-store form token when browser containers omit both Origin and Referer, with focused Gateway coverage and aligned authentication spec/design/Changelog.
+- [x] 5.8 Record the owner-selected future routing boundary: extend Collie's native router, loaders, data model, and resident UI in later source changes rather than restoring the v2 outer Fleet shell or iframe stitching.
 
 ## 6. Validate the isolated staging deployment
 

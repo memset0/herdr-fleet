@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { randomBytes } from "node:crypto";
 
 import type { JsonValue } from "../bridge/json.ts";
 import {
@@ -11,6 +12,7 @@ import {
   safeReturnPath,
   sameOriginPost,
   sessionCookie,
+  validLoginCsrfToken,
   verifySessionToken,
   type SessionClaims,
 } from "./auth.ts";
@@ -58,6 +60,7 @@ export interface GatewayOptions {
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
   readonly now?: () => number;
+  readonly loginCsrfToken?: string;
 }
 
 function withBaseHeaders(response: Response, cache: "no-store" | "public" = "no-store"): Response {
@@ -134,6 +137,9 @@ export function createGatewayHandler(options: GatewayOptions) {
   const limiter = options.limiter ?? new LoginRateLimiter(config.auth.rateLimit);
   const fetcher = options.fetcher ?? fetch;
   const now = options.now ?? Date.now;
+  const loginCsrfToken = options.loginCsrfToken ?? randomBytes(32).toString("base64url");
+  if (!/^[A-Za-z0-9_-]{43}$/.test(loginCsrfToken)) throw new Error("login CSRF token source returned an invalid token");
+  const renderLogin = (returnPath: string, message = "") => loginPage(returnPath, loginCsrfToken, message);
 
   return async (request: Request, context: GatewayContext): Promise<Response> => {
     const url = new URL(request.url);
@@ -167,13 +173,14 @@ export function createGatewayHandler(options: GatewayOptions) {
 
     if (url.pathname === "/auth/login" && request.method === "GET") {
       const next = safeReturnPath(url.searchParams.get("next"));
-      return session === null ? html(loginPage(next)) : redirect(next);
+      return session === null ? html(renderLogin(next)) : redirect(next);
     }
 
     if (url.pathname === "/auth/login" && request.method === "POST") {
-      if (!sameOriginPost(request, config.public.origin)) return text("forbidden\n", 403);
+      const sameOrigin = sameOriginPost(request, config.public.origin);
       const input = await readLoginForm(request);
-      if (input === null) return html(loginPage("/", "Invalid request."), 400);
+      if (input === null) return sameOrigin ? html(renderLogin("/", "Invalid request."), 400) : text("forbidden\n", 403);
+      if (!sameOrigin && !validLoginCsrfToken(input.csrfToken, loginCsrfToken)) return text("forbidden\n", 403);
       const attempted = await attemptLogin(
         input,
         trustedClientSource(request, context, config),
@@ -184,11 +191,11 @@ export function createGatewayHandler(options: GatewayOptions) {
       );
       if (!attempted.accepted) {
         if (attempted.retryAfterSeconds > 0) {
-          return html(loginPage("/", "Too many attempts. Try again later."), 429, {
+          return html(renderLogin("/", "Too many attempts. Try again later."), 429, {
             "retry-after": String(attempted.retryAfterSeconds),
           });
         }
-        return html(loginPage(input.returnPath, "Invalid username or password."), 401);
+        return html(renderLogin(input.returnPath, "Invalid username or password."), 401);
       }
       const created = createSessionToken(config, now());
       try {

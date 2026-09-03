@@ -73,7 +73,9 @@ MUST reject an authority, alternate scheme, alternate port, user information, en
 backslash ambiguity, control character, or path outside the application origin. Invalid input SHALL
 fall back to `/`. Login HTML SHALL retain enough same-origin referrer information for a browser that
 omits the `Origin` header to submit the form with an exact-origin `Referer`, while requests to another
-origin MUST receive no referrer information from that policy.
+origin MUST receive no referrer information from that policy. The no-store login form SHALL also
+carry an unguessable process-local CSRF token so a browser that omits both headers can submit the
+served form without weakening cross-site rejection.
 
 #### Scenario: A valid deep link is requested
 - **WHEN** an unauthenticated navigation targets a normalized path and query within the public application origin
@@ -89,7 +91,11 @@ origin MUST receive no referrer information from that policy.
 
 #### Scenario: A browser omits Origin on the login form
 - **WHEN** a browser submits the served login form without an Origin header
-- **THEN** its same-origin Referer supplies the existing exact-origin evidence and the Gateway does not reject a correct login as forbidden
+- **THEN** its same-origin Referer or the valid hidden form token supplies the required CSRF evidence and the Gateway does not reject a correct login as forbidden
+
+#### Scenario: A cross-site request lacks origin headers
+- **WHEN** a login POST has neither exact-origin headers nor the valid token issued in the no-store login page
+- **THEN** the Gateway rejects it before password verification
 
 ### Requirement: Every public application API is session authenticated
 The Gateway SHALL be the only publicly reachable application listener. Every public `/api/*` request
