@@ -18,6 +18,7 @@ import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
 import { PackProvider } from "@/components/pack-provider";
 import { CollieMark } from "@/components/collie-mark";
+import { NativeHierarchyToggle } from "@/components/native-navigation-context";
 import { NativeNavigationShell } from "@/components/native-navigation-shell";
 import { describeThrownError } from "@/lib/api-error-message";
 import { homePath } from "@/lib/nav";
@@ -129,11 +130,15 @@ export function RootLayout() {
             `bridge` and `error` are read here, once, off the root snapshot every route was
             forwarding them from anyway — six copies of the same two fields was six chances to
             disagree with the ConnectionBanner two lines up. */}
-        <AppHeaderHost bridge={data.bridge} error={data.error}>
-          <NativeNavigationShell data={data}>
+        <NativeNavigationShell data={data}>
+          <AppHeaderHost
+            bridge={data.bridge}
+            error={data.error}
+            leading={<NativeHierarchyToggle />}
+          >
             <Outlet />
-          </NativeNavigationShell>
-        </AppHeaderHost>
+          </AppHeaderHost>
+        </NativeNavigationShell>
       </div>
     </PackProvider>
   );

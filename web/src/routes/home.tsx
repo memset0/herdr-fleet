@@ -73,12 +73,11 @@ export function HomeRoute() {
   );
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-screen-sm flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* The dashboard header: wordmark + the session switcher (dashboard-only), then the shared pill
           and the Settings gear. The switcher self-hides on a single-session install. */}
       <RouteHeader
         wordmark
-        width="column"
         rightLead={
           <>
             {/* Host first, then session — outer dimension first, and the two are deliberately

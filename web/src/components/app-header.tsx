@@ -98,6 +98,16 @@ interface AppHeaderHostProps {
   // no way for them to be right differently.
   bridge: BridgeStatus | undefined;
   error: boolean;
+  /** DOWNSTREAM PORT — one node at the start of the row, before the mark.
+   *
+   *  It exists because the app shell that wraps this header owns a navigation surface the header is
+   *  the only place to reach on a narrow viewport, and a shell mounted ABOVE the header cannot reach
+   *  into it. A slot, not a component: the header renders whatever it is handed and knows nothing
+   *  about what the node does. Absent by default, which is the whole of Collie's own behavior.
+   *
+   *  It sits inside the non-override branch, so a route that takes the whole row (Settings, Pack,
+   *  either find bar) still owns every pixel of it. */
+  leading?: ReactNode;
   /** The routes below it. Not a sibling: the host RENDERS the outlet, so there is no arrangement of
    *  this app in which a route is mounted without a header above it. */
   children: ReactNode;
@@ -123,7 +133,7 @@ interface AppHeaderHostProps {
  * Routes feed it through `<RouteHeader/>`; see the note there for why that is a portal and not a
  * store of nodes.
  */
-export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
+export function AppHeaderHost({ bridge, error, leading, children }: AppHeaderHostProps) {
   // The same two shared-clock signals the ConnectionBanner reads, so the dog and the bar agree by
   // construction: bloom while troubled (≥4s not-live), rest muted once lost (≥15s, latched).
   useLocale();
@@ -241,6 +251,7 @@ export function AppHeaderHost({ bridge, error, children }: AppHeaderHostProps) {
           <div data-slot="header-row" className="flex min-h-15 items-center gap-2 pl-4 pr-2 py-1">
             {!claim.override && (
               <>
+                {leading}
                 {/* The mark is the shell's, not a slot — which is now literal rather than a promise: it
                     is mounted once for the life of the app, so no route can forget it and no navigation
                     can restart it. `onHome` is dispatched through the owner's ref, so the tap still does

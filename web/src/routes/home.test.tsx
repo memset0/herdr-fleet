@@ -308,3 +308,20 @@ describe("the dashboard across sessions", () => {
     expect(screen.getAllByLabelText(/1 pane/i).length).toBe(1);
   });
 });
+
+describe("the dashboard fills the route column", () => {
+  it("caps neither its content nor its header at a reading column", async () => {
+    // The shell puts the rails beside this column, so the column IS the bound. A 640px cap inside it
+    // would centre the herd in the middle third of a desktop and leave the header's rule short of
+    // its own content — the two halves are removed together, here and in the route's header claim.
+    renderHome(homeData({ agents: fixtureAgents, workspaces: fixtureWorkspaces, tabs: fixtureTabs }));
+    await settled();
+    const heading = screen
+      .getAllByRole("heading")
+      .find((h) => /needs you/i.test(h.textContent ?? ""));
+    expect(heading?.closest(".max-w-screen-sm")).toBeNull();
+    expect(document.querySelector("header")?.className).not.toContain("max-w-screen-sm");
+    expect(document.querySelector("header")?.className).not.toContain("mx-auto");
+  });
+});
+

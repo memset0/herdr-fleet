@@ -72,7 +72,7 @@ export function PackRoute() {
   const selected = status?.members.find((m) => m.id === openId) ?? null;
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-screen-sm flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* One header treatment app-wide — and now that is a FACT, not a claim: this route does not
           mount a header at all, it fills the one that is already there (RootLayout's
           <AppHeaderHost/>). It used to be a hand-rolled `<header>` that only
@@ -84,7 +84,6 @@ export function PackRoute() {
           The back button is `size-11` sitting at the row's `pl-4`, so its icon centre lands on the
           same 38px as the Collie mark it stands in for: nothing shifts sideways either. */}
       <RouteHeader
-        width="column"
         override={
           <>
             <Button

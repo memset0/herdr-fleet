@@ -1,5 +1,11 @@
+import type { JsonValue } from "../../../bridge/json.ts";
+import {
+  jsonNumberField,
+  jsonRecord,
+  jsonStringField,
+} from "../../../bridge/stt/json.ts";
+
 export type SidebarSide = "left" | "right";
-export type NavigationOverlay = "hierarchy" | "agents" | null;
 
 export const NATIVE_NAVIGATION_STORAGE_KEY = "herdr-fleet:native-navigation:v1";
 export const NATIVE_NAVIGATION_MAX_BYTES = 16_384;
@@ -14,15 +20,19 @@ export const SIDEBAR_BOUNDS = {
 
 interface SidebarPreference {
   preferredWidth: number;
-  collapsed: boolean;
 }
 
 export interface NativeNavigationPreferences {
   version: 1;
   left: SidebarPreference;
   right: SidebarPreference;
-  disclosedSpaces: readonly string[];
-  disclosedTabs: readonly string[];
+  /**
+   * One bounded list for every disclosed row, whatever level it sits at. It is one list and not one
+   * per level because elision moves a row between levels: the same Space is a parent today and the
+   * grandparent of the same Pane tomorrow, and a per-level list would strand its identity when it
+   * moved.
+   */
+  disclosed: readonly string[];
 }
 
 export interface StorageLike {
@@ -34,23 +44,16 @@ export interface NativeNavigationPreferenceStore {
   snapshot(): NativeNavigationPreferences;
   subscribe(listener: () => void): () => void;
   setWidth(side: SidebarSide, width: number): void;
-  toggleCollapsed(side: SidebarSide): void;
-  toggleDisclosure(kind: "space" | "tab", id: string): void;
-  ensureDisclosed(spaceId: string, tabId: string): void;
-}
-
-export interface OverlayCloseResult {
-  next: null;
-  restore: Exclude<NavigationOverlay, null> | null;
+  toggleDisclosure(id: string): void;
+  ensureDisclosed(ids: readonly string[]): void;
 }
 
 function defaultPreferences(): NativeNavigationPreferences {
   return {
     version: 1,
-    left: { preferredWidth: SIDEBAR_BOUNDS.left.default, collapsed: false },
-    right: { preferredWidth: SIDEBAR_BOUNDS.right.default, collapsed: false },
-    disclosedSpaces: [],
-    disclosedTabs: [],
+    left: { preferredWidth: SIDEBAR_BOUNDS.left.default },
+    right: { preferredWidth: SIDEBAR_BOUNDS.right.default },
+    disclosed: [],
   };
 }
 
@@ -60,6 +63,14 @@ export function clampSidebarWidth(side: SidebarSide, width: number): number {
   return Math.min(bounds.max, Math.max(bounds.min, Math.round(width)));
 }
 
+/**
+ * `collapsed` is READ AND DISCARDED, never rejected.
+ *
+ * The rails are permanently expanded now, so the field is gone from the shape above — but a browser
+ * that used the previous shell still has it in storage, and the strict unknown-key check would
+ * throw that whole record away, taking the operator's two rail widths and every disclosure with it
+ * for the sake of a boolean nothing reads. Tolerating the key is the entire migration.
+ */
 function parseSidebar(value: JsonValue | undefined, side: SidebarSide): SidebarPreference | null {
   const record = jsonRecord(value);
   if (
@@ -67,16 +78,12 @@ function parseSidebar(value: JsonValue | undefined, side: SidebarSide): SidebarP
     Object.keys(record).some((key) => key !== "preferredWidth" && key !== "collapsed")
   ) return null;
   const preferredWidth = jsonNumberField(record.preferredWidth);
-  const collapsed =
-    record.collapsed === true ? true : record.collapsed === false ? false : null;
-  if (preferredWidth === null || collapsed === null) return null;
-  return {
-    preferredWidth: clampSidebarWidth(side, preferredWidth),
-    collapsed,
-  };
+  if (preferredWidth === null) return null;
+  return { preferredWidth: clampSidebarWidth(side, preferredWidth) };
 }
 
 function parseDisclosureList(value: JsonValue | undefined): readonly string[] | null {
+  if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > NATIVE_NAVIGATION_MAX_DISCLOSURES) return null;
   const seen = new Set<string>();
   for (const item of value) {
@@ -92,6 +99,12 @@ function parseDisclosureList(value: JsonValue | undefined): readonly string[] | 
     seen.add(field);
   }
   return [...seen];
+}
+
+function mergeDisclosures(...lists: readonly (readonly string[])[]): readonly string[] {
+  const seen = new Set<string>();
+  for (const list of lists) for (const id of list) seen.add(id);
+  return [...seen].slice(0, NATIVE_NAVIGATION_MAX_DISCLOSURES);
 }
 
 export function parseNativeNavigationPreferences(raw: string | null): NativeNavigationPreferences {
@@ -115,6 +128,8 @@ export function parseNativeNavigationPreferences(raw: string | null): NativeNavi
         key !== "version" &&
         key !== "left" &&
         key !== "right" &&
+        key !== "disclosed" &&
+        // The previous shell's two per-level lists, read once and merged; never written back.
         key !== "disclosedSpaces" &&
         key !== "disclosedTabs",
     ) ||
@@ -122,10 +137,16 @@ export function parseNativeNavigationPreferences(raw: string | null): NativeNavi
   ) return defaultPreferences();
   const left = parseSidebar(value.left, "left");
   const right = parseSidebar(value.right, "right");
-  const disclosedSpaces = parseDisclosureList(value.disclosedSpaces);
-  const disclosedTabs = parseDisclosureList(value.disclosedTabs);
-  if (left && right && disclosedSpaces && disclosedTabs) {
-    return { version: 1, left, right, disclosedSpaces, disclosedTabs };
+  const disclosed = parseDisclosureList(value.disclosed);
+  const legacySpaces = parseDisclosureList(value.disclosedSpaces);
+  const legacyTabs = parseDisclosureList(value.disclosedTabs);
+  if (left && right && disclosed && legacySpaces && legacyTabs) {
+    return {
+      version: 1,
+      left,
+      right,
+      disclosed: mergeDisclosures(disclosed, legacySpaces, legacyTabs),
+    };
   }
   return defaultPreferences();
 }
@@ -134,11 +155,6 @@ function boundedAppend(values: readonly string[], id: string): readonly string[]
   if (id.length === 0 || id.length > NATIVE_NAVIGATION_MAX_ID_LENGTH) return values;
   if (values.includes(id)) return values;
   return [...values.slice(-(NATIVE_NAVIGATION_MAX_DISCLOSURES - 1)), id];
-}
-
-function toggle(values: readonly string[], id: string): readonly string[] {
-  if (id.length === 0 || id.length > NATIVE_NAVIGATION_MAX_ID_LENGTH) return values;
-  return values.includes(id) ? values.filter((value) => value !== id) : boundedAppend(values, id);
 }
 
 export class NavigationPreferenceStore implements NativeNavigationPreferenceStore {
@@ -167,33 +183,23 @@ export class NavigationPreferenceStore implements NativeNavigationPreferenceStor
   setWidth(side: SidebarSide, width: number): void {
     const preferredWidth = clampSidebarWidth(side, width);
     if (this.value[side].preferredWidth === preferredWidth) return;
-    this.commit({ ...this.value, [side]: { ...this.value[side], preferredWidth } });
+    this.commit({ ...this.value, [side]: { preferredWidth } });
   }
 
-  toggleCollapsed(side: SidebarSide): void {
-    this.commit({
-      ...this.value,
-      [side]: { ...this.value[side], collapsed: !this.value[side].collapsed },
-    });
+  toggleDisclosure(id: string): void {
+    if (id.length === 0 || id.length > NATIVE_NAVIGATION_MAX_ID_LENGTH) return;
+    const next = this.value.disclosed.includes(id)
+      ? this.value.disclosed.filter((value) => value !== id)
+      : boundedAppend(this.value.disclosed, id);
+    if (next === this.value.disclosed) return;
+    this.commit({ ...this.value, disclosed: next });
   }
 
-  toggleDisclosure(kind: "space" | "tab", id: string): void {
-    const field = kind === "space" ? "disclosedSpaces" : "disclosedTabs";
-    const next = toggle(this.value[field], id);
-    if (next === this.value[field]) return;
-    this.commit({ ...this.value, [field]: next });
-  }
-
-  ensureDisclosed(spaceId: string, tabId: string): void {
-    const disclosedSpaces = boundedAppend(this.value.disclosedSpaces, spaceId);
-    const disclosedTabs = boundedAppend(this.value.disclosedTabs, tabId);
-    if (
-      disclosedSpaces === this.value.disclosedSpaces &&
-      disclosedTabs === this.value.disclosedTabs
-    ) {
-      return;
-    }
-    this.commit({ ...this.value, disclosedSpaces, disclosedTabs });
+  ensureDisclosed(ids: readonly string[]): void {
+    let disclosed = this.value.disclosed;
+    for (const id of ids) disclosed = boundedAppend(disclosed, id);
+    if (disclosed === this.value.disclosed) return;
+    this.commit({ ...this.value, disclosed });
   }
 
   private commit(value: NativeNavigationPreferences): void {
@@ -236,17 +242,6 @@ export function widthFromPointerDrag(
   return clampSidebarWidth(side, startWidth + (side === "left" ? delta : -delta));
 }
 
-export function nextOverlay(
-  current: NavigationOverlay,
-  requested: Exclude<NavigationOverlay, null>,
-): NavigationOverlay {
-  return current === requested ? null : requested;
-}
-
-export function closeOverlay(current: NavigationOverlay): OverlayCloseResult {
-  return { next: null, restore: current };
-}
-
 function browserStorage(): StorageLike | null {
   try {
     return globalThis.localStorage ?? null;
@@ -256,9 +251,3 @@ function browserStorage(): StorageLike | null {
 }
 
 export const nativeNavigationPreferences = new NavigationPreferenceStore(browserStorage());
-import type { JsonValue } from "../../../bridge/json.ts";
-import {
-  jsonNumberField,
-  jsonRecord,
-  jsonStringField,
-} from "../../../bridge/stt/json.ts";

@@ -97,10 +97,12 @@ MUST NOT add a second Agent trigger or Agent drawer of its own.
 
 ### Requirement: Hierarchy is derived locally and follows native routes
 The hierarchy SHALL derive its Host, Space, Tab, and Pane structure only from the current root
-snapshot's existing local host roster, workspaces, tabs, Agent panes, and shell panes. A snapshot
-that reports no roster SHALL produce exactly one Host row for the machine being viewed. The Host
-level is presentational: it MUST NOT claim Pack support, switch Host, request another Host's data,
-or alter Collie's scope rules.
+snapshot's existing local host roster, workspaces, tabs, Agent panes, and shell panes. It SHALL
+present exactly one Host heading, naming the machine being viewed from the existing roster when the
+roster names it and from a generic label otherwise, with every Space beneath that heading. While
+there is one machine, the heading SHALL have no disclosure control, because a control that hides the
+only machine in the tree reveals nothing. The Host level is presentational: it MUST NOT claim Pack
+support, switch Host, request another Host's data, or alter Collie's scope rules.
 
 Space activation SHALL use Collie's existing Space route, and Pane activation SHALL use Collie's
 existing Pane route and scope rules. Disclosure actions MUST only change browser-local presentation
@@ -118,13 +120,13 @@ browser reports a reduced-motion preference. Hierarchy rows SHALL be denser than
 on a wide viewport while remaining at least touch-sized wherever the hierarchy is operated as an
 overlay.
 
-The active Pane row SHALL be highlighted. Its Host, Space, and Tab ancestors SHALL automatically
+The active Pane row SHALL be highlighted. Its surviving Space and Tab ancestors SHALL automatically
 become disclosed whenever the selected Pane changes, including direct and history-based navigation.
 Operator disclosure choices for unrelated branches SHALL remain independent.
 
 #### Scenario: A Pane deep link becomes active
 - **WHEN** the current route selects a Pane whose ancestry is closed in stored disclosure state
-- **THEN** that Pane is highlighted and its Host, Space, and Tab ancestry is disclosed without a request
+- **THEN** that Pane is highlighted and its surviving Space and Tab ancestry is disclosed without a request
 
 #### Scenario: A level holds one child
 - **WHEN** a Space holds exactly one Tab, or a Tab holds exactly one Pane
@@ -144,7 +146,7 @@ Operator disclosure choices for unrelated branches SHALL remain independent.
 
 #### Scenario: A shell Pane is present
 - **WHEN** the existing root snapshot contains a local shell Pane
-- **THEN** the Pane appears under its existing Host, Space, and Tab and activates through the same native Pane path without becoming an Agent
+- **THEN** the Pane appears under its Host heading in its existing Space, and its Tab where that level survives, and activates through the same native Pane path without becoming an Agent
 
 ### Requirement: Agent rail reuses native Agent behavior
 The wide-layout Agent rail and the narrow-layout Agent surface SHALL render the existing shared

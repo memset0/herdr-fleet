@@ -73,13 +73,12 @@ export function SpaceRoute() {
   }, [gone, data.bridge, data.error, data.scope, navigate]);
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-screen-sm flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* The space header: same shell as the dashboard, minus the session switcher (you switch
           sessions from home). Wordmark + shared pill + Settings gear. */}
       <RouteHeader
         onHome={toDashboard}
         wordmark
-        width="column"
         rightTrail={<SettingsGear scope={data.scope} />}
       />
 

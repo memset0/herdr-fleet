@@ -38,6 +38,7 @@ import { blockOwnsKeyboard } from "@/lib/harness/dialog-contract";
 import { FindBar } from "@/components/find-bar";
 import { Composer, type ComposerHandle } from "@/components/composer";
 import { ThreadSidebar } from "@/components/agent-sidebar";
+import { useNativePaneSwitcher } from "@/components/native-navigation-context";
 import { AgentIcon } from "@/components/agent-icon";
 import { TabStrip } from "@/components/tab-strip";
 import { PaneStrip } from "@/components/pane-strip";
@@ -381,6 +382,11 @@ export function AgentChat({
   // threshold + a taller hit area (below) make the gesture easy to land with a thumb; tapping is the
   // reliable fallback. "Up" naturally reveals a bottom sheet without fighting the mirror's scroll.
   const swipe = useSwipeUp(() => setDrawer("switcher"), 24);
+  // DOWNSTREAM PORT — what the switcher sheet shows when this page is mounted inside the Fleet
+  // navigation shell: the shell's own Agent surface, which on a wide viewport is a rail already on
+  // screen and here is the only place it fits. `null` outside that shell — Collie's own tests and
+  // the playground — where the pane list below stays the answer.
+  const nativeSwitcher = useNativePaneSwitcher();
   // ── COMPOSING MODE — read ONCE, here, for the whole pane ──────────────────────
   // The soft keyboard takes roughly 45% of a phone. What is left has to hold the header, the tab
   // strip, the agent's statusline, the grab handle, the status band, the controls row and the draft
@@ -1776,7 +1782,17 @@ export function AgentChat({
                     wanted. Nothing is stranded: the tab strip above still switches, the sheet is still
                     reachable the instant the keyboard closes, and `Collapse` unmounts the button at
                     the end of the exit so it leaves the tab order with the pixels. */}
-                <Collapse open={!composing && agents.length + shellPanes.length > 0}>
+                {/* DOWNSTREAM PORT — `xl:hidden`, and ON THE COLLAPSE rather than on a wrapper
+                    around it. At the width where the Fleet shell's rails stand, the hierarchy rail
+                    lists every pane on screen and a handle that opens a list of them is a row of
+                    chrome buying nothing. A wrapper would put an element between this row and the
+                    composer, which is the one adjacency the block above is built to guarantee; the
+                    class rides the row itself, so the DOM shape, the gesture, the sheet and the
+                    keyboard stand-down are all exactly as written. */}
+                <Collapse
+                  open={!composing && agents.length + shellPanes.length > 0}
+                  className="xl:hidden"
+                >
                   <button
                     type="button"
                     aria-label={t("chat.switcher.aria")}
@@ -1870,8 +1886,11 @@ export function AgentChat({
         <BottomSheet
           open={drawer === "switcher"}
           onClose={closeDrawer}
-          title={t("chat.switcher.title")}
+          title={nativeSwitcher?.title ?? t("chat.switcher.title")}
         >
+          {nativeSwitcher ? (
+            nativeSwitcher.content
+          ) : (
           <ThreadSidebar
             agents={agents}
             shellPanes={shellPanes}
@@ -1885,6 +1904,7 @@ export function AgentChat({
             onShellsOpenChange={dash.setShellsOpen}
             className="px-0 py-1"
           />
+          )}
         </BottomSheet>
 
         {/* The pane menu the header's ⋮ opens — the SAME sheet the pane pill opens, given the two

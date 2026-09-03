@@ -42,6 +42,7 @@ paths = [
   "scripts/herdr-fleet.sh",
   "web/src/components/native-agent-rail.test.tsx",
   "web/src/components/native-agent-rail.tsx",
+  "web/src/components/native-navigation-context.tsx",
   "web/src/components/native-navigation-shell.test.tsx",
   "web/src/components/native-navigation-shell.tsx",
   "web/src/components/native-navigation-tree.test.tsx",
@@ -53,7 +54,7 @@ contracts = [
   "sanitized Collie child environment",
   "bounded browser-local Agent favorites",
   "explicit Herdr-only manual Pane fit",
-  "persistent native navigation sidebars"
+  "permanently expanded native navigation rails"
 ]
 verify = [
   "fleet/auth.test.ts",
@@ -142,7 +143,7 @@ verify = [
   "web/src/routes/home.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "Collie's native rows own rendering and navigation, so they expose only favorite state and toggle ports while all identity, storage, and ordering behavior remains under fleet/ui."
+reason = "Collie's native rows own rendering and navigation, so they expose only favorite state and toggle ports while all identity, storage, and ordering behavior remains under fleet/ui. This entry also carries the dashboard route test's coverage of the content width the native navigation shell removes so the route fills its column (native-navigation-sidebars-port), because the manifest attributes web/src/routes/home.test.tsx to exactly one entry."
 
 [[invasive]]
 id = "authenticated-navigation-cache"
@@ -193,15 +194,22 @@ verify = [
   "web/src/lib/mux-capability.test.ts",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/."
+reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry."
 
 [[invasive]]
 id = "native-navigation-sidebars-port"
-intent = "Wrap Collie's native route outlet with persistent local hierarchy and Agent sidebars while retaining the existing router, data loaders, Agent list, and Pane surfaces."
+intent = "Wrap Collie's native route outlet and header with permanently expanded local hierarchy and Agent rails while retaining the existing router, data loaders, Agent list, header contract, and Pane surfaces."
 strategy = "adapt"
 review = "every-upstream-sync"
 paths = [
   "web/src/routes/root.tsx#NativeNavigationShell",
+  "web/src/components/app-header.tsx#leading?: ReactNode",
+  "web/src/components/app-header.test.tsx#downstream leading node",
+  "web/src/routes/home.tsx#flex min-h-0 w-full flex-1 flex-col",
+  "web/src/routes/space.tsx#flex min-h-0 w-full flex-1 flex-col",
+  "web/src/routes/settings.tsx#flex min-h-0 w-full flex-1 flex-col",
+  "web/src/routes/pack.tsx#flex min-h-0 w-full flex-1 flex-col",
+  "web/src/components/native-navigation-context.tsx#NativeNavigationProvider",
   "web/src/components/native-navigation-shell.tsx#NativeNavigationShell",
   "web/src/components/native-navigation-shell.test.tsx#NativeNavigationShell",
   "web/src/components/native-navigation-tree.tsx#NativeNavigationTree",
@@ -215,7 +223,10 @@ verify = [
   "web/src/components/native-navigation-shell.test.tsx",
   "web/src/components/native-navigation-tree.test.tsx",
   "web/src/components/native-agent-rail.test.tsx",
+  "web/src/components/app-header.test.tsx",
+  "web/src/components/agent-chat.test.tsx",
+  "web/src/routes/home.test.tsx",
   "web/src/components/agent-list.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "The root outlet and native presentation surfaces are Collie-owned, so the fork adds only one persistent shell and exact responsive components while all state, derivation, bounds, and preference behavior remains under fleet/ui and Agent rendering stays in the existing shared list."
+reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list."

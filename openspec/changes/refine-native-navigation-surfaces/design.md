@@ -100,8 +100,15 @@ icon kind, disclosure identity, and children. Single-child collapsing, deeper-na
 there. The component walks rows and renders; it makes no structural decision.
 
 This also keeps the Host level honest. The model reads the existing roster the snapshot already
-carries and names the row through Collie's existing host-naming helper, falling back to a generic
+carries and names the level through Collie's existing host-naming helper, falling back to a generic
 label when a solo snapshot names nothing. No new request, no Pack claim, no scope change.
+
+The Host is a HEADING rather than a disclosable row while there is one of them. A control that
+collapses the only machine in the tree hides everything and reveals nothing, and making it
+default-open would need a second kind of preference — a row that is open until it is closed — for
+exactly one row, which the single bounded disclosure list deliberately does not have. The level is
+reserved by existing; the later Host-aware change gives it a control when there is more than one
+machine to choose between.
 
 Alternative considered: keep the three fixed levels in the component and hide rows with CSS.
 Rejected: a hidden row still contributes an indentation step and a disclosure identity, so stored

@@ -624,6 +624,44 @@ describe("the ONE header — hoisted above the outlet", () => {
     expect(header?.className).toContain("max-w-screen-sm");
   });
 
+  it("renders a downstream leading node before the mark, and never over an override row", async () => {
+    // The one port the Fleet shell needs in this file: a slot at the start of the row. It is drawn
+    // BEFORE the mark, so the shell's navigation control is where a thumb reaches for it, and it is
+    // inside the non-override branch, so a route that takes the whole row still owns every pixel.
+    const router = createMemoryRouter(
+      [
+        {
+          id: ROOT_ROUTE_ID,
+          path: "/",
+          element: (
+            <AppHeaderHost
+              bridge="connected"
+              error={false}
+              leading={<button type="button">Open Herds</button>}
+            >
+              <Outlet />
+            </AppHeaderHost>
+          ),
+          children: [
+            { index: true, element: <DashRoute /> },
+            { path: "settings", element: <SettingsLikeRoute /> },
+          ],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    const { container } = render(<RouterProvider router={router} />);
+    const leading = screen.getByRole("button", { name: "Open Herds" });
+    const mark = screen.getByRole("button", { name: "Collie home" });
+    expect(leading.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector('[data-slot="header-row"]')?.contains(leading)).toBe(true);
+
+    await act(async () => {
+      await router.navigate("/settings");
+    });
+    expect(screen.queryByRole("button", { name: "Open Herds" })).toBeNull();
+  });
+
   it("refuses to render a route header with no host above it", () => {
     // The forgot case, made loud. A route mounted with no header above it is a phone screen with no
     // way home, and a silent fallback would hide exactly the mistake the hoist exists to prevent.

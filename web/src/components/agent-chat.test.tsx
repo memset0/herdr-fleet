@@ -30,6 +30,7 @@ import { fixtureAgents, fixtureShellPanes, fixtureTabs } from "@/test/handlers";
 import { PackProvider } from "./pack-provider";
 import type { AgentStatus, AgentView, ServerSummary, TabView } from "@/lib/types";
 import { withHeaderHost } from "@/test/header-host";
+import { NativeNavigationProvider } from "./native-navigation-context";
 import { COLLAPSE_MS } from "./ui/collapse";
 import { AgentChat } from "./agent-chat";
 
@@ -2109,5 +2110,71 @@ describe("AgentChat — folding the tab and pane rows", () => {
     } finally {
       kb.restore();
     }
+  });
+});
+
+describe("AgentChat — the Fleet shell's switcher port", () => {
+  // The Pane page keeps its own gesture, its own sheet and its own collapse; what the shell supplies
+  // is the sheet's CONTENT and title. Outside the shell nothing changes, which is what the first
+  // case pins — Collie alone must still list panes.
+  function renderInShell() {
+    const agent = fixtureAgents[0]!;
+    const props: ComponentProps<typeof AgentChat> = {
+      paneId: agent.paneId,
+      agent,
+      agents: fixtureAgents,
+      shellPanes: [],
+      tabs: [],
+      text: "recent pane output",
+      onBack: vi.fn(),
+      onSelect: vi.fn(),
+    };
+    const router = createMemoryRouter([
+      {
+        path: "/",
+        element: withHeaderHost(
+          <NativeNavigationProvider
+            value={{
+              hierarchyOpen: false,
+              toggleHierarchy: vi.fn(),
+              setTrigger: vi.fn(),
+              paneSwitcher: {
+                title: "Agents",
+                content: <div>the shell's Agent surface</div>,
+              },
+            }}
+          >
+            <AgentChat {...props} />
+          </NativeNavigationProvider>,
+        ),
+      },
+    ]);
+    return render(<RouterProvider router={router} />);
+  }
+
+  it("keeps the upstream pane list when the page is mounted outside the shell", async () => {
+    const user = userEvent.setup();
+    renderChat();
+    await user.click(screen.getByRole("button", { name: "Switch pane" }));
+    const sheet = await screen.findByRole("dialog");
+    expect(within(sheet).getByText("Switch pane")).toBeInTheDocument();
+    expect(screen.queryByText("the shell's Agent surface")).toBeNull();
+  });
+
+  it("presents the shell's Agent surface in the same entry, under its own title", async () => {
+    const user = userEvent.setup();
+    renderInShell();
+    await user.click(screen.getByRole("button", { name: "Switch pane" }));
+    const sheet = await screen.findByRole("dialog");
+    expect(within(sheet).getByText("Agents")).toBeInTheDocument();
+    expect(within(sheet).getByText("the shell's Agent surface")).toBeInTheDocument();
+  });
+
+  it("stands the entry down where the shell's rails already list every Pane", () => {
+    const { container } = renderChat();
+    const entry = screen.getByRole("button", { name: "Switch pane" });
+    expect(entry.closest(".xl\\:hidden")).not.toBeNull();
+    // The gesture, the sheet and the collapse above it are untouched.
+    expect(container.querySelector('[data-slot="chrome-block"]')).not.toBeNull();
   });
 });

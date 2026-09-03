@@ -34,9 +34,9 @@ Narrow layout:
 
 Hierarchy:
 
-- A Host level is added above Spaces, derived from the snapshot the shell already reads. A solo
-  snapshot reports one Host row. This reserves the level a later Host-aware change needs and claims
-  no Pack behavior.
+- A Host level is added above Spaces, derived from the snapshot the shell already reads. There is
+  one Host heading today, naming the machine being viewed. This reserves the level a later
+  Host-aware change needs and claims no Pack behavior.
 - The panel is named for the herd rather than for Spaces alone, since Spaces are no longer its top
   level.
 - A level with exactly one child is elided and its child is lifted into its place; the deeper name

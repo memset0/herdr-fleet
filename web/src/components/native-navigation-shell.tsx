@@ -1,12 +1,4 @@
-import {
-  Bot,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
-  Rows3,
-  X,
-} from "lucide-react";
+import { X } from "lucide-react";
 import {
   type KeyboardEvent,
   type PointerEvent,
@@ -26,20 +18,17 @@ import {
   type NavigationPaneInput,
 } from "../../../fleet/ui/native-navigation/model.ts";
 import {
-  closeOverlay,
   nativeNavigationPreferences,
-  nextOverlay,
   SIDEBAR_BOUNDS,
   widthFromPointerDrag,
   widthFromSeparatorKey,
   type NativeNavigationPreferenceStore,
-  type NavigationOverlay,
   type SidebarSide,
 } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
+import { NativeNavigationProvider } from "@/components/native-navigation-context";
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
-import { Button } from "@/components/ui/button";
-import { ambientPanes, paneScope } from "@/lib/hosts";
+import { ambientPanes, hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
 import { panePath, spacePath } from "@/lib/nav";
@@ -53,6 +42,21 @@ interface NativeNavigationShellProps {
   preferenceStore?: NativeNavigationPreferenceStore;
 }
 
+/**
+ * The persistent shell: two rails and, between them, the column that holds the one application
+ * header and the route outlet.
+ *
+ * IT WRAPS THE HEADER, which is the whole reason the header stops running edge to edge over the
+ * rails. Nesting is the only mechanism that gets that right without a measurement: the rails are
+ * siblings of the column the header heads, so the header's width is the column's by construction
+ * and stays correct when the prerelease strip appears or the safe-area inset changes.
+ *
+ * On a wide viewport both rails are always shown. There is no collapse control, because a rail the
+ * operator keeps open is not worth a control that hides it — the widths are the adjustment, and
+ * they persist. Below that breakpoint the rails are gone entirely and the hierarchy arrives as one
+ * overlay from the header's leading trigger, while the Agent list is presented by the Pane page's
+ * own switcher entry (components/native-navigation-context.tsx states that seam).
+ */
 export function NativeNavigationShell({
   data,
   children,
@@ -75,84 +79,103 @@ export function NativeNavigationShell({
     () => [...localPanes.agents, ...localPanes.shellPanes],
     [localPanes.agents, localPanes.shellPanes],
   );
+  // The machine whose rows these are. A solo snapshot has no roster, so Collie's own resolver
+  // returns nothing and the tree says "this host" rather than inventing a name for it.
+  const hostLabel = hostName(data.servers, data.scope.host) ?? t("fleet.navigation.thisHost");
   const tree = useMemo(
     () =>
       deriveNavigationTree({
+        hostId: data.scope.host ?? "",
+        hostLabel,
         workspaces: data.workspaces,
         tabs: data.tabs,
         agents: localPanes.agents.map(toNavigationPane),
         shellPanes: localPanes.shellPanes.map(toNavigationPane),
         selectedPaneId: paneId,
       }),
-    [data.workspaces, data.tabs, localPanes.agents, localPanes.shellPanes, paneId],
+    [
+      data.scope.host,
+      hostLabel,
+      data.workspaces,
+      data.tabs,
+      localPanes.agents,
+      localPanes.shellPanes,
+      paneId,
+    ],
   );
 
-  const [overlay, setOverlay] = useState<NavigationOverlay>(null);
-  const hierarchyTrigger = useRef<HTMLButtonElement>(null);
-  const agentsTrigger = useRef<HTMLButtonElement>(null);
-  const hierarchyClose = useRef<HTMLButtonElement>(null);
-  const agentsClose = useRef<HTMLButtonElement>(null);
+  const [hierarchyOpen, setHierarchyOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const closeControl = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
   const lastLocation = useRef(`${location.pathname}${location.search}`);
 
-  const restoreTrigger = useCallback((target: Exclude<NavigationOverlay, null> | null) => {
-    const trigger = target === "hierarchy" ? hierarchyTrigger.current : agentsTrigger.current;
-    if (trigger) requestAnimationFrame(() => trigger.focus());
+  const closeHierarchy = useCallback(() => setHierarchyOpen(false), []);
+  const toggleHierarchy = useCallback(() => setHierarchyOpen((open) => !open), []);
+  const setTrigger = useCallback((element: HTMLButtonElement | null) => {
+    trigger.current = element;
   }, []);
 
-  const closeResponsive = useCallback(
-    (restore = true) => {
-      const result = closeOverlay(overlay);
-      setOverlay(result.next);
-      if (restore) restoreTrigger(result.restore);
-    },
-    [overlay, restoreTrigger],
-  );
-
+  // FOCUS RETURNS IN AN EFFECT, not in the click handler. While the overlay stands, the whole route
+  // column — the header with it — is inert, so the trigger cannot take focus until the commit that
+  // lifts that inertness has landed. An effect runs after exactly that commit; a frame callback
+  // scheduled from the event would race it.
   useEffect(() => {
-    if (overlay === "hierarchy") hierarchyClose.current?.focus();
-    if (overlay === "agents") agentsClose.current?.focus();
-  }, [overlay]);
+    if (hierarchyOpen) {
+      closeControl.current?.focus();
+      wasOpen.current = true;
+      return;
+    }
+    if (wasOpen.current) {
+      wasOpen.current = false;
+      trigger.current?.focus();
+    }
+  }, [hierarchyOpen]);
 
   useEffect(() => {
     if (globalThis.matchMedia === undefined) return;
     const wide = globalThis.matchMedia("(min-width: 1280px)");
     const onChange = (event: MediaQueryListEvent) => {
-      if (event.matches) setOverlay(null);
+      if (event.matches) setHierarchyOpen(false);
     };
     wide.addEventListener("change", onChange);
     return () => wide.removeEventListener("change", onChange);
   }, []);
 
   useEffect(() => {
-    if (overlay === null) return;
+    if (!hierarchyOpen) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") closeResponsive();
+      if (event.key === "Escape") closeHierarchy();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [closeResponsive, overlay]);
+  }, [closeHierarchy, hierarchyOpen]);
 
   useEffect(() => {
     const current = `${location.pathname}${location.search}`;
     if (current !== lastLocation.current) {
       lastLocation.current = current;
-      if (overlay !== null) closeResponsive();
+      setHierarchyOpen(false);
     }
-  }, [closeResponsive, location.pathname, location.search, overlay]);
+  }, [location.pathname, location.search]);
 
   const openSpace = (id: string) => {
     navigate(spacePath(id, data.scope));
-    if (overlay !== null) closeResponsive();
+    closeHierarchy();
   };
   const openPaneId = (id: string) => {
     const pane = allLocalPanes.find((candidate) => candidate.paneId === id);
     navigate(panePath(id, paneScope(data.scope, pane, data.servers, data.sessions)));
-    if (overlay !== null) closeResponsive();
+    closeHierarchy();
   };
-  const openAgent = (agent: AgentView) => {
-    navigate(panePath(agent.paneId, paneScope(data.scope, agent, data.servers, data.sessions)));
-    if (overlay !== null) closeResponsive();
-  };
+  const openAgent = useCallback(
+    (agent: AgentView) => {
+      navigate(panePath(agent.paneId, paneScope(data.scope, agent, data.servers, data.sessions)));
+      closeHierarchy();
+    },
+    [navigate, data.scope, data.servers, data.sessions, closeHierarchy],
+  );
+
   const hierarchy = (
     <NativeNavigationTree
       tree={tree}
@@ -162,97 +185,75 @@ export function NativeNavigationShell({
       preferenceStore={preferenceStore}
     />
   );
-  const agents = (
-    <NativeAgentRail
-      agents={localPanes.agents}
-      bridge={data.bridge}
-      error={data.error}
-      lastSeenAt={data.lastSeenAt}
-      onOpen={openAgent}
-    />
+  // Memoised on its own inputs, not rebuilt per render: this element is also the Pane page's
+  // switcher content, published through context, and a fresh element every poll would re-render
+  // that page for a list that did not change.
+  const agents = useMemo(
+    () => (
+      <NativeAgentRail
+        agents={localPanes.agents}
+        bridge={data.bridge}
+        error={data.error}
+        lastSeenAt={data.lastSeenAt}
+        onOpen={openAgent}
+      />
+    ),
+    [localPanes.agents, data.bridge, data.error, data.lastSeenAt, openAgent],
+  );
+
+  const navigation = useMemo(
+    () => ({
+      hierarchyOpen,
+      toggleHierarchy,
+      setTrigger,
+      paneSwitcher: { title: t("fleet.navigation.agents"), content: agents },
+    }),
+    [hierarchyOpen, toggleHierarchy, setTrigger, agents],
   );
 
   return (
-    <div data-slot="native-navigation-shell" className="relative flex min-h-0 flex-1 overflow-hidden">
-      <DesktopSidebar
-        side="left"
-        title={t("fleet.navigation.hierarchy")}
-        width={preferences.left.preferredWidth}
-        collapsed={preferences.left.collapsed}
-        onWidth={(width) => preferenceStore.setWidth("left", width)}
-        onToggle={() => preferenceStore.toggleCollapsed("left")}
+    <NativeNavigationProvider value={navigation}>
+      <div
+        data-slot="native-navigation-shell"
+        className="relative flex min-h-0 flex-1 overflow-hidden"
       >
-        {overlay === "hierarchy" ? null : hierarchy}
-      </DesktopSidebar>
+        <Rail side="left" title={t("fleet.navigation.hierarchy")} width={preferences.left.preferredWidth}>
+          {hierarchyOpen ? null : hierarchy}
+        </Rail>
+        <RailSeparator
+          side="left"
+          width={preferences.left.preferredWidth}
+          onWidth={(width) => preferenceStore.setWidth("left", width)}
+          label={t("fleet.navigation.resizeHierarchy")}
+        />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="relative z-50 flex shrink-0 items-center justify-between border-b border-rule bg-background px-2 py-1 xl:hidden">
-          <Button
-            ref={hierarchyTrigger}
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-expanded={overlay === "hierarchy"}
-            aria-controls="fleet-hierarchy-overlay"
-            onClick={() => setOverlay((current) => nextOverlay(current, "hierarchy"))}
-          >
-            <Rows3 className="size-4" aria-hidden />
-            {t("fleet.navigation.hierarchy")}
-          </Button>
-          <Button
-            ref={agentsTrigger}
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-expanded={overlay === "agents"}
-            aria-controls="fleet-agents-overlay"
-            onClick={() => setOverlay((current) => nextOverlay(current, "agents"))}
-          >
-            <Bot className="size-4" aria-hidden />
-            {t("fleet.navigation.agents")}
-          </Button>
-        </div>
         <div
-          aria-hidden={overlay !== null}
-          inert={overlay !== null ? true : undefined}
-          className="flex min-h-0 flex-1 flex-col"
+          aria-hidden={hierarchyOpen}
+          inert={hierarchyOpen ? true : undefined}
+          className="flex min-w-0 flex-1 flex-col"
         >
           {children}
         </div>
+
+        <RailSeparator
+          side="right"
+          width={preferences.right.preferredWidth}
+          onWidth={(width) => preferenceStore.setWidth("right", width)}
+          label={t("fleet.navigation.resizeAgents")}
+        />
+        <Rail side="right" title={t("fleet.navigation.agents")} width={preferences.right.preferredWidth}>
+          {agents}
+        </Rail>
+
+        <HierarchyOverlay
+          open={hierarchyOpen}
+          closeRef={closeControl}
+          onClose={closeHierarchy}
+        >
+          {hierarchyOpen ? hierarchy : null}
+        </HierarchyOverlay>
       </div>
-
-      <DesktopSidebar
-        side="right"
-        title={t("fleet.navigation.agents")}
-        width={preferences.right.preferredWidth}
-        collapsed={preferences.right.collapsed}
-        onWidth={(width) => preferenceStore.setWidth("right", width)}
-        onToggle={() => preferenceStore.toggleCollapsed("right")}
-      >
-        {overlay === "agents" ? null : agents}
-      </DesktopSidebar>
-
-      <ResponsiveOverlay
-        id="fleet-hierarchy-overlay"
-        side="left"
-        title={t("fleet.navigation.hierarchy")}
-        open={overlay === "hierarchy"}
-        closeRef={hierarchyClose}
-        onClose={() => closeResponsive()}
-      >
-        {overlay === "hierarchy" ? hierarchy : null}
-      </ResponsiveOverlay>
-      <ResponsiveOverlay
-        id="fleet-agents-overlay"
-        side="right"
-        title={t("fleet.navigation.agents")}
-        open={overlay === "agents"}
-        closeRef={agentsClose}
-        onClose={() => closeResponsive()}
-      >
-        {overlay === "agents" ? agents : null}
-      </ResponsiveOverlay>
-    </div>
+    </NativeNavigationProvider>
   );
 }
 
@@ -268,94 +269,44 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
   return result;
 }
 
-function DesktopSidebar({
+/**
+ * A rail's own top strip carries the header's recipe — the safe-area inset, the 60px floor and the
+ * rule — so the three columns' top edges are one line across the viewport. It is not the header and
+ * cannot be: the header is a route's, and a route does not reach the rails.
+ */
+function Rail({
   side,
   title,
   width,
-  collapsed,
-  onWidth,
-  onToggle,
   children,
 }: {
   side: SidebarSide;
   title: string;
   width: number;
-  collapsed: boolean;
-  onWidth: (width: number) => void;
-  onToggle: () => void;
   children: ReactNode;
 }) {
-  const left = side === "left";
-  const CollapseIcon = left ? PanelLeftClose : PanelRightClose;
-  const ExpandIcon = left ? PanelLeftOpen : PanelRightOpen;
-  const collapseLabel = left
-    ? t("fleet.navigation.collapseHierarchy")
-    : t("fleet.navigation.collapseAgents");
-  const expandLabel = left
-    ? t("fleet.navigation.expandHierarchy")
-    : t("fleet.navigation.expandAgents");
-  const contentId = `fleet-${side}-sidebar-content`;
-  const sidebar = (
+  return (
     <aside
       aria-label={title}
-      style={{ width: collapsed ? 48 : width }}
+      style={{ width }}
       className={cn(
-        "hidden min-h-0 shrink-0 flex-col bg-background transition-[width] duration-200 motion-reduce:transition-none xl:flex",
-        left ? "border-r border-rule" : "border-l border-rule",
+        "hidden min-h-0 shrink-0 flex-col bg-background xl:flex",
+        side === "left" ? "border-r border-rule" : "border-l border-rule",
       )}
     >
-      <div className={cn("flex h-11 shrink-0 items-center px-1.5", collapsed ? "justify-center" : "justify-between")}>
-        {!collapsed && <span className="truncate px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</span>}
-        <button
-          type="button"
-          aria-controls={contentId}
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? expandLabel : collapseLabel}
-          onClick={onToggle}
-          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          {collapsed ? <ExpandIcon className="size-4" aria-hidden /> : <CollapseIcon className="size-4" aria-hidden />}
-        </button>
+      <div className="shrink-0 border-b border-rule [padding-top:env(safe-area-inset-top)]">
+        <div className="flex min-h-15 items-center px-3 py-1">
+          <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {title}
+          </span>
+        </div>
       </div>
-      <div
-        id={contentId}
-        aria-hidden={collapsed}
-        inert={collapsed ? true : undefined}
-        className={cn("min-h-0 flex-1 overflow-y-auto", collapsed && "invisible")}
-      >
-        {children}
-      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
     </aside>
-  );
-
-  return left ? (
-    <>
-      {sidebar}
-      {!collapsed && (
-        <SidebarSeparator
-          side={side}
-          width={width}
-          onWidth={onWidth}
-          label={t("fleet.navigation.resizeHierarchy")}
-        />
-      )}
-    </>
-  ) : (
-    <>
-      {!collapsed && (
-        <SidebarSeparator
-          side={side}
-          width={width}
-          onWidth={onWidth}
-          label={t("fleet.navigation.resizeAgents")}
-        />
-      )}
-      {sidebar}
-    </>
   );
 }
 
-function SidebarSeparator({
+function RailSeparator({
   side,
   width,
   onWidth,
@@ -409,23 +360,18 @@ function SidebarSeparator({
   );
 }
 
-function ResponsiveOverlay({
-  id,
-  side,
-  title,
+function HierarchyOverlay({
   open,
   closeRef,
   onClose,
   children,
 }: {
-  id: string;
-  side: "left" | "right";
-  title: string;
   open: boolean;
   closeRef: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   children: ReactNode;
 }) {
+  const title = t("fleet.navigation.hierarchy");
   return (
     <div
       aria-hidden={!open}
@@ -446,18 +392,13 @@ function ResponsiveOverlay({
         )}
       />
       <section
-        id={id}
+        id="fleet-hierarchy-overlay"
         role="dialog"
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "absolute inset-y-0 flex w-[min(90vw,24rem)] flex-col border-rule bg-card shadow-xl transition-transform duration-200 motion-reduce:transition-none",
-          side === "left" ? "left-0 border-r" : "right-0 border-l",
-          open
-            ? "translate-x-0"
-            : side === "left"
-              ? "-translate-x-full"
-              : "translate-x-full",
+          "absolute inset-y-0 left-0 flex w-[min(90vw,24rem)] flex-col border-r border-rule bg-card shadow-xl transition-transform duration-200 motion-reduce:transition-none",
+          open ? "translate-x-0" : "-translate-x-full",
         )}
       >
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-rule px-3">

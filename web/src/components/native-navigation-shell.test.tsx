@@ -5,6 +5,7 @@ import { useEffect } from "react";
 
 import { NavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
 import type { HomeData } from "@/lib/loaders";
+import { NativeHierarchyToggle, useNativePaneSwitcher } from "./native-navigation-context";
 import { NativeNavigationShell } from "./native-navigation-shell";
 
 const pane = {
@@ -58,6 +59,12 @@ const data: HomeData = {
   authError: false,
 };
 
+/** Stands in for the Pane page, which reads the switcher presentation through the same seam. */
+function SwitcherProbe() {
+  const switcher = useNativePaneSwitcher();
+  return <div data-testid="switcher-title">{switcher?.title ?? "none"}</div>;
+}
+
 function renderShell(store = new NavigationPreferenceStore(), onMount = vi.fn()) {
   function Layout() {
     useEffect(() => {
@@ -65,6 +72,9 @@ function renderShell(store = new NavigationPreferenceStore(), onMount = vi.fn())
     }, []);
     return (
       <NativeNavigationShell data={data} preferenceStore={store}>
+        {/* The header's leading slot, as the root route wires it. */}
+        <NativeHierarchyToggle />
+        <SwitcherProbe />
         <Outlet />
       </NativeNavigationShell>
     );
@@ -96,70 +106,68 @@ describe("NativeNavigationShell", () => {
     expect(document.querySelector("iframe")).toBeNull();
   });
 
-  it("keeps responsive overlays mutually exclusive and restores trigger focus", async () => {
-    const user = userEvent.setup();
+  it("shows both rails with no control that would hide either", () => {
     renderShell();
-    const spacesTrigger = screen.getByRole("button", { name: "Spaces", expanded: false });
-    const agentsTrigger = screen.getByRole("button", { name: "Agents", expanded: false });
-
-    await user.click(spacesTrigger);
-    expect(document.querySelector("#fleet-hierarchy-overlay")?.closest("[aria-hidden]")).toHaveAttribute(
-      "aria-hidden",
-      "false",
-    );
-    await user.click(agentsTrigger);
-    expect(document.querySelector("#fleet-hierarchy-overlay")?.closest("[aria-hidden]")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-    expect(document.querySelector("#fleet-agents-overlay")?.closest("[aria-hidden]")).toHaveAttribute(
-      "aria-hidden",
-      "false",
-    );
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(agentsTrigger).toHaveFocus());
-    expect(document.querySelector("#fleet-agents-overlay")?.closest("[aria-hidden]")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
+    expect(screen.getByRole("complementary", { name: "Herds" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Agents" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sidebar$/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Collapse (Herds|Agents)/ })).toBeNull();
   });
 
-  it("resizes by keyboard and collapse makes desktop descendants inert", async () => {
-    const user = userEvent.setup();
+  it("resizes a rail by keyboard within its bounds and remembers the width", () => {
     const { store } = renderShell();
-    const separator = screen.getByRole("separator", { name: "Resize Spaces sidebar" });
+    const separator = screen.getByRole("separator", { name: "Resize Herds sidebar" });
     expect(separator).toHaveAttribute("aria-valuenow", "280");
     fireEvent.keyDown(separator, { key: "ArrowRight" });
     expect(separator).toHaveAttribute("aria-valuenow", "296");
-
-    await user.click(screen.getByRole("button", { name: "Collapse Spaces sidebar" }));
-    const content = document.querySelector("#fleet-left-sidebar-content");
-    expect(content).toHaveAttribute("aria-hidden", "true");
-    expect(content).toHaveAttribute("inert");
-    expect(store.snapshot().left).toEqual({ preferredWidth: 296, collapsed: true });
-
-    await user.click(screen.getByRole("button", { name: "Expand Spaces sidebar" }));
-    expect(store.snapshot().left).toEqual({ preferredWidth: 296, collapsed: false });
+    expect(store.snapshot().left).toEqual({ preferredWidth: 296 });
     expect(document.querySelector('[data-slot="native-navigation-shell"]')?.innerHTML).toContain(
       "motion-reduce:transition-none",
     );
   });
 
+  it("opens the hierarchy from the header trigger, makes the route column inert, and returns focus", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    const trigger = screen.getByRole("button", { name: "Open Herds", expanded: false });
+    const column = screen.getByText("Open direct").closest("[aria-hidden]");
+
+    await user.click(trigger);
+    expect(document.querySelector("#fleet-hierarchy-overlay")?.closest("[aria-hidden]")).toHaveAttribute(
+      "aria-hidden",
+      "false",
+    );
+    expect(column).toHaveAttribute("aria-hidden", "true");
+    expect(column).toHaveAttribute("inert");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(document.querySelector("#fleet-hierarchy-overlay")?.closest("[aria-hidden]")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    expect(column).toHaveAttribute("aria-hidden", "false");
+  });
+
   it("closes the hierarchy overlay after one native Pane navigation", async () => {
     const user = userEvent.setup();
     renderShell();
-    const spacesTrigger = screen.getByRole("button", { name: "Spaces", expanded: false });
-    await user.click(spacesTrigger);
+    const trigger = screen.getByRole("button", { name: "Open Herds", expanded: false });
+    await user.click(trigger);
     const overlay = document.querySelector("#fleet-hierarchy-overlay");
     if (!(overlay instanceof HTMLElement)) throw new Error("missing hierarchy overlay");
     const surface = within(overlay);
+    // The lone Tab is elided, so the Pane hangs directly off its Space.
     await user.click(surface.getByRole("button", { name: "Expand Project" }));
-    await user.click(surface.getByRole("button", { name: "Main" }));
-    await user.click(surface.getByRole("button", { name: "claude" }));
+    await user.click(await surface.findByRole("button", { name: "claude" }));
 
     expect(await screen.findByText("Pane route")).toBeInTheDocument();
-    await waitFor(() => expect(spacesTrigger).toHaveFocus());
+    await waitFor(() => expect(trigger).toHaveFocus());
     expect(overlay.closest("[aria-hidden]")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("publishes the Agent surface as the Pane page's switcher presentation", () => {
+    renderShell();
+    expect(screen.getByTestId("switcher-title")).toHaveTextContent("Agents");
   });
 });
