@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowUp, Check, Inbox, WifiOff } from "lucide-react";
+import { useSyncExternalStore } from "react";
 
 import { clockTime } from "@/lib/format";
 import { useMuxCapability } from "@/lib/mux-capability";
@@ -10,6 +11,10 @@ import { paneRowKey } from "@/lib/hosts";
 import { AgentCard } from "./agent-card";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
+import {
+  agentFavoriteStore,
+  favoriteFirst,
+} from "../../../fleet/ui/agent-favorites.ts";
 
 interface AgentListProps {
   agents: AgentView[];
@@ -66,6 +71,7 @@ export function AgentList({
   lastSeenAt,
 }: AgentListProps) {
   useLocale();
+  useSyncExternalStore(agentFavoriteStore.subscribe, agentFavoriteStore.snapshot, agentFavoriteStore.snapshot);
   // Whether the multiplexer can say which agent a pane holds. Read unconditionally — a hook cannot
   // sit behind the early return below, and the answer is only consulted in the empty branch.
   const agentDetection = useMuxCapability("agentDetection");
@@ -109,6 +115,9 @@ export function AgentList({
   }
 
   const all = triage(agents, recentDir);
+  for (const section of all) {
+    section.agents = favoriteFirst(section.agents, agentFavoriteStore.isFavorite);
+  }
   const sections = all.filter((s) => s.agents.length > 0);
   if (sections.length === 0) return null;
   // "What needs me right now?" deserves an answer even when the answer is "nothing". Without this
@@ -143,6 +152,8 @@ export function AgentList({
             key={paneRowKey(a)}
             agent={a}
             onClick={() => onOpen(a)}
+            favorite={agentFavoriteStore.isFavorite(a)}
+            onFavoriteToggle={() => agentFavoriteStore.toggle(a)}
             statusStyle="dot"
             density={ATTENTION.has(s.key) ? "card" : "row"}
             {...(age ? { age } : {})}

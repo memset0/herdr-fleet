@@ -338,6 +338,8 @@ export const zh: Dictionary = {
   "home.empty.waiting": "等待 Herdr 响应...",
   "home.empty.panesHint": "窗格位于“空间”列表中。",
   "home.allClear": "无待处理项",
+  "home.favorite.add": "收藏 {name}",
+  "home.favorite.remove": "取消收藏 {name}",
   "home.sort.newest": "最新优先",
   "home.sort.oldest": "最早优先",
   "home.sort.aria.newest": "按最近活跃排序。点击切换为按创建时间正序",

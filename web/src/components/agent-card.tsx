@@ -1,4 +1,4 @@
-import { TerminalSquare } from "lucide-react";
+import { Star, TerminalSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import type { PaneParts } from "@/lib/pane-name";
 import { statusLabel } from "@/lib/types";
 import type { AgentView } from "@/lib/types";
 import { useLocale } from "@/hooks/use-locale";
+import { t } from "@/lib/i18n";
 
 interface AgentCardProps {
   agent: AgentView;
@@ -45,6 +46,8 @@ interface AgentCardProps {
    * signal — see a card, something wants you; all flat, nothing does.
    */
   density?: "card" | "row";
+  favorite?: boolean;
+  onFavoriteToggle?: () => void;
 }
 
 /** The row's text: line 1's name, and line 2's two runs. */
@@ -102,6 +105,8 @@ export function AgentCard({
   scope = "herd",
   statusStyle = "badge",
   density = "card",
+  favorite = false,
+  onFavoriteToggle,
 }: AgentCardProps) {
   useLocale();
   const isShell = agent.kind === "shell";
@@ -124,13 +129,15 @@ export function AgentCard({
   // idle from working. Inline it keeps full size, still sits against its subject, and a list of rows
   // lines its dots up in one column at the left edge, which is how the list is actually scanned.
   const cornerDot = statusStyle === "dot" && !isShell;
+  const favoriteControl = !isShell && onFavoriteToggle !== undefined;
 
   const Shell = flat ? "div" : Card;
 
-  return (
+  const row = (
     <button
       type="button"
       onClick={onClick}
+      data-slot="agent-row"
       className={cn(
         "w-full text-left transition-transform active:scale-[0.99]",
         // No radius on a flat row, in ANY state. These sit in a `divide-y` list, and a rounded fill
@@ -150,6 +157,7 @@ export function AgentCard({
           flat
             ? "flex flex-row items-center gap-3 px-3.5 py-2.5 shadow-[inset_2px_0_0_0_transparent]"
             : "flex-row items-center gap-3 rounded-xl px-3.5 py-3 shadow-sm",
+          favoriteControl && "pr-12",
           // The blocked tint survives both treatments — it's the one cue that reads at a glance.
           // The EDGE cannot: one class string, two containers. A card sits in a gap list and already
           // carries a border in every state, so it only recolours. A flat row sits in a divide-y
@@ -244,5 +252,25 @@ export function AgentCard({
         )}
       </Shell>
     </button>
+  );
+
+  if (!favoriteControl) return row;
+
+  return (
+    <div className="relative">
+      {row}
+      <button
+        type="button"
+        aria-pressed={favorite}
+        aria-label={favorite ? t("home.favorite.remove", { name: primary }) : t("home.favorite.add", { name: primary })}
+        onClick={onFavoriteToggle}
+        className={cn(
+          "absolute right-1.5 top-1.5 flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:scale-95",
+          favorite && "text-foreground",
+        )}
+      >
+        <Star className={cn("size-4", favorite && "fill-current")} aria-hidden />
+      </button>
+    </div>
   );
 }

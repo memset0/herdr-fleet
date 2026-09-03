@@ -370,6 +370,8 @@ export const en = {
   "home.empty.waiting": "Waiting for Herdr…",
   "home.empty.panesHint": "Your panes are under Spaces.",
   "home.allClear": "Nothing needs you",
+  "home.favorite.add": "Favorite {name}",
+  "home.favorite.remove": "Remove favorite from {name}",
   "home.sort.newest": "Newest",
   "home.sort.oldest": "Oldest",
   "home.sort.aria.newest": "Sorted by most recently used first — switch to oldest first",

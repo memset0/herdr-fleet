@@ -37,7 +37,12 @@ verify = ["scripts/check-fork.test.ts", "scripts/fork-manifest.test.ts"]
 id = "fleet-runtime"
 intent = "Provide the private authenticated Fleet runtime outside Collie-owned modules."
 paths = ["docs/herdr-fleet.md", "fleet/**", "scripts/herdr-fleet.sh"]
-contracts = ["private fleet.toml", "lead-only configuration", "sanitized Collie child environment"]
+contracts = [
+  "private fleet.toml",
+  "lead-only configuration",
+  "sanitized Collie child environment",
+  "bounded browser-local Agent favorites"
+]
 verify = [
   "fleet/auth.test.ts",
   "fleet/collie-env.test.ts",
@@ -50,7 +55,8 @@ verify = [
   "fleet/rate-limit.test.ts",
   "fleet/server.test.ts",
   "fleet/session-store.test.ts",
-  "fleet/sw-boundary.test.ts"
+  "fleet/sw-boundary.test.ts",
+  "fleet/ui/agent-favorites.test.ts"
 ]
 
 [[invasive]]
@@ -92,6 +98,33 @@ review = "every-upstream-sync"
 paths = ["CHANGELOG.md#private Fleet configuration"]
 verify = ["CHANGELOG.md", "scripts/check-version.sh"]
 reason = "The existing changelog is the single release history enforced by the upstream version gate."
+
+[[invasive]]
+id = "native-agent-favorites-port"
+intent = "Expose fork-owned browser-local favorites through Collie's native Agent list and card."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "web/src/components/agent-list.tsx#agentFavoriteStore",
+  "web/src/components/agent-list.test.tsx#browser-local favorites",
+  "web/src/components/agent-card.tsx#onFavoriteToggle",
+  "web/src/components/agent-card.test.tsx#AgentCard favorite control",
+  "web/src/routes/home.test.tsx#agentRows",
+  "web/src/lib/i18n/messages/en.ts#home.favorite.add",
+  "web/src/lib/i18n/messages/de.ts#home.favorite.add",
+  "web/src/lib/i18n/messages/es.ts#home.favorite.add",
+  "web/src/lib/i18n/messages/ja.ts#home.favorite.add",
+  "web/src/lib/i18n/messages/ko.ts#home.favorite.add",
+  "web/src/lib/i18n/messages/zh.ts#home.favorite.add"
+]
+verify = [
+  "fleet/ui/agent-favorites.test.ts",
+  "web/src/components/agent-list.test.tsx",
+  "web/src/components/agent-card.test.tsx",
+  "web/src/routes/home.test.tsx",
+  "web/src/lib/i18n/i18n.test.ts"
+]
+reason = "Collie's native rows own rendering and navigation, so they expose only favorite state and toggle ports while all identity, storage, and ordering behavior remains under fleet/ui."
 
 [[invasive]]
 id = "authenticated-navigation-cache"

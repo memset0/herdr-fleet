@@ -30,6 +30,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Gate one loopback Collie behind a same-origin authenticated Gateway with narrow proxy headers and redirects.
 - Run the Gateway and Collie under one generation-qualified Herdr Fleet supervisor without an operating-system service.
 - Require a fresh Gateway decision for every PWA navigation and document the private authenticated lead contract.
+- Restore bounded browser-local Agent favorites inside Collie's native triage lists.
 
 ### Fixed
 

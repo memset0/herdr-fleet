@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 
 import { AgentList } from "./agent-list";
 import type { AgentStatus, AgentView } from "@/lib/types";
+import { __resetAgentFavorites } from "../../../fleet/ui/agent-favorites.ts";
 
 function agent(
   paneId: string,
@@ -27,6 +28,20 @@ function agent(
  *  blocked STATUS_LABEL on every row's badge — matching on text alone catches both. */
 const headings = () =>
   screen.getAllByRole("heading").map((el) => el.textContent?.toLowerCase() ?? "");
+
+const rows = () =>
+  Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="agent-row"]'));
+
+const row = (name: RegExp) => {
+  const found = rows().find((element) => name.test(element.textContent ?? ""));
+  if (found === undefined) throw new Error(`missing Agent row ${name}`);
+  return found;
+};
+
+beforeEach(() => {
+  localStorage.clear();
+  __resetAgentFavorites();
+});
 
 describe("AgentList — sections", () => {
   const herd = [
@@ -57,7 +72,7 @@ describe("AgentList — sections", () => {
     // row is still announced as one name.
     expect(screen.getByText("moonward_os")).toBeInTheDocument();
     expect(screen.getByText("fix-auth")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /moonward_os.*fix-auth/ })).toBeInTheDocument();
+    expect(row(/moonward_os.*fix-auth/)).toHaveAccessibleName(/moonward_os.*fix-auth/);
     expect(screen.queryByText("claude")).not.toBeInTheDocument();
   });
 
@@ -106,8 +121,8 @@ describe("AgentList — sections", () => {
   it("drops the status pill inside triage sections — the heading already says it", () => {
     render(<AgentList agents={[agent("w", "working", { lastActiveAt: 1 })]} onOpen={vi.fn()} />);
     // The word survives for screen readers, but not as a pill on every row.
-    const row = screen.getByRole("button", { name: /w/ });
-    expect(row.querySelector(".sr-only")?.textContent).toBe("working");
+    const workingRow = row(/w/);
+    expect(workingRow.querySelector(".sr-only")?.textContent).toBe("working");
   });
 
   it("opens the pane behind a tapped row", async () => {
@@ -115,10 +130,10 @@ describe("AgentList — sections", () => {
     const onOpen = vi.fn();
     // The whole PANE, not just its id: `w1:p1` names a different terminal on every machine in a
     // pack, and this list is one herd across all of them.
-    const row = agent("p1", "blocked");
-    render(<AgentList agents={[row]} onOpen={onOpen} />);
-    await user.click(screen.getByRole("button", { name: /p1/ }));
-    expect(onOpen).toHaveBeenCalledExactlyOnceWith(row);
+    const pane = agent("p1", "blocked");
+    render(<AgentList agents={[pane]} onOpen={onOpen} />);
+    await user.click(row(/p1/));
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(pane);
   });
 
   it("shows the herd-empty placeholder, and suppresses it when asked", () => {
@@ -243,8 +258,7 @@ describe("AgentList — the direction toggle", () => {
         onRecentDirChange={onRecentDirChange}
       />,
     );
-    const rows = screen.getAllByRole("button", { name: /fresh|stale/ });
-    expect(rows[0]!.textContent).toContain("fresh");
+    expect(rows()[0]!.textContent).toContain("fresh");
 
     await user.click(screen.getByRole("button", { name: /switch to oldest first/i }));
     expect(onRecentDirChange).toHaveBeenCalledExactlyOnceWith("oldest");
@@ -254,8 +268,7 @@ describe("AgentList — the direction toggle", () => {
     render(
       <AgentList agents={herd} onOpen={vi.fn()} recentDir="oldest" onRecentDirChange={vi.fn()} />,
     );
-    const rows = screen.getAllByRole("button", { name: /fresh|stale/ });
-    expect(rows[0]!.textContent).toContain("stale");
+    expect(rows()[0]!.textContent).toContain("stale");
   });
 
   it("never reorders the pinned sections", () => {
@@ -267,8 +280,7 @@ describe("AgentList — the direction toggle", () => {
       const { unmount } = render(
         <AgentList agents={attention} onOpen={vi.fn()} recentDir={dir} onRecentDirChange={vi.fn()} />,
       );
-      const rows = screen.getAllByRole("button", { name: /new|old/ });
-      expect(rows[0]!.textContent).toContain("new");
+      expect(rows()[0]!.textContent).toContain("new");
       unmount();
     }
   });
@@ -276,6 +288,53 @@ describe("AgentList — the direction toggle", () => {
   it("shows no toggle when the parent doesn't wire one", () => {
     render(<AgentList agents={herd} onOpen={vi.fn()} />);
     expect(screen.queryByRole("button", { name: /switch to/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentList — browser-local favorites", () => {
+  it("favorites within one native section without opening the Pane", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    render(
+      <AgentList
+        agents={[
+          agent("newer", "working", { lastActiveAt: 200, sessionName: "newer" }),
+          agent("older", "working", { lastActiveAt: 100, sessionName: "older" }),
+        ]}
+        onOpen={onOpen}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", { name: "Favorite older" });
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toHaveFocus();
+    expect(rows().map((element) => element.textContent)).toEqual([
+      expect.stringContaining("older"),
+      expect.stringContaining("newer"),
+    ]);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("keeps favorite priority inside the Agent's current triage section", async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentList
+        agents={[
+          agent("blocked", "blocked", { lastActiveAt: 100, sessionName: "blocked" }),
+          agent("working", "working", { lastActiveAt: 200, sessionName: "working" }),
+        ]}
+        onOpen={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Favorite working" }));
+    expect(headings()).toEqual([
+      expect.stringContaining("needs you"),
+      expect.stringContaining("working"),
+    ]);
+    expect(rows()[0]!.textContent).toContain("blocked");
+    expect(rows()[1]!.textContent).toContain("working");
   });
 });
 

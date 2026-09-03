@@ -28,7 +28,7 @@ must add presentation state without moving those upstream responsibilities into 
 ### 1. Store ordered favorite identities in a fork-owned singleton
 
 Add a pure `fleet/ui/agent-favorites.ts` module with a structurally typed identity input, a
-versioned storage codec, one bounded ordered Set, subscribe/read/toggle operations, and a pure
+versioned storage codec, one bounded ordered Map, subscribe/read/toggle operations, and a pure
 stable-partition helper. The module does not import Collie's `AgentView`; the native object satisfies
 the narrow `{ host?, session?, paneId, agent, kind? }` shape structurally.
 
@@ -88,8 +88,10 @@ surface is introduced.
 
 ### 5. Classify every new and invasive path in `FORK.toml`
 
-Add `fleet/ui/**` to a dedicated owned boundary with its focused tests. Record exact invasive ports
-for `agent-list.tsx`, `agent-card.tsx`, their focused tests, and the typed i18n keys. No router,
+The existing `fleet-runtime` owned root already classifies all of `fleet/**`; extend only its
+contracts and focused verification list rather than creating a redundant child owned block. Record
+one exact invasive port for `agent-list.tsx`, `agent-card.tsx`, their focused tests, the native Home
+route test helper that identifies row buttons, and the typed i18n keys. No router implementation,
 loader, API, service-worker, Gateway, bridge, or lifecycle path is added.
 
 ## Risks / Trade-offs

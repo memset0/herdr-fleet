@@ -83,6 +83,9 @@ const settled = () =>
 const url = (router: ReturnType<typeof renderHome>) =>
   router.state.location.pathname + router.state.location.search;
 
+const agentRows = (root: ParentNode = document) =>
+  Array.from(root.querySelectorAll<HTMLButtonElement>('[data-slot="agent-row"]'));
+
 const solo = () =>
   homeData({
     agents: fixtureAgents,
@@ -108,8 +111,10 @@ describe("the dashboard on ONE machine is untouched", () => {
 
   it("opens a pane at today's bare URL — no `?h=` is ever produced", async () => {
     const router = renderHome(solo());
-    const rows = await screen.findAllByRole("button", { name: /webapp/i });
-    await userEvent.click(rows[0]!);
+    await settled();
+    const target = agentRows().find((row) => /webapp/i.test(row.textContent ?? ""));
+    if (target === undefined) throw new Error("the webapp Agent row did not render");
+    await userEvent.click(target);
     await waitFor(() => expect(url(router)).toBe("/pane/w1%3Ap1"));
   });
 });
@@ -258,7 +263,7 @@ describe("the dashboard across sessions", () => {
   const rows = () => {
     const body = document.getElementById("agent-section-needs");
     if (!body) throw new Error("the Needs you section did not render");
-    return within(body).getAllByRole("button", { name: /webapp/i });
+    return agentRows(body).filter((row) => /webapp/i.test(row.textContent ?? ""));
   };
 
   it("renders BOTH colliding rows, not one recycled row", async () => {

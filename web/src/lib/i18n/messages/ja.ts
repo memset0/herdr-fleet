@@ -350,6 +350,8 @@ export const ja: Dictionary = {
   "home.empty.waiting": "Herdrの応答を待機中...",
   "home.empty.panesHint": "ペインはSpaces内にあります。",
   "home.allClear": "対応が必要な項目はありません",
+  "home.favorite.add": "{name}をお気に入りに追加",
+  "home.favorite.remove": "{name}のお気に入りを解除",
   "home.sort.newest": "新しい順",
   "home.sort.oldest": "古い順",
   "home.sort.aria.newest": "最新順で表示中。古い順に切り替えます。",

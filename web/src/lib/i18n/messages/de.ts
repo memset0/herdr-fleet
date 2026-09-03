@@ -356,6 +356,8 @@ export const de: Dictionary = {
   "home.empty.waiting": "Warten auf Herdr...",
   "home.empty.panesHint": "Panes befinden sich unter Spaces.",
   "home.allClear": "Kein Handlungsbedarf",
+  "home.favorite.add": "{name} als Favorit markieren",
+  "home.favorite.remove": "Favorit für {name} entfernen",
   "home.sort.newest": "Neueste",
   "home.sort.oldest": "Älteste",
   "home.sort.aria.newest": "Sortiert nach letzter Nutzung. Zu älteste zuerst wechseln",
