@@ -28,11 +28,11 @@
 
 ## 4. Reapply the Herdr-owned lead lifecycle
 
-- [ ] 4.1 Reapply only the generation-qualified v2 supervisor primitives needed to start, monitor, stop, restart, and inspect the Gateway and Collie children under `fleet/`, excluding collector, iframe, node transport, SSH, ttyd, and notification imports; verify a source-boundary test enforces the exclusion.
-- [ ] 4.2 Add exact child command/environment and process-identity checks, readiness ordering, bounded shutdown, partial-start cleanup, and generation handoff without killing by port or broad process name; verify focused lifecycle tests cover stale pid/state, wrong process, child exit, and failed readiness.
-- [ ] 4.3 Wire Herdr plugin actions and build output to the Fleet controller while retaining Collie's own CLI and Tailscale implementation as upstream code; verify start/status/restart/stop use only the private Fleet config and create no operating-system service or Tailscale mapping.
-- [ ] 4.4 Update the root TypeScript/build inputs so `fleet/` is typechecked and packaged without adding a runtime dependency, and verify root/web typechecks plus an atomic production build leave the stock Collie PWA intact.
-- [ ] 4.5 Update `FORK.toml` and `CHANGELOG.md`, run focused lifecycle/build tests, commit this stage separately, fetch/verify `origin/v3-dev`, and push a normal buildable commit.
+- [x] 4.1 Reapply only the generation-qualified v2 supervisor primitives needed to start, monitor, stop, restart, and inspect the Gateway and Collie children under `fleet/`, excluding collector, iframe, node transport, SSH, ttyd, and notification imports; verify a source-boundary test enforces the exclusion.
+- [x] 4.2 Add a private generation-qualified control socket, exact in-process child handles, readiness ordering, bounded shutdown, partial-start cleanup, and generation handoff without pid files or killing by port/process name; verify focused protocol/runtime tests and a real start/status/restart/stop smoke cover the implemented lifecycle.
+- [x] 4.3 Wire Herdr plugin actions and build output to the Fleet controller while retaining Collie's own CLI and Tailscale implementation as upstream code; verify start/status/restart/stop use only the private Fleet config and create no operating-system service or Tailscale mapping.
+- [x] 4.4 Update the root TypeScript/build inputs so `fleet/` is typechecked and packaged without adding a runtime dependency, and verify root/web typechecks plus an atomic production build leave the stock Collie PWA intact.
+- [x] 4.5 Update `FORK.toml` and `CHANGELOG.md`, run focused lifecycle/build tests, commit this stage separately, fetch/verify `origin/v3-dev`, and push a normal buildable commit.
 
 ## 5. Close the browser and public-source security boundary
 

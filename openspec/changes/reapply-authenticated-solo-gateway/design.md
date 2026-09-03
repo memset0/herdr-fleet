@@ -195,8 +195,9 @@ than pushed broken. No commit contains a live configuration or deployment value.
   upstream behavior outside that profile.
 - **[Reapplying a v2 module can carry obsolete coupling]** -> Move only behavior covered by the new
   specs, use the new `fleet/` ownership boundary, and reject node/iframe/SSH imports mechanically.
-- **[A lifecycle rewrite can disturb unrelated processes]** -> Use generation-qualified runtime
-  state and exact child identity checks; never kill by port or broad process-name matching.
+- **[A lifecycle rewrite can disturb unrelated processes]** -> Use a private generation-qualified
+  control socket and only the daemon's direct child handles; never kill from pid files, ports, or
+  broad process-name matching.
 - **[Release version remains upstream-derived during development]** -> Identify every staging build
   by exact commit; change versions and tags only in a separately authorized release operation.
 

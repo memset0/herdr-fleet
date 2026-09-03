@@ -36,15 +36,17 @@ verify = ["scripts/check-fork.test.ts", "scripts/fork-manifest.test.ts"]
 [[owned]]
 id = "fleet-runtime"
 intent = "Provide the private authenticated Fleet runtime outside Collie-owned modules."
-paths = ["fleet/**"]
+paths = ["fleet/**", "scripts/herdr-fleet.sh"]
 contracts = ["private fleet.toml", "lead-only configuration", "sanitized Collie child environment"]
 verify = [
   "fleet/auth.test.ts",
   "fleet/collie-env.test.ts",
   "fleet/config.test.ts",
   "fleet/gateway.test.ts",
+  "fleet/lifecycle.test.ts",
   "fleet/login-ui.test.ts",
   "fleet/proxy.test.ts",
+  "fleet/protocol.test.ts",
   "fleet/rate-limit.test.ts",
   "fleet/server.test.ts",
   "fleet/session-store.test.ts"
@@ -65,12 +67,12 @@ reason = "Repository entrypoints and ignore rules are upstream-owned surfaces th
 
 [[invasive]]
 id = "plugin-identity"
-intent = "Expose the downstream Herdr Fleet plugin identity while retaining Collie provenance."
+intent = "Expose the downstream identity and Herdr-owned lifecycle while retaining Collie provenance."
 strategy = "adapt"
 review = "every-upstream-sync"
 paths = ["herdr-plugin.toml#memset0.herdr-fleet"]
 verify = ["herdr-plugin.toml", "UPSTREAM.md"]
-reason = "Herdr reads identity only from the upstream plugin manifest path."
+reason = "Herdr reads plugin identity, build steps, and actions only from the upstream manifest path."
 
 [[invasive]]
 id = "fleet-build-port"
