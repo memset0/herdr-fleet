@@ -96,7 +96,7 @@ export function NativeAgentRail({
         {sections.map((section) => {
           const age = AGE_BY_SECTION.get(section.key);
           return (
-            <section key={section.key} className="flex flex-col gap-1.5">
+            <section key={section.key} className="flex flex-col gap-2">
               <SectionHeader {...sectionHeaderProps(section)} />
               {section.agents.map((agent) => {
                 ordinal += 1;

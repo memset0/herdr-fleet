@@ -62,66 +62,70 @@ export function NativeAgentCard({
     index !== undefined && index < NATIVE_AGENT_SHORTCUT_LIMIT ? String(index + 1) : null;
 
   return (
-    <div
-      data-slot="native-agent-card"
-      className="group relative flex min-w-0 items-center rounded-md hover:bg-muted"
-    >
+    <div data-slot="native-agent-card" className="group relative min-w-0">
+      {/* COLLIE'S OWN CARD TREATMENT, and deliberately not a lighter one. The rail's rows are the
+          same objects the dashboard lists, so they wear the same edge, the same ground, the same
+          shadow and the same press — a row that looked different here would read as a different
+          kind of thing. What the fork owns is the ORDER of the two lines inside it, not the box. */}
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-1 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+        className="w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
-        {/* The avatar carries both marks the row needs and neither costs a column: the state at the
-            corner the eye already lands on, and the shortcut ordinal at the one it does not. */}
-        {/* NO BOX BEHIND THE MARK. `AgentIcon` draws its own tile — a brand gradient, or a bordered
-            initials chip — so a wrapper with a ground of its own put a second, differently-coloured
-            square behind it and made both badges read as blobs sitting on that square rather than on
-            the row. The badges carry no ring for the same reason: the row is their ground. */}
-        <span className="relative shrink-0">
-          <AgentIcon agent={agent.agent} className="size-8" />
-          <StatusDot
-            status={agent.status}
-            surface="bg-chrome"
-            className="absolute -bottom-0.5 -right-0.5 size-2.5"
-          />
-          <span className="sr-only">{statusLabel(agent.status)}</span>
-          {badge !== null && (
-            <span
-              aria-hidden
-              className="absolute -bottom-1.5 -left-1 text-[9px] font-medium leading-none tabular-nums text-muted-foreground"
-            >
-              {badge}
-            </span>
-          )}
-        </span>
-
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          {/* Line 1 — where. The project gives up width first: it is the run every sibling row
-              repeats, and the name beside it is the only thing telling two rows apart. */}
-          {/* THE RESERVE FOR THE STAR IS ON THIS LINE, not on the button. The favourite control is
-              positioned at the row's top trailing corner, so only the line it shares has to clear
-              it — put on the button, the same 32px pushed line 2 in as well and the age stopped
-              being at the bottom trailing corner it is supposed to occupy. */}
-          <span className="flex min-w-0 items-baseline gap-1 overflow-hidden pr-7 text-[13px] leading-tight">
-            <span className="min-w-0 truncate text-muted-foreground">{project}</span>
-            <span className="shrink-0 text-muted-foreground">·</span>
-            {/* Both truncate. The name was `shrink-0`, which let a long Tab name push the row past
-                its container — on a phone the whole sheet then read as shifted left. */}
-            <span className="min-w-0 truncate text-foreground">{name}</span>
+        <div className="flex min-w-0 items-center gap-3 rounded-xl border bg-card px-3.5 py-3 shadow-sm transition-colors hover:bg-muted/50">
+          {/* The avatar carries both marks the row needs and neither costs a column: the state at
+              the corner the eye already lands on, and the shortcut ordinal at the one it does not.
+              NO BOX BEHIND IT: `AgentIcon` draws its own tile, so a wrapper with a ground of its own
+              would put a second, differently-coloured square behind the artwork and make both badges
+              read as blobs sitting on that square rather than on the row. */}
+          <span className="relative shrink-0">
+            <AgentIcon agent={agent.agent} className="size-8" />
+            <StatusDot
+              status={agent.status}
+              // A hollow resting ring is filled with the colour it actually sits on, which is the
+              // card's ground rather than the rail's.
+              surface="bg-card"
+              className="absolute -bottom-0.5 -right-0.5 size-2.5"
+            />
+            <span className="sr-only">{statusLabel(agent.status)}</span>
+            {badge !== null && (
+              <span
+                aria-hidden
+                className="absolute -bottom-1.5 -left-1 text-[9px] font-medium leading-none tabular-nums text-muted-foreground"
+              >
+                {badge}
+              </span>
+            )}
           </span>
-          {/* Line 2 — what. Absent rather than padded: a row with nothing to say here is one line
-              tall, which is the honest height for it. */}
-          {/* Line 2 — what, with the age at its trailing end so the row's right edge reads top to
-              bottom: the control first, then the fact. */}
-          {(doing !== null || stamp !== undefined) && (
-            <span className="flex min-w-0 items-baseline gap-2 text-[11px] leading-tight text-muted-foreground">
-              <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
-              {stamp !== undefined && (
-                <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>
-              )}
+
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            {/* Line 1 — where. The project gives up width first: it is the run every sibling row
+                repeats, and the name beside it is the only thing telling two rows apart. */}
+            {/* THE RESERVE FOR THE STAR IS ON THIS LINE, not on the button. The favourite control is
+                positioned at the row's top trailing corner, so only the line it shares has to clear
+                it — put on the button, the same 32px pushed line 2 in as well and the age stopped
+                being at the bottom trailing corner it is supposed to occupy. */}
+            <span className="flex min-w-0 items-baseline gap-1 overflow-hidden pr-6 text-[13px] leading-tight">
+              <span className="min-w-0 truncate text-muted-foreground">{project}</span>
+              <span className="shrink-0 text-muted-foreground">·</span>
+              {/* Both truncate. The name was `shrink-0`, which let a long Tab name push the row past
+                  its container — on a phone the whole sheet then read as shifted left. */}
+              <span className="min-w-0 truncate text-foreground">{name}</span>
             </span>
-          )}
-        </span>
+            {/* Line 2 — what. Absent rather than padded: a row with nothing to say here is one line
+                tall, which is the honest height for it. */}
+            {/* Line 2 — what, with the age at its trailing end so the row's right edge reads top to
+                bottom: the control first, then the fact. */}
+            {(doing !== null || stamp !== undefined) && (
+              <span className="flex min-w-0 items-baseline gap-2 text-[11px] leading-tight text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
+                {stamp !== undefined && (
+                  <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>
+                )}
+              </span>
+            )}
+          </span>
+        </div>
       </button>
 
       {/* A sibling and never a child: a button inside a button is invalid markup, and nesting would
@@ -135,7 +139,7 @@ export function NativeAgentCard({
         }
         onClick={onFavoriteToggle}
         className={cn(
-          "absolute right-0.5 top-0.5 grid size-6 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+          "absolute right-2 top-2 grid size-7 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
           favorite ? "text-foreground" : "text-muted-foreground/50 hover:text-foreground",
         )}
       >

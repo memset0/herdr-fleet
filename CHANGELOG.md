@@ -41,6 +41,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ### Changed
 
+- The Agent rail's row wears Collie's own card — the same edge, ground, shadow and press — with the fork's reading order inside it and the card's own padding around it.
 - Both navigation rails stay expanded on a wide viewport, the header heads only the route column, and every route that is not a Pane fills that column.
 - The hierarchy is one Host heading over elided Space/Tab/Pane rows, with whole-row selection, one shared disclosure control, animated disclosure and a denser row.
 - On a narrow viewport the hierarchy opens from the header and the Pane page's switcher entry presents the Agent list; the shell's own trigger row is gone.

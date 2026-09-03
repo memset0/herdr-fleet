@@ -118,10 +118,11 @@ describe("NativeAgentRail", () => {
     const age = within(row).getByText(/^(now|\d+[mhd])$/);
     // THE RESERVE FOR THE STAR IS ONE LINE'S, not the button's. Line 1 shares its row with the
     // control and clears it; line 2 runs to the row's own trailing edge, which is the corner the
-    // age is specified to sit in. On the button, the same reserve pushed both lines in.
-    expect(name.parentElement?.className ?? "").toContain("pr-7");
-    expect(age.parentElement?.className ?? "").not.toContain("pr-7");
-    expect(age.closest("button")?.className ?? "").not.toContain("pr-8");
+    // age is specified to sit in. Asserted as "line 1 reserves, line 2 and the button do not",
+    // rather than as a particular width, so retuning the control's size stays a style change.
+    expect(/\bpr-\d/.test(name.parentElement?.className ?? "")).toBe(true);
+    expect(/\bpr-\d/.test(age.parentElement?.className ?? "")).toBe(false);
+    expect(/\bpr-\d/.test(age.closest("button")?.className ?? "")).toBe(false);
   });
 });
 
