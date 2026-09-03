@@ -71,7 +71,16 @@ export function RootLayout() {
   // Surface the busy bar when a navigation or a poll runs slow, each against its own threshold —
   // routine fast polls/navigations stay invisible. Mounted here so the whole app shares one
   // detector inside the router context.
-  usePollBusy();
+  // DOWNSTREAM PORT — `null`: no strip for a route change.
+  //
+  // The bar is wordless ambient reassurance, and under the Fleet shell a navigation is the one thing
+  // that does not need it: the rails and the header stay mounted across every route change, so the
+  // screen never goes blank and the arriving route draws its own chrome and its own loading state.
+  // What the operator actually saw was a strip appearing on the slowest, most-noticed navigation
+  // there is — opening a pane from the dashboard, where the first mirror fetch crosses 500ms — to
+  // report something already on screen. The AMBIENT half is untouched: a poll that has genuinely
+  // hung still surfaces, because nothing else on the screen says so.
+  usePollBusy(null);
   // The Collie mark's orbit turns for the whole of a route navigation — a tap the operator is
   // waiting on a loader for. NO THRESHOLD here, unlike the bar above: the bar is a strip that
   // appears, so it waits 500ms rather than flash on every fast tap, while the orbit is already on

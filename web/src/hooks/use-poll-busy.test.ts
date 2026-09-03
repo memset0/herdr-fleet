@@ -132,4 +132,20 @@ describe("usePollBusy — two independent thresholds (nav vs. background poll)",
       expect(isBusy()).toBe(false);
     });
   });
+
+  it("leaves navigations alone when the caller's own chrome reports them", () => {
+    // DOWNSTREAM — `null` is not a very large threshold: there is no number that means "never", and
+    // one that eventually fires is a strip that eventually appears on the slowest tap there is.
+    h.nav = "loading";
+    const { unmount } = renderHook(() => usePollBusy(null));
+    act(() => vi.advanceTimersByTime(POLL_T * 2));
+    expect(isBusy()).toBe(false);
+    unmount();
+
+    // The ambient half is untouched: a poll that has genuinely hung still surfaces.
+    h.rev = "loading";
+    renderHook(() => usePollBusy(null, 100));
+    act(() => vi.advanceTimersByTime(200));
+    expect(isBusy()).toBe(true);
+  });
 });

@@ -159,7 +159,13 @@ function Row({
       <div
         {...longPress}
         className={cn(
-          "flex min-h-11 min-w-0 items-stretch rounded-md xl:min-h-7",
+          // ONE DENSITY EVERYWHERE. The row used to be touch-sized below the rails' breakpoint and
+          // compact above it, which made the phone's hierarchy a different surface from the
+          // desktop's — the same list, read twice as tall. It is a tree of names, scanned rather
+          // than aimed at, and its whole value is how much of the herd fits on one screen. The
+          // rows that ARE aimed at on a phone — the Agent rail's, the strips, the composer's
+          // controls — keep their own floors.
+          "flex min-h-7 min-w-0 items-stretch rounded-md px-1.5",
           selected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
         )}
       >
@@ -174,7 +180,7 @@ function Row({
                 : t("fleet.navigation.expand", { name: row.label })
             }
             onClick={() => onToggle(disclosureId)}
-            className="grid w-5 shrink-0 place-items-center rounded-l-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+            className="grid w-5 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
           >
             <ChevronRight
               className={cn(
@@ -189,7 +195,7 @@ function Row({
           type="button"
           aria-current={selected ? "page" : undefined}
           onClick={activate}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-r-md pl-1 pr-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring xl:text-[13px]"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-left text-[13px] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
         >
           <RowIcon row={row} />
           <span className="truncate">{row.label}</span>

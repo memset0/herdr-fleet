@@ -35,6 +35,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Restore explicit Herdr Pane width fitting in native Display Settings.
 - Restore persistent native Space/Tab/Pane and Agent navigation sidebars.
 - Add role-aware Fleet lifecycle selection backed only by Collie's native Pack trust authority.
+- Give a native Pack peer one restricted, self-recovering SSH link that projects both loopback directions.
 - Add a fetched CJK fallback face under every font stack, chosen in Settings from a closed catalog and delivered in `unicode-range` pieces, so a mirror stays a grid in Chinese without shipping a font.
 - Offer that face as a Latin choice in the app's typeface and the terminal font pickers; it is the same family and the same download.
 
@@ -65,6 +66,9 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The Agent rail's row puts its favourite control at the top-right and its age at the bottom-right, and the phone's hierarchy drawer wears the rail's own ground and title.
 
 - Fitting a Pane now asks for the rows and measures only the columns: a bounded row field beside the Resize action, applied when the number holds still and only when it changed, with an empty field meaning "keep the Pane's own height". The protected resize accepts an optional row count validated by the controller's own rule.
+
+- The shell reports its own route changes: opening a Pane no longer puts a wordless strip across the top of the phone. A write in flight and a genuinely hung poll still surface it.
+- The hierarchy has one compact density at every width, and its rows carry their own horizontal padding.
 
 ### Fixed
 
