@@ -5,7 +5,7 @@
 > lifecycle changes must keep this document current.
 
 Herdr Web Remote adds a password-protected public Fleet dashboard and one native
-[Collie](https://github.com/AltanS/collie) UI per Herdr host. It is a Herdr 0.8+ plugin and does
+[Collie](https://github.com/AltanS/collie) UI per Herdr host. It is a Herdr 0.8.2+ plugin and does
 not install a system service, configure Tailscale, or expose a raw bridge port.
 
 The same plugin release ships a Linux/Darwin, normally dormant ttyd emergency terminal. The normal
@@ -262,7 +262,7 @@ it never adds a per-Space, per-Tab, or per-Pane network traversal.
 
 ## Requirements
 
-- Herdr 0.8.0 or newer
+- Herdr 0.8.2 or newer
 - Bun
 - A reverse proxy providing HTTPS
 - OpenSSH on the Fleet host only when remote nodes use the SSH transport

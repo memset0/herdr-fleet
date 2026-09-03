@@ -1,0 +1,325 @@
+schema_version = 1
+
+[upstream]
+url = "https://github.com/AltanS/collie.git"
+tag = "v0.34.0"
+commit = "0c647372d89d50ec62dfe8b569e9109a830660e5"
+
+[[owned]]
+id = "fleet-gateway"
+intent = "Provide the authenticated multi-host Fleet control plane and modular browser shell."
+paths = ["gateway/**", "gateway.example.json"]
+contracts = ["Collie snapshot and native route schema", "exact node Origin and Gateway session boundary"]
+verify = ["gateway/fleet.test.ts", "gateway/server.test.ts", "gateway/fleet-ui/page.test.ts"]
+
+[[owned]]
+id = "plugin-supervisor"
+intent = "Own one Herdr-coupled loopback Web Remote lifecycle."
+paths = ["supervisor/**"]
+contracts = ["Herdr plugin lifecycle hooks", "node-local process identity"]
+verify = ["supervisor/supervisor.integration.test.ts", "supervisor/runtime.test.ts"]
+
+[[owned]]
+id = "terminal-companion"
+intent = "Ship the normally dormant authenticated terminal companion."
+paths = ["services/**"]
+contracts = ["Fleet session verification", "Herdr terminal attachment"]
+verify = ["services/ttyd-fallback/test/test_fallback.py", "services/ttyd-fallback/test/test_installer.sh"]
+
+[[owned]]
+id = "fleet-shared"
+intent = "Define Fleet aggregate and command protocols once for Gateway and browser consumers."
+paths = ["shared/fleet/**"]
+contracts = ["Collie projection fields", "selected-frame command protocol"]
+verify = ["gateway/fleet-commands.test.ts", "web/src/lib/fleet-shortcuts.test.ts"]
+
+[[owned]]
+id = "bridge-extensions"
+intent = "Implement isolated Pane resize support outside Collie Bridge host files."
+paths = ["bridge/terminal-resize.ts", "bridge/terminal-resize.test.ts", "bridge/types.test.ts"]
+contracts = ["Herdr terminal controller protocol", "Collie guarded write routes"]
+verify = ["bridge/terminal-resize.test.ts", "bridge/types.test.ts"]
+
+[[owned]]
+id = "collie-fleet-adapters"
+intent = "Implement Fleet-only browser protocols and presentation outside Collie host components."
+paths = [
+  "web/src/components/fleet-route-reporter.tsx",
+  "web/src/index-css.test.ts",
+  "web/src/lib/fleet-actions.ts",
+  "web/src/lib/fleet-actions.test.ts",
+  "web/src/lib/fleet-activity.ts",
+  "web/src/lib/fleet-activity.test.ts",
+  "web/src/lib/fleet-frame.ts",
+  "web/src/lib/fleet-frame.test.ts",
+  "web/src/lib/fleet-route.ts",
+  "web/src/lib/fleet-route.test.ts",
+  "web/src/lib/fleet-shortcuts.ts",
+  "web/src/lib/fleet-shortcuts.test.ts",
+  "web/src/lib/fleet-ui-browser.test.ts",
+  "web/src/lib/terminal-resize.ts",
+  "web/src/lib/terminal-resize.test.ts",
+  "web/src/sw-boundary.test.ts"
+]
+contracts = ["React Router state", "exact parent Window and Origin", "Collie Pane action callbacks"]
+verify = ["web/src/lib/fleet-actions.test.ts", "web/src/lib/fleet-shortcuts.test.ts", "web/src/lib/fleet-ui-browser.test.ts"]
+
+[[owned]]
+id = "plugin-build-lifecycle"
+intent = "Build and run the public Herdr plugin without an operating-system service."
+paths = [
+  "memconf-build.sh",
+  "scripts/build-fleet-assets.ts",
+  "scripts/build.sh",
+  "scripts/generate-config.ts",
+  "scripts/lib-bun.sh",
+  "scripts/pane-url.sh",
+  "scripts/version-policy.sh",
+  "scripts/web-remote.sh"
+]
+contracts = ["Herdr plugin build and action environment", "Bun frozen dependency resolution"]
+verify = ["scripts/check-version.sh", "supervisor/runtime.test.ts"]
+
+[[owned]]
+id = "public-reference"
+intent = "Keep downstream feature reference and exact Collie provenance outside the compact landing page."
+paths = ["README.full.md", "UPSTREAM.md", ".adr/0011-manual-width-fit-retains-a-controller.md"]
+contracts = ["public installation and contribution guidance", "upstream MIT provenance"]
+verify = ["README.md", "UPSTREAM.md"]
+
+[[owned]]
+id = "fork-governance"
+intent = "Classify and enforce the current downstream boundary."
+paths = [
+  "FORK.toml",
+  "scripts/check-fork.ts",
+  "scripts/check-fork.test.ts",
+  "scripts/fork-manifest.ts",
+  "scripts/fork-manifest.test.ts",
+  "scripts/review-upstream.ts",
+  "scripts/review-upstream.test.ts"
+]
+contracts = ["exact adopted Git tree", "public contributor workflow"]
+verify = ["scripts/fork-manifest.test.ts", "scripts/check-fork.test.ts", "scripts/review-upstream.test.ts"]
+
+[[invasive]]
+id = "product-identity-and-provenance"
+intent = "Present Web Remote as a Herdr plugin while retaining Collie attribution."
+strategy = "keep"
+review = "every-upstream-sync"
+paths = [
+  ".adr/0001-one-managed-front-door.md#Collie",
+  ".adr/0008-collie-does-not-run-a-terminal-emulator.md#Collie",
+  ".adr/README.md#ADR",
+  ".env.example#COLLIE_",
+  ".github/workflows/release.yml#release",
+  "ARCHITECTURE.md#Collie",
+  "CHANGELOG.md#Changelog",
+  "CLAUDE.md#Working",
+  "HERDR_API.md#Herdr",
+  "README.md#Herdr",
+  "DEPLOYMENT.md#deleted",
+  "herdr-plugin.toml#memset0.web-remote",
+  "package.json#version",
+  "web/package.json#version",
+  "bun.lock#lockfileVersion",
+  "tsconfig.json#compilerOptions",
+  "scripts/check-version.sh#version",
+  "scripts/git-hooks/pre-commit#check-version",
+  "scripts/git-hooks/pre-push#SKIP_TESTS"
+]
+verify = ["scripts/check-version.sh", "README.md", "UPSTREAM.md"]
+reason = "Product identity, release policy, and provenance necessarily modify upstream repository-level surfaces."
+
+[[invasive]]
+id = "single-lifecycle-owner"
+intent = "Exclude upstream service, Tailscale, QR, Windows scheduled, and collie-ctl lifecycle owners."
+strategy = "drop"
+review = "every-upstream-sync"
+paths = [
+  ".adr/0006-update-advances-the-checkout-herdr-installed.md#deleted",
+  ".adr/0020-a-major-upgrade-is-consented-by-flag.md#deleted",
+  "contrib/windows/README.md#deleted",
+  "contrib/windows/collie-action.cs#deleted",
+  "contrib/windows/collie-ctl.ps1#deleted",
+  "contrib/windows/collie-ctl.test.ps1#deleted",
+  "scripts/collie-ctl.sh#deleted",
+  "scripts/collie-ctl.test.sh#deleted",
+  "scripts/qr.ts#deleted",
+  "scripts/qr.test.ts#deleted",
+  "systemd/collie.service#deleted"
+]
+verify = ["supervisor/supervisor.integration.test.ts", "supervisor/runtime.test.ts"]
+reason = "The plugin supervisor and external HTTPS owner are the only supported lifecycle and front door."
+
+[[invasive]]
+id = "upstream-screenshot-exclusion"
+intent = "Keep release-history screenshots out of the compact public product tree."
+strategy = "drop"
+review = "every-upstream-sync"
+paths = [
+  "assets/ask-question.png#deleted",
+  "assets/dashboard.png#deleted",
+  "assets/keys.png#deleted",
+  "assets/session-switcher.png#deleted",
+  "assets/settings.png#deleted",
+  "assets/space-detail.png#deleted"
+]
+verify = ["README.md"]
+reason = "The maintained concise landing page and full reference do not consume upstream screenshots."
+
+[[invasive]]
+id = "bridge-fleet-actions"
+intent = "Expose authenticated Space, Tab, Pane, and manual resize actions through narrow Bridge routes."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "bridge/herdr-client.ts#HerdrClient",
+  "bridge/index.ts#TerminalResizeManager",
+  "bridge/server.ts#resizePane",
+  "bridge/server.test.ts#resizePane",
+  "bridge/state-engine.ts#viewportRows",
+  "bridge/state-engine.test.ts#viewportRows",
+  "bridge/types.ts#viewportRows"
+]
+verify = ["bridge/server.test.ts", "bridge/terminal-resize.test.ts", "bridge/types.test.ts"]
+reason = "Bridge authentication, session ownership, audit, and controller leases remain authoritative host boundaries."
+
+[[invasive]]
+id = "bridge-plugin-configuration"
+intent = "Load Web Remote Host, Origin, audit, operator-control, and plugin-owned runtime configuration."
+strategy = "keep"
+review = "every-upstream-sync"
+paths = ["bridge/config.ts#loadConfig", "bridge/config.test.ts#loadConfig"]
+verify = ["bridge/config.test.ts", "bridge/server.test.ts"]
+reason = "Collie Bridge configuration is the narrow authority for node-local security inputs."
+
+[[invasive]]
+id = "release-check-compatibility"
+intent = "Preserve the current release-check monitor and visible status without restoring an executable updater."
+strategy = "keep"
+review = "every-upstream-sync"
+paths = [
+  "bridge/update.ts#UpdateMonitor",
+  "bridge/update.test.ts#UpdateMonitor",
+  "web/src/components/update-banner.tsx#updateNotice",
+  "web/src/components/update-banner.test.tsx#updateNotice",
+  "web/src/components/update-check-control.tsx#UpdateCheckControl",
+  "web/src/components/update-check-control.test.tsx#UpdateCheckControl",
+  "web/src/lib/push-decision.test.ts#decidePush"
+]
+verify = ["bridge/update.test.ts", "web/src/components/update-banner.test.tsx", "web/src/components/update-check-control.test.tsx"]
+reason = "The owner froze this compatibility surface for the current change; executable lifecycle update actions remain absent."
+
+[[invasive]]
+id = "fleet-frame-and-seen-ports"
+intent = "Let only the selected visible Fleet child attribute Pane reads as seen and report its exact route."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "web/src/App.tsx#fleet",
+  "web/src/hooks/use-polling.ts#fleet",
+  "web/src/hooks/use-polling.test.ts#fleet",
+  "web/src/lib/api.ts#x-collie-seen",
+  "web/src/lib/api.test.ts#x-collie-seen",
+  "web/src/lib/last-seen.ts#SNAPSHOT_PREFIX",
+  "web/src/lib/loaders.ts#paneLoader",
+  "web/src/lib/loaders.test.ts#paneLoader",
+  "web/src/main.tsx#fleet",
+  "web/src/routes/root.tsx#FleetRouteReporter",
+  "web/src/test/handlers.ts#fixtureSnapshot"
+]
+verify = ["web/src/lib/fleet-activity.test.ts", "web/src/lib/api.test.ts", "web/src/hooks/use-polling.test.ts"]
+reason = "React lifecycle and authenticated request construction require small host ports into downstream Fleet adapters."
+
+[[invasive]]
+id = "fleet-pane-presentation-ports"
+intent = "Expose framed presentation, manual resize, Type mode, and fixed-key callbacks through Collie components."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "web/src/components/agent-chat.tsx#resizeToMirror",
+  "web/src/components/agent-chat.test.tsx#Resize",
+  "web/src/components/app-header.tsx#framed",
+  "web/src/components/app-header.test.tsx#AppHeader",
+  "web/src/components/composer.tsx#fleet",
+  "web/src/components/composer.test.tsx#fleet",
+  "web/src/components/display-prefs.tsx#Resize",
+  "web/src/components/ui/section-label.tsx#SectionLabel",
+  "web/src/index.css#data-fleet-frame",
+  "web/src/lib/types.ts#readableLines"
+]
+verify = ["web/src/components/agent-chat.test.tsx", "web/src/components/composer.test.tsx", "web/src/index-css.test.ts"]
+reason = "These Collie components own the live DOM measurements and control lifecycle that downstream adapters invoke."
+
+[[invasive]]
+id = "authenticated-browser-cache"
+intent = "Keep stale Collie snapshots bounded by exact session identity and authentication failure."
+strategy = "keep"
+review = "every-upstream-sync"
+paths = [
+  "web/src/lib/sw-routes.ts#cache",
+  "web/src/sw.ts#cache",
+  "web/src/lib/loaders.ts#sessionStorage",
+  "web/src/lib/loaders.test.ts#sessionStorage"
+]
+verify = ["web/src/lib/loaders.test.ts", "web/src/sw-boundary.test.ts"]
+reason = "Service Worker and loader ownership are the smallest safe places to enforce navigation and stale-data policy."
+
+[[invasive]]
+id = "collie-runtime-safety"
+intent = "Retain downstream generic input, transcript, push, and operator-control safety fixes until upstream review."
+strategy = "keep"
+review = "every-upstream-sync"
+paths = [
+  "scripts/push-keys.ts#generateVapidKeys",
+  "scripts/push-keys.test.ts#generateVapidKeys",
+  "scripts/push-test.ts#push",
+  "web/src/fixtures/panes/claude--draft-paste-placeholder.txt#Pasted",
+  "web/src/lib/harness/types.ts#HarnessAdapter",
+  "web/src/lib/reply-action.ts#sendReply",
+  "web/src/lib/reply-action.test.ts#sendGuardedReply"
+]
+verify = ["scripts/push-keys.test.ts", "web/src/lib/reply-action.test.ts", "web/src/lib/push-decision.test.ts"]
+reason = "These safeguards remain in Collie-owned execution boundaries until the exact target is compared."
+
+[[invasive]]
+id = "codex-native-transition"
+intent = "Replace the complete temporary Codex adapter with Collie v0.36.1 and drop local slash, queue, chunking, and extended-read behavior."
+strategy = "replace-with-upstream"
+review = "every-upstream-sync"
+paths = [
+  "ARCHITECTURE.md#Codex",
+  "HERDR_API.md#Codex",
+  "README.full.md#Codex",
+  "UPSTREAM.md#Codex",
+  "web/src/components/agent-chat.test.tsx#CODEX_SLASH_TEXT",
+  "web/src/components/composer.test.tsx#Codex",
+  "web/src/fixtures/panes/README.md#Codex",
+  "web/src/fixtures/panes/codex--custom-status-draft.txt#Codex",
+  "web/src/fixtures/panes/codex--working-draft-queue-hint.txt#queue",
+  "web/src/lib/harness/codex.test.ts#Codex",
+  "web/src/lib/harness/codex/chrome.ts#Codex",
+  "web/src/lib/harness/codex/index.ts#codexAdapter",
+  "web/src/lib/harness/codex/markers.ts#PLACEHOLDER",
+  "web/src/lib/harness/codex/paste.ts#Pasted",
+  "web/src/lib/harness/codex/paste.test.ts#Pasted",
+  "web/src/lib/harness/codex/slash.ts#slash",
+  "web/src/lib/harness/codex/slash.test.ts#slash",
+  "web/src/lib/harness/types.ts#codex",
+  "web/src/lib/reply-action.ts#CODEX",
+  "web/src/lib/reply-action.test.ts#CODEX",
+  "bridge/server.test.ts#sendReplySteps"
+]
+verify = ["web/src/lib/harness/codex.test.ts", "web/src/lib/reply-action.test.ts", "bridge/server.test.ts"]
+reason = "These local Codex semantics were temporary and must not survive alongside the upstream-native implementation."
+temporary_until = "Collie v0.36.1 at 96c3bc3374ea49920ba1c62cfe3135277e16bf00"
+
+[[invasive]]
+id = "generated-build-state-exclusion"
+intent = "Keep generated TypeScript build state out of the public source tree."
+strategy = "drop"
+review = "every-upstream-sync"
+paths = ["web/tsconfig.tsbuildinfo#deleted"]
+verify = ["web/tsconfig.json"]
+reason = "Generated compiler state is neither source nor a stable upstream contract."

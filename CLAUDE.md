@@ -1,6 +1,6 @@
 # Working agreement
 
-Herdr Web Remote (`memset0.web-remote`) is a public-ready Herdr 0.8+ plugin derived from Collie.
+Herdr Web Remote (`memset0.web-remote`) is a public-ready Herdr 0.8.2+ plugin derived from Collie.
 Read `README.md`, `README.full.md`, `ARCHITECTURE.md`, `UPSTREAM.md`, and `HERDR_API.md` before
 changing boundaries.
 
@@ -43,6 +43,18 @@ release commit. The release gate accepts only the next patch, minor, or major ve
 major gates respectively require `WEB_REMOTE_MINOR_RELEASE_APPROVAL=X.Y.Z` or
 `WEB_REMOTE_MAJOR_RELEASE_APPROVAL=X.Y.Z`; never infer or pre-fill either approval. Tag releases as
 `vX.Y.Z` only after the release gate passes.
+
+## Fork boundary
+
+Read [`FORK.toml`](./FORK.toml) before changing any Collie-owned path. Put substantive downstream
+behavior in a declared owned module first, and expose only the smallest typed host port that the
+owned module requires. Update the manifest in the same commit whenever a path, anchor, ownership
+boundary, or verification contract changes; the manifest describes only the current fork, while
+Git and OpenSpec retain history.
+
+Run `bun run scripts/check-fork.ts` for normal boundary verification. Before synchronizing another
+Collie release, run `bun run scripts/review-upstream.ts --target <commit>` and complete the generated
+review for every invasive entry, including entries whose files the target did not change.
 
 ## Verification
 
