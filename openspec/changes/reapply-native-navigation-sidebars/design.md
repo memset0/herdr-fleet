@@ -88,8 +88,9 @@ favorite subscriptions, stable partitioning, triage, cards, accessible favorite 
 future compatible changes. The rail passes no shell panes and does not import or repurpose
 `ThreadSidebar`.
 
-If narrow sizing needs a presentation hook, extend `AgentList` only with a class/container port
-that changes no list logic. Do not duplicate triage or favorite state in owned navigation modules.
+No `AgentList` presentation hook is required: only one responsive or desktop copy is mounted at a
+time, so the shared list retains its native section ids without duplication. Do not duplicate
+triage or favorite state in owned navigation modules.
 
 ### 5. Use one responsive shell state and two inactive mounted surfaces
 
@@ -131,13 +132,14 @@ Extend `fleet-runtime` contracts and verification with native navigation. Add on
 
 - `web/src/routes/root.tsx`;
 - the new native shell/tree/rail component and focused test paths;
-- any narrow `AgentList` presentation/test anchor actually required;
-- all six typed dictionary keys;
 - root/router-focused tests that prove persistent native outlet behavior.
 
-No router, loader, API, service-worker, Gateway, bridge, `ThreadSidebar`, manual-fit, favorite-store,
-or deployment path belongs in the entry unless implementation inspection proves a narrow port is
-strictly necessary.
+The new component paths are also exact paths on the existing `fleet-runtime` owned entry because
+the fork checker classifies files absent from the Collie baseline as owned; listing the same exact
+paths in the invasive entry preserves the required review anchors for their Collie namespace.
+The six dictionary files retain their existing single invasive declarations, because `FORK.toml`
+forbids declaring one upstream path twice. No `AgentList`, router, loader, API, service-worker,
+Gateway, bridge, `ThreadSidebar`, manual-fit, favorite-store, or deployment path is added.
 
 ## Risks / Trade-offs
 

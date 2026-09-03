@@ -369,6 +369,18 @@ export const ja: Dictionary = {
   "home.sort.aria.oldest": "古い順で表示中。最新順に切り替えます。",
   "home.sidebar.shells": "シェル",
   "home.sidebar.paneActionsTitle": "タップしてペイン操作を表示",
+  "fleet.navigation.hierarchy": "スペース",
+  "fleet.navigation.agents": "エージェント",
+  "fleet.navigation.empty": "利用できるスペースがありません。",
+  "fleet.navigation.expandSpace": "{name} を展開",
+  "fleet.navigation.collapseSpace": "{name} を折りたたむ",
+  "fleet.navigation.expandHierarchy": "スペースサイドバーを展開",
+  "fleet.navigation.collapseHierarchy": "スペースサイドバーを折りたたむ",
+  "fleet.navigation.expandAgents": "エージェントサイドバーを展開",
+  "fleet.navigation.collapseAgents": "エージェントサイドバーを折りたたむ",
+  "fleet.navigation.resizeHierarchy": "スペースサイドバーの幅を変更",
+  "fleet.navigation.resizeAgents": "エージェントサイドバーの幅を変更",
+  "fleet.navigation.close": "ナビゲーションを閉じる",
 
   // --- status (triage sections, status labels, counts) ---
   "status.section.needsYou": "要対応",

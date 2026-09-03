@@ -33,6 +33,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Restore bounded browser-local Agent favorites inside Collie's native triage lists.
 - Expose Collie's native Push-key generation and test delivery as Herdr Fleet actions.
 - Restore explicit Herdr Pane width fitting in native Display Settings.
+- Restore persistent native Space/Tab/Pane and Agent navigation sidebars.
 
 ### Fixed
 

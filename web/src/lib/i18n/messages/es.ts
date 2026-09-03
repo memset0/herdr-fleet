@@ -375,6 +375,18 @@ export const es: Dictionary = {
   "home.sort.aria.oldest": "Ordenado por más antiguo primero. Cambiar a uso reciente.",
   "home.sidebar.shells": "Shells",
   "home.sidebar.paneActionsTitle": "Ver acciones del panel",
+  "fleet.navigation.hierarchy": "Espacios",
+  "fleet.navigation.agents": "Agentes",
+  "fleet.navigation.empty": "No hay espacios disponibles.",
+  "fleet.navigation.expandSpace": "Expandir {name}",
+  "fleet.navigation.collapseSpace": "Contraer {name}",
+  "fleet.navigation.expandHierarchy": "Expandir la barra de espacios",
+  "fleet.navigation.collapseHierarchy": "Contraer la barra de espacios",
+  "fleet.navigation.expandAgents": "Expandir la barra de agentes",
+  "fleet.navigation.collapseAgents": "Contraer la barra de agentes",
+  "fleet.navigation.resizeHierarchy": "Cambiar el ancho de la barra de espacios",
+  "fleet.navigation.resizeAgents": "Cambiar el ancho de la barra de agentes",
+  "fleet.navigation.close": "Cerrar navegación",
 
   // --- status (triage sections, status labels, counts) ---
   "status.section.needsYou": "Requiere atención",

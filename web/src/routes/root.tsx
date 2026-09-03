@@ -18,6 +18,7 @@ import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
 import { PackProvider } from "@/components/pack-provider";
 import { CollieMark } from "@/components/collie-mark";
+import { NativeNavigationShell } from "@/components/native-navigation-shell";
 import { describeThrownError } from "@/lib/api-error-message";
 import { homePath } from "@/lib/nav";
 import { scopeFromUrl } from "@/lib/session";
@@ -129,7 +130,9 @@ export function RootLayout() {
             forwarding them from anyway — six copies of the same two fields was six chances to
             disagree with the ConnectionBanner two lines up. */}
         <AppHeaderHost bridge={data.bridge} error={data.error}>
-          <Outlet />
+          <NativeNavigationShell data={data}>
+            <Outlet />
+          </NativeNavigationShell>
         </AppHeaderHost>
       </div>
     </PackProvider>

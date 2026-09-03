@@ -389,6 +389,18 @@ export const en = {
   "home.sort.aria.oldest": "Sorted by oldest first — switch to most recently used first",
   "home.sidebar.shells": "Shells",
   "home.sidebar.paneActionsTitle": "Tap for pane actions",
+  "fleet.navigation.hierarchy": "Spaces",
+  "fleet.navigation.agents": "Agents",
+  "fleet.navigation.empty": "No spaces available.",
+  "fleet.navigation.expandSpace": "Expand {name}",
+  "fleet.navigation.collapseSpace": "Collapse {name}",
+  "fleet.navigation.expandHierarchy": "Expand Spaces sidebar",
+  "fleet.navigation.collapseHierarchy": "Collapse Spaces sidebar",
+  "fleet.navigation.expandAgents": "Expand Agents sidebar",
+  "fleet.navigation.collapseAgents": "Collapse Agents sidebar",
+  "fleet.navigation.resizeHierarchy": "Resize Spaces sidebar",
+  "fleet.navigation.resizeAgents": "Resize Agents sidebar",
+  "fleet.navigation.close": "Close navigation",
 
   // --- status (triage sections, status labels, counts) ---
   "status.section.needsYou": "Needs you",

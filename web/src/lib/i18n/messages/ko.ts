@@ -367,6 +367,18 @@ export const ko: Dictionary = {
   "home.sort.aria.oldest": "오래된순 정렬, 최근 사용순으로 전환",
   "home.sidebar.shells": "셸",
   "home.sidebar.paneActionsTitle": "창 작업 보기",
+  "fleet.navigation.hierarchy": "스페이스",
+  "fleet.navigation.agents": "에이전트",
+  "fleet.navigation.empty": "사용 가능한 스페이스가 없습니다.",
+  "fleet.navigation.expandSpace": "{name} 펼치기",
+  "fleet.navigation.collapseSpace": "{name} 접기",
+  "fleet.navigation.expandHierarchy": "스페이스 사이드바 펼치기",
+  "fleet.navigation.collapseHierarchy": "스페이스 사이드바 접기",
+  "fleet.navigation.expandAgents": "에이전트 사이드바 펼치기",
+  "fleet.navigation.collapseAgents": "에이전트 사이드바 접기",
+  "fleet.navigation.resizeHierarchy": "스페이스 사이드바 너비 조절",
+  "fleet.navigation.resizeAgents": "에이전트 사이드바 너비 조절",
+  "fleet.navigation.close": "탐색 닫기",
 
   // --- status (triage sections, status labels, counts) ---
   "status.section.needsYou": "입력 대기",

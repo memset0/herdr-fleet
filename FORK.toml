@@ -36,13 +36,24 @@ verify = ["scripts/check-fork.test.ts", "scripts/fork-manifest.test.ts"]
 [[owned]]
 id = "fleet-runtime"
 intent = "Provide the private authenticated Fleet runtime outside Collie-owned modules."
-paths = ["docs/herdr-fleet.md", "fleet/**", "scripts/herdr-fleet.sh"]
+paths = [
+  "docs/herdr-fleet.md",
+  "fleet/**",
+  "scripts/herdr-fleet.sh",
+  "web/src/components/native-agent-rail.test.tsx",
+  "web/src/components/native-agent-rail.tsx",
+  "web/src/components/native-navigation-shell.test.tsx",
+  "web/src/components/native-navigation-shell.tsx",
+  "web/src/components/native-navigation-tree.test.tsx",
+  "web/src/components/native-navigation-tree.tsx"
+]
 contracts = [
   "private fleet.toml",
   "lead-only configuration",
   "sanitized Collie child environment",
   "bounded browser-local Agent favorites",
-  "explicit Herdr-only manual Pane fit"
+  "explicit Herdr-only manual Pane fit",
+  "persistent native navigation sidebars"
 ]
 verify = [
   "fleet/auth.test.ts",
@@ -61,7 +72,9 @@ verify = [
   "fleet/manual-pane-fit/action.test.ts",
   "fleet/manual-pane-fit/capability.test.ts",
   "fleet/manual-pane-fit/controller.test.ts",
-  "fleet/ui/manual-pane-fit.test.ts"
+  "fleet/ui/manual-pane-fit.test.ts",
+  "fleet/ui/native-navigation/model.test.ts",
+  "fleet/ui/native-navigation/preferences.test.ts"
 ]
 
 [[invasive]]
@@ -181,3 +194,28 @@ verify = [
   "web/src/lib/i18n/i18n.test.ts"
 ]
 reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/."
+
+[[invasive]]
+id = "native-navigation-sidebars-port"
+intent = "Wrap Collie's native route outlet with persistent local hierarchy and Agent sidebars while retaining the existing router, data loaders, Agent list, and Pane surfaces."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "web/src/routes/root.tsx#NativeNavigationShell",
+  "web/src/components/native-navigation-shell.tsx#NativeNavigationShell",
+  "web/src/components/native-navigation-shell.test.tsx#NativeNavigationShell",
+  "web/src/components/native-navigation-tree.tsx#NativeNavigationTree",
+  "web/src/components/native-navigation-tree.test.tsx#NativeNavigationTree",
+  "web/src/components/native-agent-rail.tsx#NativeAgentRail",
+  "web/src/components/native-agent-rail.test.tsx#NativeAgentRail"
+]
+verify = [
+  "fleet/ui/native-navigation/model.test.ts",
+  "fleet/ui/native-navigation/preferences.test.ts",
+  "web/src/components/native-navigation-shell.test.tsx",
+  "web/src/components/native-navigation-tree.test.tsx",
+  "web/src/components/native-agent-rail.test.tsx",
+  "web/src/components/agent-list.test.tsx",
+  "web/src/lib/i18n/i18n.test.ts"
+]
+reason = "The root outlet and native presentation surfaces are Collie-owned, so the fork adds only one persistent shell and exact responsive components while all state, derivation, bounds, and preference behavior remains under fleet/ui and Agent rendering stays in the existing shared list."

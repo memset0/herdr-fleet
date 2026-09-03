@@ -375,6 +375,18 @@ export const de: Dictionary = {
   "home.sort.aria.oldest": "Sortiert nach älteste zuerst. Zu letzter Nutzung wechseln",
   "home.sidebar.shells": "Shells",
   "home.sidebar.paneActionsTitle": "Pane-Aktionen anzeigen",
+  "fleet.navigation.hierarchy": "Spaces",
+  "fleet.navigation.agents": "Agents",
+  "fleet.navigation.empty": "Keine Spaces verfügbar.",
+  "fleet.navigation.expandSpace": "{name} ausklappen",
+  "fleet.navigation.collapseSpace": "{name} einklappen",
+  "fleet.navigation.expandHierarchy": "Spaces-Seitenleiste ausklappen",
+  "fleet.navigation.collapseHierarchy": "Spaces-Seitenleiste einklappen",
+  "fleet.navigation.expandAgents": "Agents-Seitenleiste ausklappen",
+  "fleet.navigation.collapseAgents": "Agents-Seitenleiste einklappen",
+  "fleet.navigation.resizeHierarchy": "Breite der Spaces-Seitenleiste ändern",
+  "fleet.navigation.resizeAgents": "Breite der Agents-Seitenleiste ändern",
+  "fleet.navigation.close": "Navigation schließen",
 
   // --- status (triage sections, status labels, counts) ---
   "status.section.needsYou": "Eingabe erforderlich",
