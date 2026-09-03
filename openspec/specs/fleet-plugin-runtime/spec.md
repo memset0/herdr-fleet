@@ -8,6 +8,7 @@ run an authenticated Herdr Fleet lead while preserving the exact Collie baseline
 ## Requirements
 
 ### Requirement: The v3 line has an explicit downstream identity and provenance
+
 The plugin SHALL identify itself as `memset0.herdr-fleet` and as Herdr Fleet while recording Collie
 v1.2.0 tag object `0f98f28c9aaadd641c4bc5ac484190ee3ef7008c` and commit
 `4618c90534d6f818ed6788b8db00e1582c5abfdc` as its initial upstream baseline. It MUST preserve
@@ -23,6 +24,7 @@ functionality.
 - **THEN** its output can be tied to an exact `v3-dev` commit without creating a release tag or claiming a different upstream baseline
 
 ### Requirement: Fleet-owned behavior stays outside upstream business logic
+
 The authenticated Gateway, private configuration reader, session state, login presentation, proxy,
 and Herdr-coupled lifecycle SHALL live in explicit downstream-owned roots. Any necessary edit to an
 upstream-owned path MUST expose only a narrow identity, lifecycle, configuration, static-routing, or
@@ -43,30 +45,38 @@ installed operating-system service.
 
 A schema-1 Lead SHALL continue to run one loopback Collie child and one loopback authenticated
 Gateway child with unchanged inputs. A schema-2 Lead SHALL run the same two child kinds after native
-Lead authority validation. A schema-2 Peer SHALL run one local loopback Collie child and MUST NOT
-start a Gateway, Fleet session store, browser-authentication listener, or public listener.
+Lead authority validation and after its reachability mapping is validated against native membership.
+A schema-2 Peer SHALL run one local loopback Collie child plus one supervised reachability link child,
+and MUST NOT start a Gateway, Fleet session store, browser-authentication listener, or public listener.
 
 Start, stop, restart, status, and failed-start cleanup MUST act only on the plugin-owned generation,
 MUST report the configured role and exact child set without secrets, and MUST leave unrelated Herdr
-state and terminal panes unchanged.
+state and terminal panes unchanged. A link child that exits MUST be recovered under its own bounded
+backoff without restarting the Collie child, and stopping the plugin MUST leave no orphaned link
+process or published projection.
 
 #### Scenario: Existing schema-1 Lead starts
 - **WHEN** Herdr starts the plugin with an unchanged valid schema-1 Lead configuration
 - **THEN** one loopback Gateway and one loopback Collie child become ready with the same observable configuration and status as before this change
 
 #### Scenario: Schema-2 Lead starts
-- **WHEN** Herdr starts a schema-2 Lead whose configuration and native Pack authority state agree
+- **WHEN** Herdr starts a schema-2 Lead whose configuration, native Pack authority state, and reachability mapping agree
 - **THEN** one loopback Gateway and one loopback Collie child become ready and status identifies the Lead role without exposing trust or browser secrets
 
 #### Scenario: Schema-2 Peer starts
 - **WHEN** Herdr starts a schema-2 Peer whose configuration and native Pack authority state agree
-- **THEN** one loopback Collie child becomes ready, no Gateway or browser listener exists, and status identifies the Peer role
+- **THEN** one loopback Collie child and one reachability link child become ready, no Gateway or browser listener exists, and status identifies the Peer role and the link layer separately
+
+#### Scenario: The link child exits while Collie is healthy
+- **WHEN** a schema-2 Peer's link child exits
+- **THEN** only the link child is retried under bounded backoff, the Collie child keeps running, and status reports the Peer as not ready until the link is re-established
 
 #### Scenario: Startup fails after a child was created
-- **WHEN** a required child cannot become ready or configuration/authority validation fails
-- **THEN** the attempted generation is cleaned up, no unintended listener is created, and unrelated Herdr processes and panes remain untouched
+- **WHEN** a required child cannot become ready or configuration/authority/reachability validation fails
+- **THEN** the attempted generation is cleaned up, no unintended listener or published projection is left behind, and unrelated Herdr processes and panes remain untouched
 
 ### Requirement: Upstream Tailscale support is retained but inactive in the Fleet profile
+
 The fork SHALL retain Collie's upstream Tailscale serve and identity implementation for compatibility.
 The Herdr Fleet lead profile MUST instead select external ingress, MUST NOT manage a Tailscale serve
 mapping, and MUST treat its own password/session Gateway as the public browser authorization
