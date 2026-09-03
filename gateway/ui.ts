@@ -1,4 +1,4 @@
-export { FLEET_CSS, FLEET_JS, fleetPage } from "./fleet-ui.ts";
+export { fleetPage } from "./fleet-ui/index.ts";
 
 import { GATEWAY_THEME_CSS } from "./theme.ts";
 

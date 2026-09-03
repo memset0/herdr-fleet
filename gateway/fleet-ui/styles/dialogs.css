@@ -1,0 +1,214 @@
+.shortcut-toast {
+  position: fixed;
+  z-index: 30;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  left: 50%;
+  max-width: min(32rem, calc(100vw - 2rem));
+  visibility: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--card) 94%, transparent);
+  padding: 0.42rem 0.72rem;
+  box-shadow: 0 8px 24px light-dark(#00000018, #00000070);
+  color: var(--foreground);
+  font-size: 0.7rem;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 0.35rem);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease,
+    visibility 0s linear 0.2s;
+  backdrop-filter: blur(12px);
+}
+.shortcut-toast[data-visible="true"] {
+  visibility: visible;
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: 0s;
+}
+.command-dialog {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding: max(10vh, 3rem) 1rem 1rem;
+}
+.command-dialog[hidden] {
+  display: none;
+}
+.command-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: light-dark(#00000042, #00000096);
+  cursor: default;
+  backdrop-filter: blur(4px);
+}
+.command-dialog-panel {
+  position: relative;
+  z-index: 1;
+  width: min(42rem, calc(100vw - 2rem));
+  max-height: min(76vh, 44rem);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--card);
+  padding: 0.85rem;
+  box-shadow: 0 24px 80px light-dark(#00000035, #000000d0);
+}
+.command-dialog-form {
+  display: grid;
+  min-height: 0;
+  gap: 0.65rem;
+}
+.command-dialog-form > label,
+.destructive-dialog h2 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.command-dialog-form > input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--background);
+  padding: 0.7rem 0.75rem;
+  color: var(--foreground);
+  font:
+    500 0.84rem/1.25 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  outline: none;
+}
+.command-dialog-form > input:focus {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 24%, transparent);
+}
+.command-dialog-hint,
+.command-dialog-error {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+.command-dialog-error {
+  color: var(--destructive);
+}
+.command-dialog-results {
+  display: grid;
+  min-height: 0;
+  max-height: min(56vh, 32rem);
+  gap: 0.2rem;
+  overflow-y: auto;
+}
+.command-dialog-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  padding: 0.55rem 0.65rem;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.command-dialog-result:hover,
+.command-dialog-result[aria-selected="true"] {
+  background: var(--accent);
+}
+.command-dialog-result:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+.command-result-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.1rem;
+}
+.command-result-name {
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-result-id {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font:
+    0.62rem/1.25 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-result-bindings {
+  display: flex;
+  max-width: 18rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.25rem;
+}
+.command-result-bindings kbd,
+.fleet-shortcut-bindings kbd {
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: calc(var(--radius) - 4px);
+  background: var(--background);
+  padding: 0.13rem 0.32rem;
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.6rem;
+  line-height: 1.2;
+}
+.command-result-unbound,
+.fleet-shortcut-unbound {
+  color: var(--muted-foreground);
+  font-size: 0.62rem;
+  font-style: italic;
+}
+.command-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+.command-dialog-actions button {
+  min-height: 2rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 3px);
+  background: var(--background);
+  padding: 0 0.75rem;
+  color: var(--foreground);
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.command-dialog-actions button[type="submit"] {
+  background: var(--accent);
+  font-weight: 750;
+}
+.command-dialog-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.destructive-dialog .command-dialog-panel {
+  width: min(30rem, calc(100vw - 2rem));
+}
+.destructive-dialog h2 {
+  color: var(--destructive);
+}
+.command-dialog-actions .destructive-action {
+  border-color: color-mix(in oklch, var(--destructive) 45%, var(--border));
+  color: var(--destructive);
+  font-weight: 750;
+}

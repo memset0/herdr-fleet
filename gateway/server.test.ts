@@ -6,9 +6,11 @@ import { FleetCollector } from "./fleet.ts";
 import { createGatewayHandler } from "./server.ts";
 import { gatewayConfig, rawGatewayConfig } from "./test-helpers.ts";
 import { TransportRegistry } from "./transports.ts";
+import { buildFleetAssets } from "../scripts/build-fleet-assets.ts";
 
 const config = gatewayConfig();
 beforeAll(async () => {
+  await buildFleetAssets();
   config.auth.passwordHash = await Bun.password.hash("gateway-test-password", {
     algorithm: "argon2id",
     memoryCost: 4_096,
@@ -33,16 +35,39 @@ function setup(
   pluginVersion = "2.4.1-test",
 ) {
   const transports = new TransportRegistry(gateway.nodes);
-  const collector = new FleetCollector(gateway, transports, collectorFetcher, now ?? Date.now);
-  return createGatewayHandler({ config: gateway, collector, transports, fetcher, limiter, now, pluginVersion });
+  const collector = new FleetCollector(
+    gateway,
+    transports,
+    collectorFetcher,
+    now ?? Date.now,
+  );
+  return createGatewayHandler({
+    config: gateway,
+    collector,
+    transports,
+    fetcher,
+    limiter,
+    now,
+    pluginVersion,
+  });
 }
 
-async function login(handler: ReturnType<typeof setup>, next = "https://fleet.example.com/"): Promise<string> {
+async function login(
+  handler: ReturnType<typeof setup>,
+  next = "https://fleet.example.com/",
+): Promise<string> {
   const response = await handler(
     request("fleet.example.com", "/auth/login", {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", "x-forwarded-for": "192.0.2.8" },
-      body: new URLSearchParams({ username: "operator", password: "gateway-test-password", next }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-forwarded-for": "192.0.2.8",
+      },
+      body: new URLSearchParams({
+        username: "operator",
+        password: "gateway-test-password",
+        next,
+      }),
     }),
   );
   expect(response.status).toBe(303);
@@ -53,6 +78,39 @@ async function login(handler: ReturnType<typeof setup>, next = "https://fleet.ex
 }
 
 describe("Gateway host routing and auth flow", () => {
+  test("serves only the two public Fleet assets with stable paths and headers", async () => {
+    const handler = setup();
+    const css = await handler(
+      request("fleet.example.com", "/fleet-assets/fleet.css"),
+    );
+    const js = await handler(
+      request("fleet.example.com", "/fleet-assets/fleet.js"),
+    );
+    expect(css.status).toBe(200);
+    expect(css.headers.get("content-type")).toBe("text/css; charset=utf-8");
+    expect(css.headers.get("cache-control")).toBe("no-cache");
+    expect(css.headers.get("x-content-type-options")).toBe("nosniff");
+    expect((await css.text()).length).toBeGreaterThan(1_000);
+    expect(js.status).toBe(200);
+    expect(js.headers.get("content-type")).toBe(
+      "text/javascript; charset=utf-8",
+    );
+    expect(js.headers.get("cache-control")).toBe("no-cache");
+    expect(js.headers.get("x-frame-options")).toBe("DENY");
+    expect((await js.text()).length).toBeGreaterThan(1_000);
+    expect(
+      (await handler(request("fleet.example.com", "/fleet-assets/other.js")))
+        .status,
+    ).toBe(303);
+    expect(
+      (
+        await handler(
+          request("fleet.example.com", "/fleet-assets/../gateway.json"),
+        )
+      ).status,
+    ).toBe(303);
+  });
+
   test("fails unknown hosts closed without proxying", async () => {
     let calls = 0;
     const handler = setup((async () => {
@@ -66,12 +124,20 @@ describe("Gateway host routing and auth flow", () => {
 
   test("denies APIs and preserves a deep-link return URL for navigations", async () => {
     const handler = setup();
-    expect((await handler(request("local.example.com", "/api/snapshot"))).status).toBe(401);
-    const deep = await handler(request("local.example.com", "/pane/p1?session=batch%20demo"));
+    expect(
+      (await handler(request("local.example.com", "/api/snapshot"))).status,
+    ).toBe(401);
+    const deep = await handler(
+      request("local.example.com", "/pane/p1?session=batch%20demo"),
+    );
     expect(deep.status).toBe(303);
     const location = new URL(deep.headers.get("location")!);
-    expect(location.origin + location.pathname).toBe("https://fleet.example.com/auth/login");
-    expect(location.searchParams.get("next")).toBe("https://local.example.com/pane/p1?session=batch%20demo");
+    expect(location.origin + location.pathname).toBe(
+      "https://fleet.example.com/auth/login",
+    );
+    expect(location.searchParams.get("next")).toBe(
+      "https://local.example.com/pane/p1?session=batch%20demo",
+    );
   });
 
   test("refreshes node state only for an authenticated Fleet API read", async () => {
@@ -83,7 +149,14 @@ describe("Gateway host routing and auth flow", () => {
         JSON.stringify({
           bridge: "connected",
           sessions: [
-            { name: "default", isPrimary: true, reachable: true, agents: 0, working: 0, blocked: 0 },
+            {
+              name: "default",
+              isPrimary: true,
+              reachable: true,
+              agents: 0,
+              working: 0,
+              blocked: 0,
+            },
           ],
           agents: [],
           shellPanes: [],
@@ -94,13 +167,23 @@ describe("Gateway host routing and auth flow", () => {
         { headers: { "content-type": "application/json" } },
       );
     }) as unknown as typeof fetch;
-    const handler = setup(fetch, undefined, () => clock, config, collectorFetcher);
+    const handler = setup(
+      fetch,
+      undefined,
+      () => clock,
+      config,
+      collectorFetcher,
+    );
 
-    expect((await handler(request("fleet.example.com", "/api/fleet"))).status).toBe(401);
+    expect(
+      (await handler(request("fleet.example.com", "/api/fleet"))).status,
+    ).toBe(401);
     expect(calls).toBe(0);
 
     const cookie = await login(handler);
-    const response = await handler(request("fleet.example.com", "/api/fleet", { headers: { cookie } }));
+    const response = await handler(
+      request("fleet.example.com", "/api/fleet", { headers: { cookie } }),
+    );
     expect(response.status).toBe(200);
     expect(calls).toBe(1);
     expect(await response.json()).toMatchObject({
@@ -116,21 +199,37 @@ describe("Gateway host routing and auth flow", () => {
     });
 
     clock = 200;
-    const cached = await handler(request("fleet.example.com", "/api/fleet?manual=1", { headers: { cookie } }));
+    const cached = await handler(
+      request("fleet.example.com", "/api/fleet?manual=1", {
+        headers: { cookie },
+      }),
+    );
     expect(cached.status).toBe(200);
     expect(calls).toBe(1);
-    expect(await cached.json()).toMatchObject({ refresh: { delayMs: 5_000, nextAt: 5_100 } });
+    expect(await cached.json()).toMatchObject({
+      refresh: { delayMs: 5_000, nextAt: 5_100 },
+    });
 
     clock = 5_100;
-    const due = await handler(request("fleet.example.com", "/api/fleet", { headers: { cookie } }));
+    const due = await handler(
+      request("fleet.example.com", "/api/fleet", { headers: { cookie } }),
+    );
     expect(due.status).toBe(200);
     expect(calls).toBe(2);
-    expect(await due.json()).toMatchObject({ refresh: { delayMs: 5_000, nextAt: 10_100 } });
+    expect(await due.json()).toMatchObject({
+      refresh: { delayMs: 5_000, nextAt: 10_100 },
+    });
   });
 
   test("logs in once and proxies node requests without the session credential", async () => {
-    const seen: { cookie: string | null; host: string | null } = { cookie: null, host: null };
-    const handler = setup((async (_input: string | URL | Request, init?: RequestInit) => {
+    const seen: { cookie: string | null; host: string | null } = {
+      cookie: null,
+      host: null,
+    };
+    const handler = setup((async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const headers = new Headers(init?.headers);
       seen.cookie = headers.get("cookie");
       seen.host = headers.get("host");
@@ -138,10 +237,16 @@ describe("Gateway host routing and auth flow", () => {
         headers: { "content-type": "application/json" },
       });
     }) as typeof fetch);
-    const cookie = await login(handler, "https://local.example.com/pane/p1?session=demo");
+    const cookie = await login(
+      handler,
+      "https://local.example.com/pane/p1?session=demo",
+    );
     const response = await handler(
       request("local.example.com", "/api/snapshot?session=demo", {
-        headers: { cookie: `${cookie}; collie_pref=kept`, origin: "https://local.example.com" },
+        headers: {
+          cookie: `${cookie}; collie_pref=kept`,
+          origin: "https://local.example.com",
+        },
       }),
     );
     expect(response.status).toBe(200);
@@ -173,37 +278,57 @@ describe("Gateway host routing and auth flow", () => {
     raw.fleetUi = { iframeCacheSize: 5 };
     const framedConfig = parseGatewayConfig(raw);
     framedConfig.auth.passwordHash = config.auth.passwordHash;
-    const handler = setup((async (input: string | URL | Request) => {
-      const pathname = new URL(String(input)).pathname;
-      if (pathname.startsWith("/api/")) {
-        return new Response("{}", {
-          headers: { "content-type": "application/json", "x-frame-options": "SAMEORIGIN" },
+    const handler = setup(
+      (async (input: string | URL | Request) => {
+        const pathname = new URL(String(input)).pathname;
+        if (pathname.startsWith("/api/")) {
+          return new Response("{}", {
+            headers: {
+              "content-type": "application/json",
+              "x-frame-options": "SAMEORIGIN",
+            },
+          });
+        }
+        return new Response("<!doctype html><title>Collie</title>", {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "content-security-policy":
+              "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+            "x-frame-options": "SAMEORIGIN",
+          },
         });
-      }
-      return new Response("<!doctype html><title>Collie</title>", {
-        headers: {
-          "content-type": "text/html; charset=utf-8",
-          "content-security-policy":
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
-          "x-frame-options": "SAMEORIGIN",
-        },
-      });
-    }) as typeof fetch, undefined, undefined, framedConfig);
+      }) as typeof fetch,
+      undefined,
+      undefined,
+      framedConfig,
+    );
     const cookie = await login(handler);
 
-    const fleet = await handler(request("fleet.example.com", "/", { headers: { cookie } }));
+    const fleet = await handler(
+      request("fleet.example.com", "/", { headers: { cookie } }),
+    );
     const fleetCsp = fleet.headers.get("content-security-policy") ?? "";
     expect(fleet.status).toBe(200);
     expect(fleet.headers.get("x-frame-options")).toBe("DENY");
     expect(fleet.headers.get("referrer-policy")).toBe("same-origin");
     expect(fleetCsp).toContain("frame-ancestors 'none'");
-    expect(fleetCsp).toContain("frame-src https://local.example.com https://remote.example.com");
+    expect(fleetCsp).toContain(
+      "frame-src https://local.example.com https://remote.example.com",
+    );
     expect(fleetCsp).not.toContain("disabled.example.com");
     expect(fleetCsp).not.toContain("*.example.com");
     expect(await fleet.text()).toContain('data-iframe-cache-size="5"');
-    expect(await (await handler(request("fleet.example.com", "/", { headers: { cookie } }))).text()).toContain('data-plugin-version="2.4.1-test"');
+    expect(
+      await (
+        await handler(
+          request("fleet.example.com", "/", { headers: { cookie } }),
+        )
+      ).text(),
+    ).toContain('data-plugin-version="2.4.1-test"');
 
-    const node = await handler(request("local.example.com", "/", { headers: { cookie } }));
+    const node = await handler(
+      request("local.example.com", "/", { headers: { cookie } }),
+    );
     const nodeCsp = node.headers.get("content-security-policy") ?? "";
     expect(node.status).toBe(200);
     expect(node.headers.get("x-frame-options")).toBeNull();
@@ -214,7 +339,9 @@ describe("Gateway host routing and auth flow", () => {
     expect(nodeCsp).toContain("frame-ancestors https://fleet.example.com");
     expect(nodeCsp).not.toContain("frame-ancestors 'none'");
 
-    const api = await handler(request("local.example.com", "/api/snapshot", { headers: { cookie } }));
+    const api = await handler(
+      request("local.example.com", "/api/snapshot", { headers: { cookie } }),
+    );
     expect(api.headers.get("x-frame-options")).toBe("DENY");
   });
 
@@ -224,9 +351,13 @@ describe("Gateway host routing and auth flow", () => {
       calls += 1;
       return new Response("asset");
     }) as unknown as typeof fetch);
-    expect((await handler(request("local.example.com", "/sw.js"))).status).toBe(200);
+    expect((await handler(request("local.example.com", "/sw.js"))).status).toBe(
+      200,
+    );
     expect(calls).toBe(1);
-    expect((await handler(request("local.example.com", "/auth/not-collie"))).status).toBe(404);
+    expect(
+      (await handler(request("local.example.com", "/auth/not-collie"))).status,
+    ).toBe(404);
     expect(calls).toBe(1);
   });
 
@@ -235,23 +366,39 @@ describe("Gateway host routing and auth flow", () => {
       throw new Error("synthetic connection failure");
     }) as unknown as typeof fetch);
     const cookie = await login(handler);
-    const response = await handler(request("local.example.com", "/api/snapshot", { headers: { cookie } }));
+    const response = await handler(
+      request("local.example.com", "/api/snapshot", { headers: { cookie } }),
+    );
     expect(response.status).toBe(502);
-    expect(await response.json()).toEqual({ error: "node upstream unavailable" });
+    expect(await response.json()).toEqual({
+      error: "node upstream unavailable",
+    });
   });
 
   test("requires same-origin POST for logout and rate-limits invalid passwords", async () => {
     let clock = 1_000;
     const limiter = new LoginRateLimiter(2, 10_000, 20_000);
     const handler = setup(fetch, limiter, () => clock);
-    expect((await handler(request("fleet.example.com", "/auth/logout", { method: "POST" }))).status).toBe(403);
+    expect(
+      (
+        await handler(
+          request("fleet.example.com", "/auth/logout", { method: "POST" }),
+        )
+      ).status,
+    ).toBe(403);
 
     const invalid = () =>
       handler(
         request("fleet.example.com", "/auth/login", {
           method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded", "x-forwarded-for": "198.51.100.4" },
-          body: new URLSearchParams({ username: "operator", password: "wrong" }),
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            "x-forwarded-for": "198.51.100.4",
+          },
+          body: new URLSearchParams({
+            username: "operator",
+            password: "wrong",
+          }),
         }),
       );
     expect((await invalid()).status).toBe(401);
@@ -261,10 +408,12 @@ describe("Gateway host routing and auth flow", () => {
     expect((await invalid()).status).toBe(429);
 
     const cookie = await login(setup());
-    const logout = await setup()(request("local.example.com", "/auth/logout", {
-      method: "POST",
-      headers: { cookie, origin: "https://local.example.com" },
-    }));
+    const logout = await setup()(
+      request("local.example.com", "/auth/logout", {
+        method: "POST",
+        headers: { cookie, origin: "https://local.example.com" },
+      }),
+    );
     expect(logout.status).toBe(303);
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
   });

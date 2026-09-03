@@ -7,7 +7,13 @@ import { loadGatewayConfig, parseGatewayConfig } from "./config.ts";
 import { rawGatewayConfig } from "./test-helpers.ts";
 
 const temporary: string[] = [];
-afterEach(async () => Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
+afterEach(async () =>
+  Promise.all(
+    temporary
+      .splice(0)
+      .map((path) => rm(path, { recursive: true, force: true })),
+  ),
+);
 
 function nodes(raw: Record<string, unknown>): Array<Record<string, unknown>> {
   return raw.nodes as Array<Record<string, unknown>>;
@@ -19,14 +25,21 @@ describe("gateway configuration", () => {
     expect(config.public.fleetHost).toBe("fleet.example.com");
     expect(config.fleetUi.iframeCacheSize).toBe(1);
     expect(config.fleetUi.shortcuts.prefix.label).toBe("Ctrl+B");
-    expect(config.fleetUi.shortcuts.bindingsByCommand["copy-fleet-pane-link"]).toEqual([]);
-    expect(config.nodes[0]?.transport).toEqual({ type: "local", url: "http://127.0.0.1:18788" });
+    expect(
+      config.fleetUi.shortcuts.bindingsByCommand["copy-fleet-pane-link"],
+    ).toEqual([]);
+    expect(config.nodes[0]?.transport).toEqual({
+      type: "local",
+      url: "http://127.0.0.1:18788",
+    });
   });
 
   test("rejects the retired independently configured terminal URL", () => {
     const configured = rawGatewayConfig();
     nodes(configured)[0]!.fallbackUrl = "https://fleet.example.com/ttyd/local/";
-    expect(() => parseGatewayConfig(configured)).toThrow("unknown field(s): fallbackUrl");
+    expect(() => parseGatewayConfig(configured)).toThrow(
+      "unknown field(s): fallbackUrl",
+    );
   });
 
   test("accepts a bounded Fleet iframe cache size and rejects invalid Fleet UI settings", () => {
@@ -37,22 +50,33 @@ describe("gateway configuration", () => {
     for (const iframeCacheSize of [0, 11, 1.5, "5"]) {
       const invalid = rawGatewayConfig();
       invalid.fleetUi = { iframeCacheSize };
-      expect(() => parseGatewayConfig(invalid)).toThrow("fleetUi.iframeCacheSize");
+      expect(() => parseGatewayConfig(invalid)).toThrow(
+        "fleetUi.iframeCacheSize",
+      );
     }
 
     const unknown = rawGatewayConfig();
     unknown.fleetUi = { iframeCacheSize: 5, prioritizeAttention: true };
-    expect(() => parseGatewayConfig(unknown)).toThrow("fleetUi contains unknown field");
+    expect(() => parseGatewayConfig(unknown)).toThrow(
+      "fleetUi contains unknown field",
+    );
   });
 
   test("accepts only an absolute external Fleet shortcut path", () => {
     const configured = rawGatewayConfig();
-    configured.fleetUi = { iframeCacheSize: 5, shortcutsFile: "/synthetic/config/shortcuts.json" };
-    expect(parseGatewayConfig(configured).fleetUi.shortcutsFile).toBe("/synthetic/config/shortcuts.json");
+    configured.fleetUi = {
+      iframeCacheSize: 5,
+      shortcutsFile: "/synthetic/config/shortcuts.json",
+    };
+    expect(parseGatewayConfig(configured).fleetUi.shortcutsFile).toBe(
+      "/synthetic/config/shortcuts.json",
+    );
 
     const relative = rawGatewayConfig();
     relative.fleetUi = { shortcutsFile: "shortcuts.json" };
-    expect(() => parseGatewayConfig(relative)).toThrow("fleetUi.shortcutsFile must be absolute");
+    expect(() => parseGatewayConfig(relative)).toThrow(
+      "fleetUi.shortcutsFile must be absolute",
+    );
   });
 
   test("loads a complete external shortcut replacement with explicit empty bindings", async () => {
@@ -62,24 +86,36 @@ describe("gateway configuration", () => {
     const gatewayPath = join(root, "gateway.json");
     const raw = rawGatewayConfig();
     raw.fleetUi = { shortcutsFile: shortcutPath };
-    await writeFile(shortcutPath, JSON.stringify({
-      schemaVersion: 1,
-      prefix: "Ctrl+B",
-      bindings: {
-        "open-command-palette": [],
-        "copy-fleet-pane-link": ["Prefix+Ctrl+E"],
-      },
-    }));
+    await writeFile(
+      shortcutPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        prefix: "Ctrl+B",
+        bindings: {
+          "open-command-palette": [],
+          "copy-fleet-pane-link": ["Prefix+Ctrl+E"],
+        },
+      }),
+    );
     await writeFile(gatewayPath, JSON.stringify(raw), { mode: 0o600 });
 
     const config = await loadGatewayConfig(gatewayPath);
-    expect(config.fleetUi.shortcuts.bindingsByCommand["open-command-palette"]).toEqual([]);
-    expect(config.fleetUi.shortcuts.bindingsByCommand["open-fleet-settings"]).toEqual([]);
-    expect(config.fleetUi.shortcuts.bindingsByCommand["copy-fleet-pane-link"]?.[0]?.label).toBe("Prefix Ctrl+E");
+    expect(
+      config.fleetUi.shortcuts.bindingsByCommand["open-command-palette"],
+    ).toEqual([]);
+    expect(
+      config.fleetUi.shortcuts.bindingsByCommand["open-fleet-settings"],
+    ).toEqual([]);
+    expect(
+      config.fleetUi.shortcuts.bindingsByCommand["copy-fleet-pane-link"]?.[0]
+        ?.label,
+    ).toBe("Prefix Ctrl+E");
   });
 
   test("fails visibly for missing, malformed, unknown, colliding, or oversized shortcut files", async () => {
-    const root = await mkdtemp(join(tmpdir(), "web-remote-shortcuts-invalid-test-"));
+    const root = await mkdtemp(
+      join(tmpdir(), "web-remote-shortcuts-invalid-test-"),
+    );
     temporary.push(root);
     const gatewayPath = join(root, "gateway.json");
     const shortcutPath = join(root, "shortcuts.json");
@@ -89,17 +125,33 @@ describe("gateway configuration", () => {
 
     await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("unavailable");
     await writeFile(shortcutPath, "not json");
-    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("not valid JSON");
-    await writeFile(shortcutPath, JSON.stringify({ schemaVersion: 1, prefix: "Ctrl+B", bindings: { unknown: [] } }));
-    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("unknown command");
-    await writeFile(shortcutPath, JSON.stringify({
-      schemaVersion: 1,
-      prefix: "Ctrl+B",
-      bindings: { "next-pane": ["Alt+J"], "last-pane": ["Alt+J"] },
-    }));
+    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow(
+      "not valid JSON",
+    );
+    await writeFile(
+      shortcutPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        prefix: "Ctrl+B",
+        bindings: { unknown: [] },
+      }),
+    );
+    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow(
+      "unknown command",
+    );
+    await writeFile(
+      shortcutPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        prefix: "Ctrl+B",
+        bindings: { "next-pane": ["Alt+J"], "last-pane": ["Alt+J"] },
+      }),
+    );
     await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("collision");
     await writeFile(shortcutPath, " ".repeat(1_048_577));
-    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow("exceeds 1 MiB");
+    await expect(loadGatewayConfig(gatewayPath)).rejects.toThrow(
+      "exceeds 1 MiB",
+    );
   });
 
   test("rejects unknown fields, non-boolean enablement, non-loopback URLs, and disabled-only inventory", () => {
@@ -112,7 +164,10 @@ describe("gateway configuration", () => {
     expect(() => parseGatewayConfig(enabled)).toThrow("must be a boolean");
 
     const publicUrl = rawGatewayConfig();
-    nodes(publicUrl)[0]!.transport = { type: "local", url: "http://192.0.2.10:8787" };
+    nodes(publicUrl)[0]!.transport = {
+      type: "local",
+      url: "http://192.0.2.10:8787",
+    };
     expect(() => parseGatewayConfig(publicUrl)).toThrow("loopback");
 
     const disabled = rawGatewayConfig();
@@ -126,11 +181,18 @@ describe("gateway configuration", () => {
       ...nodes(duplicateHost)[0],
       id: "other",
     });
-    expect(() => parseGatewayConfig(duplicateHost)).toThrow("duplicate public host");
+    expect(() => parseGatewayConfig(duplicateHost)).toThrow(
+      "duplicate public host",
+    );
 
     const listenerCollision = rawGatewayConfig();
-    nodes(listenerCollision)[0]!.transport = { type: "local", url: "http://127.0.0.1:18787" };
-    expect(() => parseGatewayConfig(listenerCollision)).toThrow("duplicate local listener port");
+    nodes(listenerCollision)[0]!.transport = {
+      type: "local",
+      url: "http://127.0.0.1:18787",
+    };
+    expect(() => parseGatewayConfig(listenerCollision)).toThrow(
+      "duplicate local listener port",
+    );
   });
 
   test("parses an optional central-only Discord notifier and forwards an opaque template selector", () => {
@@ -150,16 +212,27 @@ describe("gateway configuration", () => {
 
     const disabled = rawGatewayConfig();
     disabled.discordNotifications = { enabled: false };
-    expect(parseGatewayConfig(disabled).discordNotifications).toEqual({ enabled: false });
+    expect(parseGatewayConfig(disabled).discordNotifications).toEqual({
+      enabled: false,
+    });
   });
 
   test("rejects incomplete or unsafe Discord notifier selectors", () => {
     const missing = rawGatewayConfig();
-    missing.discordNotifications = { enabled: true, executable: "/opt/example/bin/pingme" };
-    expect(() => parseGatewayConfig(missing)).toThrow("require executable and channel");
+    missing.discordNotifications = {
+      enabled: true,
+      executable: "/opt/example/bin/pingme",
+    };
+    expect(() => parseGatewayConfig(missing)).toThrow(
+      "require executable and channel",
+    );
 
     const relative = rawGatewayConfig();
-    relative.discordNotifications = { enabled: true, executable: "pingme", channel: "test" };
+    relative.discordNotifications = {
+      enabled: true,
+      executable: "pingme",
+      channel: "test",
+    };
     expect(() => parseGatewayConfig(relative)).toThrow("must be absolute");
 
     const invalidChannel = rawGatewayConfig();
@@ -168,7 +241,9 @@ describe("gateway configuration", () => {
       executable: "/opt/example/bin/pingme",
       channel: "--test-channel",
     };
-    expect(() => parseGatewayConfig(invalidChannel)).toThrow("numeric id or configured alias");
+    expect(() => parseGatewayConfig(invalidChannel)).toThrow(
+      "numeric id or configured alias",
+    );
   });
 
   test("rejects a private SSH identity path reused by another node", () => {
@@ -197,9 +272,15 @@ describe("gateway configuration", () => {
       id: "cluster-b",
       name: "Cluster B",
       publicHost: "cluster-b.example.com",
-      transport: { ...remote.transport, host: "cluster-b.example", localPort: 18790 },
+      transport: {
+        ...remote.transport,
+        host: "cluster-b.example",
+        localPort: 18790,
+      },
     });
-    expect(() => parseGatewayConfig(raw)).toThrow("duplicate SSH identity path");
+    expect(() => parseGatewayConfig(raw)).toThrow(
+      "duplicate SSH identity path",
+    );
   });
 
   test("accepts a structured SSH jump endpoint and rejects ambiguous jump configuration", () => {
@@ -235,14 +316,24 @@ describe("gateway configuration", () => {
     });
 
     const unknownField = structuredClone(raw);
-    const unknownJump = (nodes(unknownField)[0]!.transport as Record<string, unknown>).jump as Record<string, unknown>;
+    const unknownJump = (
+      nodes(unknownField)[0]!.transport as Record<string, unknown>
+    ).jump as Record<string, unknown>;
     unknownJump.agentForwarding = true;
-    expect(() => parseGatewayConfig(unknownField)).toThrow("jump contains unknown field");
+    expect(() => parseGatewayConfig(unknownField)).toThrow(
+      "jump contains unknown field",
+    );
 
     const sharedPath = structuredClone(raw);
-    const sharedTransport = nodes(sharedPath)[0]!.transport as Record<string, unknown>;
-    (sharedTransport.jump as Record<string, unknown>).identityFile = sharedTransport.identityFile;
-    expect(() => parseGatewayConfig(sharedPath)).toThrow("must differ from the target identity");
+    const sharedTransport = nodes(sharedPath)[0]!.transport as Record<
+      string,
+      unknown
+    >;
+    (sharedTransport.jump as Record<string, unknown>).identityFile =
+      sharedTransport.identityFile;
+    expect(() => parseGatewayConfig(sharedPath)).toThrow(
+      "must differ from the target identity",
+    );
   });
 
   test("requires protected config and SSH identity files", async () => {
@@ -252,7 +343,9 @@ describe("gateway configuration", () => {
     const identity = join(root, "ssh", "identity");
     const knownHosts = join(root, "ssh", "known_hosts");
     await writeFile(identity, "synthetic-private-key\n", { mode: 0o644 });
-    await writeFile(knownHosts, "cluster.example ssh-ed25519 synthetic\n", { mode: 0o644 });
+    await writeFile(knownHosts, "cluster.example ssh-ed25519 synthetic\n", {
+      mode: 0o644,
+    });
     const raw = rawGatewayConfig();
     nodes(raw)[0]!.transport = {
       type: "ssh",
@@ -269,15 +362,23 @@ describe("gateway configuration", () => {
     await writeFile(path, JSON.stringify(raw), { mode: 0o644 });
     await chmod(path, 0o644);
     await chmod(identity, 0o644);
-    await expect(loadGatewayConfig(path)).rejects.toThrow("gateway config must not be accessible");
+    await expect(loadGatewayConfig(path)).rejects.toThrow(
+      "gateway config must not be accessible",
+    );
     await chmod(path, 0o600);
-    await expect(loadGatewayConfig(path)).rejects.toThrow("SSH identity must not be accessible");
+    await expect(loadGatewayConfig(path)).rejects.toThrow(
+      "SSH identity must not be accessible",
+    );
     await chmod(identity, 0o600);
-    expect((await loadGatewayConfig(path)).nodes[0]?.transport.type).toBe("ssh");
+    expect((await loadGatewayConfig(path)).nodes[0]?.transport.type).toBe(
+      "ssh",
+    );
   });
 
   test("requires an enabled Discord notifier path to be a real executable file", async () => {
-    const root = await mkdtemp(join(tmpdir(), "web-remote-discord-config-test-"));
+    const root = await mkdtemp(
+      join(tmpdir(), "web-remote-discord-config-test-"),
+    );
     temporary.push(root);
     const executable = join(root, "pingme");
     const path = join(root, "gateway.json");
@@ -285,22 +386,33 @@ describe("gateway configuration", () => {
     raw.discordNotifications = { enabled: true, executable, channel: "test" };
     await writeFile(path, JSON.stringify(raw), { mode: 0o600 });
 
-    await expect(loadGatewayConfig(path)).rejects.toThrow("executable is unavailable");
+    await expect(loadGatewayConfig(path)).rejects.toThrow(
+      "executable is unavailable",
+    );
     await writeFile(executable, "synthetic binary\n", { mode: 0o600 });
-    await expect(loadGatewayConfig(path)).rejects.toThrow("regular executable file");
+    await expect(loadGatewayConfig(path)).rejects.toThrow(
+      "regular executable file",
+    );
     await chmod(executable, 0o700);
-    expect((await loadGatewayConfig(path)).discordNotifications).toMatchObject({ enabled: true, channel: "test" });
+    expect((await loadGatewayConfig(path)).discordNotifications).toMatchObject({
+      enabled: true,
+      channel: "test",
+    });
   });
 
   test("rejects copied SSH private identities even when their paths differ", async () => {
-    const root = await mkdtemp(join(tmpdir(), "web-remote-config-identity-test-"));
+    const root = await mkdtemp(
+      join(tmpdir(), "web-remote-config-identity-test-"),
+    );
     temporary.push(root);
     const identityA = join(root, "cluster-a-key");
     const identityB = join(root, "cluster-b-key");
     const knownHosts = join(root, "known_hosts");
     await writeFile(identityA, "synthetic-private-key-a\n", { mode: 0o600 });
     await writeFile(identityB, "synthetic-private-key-a\n", { mode: 0o600 });
-    await writeFile(knownHosts, "cluster.example ssh-ed25519 synthetic\n", { mode: 0o644 });
+    await writeFile(knownHosts, "cluster.example ssh-ed25519 synthetic\n", {
+      mode: 0o644,
+    });
 
     const raw = rawGatewayConfig();
     const transport = {
@@ -328,25 +440,46 @@ describe("gateway configuration", () => {
       publicHost: "cluster-b.example.com",
       enabled: true,
       labels: ["remote"],
-      transport: { ...transport, host: "cluster-b.example", identityFile: identityB, localPort: 18790 },
+      transport: {
+        ...transport,
+        host: "cluster-b.example",
+        identityFile: identityB,
+        localPort: 18790,
+      },
     });
     const path = join(root, "gateway.json");
     await writeFile(path, JSON.stringify(raw), { mode: 0o600 });
 
-    await expect(loadGatewayConfig(path)).rejects.toThrow("reuses the SSH private identity");
+    await expect(loadGatewayConfig(path)).rejects.toThrow(
+      "reuses the SSH private identity",
+    );
   });
 
   test("requires a protected jump identity and rejects a copied target identity", async () => {
-    const root = await mkdtemp(join(tmpdir(), "web-remote-jump-identity-test-"));
+    const root = await mkdtemp(
+      join(tmpdir(), "web-remote-jump-identity-test-"),
+    );
     temporary.push(root);
     const targetIdentity = join(root, "target-key");
     const jumpIdentity = join(root, "jump-key");
     const targetKnownHosts = join(root, "target-known-hosts");
     const jumpKnownHosts = join(root, "jump-known-hosts");
-    await writeFile(targetIdentity, "synthetic-target-private-key\n", { mode: 0o600 });
-    await writeFile(jumpIdentity, "synthetic-jump-private-key\n", { mode: 0o644 });
-    await writeFile(targetKnownHosts, "cluster.example ssh-ed25519 synthetic-target\n", { mode: 0o644 });
-    await writeFile(jumpKnownHosts, "bastion.example ssh-ed25519 synthetic-jump\n", { mode: 0o644 });
+    await writeFile(targetIdentity, "synthetic-target-private-key\n", {
+      mode: 0o600,
+    });
+    await writeFile(jumpIdentity, "synthetic-jump-private-key\n", {
+      mode: 0o644,
+    });
+    await writeFile(
+      targetKnownHosts,
+      "cluster.example ssh-ed25519 synthetic-target\n",
+      { mode: 0o644 },
+    );
+    await writeFile(
+      jumpKnownHosts,
+      "bastion.example ssh-ed25519 synthetic-jump\n",
+      { mode: 0o644 },
+    );
 
     const raw = rawGatewayConfig();
     nodes(raw)[0]!.transport = {
@@ -370,11 +503,21 @@ describe("gateway configuration", () => {
     const path = join(root, "gateway.json");
     await writeFile(path, JSON.stringify(raw), { mode: 0o600 });
 
-    await expect(loadGatewayConfig(path)).rejects.toThrow("SSH jump identity must not be accessible");
+    // The test runner commonly uses umask 077, so make the unsafe fixture explicit.
+    await chmod(jumpIdentity, 0o644);
+    await expect(loadGatewayConfig(path)).rejects.toThrow(
+      "SSH jump identity must not be accessible",
+    );
     await chmod(jumpIdentity, 0o600);
-    expect((await loadGatewayConfig(path)).nodes[0]?.transport.type).toBe("ssh");
+    expect((await loadGatewayConfig(path)).nodes[0]?.transport.type).toBe(
+      "ssh",
+    );
 
-    await writeFile(jumpIdentity, "synthetic-target-private-key\n", { mode: 0o600 });
-    await expect(loadGatewayConfig(path)).rejects.toThrow("SSH jump reuses its target private identity");
+    await writeFile(jumpIdentity, "synthetic-target-private-key\n", {
+      mode: 0o600,
+    });
+    await expect(loadGatewayConfig(path)).rejects.toThrow(
+      "SSH jump reuses its target private identity",
+    );
   });
 });

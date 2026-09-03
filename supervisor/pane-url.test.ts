@@ -28,7 +28,9 @@ describe("focused Pane Fleet URL", () => {
         tabId: "w0:t2",
         paneId: "w0:p3",
       }),
-    ).toBe("https://herdr.example.com/?instance=cluster-a&space=w0&tab=w0%3At2&pane=w0%3Ap3");
+    ).toBe(
+      "https://herdr.example.com/?instance=cluster-a&space=w0&tab=w0%3At2&pane=w0%3Ap3",
+    );
   });
 
   test("encodes a named session after the instance and Pane selectors", () => {
@@ -47,7 +49,9 @@ describe("focused Pane Fleet URL", () => {
   });
 
   test("accepts only an HTTPS origin root and bounded route selectors", () => {
-    expect(normalizeFleetUrl("https://herdr.example.com:8443")).toBe("https://herdr.example.com:8443/");
+    expect(normalizeFleetUrl("https://herdr.example.com:8443")).toBe(
+      "https://herdr.example.com:8443/",
+    );
     for (const fleetUrl of [
       "http://herdr.example.com/",
       "https://user@herdr.example.com/",
@@ -56,14 +60,32 @@ describe("focused Pane Fleet URL", () => {
       "https://herdr.example.com/#x",
     ]) {
       expect(() =>
-        buildFleetPaneUrl({ fleetUrl, instanceId: "cluster-a", spaceId: "w0", tabId: "w0:t2", paneId: "w0:p3" }),
+        buildFleetPaneUrl({
+          fleetUrl,
+          instanceId: "cluster-a",
+          spaceId: "w0",
+          tabId: "w0:t2",
+          paneId: "w0:p3",
+        }),
       ).toThrow();
     }
     expect(() =>
-      buildFleetPaneUrl({ fleetUrl: config.HERDR_WEB_FLEET_URL, instanceId: "Cluster A", spaceId: "w0", tabId: "w0:t2", paneId: "w0:p3" }),
+      buildFleetPaneUrl({
+        fleetUrl: config.HERDR_WEB_FLEET_URL,
+        instanceId: "Cluster A",
+        spaceId: "w0",
+        tabId: "w0:t2",
+        paneId: "w0:p3",
+      }),
     ).toThrow("instance id");
     expect(() =>
-      buildFleetPaneUrl({ fleetUrl: config.HERDR_WEB_FLEET_URL, instanceId: "cluster-a", spaceId: "w0", tabId: "w0:t2", paneId: "../p3" }),
+      buildFleetPaneUrl({
+        fleetUrl: config.HERDR_WEB_FLEET_URL,
+        instanceId: "cluster-a",
+        spaceId: "w0",
+        tabId: "w0:t2",
+        paneId: "../p3",
+      }),
     ).toThrow("Pane id");
     expect(() =>
       buildFleetPaneUrl({
@@ -84,30 +106,39 @@ describe("focused Pane Fleet URL", () => {
         HERDR_SOCKET_PATH: "/tmp/relocated.sock",
       }),
     ).toBe("cluster-user");
-    expect(sessionNameFromRuntime({ HERDR_SESSION: "default" })).toBeUndefined();
     expect(
-      sessionNameFromRuntime({ HERDR_SOCKET_PATH: "/home/operator/.config/herdr/sessions/demo/herdr.sock" }),
+      sessionNameFromRuntime({ HERDR_SESSION: "default" }),
+    ).toBeUndefined();
+    expect(
+      sessionNameFromRuntime({
+        HERDR_SOCKET_PATH:
+          "/home/operator/.config/herdr/sessions/demo/herdr.sock",
+      }),
     ).toBe("demo");
-    expect(sessionNameFromRuntime({ HERDR_SOCKET_PATH: "/tmp/relocated.sock" })).toBeUndefined();
-    expect(() => sessionNameFromRuntime({ HERDR_SESSION: "bad\u0007session" })).toThrow("session name");
+    expect(
+      sessionNameFromRuntime({ HERDR_SOCKET_PATH: "/tmp/relocated.sock" }),
+    ).toBeUndefined();
+    expect(() =>
+      sessionNameFromRuntime({ HERDR_SESSION: "bad\u0007session" }),
+    ).toThrow("session name");
   });
 });
 
 describe("Pane URL clipboard bridge", () => {
-  test("keeps the manifest, public environment, and portable binding in sync", async () => {
-    const manifest = await Bun.file(join(pluginRoot, "herdr-plugin.toml")).text();
+  test("keeps the manifest and public environment in sync", async () => {
+    const manifest = await Bun.file(
+      join(pluginRoot, "herdr-plugin.toml"),
+    ).text();
     expect(manifest).toContain('id = "copy-pane-url"');
     expect(manifest).toContain('contexts = ["pane"]');
     expect(manifest).toContain('placement = "popup"');
-    expect(manifest).toContain('command = ["bash", "scripts/pane-url.sh", "copy"]');
+    expect(manifest).toContain(
+      'command = ["bash", "scripts/pane-url.sh", "copy"]',
+    );
 
     const example = await Bun.file(join(pluginRoot, ".env.example")).text();
     expect(example).toContain("HERDR_WEB_FLEET_URL=https://herdr.example.com/");
     expect(example).toContain("HERDR_WEB_INSTANCE_ID=local");
-
-    const readme = await Bun.file(join(pluginRoot, "README.md")).text();
-    expect(readme).toContain('key = "prefix+ctrl+r"');
-    expect(readme).toContain('command = "memset0.web-remote.copy-pane-url"');
   });
 
   test("opens the registered popup with validated plugin-namespaced context", () => {

@@ -1,0 +1,23 @@
+@media (min-width: 1200px) and (hover: hover) and (pointer: fine) {
+  .desktop-terminal-entry {
+    display: inline-flex;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-mark {
+    animation: none;
+  }
+  .agent-card,
+  .agent-card-main {
+    transition: none;
+  }
+  .fleet-shell,
+  .fleet-header,
+  .agent-menu,
+  .instance-strip,
+  .host-rail-footer,
+  .tree-children,
+  .tree-chevron {
+    transition: none !important;
+  }
+}

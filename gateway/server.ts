@@ -7,11 +7,16 @@ import {
   sessionCookie,
   verifyCredentials,
 } from "./auth.ts";
-import { normalizeHost, type GatewayConfig, type NodeConfig } from "./config.ts";
+import {
+  normalizeHost,
+  type GatewayConfig,
+  type NodeConfig,
+} from "./config.ts";
 import type { FleetCollector } from "./fleet.ts";
 import { proxyCollie, publicCollieAsset } from "./proxy.ts";
 import type { TransportRegistry } from "./transports.ts";
-import { APP_CSS, FLEET_CSS, FLEET_JS, fleetPage, loginPage } from "./ui.ts";
+import { fleetAssetResponse } from "./fleet-ui/index.ts";
+import { APP_CSS, fleetPage, loginPage } from "./ui.ts";
 
 const HTML_CSP =
   "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data:; " +
@@ -27,11 +32,17 @@ const BASE_HEADERS: Record<string, string> = {
 
 function response(body: BodyInit | null, init: ResponseInit = {}): Response {
   const headers = new Headers(init.headers);
-  for (const [name, value] of Object.entries(BASE_HEADERS)) headers.set(name, value);
+  for (const [name, value] of Object.entries(BASE_HEADERS))
+    headers.set(name, value);
   return new Response(body, { ...init, headers });
 }
 
-function html(body: string, status = 200, extra: HeadersInit = {}, contentSecurityPolicy = HTML_CSP): Response {
+function html(
+  body: string,
+  status = 200,
+  extra: HeadersInit = {},
+  contentSecurityPolicy = HTML_CSP,
+): Response {
   const headers = new Headers(extra);
   headers.set("content-type", "text/html; charset=utf-8");
   headers.set("content-security-policy", contentSecurityPolicy);
@@ -54,23 +65,37 @@ function fleetDocumentCsp(config: GatewayConfig): string {
   return `${HTML_CSP}; frame-src ${frameSources}`;
 }
 
-function nodeDocumentCsp(upstream: string | null, config: GatewayConfig): string {
+function nodeDocumentCsp(
+  upstream: string | null,
+  config: GatewayConfig,
+): string {
   const directives = (upstream ?? "default-src 'none'")
     .split(";")
     .map((directive) => directive.trim())
-    .filter((directive) => directive && !directive.toLowerCase().startsWith("frame-ancestors"));
-  directives.push(`frame-ancestors ${publicOrigin(config, config.public.fleetHost)}`);
+    .filter(
+      (directive) =>
+        directive && !directive.toLowerCase().startsWith("frame-ancestors"),
+    );
+  directives.push(
+    `frame-ancestors ${publicOrigin(config, config.public.fleetHost)}`,
+  );
   return directives.join("; ");
 }
 
 function isHtmlDocument(headers: Headers): boolean {
-  return headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === "text/html";
+  return (
+    headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ===
+    "text/html"
+  );
 }
 
 function json(value: unknown, status = 200): Response {
   return response(JSON.stringify(value), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
   });
 }
 
@@ -81,11 +106,18 @@ function redirect(location: string, headers: HeadersInit = {}): Response {
 }
 
 function clientKey(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim();
+  const forwarded = request.headers
+    .get("x-forwarded-for")
+    ?.split(",", 1)[0]
+    ?.trim();
   return forwarded || request.headers.get("x-real-ip")?.trim() || "unknown";
 }
 
-function requestedUrl(request: Request, config: GatewayConfig, host: string): string {
+function requestedUrl(
+  request: Request,
+  config: GatewayConfig,
+  host: string,
+): string {
   const url = new URL(request.url);
   return `${config.public.scheme}://${host}${url.pathname}${url.search}`;
 }
@@ -94,19 +126,31 @@ function expectedOrigin(config: GatewayConfig, host: string): string {
   return `${config.public.scheme}://${host}`;
 }
 
-function sameOriginPost(request: Request, config: GatewayConfig, host: string): boolean {
+function sameOriginPost(
+  request: Request,
+  config: GatewayConfig,
+  host: string,
+): boolean {
   if (request.method !== "POST") return false;
   const origin = request.headers.get("origin");
   if (origin) return origin === expectedOrigin(config, host);
   const referer = request.headers.get("referer");
-  return Boolean(referer && referer.startsWith(`${expectedOrigin(config, host)}/`));
+  return Boolean(
+    referer && referer.startsWith(`${expectedOrigin(config, host)}/`),
+  );
 }
 
 async function formData(request: Request): Promise<URLSearchParams> {
-  const type = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (type !== "application/x-www-form-urlencoded") throw new Error("unsupported form content type");
+  const type = request.headers
+    .get("content-type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  if (type !== "application/x-www-form-urlencoded")
+    throw new Error("unsupported form content type");
   const length = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(length) && length > 16_384) throw new Error("form is too large");
+  if (Number.isFinite(length) && length > 16_384)
+    throw new Error("form is too large");
   const text = await request.text();
   if (text.length > 16_384) throw new Error("form is too large");
   return new URLSearchParams(text);
@@ -122,30 +166,51 @@ export interface GatewayHandlerOptions {
   now?: () => number;
 }
 
-export function createGatewayHandler(options: GatewayHandlerOptions): (request: Request) => Promise<Response> {
+export function createGatewayHandler(
+  options: GatewayHandlerOptions,
+): (request: Request) => Promise<Response> {
   const { config, collector, transports } = options;
   const pluginVersion = options.pluginVersion ?? "development";
   const fetcher = options.fetcher ?? fetch;
   const limiter = options.limiter ?? new LoginRateLimiter();
   const now = options.now ?? Date.now;
   const nodes = new Map<string, NodeConfig>(
-    config.nodes.filter((node) => node.enabled).map((node) => [node.publicHost, node]),
+    config.nodes
+      .filter((node) => node.enabled)
+      .map((node) => [node.publicHost, node]),
   );
   const recognizedHosts = new Set([config.public.fleetHost, ...nodes.keys()]);
 
-  const proxyNode = async (request: Request, node: NodeConfig): Promise<Response> => {
+  const proxyNode = async (
+    request: Request,
+    node: NodeConfig,
+  ): Promise<Response> => {
     try {
-      const proxied = await proxyCollie(request, node, transports.upstream(node), config, fetcher);
-      for (const [name, value] of Object.entries(BASE_HEADERS)) proxied.headers.set(name, value);
+      const proxied = await proxyCollie(
+        request,
+        node,
+        transports.upstream(node),
+        config,
+        fetcher,
+      );
+      for (const [name, value] of Object.entries(BASE_HEADERS))
+        proxied.headers.set(name, value);
       if (isHtmlDocument(proxied.headers)) {
-        proxied.headers.set("content-security-policy", nodeDocumentCsp(proxied.headers.get("content-security-policy"), config));
+        proxied.headers.set(
+          "content-security-policy",
+          nodeDocumentCsp(
+            proxied.headers.get("content-security-policy"),
+            config,
+          ),
+        );
         // X-Frame-Options cannot express an exact cross-origin parent and would override the more
         // precise CSP in older browser implementations. Node documents are framed only by Fleet.
         proxied.headers.delete("x-frame-options");
       }
       return proxied;
     } catch {
-      return request.headers.get("accept")?.includes("application/json") || new URL(request.url).pathname.startsWith("/api/")
+      return request.headers.get("accept")?.includes("application/json") ||
+        new URL(request.url).pathname.startsWith("/api/")
         ? json({ error: "node upstream unavailable" }, 502)
         : response("node upstream unavailable\n", { status: 502 });
     }
@@ -153,18 +218,33 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
 
   return async (request: Request): Promise<Response> => {
     const host = normalizeHost(request.headers.get("host"));
-    if (!recognizedHosts.has(host)) return response("not found\n", { status: 404 });
+    if (!recognizedHosts.has(host))
+      return response("not found\n", { status: 404 });
     const url = new URL(request.url);
     const authenticated = hasSession(request, config, now());
 
     if (url.pathname === "/auth/app.css" && request.method === "GET") {
-      return response(APP_CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" } });
+      return response(APP_CSS, {
+        headers: {
+          "content-type": "text/css; charset=utf-8",
+          "cache-control": "no-cache",
+        },
+      });
     }
-    if (url.pathname === "/fleet-assets/fleet.css" && request.method === "GET") {
-      return response(FLEET_CSS, { headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-cache" } });
+    if (
+      url.pathname === "/fleet-assets/fleet.css" &&
+      request.method === "GET"
+    ) {
+      const asset = await fleetAssetResponse("fleet.css");
+      for (const [name, value] of Object.entries(BASE_HEADERS))
+        asset.headers.set(name, value);
+      return asset;
     }
     if (url.pathname === "/fleet-assets/fleet.js" && request.method === "GET") {
-      return response(FLEET_JS, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } });
+      const asset = await fleetAssetResponse("fleet.js");
+      for (const [name, value] of Object.entries(BASE_HEADERS))
+        asset.headers.set(name, value);
+      return asset;
     }
 
     if (url.pathname === "/auth/login" && request.method === "GET") {
@@ -173,28 +253,55 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
     }
     if (url.pathname === "/auth/login" && request.method === "POST") {
       const key = clientKey(request);
-      if (!limiter.allowed(key, now())) return html(loginPage(safeReturnUrl(null, config), "Too many attempts. Try again later."), 429);
+      if (!limiter.allowed(key, now()))
+        return html(
+          loginPage(
+            safeReturnUrl(null, config),
+            "Too many attempts. Try again later.",
+          ),
+          429,
+        );
       try {
         const form = await formData(request);
         const next = safeReturnUrl(form.get("next"), config);
-        const valid = await verifyCredentials(form.get("username") ?? "", form.get("password") ?? "", config);
+        const valid = await verifyCredentials(
+          form.get("username") ?? "",
+          form.get("password") ?? "",
+          config,
+        );
         if (!valid) {
           limiter.failure(key, now());
           return html(loginPage(next, "Invalid username or password."), 401);
         }
         limiter.success(key);
-        return redirect(next, { "set-cookie": sessionCookie(config, createSessionToken(config, now())) });
+        return redirect(next, {
+          "set-cookie": sessionCookie(
+            config,
+            createSessionToken(config, now()),
+          ),
+        });
       } catch (error) {
-        return html(loginPage(safeReturnUrl(null, config), error instanceof Error ? error.message : "Invalid request."), 400);
+        return html(
+          loginPage(
+            safeReturnUrl(null, config),
+            error instanceof Error ? error.message : "Invalid request.",
+          ),
+          400,
+        );
       }
     }
     if (url.pathname === "/auth/logout") {
-      if (!sameOriginPost(request, config, host)) return response("forbidden\n", { status: 403 });
-      return redirect(`${config.public.scheme}://${config.public.fleetHost}/auth/login`, {
-        "set-cookie": clearSessionCookie(config),
-      });
+      if (!sameOriginPost(request, config, host))
+        return response("forbidden\n", { status: 403 });
+      return redirect(
+        `${config.public.scheme}://${config.public.fleetHost}/auth/login`,
+        {
+          "set-cookie": clearSessionCookie(config),
+        },
+      );
     }
-    if (url.pathname.startsWith("/auth/")) return response("not found\n", { status: 404 });
+    if (url.pathname.startsWith("/auth/"))
+      return response("not found\n", { status: 404 });
 
     const node = nodes.get(host);
     if (node && publicCollieAsset(url.pathname) && request.method === "GET") {
@@ -202,20 +309,29 @@ export function createGatewayHandler(options: GatewayHandlerOptions): (request: 
     }
 
     if (!authenticated) {
-      if (url.pathname.startsWith("/api/")) return json({ error: "authentication required" }, 401);
-      const login = new URL(`${config.public.scheme}://${config.public.fleetHost}/auth/login`);
+      if (url.pathname.startsWith("/api/"))
+        return json({ error: "authentication required" }, 401);
+      const login = new URL(
+        `${config.public.scheme}://${config.public.fleetHost}/auth/login`,
+      );
       login.searchParams.set("next", requestedUrl(request, config, host));
       return redirect(login.toString());
     }
 
     if (host === config.public.fleetHost) {
       if (url.pathname === "/api/fleet" && request.method === "GET") {
-        await collector.refresh({ manual: url.searchParams.get("manual") === "1" });
+        await collector.refresh({
+          manual: url.searchParams.get("manual") === "1",
+        });
         return json(collector.snapshot());
       }
       if (url.pathname === "/" && request.method === "GET") {
         const document = html(
-          fleetPage(config.fleetUi.iframeCacheSize, pluginVersion, config.fleetUi.shortcuts),
+          fleetPage(
+            config.fleetUi.iframeCacheSize,
+            pluginVersion,
+            config.fleetUi.shortcuts,
+          ),
           200,
           {},
           fleetDocumentCsp(config),

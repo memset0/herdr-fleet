@@ -8,6 +8,7 @@ bun_bin="$(find_bun)"
 
 "$root/scripts/check-version.sh"
 (cd "$root" && "$bun_bin" install --frozen-lockfile && "$bun_bin" run typecheck)
+(cd "$root" && "$bun_bin" run scripts/build-fleet-assets.ts)
 (cd "$root/web" && "$bun_bin" install --frozen-lockfile && "$bun_bin" run typecheck)
 case "${HERDR_WEB_TTYD_TEST_MODE:-run}" in
   run)

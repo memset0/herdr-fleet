@@ -1,59 +1,32 @@
 import type { GatewayConfig, NodeConfig } from "./config.ts";
 import type { TransportRegistry, TransportStatus } from "./transports.ts";
 
-export interface SessionSummary {
-  name: string;
-  isPrimary: boolean;
-  reachable: boolean;
-  agents: number;
-  working: number;
-  blocked: number;
-}
-
-export type FleetAgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
-
-interface AgentProjection {
-  paneId: string;
-  workspaceId: string;
-  workspaceLabel: string;
-  workspaceNumber: number;
-  tabId: string;
-  agent: string;
-  status: FleetAgentStatus;
-  cwd: string;
-  focused: boolean;
-  paneLabel?: string;
-  sessionName?: string;
-  tabLabel?: string;
-  lastActiveAt?: number;
-  lastSeenAt?: number;
-}
-
-interface WorkspaceProjection {
-  workspaceId: string;
-  number: number;
-  label: string;
-  focused: boolean;
-  activeTabId: string;
-  tabCount: number;
-  paneCount: number;
-}
-
-interface TabProjection {
-  tabId: string;
-  workspaceId: string;
-  number: number;
-  label: string;
-  focused: boolean;
-  paneCount: number;
-}
-
-export interface FleetAgentCard extends AgentProjection {
-  herdrSession: string;
-  primarySession: boolean;
-  reachable: boolean;
-  observedAt: number;
-}
+export type {
+  AgentProjection,
+  FleetAgentCard,
+  FleetAgentStatus,
+  FleetNodeState,
+  FleetSessionTree,
+  FleetState,
+  FleetTransportStatus,
+  FleetTreePane,
+  FleetTreeSpace,
+  FleetTreeTab,
+  SessionSummary,
+  TabProjection,
+  WorkspaceProjection,
+} from "../shared/fleet/index.ts";
+import type {
+  AgentProjection,
+  FleetAgentCard,
+  FleetAgentStatus,
+  FleetNodeState,
+  FleetSessionTree,
+  FleetState,
+  SessionSummary,
+  TabProjection,
+  WorkspaceProjection,
+} from "../shared/fleet/index.ts";
 
 interface CollieSnapshot {
   bridge: string;
@@ -65,72 +38,6 @@ interface CollieSnapshot {
   ts: number;
 }
 
-export interface FleetTreePane {
-  paneId: string;
-  label: string | null;
-  agent: string;
-  kind: "agent" | "shell";
-  status: FleetAgentStatus;
-  focused: boolean;
-}
-
-export interface FleetTreeTab {
-  tabId: string;
-  number: number;
-  label: string;
-  focused: boolean;
-  panes: FleetTreePane[];
-}
-
-export interface FleetTreeSpace {
-  workspaceId: string;
-  number: number;
-  label: string;
-  focused: boolean;
-  tabs: FleetTreeTab[];
-}
-
-export interface FleetSessionTree {
-  herdrSession: string;
-  primarySession: boolean;
-  reachable: boolean;
-  observedAt: number;
-  spaces: FleetTreeSpace[];
-}
-
-export interface FleetNodeState {
-  id: string;
-  name: string;
-  publicHost: string;
-  labels: string[];
-  health: "online" | "herdr-down" | "bridge-down" | "transport-down";
-  transport: TransportStatus;
-  bridge: string | null;
-  agents: number;
-  working: number;
-  blocked: number;
-  sessions: SessionSummary[];
-  agentEntries: FleetAgentCard[];
-  treeSessions: FleetSessionTree[];
-  observedAt: number;
-  lastHealthyAt: number | null;
-  message: string | null;
-}
-
-export interface FleetState {
-  generatedAt: number;
-  revision: number;
-  refresh: {
-    baseMs: number;
-    maxMs: number;
-    minNodeRevisitMs: number;
-    delayMs: number;
-    nextAt: number;
-  };
-  totals: { nodes: number; online: number; agents: number; working: number; blocked: number };
-  nodes: FleetNodeState[];
-}
-
 export interface FleetCollectorRuntime {
   schedule?: (callback: () => void | Promise<void>, delayMs: number) => unknown;
   cancel?: (handle: unknown) => void;
@@ -140,7 +47,13 @@ export interface FleetCollectorRuntime {
 
 const MIN_NODE_REVISIT_MS = 5_000;
 const MAX_REFRESH_MS = 3_600_000;
-const AGENT_STATUSES = new Set<FleetAgentStatus>(["idle", "working", "blocked", "done", "unknown"]);
+const AGENT_STATUSES = new Set<FleetAgentStatus>([
+  "idle",
+  "working",
+  "blocked",
+  "done",
+  "unknown",
+]);
 const ROUTE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
@@ -154,7 +67,9 @@ function validSession(value: unknown): value is SessionSummary {
     !CONTROL_CHARACTER.test(session.name) &&
     typeof session.isPrimary === "boolean" &&
     typeof session.reachable === "boolean" &&
-    [session.agents, session.working, session.blocked].every((count) => Number.isSafeInteger(count) && (count as number) >= 0)
+    [session.agents, session.working, session.blocked].every(
+      (count) => Number.isSafeInteger(count) && (count as number) >= 0,
+    )
   );
 }
 
@@ -166,18 +81,24 @@ function requiredString(value: unknown, label: string, max = 4_096): string {
 }
 
 function displayString(value: unknown, label: string, max = 4_096): string {
-  if (typeof value !== "string" || value.length > max) throw new Error(`${label} is invalid`);
+  if (typeof value !== "string" || value.length > max)
+    throw new Error(`${label} is invalid`);
   return value;
 }
 
-function optionalString(value: unknown, label: string, max = 4_096): string | undefined {
+function optionalString(
+  value: unknown,
+  label: string,
+  max = 4_096,
+): string | undefined {
   if (value === undefined) return undefined;
   return displayString(value, label, max);
 }
 
 function optionalTimestamp(value: unknown, label: string): number | undefined {
   if (value === undefined) return undefined;
-  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`${label} is invalid`);
+  if (!Number.isSafeInteger(value) || (value as number) < 0)
+    throw new Error(`${label} is invalid`);
   return value as number;
 }
 
@@ -188,7 +109,8 @@ function routeId(value: unknown, label: string): string {
 }
 
 function nonNegativeInteger(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) throw new Error(`${label} is invalid`);
+  if (!Number.isSafeInteger(value) || (value as number) < 0)
+    throw new Error(`${label} is invalid`);
   return value as number;
 }
 
@@ -202,25 +124,56 @@ function parseAgent(value: unknown, index: number): AgentProjection {
     throw new Error(`agents[${index}] is not an object`);
   }
   const agent = value as Record<string, unknown>;
-  const status = requiredString(agent.status, `agents[${index}].status`, 16) as FleetAgentStatus;
-  if (!AGENT_STATUSES.has(status)) throw new Error(`agents[${index}].status is invalid`);
-  if (!Number.isSafeInteger(agent.workspaceNumber) || (agent.workspaceNumber as number) < 0) {
+  const status = requiredString(
+    agent.status,
+    `agents[${index}].status`,
+    16,
+  ) as FleetAgentStatus;
+  if (!AGENT_STATUSES.has(status))
+    throw new Error(`agents[${index}].status is invalid`);
+  if (
+    !Number.isSafeInteger(agent.workspaceNumber) ||
+    (agent.workspaceNumber as number) < 0
+  ) {
     throw new Error(`agents[${index}].workspaceNumber is invalid`);
   }
-  if (typeof agent.focused !== "boolean") throw new Error(`agents[${index}].focused is invalid`);
+  if (typeof agent.focused !== "boolean")
+    throw new Error(`agents[${index}].focused is invalid`);
 
-  const paneLabel = optionalString(agent.paneLabel, `agents[${index}].paneLabel`, 1_024);
-  const sessionName = optionalString(agent.sessionName, `agents[${index}].sessionName`, 1_024);
-  const tabLabel = optionalString(agent.tabLabel, `agents[${index}].tabLabel`, 1_024);
-  const lastActiveAt = optionalTimestamp(agent.lastActiveAt, `agents[${index}].lastActiveAt`);
-  const lastSeenAt = optionalTimestamp(agent.lastSeenAt, `agents[${index}].lastSeenAt`);
+  const paneLabel = optionalString(
+    agent.paneLabel,
+    `agents[${index}].paneLabel`,
+    1_024,
+  );
+  const sessionName = optionalString(
+    agent.sessionName,
+    `agents[${index}].sessionName`,
+    1_024,
+  );
+  const tabLabel = optionalString(
+    agent.tabLabel,
+    `agents[${index}].tabLabel`,
+    1_024,
+  );
+  const lastActiveAt = optionalTimestamp(
+    agent.lastActiveAt,
+    `agents[${index}].lastActiveAt`,
+  );
+  const lastSeenAt = optionalTimestamp(
+    agent.lastSeenAt,
+    `agents[${index}].lastSeenAt`,
+  );
 
   const paneId = routeId(agent.paneId, `agents[${index}].paneId`);
 
   return {
     paneId,
     workspaceId: routeId(agent.workspaceId, `agents[${index}].workspaceId`),
-    workspaceLabel: displayString(agent.workspaceLabel, `agents[${index}].workspaceLabel`, 1_024),
+    workspaceLabel: displayString(
+      agent.workspaceLabel,
+      `agents[${index}].workspaceLabel`,
+      1_024,
+    ),
     workspaceNumber: agent.workspaceNumber as number,
     tabId: routeId(agent.tabId, `agents[${index}].tabId`),
     agent: requiredString(agent.agent, `agents[${index}].agent`, 128),
@@ -241,13 +194,25 @@ function parseWorkspace(value: unknown, index: number): WorkspaceProjection {
   }
   const workspace = value as Record<string, unknown>;
   return {
-    workspaceId: routeId(workspace.workspaceId, `workspaces[${index}].workspaceId`),
+    workspaceId: routeId(
+      workspace.workspaceId,
+      `workspaces[${index}].workspaceId`,
+    ),
     number: nonNegativeInteger(workspace.number, `workspaces[${index}].number`),
     label: displayString(workspace.label, `workspaces[${index}].label`, 1_024),
     focused: boolean(workspace.focused, `workspaces[${index}].focused`),
-    activeTabId: routeId(workspace.activeTabId, `workspaces[${index}].activeTabId`),
-    tabCount: nonNegativeInteger(workspace.tabCount, `workspaces[${index}].tabCount`),
-    paneCount: nonNegativeInteger(workspace.paneCount, `workspaces[${index}].paneCount`),
+    activeTabId: routeId(
+      workspace.activeTabId,
+      `workspaces[${index}].activeTabId`,
+    ),
+    tabCount: nonNegativeInteger(
+      workspace.tabCount,
+      `workspaces[${index}].tabCount`,
+    ),
+    paneCount: nonNegativeInteger(
+      workspace.paneCount,
+      `workspaces[${index}].paneCount`,
+    ),
   };
 }
 
@@ -267,7 +232,8 @@ function parseTab(value: unknown, index: number): TabProjection {
 }
 
 function parseSnapshot(value: unknown): CollieSnapshot {
-  if (!value || typeof value !== "object") throw new Error("snapshot is not an object");
+  if (!value || typeof value !== "object")
+    throw new Error("snapshot is not an object");
   const snapshot = value as Record<string, unknown>;
   if (
     typeof snapshot.bridge !== "string" ||
@@ -288,16 +254,24 @@ function parseSnapshot(value: unknown): CollieSnapshot {
   ) {
     throw new Error("snapshot shape exceeds Fleet limits");
   }
-  const sessionNames = new Set((snapshot.sessions as SessionSummary[]).map((session) => session.name));
-  const primarySessions = (snapshot.sessions as SessionSummary[]).filter((session) => session.isPrimary).length;
+  const sessionNames = new Set(
+    (snapshot.sessions as SessionSummary[]).map((session) => session.name),
+  );
+  const primarySessions = (snapshot.sessions as SessionSummary[]).filter(
+    (session) => session.isPrimary,
+  ).length;
   if (sessionNames.size !== snapshot.sessions.length || primarySessions !== 1) {
     throw new Error("snapshot session registry is ambiguous");
   }
   const agents = (snapshot.agents as unknown[]).map(parseAgent);
-  const shellPanes = (snapshot.shellPanes as unknown[]).map((pane, index) => parseAgent(pane, agents.length + index));
+  const shellPanes = (snapshot.shellPanes as unknown[]).map((pane, index) =>
+    parseAgent(pane, agents.length + index),
+  );
   const workspaces = (snapshot.workspaces as unknown[]).map(parseWorkspace);
   const tabs = (snapshot.tabs as unknown[]).map(parseTab);
-  const workspaceIds = new Set(workspaces.map((workspace) => workspace.workspaceId));
+  const workspaceIds = new Set(
+    workspaces.map((workspace) => workspace.workspaceId),
+  );
   const tabIds = new Set(tabs.map((tab) => tab.tabId));
   if (workspaceIds.size !== workspaces.length || tabIds.size !== tabs.length) {
     throw new Error("snapshot topology contains duplicate ids");
@@ -309,7 +283,11 @@ function parseSnapshot(value: unknown): CollieSnapshot {
   if (new Set(panes.map((pane) => pane.paneId)).size !== panes.length) {
     throw new Error("snapshot topology contains duplicate pane ids");
   }
-  if (panes.some((pane) => !workspaceIds.has(pane.workspaceId) || !tabIds.has(pane.tabId))) {
+  if (
+    panes.some(
+      (pane) => !workspaceIds.has(pane.workspaceId) || !tabIds.has(pane.tabId),
+    )
+  ) {
     throw new Error("snapshot pane references unknown topology");
   }
   return {
@@ -327,11 +305,17 @@ function offlineAgents(entries: readonly FleetAgentCard[]): FleetAgentCard[] {
   return entries.map((entry) => ({ ...entry, reachable: false }));
 }
 
-function offlineTrees(entries: readonly FleetSessionTree[]): FleetSessionTree[] {
+function offlineTrees(
+  entries: readonly FleetSessionTree[],
+): FleetSessionTree[] {
   return entries.map((entry) => ({ ...entry, reachable: false }));
 }
 
-function sessionTree(snapshot: CollieSnapshot, session: SessionSummary, observedAt: number): FleetSessionTree {
+function sessionTree(
+  snapshot: CollieSnapshot,
+  session: SessionSummary,
+  observedAt: number,
+): FleetSessionTree {
   const panes = [
     ...snapshot.agents.map((pane) => ({ ...pane, kind: "agent" as const })),
     ...snapshot.shellPanes.map((pane) => ({ ...pane, kind: "shell" as const })),
@@ -342,7 +326,11 @@ function sessionTree(snapshot: CollieSnapshot, session: SessionSummary, observed
     reachable: true,
     observedAt,
     spaces: [...snapshot.workspaces]
-      .sort((left, right) => left.number - right.number || left.workspaceId.localeCompare(right.workspaceId))
+      .sort(
+        (left, right) =>
+          left.number - right.number ||
+          left.workspaceId.localeCompare(right.workspaceId),
+      )
       .map((workspace) => ({
         workspaceId: workspace.workspaceId,
         number: workspace.number,
@@ -350,14 +338,22 @@ function sessionTree(snapshot: CollieSnapshot, session: SessionSummary, observed
         focused: workspace.focused,
         tabs: snapshot.tabs
           .filter((tab) => tab.workspaceId === workspace.workspaceId)
-          .sort((left, right) => left.number - right.number || left.tabId.localeCompare(right.tabId))
+          .sort(
+            (left, right) =>
+              left.number - right.number ||
+              left.tabId.localeCompare(right.tabId),
+          )
           .map((tab) => ({
             tabId: tab.tabId,
             number: tab.number,
             label: tab.label,
             focused: tab.focused,
             panes: panes
-              .filter((pane) => pane.workspaceId === workspace.workspaceId && pane.tabId === tab.tabId)
+              .filter(
+                (pane) =>
+                  pane.workspaceId === workspace.workspaceId &&
+                  pane.tabId === tab.tabId,
+              )
               .sort((left, right) => left.paneId.localeCompare(right.paneId))
               .map((pane) => ({
                 paneId: pane.paneId,
@@ -405,7 +401,11 @@ function unavailableState(
   };
 }
 
-function initialState(node: NodeConfig, transport: TransportStatus, now: number): FleetNodeState {
+function initialState(
+  node: NodeConfig,
+  transport: TransportStatus,
+  now: number,
+): FleetNodeState {
   return unavailableState(node, transport, now);
 }
 
@@ -447,13 +447,18 @@ export class FleetCollector {
     this.baseRefreshMs = Math.max(config.pollIntervalMs, MIN_NODE_REVISIT_MS);
     this.refreshDelayMs = this.baseRefreshMs;
     for (const node of this.enabledNodes) {
-      this.states.set(node.id, initialState(node, transports.status(node), now()));
+      this.states.set(
+        node.id,
+        initialState(node, transports.status(node), now()),
+      );
     }
     this.visibleSignature = this.signature();
     this.schedule =
       runtime.schedule ??
       ((callback, delayMs) => setTimeout(() => void callback(), delayMs));
-    this.cancel = runtime.cancel ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+    this.cancel =
+      runtime.cancel ??
+      ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     this.onCycle = runtime.onCycle;
     this.warn = runtime.warn ?? ((message) => console.warn(message));
   }
@@ -474,7 +479,8 @@ export class FleetCollector {
   private scheduleBackground(delayOverride?: number): void {
     if (!this.backgroundEnabled) return;
     if (this.backgroundTimer !== null) this.cancel(this.backgroundTimer);
-    const delayMs = delayOverride ?? Math.max(0, this.nextRefreshAt - this.now());
+    const delayMs =
+      delayOverride ?? Math.max(0, this.nextRefreshAt - this.now());
     this.backgroundTimer = this.schedule(async () => {
       this.backgroundTimer = null;
       try {
@@ -488,7 +494,9 @@ export class FleetCollector {
   private nextNodeEligibility(): number {
     return this.enabledNodes.reduce((latest, node) => {
       const attemptedAt = this.lastAttemptAt.get(node.id);
-      return attemptedAt === undefined ? latest : Math.max(latest, attemptedAt + MIN_NODE_REVISIT_MS);
+      return attemptedAt === undefined
+        ? latest
+        : Math.max(latest, attemptedAt + MIN_NODE_REVISIT_MS);
     }, 0);
   }
 
@@ -497,7 +505,10 @@ export class FleetCollector {
     this.manualResetPending = false;
     this.refreshDelayMs = this.baseRefreshMs;
     const now = this.now();
-    this.nextRefreshAt = Math.max(now + this.baseRefreshMs, this.nextNodeEligibility());
+    this.nextRefreshAt = Math.max(
+      now + this.baseRefreshMs,
+      this.nextNodeEligibility(),
+    );
   }
 
   async refresh(options: { manual?: boolean } = {}): Promise<void> {
@@ -531,7 +542,9 @@ export class FleetCollector {
     }
 
     const pending = (async () => {
-      await Promise.all(this.enabledNodes.map((node) => this.refreshNode(node)));
+      await Promise.all(
+        this.enabledNodes.map((node) => this.refreshNode(node)),
+      );
       const next = this.signature();
       const changed = next !== this.visibleSignature;
       if (changed) {
@@ -543,14 +556,29 @@ export class FleetCollector {
       this.refreshDelayMs =
         changed || reset
           ? this.baseRefreshMs
-          : Math.min(Math.max(this.refreshDelayMs, this.baseRefreshMs) * 2, MAX_REFRESH_MS);
-      this.nextRefreshAt = Math.max(this.now() + this.refreshDelayMs, this.nextNodeEligibility());
+          : Math.min(
+              Math.max(this.refreshDelayMs, this.baseRefreshMs) * 2,
+              MAX_REFRESH_MS,
+            );
+      this.nextRefreshAt = Math.max(
+        this.now() + this.refreshDelayMs,
+        this.nextNodeEligibility(),
+      );
       if (this.onCycle) {
         try {
           const observerDeadline = this.onCycle(this.snapshot());
-          if (typeof observerDeadline === "number" && Number.isFinite(observerDeadline)) {
-            const earliestEligibleAt = Math.max(this.now(), this.nextNodeEligibility());
-            this.nextRefreshAt = Math.min(this.nextRefreshAt, Math.max(observerDeadline, earliestEligibleAt));
+          if (
+            typeof observerDeadline === "number" &&
+            Number.isFinite(observerDeadline)
+          ) {
+            const earliestEligibleAt = Math.max(
+              this.now(),
+              this.nextNodeEligibility(),
+            );
+            this.nextRefreshAt = Math.min(
+              this.nextRefreshAt,
+              Math.max(observerDeadline, earliestEligibleAt),
+            );
           }
         } catch {
           this.warn("[gateway/fleet] collection observer failed");
@@ -565,16 +593,31 @@ export class FleetCollector {
     }
   }
 
-  private cachedSession(previous: FleetNodeState | undefined, name: string): FleetAgentCard[] {
-    return offlineAgents(previous?.agentEntries.filter((entry) => entry.herdrSession === name) ?? []);
+  private cachedSession(
+    previous: FleetNodeState | undefined,
+    name: string,
+  ): FleetAgentCard[] {
+    return offlineAgents(
+      previous?.agentEntries.filter((entry) => entry.herdrSession === name) ??
+        [],
+    );
   }
 
-  private cachedSessionTree(previous: FleetNodeState | undefined, name: string): FleetSessionTree | null {
-    const tree = previous?.treeSessions.find((entry) => entry.herdrSession === name);
+  private cachedSessionTree(
+    previous: FleetNodeState | undefined,
+    name: string,
+  ): FleetSessionTree | null {
+    const tree = previous?.treeSessions.find(
+      (entry) => entry.herdrSession === name,
+    );
     return tree ? { ...tree, reachable: false } : null;
   }
 
-  private currentSession(agents: AgentProjection[], session: SessionSummary, observedAt: number): FleetAgentCard[] {
+  private currentSession(
+    agents: AgentProjection[],
+    session: SessionSummary,
+    observedAt: number,
+  ): FleetAgentCard[] {
     return agents.map((agent) => ({
       ...agent,
       herdrSession: session.name,
@@ -584,14 +627,18 @@ export class FleetCollector {
     }));
   }
 
-  private async fetchSnapshot(node: NodeConfig, session?: string): Promise<CollieSnapshot> {
+  private async fetchSnapshot(
+    node: NodeConfig,
+    session?: string,
+  ): Promise<CollieSnapshot> {
     const url = new URL(`${this.transports.upstream(node)}/api/snapshot`);
     if (session !== undefined) url.searchParams.set("session", session);
     const response = await this.fetcher(url, {
       headers: { Accept: "application/json", Host: node.publicHost },
       signal: AbortSignal.timeout(4_000),
     });
-    if (!response.ok) throw new Error(`bridge returned HTTP ${response.status}`);
+    if (!response.ok)
+      throw new Error(`bridge returned HTTP ${response.status}`);
     return parseSnapshot(await response.json());
   }
 
@@ -600,7 +647,10 @@ export class FleetCollector {
     const transport = this.transports.status(node);
     const previous = this.states.get(node.id);
     if (transport.state !== "up") {
-      this.states.set(node.id, unavailableState(node, transport, now, previous));
+      this.states.set(
+        node.id,
+        unavailableState(node, transport, now, previous),
+      );
       return;
     }
 
@@ -609,48 +659,64 @@ export class FleetCollector {
       const snapshot = await this.fetchSnapshot(node);
       const bridgeConnected = snapshot.bridge === "connected";
       const sessionResults = await Promise.all(
-        snapshot.sessions.map(async (session): Promise<{
-          session: SessionSummary;
-          entries: FleetAgentCard[];
-          tree: FleetSessionTree | null;
-        }> => {
-          if (!bridgeConnected || !session.reachable) {
-            return {
-              session: { ...session, reachable: false },
-              entries: this.cachedSession(previous, session.name),
-              tree: this.cachedSessionTree(previous, session.name),
-            };
-          }
-          if (session.isPrimary) {
-            return {
-              session,
-              entries: this.currentSession(snapshot.agents, session, now),
-              tree: sessionTree(snapshot, session, now),
-            };
-          }
-          try {
-            const detail = await this.fetchSnapshot(node, session.name);
-            if (detail.bridge !== "connected") throw new Error("named session bridge is disconnected");
-            return {
-              session,
-              entries: this.currentSession(detail.agents, session, now),
-              tree: sessionTree(detail, session, now),
-            };
-          } catch {
-            return {
-              session: { ...session, reachable: false },
-              entries: this.cachedSession(previous, session.name),
-              tree: this.cachedSessionTree(previous, session.name),
-            };
-          }
-        }),
+        snapshot.sessions.map(
+          async (
+            session,
+          ): Promise<{
+            session: SessionSummary;
+            entries: FleetAgentCard[];
+            tree: FleetSessionTree | null;
+          }> => {
+            if (!bridgeConnected || !session.reachable) {
+              return {
+                session: { ...session, reachable: false },
+                entries: this.cachedSession(previous, session.name),
+                tree: this.cachedSessionTree(previous, session.name),
+              };
+            }
+            if (session.isPrimary) {
+              return {
+                session,
+                entries: this.currentSession(snapshot.agents, session, now),
+                tree: sessionTree(snapshot, session, now),
+              };
+            }
+            try {
+              const detail = await this.fetchSnapshot(node, session.name);
+              if (detail.bridge !== "connected")
+                throw new Error("named session bridge is disconnected");
+              return {
+                session,
+                entries: this.currentSession(detail.agents, session, now),
+                tree: sessionTree(detail, session, now),
+              };
+            } catch {
+              return {
+                session: { ...session, reachable: false },
+                entries: this.cachedSession(previous, session.name),
+                tree: this.cachedSessionTree(previous, session.name),
+              };
+            }
+          },
+        ),
       );
 
       const sessions = sessionResults.map((result) => result.session);
-      const agents = snapshot.sessions.reduce((sum, session) => sum + session.agents, 0);
-      const working = snapshot.sessions.reduce((sum, session) => sum + session.working, 0);
-      const blocked = snapshot.sessions.reduce((sum, session) => sum + session.blocked, 0);
-      const online = bridgeConnected && snapshot.sessions.some((session) => session.reachable);
+      const agents = snapshot.sessions.reduce(
+        (sum, session) => sum + session.agents,
+        0,
+      );
+      const working = snapshot.sessions.reduce(
+        (sum, session) => sum + session.working,
+        0,
+      );
+      const blocked = snapshot.sessions.reduce(
+        (sum, session) => sum + session.blocked,
+        0,
+      );
+      const online =
+        bridgeConnected &&
+        snapshot.sessions.some((session) => session.reachable);
       this.states.set(node.id, {
         id: node.id,
         name: node.name,
@@ -663,11 +729,17 @@ export class FleetCollector {
         working,
         blocked,
         sessions,
-        agentEntries: sortAgentEntries(sessionResults.flatMap((result) => result.entries)),
-        treeSessions: sessionResults.flatMap((result) => result.tree ? [result.tree] : []),
+        agentEntries: sortAgentEntries(
+          sessionResults.flatMap((result) => result.entries),
+        ),
+        treeSessions: sessionResults.flatMap((result) =>
+          result.tree ? [result.tree] : [],
+        ),
         observedAt: now,
         lastHealthyAt: online ? now : (previous?.lastHealthyAt ?? null),
-        message: online ? null : "Collie is reachable but no Herdr session is connected",
+        message: online
+          ? null
+          : "Collie is reachable but no Herdr session is connected",
       });
     } catch (error) {
       this.states.set(
@@ -684,7 +756,9 @@ export class FleetCollector {
   }
 
   private sortedNodes(): FleetNodeState[] {
-    return [...this.states.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return [...this.states.values()].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
   }
 
   private signature(): string {
@@ -695,14 +769,22 @@ export class FleetCollector {
         publicHost: node.publicHost,
         labels: node.labels,
         health: node.health,
-        transport: { kind: node.transport.kind, state: node.transport.state, message: node.transport.message },
+        transport: {
+          kind: node.transport.kind,
+          state: node.transport.state,
+          message: node.transport.message,
+        },
         bridge: node.bridge,
         agents: node.agents,
         working: node.working,
         blocked: node.blocked,
         sessions: node.sessions,
-        agentEntries: node.agentEntries.map(({ observedAt: _observedAt, ...entry }) => entry),
-        treeSessions: node.treeSessions.map(({ observedAt: _observedAt, ...tree }) => tree),
+        agentEntries: node.agentEntries.map(
+          ({ observedAt: _observedAt, ...entry }) => entry,
+        ),
+        treeSessions: node.treeSessions.map(
+          ({ observedAt: _observedAt, ...tree }) => tree,
+        ),
         message: node.message,
       })),
     );
