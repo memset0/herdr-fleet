@@ -32,6 +32,6 @@
 
 ## 6. Publish, stage, and archive
 
-- [ ] 6.1 Commit the feature as one reviewed conventional commit, fetch/verify `origin/v3-dev`, push normally, and verify the public exact candidate.
-- [ ] 6.2 Deploy only that exact commit to isolated v3 staging, preserve settings/STT/v2/Herdr, and present the manual action for owner browser acceptance.
-- [ ] 6.3 After acceptance, sync `fleet-manual-pane-fit`, archive the change, commit/push the archive separately, redeploy the archive HEAD, and report source/deployment identities.
+- [x] 6.1 Commit the feature as one reviewed conventional commit, fetch/verify `origin/v3-dev`, push normally, and verify the public exact candidate.
+- [x] 6.2 Deploy only that exact commit to isolated v3 staging, preserve settings/STT/v2/Herdr, and present the manual action for owner browser acceptance.
+- [x] 6.3 After acceptance, sync `fleet-manual-pane-fit`, archive the change, commit/push the archive separately, and include it in the final cumulative archive-HEAD staging deployment before reporting source/deployment identities.
