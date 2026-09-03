@@ -1,3 +1,5 @@
+import { operatorChosenName } from "../pane-naming.ts";
+
 export const MAX_NAVIGATION_SPACES = 256;
 export const MAX_NAVIGATION_TABS = 512;
 export const MAX_NAVIGATION_PANES = 2048;
@@ -122,20 +124,6 @@ export function tabDisclosureId(workspaceId: string, tabId: string): string {
   return JSON.stringify(["tab", workspaceId, tabId]);
 }
 
-/**
- * Whether a label is a NAME rather than a multiplexer's ordinal.
- *
- * Herdr labels an unnamed pane with its number, so a row that took that value would read `1` where
- * its Tab carries the name the operator actually typed. Digits only — a name that merely CONTAINS a
- * number (`v2`, `pass 3`) is still a name, and a person who deliberately names a pane `7` gets the
- * same answer as the counter, which is the one collision this rule cannot tell apart and does not
- * try to.
- */
-function operatorChosen(label: string | undefined): string | undefined {
-  if (label === undefined || label.length === 0) return undefined;
-  return /^\d+$/.test(label) ? undefined : label;
-}
-
 function paneRow(pane: NavigationPaneInput, selected: boolean): NavigationRow {
   const row: NavigationRow = {
     key: `pane:${pane.workspaceId}:${pane.tabId}:${pane.paneId}`,
@@ -238,7 +226,7 @@ export function deriveNavigationTree(input: {
           const selected = only.paneId === input.selectedPaneId;
           if (selected) remember(only.paneId, [spaceId]);
           return [
-            { ...paneRow(only, selected), label: operatorChosen(only.ownLabel) ?? entry.tab.label },
+            { ...paneRow(only, selected), label: operatorChosenName(only.ownLabel) ?? entry.tab.label },
           ];
         }
 

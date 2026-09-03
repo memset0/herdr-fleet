@@ -40,6 +40,7 @@ paths = [
   "docs/herdr-fleet.md",
   "fleet/**",
   "scripts/herdr-fleet.sh",
+  "web/src/components/native-agent-card.tsx",
   "web/src/components/native-agent-rail.test.tsx",
   "web/src/components/native-agent-rail.tsx",
   "web/src/components/native-navigation-context.tsx",
@@ -222,6 +223,7 @@ paths = [
   "web/src/components/native-navigation-shell.test.tsx#NativeNavigationShell",
   "web/src/components/native-navigation-tree.tsx#NativeNavigationTree",
   "web/src/components/native-navigation-tree.test.tsx#NativeNavigationTree",
+  "web/src/components/native-agent-card.tsx#NativeAgentCard",
   "web/src/components/native-agent-rail.tsx#NativeAgentRail",
   "web/src/components/native-agent-rail.test.tsx#NativeAgentRail"
 ]

@@ -55,6 +55,9 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The hierarchy's state dot is one size smaller, the control row is shorter with larger type on one line box with its icons, and the rail separators no longer show a seam of page between the three columns.
 - A Pane label that is only digits is the multiplexer's ordinal, not a name, so an elided row keeps its Tab's name.
 
+- The Agent rail draws its own row over Collie's own triage order: the Agent's mark with the Pane's state and a shortcut ordinal badged at its corners, the Space then the work's name on line one with its age, and what the Pane is doing beneath. Collie's own Agent list and card are untouched.
+- The hierarchy's guide line falls on the centre of the control that opened its level, children begin one control-width in, and a row with no children draws no disclosure column.
+
 ### Fixed
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.

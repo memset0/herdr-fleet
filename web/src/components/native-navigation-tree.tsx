@@ -161,14 +161,12 @@ function Row({
               aria-hidden
             />
           </button>
-        ) : (
-          <span className="w-5 shrink-0" aria-hidden />
-        )}
+        ) : null}
         <button
           type="button"
           aria-current={selected ? "page" : undefined}
           onClick={activate}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-r-md pr-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring xl:text-[13px]"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-r-md pl-1 pr-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring xl:text-[13px]"
         >
           <RowIcon row={row} />
           <span className="truncate">{row.label}</span>
@@ -188,7 +186,12 @@ function Row({
       {row.children.length > 0 && (
         <div id={childrenId}>
           <Collapse open={open}>
-            <div className="ml-1 flex flex-col border-l border-border/70 pl-1">
+            {/* HALF A CHEVRON OUT, HALF A CHEVRON IN. The guide line lands on the centre of the
+                control that opened this level — `ml-2.5` against the `w-5` chevron above — and the
+                children begin a further half in, so a child's row starts exactly one chevron right
+                of its parent's. A leaf draws no chevron at all, so the first thing inside its
+                highlight is its own icon rather than an empty column. */}
+            <div className="ml-2.5 flex flex-col border-l border-border/70 pl-2.5">
               {row.children.map((child) => (
                 <Row
                   key={child.key}
