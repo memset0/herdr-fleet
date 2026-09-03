@@ -2,8 +2,8 @@ schema_version = 1
 
 [upstream]
 url = "https://github.com/AltanS/collie.git"
-tag = "v0.34.0"
-commit = "0c647372d89d50ec62dfe8b569e9109a830660e5"
+tag = "v0.36.1"
+commit = "96c3bc3374ea49920ba1c62cfe3135277e16bf00"
 
 [[owned]]
 id = "fleet-gateway"
@@ -276,44 +276,13 @@ paths = [
   "scripts/push-keys.test.ts#generateVapidKeys",
   "scripts/push-test.ts#push",
   "web/src/fixtures/panes/claude--draft-paste-placeholder.txt#Pasted",
+  "web/src/fixtures/panes/README.md#identifying",
   "web/src/lib/harness/types.ts#HarnessAdapter",
   "web/src/lib/reply-action.ts#sendReply",
   "web/src/lib/reply-action.test.ts#sendGuardedReply"
 ]
 verify = ["scripts/push-keys.test.ts", "web/src/lib/reply-action.test.ts", "web/src/lib/push-decision.test.ts"]
 reason = "These safeguards remain in Collie-owned execution boundaries until the exact target is compared."
-
-[[invasive]]
-id = "codex-native-transition"
-intent = "Replace the complete temporary Codex adapter with Collie v0.36.1 and drop local slash, queue, chunking, and extended-read behavior."
-strategy = "replace-with-upstream"
-review = "every-upstream-sync"
-paths = [
-  "ARCHITECTURE.md#Codex",
-  "HERDR_API.md#Codex",
-  "README.full.md#Codex",
-  "UPSTREAM.md#Codex",
-  "web/src/components/agent-chat.test.tsx#CODEX_SLASH_TEXT",
-  "web/src/components/composer.test.tsx#Codex",
-  "web/src/fixtures/panes/README.md#Codex",
-  "web/src/fixtures/panes/codex--custom-status-draft.txt#Codex",
-  "web/src/fixtures/panes/codex--working-draft-queue-hint.txt#queue",
-  "web/src/lib/harness/codex.test.ts#Codex",
-  "web/src/lib/harness/codex/chrome.ts#Codex",
-  "web/src/lib/harness/codex/index.ts#codexAdapter",
-  "web/src/lib/harness/codex/markers.ts#PLACEHOLDER",
-  "web/src/lib/harness/codex/paste.ts#Pasted",
-  "web/src/lib/harness/codex/paste.test.ts#Pasted",
-  "web/src/lib/harness/codex/slash.ts#slash",
-  "web/src/lib/harness/codex/slash.test.ts#slash",
-  "web/src/lib/harness/types.ts#codex",
-  "web/src/lib/reply-action.ts#CODEX",
-  "web/src/lib/reply-action.test.ts#CODEX",
-  "bridge/server.test.ts#sendReplySteps"
-]
-verify = ["web/src/lib/harness/codex.test.ts", "web/src/lib/reply-action.test.ts", "bridge/server.test.ts"]
-reason = "These local Codex semantics were temporary and must not survive alongside the upstream-native implementation."
-temporary_until = "Collie v0.36.1 at 96c3bc3374ea49920ba1c62cfe3135277e16bf00"
 
 [[invasive]]
 id = "generated-build-state-exclusion"

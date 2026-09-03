@@ -1,6 +1,5 @@
-// The Codex adapter. Chrome/status/draft are Tier 1: the boxless `› ` composer remains visible in
-// the mirror for diagnosis, while its trailing status/footer row is stripped and re-surfaced
-// natively. Interactive
+// The Codex adapter. Chrome/status/draft are Tier 1: the boxless `› ` composer plus its
+// dot-separated status row are stripped from the mirror and re-surfaced natively. Interactive
 // kinds with dated captures and notes (all under this directory): the folder-trust prompt
 // (`prompt-select`, family trust), exec approvals (`prompt-select`, family permission —
 // classified by row: the one-shot Yes and the reject become buttons, persistent rows never do),
@@ -13,66 +12,56 @@
 // the captured screen. Registered as `agent: "codex"`; variant folding belongs in
 // `canonicalAgent`, never here.
 
-import type { Block, StyledLine } from "../../blocks";
+import { trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
 import {
-  composerPrompt as chromeComposerPrompt,
-  composerReady as chromeComposerReady,
-  extractInputDraft as extractChromeInputDraft,
+  composerPrompt,
+  composerReady,
+  extractInputDraft,
   extractStatusLines,
-  presentChrome,
+  stripChrome,
 } from "./chrome";
 import { detectApprovalRegion } from "./approval";
 import { detectAskRegion } from "./ask";
 import { detectTrustRegion } from "./trust";
 import { codexDraftCarriesSend } from "./paste";
-import { slashComposerReady, slashInputDraft, slashPromptRegion } from "./slash";
-
-export function extractInputDraft(lines: StyledLine[]): string | null {
-  return extractChromeInputDraft(lines) ?? slashInputDraft(lines);
-}
-
-function composerReady(lines: StyledLine[]): boolean {
-  return chromeComposerReady(lines) || slashComposerReady(lines);
-}
-
-function composerPrompt(lines: StyledLine[]): string | null {
-  return chromeComposerPrompt(lines) ?? slashPromptRegion(lines);
-}
 
 export function codexBuildBlocks(lines: StyledLine[]): Block[] {
   const trust = detectTrustRegion(lines);
   if (trust) {
-    return [
-      { kind: "raw", lines },
-      { kind: "prompt-select", prompt: trust.model, lines: lines.slice(trust.startLine) },
-    ];
+    const before = trimTrailingBlank(lines.slice(0, trust.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "prompt-select", prompt: trust.model, lines: lines.slice(trust.startLine) });
+    return blocks;
   }
 
   const approval = detectApprovalRegion(lines);
   if (approval) {
-    return [
-      { kind: "raw", lines },
-      {
-        kind: "prompt-select",
-        prompt: approval.model,
-        lines: lines.slice(approval.startLine),
-      },
-    ];
+    const before = trimTrailingBlank(lines.slice(0, approval.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({
+      kind: "prompt-select",
+      prompt: approval.model,
+      lines: lines.slice(approval.startLine),
+    });
+    return blocks;
   }
 
   const ask = detectAskRegion(lines);
   if (ask) {
-    return [
-      { kind: "raw", lines },
-      { kind: "prompt-select", prompt: ask.model, lines: lines.slice(ask.startLine) },
-    ];
+    const before = trimTrailingBlank(lines.slice(0, ask.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "prompt-select", prompt: ask.model, lines: lines.slice(ask.startLine) });
+    return blocks;
   }
 
-  return [{ kind: "raw", lines: presentChrome(lines) }];
+  return [{ kind: "raw", lines: stripChrome(lines) }];
 }
 
-export { extractStatusLines };
+export { extractStatusLines, extractInputDraft };
 
 export const codexAdapter: HarnessAdapter = {
   agent: "codex",

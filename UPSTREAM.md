@@ -1,9 +1,9 @@
 # Upstream provenance
 
 The node bridge and React PWA are derived from
-[AltanS/collie](https://github.com/AltanS/collie), version **v0.34.0**, commit
-`0c647372d89d50ec62dfe8b569e9109a830660e5`. The exact annotated release tag is retained through
-the second parent of Web Remote's v0.34.0 adoption merge; later Collie commits and releases are not
+[AltanS/collie](https://github.com/AltanS/collie), version **v0.36.1**, commit
+`96c3bc3374ea49920ba1c62cfe3135277e16bf00`. The exact annotated release tag is retained through
+the second parent of Web Remote's v0.36.1 adoption merge; later Collie commits and releases are not
 part of this provenance boundary.
 
 The upstream Git history and MIT `LICENSE` are retained. Web Remote adds the Fleet Gateway,
@@ -11,29 +11,25 @@ single-account authentication, multi-instance routing, SSH transports, and a Her
 plugin-owned supervisor. Upstream's Tailscale/system-service control path is intentionally not part
 of this derivative's supported workflow. Windows Task Scheduler, QR lifecycle tooling, and
 upstream's moving self-update/major-update path are likewise excluded. Web Remote also does not
-adopt v0.34.0's `COLLIE_PUBLIC_URL`, `COLLIE_SERVE_PORT`, `collie-ctl.sh`, Tailscale publication, or
+adopt v0.36.1's `COLLIE_PUBLIC_URL`, `COLLIE_SERVE_PORT`, `collie-ctl.sh`, Tailscale publication, or
 OS-service lifecycle; its Herdr plugin manifest, Gateway, and supervisor remain the only supported
 runtime ownership path.
 
-The v0.34.0 import does retain Collie's guarded plan-feedback and password/no-echo input handling,
-complete and partial draft safeguards, socket write draining, Codex and Grok Build harnesses,
-per-root journal diagnostics, operator-owned `commands.toml` / `keys.toml`, F1–F12 support,
-tap-to-type preference, optional audit-content redaction, sanitized terminal titles, Push
-subscription maintenance, and bounded dated `sessionStorage` mirrors. Web Remote-specific tests
-keep those additions inside the existing Host/Origin, text-only, History-containment, framed-seen,
-Fleet-projection, and manual-resize boundaries.
+The v0.36.1 import retains Collie's guarded plan-feedback and password/no-echo input handling,
+complete and partial draft safeguards, socket write draining, native Codex, Grok Build, OMP, and
+AGY harnesses, per-root journal diagnostics, operator-owned `commands.toml`, `keys.toml`, and
+`quick-replies.toml`, F1–F12 support, tap-to-type preference, optional audit-content redaction,
+sanitized terminal titles, Push subscription maintenance, proxy-auth recovery, fail-closed
+Host/bind/peer validation, upload sniffing, and bounded dated `sessionStorage` mirrors. Web
+Remote-specific tests keep those additions inside the existing Host/Origin, text-only,
+History-containment, framed-seen, Fleet-projection, and manual-resize boundaries.
 
-Web Remote temporarily fixes v0.34.0's documented Codex custom-status limitation: a bounded
-multi-field customized status row may anchor the existing tail composer without containing the
-optional default `Context` field. It also recognizes Codex's exact renderer-owned slash palette so
-complete commands remain guarded after the ordinary status row disappears. These downstream
-decisions are recorded in the changelog and tests. After three-node deployment and owner acceptance,
-the generic Codex-only fix was rebased onto Collie v0.35.0 and pushed as the single-commit fork branch
-[`memset0:fix/codex-guarded-input`](https://github.com/memset0/collie/tree/fix/codex-guarded-input),
-commit `d57b9a53141693b88cde7d37a2aa4389d77c5c4e`; the owner submits the upstream PR separately.
-Before the next Collie migration, inspect Collie `main`, that branch/PR, and any independent later
-fix. Prefer the accepted upstream implementation and remove or reconcile overlapping local
-predicates instead of carrying both or blindly reapplying downstream patches.
+Codex is wholly upstream-owned at this baseline. Web Remote uses v0.36.1's native 0.150.x status,
+placeholder, paste-token, continuation, and prompt-binding design without a downstream adapter.
+Earlier Web Remote releases carried temporary custom-status, queue-footer, slash-palette, chunking,
+and extended stable-read patches; those commits remain in Git and the changelog, but their code,
+fixtures, tests, and active `FORK.toml` entry do not survive this adoption. States that v0.36.1
+cannot verify remain fail-closed rather than restoring one of those local paths.
 
 The dormant `services/ttyd-fallback/` companion is Web Remote-owned generic code, not Collie-derived
 source. Its separate ttyd provenance and artifact integrity record live in that directory's

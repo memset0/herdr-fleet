@@ -136,45 +136,28 @@ version-1 subset of the original direct Alt bindings and fail unsupported action
 
 ### Collie node controls
 
-The node UI includes Collie v0.34.0's safer remote-input path. A free-text reply refreshes the Pane,
+The node UI includes Collie v0.36.1's safer remote-input path. A free-text reply refreshes the Pane,
 refuses supported harnesses whose composer is hidden by a dialog, types first, and sends Enter only
 after the fresh Pane verifies the text. The explicit type-anyway path still withholds Enter when it
 cannot verify the draft. Direct terminal typing is a separate ordered queue: it adds no implicit
 Enter, drains long socket writes, and drops pending keys when the selected Pane or page context
-changes. Claude Code, Codex, Grok Build, and OMP receive first-class structured controls;
+changes. Claude Code, Codex, Grok Build, OMP, and AGY receive first-class structured controls;
 unsupported or ambiguous terminal states stay on the generic direct-typing path. Password/no-echo
 prompts remove recoverable drafts and hand control to explicit direct typing without caching their
 Pane text.
 
-Codex's composer remains guarded when an operator customizes its status row: the detector relies on
-the bounded tail `›` prompt/status structure, not the optional default `Context` field or the meaning
-of model/project/branch/rate/permission/session labels. A disabled, missing, malformed, or ambiguous
-status row still fails closed, so no submit key is inferred from a lone transcript-shaped prompt.
-Compact two-field rows require Codex's exact styled field/separator signature; plain two-field prose
-does not qualify.
-While Codex is working, its official `tab to queue message` footer may replace the summary below a
-taller blank composer. That bounded footer remains chrome, and any half-written `›` draft is still
-recovered and verified like a Claude draft; request-user-input footers remain dialogs.
-An empty Codex `›` input box—including the dim `Ask Codex to do anything` placeholder—is hidden
-because Collie's own composer already represents it. The same literal words in ordinary draft style
-remain user input. A non-empty draft remains visible for recovery and diagnosis, with every native blank layout row
-preserved; only its status/footer row is removed and re-surfaced as the app strip above Collie's
-composer. A selection, approval, or trust dialog is not a composer and remains visible in the raw
-terminal mirror alongside its structured controls.
-Typing an exact slash command temporarily replaces Codex's status row with its filtered palette.
-That state remains raw and is accepted for guarded submit only when the complete `/command` query
-equals the first cyan/bold selected option. Partial filters and palette-shaped prose remain
-unwritable, while `/status`, `/fast`, and other exact commands use the same two-stable-read and
-prompt-binding rules as ordinary replies.
-Large Codex pastes may appear as `[Pasted Content N chars]`; guarded send accepts that token only
-when its Unicode count exactly matches the current message. Codex also receives a longer read-only
-verification window and must show the same verified prompt/draft tail on two consecutive reads
-before Enter. The final Enter is bound to that stable region. Including wrapped continuations keeps
-long drafts inside the bridge's bounded binding window instead of binding only a first `›` row that
-may sit too high.
-Codex input is emitted as Unicode-safe 900-byte-or-smaller writes because a live Herdr 0.8.0 probe
-retained only the first 1,024 bytes of a larger single write. Chunks are never retried; a partial
-failure leaves the existing terminal draft for inspection and withholds Enter.
+Codex behavior is the native Collie v0.36.1 design. The detector recognizes the upstream 0.150.x
+customized, reordered, and renderer-styled status forms only beneath the complete column-zero
+prompt/draft run. It binds wrapped continuations, distinguishes the dim `Ask Codex to do anything`
+placeholder from the same words typed as a draft, and accepts `[Pasted Content N chars]` only when
+the count matches the submitted message. A lone prompt, malformed status, transcript echo, dialog,
+slash palette, or unrecognized running-turn footer remains raw and fails closed without Enter.
+
+The former downstream Codex adapter is intentionally absent: Web Remote no longer adds its own
+slash-palette submit path, running queue-footer recovery, input chunking, or extended stable-read
+window. Herdr 0.8.2 was re-probed with one `pane.send_text` request through 40,000 bytes and delivered
+the complete payload, so the upstream single-write path is authoritative. A long draft that Codex
+does not render verifiably remains in the Pane for inspection and is not submitted automatically.
 
 Pane history can search several comma-separated roots per harness, which supports mixed agent
 profiles on one Herdr host. A session is resolved in the first matching root and every later read is
@@ -186,12 +169,12 @@ but never rename its Tab, route, Fleet notification hierarchy, or explicit Pane/
 HTML navigation remains network-first through the Gateway; only validated same-origin font
 responses enter the lazy cache.
 
-Optional owner-only `commands.toml` and `keys.toml` files replace the shipped rows only for their
-matching Agent scopes and are validated with last-good hot reload. The fixed keys tray includes
-F1–F12, and a browser-local Display preference controls whether tapping the mirror focuses the
-composer. `COLLIE_AUDIT_CONTENT=none` redacts free-form write content from the action audit while
-retaining allowlisted structural fields. The example `.env` also documents the generic one-shot
-VAPID key generator; none of these options creates a service or updater.
+Optional owner-only `commands.toml`, `keys.toml`, and `quick-replies.toml` files replace the shipped
+rows only for their matching Agent scopes and are validated with last-good hot reload. The fixed
+keys tray includes F1–F12, and a browser-local Display preference controls whether tapping the mirror
+focuses the composer. `COLLIE_AUDIT_CONTENT=none` redacts free-form write content from the action
+audit while retaining allowlisted structural fields. The example `.env` also documents the generic
+one-shot VAPID key generator; none of these options creates a service or updater.
 
 Successful snapshot and Pane reads write dated, per-Herdr-session mirrors to this tab's
 `sessionStorage`, bounded to the four newest Panes. They are used only when transport recovery needs
@@ -366,7 +349,7 @@ For `herdr --remote`, connect with the remote server's keybindings:
 herdr --remote <target> --remote-keybindings server
 ```
 
-Herdr 0.8 defaults remote attaches to a snapshot of the viewing computer's local keybindings and
+Herdr 0.8.2 defaults remote attaches to a snapshot of the viewing computer's local keybindings and
 deliberately omits custom command bindings from that snapshot. Consequently, a Web Remote binding
 installed on the remote server cannot fire in the default `local` mode. Keybinding mode is chosen
 during the client handshake: after installing or changing this binding, detach and reconnect with

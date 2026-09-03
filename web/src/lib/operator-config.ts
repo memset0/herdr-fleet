@@ -1,13 +1,14 @@
 import { useEffect, useSyncExternalStore } from "react";
 
 import { fetchConfig } from "@/lib/api";
-import type { OperatorCommand, OperatorKeyRow } from "@/lib/types";
+import type { OperatorCommand, OperatorKeyRow, OperatorQuickReplyRow } from "@/lib/types";
 
-// The operator's own rows — their `commands.toml` palette AND their `keys.toml` tray presets — read
-// from ONE /api/config call and held in module state. Both files ride the same request because both
-// are the same kind of thing: startup-resolved operator config the client reads once. Modelled on the lib/server-build.ts store idiom: plain module state + subscribe +
-// a useSyncExternalStore hook, so the composer participates without prop-drilling through the route
-// tree.
+// The operator's own rows — their `commands.toml` palette, their `keys.toml` tray presets AND their
+// `quick-replies.toml` dock groups — read from ONE /api/config call and held in module state. All
+// three files ride the same request because all three are the same kind of thing:
+// startup-resolved operator config the client reads once. Modelled on the lib/server-build.ts store
+// idiom: plain module state + subscribe + a useSyncExternalStore hook, so the composer participates
+// without prop-drilling through the route tree.
 //
 // THE CONTRACT: one SUCCESSFUL read is cached for the life of the page; a failed attempt is not
 // cached, so a later mount tries again. Never polled, and deliberately not folded into the 1.5s
@@ -25,6 +26,7 @@ import type { OperatorCommand, OperatorKeyRow } from "@/lib/types";
 
 let current: readonly OperatorCommand[] = [];
 let currentKeys: readonly OperatorKeyRow[] = [];
+let currentReplies: readonly OperatorQuickReplyRow[] = [];
 let inflight: Promise<void> | null = null;
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -41,6 +43,7 @@ export function loadOperatorCommands(): Promise<void> {
     .then((cfg) => {
       current = cfg.operatorCommands ?? [];
       currentKeys = cfg.operatorKeys ?? [];
+      currentReplies = cfg.operatorQuickReplies ?? [];
       loaded = true;
       emit();
     })
@@ -59,6 +62,10 @@ export function getOperatorCommands(): readonly OperatorCommand[] {
 
 export function getOperatorKeys(): readonly OperatorKeyRow[] {
   return currentKeys;
+}
+
+export function getOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
+  return currentReplies;
 }
 
 export function subscribeOperatorConfig(cb: () => void): () => void {
@@ -85,10 +92,23 @@ export function useOperatorKeys(): readonly OperatorKeyRow[] {
   return useSyncExternalStore(subscribeOperatorConfig, getOperatorKeys, getOperatorKeys);
 }
 
+/** Reactive read of the Quick-dock groups. Same one-shot fetch, same contract. */
+export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(
+    subscribeOperatorConfig,
+    getOperatorQuickReplies,
+    getOperatorQuickReplies,
+  );
+}
+
 /** Test helper — reset module state between cases. */
 export function __resetOperatorCommands(): void {
   current = [];
   currentKeys = [];
+  currentReplies = [];
   inflight = null;
   loaded = false;
   listeners.clear();

@@ -16,33 +16,19 @@ draft, and emits its submit keys only after a second read verifies that text. A 
 type-anyway override skips only the composer refusal, not submit verification. Direct terminal
 typing uses an ordered queue with no implicit Enter and invalidates pending input on Pane changes,
 page lock/backgrounding, or failure, so old keys cannot spill into a later context. Socket writes
-drain under backpressure before success is reported. Claude, Codex, Grok Build, and OMP each use an
-explicit harness adapter; a dialog or draft that cannot be classified stays on the fail-closed raw
-path. Password/no-echo recognition removes persisted drafts and never stores that Pane mirror.
-Codex composer detection accepts either its exact default status signature or a bounded multi-field
-custom status row, but only as the final row beneath the existing column-zero tail prompt/draft run;
-a lone prompt, disabled status, transcript echo, or dialog remains insufficient evidence.
-The generic text path keeps a three-field minimum. A two-field row needs the stricter four-segment
-Codex renderer signature, preventing the known plain-text status lookalike from widening the gate.
-The fixed running `tab to queue message` footer is a separate tail-chrome variant with a bounded
-blank composer height; its prompt draft is recovered, while ask/wizard/notes footers are excluded.
-Codex presentation hides the whole native composer only when its extracted draft is empty. Its
-exact empty-placeholder wording also requires the captured dim style, so a non-dim user draft with
-the same words is retained. A non-empty prompt/draft remains in the raw mirror with every blank layout row preserved and only the
-located status/footer removed; dialogs have no located composer and remain raw. Extraction is
-independent of that presentation policy, and the separate status strip still renders the removed
-styled row immediately above the app composer.
-An exact Codex slash palette is a second guarded input state, not ordinary composer chrome. It stays
-raw and qualifies only with the background-painted `› /command` row plus the exact cyan/bold first
-option at the buffer tail. The adapter extracts the complete command and binds the full palette
-region; partial filters, mismatches, unstyled lookalikes, and scrolled-away palettes remain refused.
-Codex guarded send additionally accepts its exact character-counted large-paste token, polls longer
-without rewriting text, requires two consecutive identical verified prompt/draft tails, and binds
-submit to that stable region; these are evidence/race controls, not retries of the input operation.
-Its one logical input operation is transported as
-ordered Unicode-safe sub-1,024-byte writes with a bounded inter-chunk settle, avoiding Herdr 0.8.0's
-live-probed single-write 1,024-byte retention boundary. A partial chunk failure is terminal and
-marked delivered; it cannot fall through to verification, submit, or retry.
+drain under backpressure before success is reported. Claude, Codex, Grok Build, OMP, and AGY each use
+an explicit upstream harness adapter; a dialog or draft that cannot be classified stays on the
+fail-closed raw path. Password/no-echo recognition removes persisted drafts and never stores that
+Pane mirror.
+
+Codex behavior follows Collie v0.36.1 without a downstream adapter. Its composer detector accepts
+the upstream 0.150.x customized, reordered, and renderer-styled status forms only beneath the
+complete prompt/draft run. Wrapped continuations, the dim empty placeholder, and an exact
+character-counted paste token participate in the same prompt binding. A lone prompt, malformed
+status, transcript echo, dialog, slash palette, or unrecognized running-turn footer remains
+insufficient and fails closed. Herdr 0.8.2 was re-probed with single writes through 40,000 bytes, so
+the guarded path issues one text request and never restores the removed downstream chunking,
+queue-footer, slash-palette, or extended stable-read behavior.
 
 Harness transcript settings accept several ordered roots. Discovery selects the first root that
 contains the reported session and binds subsequent reads to its realpath; the existing containment
@@ -58,12 +44,12 @@ the existing degraded transport branch; fresh navigation remains network-first. 
 error. This prevents a resident iframe or discarded mobile page from rendering protected stale
 content after its Gateway session expires.
 
-Operator `commands.toml` and `keys.toml` are parsed into bounded Agent-scoped rows and hot-reloaded
-with last-good semantics. They replace, rather than merge with, matching shipped rows. Optional
-audit redaction removes free-form content but keeps structural action fields. Sanitized OSC titles
-remain a lowest-priority display hint after explicit Pane/session names and never alter Tab or route
-identity. These controls remain inside the node's existing authenticated API and plugin supervisor;
-they introduce no Gateway write endpoint or lifecycle process.
+Operator `commands.toml`, `keys.toml`, and `quick-replies.toml` are parsed into bounded Agent-scoped
+rows and hot-reloaded with last-good semantics. They replace, rather than merge with, matching
+shipped rows. Optional audit redaction removes free-form content but keeps structural action fields.
+Sanitized OSC titles remain a lowest-priority display hint after explicit Pane/session names and
+never alter Tab or route identity. These controls remain inside the node's existing authenticated
+API and plugin supervisor; they introduce no Gateway write endpoint or lifecycle process.
 
 An optional Pane-context action turns the focused Space, Tab, and Pane ids plus public Fleet
 origin/instance metadata into the canonical outer deep link. Because plugin-action stdout is logged rather than connected to

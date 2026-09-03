@@ -22,6 +22,8 @@ explain operational context but must not become a second agent-install workflow.
   public.
 - Preserve Collie's Host/Origin, CSP, text-node rendering, filesystem containment, and prompt-binding
   security invariants.
+- Preserve v0.36.1's fail-closed Host allowlist, loopback bind/peer checks, proxy-auth recovery, and
+  upload magic-byte validation. A deployment-specific Gateway does not weaken the node Bridge.
 - The supported lifecycle is the plugin-owned supervisor. Do not add systemd, launchd, cron,
   Tailscale, a public listener, or a shared-home pidfile.
 - Keep Fleet aggregation to stable, explicitly allowlisted summary and Agent-card fields. Pane
@@ -78,5 +80,7 @@ then atomically swapped into `web/dist`.
 - Herdr RPC is one request per connection except `events.subscribe`; request ids are strings.
 - Pane output is React text, never `innerHTML`.
 - Every agent journal path must pass realpath containment under its configured harness root.
+- `commands.toml`, `keys.toml`, and `quick-replies.toml` share one last-good operator-file and scope
+  contract; extend all three consistently without moving their values into Fleet.
 
 `AGENTS.md` points here so all coding agents receive the same rules.

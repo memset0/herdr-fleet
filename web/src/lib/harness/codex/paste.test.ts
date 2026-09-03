@@ -1,27 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  CODEX_INPUT_CHUNK_BYTES,
-  codexDraftCarriesSend,
-  codexInputChunks,
-} from "./paste";
-
-describe("Codex input chunks", () => {
-  it("round-trips text with every chunk below the byte boundary", () => {
-    const sent = `${"a".repeat(899)}🙂${"界".repeat(400)}`;
-    const chunks = codexInputChunks(sent);
-    expect(chunks.join("")).toBe(sent);
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((chunk) => new TextEncoder().encode(chunk).length <= CODEX_INPUT_CHUNK_BYTES)).toBe(
-      true,
-    );
-  });
-
-  it("returns no write for empty text and does not split a short message", () => {
-    expect(codexInputChunks("")).toEqual([]);
-    expect(codexInputChunks("hello")).toEqual(["hello"]);
-  });
-});
+import { codexDraftCarriesSend } from "./paste";
 
 describe("Codex large-paste evidence", () => {
   it("accepts only the exact Unicode character count", () => {

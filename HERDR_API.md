@@ -1,10 +1,11 @@
-# Herdr socket and plugin API — empirically verified (v0.8.0, protocol 19)
+# Herdr socket and plugin API — verified through v0.8.2
 
-Probed live against a running Herdr server, most recently re-probed 2026-08-08 and cross-checked
-against the bundled machine-readable schema — `herdr api schema [--json | --output PATH]`
-(`schema_version 1`, covering requests, responses, errors, and events) is now the fastest way to
-re-derive this contract without probing. These are the facts the bridge is built on; they confirm
-the socket assumptions behind the design in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+The core contract was originally probed against Herdr 0.8.0 protocol 19. Web Remote now requires
+Herdr 0.8.2 protocol 20; the long-send behavior below was re-probed on that version and the current
+CLI/schema were rechecked. Dated observations continue to name the release actually tested. The
+bundled machine-readable schema — `herdr api schema [--json | --output PATH]` (`schema_version 1`,
+covering requests, responses, errors, and events) — is the fastest way to re-derive the contract.
+These facts confirm the socket assumptions in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ## Transport
 
@@ -55,16 +56,16 @@ the socket assumptions behind the design in [`ARCHITECTURE.md`](./ARCHITECTURE.m
 | `pane.send_keys` | `{pane_id, keys}` | (ack) |
 | `agent.send` | `{target, text}` | (ack) — writes **literal** text, no Enter |
 
-## Writable terminal-session controller (v0.8.0)
+## Writable terminal-session controller (CLI surface rechecked on v0.8.2)
 
-Herdr 0.8.0's supported CLI provides the one stateful primitive behind Collie's custom manual
+Herdr 0.8.2's supported CLI provides the one stateful primitive behind Collie's custom manual
 width fit:
 
 ```text
 herdr terminal session control <PANE_ID> --cols <N> --rows <N>
 ```
 
-The installed CLI help and the v0.8.0 implementation/tests were re-checked for Web Remote 2.3.0:
+The installed 0.8.2 CLI help and the earlier 0.8.0 implementation/tests establish this contract:
 
 - The process connects to the exact `HERDR_SOCKET_PATH`, acquires writable controller ownership for
   the target Pane, then prints newline-delimited `terminal.frame` records whose ANSI bytes are
@@ -133,10 +134,22 @@ Fleet rail changes, or automatic browser resize handling.
     first and wrong hypothesis.
   - A `\n` inside `text` is delivered as a real newline keypress, not as pasted content. What the TUI
     does with it (submit vs. insert) is the harness's choice, not something the paste framing hides.
-  - A 2026-08-26 Herdr 0.8.0 Codex probe sent 1,123 synthetic ASCII bytes in one RPC and the
-    composer retained exactly the first 1,024. Two ordered sub-1,024-byte RPCs retained all 1,123.
-    The Codex guarded path therefore transports one logical input as Unicode-safe chunks; it still
-    verifies the complete logical message before sending Enter and never retries a partial write.
+- **`pane.send_text` has no 1,024-byte cap. Live-probed 2026-08-28 on herdr 0.8.2.** A claim from a
+  2026-08-26 herdr **0.8.0** Codex probe said one RPC kept only the first 1,024 bytes. It does not
+  reproduce here. Method: a throwaway shell pane running `cat > file`, so the count is bytes that
+  reached the PTY, not glyphs a TUI chose to render. One `pane.send_text` per trial, then `wc -c`:
+
+  | Sent (bytes) | Arrived (bytes) | Payload |
+  | --- | --- | --- |
+  | 1023 / 1024 / 1025 / 2048 / 3000 | identical | ASCII, no newline |
+  | 2000 / 8000 / 40000 | identical | ASCII with a `\n` every 40 bytes |
+  | 2760 | identical | multi-byte UTF-8, no newline |
+
+  Every RPC acked `{"type":"ok"}`. There is no `truncated` flag and no error on a long send, so a
+  future cap would be silent — re-probe before trusting a new herdr with a large paste. Until one
+  appears, **do not chunk a send.** Chunking is what [`.adr/0010`](./.adr/0010-long-sends-are-verified-via-the-paste-placeholder.md)
+  rejects: `pane.send_text` carries no bracketed paste, so a chunk boundary landing on a lone `\n`
+  submits a half-written message.
 - **An ack means "herdr took the bytes", never "the TUI acted on them".** Both `send_text` and
   `send_keys` return before the target program has read, let alone rendered, anything. So a
   successful RPC pair is not evidence a reply was delivered — a focused TUI dialog can swallow the

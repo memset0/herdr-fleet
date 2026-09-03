@@ -15,7 +15,6 @@ import {
   PLACEHOLDER,
   promptText,
   rstrip,
-  isQueueHintRow,
   skipBlanksUp,
 } from "./markers";
 
@@ -32,20 +31,23 @@ export interface ComposerBox {
 // Claude. A run deeper than this is not a composer (fail closed — locateComposer returns null).
 const MAX_DRAFT_ROWS = 100;
 
-// While a task runs, Codex lets the composer occupy several blank visual rows and replaces the
-// normal status summary with `tab to queue message …` at the bottom. Official TUI snapshots use six
-// blank rows for the ordinary height. Keep a little repaint/viewport slack, still far below the
-// draft-row bound and only on the exact fixed queue-footer path.
-const MAX_QUEUE_HINT_GAP = 12;
-
-// Continuation rows are exactly two-space-indented text. Deeper indents belong to dialogs and
-// transcript blocks; a `› ` or `• ` row is never a continuation.
-const CONTINUATION = /^ {2}\S/;
+// A continuation row is the composer's TWO-SPACE GUTTER followed by the draft's own text — and
+// that text may ITSELF begin with spaces. Type two spaces mid-sentence, or let a soft wrap land
+// inside a run of them, and Codex paints a four-space-indented row that is a perfectly healthy
+// continuation. The old `/^ {2}\S/` demanded a non-space at column 2, read that row as foreign,
+// and made `locateComposer` return null — which refused EVERY send in the pane with "the input
+// box isn't on screen — a menu or dialog is probably up" for as long as the draft sat there. That
+// is a DEADLOCK, not a transient: the refusal is itself what keeps the draft from being sent, so
+// the pane never recovers on its own. Only the gutter is asserted here, because only the gutter is
+// the renderer's; what the walk actually bounds the run with is the blank row above it (`isBlank`,
+// checked first in the same test), and Codex separates every section of a screen with one. A `› `
+// or `• ` row still starts at column 0, so neither can pass as a continuation.
+const CONTINUATION = /^ {2}\s*\S/;
 const PROMPT_PREFIX = "› ";
 
 /** The exact placeholder text is still a valid thing an operator might deliberately type. Codex
- * distinguishes its empty hint by painting the whole body dim, so presentation/extraction should
- * use that renderer evidence too instead of discarding an ordinary non-dim draft with those words. */
+ * distinguishes its empty hint by painting the whole body dim, so extraction should use that
+ * renderer evidence too instead of discarding an ordinary non-dim draft with those words. */
 function isEmptyPlaceholder(line: StyledLine): boolean {
   const text = rstrip(lineText(line));
   if (promptText(text) !== PLACEHOLDER) return false;
@@ -66,26 +68,6 @@ function isEmptyPlaceholder(line: StyledLine): boolean {
   return sawBody;
 }
 
-/** Codex's native composer is three rows tall in the captured renderer: one background-painted
- * blank above the prompt, the prompt itself, and one or more layout rows below it. The parser is
- * intentionally anchored at the prompt, so presentation separately claims that one upper row only
- * when it is blank and carries the exact same background as the prompt. A plain transcript separator
- * stays outside the composer. */
-function presentationStart(lines: StyledLine[], box: ComposerBox): number {
-  if (box.promptRow === 0) return box.promptRow;
-  const above = lines[box.promptRow - 1]!;
-  if (!isBlank(lineText(above))) return box.promptRow;
-  const background = above.segments.find(
-    (segment) => segment.style.backgroundColor !== undefined,
-  )?.style.backgroundColor;
-  if (background === undefined) return box.promptRow;
-  return lines[box.promptRow]!.segments.some(
-    (segment) => segment.style.backgroundColor === background,
-  )
-    ? box.promptRow - 1
-    : box.promptRow;
-}
-
 /** The composer at the buffer tail, or null (a dialog owns the screen, or the frame is torn). */
 export function locateComposer(lines: StyledLine[]): ComposerBox | null {
   const texts = lines.map((l) => rstrip(lineText(l)));
@@ -94,11 +76,7 @@ export function locateComposer(lines: StyledLine[]): ComposerBox | null {
 
   // One blank row separates the prompt/draft run from the status row (every capture); above the
   // gap the run is CONTIGUOUS non-blank rows — wrapped-draft continuations under the `› ` prompt.
-  const top = skipBlanksUp(
-    texts,
-    statusRow - 1,
-    isQueueHintRow(texts[statusRow]!) ? MAX_QUEUE_HINT_GAP : undefined,
-  );
+  const top = skipBlanksUp(texts, statusRow - 1);
   if (top < 0) return null;
   for (let i = top; i >= 0 && top - i < MAX_DRAFT_ROWS; i--) {
     const t = texts[i]!;
@@ -117,19 +95,6 @@ export function stripChrome(lines: StyledLine[]): StyledLine[] {
   const box = locateComposer(lines);
   if (box === null) return lines;
   return lines.slice(0, box.promptRow);
-}
-
-/**
- * Presentation policy, deliberately separate from composer detection and reply authorization:
- * hide an empty native composer (Collie's own input replaces it), but keep a non-empty prompt/draft
- * visible for diagnosis. Dialogs have no located composer and remain byte-for-byte raw.
- */
-export function presentChrome(lines: StyledLine[]): StyledLine[] {
-  const box = locateComposer(lines);
-  if (box === null) return lines;
-  return extractInputDraft(lines) === null
-    ? lines.slice(0, presentationStart(lines, box))
-    : lines.slice(0, box.statusRow);
 }
 
 /** The status row, styled, for the strip above the phone composer. Empty when no composer. */
