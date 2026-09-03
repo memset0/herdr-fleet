@@ -89,20 +89,9 @@ async function responseBody(response: Response): Promise<ManualPaneFitResponse> 
 }
 
 describe("manual Pane fit input and safe errors", () => {
-  test("accepts a bounded cols field, and an optional bounded rows beside it", () => {
-    expect(parseResizePaneInput({ cols: 20 })).toEqual({ ok: true, cols: 20, rows: null });
-    expect(parseResizePaneInput({ cols: 500 })).toEqual({ ok: true, cols: 500, rows: null });
-    // An explicit height, and the two ends the controller itself refuses past.
-    expect(parseResizePaneInput({ cols: 80, rows: 24 })).toEqual({ ok: true, cols: 80, rows: 24 });
-    expect(parseResizePaneInput({ cols: 80, rows: 0 })).toEqual({ ok: false, error: "bad rows" });
-    expect(parseResizePaneInput({ cols: 80, rows: 65_536 })).toEqual({
-      ok: false,
-      error: "bad rows",
-    });
-    expect(parseResizePaneInput({ cols: 80, rows: 24.5 })).toEqual({
-      ok: false,
-      error: "bad rows",
-    });
+  test("accepts exactly one bounded integer cols field", () => {
+    expect(parseResizePaneInput({ cols: 20 })).toEqual({ ok: true, cols: 20 });
+    expect(parseResizePaneInput({ cols: 500 })).toEqual({ ok: true, cols: 500 });
     const invalid: JsonValue[] = [
       null,
       [],
@@ -111,9 +100,7 @@ describe("manual Pane fit input and safe errors", () => {
       { cols: 501 },
       { cols: 80.5 },
       { cols: "80" },
-      // An unknown field is still refused; `rows` stopped being one.
-      { cols: 80, height: 24 },
-      { rows: 24 },
+      { cols: 80, rows: 24 },
     ];
     for (const value of invalid) {
       expect(parseResizePaneInput(value).ok).toBeFalse();
@@ -151,7 +138,7 @@ describe("manual Pane fit server action", () => {
       "w1:p1",
       new Request("http://localhost", {
         method: "POST",
-        body: JSON.stringify({ cols: 80, height: 24 }),
+        body: JSON.stringify({ cols: 80, rows: 24 }),
       }),
       audit,
       "phone",

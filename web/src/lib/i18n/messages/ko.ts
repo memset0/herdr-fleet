@@ -187,9 +187,6 @@ export const ko: Dictionary = {
   "settings.display.resize.hint":
     "공유 Pane 너비를 현재 보기에 한 번 맞춥니다. 이후 레이아웃 변경은 크기를 바꾸지 않습니다.",
   "settings.display.resize.aria": "Pane을 현재 보기에 맞추기",
-  "settings.display.resize.rows": "행 수",
-  "settings.display.resize.rowsHint": "터미널을 몇 줄 보여줄지. 비워 두면 창의 높이를 그대로 둡니다.",
-  "settings.display.resize.rowsAuto": "유지",
   "settings.display.resize.busy": "크기 조정 중…",
   "settings.display.resize.success": "{cols}열 × {rows}행으로 조정했습니다.",
   "settings.display.resize.geometryError": "아직 터미널 너비를 측정할 수 없습니다.",

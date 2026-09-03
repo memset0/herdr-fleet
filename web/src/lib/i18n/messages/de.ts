@@ -193,9 +193,6 @@ export const de: Dictionary = {
   "settings.display.resize.hint":
     "Passt die gemeinsame Pane-Breite einmalig an. Spätere Layoutänderungen ändern sie nicht.",
   "settings.display.resize.aria": "Pane an diese Ansicht anpassen",
-  "settings.display.resize.rows": "Zeilen",
-  "settings.display.resize.rowsHint": "Wie viel vom Terminal sichtbar bleibt. Leer behält die Höhe des Panes.",
-  "settings.display.resize.rowsAuto": "Behalten",
   "settings.display.resize.busy": "Größe wird angepasst…",
   "settings.display.resize.success": "Auf {cols} Spalten × {rows} Zeilen angepasst.",
   "settings.display.resize.geometryError": "Die Terminalbreite kann noch nicht gemessen werden.",

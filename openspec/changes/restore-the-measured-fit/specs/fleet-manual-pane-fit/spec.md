@@ -1,11 +1,4 @@
-# fleet-manual-pane-fit Specification
-
-## Purpose
-
-Adds one explicit, authorised action that fits a Herdr Pane's shared PTY width to the native Collie
-terminal mirror without introducing automatic resize or controller takeover.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Display Settings exposes one explicit manual fit action
 An authorised operator viewing an active Herdr Pane SHALL see a `Resize` action immediately below
@@ -33,27 +26,6 @@ preference, or trigger from a render/effect without an explicit operator activat
 - **WHEN** the active multiplexer does not advertise manual Pane fit
 - **THEN** the action is absent and no speculative request is made
 
-### Requirement: Manual fit derives bounded columns from current rendered geometry
-On explicit activation, Herdr Fleet SHALL measure the active terminal mirror's usable content width
-using its current computed monospace cell width and horizontal padding. It SHALL floor the number of
-complete cells and clamp the result to a bounded whole-number range of 20 through 500 columns.
-
-Missing, zero, non-finite, or otherwise unusable geometry MUST fail visibly without sending a
-resize. Later viewport, drawer, rail, font-size, route, or layout changes MUST NOT issue another
-request until the operator activates `Resize` again.
-
-#### Scenario: Current geometry is usable
-- **WHEN** the visible content width and monospace cell width produce a finite value
-- **THEN** Fleet subtracts horizontal padding, floors complete cells, clamps to 20..500, and sends that integer once
-
-#### Scenario: Geometry cannot be measured
-- **WHEN** the scrollport, computed font metrics, padding, or usable width is unavailable or invalid
-- **THEN** Fleet reports failure and sends no resize request
-
-#### Scenario: Layout changes after resize
-- **WHEN** browser size, drawer state, font preference, or native layout changes after a successful fit
-- **THEN** no follow-up resize occurs without another explicit activation
-
 ### Requirement: Herdr resize preserves rows and controller ownership
 The protected resize operation SHALL accept only an integer column count in the range 20 through
 500. It SHALL obtain the current trusted Herdr session socket and current Pane viewport row count
@@ -80,24 +52,3 @@ claiming success or changing another owner's controller.
 #### Scenario: The same Pane is resized again
 - **WHEN** a later valid manual request targets the same trusted session socket and Pane
 - **THEN** Fleet reuses its retained controller lease and applies only the new explicit dimensions
-
-### Requirement: Resize uses existing write, session, audit, and lifecycle boundaries
-The resize endpoint SHALL remain behind Collie's existing same-origin/session and write-level device
-authorisation. It SHALL resolve the Pane within the request's trusted Host/session scope and record
-the operation through the existing audit attribution as `pane.resize`.
-
-Only the Herdr adapter SHALL advertise the capability. Stale or unsupported clients MUST receive a
-clean unsupported response. All retained controllers MUST be released when their Pane/session/server
-closes or when the bridge shuts down, without killing an unrelated process by name, port, or pidfile.
-
-#### Scenario: An unauthorised client requests resize
-- **WHEN** the existing write gate rejects the request
-- **THEN** no controller is acquired and the standard denial response is returned
-
-#### Scenario: A stale client calls an unsupported bridge
-- **WHEN** the active adapter does not advertise manual fit
-- **THEN** the endpoint reports unsupported and performs no resize
-
-#### Scenario: The bridge shuts down
-- **WHEN** Collie closes while manual-fit controllers are retained
-- **THEN** Fleet releases every owned controller and leaves unrelated Herdr clients and Panes untouched
