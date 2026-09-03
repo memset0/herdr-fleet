@@ -23,6 +23,10 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ## [Unreleased]
 
+### Added
+
+- Establish the Herdr Fleet plugin identity, exact Collie fork boundary, and private Fleet configuration.
+
 ## [1.2.0] - 2026-09-02
 
 ### Added

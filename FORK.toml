@@ -1,0 +1,81 @@
+schema_version = 1
+
+[upstream]
+url = "https://github.com/AltanS/collie.git"
+tag = "v1.2.0"
+tag_object = "0f98f28c9aaadd641c4bc5ac484190ee3ef7008c"
+commit = "4618c90534d6f818ed6788b8db00e1582c5abfdc"
+
+[[owned]]
+id = "development-workflow"
+intent = "Maintain downstream OpenSpec and agent integrations without changing Collie product behavior."
+paths = [
+  ".agents/**",
+  ".claude/commands/**",
+  ".claude/skills/**",
+  ".opencode/**",
+  "openspec/**"
+]
+contracts = ["downstream-only specifications", "OpenSpec 1.11.0 generated workflows"]
+verify = ["openspec/config.yaml"]
+
+[[owned]]
+id = "fork-governance"
+intent = "Keep the exact Collie provenance and every downstream path reviewable."
+paths = [
+  "FORK.toml",
+  "UPSTREAM.md",
+  "scripts/check-fork.ts",
+  "scripts/check-fork.test.ts",
+  "scripts/fork-manifest.ts",
+  "scripts/fork-manifest.test.ts"
+]
+contracts = ["exact upstream identity", "complete changed-path classification"]
+verify = ["scripts/check-fork.test.ts", "scripts/fork-manifest.test.ts"]
+
+[[owned]]
+id = "fleet-runtime"
+intent = "Provide the private authenticated Fleet runtime outside Collie-owned modules."
+paths = ["fleet/**"]
+contracts = ["private fleet.toml", "lead-only configuration", "sanitized Collie child environment"]
+verify = ["fleet/config.test.ts", "fleet/collie-env.test.ts"]
+
+[[invasive]]
+id = "repository-guidance"
+intent = "Make downstream instructions canonical and exclude machine-local Fleet configuration."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  ".gitignore#/fleet.toml",
+  "AGENTS.md#Repository-specific OpenSpec and Git Workflow Requirements",
+  "CLAUDE.md#AGENTS.md"
+]
+verify = ["AGENTS.md", ".gitignore"]
+reason = "Repository entrypoints and ignore rules are upstream-owned surfaces that every contributor consumes."
+
+[[invasive]]
+id = "plugin-identity"
+intent = "Expose the downstream Herdr Fleet plugin identity while retaining Collie provenance."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = ["herdr-plugin.toml#memset0.herdr-fleet"]
+verify = ["herdr-plugin.toml", "UPSTREAM.md"]
+reason = "Herdr reads identity only from the upstream plugin manifest path."
+
+[[invasive]]
+id = "fleet-build-port"
+intent = "Include fork-owned Fleet modules in existing root test and typecheck gates."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = ["package.json#./fleet", "tsconfig.json#\"fleet\""]
+verify = ["fleet/config.test.ts", "fleet/collie-env.test.ts"]
+reason = "The upstream root package and TypeScript configuration own the repository-wide verification entrypoints."
+
+[[invasive]]
+id = "downstream-changelog"
+intent = "Record functional downstream work under the existing unreleased release discipline."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = ["CHANGELOG.md#private Fleet configuration"]
+verify = ["CHANGELOG.md", "scripts/check-version.sh"]
+reason = "The existing changelog is the single release history enforced by the upstream version gate."

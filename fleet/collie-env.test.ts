@@ -1,0 +1,58 @@
+import { describe, expect, test } from "bun:test";
+
+import { collieChildEnv } from "./collie-env.ts";
+import { parseFleetToml } from "./config.ts";
+
+const config = parseFleetToml(`schema_version = 1
+role = "lead"
+[listen]
+host = "127.0.0.1"
+port = 18787
+[public]
+origin = "https://fleet.example.com"
+[collie]
+host = "127.0.0.1"
+port = 8787
+[auth]
+username = "operator"
+password_hash = "$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA"
+session_secret = "${Buffer.alloc(32, 9).toString("base64url")}"
+`);
+
+describe("Fleet Collie child environment", () => {
+  test("forces external ingress and removes inherited trust bypasses", () => {
+    const inherited = {
+      PATH: "/usr/bin",
+      COLLIE_HOST: "0.0.0.0",
+      COLLIE_ALLOW_NON_LOOPBACK_BIND: "1",
+      COLLIE_TRUSTED_USER: "forged@example.com",
+      COLLIE_TRUSTED_USER_OPTIONAL: "1",
+      COLLIE_TAILSCALE_HOSTS: "old.example.com",
+      COLLIE_SERVE_MODE: "https",
+      COLLIE_DEVICE_HEADER: "X-Trusted",
+      COLLIE_ALLOW_ANY_HOST: "1",
+    };
+    const env = collieChildEnv(config, inherited);
+    expect(env).toMatchObject({
+      PATH: "/usr/bin",
+      COLLIE_HOST: "127.0.0.1",
+      COLLIE_PORT: "8787",
+      COLLIE_SKIP_SERVE: "1",
+      COLLIE_PUBLIC_HOSTS: "fleet.example.com",
+      COLLIE_ALLOWED_ORIGINS: "https://fleet.example.com",
+      COLLIE_PUBLIC_URL: "https://fleet.example.com",
+    });
+    for (const key of [
+      "COLLIE_ALLOW_NON_LOOPBACK_BIND",
+      "COLLIE_TRUSTED_USER",
+      "COLLIE_TRUSTED_USER_OPTIONAL",
+      "COLLIE_TAILSCALE_HOSTS",
+      "COLLIE_SERVE_MODE",
+      "COLLIE_DEVICE_HEADER",
+      "COLLIE_ALLOW_ANY_HOST",
+    ]) {
+      expect(env[key]).toBeUndefined();
+    }
+    expect(inherited.COLLIE_HOST).toBe("0.0.0.0");
+  });
+});

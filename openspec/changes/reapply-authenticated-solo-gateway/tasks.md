@@ -1,12 +1,12 @@
 ## 1. Establish the fork and configuration boundary
 
-- [ ] 1.1 Re-read the exact Collie v1.2.0 baseline, current source instructions, this change, and the reviewed v2 owned authentication/supervisor modules; record the clean `v3-dev` baseline and exact task-owned paths before implementation.
-- [ ] 1.2 Add `FORK.toml` plus the smallest reusable fork-manifest parser/checker, classify every path changed since the Collie baseline including OpenSpec setup, and verify the checker rejects an unclassified or overbroad invasive path.
-- [ ] 1.3 Change the Herdr plugin identity to `memset0.herdr-fleet`, preserve Collie attribution, add the minimum owned entrypoint/build ports, and verify manifest/package/version checks remain coherent without cutting a release.
-- [ ] 1.4 Implement strict `fleet/config.ts` schema-version-1 parsing with Bun TOML, accepting only the lead role and one loopback Gateway/Collie pair while rejecting unknown, peer, hosts, SSH, transport, and Pack fields; verify focused parser tests cover every rejection family.
-- [ ] 1.5 Resolve only an explicit or Herdr-provided owner-only `fleet.toml`, reject absent/broad-permission files without leaking values, ignore any repository-root live file, and verify temporary-file permission tests plus `git check-ignore` protect local configuration.
-- [ ] 1.6 Build the sanitized Fleet-to-Collie child environment that forces loopback/external ingress, exact Host/Origin, and `COLLIE_SKIP_SERVE=1` while removing conflicting inherited Tailscale identity/publication values; verify focused environment tests and unchanged standalone Collie behavior.
-- [ ] 1.7 Update `FORK.toml` and `CHANGELOG.md`, run focused configuration/fork/version/type checks, commit this stage separately, fetch/verify `origin/v3-dev`, and push a normal buildable commit.
+- [x] 1.1 Re-read the exact Collie v1.2.0 baseline, current source instructions, this change, and the reviewed v2 owned authentication/supervisor modules; record the clean `v3-dev` baseline and exact task-owned paths before implementation.
+- [x] 1.2 Add `FORK.toml` plus the smallest reusable fork-manifest parser/checker, classify every path changed since the Collie baseline including OpenSpec setup, and verify the checker rejects an unclassified or overbroad invasive path.
+- [x] 1.3 Change the Herdr plugin identity to `memset0.herdr-fleet`, preserve Collie attribution, add the minimum owned entrypoint/build ports, and verify manifest/package/version checks remain coherent without cutting a release.
+- [x] 1.4 Implement strict `fleet/config.ts` schema-version-1 parsing with Bun TOML, accepting only the lead role and one loopback Gateway/Collie pair while rejecting unknown, peer, hosts, SSH, transport, and Pack fields; verify focused parser tests cover every rejection family.
+- [x] 1.5 Resolve only an explicit or Herdr-provided owner-only `fleet.toml`, reject absent/broad-permission files without leaking values, ignore any repository-root live file, and verify temporary-file permission tests plus `git check-ignore` protect local configuration.
+- [x] 1.6 Build the sanitized Fleet-to-Collie child environment that forces loopback/external ingress, exact Host/Origin, and `COLLIE_SKIP_SERVE=1` while removing conflicting inherited Tailscale identity/publication values; verify focused environment tests and unchanged standalone Collie behavior.
+- [x] 1.7 Update `FORK.toml` and `CHANGELOG.md`, run focused configuration/fork/version/type checks, commit this stage separately, fetch/verify `origin/v3-dev`, and push a normal buildable commit.
 
 ## 2. Reapply and harden the authentication core
 

@@ -1,8 +1,8 @@
-id = "herdr.collie"
-name = "Collie"
+id = "memset0.herdr-fleet"
+name = "Herdr Fleet"
 version = "1.2.0"
 min_herdr_version = "0.7.0"
-description = "Mobile web UI to monitor and reply to your agent herd, served over Tailscale"
+description = "Authenticated mobile web UI for the AI agents in your Herdr fleet"
 platforms = ["linux", "macos"]
 
 # This plugin is a thin launcher. The actual bridge runs as a systemd --user service so it
