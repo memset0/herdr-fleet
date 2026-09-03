@@ -215,12 +215,17 @@ function Row({
       {row.children.length > 0 && (
         <div id={childrenId}>
           <Collapse open={open}>
-            {/* HALF A CHEVRON OUT, HALF A CHEVRON IN. The guide line lands on the centre of the
-                control that opened this level — `ml-2.5` against the `w-5` chevron above — and the
-                children begin a further half in, so a child's row starts exactly one chevron right
-                of its parent's. A leaf draws no chevron at all, so the first thing inside its
-                highlight is its own icon rather than an empty column. */}
-            <div className="ml-2.5 flex flex-col border-l border-border/70 pl-2.5">
+            {/* THE LINE LANDS ON THE CHEVRON'S CENTRE, and the arithmetic is stated because it has
+                two inputs and both have moved once already. The row above carries `px-1.5`, so its
+                `w-5` chevron occupies 6..26px and its centre is at 16px — hence `ml-4`. The children
+                then begin one chevron-width in from where that chevron STARTED (6 + 20 = 26px),
+                which is `pl-2` past the line's own 1px: 16 + 1 + 8 = 25px, the same column the
+                parent's label sits in. Change the row's padding or the chevron's width and both
+                numbers move together; neither is a taste choice.
+
+                A leaf draws no chevron at all, so the first thing inside its highlight is its own
+                icon rather than an empty column. */}
+            <div className="ml-4 flex flex-col border-l border-border/70 pl-2">
               {row.children.map((child) => (
                 <Row
                   key={child.key}

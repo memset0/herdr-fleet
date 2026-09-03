@@ -69,7 +69,7 @@ export function NativeAgentCard({
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-8 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-1 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
       >
         {/* The avatar carries both marks the row needs and neither costs a column: the state at the
             corner the eye already lands on, and the shortcut ordinal at the one it does not. */}
@@ -98,7 +98,11 @@ export function NativeAgentCard({
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           {/* Line 1 — where. The project gives up width first: it is the run every sibling row
               repeats, and the name beside it is the only thing telling two rows apart. */}
-          <span className="flex min-w-0 items-baseline gap-1 overflow-hidden text-[13px] leading-tight">
+          {/* THE RESERVE FOR THE STAR IS ON THIS LINE, not on the button. The favourite control is
+              positioned at the row's top trailing corner, so only the line it shares has to clear
+              it — put on the button, the same 32px pushed line 2 in as well and the age stopped
+              being at the bottom trailing corner it is supposed to occupy. */}
+          <span className="flex min-w-0 items-baseline gap-1 overflow-hidden pr-7 text-[13px] leading-tight">
             <span className="min-w-0 truncate text-muted-foreground">{project}</span>
             <span className="shrink-0 text-muted-foreground">·</span>
             {/* Both truncate. The name was `shrink-0`, which let a long Tab name push the row past

@@ -104,4 +104,24 @@ describe("NativeAgentRail", () => {
     render(<NativeAgentRail agents={[]} bridge="connected" onOpen={vi.fn()} />);
     expect(screen.getByText(/no agents running/i)).toBeInTheDocument();
   });
+
+  it("puts the age at the row's own trailing edge, under the favourite control", () => {
+    render(
+      <NativeAgentRail
+        agents={[agent("p1", { tabLabel: "mukai", lastSeenAt: Date.now() })]}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    const row = rows()[0]!;
+    const name = within(row).getByText("mukai");
+    const age = within(row).getByText(/^(now|\d+[mhd])$/);
+    // THE RESERVE FOR THE STAR IS ONE LINE'S, not the button's. Line 1 shares its row with the
+    // control and clears it; line 2 runs to the row's own trailing edge, which is the corner the
+    // age is specified to sit in. On the button, the same reserve pushed both lines in.
+    expect(name.parentElement?.className ?? "").toContain("pr-7");
+    expect(age.parentElement?.className ?? "").not.toContain("pr-7");
+    expect(age.closest("button")?.className ?? "").not.toContain("pr-8");
+  });
 });
+

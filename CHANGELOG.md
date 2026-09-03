@@ -70,6 +70,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ### Fixed
 
+- The hierarchy's guide line falls on its chevron's centre again — the row's own padding had moved the chevron and not the line — and the Agent row's age reaches the bottom trailing corner, because the reserve for the favourite control now belongs to the line that shares it rather than to the whole row.
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.
 - Accept header-stripped browser login submissions through an unguessable no-store CSRF form token.
 - Allow the authenticated same-origin UI to request microphone access without delegating it cross-origin.
