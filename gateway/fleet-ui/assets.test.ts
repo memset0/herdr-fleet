@@ -31,4 +31,13 @@ describe("Fleet build assets", () => {
       (await fleetAssetResponse("fleet.js")).headers.get("content-type"),
     ).toBe("text/javascript; charset=utf-8");
   });
+
+  test("builds Fleet assets from the receiving-node Web entrypoint", async () => {
+    const webPackage = await Bun.file("web/package.json").json() as {
+      scripts?: { build?: string };
+    };
+    expect(webPackage.scripts?.build).toStartWith(
+      "bun run ../scripts/build-fleet-assets.ts && ",
+    );
+  });
 });

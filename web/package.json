@@ -7,7 +7,7 @@
   "description": "Collie-derived node PWA for Herdr Web Remote",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "bun run ../scripts/build-fleet-assets.ts && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
