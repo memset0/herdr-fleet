@@ -125,11 +125,20 @@ export function checkFleetImportBoundary(files: ReadonlyMap<string, string>): st
         errors.push(`${path} deep-imports shared Fleet through ${specifier}`);
       }
       if (
+        path.startsWith("web/") &&
         !path.startsWith("web/src/downstream/fleet/") &&
         specifier.includes("downstream/fleet/") &&
         !/downstream\/fleet\/index(?:\.ts)?$/.test(specifier)
       ) {
         errors.push(`${path} deep-imports Collie Fleet through ${specifier}`);
+      }
+      if (
+        path.startsWith("bridge/") &&
+        !path.startsWith("bridge/downstream/fleet/") &&
+        specifier.includes("downstream/fleet/") &&
+        !/downstream\/fleet\/index(?:\.ts)?$/.test(specifier)
+      ) {
+        errors.push(`${path} deep-imports Bridge Fleet through ${specifier}`);
       }
     }
   }

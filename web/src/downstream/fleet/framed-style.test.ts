@@ -2,20 +2,22 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, test } from "vitest";
 
+const framedCss = readFileSync("src/downstream/fleet/framed.css", "utf8");
 const indexCss = readFileSync("src/index.css", "utf8");
 
 describe("document scroll ownership", () => {
-  test("clips the Collie document root so route content owns vertical scrolling", () => {
-    expect(indexCss).toMatch(
-      /html,\s*body,\s*#root\s*\{[^}]*height:\s*100%;[^}]*overflow:\s*hidden;/s,
+  test("clips only a Fleet-framed document root", () => {
+    expect(framedCss).toMatch(
+      /:root\[data-fleet-frame\],\s*:root\[data-fleet-frame\] body,\s*:root\[data-fleet-frame\] #root\s*\{[^}]*height:\s*100%;[^}]*overflow:\s*hidden;/s,
     );
-    expect(indexCss).toMatch(/html,\s*body,\s*#root\s*\{[^}]*overflow:\s*clip;/s);
+    expect(framedCss).toMatch(/#root\s*\{[^}]*overflow:\s*clip;/s);
+    expect(indexCss).not.toContain("data-fleet-frame");
   });
 });
 
 describe("Fleet-framed Pane chrome", () => {
   test("uses only root-scoped purpose-built hooks and static declarations", () => {
-    const block = indexCss.match(
+    const block = framedCss.match(
       /:root\[data-fleet-frame\][\s\S]*?\[data-fleet-controls-row\]\s*\{[^}]*\}/,
     )?.[0];
     expect(block).toBeDefined();
@@ -33,7 +35,7 @@ describe("Fleet-framed Pane chrome", () => {
       "data-fleet-controls-label",
       "data-fleet-controls-row",
     ]) {
-      const selectors = [...indexCss.matchAll(new RegExp(`([^{}]+\\[${hook}\\][^{}]*)\\{`, "g"))]
+      const selectors = [...framedCss.matchAll(new RegExp(`([^{}]+\\[${hook}\\][^{}]*)\\{`, "g"))]
         .map((match) => match[1]!.trim());
       expect(selectors.length).toBeGreaterThan(0);
       expect(selectors.every((selector) => selector.includes(":root[data-fleet-frame]"))).toBe(true);

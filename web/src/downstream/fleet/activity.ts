@@ -115,10 +115,8 @@ const browserActivity = createFleetActivityController({
   removeVisibilityListener: (listener) => document.removeEventListener("visibilitychange", listener),
 });
 
-let testActivityOverride: boolean | undefined;
-
 export function paneObservationActive(): boolean {
-  return testActivityOverride ?? browserActivity.active();
+  return browserActivity.active();
 }
 
 export function startFleetActivity(): () => void {
@@ -127,9 +125,4 @@ export function startFleetActivity(): () => void {
 
 export function subscribeFleetActivation(listener: () => void): () => void {
   return browserActivity.subscribeActivation(listener);
-}
-
-/** Test seam for API header assertions; production callers must not override activity. */
-export function __setPaneObservationActiveForTest(active: boolean | undefined): void {
-  testActivityOverride = active;
 }

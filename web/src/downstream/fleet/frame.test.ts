@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { FLEET_FRAME_ATTRIBUTE, markFleetFrame } from "./fleet-frame";
+import { FLEET_FRAME_ATTRIBUTE, isFleetFrame, markFleetFrame } from "./frame";
 
 describe("Fleet frame presentation marker", () => {
   beforeEach(() => {
@@ -21,5 +21,15 @@ describe("Fleet frame presentation marker", () => {
     markFleetFrame(document.documentElement, false);
 
     expect(document.documentElement).not.toHaveAttribute(FLEET_FRAME_ATTRIBUTE);
+  });
+
+  it("detects only a child browsing context", () => {
+    const top = {} as Window;
+    Object.defineProperty(top, "parent", { value: top });
+    const child = {} as Window;
+    Object.defineProperty(child, "parent", { value: top });
+
+    expect(isFleetFrame(top)).toBe(false);
+    expect(isFleetFrame(child)).toBe(true);
   });
 });

@@ -13,6 +13,13 @@ Web Remote supervisor owns its lightweight node control on every Fleet node and 
 Fleet host. Idle state contains no ttyd or writable attachment; an authenticated desktop navigation
 opens one bounded existing-Pane attachment. It is not a second plugin, service, or Collie path.
 
+For maintainers, [`FORK.toml`](./FORK.toml) records the exact Collie baseline and separates owned
+modules from invasive Collie ports. Gateway UI code lives under `gateway/fleet-ui/`, shared
+protocols under `shared/fleet/`, and node-side additions behind the
+`web/src/downstream/fleet/` and `bridge/downstream/fleet/` barrels. Read
+[`UPSTREAM.md`](./UPSTREAM.md) before synchronizing Collie and run the checker/reviewer named in
+[`CLAUDE.md`](./CLAUDE.md); the manifest intentionally does not duplicate historical patches.
+
 The Collie-derived node UI can inspect and control panes, switch among every locally discovered
 named Herdr session, and keep its native deep links:
 

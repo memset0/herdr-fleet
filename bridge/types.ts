@@ -52,14 +52,6 @@ export interface AgentView {
    */
   readableLines?: number;
   /**
-   * The real PTY viewport height reported by Herdr. Resize needs this on the bridge so a width-only
-   * request can preserve rows instead of adopting the temporarily-shortened browser view while its
-   * Display drawer is open.
-   *
-   * SERVER-SIDE ONLY — the browser neither displays nor chooses it; {@link PaneWire} strips it.
-   */
-  viewportRows?: number;
-  /**
    * The pane's tab label, denormalised from `tab.list` exactly as `workspaceLabel` already is — so
    * every client surface (card, sidebar, palette, space view) gets it without joining `tabs[]`.
    * Absent when the label carries no information: an unlabelled tab in a single-tab space is named
@@ -100,7 +92,7 @@ export interface AgentView {
  * NOTE the `Omit` is opt-OUT: a future server-only field on AgentView goes on the wire unless it is
  * added to the omit list here. If you add one, strip it here in the same change.
  */
-export type PaneWire = Omit<AgentView, "agentSession" | "viewportRows"> & {
+export type PaneWire = Omit<AgentView, "agentSession"> & {
   /** True when this pane's history is actually offerable: the agent named a session AND its harness
    *  has a journal adapter. Says nothing about whether the log is readable — a named session whose
    *  file is missing still answers `available:false` with reason `no-log`. */
@@ -115,7 +107,7 @@ export type PaneWire = Omit<AgentView, "agentSession" | "viewportRows"> & {
  * would advertise a History affordance that always comes back empty, so the registry gets a vote.
  */
 export function toPaneWire(pane: AgentView, hasJournal: (agent: string) => boolean): PaneWire {
-  const { agentSession, viewportRows: _viewportRows, ...rest } = pane;
+  const { agentSession, ...rest } = pane;
   return agentSession && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
 }
 
@@ -266,11 +258,6 @@ export type ActionResponse =
       textDelivered?: boolean;
       code?: "prompt_changed";
     };
-
-/** POST /api/pane/:id/resize — the width-only dimensions Herdr actually accepted. */
-export type PaneResizeResponse =
-  | { ok: true; cols: number; rows: number }
-  | { ok: false; error: string };
 
 /** POST /api/pane/:id/upload — image saved to a host file; `path` is the absolute path to ref. */
 export type UploadResponse = { ok: true; path: string } | { ok: false; error: string };

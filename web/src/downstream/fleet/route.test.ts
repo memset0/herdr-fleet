@@ -3,7 +3,7 @@ import {
   FLEET_ROUTE_MESSAGE_VERSION,
   fleetRouteMessage,
   postFleetRoute,
-} from "./fleet-route";
+} from "./route";
 
 describe("fleetRouteMessage", () => {
   it("maps the primary and named-session homepages", () => {

@@ -83,7 +83,8 @@ The installed 0.8.2 CLI help and the earlier 0.8.0 implementation/tests establis
   submits only columns; the bridge pairs them with the Pane's current `scroll.viewport_rows` from
   `session.snapshot`, so opening the Display drawer never changes the PTY height.
 
-This is an intentional owner-maintained extension, isolated in `bridge/terminal-resize.ts` and
+This is an intentional owner-maintained extension, isolated in
+`bridge/downstream/fleet/terminal-resize.ts` and
 documented by [ADR 0011](./.adr/0011-manual-width-fit-retains-a-controller.md). It changes the shared
 PTY only after an authenticated Display → Resize click and is not used for streaming output, input,
 Fleet rail changes, or automatic browser resize handling.

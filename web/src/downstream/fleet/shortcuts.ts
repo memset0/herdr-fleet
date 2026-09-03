@@ -7,7 +7,7 @@ import {
   type FleetKeyChord,
   type FleetShortcutConfiguration,
   type FleetShortcutRecognizer,
-} from "../../../shared/fleet/index.ts";
+} from "../../../../shared/fleet/index.ts";
 
 export const FLEET_SHORTCUT_CONFIG_TYPE = "herdr-web-remote:shortcut-config";
 export const FLEET_SHORTCUT_INTENT_TYPE = "herdr-web-remote:shortcut-intent";

@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
 import "./index.css";
-import { markFleetFrame } from "./lib/fleet-frame";
+import { markFleetFrame } from "@/downstream/fleet";
 // Registers the service worker (precaches the app shell, enables install) and wires auto/manual
 // updates. Guards on `serviceWorker in navigator`, so over plain HTTP (insecure context) it no-ops.
 import "./lib/pwa";

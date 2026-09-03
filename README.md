@@ -61,4 +61,6 @@ Local nodes are reached over loopback, while remote nodes connect through SSH tu
 listeners remain loopback-only on every host.
 
 For complete feature, configuration, lifecycle, and security details, see the maintained
-[full reference](./README.full.md).
+[full reference](./README.full.md). Maintainers should also read the compact
+[fork boundary](./FORK.toml), [upstream provenance](./UPSTREAM.md), and
+[architecture](./ARCHITECTURE.md) before changing Collie-owned code.

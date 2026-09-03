@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { browserFleetRuntime } from "../../../gateway/fleet-ui/client/context.ts";
-import { startFleetClient } from "../../../gateway/fleet-ui/client/index.ts";
-import { fleetPage } from "../../../gateway/fleet-ui/page.ts";
+import { browserFleetRuntime } from "../../../../gateway/fleet-ui/client/context.ts";
+import { startFleetClient } from "../../../../gateway/fleet-ui/client/index.ts";
+import { fleetPage } from "../../../../gateway/fleet-ui/page.ts";
 
 function bodyOf(html: string): string {
   const match = /<body>([\s\S]*)<\/body>/.exec(html);

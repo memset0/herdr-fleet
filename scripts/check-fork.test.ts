@@ -120,9 +120,13 @@ describe("Fleet import boundary", () => {
           ["gateway/ui.ts", 'export { fleetPage } from "./fleet-ui/index.ts";'],
           ["web/src/App.tsx", 'import { thing } from "./downstream/fleet/private.ts";'],
           ["web/src/App.test.tsx", 'import { thing } from "./downstream/fleet/private.ts";'],
+          ["bridge/server.ts", 'import { route } from "./downstream/fleet/actions.ts";'],
         ]),
       ),
-    ).toEqual(["web/src/App.tsx deep-imports Collie Fleet through ./downstream/fleet/private.ts"]);
+    ).toEqual([
+      "web/src/App.tsx deep-imports Collie Fleet through ./downstream/fleet/private.ts",
+      "bridge/server.ts deep-imports Bridge Fleet through ./downstream/fleet/actions.ts",
+    ]);
   });
 });
 

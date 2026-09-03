@@ -6,9 +6,7 @@ import { BusyBar } from "@/components/busy-bar";
 import { IdleLock } from "@/components/idle-lock";
 import { useIdleLock } from "@/hooks/use-idle-lock";
 import { useCatchingUp } from "@/lib/idle";
-import { startFleetActivity } from "@/lib/fleet-activity";
-import { startFleetActions } from "@/lib/fleet-actions";
-import { startFleetShortcuts } from "@/lib/fleet-shortcuts";
+import { startFleetAdapter } from "@/downstream/fleet";
 
 // The idle lock COVERS the app rather than replacing it. It used to render instead of the router,
 // which unmounted the whole route tree — and with it every piece of local component state, including
@@ -23,14 +21,7 @@ export function App() {
   // Install before child passive effects report their route to Fleet. Framed API reads already
   // default inactive at module load, so even the initial router loader cannot win the load race.
   useLayoutEffect(() => {
-    const stopActivity = startFleetActivity();
-    const stopActions = startFleetActions();
-    const stopShortcuts = startFleetShortcuts();
-    return () => {
-      stopShortcuts();
-      stopActions();
-      stopActivity();
-    };
+    return startFleetAdapter(router);
   }, []);
   const { locked, unlock } = useIdleLock();
   // The cover outlives the lock by one beat: resuming refetches, and dropping the cover the instant

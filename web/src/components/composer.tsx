@@ -29,54 +29,9 @@ import { TerminalDraftPreview } from "@/components/terminal-draft-preview";
 import { DirectTypingStrip } from "@/components/direct-typing-strip";
 import { NoEchoNotice } from "@/components/no-echo-notice";
 import {
-  registerFleetShortcutHandler,
-  type FleetShortcutChildAction,
-} from "@/lib/fleet-shortcuts";
-
-export const FLEET_FIXED_KEY_ACTIONS = {
-  "send-escape": ["Escape"],
-  "send-enter": ["Enter"],
-  "send-up-arrow": ["Up"],
-  "send-down-arrow": ["Down"],
-  "send-left-arrow": ["Left"],
-  "send-right-arrow": ["Right"],
-  "send-space": ["Space"],
-  "send-ctrl-c": ["ctrl+c"],
-} as const satisfies Partial<Record<FleetShortcutChildAction, readonly string[]>>;
-
-interface ComposerFleetHandlerOptions {
-  direct: { active: boolean; activate(): void; deactivate(): void };
-  locked(): boolean;
-  hasDraft(): boolean;
-  pressKeys(keys: string[]): Promise<boolean>;
-}
-
-export function createComposerFleetShortcutHandlers({
-  direct,
-  locked,
-  hasDraft,
-  pressKeys,
-}: ComposerFleetHandlerOptions): Map<FleetShortcutChildAction, () => void | Promise<void>> {
-  const handlers = new Map<FleetShortcutChildAction, () => void | Promise<void>>();
-  handlers.set("toggle-type-mode", () => {
-    if (direct.active) {
-      direct.deactivate();
-      return;
-    }
-    if (locked() || hasDraft()) {
-      throw new Error(locked()
-        ? "Type mode is unavailable"
-        : "Send or clear the draft before typing into the terminal");
-    }
-    direct.activate();
-  });
-  for (const [action, keys] of Object.entries(FLEET_FIXED_KEY_ACTIONS)) {
-    handlers.set(action as FleetShortcutChildAction, async () => {
-      if (!await pressKeys([...keys])) throw new Error("Key send failed");
-    });
-  }
-  return handlers;
-}
+  FleetResizeRow,
+  useFleetComposerShortcuts,
+} from "@/downstream/fleet";
 
 export interface ComposerHandle {
   /** Focus the input and put the caret at the end — used by the mirror-tap-to-focus in AgentChat. */
@@ -115,7 +70,7 @@ interface ComposerProps {
   stepFontSize: (delta: number) => void;
   setRawTerminal: (raw: boolean) => void;
   /** WEB REMOTE CUSTOM: one-shot shared PTY width fit; implemented by AgentChat's mirror owner. */
-  onResize: () => Promise<void>;
+  onResize?: () => Promise<void>;
   setTapToFocus: (tapToFocus: boolean) => void;
   /** Snap the mirror to the live tail (follow + revalidate + scroll) after a successful send. */
   onSent: () => void;
@@ -719,19 +674,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }
 
-  // Fleet commands enter through the same direct-Type state and exact pane.send_keys path as the
-  // visible Type/Keys controls. The command id selects one compile-time constant; no parent message
-  // can supply text or an arbitrary key array.
-  useEffect(() => {
-    const handlers = createComposerFleetShortcutHandlers({
-      direct,
-      locked: () => locked,
-      hasDraft: () => inputValueRef.current.length > 0,
-      pressKeys,
-    });
-    const unregister = [...handlers].map(([action, handler]) => registerFleetShortcutHandler(action, handler));
-    return () => { for (const remove of unregister) remove(); };
-  }, [direct, locked]);
+  useFleetComposerShortcuts({
+    direct,
+    locked: () => locked,
+    hasDraft: () => inputValueRef.current.length > 0,
+    pressKeys,
+  });
 
   // Insert "/cmd " into the composer (arg-taking commands) and focus it. Appends to any draft already
   // typed (with a separating space) rather than clobbering it; an empty draft just gets set.
@@ -843,9 +791,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               setWrap={setWrap}
               stepFontSize={stepFontSize}
               setRawTerminal={setRawTerminal}
-              onResize={onResize}
-              resizeDisabled={locked}
               setTapToFocus={setTapToFocus}
+              extensions={
+                onResize
+                  ? <FleetResizeRow disabled={locked} onResize={onResize} />
+                  : undefined
+              }
             />
           </ComposerDock>
         )}
@@ -860,12 +811,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             back. `pt-3` on the row reserves the space it occupies so it can't collide with whatever
             sits above. */}
         <div data-fleet-controls-row className="relative mb-2 flex items-center gap-2 pt-3">
-          <SectionLabel
-            data-fleet-controls-label
-            className="absolute left-0 top-0 text-[10px] leading-none opacity-80"
-          >
-            Controls
-          </SectionLabel>
+          <span data-fleet-controls-label className="absolute left-0 top-0">
+            <SectionLabel className="text-[10px] leading-none opacity-80">
+              Controls
+            </SectionLabel>
+          </span>
           {/* Keys and Quick are TOGGLES for the in-flow dock above (not overlays): tap to open, tap
               again to close. aria-expanded ties each to the dock; secondary variant marks it pressed
               while open. Both share the single-valued `drawer`, so opening one closes the other. */}

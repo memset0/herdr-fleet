@@ -80,6 +80,7 @@ export class StateEngine {
   private shellPanes: AgentView[] = [];
   private workspaces: WorkspaceView[] = [];
   private tabs: TabView[] = [];
+  private paneRows = new Map<string, number>();
   private bridge: BridgeStatus = "disconnected";
   private readonly prevStatus = new Map<string, AgentStatus>();
   // Last-known claude `/rename` session name per pane. Kept sticky so the name doesn't flicker away
@@ -133,6 +134,11 @@ export class StateEngine {
       tabs: this.tabs,
       bridge: this.bridge,
     };
+  }
+
+  /** Narrow server-only geometry port for the explicit Fleet resize action. */
+  paneViewportRows(paneId: string): number | undefined {
+    return this.paneRows.get(paneId);
   }
 
   start(): void {
@@ -264,10 +270,7 @@ export class StateEngine {
           // Scrollback depth + viewport = what a `recent` read can yield. Omitted when the server
           // predates `scroll`, so an older Herdr simply reads as "unknown" rather than "zero".
           ...(p.scroll
-            ? {
-                readableLines: p.scroll.max_offset_from_bottom + p.scroll.viewport_rows,
-                viewportRows: p.scroll.viewport_rows,
-              }
+            ? { readableLines: p.scroll.max_offset_from_bottom + p.scroll.viewport_rows }
             : {}),
         };
       };
@@ -339,6 +342,10 @@ export class StateEngine {
       this.shellPanes = shellPanes;
       this.workspaces = workspaceViews;
       this.tabs = tabViews;
+      this.paneRows = new Map(
+        panes.flatMap((pane) =>
+          pane.scroll ? [[pane.pane_id, pane.scroll.viewport_rows] as const] : []),
+      );
       this.bridge = "connected";
 
       // After all transition/removal bookkeeping so listeners see a consistent, current snapshot.

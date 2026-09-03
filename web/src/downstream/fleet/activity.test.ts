@@ -4,7 +4,7 @@ import {
   FLEET_ACTIVITY_MESSAGE_VERSION,
   isFleetActivityMessage,
   type FleetActivityEnvironment,
-} from "./fleet-activity";
+} from "./activity";
 
 class FakeActivityEnvironment implements FleetActivityEnvironment {
   readonly framed: boolean;

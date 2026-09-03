@@ -250,11 +250,6 @@ export type ActionResponse =
       code?: "prompt_changed";
     };
 
-/** Width-only manual resize result; rows are preserved bridge-side from Herdr's current viewport. */
-export type PaneResizeResponse =
-  | { ok: true; cols: number; rows: number }
-  | { ok: false; error: string };
-
 export type UploadResponse = { ok: true; path: string } | { ok: false; error: string };
 
 /** A freshly-created shell pane — enough to navigate into before the next poll lands. */

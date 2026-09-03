@@ -11,7 +11,7 @@ import {
   type FleetActionEnvironment,
   type FleetActionReady,
   type FleetActionResult,
-} from "./fleet-actions";
+} from "./actions";
 
 class FakeActionEnvironment implements FleetActionEnvironment {
   readonly framed: boolean;

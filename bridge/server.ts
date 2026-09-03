@@ -21,7 +21,7 @@ import type { Snooze } from "./snooze.ts";
 import { imageExtFromBytes, SNIFF_BYTES } from "./uploads.ts";
 import type { UpdateMonitor } from "./update.ts";
 import type { StateEngine } from "./state-engine.ts";
-import { validTerminalColumns, type TerminalResizeManager } from "./terminal-resize.ts";
+import type { FleetBridgeActions } from "./downstream/fleet/index.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 import type { JournalAdapter } from "./journal/types.ts";
@@ -34,7 +34,6 @@ import type {
   DeviceAuth,
   PaneHistoryResponse,
   PaneReadResponse,
-  PaneResizeResponse,
   SnapshotResponse,
   UploadResponse,
 } from "./types.ts";
@@ -117,7 +116,6 @@ const MAX_HISTORY_LIMIT = 5000;
 // A tab supports rename + close — an action group like the pane route. The `/api/tab` POST above
 // (create) is an exact match on `/api/tab`, so it never collides with this `/api/tab/<id>/<action>`.
 const TAB_ACTION_ROUTE = /^\/api\/tab\/([^/]+)\/(rename|close)$/;
-const WORKSPACE_ACTION_ROUTE = /^\/api\/workspace\/([^/]+)\/(rename|close)$/;
 
 /**
  * Header the web app sets on its own pane reads, and the ONLY thing that lets a read mark a pane
@@ -159,9 +157,10 @@ export function startServer(opts: {
   updateMonitor: UpdateMonitor;
   audit: AuditLog;
   activity: ActivityLedger;
-  terminalResize: TerminalResizeManager;
+  fleet: FleetBridgeActions;
 }) {
-  const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity, terminalResize } = opts;
+  const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity, fleet } = opts;
+  const fleetResponses = { json, text };
   // One journal registry + store for the process. The store's cache is keyed by absolute path, so
   // sharing it across herdr sessions AND across harnesses is correct — two sessions can front panes
   // whose agents write into the same root. Which harnesses have journals at all is decided in
@@ -260,17 +259,14 @@ export function startServer(opts: {
       }
 
       // ── Space actions: rename / close every Tab and Pane in the exact workspace ──
-      const workspaceMatch = pathname.match(WORKSPACE_ACTION_ROUTE);
-      if (workspaceMatch && req.method === "POST") {
+      const workspaceAction = fleet.matchWorkspace(pathname);
+      if (workspaceAction && req.method === "POST") {
         const denied = guard(req, cfg, "write");
         if (denied) return denied;
         const rt = registry.get(sessionName);
         if (!rt) return unknownSession();
-        const workspaceId = decodeURIComponent(workspaceMatch[1]!);
-        const action = workspaceMatch[2];
         const device = deviceAuth(req, cfg).device;
-        if (action === "close") return closeWorkspace(rt.herdr, workspaceId, req, audit, device, rt.name);
-        return renameWorkspace(rt.herdr, workspaceId, req, audit, device, rt.name);
+        return fleet.workspace(workspaceAction, rt, req, audit, device, fleetResponses);
       }
 
       // ── Tab actions: rename (set its label) / close (kill it + every pane in it) ──
@@ -326,7 +322,7 @@ export function startServer(opts: {
         if (action === "close" && req.method === "POST") return closePane(herdr, paneId, req, audit, device, session);
         if (action === "rename" && req.method === "POST") return renamePane(herdr, paneId, req, audit, device, session);
         if (action === "resize" && req.method === "POST")
-          return resizePane(terminalResize, rt.engine, rt.socketPath, paneId, req, audit, device, session);
+          return fleet.resize(rt, paneId, req, audit, device, fleetResponses);
         return text("method not allowed", 405);
       }
 
@@ -459,73 +455,6 @@ export function startServer(opts: {
   for (const w of startupWarnings(cfg)) console.warn(w);
 
   return server;
-}
-
-/** The retained-controller surface resizePane needs; exported separately for a focused fake. */
-export interface PaneResizeController {
-  resize(socketPath: string, paneId: string, size: { cols: number; rows: number }): Promise<void>;
-}
-
-/**
- * Width-only manual resize. Rows come from Herdr's latest snapshot, not browser geometry: opening
- * Display Settings shortens the Collie mirror, and adopting that temporary height would violate the
- * action's promise to change width only.
- */
-export async function resizePane(
-  controller: PaneResizeController,
-  engine: Pick<StateEngine, "current">,
-  socketPath: string,
-  paneId: string,
-  req: Request,
-  audit: AuditLog,
-  device: string | null,
-  session: string,
-): Promise<Response> {
-  const ae = req.headers.get("accept-encoding");
-  let body: { cols?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    return text("bad body", 400);
-  }
-  if (!validTerminalColumns(body.cols)) return text("bad cols", 400);
-
-  const snapshot = engine.current();
-  const pane = [...snapshot.agents, ...snapshot.shellPanes].find((p) => p.paneId === paneId);
-  const rows = pane?.viewportRows;
-  if (rows === undefined) {
-    const error = pane ? "Pane geometry is not available yet" : "Pane is no longer available";
-    audit.record({
-      action: "pane.resize",
-      paneId,
-      session,
-      device,
-      detail: { cols: body.cols, resized: false, error },
-    });
-    return json({ ok: false, error } satisfies PaneResizeResponse, ae);
-  }
-
-  try {
-    await controller.resize(socketPath, paneId, { cols: body.cols, rows });
-    audit.record({
-      action: "pane.resize",
-      paneId,
-      session,
-      device,
-      detail: { cols: body.cols, rows, resized: true },
-    });
-    return json({ ok: true, cols: body.cols, rows } satisfies PaneResizeResponse, ae);
-  } catch (err) {
-    const error = (err as Error).message;
-    audit.record({
-      action: "pane.resize",
-      paneId,
-      session,
-      device,
-      detail: { cols: body.cols, rows, resized: false, error },
-    });
-    return json({ ok: false, error } satisfies PaneResizeResponse, ae);
-  }
 }
 
 /**
@@ -1037,53 +966,6 @@ export function normalizeTabLabel(
   const label = v.trim();
   if (!label) return { ok: false, error: "label required" };
   return { ok: true, label };
-}
-
-/** Space labels follow the same non-empty, non-null rule as Tab labels. */
-export const normalizeWorkspaceLabel = normalizeTabLabel;
-
-async function renameWorkspace(
-  herdr: HerdrClient,
-  workspaceId: string,
-  req: Request,
-  audit: AuditLog,
-  device: string | null,
-  session: string,
-): Promise<Response> {
-  const ae = req.headers.get("accept-encoding");
-  let body: { label?: unknown };
-  try {
-    body = (await req.json()) as typeof body;
-  } catch {
-    return text("bad body", 400);
-  }
-  const parsed = normalizeWorkspaceLabel(body.label);
-  if (!parsed.ok) return text(parsed.error, 400);
-  try {
-    await herdr.renameWorkspace(workspaceId, parsed.label);
-    audit.record({ action: "workspace.rename", session, device, detail: { workspaceId, label: parsed.label } });
-    return json({ ok: true } satisfies ActionResponse, ae);
-  } catch (err) {
-    return json({ ok: false, error: (err as Error).message } satisfies ActionResponse, ae);
-  }
-}
-
-async function closeWorkspace(
-  herdr: HerdrClient,
-  workspaceId: string,
-  req: Request,
-  audit: AuditLog,
-  device: string | null,
-  session: string,
-): Promise<Response> {
-  const ae = req.headers.get("accept-encoding");
-  try {
-    await herdr.closeWorkspace(workspaceId);
-    audit.record({ action: "workspace.close", session, device, detail: { workspaceId } });
-    return json({ ok: true } satisfies ActionResponse, ae);
-  } catch (err) {
-    return json({ ok: false, error: (err as Error).message } satisfies ActionResponse, ae);
-  }
 }
 
 // Set a tab's label. Structural metadata op — strictly less powerful than the text/keys injection the

@@ -10,11 +10,7 @@ import { isReloadHeld, __resetReloadGuard } from "@/lib/reload-guard";
 import { loadDraft } from "@/lib/drafts";
 import { server } from "@/test/setup";
 import { recordReply } from "@/test/handlers";
-import {
-  Composer,
-  createComposerFleetShortcutHandlers,
-  FLEET_FIXED_KEY_ACTIONS,
-} from "./composer";
+import { Composer } from "./composer";
 
 // A guarded send is TWO reply calls: type (submit:false), then — once the text is verified on the
 // input line — submit-only (empty text). Overriding the reply handler therefore has to keep the fake
@@ -53,7 +49,6 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
-    onResize: vi.fn(async () => {}),
     setTapToFocus: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
@@ -62,54 +57,6 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
   render(<RouterProvider router={router} />);
   return props;
 }
-
-describe("Composer — Fleet-framed presentation hooks", () => {
-  it("marks only the label and padding owner while standalone actions remain available", () => {
-    renderComposer();
-    const label = screen.getByText("Controls");
-    const row = label.parentElement;
-
-    expect(label).toHaveAttribute("data-fleet-controls-label");
-    expect(row).toHaveAttribute("data-fleet-controls-row");
-    expect(row).toHaveClass("pt-3");
-    expect(screen.getByRole("button", { name: "Keys" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Type into terminal" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Quick" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Agent" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Display settings" })).toBeInTheDocument();
-  });
-
-  it("maps every fixed Fleet send to one exact Keys array and reuses the Type lifecycle", async () => {
-    expect(FLEET_FIXED_KEY_ACTIONS).toEqual({
-      "send-escape": ["Escape"],
-      "send-enter": ["Enter"],
-      "send-up-arrow": ["Up"],
-      "send-down-arrow": ["Down"],
-      "send-left-arrow": ["Left"],
-      "send-right-arrow": ["Right"],
-      "send-space": ["Space"],
-      "send-ctrl-c": ["ctrl+c"],
-    });
-    const direct = { active: false, activate: vi.fn(), deactivate: vi.fn() };
-    const pressKeys = vi.fn(async () => true);
-    const handlers = createComposerFleetShortcutHandlers({
-      direct,
-      locked: () => false,
-      hasDraft: () => false,
-      pressKeys,
-    });
-    for (const [action, keys] of Object.entries(FLEET_FIXED_KEY_ACTIONS)) {
-      await handlers.get(action as keyof typeof FLEET_FIXED_KEY_ACTIONS)?.();
-      expect(pressKeys).toHaveBeenLastCalledWith(keys);
-    }
-    expect(pressKeys).toHaveBeenCalledTimes(Object.keys(FLEET_FIXED_KEY_ACTIONS).length);
-    handlers.get("toggle-type-mode")?.();
-    expect(direct.activate).toHaveBeenCalledTimes(1);
-    direct.active = true;
-    handlers.get("toggle-type-mode")?.();
-    expect(direct.deactivate).toHaveBeenCalledTimes(1);
-  });
-});
 
 /**
  * Wait for a send that can never verify to reach its terminal `stalled` outcome.
@@ -149,7 +96,6 @@ function renderComposerWithStatus(overrides: Partial<ComponentProps<typeof Compo
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
-    onResize: vi.fn(async () => {}),
     setTapToFocus: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
@@ -499,7 +445,6 @@ describe("Composer — send", () => {
               setWrap={vi.fn()}
               stepFontSize={vi.fn()}
               setRawTerminal={vi.fn()}
-              onResize={vi.fn(async () => {})}
               setTapToFocus={vi.fn()}
               onSent={vi.fn()}
             />
@@ -593,7 +538,6 @@ describe("Composer — send", () => {
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
-      onResize: vi.fn(async () => {}),
       setTapToFocus: vi.fn(),
       onSent: vi.fn(),
     };
@@ -690,7 +634,6 @@ describe("Composer — typing into the terminal", () => {
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
-            onResize={vi.fn(async () => {})}
             setTapToFocus={vi.fn()}
             onSent={vi.fn()}
           />
@@ -823,7 +766,6 @@ describe("Composer — typing into the terminal", () => {
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
-            onResize={vi.fn(async () => {})}
             setTapToFocus={vi.fn()}
             onSent={vi.fn()}
           />
@@ -1015,7 +957,6 @@ describe("Composer — typing into the terminal", () => {
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
-            onResize={vi.fn(async () => {})}
             setTapToFocus={vi.fn()}
             onSent={vi.fn()}
           />
@@ -1278,7 +1219,6 @@ function renderDraftHarness(overrides: Partial<ComponentProps<typeof Composer>> 
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
-      onResize: vi.fn(async () => {}),
       setTapToFocus: vi.fn(),
       onSent: vi.fn(),
       ...rest,
@@ -1550,7 +1490,6 @@ describe("Composer — in-flight echo suppression (match-last-sent)", () => {
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
-      onResize: vi.fn(async () => {}),
       setTapToFocus: vi.fn(),
       onSent: vi.fn(),
     };
@@ -1918,7 +1857,7 @@ describe("Composer — quick dock (in-flow, matches the keys dock)", () => {
 });
 
 describe("Composer — display prefs behind the gear", () => {
-  it("wrap/raw/font and the custom manual resize live behind the Display gear", async () => {
+  it("the View row is gone; wrap/raw/font live behind the Display gear as labelled controls", async () => {
     const user = userEvent.setup();
     renderComposer();
 
@@ -1931,21 +1870,6 @@ describe("Composer — display prefs behind the gear", () => {
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Raw terminal" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Decrease font size" })).toBeInTheDocument();
-    const textSizeRow = screen.getByText("Text size").closest("div.flex.items-center.justify-between");
-    expect(textSizeRow?.nextElementSibling).toHaveTextContent("ResizeCustom");
-    expect(screen.getByText("Custom")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Resize pane to this view" })).toBeEnabled();
-  });
-
-  it("invokes the custom resize exactly once per explicit click", async () => {
-    const user = userEvent.setup();
-    const onResize = vi.fn(async () => {});
-    renderComposer({ onResize });
-
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-    expect(onResize).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Resize pane to this view" }));
-    expect(onResize).toHaveBeenCalledTimes(1);
   });
 
   it("the Display dock shares the single drawer slot with Keys", async () => {
@@ -1968,7 +1892,6 @@ describe("Composer — display prefs behind the gear", () => {
     expect(screen.getByRole("button", { name: "Keys" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Display settings" }));
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Resize pane to this view" })).toBeDisabled();
   });
 });
 
@@ -2102,7 +2025,6 @@ describe("Composer — draft persistence", () => {
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
-      onResize: vi.fn(async () => {}),
       setTapToFocus: vi.fn(),
       onSent: vi.fn(),
       ...overrides,

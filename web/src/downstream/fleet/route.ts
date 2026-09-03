@@ -1,4 +1,4 @@
-import { normalizeSession, SESSION_PARAM } from "./session";
+import { normalizeSession, SESSION_PARAM } from "@/lib/session";
 
 export const FLEET_ROUTE_MESSAGE_TYPE = "herdr-web-remote:route";
 export const FLEET_ROUTE_MESSAGE_VERSION = 1;

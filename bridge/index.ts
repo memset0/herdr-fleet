@@ -19,7 +19,7 @@ import {
 } from "./sessions.ts";
 import { Snooze } from "./snooze.ts";
 import { StateEngine } from "./state-engine.ts";
-import { TerminalResizeManager } from "./terminal-resize.ts";
+import { createFleetBridgeActions } from "./downstream/fleet/index.ts";
 import {
   bridgeStampSync,
   githubTagsFetcher,
@@ -73,7 +73,7 @@ const audit = new AuditLog(fileAuditAppender(join(cfg.stateDir, "audit.log")), {
 });
 // Display → Resize holds one controller per manually resized Pane. One process-global manager can
 // key those leases by exact session socket + Pane id across every runtime this bridge fronts.
-const terminalResize = new TerminalResizeManager();
+const fleet = createFleetBridgeActions();
 
 // ── Update-availability monitor ───────────────────────────────────────────────
 // The running plugin version, captured NOW at module load — never re-read from disk later, or a
@@ -226,7 +226,7 @@ const server = startServer({
   updateMonitor,
   audit,
   activity,
-  terminalResize,
+  fleet,
 });
 
 const shutdown = async () => {
@@ -235,7 +235,7 @@ const shutdown = async () => {
   // before we tear down the poll loops and exit.
   await server.stop();
   clearInterval(refreshTimer);
-  terminalResize.disposeAll();
+  fleet.dispose();
   registry.disposeAll();
   // Writes are debounced, so the last few seconds of "you looked at this" live only in memory —
   // persist them before exiting, or every restart quietly resurrects alerts you'd already cleared.

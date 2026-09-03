@@ -4,7 +4,7 @@
 import { trackBusy } from "./busy";
 import { markLive } from "./connection-health";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
-import { paneObservationActive } from "./fleet-activity";
+import type { PaneResizeResponse } from "@/downstream/fleet";
 import type {
   ActionResponse,
   BridgeConfig,
@@ -12,11 +12,27 @@ import type {
   NotifyPrefs,
   PaneHistoryResponse,
   PaneReadResponse,
-  PaneResizeResponse,
   SnapshotResponse,
   UpdateInfo,
   UploadResponse,
 } from "./types";
+
+type PaneObservationProvider = () => boolean;
+
+let paneObservationProvider: PaneObservationProvider = () =>
+  window.parent === window && !document.hidden;
+
+/** Narrow host port: Fleet may gate read-side seen attribution without owning API requests. */
+export function registerPaneObservationProvider(
+  provider: PaneObservationProvider,
+): () => void {
+  paneObservationProvider = provider;
+  return () => {
+    if (paneObservationProvider === provider) {
+      paneObservationProvider = () => window.parent === window && !document.hidden;
+    }
+  };
+}
 
 export type { NotifyPrefs, UpdateInfo };
 
@@ -262,7 +278,7 @@ export async function fetchPane(
   // seen. A cross-site no-cors GET can't set a custom header, so it can't clear your alerts by
   // guessing pane ids (bridge/server.ts → marksPaneSeen).
   const headers: Record<string, string> = {
-    ...(paneObservationActive() ? { "x-collie-seen": "1" } : {}),
+    ...(paneObservationProvider() ? { "x-collie-seen": "1" } : {}),
     [XHR_HEADER]: XHR_HEADER_VALUE,
   };
   if (cached) headers["if-none-match"] = cached.etag;
@@ -321,7 +337,7 @@ export function fetchHistory(
   // resident Fleet frame may keep History mounted, but it cannot clear Ready · unseen.
   return req<PaneHistoryResponse>(withSession(path, session), {
     signal,
-    headers: paneObservationActive() ? { "x-collie-seen": "1" } : {},
+    headers: paneObservationProvider() ? { "x-collie-seen": "1" } : {},
   });
 }
 

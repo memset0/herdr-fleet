@@ -63,3 +63,10 @@ preflight a named stable tag, and merge that tag's dereferenced commit from the 
 the release remains Git ancestry. Do not silently follow upstream's default branch. Record the
 overlap and boundary decisions, rerun both projects' complete test suites, verify an untagged node
 candidate, and update the exact tag and commit above in the accepted release.
+
+The executable current-state inventory is [`FORK.toml`](./FORK.toml). Run
+`bun run scripts/check-fork.ts` for ordinary changes and
+`bun run scripts/review-upstream.ts --target <commit>` before a synchronization. Every invasive
+entry requires a decision even when the selected target did not touch its file; owned target-path
+collisions are reviewed separately. Keep detailed synchronization evidence outside the compact
+manifest.

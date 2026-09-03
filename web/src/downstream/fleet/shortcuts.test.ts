@@ -1,7 +1,7 @@
 import {
   parseFleetShortcutDocument,
   publicFleetShortcutDocument,
-} from "../../../shared/fleet/index";
+} from "../../../../shared/fleet/index";
 import {
   createFleetShortcutController,
   FLEET_SHORTCUT_COMMAND_TYPE,
@@ -17,7 +17,7 @@ import {
   type FleetShortcutIntent,
   type FleetShortcutReady,
   type FleetShortcutResult,
-} from "./fleet-shortcuts";
+} from "./shortcuts";
 
 class FakeShortcutEnvironment implements FleetShortcutEnvironment {
   readonly framed: boolean;

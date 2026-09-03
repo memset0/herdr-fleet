@@ -31,38 +31,28 @@ id = "fleet-shared"
 intent = "Define Fleet aggregate and command protocols once for Gateway and browser consumers."
 paths = ["shared/fleet/**"]
 contracts = ["Collie projection fields", "selected-frame command protocol"]
-verify = ["gateway/fleet-commands.test.ts", "web/src/lib/fleet-shortcuts.test.ts"]
+verify = ["gateway/fleet-commands.test.ts", "web/src/downstream/fleet/shortcuts.test.ts"]
 
 [[owned]]
-id = "bridge-extensions"
-intent = "Implement isolated Pane resize support outside Collie Bridge host files."
-paths = ["bridge/terminal-resize.ts", "bridge/terminal-resize.test.ts", "bridge/types.test.ts"]
+id = "bridge-fleet-adapters"
+intent = "Implement bounded Space and Pane actions outside Collie Bridge host files."
+paths = ["bridge/downstream/fleet/**"]
 contracts = ["Herdr terminal controller protocol", "Collie guarded write routes"]
-verify = ["bridge/terminal-resize.test.ts", "bridge/types.test.ts"]
+verify = ["bridge/downstream/fleet/actions.test.ts", "bridge/downstream/fleet/terminal-resize.test.ts"]
 
 [[owned]]
 id = "collie-fleet-adapters"
 intent = "Implement Fleet-only browser protocols and presentation outside Collie host components."
-paths = [
-  "web/src/components/fleet-route-reporter.tsx",
-  "web/src/index-css.test.ts",
-  "web/src/lib/fleet-actions.ts",
-  "web/src/lib/fleet-actions.test.ts",
-  "web/src/lib/fleet-activity.ts",
-  "web/src/lib/fleet-activity.test.ts",
-  "web/src/lib/fleet-frame.ts",
-  "web/src/lib/fleet-frame.test.ts",
-  "web/src/lib/fleet-route.ts",
-  "web/src/lib/fleet-route.test.ts",
-  "web/src/lib/fleet-shortcuts.ts",
-  "web/src/lib/fleet-shortcuts.test.ts",
-  "web/src/lib/fleet-ui-browser.test.ts",
-  "web/src/lib/terminal-resize.ts",
-  "web/src/lib/terminal-resize.test.ts",
-  "web/src/sw-boundary.test.ts"
-]
+paths = ["web/src/downstream/fleet/**"]
 contracts = ["React Router state", "exact parent Window and Origin", "Collie Pane action callbacks"]
-verify = ["web/src/lib/fleet-actions.test.ts", "web/src/lib/fleet-shortcuts.test.ts", "web/src/lib/fleet-ui-browser.test.ts"]
+verify = ["web/src/downstream/fleet/adapter.test.ts", "web/src/downstream/fleet/pane-host.test.tsx", "web/src/downstream/fleet/shortcuts.test.ts"]
+
+[[owned]]
+id = "collie-security-regressions"
+intent = "Pin Web Remote's network-first Service Worker authentication boundary."
+paths = ["web/src/sw-boundary.test.ts"]
+contracts = ["Gateway authentication before HTML navigation", "static-only PWA cache"]
+verify = ["web/src/sw-boundary.test.ts", "web/src/lib/sw-routes.test.ts"]
 
 [[owned]]
 id = "plugin-build-lifecycle"
@@ -147,7 +137,8 @@ paths = [
   "scripts/collie-ctl.test.sh#deleted",
   "scripts/qr.ts#deleted",
   "scripts/qr.test.ts#deleted",
-  "systemd/collie.service#deleted"
+  "systemd/collie.service#deleted",
+  "bridge/server.test.ts#README"
 ]
 verify = ["supervisor/supervisor.integration.test.ts", "supervisor/runtime.test.ts"]
 reason = "The plugin supervisor and external HTTPS owner are the only supported lifecycle and front door."
@@ -174,15 +165,13 @@ intent = "Expose authenticated Space, Tab, Pane, and manual resize actions throu
 strategy = "adapt"
 review = "every-upstream-sync"
 paths = [
-  "bridge/herdr-client.ts#HerdrClient",
-  "bridge/index.ts#TerminalResizeManager",
-  "bridge/server.ts#resizePane",
-  "bridge/server.test.ts#resizePane",
-  "bridge/state-engine.ts#viewportRows",
-  "bridge/state-engine.test.ts#viewportRows",
-  "bridge/types.ts#viewportRows"
+  "bridge/herdr-client.ts#renameWorkspace",
+  "bridge/index.ts#createFleetBridgeActions",
+  "bridge/server.ts#FleetBridgeActions",
+  "bridge/state-engine.ts#paneViewportRows",
+  "bridge/state-engine.test.ts#paneViewportRows"
 ]
-verify = ["bridge/server.test.ts", "bridge/terminal-resize.test.ts", "bridge/types.test.ts"]
+verify = ["bridge/downstream/fleet/actions.test.ts", "bridge/downstream/fleet/terminal-resize.test.ts", "bridge/server.test.ts"]
 reason = "Bridge authentication, session ownership, audit, and controller leases remain authoritative host boundaries."
 
 [[invasive]]
@@ -202,11 +191,14 @@ review = "every-upstream-sync"
 paths = [
   "bridge/update.ts#UpdateMonitor",
   "bridge/update.test.ts#UpdateMonitor",
+  "bridge/types.ts#bridgeStale",
   "web/src/components/update-banner.tsx#updateNotice",
   "web/src/components/update-banner.test.tsx#updateNotice",
   "web/src/components/update-check-control.tsx#UpdateCheckControl",
   "web/src/components/update-check-control.test.tsx#UpdateCheckControl",
-  "web/src/lib/push-decision.test.ts#decidePush"
+  "web/src/lib/push-decision.test.ts#decidePush",
+  "web/src/lib/types.ts#bridgeStale",
+  "web/src/test/handlers.ts#bridgeStale"
 ]
 verify = ["bridge/update.test.ts", "web/src/components/update-banner.test.tsx", "web/src/components/update-check-control.test.tsx"]
 reason = "The owner froze this compatibility surface for the current change; executable lifecycle update actions remain absent."
@@ -217,19 +209,11 @@ intent = "Let only the selected visible Fleet child attribute Pane reads as seen
 strategy = "adapt"
 review = "every-upstream-sync"
 paths = [
-  "web/src/App.tsx#fleet",
-  "web/src/hooks/use-polling.ts#fleet",
-  "web/src/hooks/use-polling.test.ts#fleet",
-  "web/src/lib/api.ts#x-collie-seen",
-  "web/src/lib/api.test.ts#x-collie-seen",
-  "web/src/lib/last-seen.ts#SNAPSHOT_PREFIX",
-  "web/src/lib/loaders.ts#paneLoader",
-  "web/src/lib/loaders.test.ts#paneLoader",
-  "web/src/main.tsx#fleet",
-  "web/src/routes/root.tsx#FleetRouteReporter",
-  "web/src/test/handlers.ts#fixtureSnapshot"
+  "web/src/App.tsx#startFleetAdapter",
+  "web/src/lib/api.ts#registerPaneObservationProvider",
+  "web/src/main.tsx#markFleetFrame"
 ]
-verify = ["web/src/lib/fleet-activity.test.ts", "web/src/lib/api.test.ts", "web/src/hooks/use-polling.test.ts"]
+verify = ["web/src/downstream/fleet/activity.test.ts", "web/src/downstream/fleet/adapter.test.ts", "web/src/downstream/fleet/api-port.test.ts"]
 reason = "React lifecycle and authenticated request construction require small host ports into downstream Fleet adapters."
 
 [[invasive]]
@@ -238,19 +222,27 @@ intent = "Expose framed presentation, manual resize, Type mode, and fixed-key ca
 strategy = "adapt"
 review = "every-upstream-sync"
 paths = [
-  "web/src/components/agent-chat.tsx#resizeToMirror",
-  "web/src/components/agent-chat.test.tsx#Resize",
-  "web/src/components/app-header.tsx#framed",
-  "web/src/components/app-header.test.tsx#AppHeader",
-  "web/src/components/composer.tsx#fleet",
-  "web/src/components/composer.test.tsx#fleet",
-  "web/src/components/display-prefs.tsx#Resize",
-  "web/src/components/ui/section-label.tsx#SectionLabel",
-  "web/src/index.css#data-fleet-frame",
-  "web/src/lib/types.ts#readableLines"
+  "web/src/components/agent-chat.tsx#useFleetPaneResize",
+  "web/src/components/app-header.tsx#isFleetFrame",
+  "web/src/components/composer.tsx#useFleetComposerShortcuts",
+  "web/src/components/display-prefs.tsx#extensions",
+  "web/src/lib/api.ts#resizePane",
+  "web/src/lib/api.ts#renameWorkspace"
 ]
-verify = ["web/src/components/agent-chat.test.tsx", "web/src/components/composer.test.tsx", "web/src/index-css.test.ts"]
+verify = ["web/src/downstream/fleet/pane-controls.test.tsx", "web/src/downstream/fleet/pane-host.test.tsx", "web/src/downstream/fleet/framed-style.test.ts"]
 reason = "These Collie components own the live DOM measurements and control lifecycle that downstream adapters invoke."
+
+[[invasive]]
+id = "collie-pane-title-presentation"
+intent = "Use sanitized terminal titles only when stable Pane and session labels are absent."
+strategy = "keep"
+review = "every-upstream-sync"
+paths = [
+  "web/src/components/agent-chat.tsx#terminalTitle",
+  "web/src/components/agent-chat.test.tsx#terminalTitle"
+]
+verify = ["web/src/components/agent-chat.test.tsx", "bridge/state-engine.test.ts"]
+reason = "AgentChat owns the native Pane heading fallback order; the title source is already sanitized by the Bridge."
 
 [[invasive]]
 id = "authenticated-browser-cache"
@@ -260,6 +252,7 @@ review = "every-upstream-sync"
 paths = [
   "web/src/lib/sw-routes.ts#cache",
   "web/src/sw.ts#cache",
+  "web/src/lib/last-seen.ts#clearLastSeen",
   "web/src/lib/loaders.ts#sessionStorage",
   "web/src/lib/loaders.test.ts#sessionStorage"
 ]
@@ -276,10 +269,7 @@ paths = [
   "scripts/push-keys.test.ts#generateVapidKeys",
   "scripts/push-test.ts#push",
   "web/src/fixtures/panes/claude--draft-paste-placeholder.txt#Pasted",
-  "web/src/fixtures/panes/README.md#identifying",
-  "web/src/lib/harness/types.ts#HarnessAdapter",
-  "web/src/lib/reply-action.ts#sendReply",
-  "web/src/lib/reply-action.test.ts#sendGuardedReply"
+  "web/src/fixtures/panes/README.md#identifying"
 ]
 verify = ["scripts/push-keys.test.ts", "web/src/lib/reply-action.test.ts", "web/src/lib/push-decision.test.ts"]
 reason = "These safeguards remain in Collie-owned execution boundaries until the exact target is compared."

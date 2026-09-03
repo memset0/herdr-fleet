@@ -3,6 +3,7 @@ import { Settings } from "lucide-react";
 import { useNavigate } from "react-router";
 
 import { isConnecting } from "@/lib/connection";
+import { isFleetFrame } from "@/downstream/fleet";
 import { useConnectionLost, useConnectionTrouble } from "@/hooks/use-connection-lost";
 import { settingsPath } from "@/lib/nav";
 import { CollieHome } from "@/components/collie-home";
@@ -64,7 +65,7 @@ export function AppHeader({
   const lost = useConnectionLost(connecting);
   // Fleet already owns the surrounding navigation. Omit the entire home affordance in any framed
   // native view so its button/wordmark does not reserve space; a direct/new-tab Collie page keeps it.
-  const embedded = typeof window !== "undefined" && window.parent !== window;
+  const embedded = typeof window !== "undefined" && isFleetFrame();
   return (
     <header className="sticky top-0 z-20 flex items-center gap-2 border-b border-border/60 bg-muted pl-4 pr-2 py-2 [padding-top:calc(env(safe-area-inset-top)_+_0.5rem)]">
       {override ?? (

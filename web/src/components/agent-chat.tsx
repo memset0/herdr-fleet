@@ -8,10 +8,8 @@ import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
 import { useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { isConnecting } from "@/lib/connection";
-import * as api from "@/lib/api";
 import { setStatus } from "@/lib/status";
-import { measureTerminalColumns } from "@/lib/terminal-resize";
-import { registerFleetShortcutHandler } from "@/lib/fleet-shortcuts";
+import { useFleetPaneResize } from "@/downstream/fleet";
 import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/chat/chat-message-list";
 import { BottomSheet } from "@/components/ui/sheet";
 import { AppHeader } from "@/components/app-header";
@@ -134,39 +132,16 @@ export function AgentChat({
   const listRef = useRef<ChatMessageListHandle>(null);
   const composerRef = useRef<ComposerHandle>(null);
 
-  // WEB REMOTE CUSTOM: the Display drawer can request one explicit width fit, but AgentChat owns
-  // the actual mirror scrollport and is therefore the only layer that can measure it faithfully.
-  // No effect/listener calls this function: viewport/font/layout changes alone never resize Herdr.
-  const resizeToMirror = useCallback(async () => {
-    if (readOnly) {
-      setStatus("Read-only — device not authorised", "error");
-      return;
-    }
-    const scrollport = listRef.current?.getScrollElement();
-    if (!scrollport) {
-      setStatus("Terminal width is not ready to measure", "error");
-      return;
-    }
-    try {
-      const cols = measureTerminalColumns(scrollport, prefs.fontSize);
-      const result = await api.resizePane(paneId, cols, session);
-      if (!result.ok) {
-        setStatus(result.error, "error");
-        return;
-      }
-      setStatus(`Resized to ${result.cols} columns`, "success");
-      revalidator.revalidate();
-    } catch (cause) {
-      setStatus(cause instanceof Error ? cause.message : String(cause), "error");
-    }
-  }, [paneId, prefs.fontSize, readOnly, revalidator, session]);
-
-  // Fleet delegates its framed Alt+S action to this exact callback. The Display button below keeps
-  // using the same reference, so neither path can drift in measurement, session scope, or status.
-  useEffect(
-    () => registerFleetShortcutHandler("fit-pane-width", resizeToMirror),
-    [resizeToMirror],
-  );
+  // The mirror owner supplies only the live scrollport and route context. Fleet's measurement,
+  // request, feedback, and shortcut lifecycle remain behind the downstream adapter.
+  const resizeToMirror = useFleetPaneResize({
+    paneId,
+    session,
+    fontSize: prefs.fontSize,
+    readOnly,
+    scrollport: listRef,
+    revalidate: revalidator.revalidate,
+  });
 
   const gone = !agent;
 

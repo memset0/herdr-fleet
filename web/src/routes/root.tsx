@@ -8,7 +8,6 @@ import { useConnectionLost } from "@/hooks/use-connection-lost";
 import { UpdateAvailableBanner } from "@/components/update-available-banner";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { DogGallop } from "@/components/dog-gallop";
-import { FleetRouteReporter } from "@/components/fleet-route-reporter";
 import { homePath } from "@/lib/nav";
 import { SESSION_PARAM, normalizeSession } from "@/lib/session";
 import { PANE_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
@@ -63,7 +62,6 @@ export function RootLayout() {
   // from covering the route's sticky header — it reserves real space instead of overlaying.
   return (
     <div className="flex h-[100dvh] flex-col">
-      <FleetRouteReporter agents={data.agents} shellPanes={data.shellPanes} />
       {/* API-observed self-update: mounted unconditionally so its controller runs (and can
           auto-update) for the app's lifetime; renders the slim "tap to update" row only when a fresh
           build is confirmed but auto-update is held off (unsent work) or already spent. */}

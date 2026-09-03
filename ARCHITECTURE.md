@@ -3,6 +3,24 @@
 Herdr Web Remote is two cooperating applications managed by one plugin-owned supervisor plus one
 dormant emergency companion shipped by the same plugin release.
 
+## Fork and module boundary
+
+[`FORK.toml`](./FORK.toml) is the compact current-state porting guide. Downstream-owned code lives
+under `gateway/`, `shared/fleet/`, `web/src/downstream/fleet/`, and
+`bridge/downstream/fleet/`; Collie-owned files expose only the typed lifecycle, observation,
+component-slot, API-method, route-dispatch, or geometry ports those modules require. Normal checks
+run `scripts/check-fork.ts`; an upstream adoption additionally runs `scripts/review-upstream.ts` and
+records one decision for every invasive entry. Detailed past decisions remain in Git and OpenSpec,
+not in the live manifest.
+
+The Gateway Fleet shell is built from `gateway/fleet-ui/`: server/page markup, pure models, browser
+controllers, and styles compile atomically into the existing `/fleet-assets/fleet.js` and
+`/fleet-assets/fleet.css` URLs. The Collie child has one `web/src/downstream/fleet/index.ts` entry
+surface that owns frame activity, route/action/shortcut protocols, Pane controls, and framed CSS.
+The Bridge has one corresponding entry surface for exact Space and resize handlers plus controller
+disposal. This ownership keeps upstream files reviewable without introducing a generic extension or
+arbitrary Herdr RPC interface.
+
 ## Node plane
 
 Each Herdr host runs the Collie-derived Bun bridge as the Herdr owner. It binds a configured

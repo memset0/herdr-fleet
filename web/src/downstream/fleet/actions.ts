@@ -1,4 +1,4 @@
-import * as api from "./api";
+import * as api from "@/lib/api";
 
 export const FLEET_ACTION_PROBE_TYPE = "herdr-web-remote:action-probe";
 export const FLEET_ACTION_READY_TYPE = "herdr-web-remote:action-ready";
