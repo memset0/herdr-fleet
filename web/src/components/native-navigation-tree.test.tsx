@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 
 import {
   deriveNavigationTree,
+  hostCollapseId,
   spaceDisclosureId,
   tabDisclosureId,
 } from "../../../fleet/ui/native-navigation/model.ts";
@@ -16,6 +17,7 @@ function tree(selectedPaneId?: string) {
     workspaces: [
       { workspaceId: "w1", label: "Project One" },
       { workspaceId: "w2", label: "Project Two" },
+      { workspaceId: "w3", label: "Empty Project" },
     ],
     tabs: [
       { workspaceId: "w1", tabId: "t1", label: "Main" },
@@ -60,15 +62,35 @@ describe("NativeNavigationTree", () => {
       />,
     );
 
-    expect(screen.getByRole("region", { name: "This host" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "This host" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "First task" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    // The Host is not in the ancestry: it is open until the operator closes it, and a deep link may
+    // not undo a decision they made about a whole machine.
     expect(store.snapshot().disclosed).toEqual([
       spaceDisclosureId("w1"),
       tabDisclosureId("w1", "t1"),
     ]);
+  });
+
+  it("opens the Host by default and remembers a collapse as one bounded identity", async () => {
+    const user = userEvent.setup();
+    const store = new NavigationPreferenceStore();
+    render(
+      <NativeNavigationTree
+        tree={tree()}
+        onOpenSpace={vi.fn()}
+        onOpenPane={vi.fn()}
+        preferenceStore={store}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Project One" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Collapse This host" }));
+    expect(store.snapshot().disclosed).toEqual([hostCollapseId("")]);
+    expect(screen.getByRole("button", { name: "Expand This host" })).toBeInTheDocument();
   });
 
   it("elides a lone Tab so its Pane hangs off the Space", async () => {
@@ -84,12 +106,13 @@ describe("NativeNavigationTree", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Expand Project Two" }));
-    expect(await screen.findByRole("button", { name: "shell" })).toBeInTheDocument();
+    // Nobody named that shell Pane, so its row takes the Tab's name — and the Tab itself is gone.
+    expect(await screen.findByRole("button", { name: "Review" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Expand Review" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "shell" })).toBeNull();
   });
 
-  it("keeps disclosure local and activates native Space and Pane callbacks once", async () => {
+  it("discloses a Space that has children and keeps the Space route for one that has none", async () => {
     const user = userEvent.setup();
     const store = new NavigationPreferenceStore();
     const onOpenSpace = vi.fn();
@@ -103,7 +126,8 @@ describe("NativeNavigationTree", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Expand Project One" }));
+    // Its label is a disclosure control too, so the row opens rather than navigating away.
+    await user.click(screen.getByRole("button", { name: "Project One" }));
     await user.click(await screen.findByRole("button", { name: "Expand Main" }));
     expect(onOpenSpace).not.toHaveBeenCalled();
     expect(onOpenPane).not.toHaveBeenCalled();
@@ -112,9 +136,11 @@ describe("NativeNavigationTree", () => {
       tabDisclosureId("w1", "t1"),
     ]);
 
-    await user.click(screen.getByRole("button", { name: "Project One" }));
+    // A Space with nothing under it has nothing to disclose, so it keeps its route.
+    await user.click(screen.getByRole("button", { name: "Empty Project" }));
+    expect(onOpenSpace).toHaveBeenCalledExactlyOnceWith("w3");
+
     await user.click(await screen.findByRole("button", { name: "First task" }));
-    expect(onOpenSpace).toHaveBeenCalledExactlyOnceWith("w1");
     expect(onOpenPane).toHaveBeenCalledExactlyOnceWith("p1");
   });
 

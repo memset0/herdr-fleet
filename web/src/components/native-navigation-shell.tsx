@@ -265,14 +265,19 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
     label: paneDisplayName(pane),
     agent: pane.agent,
   };
+  // The operator's own name for the Pane, and only that. `paneDisplayName` above already falls back
+  // through a session name, a terminal title and the Agent's own name; the model needs to know which
+  // of the two values was chosen by a person, because an elided row is named by a person's choice.
+  if (pane.paneLabel) result.ownLabel = pane.paneLabel;
   if (pane.kind) result.kind = pane.kind;
   return result;
 }
 
 /**
- * A rail's own top strip carries the header's recipe — the safe-area inset, the 60px floor and the
- * rule — so the three columns' top edges are one line across the viewport. It is not the header and
- * cannot be: the header is a route's, and a route does not reach the rails.
+ * A rail's own top strip carries the header's height recipe — the safe-area inset and the 60px
+ * floor — so the three columns' content starts on one line across the viewport. It carries no rule
+ * of its own: the title names the list directly beneath it, and a hairline between the two would cut
+ * a label off the thing it labels (DESIGN.md §4 — a rule separates REGIONS).
  */
 function Rail({
   side,
@@ -294,7 +299,7 @@ function Rail({
         side === "left" ? "border-r border-rule" : "border-l border-rule",
       )}
     >
-      <div className="shrink-0 border-b border-rule [padding-top:env(safe-area-inset-top)]">
+      <div className="shrink-0 [padding-top:env(safe-area-inset-top)]">
         <div className="flex min-h-15 items-center px-3 py-1">
           <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             {title}

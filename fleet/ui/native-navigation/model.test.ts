@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   deriveNavigationTree,
+  hostCollapseId,
   MAX_NAVIGATION_PANES,
   spaceDisclosureId,
   tabDisclosureId,
@@ -10,7 +11,7 @@ import {
 const HOST = { hostId: "", hostLabel: "This host" };
 
 describe("native navigation hierarchy", () => {
-  test("puts every Space under exactly one Host heading", () => {
+  test("puts every Space under one Host row that is open until it is closed", () => {
     const tree = deriveNavigationTree({
       hostId: "peer-a",
       hostLabel: "peer-a",
@@ -20,9 +21,15 @@ describe("native navigation hierarchy", () => {
       shellPanes: [],
     });
 
-    expect(tree.hosts).toHaveLength(1);
-    expect(tree.hosts[0]?.label).toBe("peer-a");
-    expect(tree.hosts[0]?.rows.map((row) => row.label)).toEqual(["One"]);
+    expect(tree.rows).toHaveLength(1);
+    expect(tree.rows[0]).toMatchObject({
+      label: "peer-a",
+      icon: "none",
+      disclosureId: hostCollapseId("peer-a"),
+      disclosureInverted: true,
+    });
+    expect(tree.rows[0]?.target).toBeUndefined();
+    expect(tree.rows[0]?.children.map((row) => row.label)).toEqual(["One"]);
   });
 
   test("preserves Space, Tab, Agent, and shell order while selecting ancestry", () => {
@@ -53,43 +60,67 @@ describe("native navigation hierarchy", () => {
       selectedPaneId: "p3",
     });
 
-    const rows = tree.hosts[0]?.rows ?? [];
+    const rows = tree.rows[0]?.children ?? [];
     expect(rows.map((row) => row.label)).toEqual(["Two", "One"]);
     // Two tabs survive, so the Tab level stays; `t2` groups two Panes and `t1` groups one, which
     // means the second Tab is replaced by its own Pane.
-    expect(rows[0]?.children.map((row) => row.label)).toEqual(["Second", "Codex"]);
+    // `t1` holds one Pane, so its row is the elided one and takes the Tab's name.
+    expect(rows[0]?.children.map((row) => row.label)).toEqual(["Second", "First"]);
     expect(rows[0]?.children[0]?.children.map((row) => row.label)).toEqual(["Claude", "Shell"]);
+    // A Pane inside a Tab that SURVIVES keeps its own display label: there the terminal title is
+    // what tells two siblings apart.
     expect(tree.selection).toEqual({
       paneId: "p3",
       ancestors: [spaceDisclosureId("w2"), tabDisclosureId("w2", "t2")],
     });
   });
 
-  test("elides a lone Tab and lets the Pane's own name and icon win", () => {
-    const tree = deriveNavigationTree({
+  test("elides a lone Tab, keeps the Pane's icon, and names the row for the operator", () => {
+    // No Pane here was named by a person, so the Tab's name is the only name in the branch —
+    // `label` is a terminal title, which every sibling on this herd would repeat.
+    const unnamed = deriveNavigationTree({
       ...HOST,
       workspaces: [{ workspaceId: "w1", label: "One" }],
-      tabs: [{ workspaceId: "w1", tabId: "t1", label: "Tab name nobody chose" }],
+      tabs: [{ workspaceId: "w1", tabId: "t1", label: "Rename the tree" }],
       agents: [
-        { workspaceId: "w1", tabId: "t1", paneId: "p1", label: "Claude", agent: "claude" },
+        { workspaceId: "w1", tabId: "t1", paneId: "p1", label: "root@host:~/repo", agent: "claude" },
       ],
       shellPanes: [],
       selectedPaneId: "p1",
     });
 
-    const space = tree.hosts[0]?.rows[0];
+    const space = unnamed.rows[0]?.children[0];
     expect(space?.icon).toBe("none");
     expect(space?.disclosureId).toBe(spaceDisclosureId("w1"));
     expect(space?.children).toHaveLength(1);
     expect(space?.children[0]).toMatchObject({
-      label: "Claude",
+      label: "Rename the tree",
       icon: "agent",
       agent: "claude",
       target: { kind: "pane", paneId: "p1" },
       selected: true,
     });
     expect(space?.children[0]?.disclosureId).toBeUndefined();
-    expect(tree.selection?.ancestors).toEqual([spaceDisclosureId("w1")]);
+    expect(unnamed.selection?.ancestors).toEqual([spaceDisclosureId("w1")]);
+
+    // The operator named the Pane, so their name wins over the Tab's.
+    const named = deriveNavigationTree({
+      ...HOST,
+      workspaces: [{ workspaceId: "w1", label: "One" }],
+      tabs: [{ workspaceId: "w1", tabId: "t1", label: "Rename the tree" }],
+      agents: [
+        {
+          workspaceId: "w1",
+          tabId: "t1",
+          paneId: "p1",
+          label: "root@host:~/repo",
+          ownLabel: "guard work",
+          agent: "claude",
+        },
+      ],
+      shellPanes: [],
+    });
+    expect(named.rows[0]?.children[0]?.children[0]?.label).toBe("guard work");
   });
 
   test("keeps a group row and its folder only where more than one child survives", () => {
@@ -108,16 +139,17 @@ describe("native navigation hierarchy", () => {
       shellPanes: [],
     });
 
-    const children = tree.hosts[0]?.rows[0]?.children ?? [];
+    const children = tree.rows[0]?.children[0]?.children ?? [];
     expect(children[0]).toMatchObject({
       label: "Pair",
       icon: "group",
       disclosureId: tabDisclosureId("w1", "t1"),
     });
     expect(children[0]?.target).toBeUndefined();
-    expect(children[1]).toMatchObject({ label: "C", icon: "agent" });
+    // `t2` holds one Pane and nobody named it, so its row takes the Tab's name.
+    expect(children[1]).toMatchObject({ label: "Single", icon: "agent" });
     expect(children.filter((row) => row.icon === "group")).toHaveLength(1);
-    expect(tree.hosts[0]?.rows[0]?.icon).toBe("none");
+    expect(tree.rows[0]?.children[0]?.icon).toBe("none");
   });
 
   test("drops orphaned, invalid and empty rows and leaves an empty Space openable", () => {
@@ -135,8 +167,8 @@ describe("native navigation hierarchy", () => {
       shellPanes: [],
     });
 
-    const space = tree.hosts[0]?.rows[0];
-    expect(tree.hosts[0]?.rows).toHaveLength(1);
+    const space = tree.rows[0]?.children[0];
+    expect(tree.rows[0]?.children).toHaveLength(1);
     expect(space?.children).toEqual([]);
     expect(space?.disclosureId).toBeUndefined();
     expect(space?.target).toEqual({ kind: "space", workspaceId: "w1" });
@@ -157,6 +189,6 @@ describe("native navigation hierarchy", () => {
       agents,
       shellPanes: [],
     });
-    expect(tree.hosts[0]?.rows[0]?.children).toHaveLength(MAX_NAVIGATION_PANES);
+    expect(tree.rows[0]?.children[0]?.children).toHaveLength(MAX_NAVIGATION_PANES);
   });
 });

@@ -18,7 +18,17 @@ export interface NavigationPaneInput {
   paneId: string;
   workspaceId: string;
   tabId: string;
+  /** Collie's own display name for the Pane, which may be a terminal- or Agent-supplied value. */
   label: string;
+  /**
+   * The name the OPERATOR gave this Pane, when they gave it one.
+   *
+   * It is carried separately from {@link label} because only this one is a name: `label` falls back
+   * through a session name, a terminal title and finally the Agent's own name, and on a herd where
+   * no Pane is named those values repeat across every sibling row. An elided row is named by this,
+   * then by the Tab it replaced — see {@link deriveNavigationTree}.
+   */
+  ownLabel?: string;
   agent: string;
   kind?: "agent" | "shell";
 }
@@ -50,6 +60,12 @@ export interface NavigationRow {
    * never occupy a disclosure slot and an elided level can never leave one behind.
    */
   disclosureId?: string;
+  /**
+   * The identity means CONCEALED rather than disclosed — the spelling of a row that is open until
+   * the operator closes it, in a store that holds one bounded list and knows nothing about
+   * defaults. Only a Host row sets it; see {@link deriveNavigationTree}.
+   */
+  disclosureInverted?: true;
   target?: NavigationTarget;
   selected: boolean;
   children: NavigationRow[];
@@ -61,28 +77,25 @@ export interface NavigationSelection {
   ancestors: readonly string[];
 }
 
-/**
- * One machine's rows, under a heading naming it.
- *
- * The Host is a HEADING and not a disclosable row while there is one of them: a control that
- * collapses the only machine in the tree hides everything and reveals nothing, and giving it a
- * default-open state would need a second kind of preference (a row that is open until closed)
- * for exactly one row. The level is reserved by existing; a later Host-aware change gives it a
- * disclosure control when there is more than one to choose between.
- */
-export interface NavigationHost {
-  key: string;
-  label: string;
-  rows: NavigationRow[];
-}
-
 export interface NavigationTree {
-  hosts: NavigationHost[];
+  /** The Host rows, each holding its machine's Spaces. */
+  rows: NavigationRow[];
   selection: NavigationSelection | null;
 }
 
 function validId(value: string): boolean {
   return value.length > 0 && value.length <= MAX_NAVIGATION_ID_LENGTH;
+}
+
+/**
+ * A Host's disclosure identity, and it means CONCEALED.
+ *
+ * A Host is open until the operator closes it, which the disclosed-set cannot say directly. Rather
+ * than teach the store a second kind of entry, the identity itself carries the sense: present means
+ * this machine is collapsed. The bounds, the toggle and the storage are unchanged.
+ */
+export function hostCollapseId(hostId: string): string {
+  return JSON.stringify(["host-collapsed", hostId]);
 }
 
 export function spaceDisclosureId(workspaceId: string): string {
@@ -185,13 +198,15 @@ export function deriveNavigationTree(input: {
         const tabId = tabDisclosureId(workspace.workspaceId, entry.tab.tabId);
         const ancestorsOfPane = elideTabLevel ? [spaceId] : [spaceId, tabId];
 
-        // A Tab with one Pane is not a level either: the Pane takes its row, name and icon.
+        // A Tab with one Pane is not a level either: the Pane takes its row and icon. The NAME is
+        // whichever of the two the operator chose — their Pane name if they gave one, otherwise the
+        // Tab's, which on a herd where no Pane is named is the only name in that branch at all.
         if (entry.panes.length === 1) {
           const only = entry.panes[0];
           if (!only) return [];
           const selected = only.paneId === input.selectedPaneId;
           if (selected) remember(only.paneId, [spaceId]);
-          return [paneRow(only, selected)];
+          return [{ ...paneRow(only, selected), label: only.ownLabel ?? entry.tab.label }];
         }
 
         const paneRows = entry.panes.map((pane) => {
@@ -226,8 +241,17 @@ export function deriveNavigationTree(input: {
       return row;
     });
 
-  return {
-    hosts: [{ key: `host:${input.hostId}`, label: input.hostLabel, rows: spaces }],
-    selection,
+  const host: NavigationRow = {
+    key: `host:${input.hostId}`,
+    label: input.hostLabel,
+    icon: "none",
+    selected: false,
+    children: spaces,
   };
+  if (spaces.length > 0) {
+    host.disclosureId = hostCollapseId(input.hostId);
+    host.disclosureInverted = true;
+  }
+
+  return { rows: [host], selection };
 }

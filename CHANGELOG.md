@@ -41,6 +41,9 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The hierarchy is one Host heading over elided Space/Tab/Pane rows, with whole-row selection, one shared disclosure control, animated disclosure and a denser row.
 - On a narrow viewport the hierarchy opens from the header and the Pane page's switcher entry presents the Agent list; the shell's own trigger row is gone.
 
+- The hierarchy's Host is a row you can collapse, a Space row discloses instead of navigating away, and an elided single-Pane Tab keeps the name its operator chose rather than a terminal title every sibling repeats.
+- The hierarchy indents less, and neither rail's title is cut off from its list by a rule.
+
 ### Fixed
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.

@@ -157,9 +157,10 @@ describe("NativeNavigationShell", () => {
     const overlay = document.querySelector("#fleet-hierarchy-overlay");
     if (!(overlay instanceof HTMLElement)) throw new Error("missing hierarchy overlay");
     const surface = within(overlay);
-    // The lone Tab is elided, so the Pane hangs directly off its Space.
+    // The lone Tab is elided, so the Pane hangs directly off its Space — under the Tab's name,
+    // because nobody named the Pane.
     await user.click(surface.getByRole("button", { name: "Expand Project" }));
-    await user.click(await surface.findByRole("button", { name: "claude" }));
+    await user.click(await surface.findByRole("button", { name: "Main" }));
 
     expect(await screen.findByText("Pane route")).toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());

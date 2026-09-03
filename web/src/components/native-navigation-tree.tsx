@@ -36,7 +36,7 @@ export function NativeNavigationTree({
     if (tree.selection) preferenceStore.ensureDisclosed(tree.selection.ancestors);
   }, [preferenceStore, tree.selection]);
 
-  const empty = tree.hosts.every((host) => host.rows.length === 0);
+  const empty = tree.rows.every((row) => row.children.length === 0);
   if (empty) {
     return <p className="px-3 py-6 text-sm text-muted-foreground">{t("fleet.navigation.empty")}</p>;
   }
@@ -45,31 +45,18 @@ export function NativeNavigationTree({
   const spaceIsCurrent = tree.selection === null;
 
   return (
-    <nav aria-label={t("fleet.navigation.hierarchy")} className="flex flex-col gap-2 p-1.5">
-      {tree.hosts.map((host) => (
-        <section key={host.key} aria-label={host.label} className="min-w-0">
-          {/* The Host heading. Not a row: see NavigationHost's header for why the only machine in
-              the tree has no control that would hide it. */}
-          <div className="flex min-h-8 items-center px-2 xl:min-h-6">
-            <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {host.label}
-            </span>
-          </div>
-          <div className="flex flex-col">
-            {host.rows.map((row) => (
-              <Row
-                key={row.key}
-                row={row}
-                disclosed={disclosed}
-                spaceIsCurrent={spaceIsCurrent}
-                selectedSpaceId={selectedSpaceId}
-                onToggle={(id) => preferenceStore.toggleDisclosure(id)}
-                onOpenSpace={onOpenSpace}
-                onOpenPane={onOpenPane}
-              />
-            ))}
-          </div>
-        </section>
+    <nav aria-label={t("fleet.navigation.hierarchy")} className="flex flex-col p-1.5">
+      {tree.rows.map((row) => (
+        <Row
+          key={row.key}
+          row={row}
+          disclosed={disclosed}
+          spaceIsCurrent={spaceIsCurrent}
+          selectedSpaceId={selectedSpaceId}
+          onToggle={(id) => preferenceStore.toggleDisclosure(id)}
+          onOpenSpace={onOpenSpace}
+          onOpenPane={onOpenPane}
+        />
       ))}
     </nav>
   );
@@ -109,7 +96,11 @@ function Row({
   onOpenPane,
 }: RowProps) {
   const disclosureId = row.disclosureId;
-  const open = disclosureId !== undefined && disclosed.has(disclosureId);
+  // A Host's identity means CONCEALED (model.ts, `hostCollapseId`), so the same set answers both
+  // kinds of row without the store knowing there are two.
+  const open =
+    disclosureId !== undefined &&
+    (row.disclosureInverted === true ? !disclosed.has(disclosureId) : disclosed.has(disclosureId));
   const childrenId = disclosureId === undefined ? undefined : `fleet-navigation-${disclosureId}`;
   const selected =
     row.selected ||
@@ -117,10 +108,14 @@ function Row({
       row.target?.kind === "space" &&
       row.target.workspaceId === selectedSpaceId);
 
+  // A ROW THAT CAN DISCLOSE, DISCLOSES. A row wearing a disclosure control on its left and
+  // navigating away when its label is tapped is two promises from one surface; the operator asked
+  // for the tree to open rather than leave. The Space route stays reachable from the one Space row
+  // that has nothing to open — and from every native surface that already offers it.
   const activate = () => {
-    if (row.target?.kind === "space") onOpenSpace(row.target.workspaceId);
+    if (disclosureId !== undefined) onToggle(disclosureId);
+    else if (row.target?.kind === "space") onOpenSpace(row.target.workspaceId);
     else if (row.target?.kind === "pane") onOpenPane(row.target.paneId);
-    else if (disclosureId !== undefined) onToggle(disclosureId);
   };
 
   return (
@@ -169,7 +164,7 @@ function Row({
       {row.children.length > 0 && (
         <div id={childrenId}>
           <Collapse open={open}>
-            <div className="ml-3 flex flex-col border-l border-border/70 pl-1">
+            <div className="ml-1.5 flex flex-col border-l border-border/70 pl-1">
               {row.children.map((child) => (
                 <Row
                   key={child.key}
