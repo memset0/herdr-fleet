@@ -6,7 +6,8 @@ standalone deployment alternatives remain upstream behavior.
 
 The first v3 stage is deliberately solo. It provides one Fleet lead profile, one Collie process,
 one password/session Gateway, and one public HTTPS origin. It does not implement peers, SSH,
-multi-host routing, Fleet-specific navigation, ttyd, or external notifications.
+multi-host routing, Fleet-specific navigation, ttyd, or Fleet-specific aggregate/external
+notifications. Collie's native optional Web Push remains available unchanged.
 
 The full Collie Pack security harness for this baseline is verified on Bun 1.3.14. Its pinned-client
 TLS canary does not hold on Bun 1.3.12, so Pack or later multi-host behavior must not be enabled on an
@@ -83,6 +84,20 @@ Herdr actions call the thin `scripts/herdr-fleet.sh` launcher:
 The supervisor uses no operating-system service, pid-file discovery, port-based killing, or broad
 process-name matching. Its private Unix control socket is generation-qualified; child crashes use a
 bounded restart delay. Logs and session state stay beneath the owner-only plugin state directory.
+
+## Native Web Push actions
+
+Herdr Fleet exposes Collie's existing `push-keys` and `push-test` commands as fixed no-argument
+plugin actions. They run through `scripts/collie-ctl.sh`, so Collie's own config-directory
+resolution, mode-600 writes, existing-key refusal, subscription store, and diagnostics remain the
+only implementation.
+
+The actions do not enable Push automatically. Generate initial keys only when intended, invoke the
+existing Fleet `restart` action so the running bridge reads them, then enable notifications in each
+browser through Collie's Settings. The fixed `push-keys` action cannot rotate existing keys; forced
+rotation and subscription list/forget operations remain terminal commands because they require
+explicit arguments or review. See [`voice-and-push.md`](voice-and-push.md#web-push-optional) for the
+native Collie workflow.
 
 ## Retained Collie deployment alternatives
 

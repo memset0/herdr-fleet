@@ -9,6 +9,25 @@ import { fleetTestConfig } from "./test-helpers.ts";
 
 const root = resolve(import.meta.dir, "..");
 
+function actionBlocks(manifest: string): string[] {
+  return manifest.split("[[actions]]").slice(1);
+}
+
+function validatePushActions(manifest: string): void {
+  const pushBlocks = actionBlocks(manifest).filter((block) => /\nid = "push-[^"]+"/.test(`\n${block}`));
+  if (pushBlocks.length !== 2) throw new Error("manifest must contain exactly two Push actions");
+  for (const id of ["push-keys", "push-test"] as const) {
+    const matches = pushBlocks.filter((block) => block.includes(`id = "${id}"`));
+    if (matches.length !== 1) throw new Error(`manifest must contain exactly one ${id} action`);
+    const block = matches[0] ?? "";
+    const command = `command = ["bash", "scripts/collie-ctl.sh", "${id}"]`;
+    if (!block.includes(command)) throw new Error(`${id} must delegate to the frozen Collie shim`);
+    if (/--force|COLLIE_VAPID_|https?:|mailto:|push (list|forget)/.test(block)) {
+      throw new Error(`${id} embeds forbidden Push arguments or values`);
+    }
+  }
+}
+
 describe("Herdr-owned Fleet lifecycle", () => {
   test("derives private generation-qualified paths without process-name or port ownership", () => {
     const paths = resolveRuntimePaths({
@@ -106,5 +125,31 @@ describe("Herdr-owned Fleet lifecycle", () => {
     expect(manifest).not.toContain("systemctl");
     expect(manifest).not.toContain("tailscale");
     expect(manifest.match(/scripts\/herdr-fleet\.sh/g)?.length).toBe(6);
+  });
+
+  test("the plugin manifest exposes only the two native no-argument Push actions", () => {
+    const manifest = readFileSync(resolve(root, "herdr-plugin.toml"), "utf8");
+    expect(() => validatePushActions(manifest)).not.toThrow();
+    expect(() =>
+      validatePushActions(
+        `${manifest}\n[[actions]]\nid = "push-test"\ncommand = ["bash", "scripts/collie-ctl.sh", "push-test"]\n`,
+      ),
+    ).toThrow();
+    expect(() =>
+      validatePushActions(manifest.replace('"push-keys"]', '"push-keys", "--force"]')),
+    ).toThrow();
+    expect(() =>
+      validatePushActions(
+        manifest.replace(
+          '"scripts/collie-ctl.sh", "push-test"',
+          '"scripts/herdr-fleet.sh", "push-test"',
+        ),
+      ),
+    ).toThrow();
+    expect(() =>
+      validatePushActions(
+        `${manifest}\n[[actions]]\nid = "push-list"\ncommand = ["bash", "scripts/collie-ctl.sh", "push", "list"]\n`,
+      ),
+    ).toThrow();
   });
 });

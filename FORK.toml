@@ -74,11 +74,11 @@ reason = "Repository entrypoints and ignore rules are upstream-owned surfaces th
 
 [[invasive]]
 id = "plugin-identity"
-intent = "Expose the downstream identity and Herdr-owned lifecycle while retaining Collie provenance."
+intent = "Expose the downstream identity, Herdr-owned lifecycle, and inherited native operator actions while retaining Collie provenance."
 strategy = "adapt"
 review = "every-upstream-sync"
 paths = ["herdr-plugin.toml#memset0.herdr-fleet"]
-verify = ["herdr-plugin.toml", "UPSTREAM.md"]
+verify = ["herdr-plugin.toml", "UPSTREAM.md", "fleet/lifecycle.test.ts"]
 reason = "Herdr reads plugin identity, build steps, and actions only from the upstream manifest path."
 
 [[invasive]]

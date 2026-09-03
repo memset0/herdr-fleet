@@ -40,3 +40,15 @@ id = "url"
 title = "Show Herdr Fleet URL"
 contexts = ["workspace"]
 command = ["bash", "scripts/herdr-fleet.sh", "url"]
+
+[[actions]]
+id = "push-keys"
+title = "Generate push keys"
+contexts = ["workspace"]
+command = ["bash", "scripts/collie-ctl.sh", "push-keys"]
+
+[[actions]]
+id = "push-test"
+title = "Send a test notification"
+contexts = ["workspace"]
+command = ["bash", "scripts/collie-ctl.sh", "push-test"]
