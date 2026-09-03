@@ -49,18 +49,32 @@ export interface ManualPaneFitAction {
 }
 
 export type ResizePaneInput =
-  | { readonly ok: true; readonly cols: number }
-  | { readonly ok: false; readonly error: "bad body" | "bad cols" };
+  | { readonly ok: true; readonly cols: number; readonly rows: number | null }
+  | { readonly ok: false; readonly error: "bad body" | "bad cols" | "bad rows" };
 
+/**
+ * `{cols}`, or `{cols, rows}`.
+ *
+ * ROWS ARE OPTIONAL AND THEIR ABSENCE IS A MEANING, not a default to fill in: it says "keep the
+ * height this pane already has", which is what every fit did before a caller could ask for one. A
+ * present `rows` is validated by exactly the same rule the controller applies, so a value this
+ * parser accepts is one the resize can carry out.
+ */
 export function parseResizePaneInput(value: JsonValue): ResizePaneInput {
   const record = jsonRecord(value);
   if (record === null) return { ok: false, error: "bad body" };
   const fields = Object.keys(record);
-  if (fields.length !== 1 || fields[0] !== "cols") return { ok: false, error: "bad body" };
+  if (fields.some((field) => field !== "cols" && field !== "rows")) {
+    return { ok: false, error: "bad body" };
+  }
+  if (!fields.includes("cols")) return { ok: false, error: "bad body" };
   const cols = jsonNumberField(record.cols);
-  return cols !== null && validPaneFitColumns(cols)
-    ? { ok: true, cols }
-    : { ok: false, error: "bad cols" };
+  if (cols === null || !validPaneFitColumns(cols)) return { ok: false, error: "bad cols" };
+  if (!fields.includes("rows")) return { ok: true, cols, rows: null };
+  const rows = jsonNumberField(record.rows);
+  return rows !== null && validPaneFitRows(rows)
+    ? { ok: true, cols, rows }
+    : { ok: false, error: "bad rows" };
 }
 
 interface SafeManualPaneFitFailure {
@@ -106,7 +120,9 @@ export function createManualPaneFitAction(
         );
       }
 
-      const rows = session.engine.paneViewportRows(paneId);
+      // The operator's own number when they gave one; otherwise the height the pane already has,
+      // which is the only case that can fail for geometry — a number that was typed is already valid.
+      const rows = input.rows ?? session.engine.paneViewportRows(paneId);
       if (!validPaneFitRows(rows)) {
         return failedResponse(
           "geometry",

@@ -6,7 +6,6 @@ import {
   EllipsisVertical,
   Loader2,
   Minimize2,
-  Scaling,
   ScrollText,
   TerminalSquare,
 } from "lucide-react";
@@ -38,6 +37,7 @@ import { FindBar } from "@/components/find-bar";
 import { Composer, type ComposerHandle } from "@/components/composer";
 import { ThreadSidebar } from "@/components/agent-sidebar";
 import { useNativePaneSwitcher } from "@/components/native-navigation-context";
+import { NativePaneFitControls } from "@/components/native-pane-fit";
 import { AgentIcon } from "@/components/agent-icon";
 import { TabStrip } from "@/components/tab-strip";
 import { PaneStrip } from "@/components/pane-strip";
@@ -75,8 +75,6 @@ import type {
   WizardModel,
 } from "@/lib/blocks";
 import type { Scope } from "@/lib/scope";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { resizePane } from "@/lib/api";
 import { runManualPaneFit } from "../../../fleet/ui/manual-pane-fit.ts";
 
@@ -336,14 +334,15 @@ export function AgentChat({
   const composerRef = useRef<ComposerHandle>(null);
   const [manualPaneFitBusy, setManualPaneFitBusy] = useState(false);
 
-  async function fitPaneToMirror(): Promise<void> {
+  async function fitPaneToMirror(rows: number | null): Promise<void> {
     if (manualPaneFitBusy || readOnly || hostBlock !== undefined) return;
     setManualPaneFitBusy(true);
     try {
       const result = await runManualPaneFit(
         listRef.current?.getScrollElement() ?? null,
         prefs.fontSize,
-        (cols) => resizePane(paneId, cols, scope),
+        rows,
+        (cols, height) => resizePane(paneId, cols, height, scope),
       );
       if (result.ok) {
         setStatus(
@@ -1838,43 +1837,11 @@ export function AgentChat({
                   setTapToFocus={setTapToFocus}
                   displayPrefsAfterTextSize={
                     manualPaneFit.capable && !gone ? (
-                      <div className="flex items-center justify-between gap-3 py-1.5">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 text-sm font-medium">
-                            {t("settings.display.resize.label")}
-                            <Badge
-                              variant="outline"
-                              className="px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
-                            >
-                              {t("settings.display.resize.badge")}
-                            </Badge>
-                          </div>
-                          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                            {t("settings.display.resize.hint")}
-                          </p>
-                        </div>
-                        <Button
-                          className="shrink-0"
-                          variant="outline"
-                          size="sm"
-                          disabled={
-                            readOnly ||
-                            hostBlock !== undefined ||
-                            manualPaneFitBusy
-                          }
-                          onClick={() => void fitPaneToMirror()}
-                          aria-label={t("settings.display.resize.aria")}
-                        >
-                          {manualPaneFitBusy ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <Scaling />
-                          )}
-                          {manualPaneFitBusy
-                            ? t("settings.display.resize.busy")
-                            : t("settings.display.resize.label")}
-                        </Button>
-                      </div>
+                      <NativePaneFitControls
+                        busy={manualPaneFitBusy}
+                        disabled={readOnly || hostBlock !== undefined}
+                        onFit={(rows) => void fitPaneToMirror(rows)}
+                      />
                     ) : undefined
                   }
                   onSent={onSent}

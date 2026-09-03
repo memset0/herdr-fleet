@@ -49,6 +49,8 @@ paths = [
   "web/src/components/fleet-webfonts.tsx",
   "web/src/components/native-navigation-tree.test.tsx",
   "web/src/components/native-navigation-tree.tsx",
+  "web/src/components/native-pane-fit.test.tsx",
+  "web/src/components/native-pane-fit.tsx",
   "web/src/lib/fleet-webfonts.test.ts",
   "web/src/lib/fleet-webfonts.ts"
 ]
@@ -59,7 +61,7 @@ contracts = [
   "native Pack authority selection",
   "role-aware child lifecycle",
   "bounded browser-local Agent favorites",
-  "explicit Herdr-only manual Pane fit",
+  "explicit Herdr-only manual Pane fit with a chosen height",
   "permanently expanded native navigation rails",
   "one fetched CJK fallback face"
 ]
@@ -196,6 +198,7 @@ verify = [
   "fleet/manual-pane-fit/capability.test.ts",
   "fleet/manual-pane-fit/controller.test.ts",
   "fleet/ui/manual-pane-fit.test.ts",
+  "web/src/components/native-pane-fit.test.tsx",
   "bridge/state-engine.test.ts",
   "bridge/sessions.test.ts",
   "web/src/components/agent-chat.test.tsx",

@@ -523,13 +523,17 @@ export function focusPane(paneId: string, scope?: Scope): Promise<ActionResponse
 export function resizePane(
   paneId: string,
   cols: number,
+  // DOWNSTREAM PORT — an explicit height, or `null` to keep the pane's own. Absent from the body
+  // rather than sent as null: the bridge reads "no rows field" as "leave it alone", which is what
+  // every resize did before a caller could ask for a height.
+  rows: number | null = null,
   scope?: Scope,
 ): Promise<PaneResizeResponse> {
   return req<PaneResizeResponse>(
     withScope(`/api/pane/${encodeURIComponent(paneId)}/resize`, scope),
     {
       method: "POST",
-      body: JSON.stringify({ cols }),
+      body: JSON.stringify(rows === null ? { cols } : { cols, rows }),
     },
   );
 }

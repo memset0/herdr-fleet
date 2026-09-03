@@ -188,6 +188,9 @@ export const ja: Dictionary = {
   "settings.display.resize.hint":
     "共有ペインの幅を一度だけ表示に合わせます。以後のレイアウト変更ではリサイズしません。",
   "settings.display.resize.aria": "ペインをこの表示幅に合わせる",
+  "settings.display.resize.rows": "行数",
+  "settings.display.resize.rowsHint": "ターミナルを何行分表示するか。空欄ならペインの高さのままにします。",
+  "settings.display.resize.rowsAuto": "そのまま",
   "settings.display.resize.busy": "リサイズ中…",
   "settings.display.resize.success": "{cols} 列 × {rows} 行にリサイズしました。",
   "settings.display.resize.geometryError": "ターミナル幅をまだ測定できません。",

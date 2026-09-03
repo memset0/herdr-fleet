@@ -64,6 +64,8 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The strips fold automatically and only automatically: the manual control is gone, and the pane's state rides the folded bar as a word so the composer's band no longer comes back the moment the keyboard does.
 - The Agent rail's row puts its favourite control at the top-right and its age at the bottom-right, and the phone's hierarchy drawer wears the rail's own ground and title.
 
+- Fitting a Pane now asks for the rows and measures only the columns: a bounded row field beside the Resize action, applied when the number holds still and only when it changed, with an empty field meaning "keep the Pane's own height". The protected resize accepts an optional row count validated by the controller's own rule.
+
 ### Fixed
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.

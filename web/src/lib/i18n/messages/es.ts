@@ -192,6 +192,9 @@ export const es: Dictionary = {
   "settings.display.resize.hint":
     "Ajusta una vez el ancho compartido del panel. Los cambios posteriores no lo redimensionan.",
   "settings.display.resize.aria": "Ajustar el panel a esta vista",
+  "settings.display.resize.rows": "Filas",
+  "settings.display.resize.rowsHint": "Cuánto del terminal permanece a la vista. Vacío conserva la altura del panel.",
+  "settings.display.resize.rowsAuto": "Conservar",
   "settings.display.resize.busy": "Redimensionando…",
   "settings.display.resize.success": "Ajustado a {cols} columnas × {rows} filas.",
   "settings.display.resize.geometryError": "El ancho del terminal aún no se puede medir.",

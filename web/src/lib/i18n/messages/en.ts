@@ -205,6 +205,9 @@ export const en = {
   "settings.display.resize.hint":
     "Fits the shared Pane width once. Later layout changes do not resize it.",
   "settings.display.resize.aria": "Resize Pane to this view",
+  "settings.display.resize.rows": "Rows",
+  "settings.display.resize.rowsHint": "How much of the terminal to keep on screen. Empty keeps the pane's own height.",
+  "settings.display.resize.rowsAuto": "Keep",
   "settings.display.resize.busy": "Resizing…",
   "settings.display.resize.success": "Resized to {cols} columns × {rows} rows.",
   "settings.display.resize.geometryError": "The terminal width is not ready to measure.",
