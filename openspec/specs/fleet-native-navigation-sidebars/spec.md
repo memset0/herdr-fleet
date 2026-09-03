@@ -132,15 +132,22 @@ step. The selected row's highlight SHALL cover the whole row including its discl
 Disclosure SHALL open and close as an animated in-flow transition, and MUST NOT animate when the
 browser reports a reduced-motion preference. Hierarchy rows SHALL be denser than Collie's touch rows
 on a wide viewport while remaining at least touch-sized wherever the hierarchy is operated as an
-overlay.
+overlay, and the disclosure column, the indentation step and each rail's own title SHALL spend no
+more of the rail's width or height than that.
 
-The active Pane row SHALL be highlighted. Its surviving Space and Tab ancestors SHALL automatically
-become disclosed whenever the selected Pane changes, including direct and history-based navigation.
-Operator disclosure choices for unrelated branches SHALL remain independent.
+The active Pane row SHALL be highlighted. Automatic disclosure of its surviving Space and Tab
+ancestors SHALL happen when the selected Pane CHANGES — a deep link, a row in the Agent rail, a row
+in this tree — and at no other time. A snapshot that changes no selection MUST NOT re-disclose a
+branch the operator has collapsed. Operator disclosure choices for unrelated branches SHALL remain
+independent.
 
 #### Scenario: A Pane deep link becomes active
 - **WHEN** the current route selects a Pane whose ancestry is closed in stored disclosure state
 - **THEN** that Pane is highlighted and its surviving Space and Tab ancestry is disclosed without a request
+
+#### Scenario: Operator collapses the branch they are standing in
+- **WHEN** the operator conceals the Space holding the selected Pane and further snapshots arrive
+- **THEN** the branch stays concealed until the selected Pane changes
 
 #### Scenario: Operator collapses the machine
 - **WHEN** the operator activates a Host row's disclosure control and later reloads the application
@@ -233,3 +240,33 @@ NOT contain Pane output, credentials, private configuration, or deployment ident
 #### Scenario: A preference write fails
 - **WHEN** browser storage rejects a width or disclosure update
 - **THEN** the current page keeps a bounded in-memory result and all native navigation remains usable
+
+### Requirement: The shell's chrome stands on its own ground
+The application header and both rails SHALL be filled with the same raised chrome ground the Pane
+screen's composer dock uses, so the surfaces around the route read as chrome rather than as more of
+the page. The route's own content and the terminal mirror SHALL keep their existing grounds.
+
+Any drawing knocked out against the header's fill MUST be knocked out in that same value, so a
+change of ground can never leave a halo behind.
+
+#### Scenario: The application is drawn
+- **WHEN** any route is on screen
+- **THEN** the header and both rails share one raised ground, distinct from the route's content and from the mirror
+
+#### Scenario: The mark is drawn on that ground
+- **WHEN** a route keeps the Collie mark
+- **THEN** the mark's knockout uses the header's own fill value
+
+### Requirement: A hierarchy row carries its Pane's state
+A hierarchy row that stands for a Pane SHALL show that Pane's state as the same dot Collie's Tab row
+draws, at the row's trailing end, with the state's word available to assistive technology. The dot
+MUST use the rail's own ground for a resting state's ring, and MUST NOT replace the Agent's own mark
+at the row's leading end.
+
+#### Scenario: An Agent row is drawn
+- **WHEN** a row stands for a Pane running an Agent
+- **THEN** the Agent's mark leads the row, the state's dot trails it, and both are drawn at once
+
+#### Scenario: A row stands for no Pane
+- **WHEN** a row is a Host, a Space, or a group of Panes
+- **THEN** it carries no state dot of its own
