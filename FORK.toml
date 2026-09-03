@@ -42,8 +42,11 @@ verify = [
   "fleet/auth.test.ts",
   "fleet/collie-env.test.ts",
   "fleet/config.test.ts",
+  "fleet/gateway.test.ts",
   "fleet/login-ui.test.ts",
+  "fleet/proxy.test.ts",
   "fleet/rate-limit.test.ts",
+  "fleet/server.test.ts",
   "fleet/session-store.test.ts"
 ]
 

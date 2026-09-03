@@ -20,11 +20,11 @@
 
 ## 3. Add the authenticated single-upstream Gateway
 
-- [ ] 3.1 Implement the Fleet Gateway route classifier so only authentication endpoints and the exact update-safe static allowlist are public, every `/api/*` returns `401` before upstream access without a session, and every other document navigation enters login; verify path normalization and source-map/filesystem negatives.
-- [ ] 3.2 Implement the one-loopback Collie proxy with parsed target construction, bounded streaming bodies, a narrow request-header allowlist, removal of Fleet/Authorization/forwarding/Tailscale/device credentials, and exact public Host/Origin reconstruction; verify request, upload, conditional-read, and spoofed-header cases.
-- [ ] 3.3 Implement response filtering with hop-by-hop/stale encoding removal, Fleet-cookie protection, no-store policy, and parsed exact-origin Location rewriting; verify malicious userinfo/prefix redirects, foreign redirects, cookies, 304, streaming, and upstream failure behavior.
-- [ ] 3.4 Wire the Gateway listener so it binds only to configured loopback, validates the exact public Host, derives trusted client attribution only for a loopback proxy peer, applies security headers by response class, and reports readiness without exposing configuration or secrets; verify listener-level Host/Origin/client-address tests.
-- [ ] 3.5 Update `FORK.toml` and `CHANGELOG.md`, run Gateway/auth/config focused tests plus root typecheck, commit this stage separately, fetch/verify `origin/v3-dev`, and push a normal buildable commit.
+- [x] 3.1 Implement the Fleet Gateway route classifier so only authentication endpoints and the exact update-safe static allowlist are public, every `/api/*` returns `401` before upstream access without a session, and every other document navigation enters login; verify path normalization and source-map/filesystem negatives.
+- [x] 3.2 Implement the one-loopback Collie proxy with parsed target construction, bounded streaming bodies, a narrow request-header allowlist, removal of Fleet/Authorization/forwarding/Tailscale/device credentials, and exact public Host/Origin reconstruction; verify request, upload, conditional-read, and spoofed-header cases.
+- [x] 3.3 Implement response filtering with hop-by-hop/stale encoding removal, Fleet-cookie protection, no-store policy, and parsed exact-origin Location rewriting; verify malicious userinfo/prefix redirects, foreign redirects, cookies, 304, streaming, and upstream failure behavior.
+- [x] 3.4 Wire the Gateway listener so it binds only to configured loopback, validates the exact public Host, derives trusted client attribution only for a loopback proxy peer, applies security headers by response class, and reports readiness without exposing configuration or secrets; verify listener-level Host/Origin/client-address tests.
+- [x] 3.5 Update `FORK.toml` and `CHANGELOG.md`, run Gateway/auth/config focused tests plus root typecheck, commit this stage separately, fetch/verify `origin/v3-dev`, and push a normal buildable commit.
 
 ## 4. Reapply the Herdr-owned lead lifecycle
 

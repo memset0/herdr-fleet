@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 
 import {
   clearSessionCookie,
+  cookieValue,
   createSessionToken,
   attemptLogin,
   readLoginForm,
@@ -57,6 +58,7 @@ describe("Fleet authentication", () => {
     expect(clearSessionCookie()).toBe(
       "__Host-herdr_fleet_session=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict",
     );
+    expect(cookieValue("a=1; session=first; session=second", "session")).toBeNull();
   });
 
   test("verifies the password path for correct and generic incorrect credentials", async () => {

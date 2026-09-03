@@ -27,6 +27,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 - Establish the Herdr Fleet plugin identity, exact Collie fork boundary, and private Fleet configuration.
 - Reapply single-account Argon2id login with signed, revocable, host-only sessions and bounded attempts.
+- Gate one loopback Collie behind a same-origin authenticated Gateway with narrow proxy headers and redirects.
 
 ## [1.2.0] - 2026-09-02
 

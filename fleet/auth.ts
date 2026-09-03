@@ -112,12 +112,15 @@ export function verifySessionToken(token: string, config: FleetConfig, now: numb
 
 export function cookieValue(header: string | null, name: string): string | null {
   if (header === null) return null;
+  let found: string | null = null;
   for (const part of header.split(";")) {
     const split = part.indexOf("=");
     if (split < 0) continue;
-    if (part.slice(0, split).trim() === name) return part.slice(split + 1).trim();
+    if (part.slice(0, split).trim() !== name) continue;
+    if (found !== null) return null;
+    found = part.slice(split + 1).trim();
   }
-  return null;
+  return found;
 }
 
 export function sessionCookie(config: FleetConfig, token: string): string {
@@ -217,9 +220,26 @@ export async function readLoginForm(request: Request): Promise<LoginInput | null
     const length = Number(declared);
     if (!Number.isSafeInteger(length) || length < 0 || length > LOGIN_FORM_LIMIT) return null;
   }
-  const body = await request.text();
-  if (body.length > LOGIN_FORM_LIMIT) return null;
-  const form = new URLSearchParams(body);
+  const body = request.body;
+  if (body === null) return null;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const pieces: string[] = [];
+  let received = 0;
+  while (true) {
+    const next = await reader.read();
+    if (next.done) break;
+    received += next.value.byteLength;
+    if (received > LOGIN_FORM_LIMIT) {
+      await reader.cancel();
+      return null;
+    }
+    pieces.push(decoder.decode(next.value, { stream: true }));
+  }
+  pieces.push(decoder.decode());
+  const text = pieces.join("");
+  if (text.length > LOGIN_FORM_LIMIT) return null;
+  const form = new URLSearchParams(text);
   const username = form.get("username") ?? "";
   const password = form.get("password") ?? "";
   const next = form.get("next");
