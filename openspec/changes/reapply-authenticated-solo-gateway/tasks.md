@@ -10,13 +10,13 @@
 
 ## 2. Reapply and harden the authentication core
 
-- [ ] 2.1 Implement versioned HMAC session tokens with random 256-bit session ids, bounded issuance/expiry validation, constant-time signature comparison, and no credential-bearing diagnostics; verify tamper, malformed, future, expiry, and secret-rotation tests.
-- [ ] 2.2 Implement the owner-only versioned active-session store using one-way id digests, atomic writes, bounded pruning, restart-safe recognition, and fail-closed unreadable-state behavior; verify login persistence, logout revocation, copied-token refusal, expiry pruning, permissions, and corrupt-state tests.
-- [ ] 2.3 Reapply single-account Argon2id verification with bounded username/password/form inputs and externally equivalent credential failures; verify correct, wrong-user, wrong-password, combined-failure, oversized, and malformed-request cases.
-- [ ] 2.4 Reapply the login limiter as finite per-source plus aggregate budgets with bounded recovery, using client identity supplied only by the trusted listener boundary; verify source rotation, spoofed forwarding fields, capacity, recovery, success isolation, and no-verification-while-blocked behavior.
-- [ ] 2.5 Implement exact-Origin login/logout transitions and relative-only safe-return normalization; verify scheme-relative, absolute, alternate-port, userinfo, encoded-authority, backslash, control-character, malformed, and cross-origin cases all fall back or fail closed.
-- [ ] 2.6 Reapply the JavaScript-free login page using Collie v1.2.0 typography/tokens, accessible labels/autocomplete/focus behavior, generic escaped errors, and no reflected credentials; verify one focused markup/style test rather than duplicating Collie's component suite.
-- [ ] 2.7 Update `FORK.toml` and `CHANGELOG.md`, run the authentication test subset and root typecheck, commit this stage separately, fetch/verify `origin/v3-dev`, and push a normal buildable commit.
+- [x] 2.1 Implement versioned HMAC session tokens with random 256-bit session ids, bounded issuance/expiry validation, constant-time signature comparison, and no credential-bearing diagnostics; verify tamper, malformed, future, expiry, and secret-rotation tests.
+- [x] 2.2 Implement the owner-only versioned active-session store using one-way id digests, atomic writes, bounded pruning, restart-safe recognition, and fail-closed unreadable-state behavior; verify login persistence, logout revocation, copied-token refusal, expiry pruning, permissions, and corrupt-state tests.
+- [x] 2.3 Reapply single-account Argon2id verification with bounded username/password/form inputs and externally equivalent credential failures; verify correct, wrong-user, wrong-password, combined-failure, oversized, and malformed-request cases.
+- [x] 2.4 Reapply the login limiter as finite per-source plus aggregate budgets with bounded recovery, using client identity supplied only by the trusted listener boundary; verify source rotation, spoofed forwarding fields, capacity, recovery, success isolation, and no-verification-while-blocked behavior.
+- [x] 2.5 Implement exact-Origin login/logout transitions and relative-only safe-return normalization; verify scheme-relative, absolute, alternate-port, userinfo, encoded-authority, backslash, control-character, malformed, and cross-origin cases all fall back or fail closed.
+- [x] 2.6 Reapply the JavaScript-free login page using Collie v1.2.0 typography/tokens, accessible labels/autocomplete/focus behavior, generic escaped errors, and no reflected credentials; verify one focused markup/style test rather than duplicating Collie's component suite.
+- [x] 2.7 Update `FORK.toml` and `CHANGELOG.md`, run the authentication test subset and root typecheck, commit this stage separately, fetch/verify `origin/v3-dev`, and push a normal buildable commit.
 
 ## 3. Add the authenticated single-upstream Gateway
 

@@ -38,7 +38,14 @@ id = "fleet-runtime"
 intent = "Provide the private authenticated Fleet runtime outside Collie-owned modules."
 paths = ["fleet/**"]
 contracts = ["private fleet.toml", "lead-only configuration", "sanitized Collie child environment"]
-verify = ["fleet/config.test.ts", "fleet/collie-env.test.ts"]
+verify = [
+  "fleet/auth.test.ts",
+  "fleet/collie-env.test.ts",
+  "fleet/config.test.ts",
+  "fleet/login-ui.test.ts",
+  "fleet/rate-limit.test.ts",
+  "fleet/session-store.test.ts"
+]
 
 [[invasive]]
 id = "repository-guidance"
