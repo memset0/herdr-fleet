@@ -36,19 +36,35 @@ service-worker port and MUST be listed exactly in `FORK.toml` with its reason an
 - **WHEN** the implemented tree is compared with the exact Collie baseline
 - **THEN** every changed path is classified by `FORK.toml`, every invasive path has a specific reason and verification, and no unclassified downstream path remains
 
-### Requirement: Herdr owns the Fleet runtime lifecycle
-The plugin SHALL run its lead/solo Gateway and Collie children as one Herdr-owned runtime without
-requiring Collie's Tailscale publication or a separately installed operating-system service. Start,
-stop, restart, status, and failed-start cleanup MUST act only on the plugin-owned generation and MUST
-leave unrelated Herdr state and terminal panes unchanged.
+### Requirement: Herdr owns the role-aware Fleet runtime lifecycle
+The plugin SHALL run the exact child composition selected by its validated Fleet configuration and
+native Pack authority state without requiring Collie's Tailscale publication or a separately
+installed operating-system service.
 
-#### Scenario: The lead starts successfully
-- **WHEN** Herdr starts the plugin with a valid lead configuration
-- **THEN** one loopback Gateway and one loopback Collie child become ready under the plugin-owned lifecycle without configuring Tailscale or installing an operating-system service
+A schema-1 Lead SHALL continue to run one loopback Collie child and one loopback authenticated
+Gateway child with unchanged inputs. A schema-2 Lead SHALL run the same two child kinds after native
+Lead authority validation. A schema-2 Peer SHALL run one local loopback Collie child and MUST NOT
+start a Gateway, Fleet session store, browser-authentication listener, or public listener.
 
-#### Scenario: Startup fails after one child was created
-- **WHEN** either child cannot become ready or the configuration becomes invalid during startup
-- **THEN** the attempted generation is cleaned up, no public listener is created, and unrelated Herdr processes and panes remain untouched
+Start, stop, restart, status, and failed-start cleanup MUST act only on the plugin-owned generation,
+MUST report the configured role and exact child set without secrets, and MUST leave unrelated Herdr
+state and terminal panes unchanged.
+
+#### Scenario: Existing schema-1 Lead starts
+- **WHEN** Herdr starts the plugin with an unchanged valid schema-1 Lead configuration
+- **THEN** one loopback Gateway and one loopback Collie child become ready with the same observable configuration and status as before this change
+
+#### Scenario: Schema-2 Lead starts
+- **WHEN** Herdr starts a schema-2 Lead whose configuration and native Pack authority state agree
+- **THEN** one loopback Gateway and one loopback Collie child become ready and status identifies the Lead role without exposing trust or browser secrets
+
+#### Scenario: Schema-2 Peer starts
+- **WHEN** Herdr starts a schema-2 Peer whose configuration and native Pack authority state agree
+- **THEN** one loopback Collie child becomes ready, no Gateway or browser listener exists, and status identifies the Peer role
+
+#### Scenario: Startup fails after a child was created
+- **WHEN** a required child cannot become ready or configuration/authority validation fails
+- **THEN** the attempted generation is cleaned up, no unintended listener is created, and unrelated Herdr processes and panes remain untouched
 
 ### Requirement: Upstream Tailscale support is retained but inactive in the Fleet profile
 The fork SHALL retain Collie's upstream Tailscale serve and identity implementation for compatibility.

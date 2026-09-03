@@ -9,32 +9,57 @@ turning Collie state or any real deployment configuration into public source mat
 
 ### Requirement: Fleet consumes one independent private configuration
 The plugin SHALL load one `fleet.toml` from its operator-selected or Herdr-provided configuration
-directory as the source of truth for Fleet runtime behavior. The file MUST be separate from Collie's
-`.env`, Pack trust store, Pack operations store, browser storage, and repository-local examples. The
-runtime MUST NOT infer a live configuration from source-tree contents or silently fall back to
-Collie defaults for a required Fleet security value.
+directory as the source of truth for Fleet role and lifecycle selection. The file MUST be separate
+from Collie's `.env`, Pack trust store, Pack operations store, browser storage, and repository-local
+examples. It MUST reference Collie-managed native Pack state only through the closed schema-2
+lifecycle selection and MUST NOT duplicate membership, identity, certificate, secret, signature,
+address, or trust records.
+
+The runtime MUST NOT infer a live configuration from source-tree contents or silently fall back to
+Collie defaults for a required Fleet security value. Concrete transport reachability remains outside
+this schema and MUST NOT be inferred from Pack member addresses.
 
 #### Scenario: A valid configuration is loaded
-- **WHEN** the plugin starts with an explicitly resolved owner-only `fleet.toml`
-- **THEN** it derives the Fleet role, public origin, authentication settings, loopback listeners, and Collie child settings from that file before starting a child
+- **WHEN** the plugin starts with an explicitly resolved owner-only schema-1 or schema-2 `fleet.toml`
+- **THEN** it derives the schema's exact Fleet role, lifecycle selection, role-appropriate loopback listeners, and Collie child settings before starting a child
+
+#### Scenario: A valid schema-2 configuration is loaded
+- **WHEN** the plugin starts with an explicitly resolved owner-only schema-2 `fleet.toml`
+- **THEN** it derives the exact Fleet role, native-Pack lifecycle selection, role-appropriate loopback listeners, and Collie state reference before starting a child
 
 #### Scenario: No live configuration exists
 - **WHEN** the configured file is absent or cannot be resolved
-- **THEN** startup fails closed without creating a Gateway, Collie child, public route, default credential, or generated live configuration
+- **THEN** startup fails closed without creating a Gateway, Collie child, public route, default credential, generated live configuration, or Pack state
 
-### Requirement: The first configuration schema is strictly lead-only
-Schema version 1 in this change SHALL require `role = "lead"` and exactly one local Collie upstream.
-It SHALL accept only lead/solo public-authentication, UI placeholder, lifecycle, and local-upstream
-fields needed by this change. Peer role, host inventory, SSH transport, Pack routing, tunnel retry,
-and remote update fields MUST be rejected as unsupported rather than ignored or partially activated.
+### Requirement: Configuration schemas are strict and backward compatible
+Schema version 1 SHALL retain its existing lead-only grammar and normalized behavior unchanged.
+Schema version 2 SHALL require `role = "lead"` or `role = "peer"`, one `[lifecycle]` table with
+`mode = "native-pack"` and `pack_state = "collie"`, and one loopback `[collie]` endpoint.
 
-#### Scenario: The first lead configuration is accepted
-- **WHEN** a schema-version-1 file declares the lead role and one valid loopback Collie upstream with all required authentication and public-origin fields
-- **THEN** validation returns one complete immutable lead configuration with no inferred peer or transport behavior
+A schema-2 Lead SHALL require the existing `[listen]`, `[public]`, `[auth]`, and optional `[proxy]`
+tables used by the authenticated Gateway. A schema-2 Peer MUST reject those Lead-only tables and
+MUST contain no public origin, browser account, session secret, Gateway listener, Host inventory,
+transport endpoint, SSH key, SSH command, Pack secret, certificate, or membership row.
 
-#### Scenario: Deferred multi-host configuration is supplied early
-- **WHEN** a schema-version-1 file declares a peer role, host inventory, SSH transport, or Pack routing field
-- **THEN** validation identifies the unsupported field or role and startup performs no partial multi-host action
+Every table SHALL reject unknown fields with a qualified diagnostic. Unsupported schema versions,
+roles, lifecycle selections, Pack-state selections, or role-incompatible tables MUST fail before
+authority validation or child startup rather than being ignored or partially activated.
+
+#### Scenario: Existing schema-1 Lead configuration is parsed
+- **WHEN** an unchanged valid schema-1 file is loaded after this change
+- **THEN** it produces the same normalized Lead configuration and child inputs as before
+
+#### Scenario: Schema-2 Lead configuration is parsed
+- **WHEN** schema 2 declares a Lead, native-Pack lifecycle, Collie-managed Pack state, one loopback Collie endpoint, and complete Gateway tables
+- **THEN** validation returns one immutable Lead configuration without transport or duplicated trust material
+
+#### Scenario: Schema-2 Peer configuration is parsed
+- **WHEN** schema 2 declares a Peer, native-Pack lifecycle, Collie-managed Pack state, and one loopback Collie endpoint only
+- **THEN** validation returns one immutable Peer configuration with no Gateway or browser-authentication values
+
+#### Scenario: Role-incompatible or deferred fields are supplied
+- **WHEN** a Peer supplies a public/auth/listen/proxy table or either role supplies membership, SSH, transport, endpoint, key, command, or unknown fields
+- **THEN** validation identifies the unsupported qualified field and startup performs no partial action
 
 #### Scenario: An unknown field is supplied
 - **WHEN** any configuration table contains a field outside its exact schema
