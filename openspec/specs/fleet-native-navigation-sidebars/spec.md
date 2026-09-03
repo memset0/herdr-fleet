@@ -128,8 +128,13 @@ named. A Pane inside a Tab that survives keeps its existing name, which is what 
 from its siblings. A row SHALL present a group icon only when it still groups more than one child
 after elision; a Space row SHALL present no icon of its own.
 
-Every level SHALL use the same disclosure control with the same size, hit area, and indentation
-step. The selected row's highlight SHALL cover the whole row including its disclosure control.
+Every level SHALL use the same disclosure control with the same size and hit area. A row that has no
+children SHALL draw no disclosure column, so the first thing inside its highlight is its own icon.
+A disclosed level's guide line SHALL fall on the centre of the control that opened it, and its
+children SHALL begin one control-width to the right of that control's own edge. The selected row's
+highlight SHALL cover the whole row including its disclosure control, and SHALL NOT extend left of
+the level's own edge.
+
 Disclosure SHALL open and close as an animated in-flow transition, and MUST NOT animate when the
 browser reports a reduced-motion preference. Hierarchy rows SHALL be denser than Collie's touch rows
 on a wide viewport while remaining at least touch-sized wherever the hierarchy is operated as an
@@ -170,6 +175,10 @@ independent.
 - **WHEN** a Tab holds more than one Pane
 - **THEN** the Tab is drawn as a group row with a group icon, its own disclosure control, and its Panes indented one step beneath it
 
+#### Scenario: A leaf row is drawn beside a parent
+- **WHEN** a level holds both a row with children and a row without
+- **THEN** the row without children draws no disclosure column and its icon begins at the level's own edge
+
 #### Scenario: Operator activates a Space that has children
 - **WHEN** the operator activates a Space row that holds Tabs or Panes
 - **THEN** the row discloses or conceals its children and no navigation occurs
@@ -187,34 +196,47 @@ independent.
 - **THEN** the Pane appears under its Host row in its existing Space, and its Tab where that level survives, and activates through the same native Pane path without becoming an Agent
 
 ### Requirement: Agent rail reuses native Agent behavior
-The wide-layout Agent rail and the narrow-layout Agent surface SHALL render the existing shared
-native Agent list from the current root snapshot. They SHALL preserve its favorite-aware ordering,
-triage sections, card behavior, row navigation, favorite controls, and browser-local favorite
-semantics. Shell rows MUST NOT be introduced into the Agent rail.
+The wide-layout Agent rail and the narrow-layout Agent surface SHALL present the same Agent rows,
+ordered by Collie's own triage: its sections, their headings, their order, and their contents. Inside
+each section the rows SHALL be ordered favorites-first from the existing browser-local favorite
+store, and each row SHALL carry that store's toggle. Shell rows MUST NOT be introduced into the
+Agent surface.
 
-On a narrow viewport the Agent surface SHALL be presented by the Pane page's existing pane-switcher
-entry, in that entry's existing position, with its existing gesture and sheet, and named for its
-Agent content. On a wide viewport that entry SHALL NOT be exposed, because the Agent rail is
-already on screen.
+The row itself is fork-owned. It SHALL lead with the Agent's own mark, badged with the Pane's state
+and with an ordinal a later keyboard shortcut can address, and it SHALL say WHERE the work is before
+WHAT it is doing: the Space in a muted style, then the name the operator gave the work in the plain
+one, with the row's age at that line's trailing end and what the Pane is doing beneath. The name
+SHALL follow the same rule the hierarchy uses — the operator's own Pane name, else the Tab's, never
+a number the multiplexer assigned. A row with nothing to say on its second line SHALL be one line
+tall rather than padded to two.
 
-The navigation shell MUST NOT redesign Agent cards, add another favorite store, alter triage,
-change manual Pane fit, or create a separate Agent fetch or backend model.
+Collie's own Agent list and card MUST remain unchanged, so every other surface that renders them is
+unaffected. The navigation shell MUST NOT add another favorite store, alter triage, change manual
+Pane fit, or create a separate Agent fetch or backend model.
 
 #### Scenario: Favorites change while the Agent rail is visible
-- **WHEN** the operator toggles an existing native Agent favorite control
-- **THEN** the shared Agent list updates with its current favorite-aware ordering and the shell adds no navigation or request behavior
+- **WHEN** the operator toggles a favorite from a rail row
+- **THEN** that section reorders favorites-first from the same store and the shell adds no navigation or request behavior
 
 #### Scenario: Operator opens an Agent from the responsive overlay
 - **WHEN** the operator activates the Pane page's pane-switcher entry and then activates an Agent row
-- **THEN** the same native Agent list is presented in that entry's existing sheet, Collie's existing Pane navigation runs once, and the sheet closes
+- **THEN** the same rows are presented in that entry's existing sheet, Collie's existing Pane navigation runs once, and the sheet closes
 
 #### Scenario: Wide viewport hides the pane-switcher entry
 - **WHEN** both rails are shown
 - **THEN** the Pane page exposes no pane-switcher entry and the Pane page's own composer, strips, and thread sidebar are unchanged
 
+#### Scenario: A rail row is drawn
+- **WHEN** a row stands for a Pane
+- **THEN** the Agent's mark leads it with the state at one corner and a shortcut ordinal at the other, the Space precedes the work's name on the first line, and what the Pane is doing follows beneath
+
+#### Scenario: More rows than a single key can address
+- **WHEN** the rail holds more rows than one keypress can reach
+- **THEN** the rows past that limit carry no ordinal, because a badge there would promise a shortcut that does not exist
+
 #### Scenario: Existing Agent behavior evolves
-- **WHEN** the shared Agent list changes its native ordering or card presentation in a compatible future update
-- **THEN** both shell Agent surfaces inherit that behavior rather than maintaining a duplicate implementation
+- **WHEN** Collie changes its triage order or its favorite-aware rules in a compatible future update
+- **THEN** the rail inherits that ordering rather than maintaining a duplicate of it
 
 ### Requirement: Navigation preferences are bounded and fail safe
 Sidebar preferred widths and hierarchy disclosure state SHALL be independent, versioned
