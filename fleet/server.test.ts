@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import type { FleetConfig } from "./config.ts";
+import type { FleetLeadConfig } from "./config.ts";
 import { startGateway } from "./server.ts";
 import { SessionStore } from "./session-store.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
@@ -13,7 +13,7 @@ describe("Fleet Gateway listener", () => {
   test("binds loopback and applies the handler before the Collie fetcher", async () => {
     const state = await mkdtemp(join(tmpdir(), "herdr-fleet-listener-"));
     const base = fleetTestConfig();
-    const config: FleetConfig = { ...base, listen: { ...base.listen, port: 0 } };
+    const config: FleetLeadConfig = { ...base, listen: { ...base.listen, port: 0 } };
     let upstreamCalls = 0;
     const server = startGateway({
       config,

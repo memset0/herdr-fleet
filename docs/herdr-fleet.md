@@ -4,10 +4,11 @@ Herdr Fleet adds an authenticated Herdr plugin boundary to the exact Collie base
 [`FORK.toml`](../FORK.toml). Collie's PWA, bridge API, multiplexer adapters, Pack implementation, and
 standalone deployment alternatives remain upstream behavior.
 
-The first v3 stage is deliberately solo. It provides one Fleet lead profile, one Collie process,
-one password/session Gateway, and one public HTTPS origin. It does not implement peers, SSH,
-multi-host routing, Fleet-specific navigation, ttyd, or Fleet-specific aggregate/external
-notifications. Collie's native optional Web Push remains available unchanged.
+Schema 1 remains the deliberately solo-compatible Fleet lead profile: one Collie process, one
+password/session Gateway, and one public HTTPS origin. Schema 2 adds only the role-aware foundation
+for selecting Collie's native Pack authority. It does not implement SSH reachability, enroll a
+member, contact a peer, aggregate Hosts, distribute software, or replace Collie's native Pack
+router, loaders, and UI. Collie's native optional Web Push remains available unchanged.
 
 The full Collie Pack security harness for this baseline is verified on Bun 1.3.14. Its pinned-client
 TLS canary does not hold on Bun 1.3.12, so Pack or later multi-host behavior must not be enabled on an
@@ -39,6 +40,38 @@ operations JSON files remain Collie-managed state and are never configuration in
 Do not commit a complete configuration, password hash, signing secret, session state, hostname,
 device mapping, or private path. Public tests construct synthetic values in temporary directories.
 
+Schema version 2 selects Collie's native Pack lifecycle without copying its trust state:
+
+| Role | Required tables | Runtime |
+| --- | --- | --- |
+| `lead` | root, `lifecycle`, `listen`, `public`, `collie`, `auth`; optional `auth.rate_limit` and `proxy` | One loopback Collie plus one loopback authenticated Gateway. |
+| `peer` | root, `lifecycle`, `collie` | One loopback Collie only; no Gateway, browser account, session store, or public listener. |
+
+Both roles require:
+
+```toml
+schema_version = 2
+role = "peer" # or "lead"
+
+[lifecycle]
+mode = "native-pack"
+pack_state = "collie"
+
+[collie]
+host = "127.0.0.1"
+port = 8787
+```
+
+A Lead then supplies the same synthetic-shape Gateway tables documented for schema 1. A Peer must
+not supply them. Neither role accepts members, addresses, transport endpoints, SSH keys/commands,
+Pack secrets, certificates, or alternate trust paths. Future reachability configuration belongs to
+a later schema change rather than a dormant field here.
+
+Before a schema-2 child starts, Fleet uses Collie's existing trust reader and mode derivation against
+the Collie child's isolated state directory. The configured role must match a valid active native
+Lead or Peer state. Missing, invalid, conflicted, solo, or mismatched state fails closed. Fleet never
+creates, repairs, enrolls, rotates, or otherwise writes that state.
+
 ## Authentication boundary
 
 The Gateway owns `/auth/login` and `/auth/logout`. A successful login verifies the configured
@@ -46,10 +79,10 @@ Argon2id hash and returns a signed `__Host-` cookie backed by an owner-only acti
 The cookie is Secure, HttpOnly, SameSite=Strict, Path=/, and has no Domain attribute. Logout revokes
 the current server-side session before clearing the cookie.
 
-All document navigations and `/api/*` requests require a current session before Collie is contacted.
+All Lead document navigations and `/api/*` requests require a current session before Collie is contacted.
 Only the authentication stylesheet and an exact set of PWA update assets are public. The service
 worker sends every document navigation to the network first, so an expired or logged-out session
-cannot recover an old authenticated app shell. `/pack/*` is not exposed by this stage.
+cannot recover an old authenticated app shell. The public Gateway never exposes `/pack/*`.
 
 Login and logout require an exact-origin POST. Return targets are relative application paths rather
 than user-provided URLs. Credential inputs, session files, attempt budgets, proxy bodies, headers,
@@ -76,14 +109,32 @@ Authorization, forwarding headers, Tailscale identity, or device-trust assertion
 Herdr actions call the thin `scripts/herdr-fleet.sh` launcher:
 
 - `start`/`ensure` starts one generation-qualified supervisor.
-- `status` reports only safe generation, component, PID, and readiness facts.
-- `restart` replaces the supervisor's own Collie and Gateway children.
+- `status` reports only safe generation, configured schema-2 role, component, PID, and readiness
+  facts; schema-1 output remains unchanged.
+- `restart` replaces only the supervisor's role-selected children.
 - `stop` closes the private control socket and only those direct children.
 - `url` prints the configured public origin.
 
 The supervisor uses no operating-system service, pid-file discovery, port-based killing, or broad
 process-name matching. Its private Unix control socket is generation-qualified; child crashes use a
 bounded restart delay. Logs and session state stay beneath the owner-only plugin state directory.
+
+A schema-2 Lead supervises Collie plus Gateway. A schema-2 Peer supervises Collie only and checks
+that its loopback listener is accepting connections without attempting to bypass native Pack mTLS.
+Fleet never starts a second Pack listener or projects that loopback endpoint off-host.
+
+## Native Pack authority boundary
+
+Fleet browser authentication and native Pack machine admission are independent. The Fleet cookie,
+password material, session secret, and active session state are not placed in the Collie child
+environment or translated into Pack credentials. The public Gateway returns not found for every
+`/pack/*` path before proxying, including for an authenticated browser.
+
+Collie's `pack-trust.json`, pinned certificates, Pack secret/signatures, role derivation, membership
+transitions, strict no-grace rotation, member permissions, router, loaders, and native UI remain the
+only Pack authority and implementation. Fleet reads that state only to confirm schema-2 role
+agreement before startup. It adds no enrollment, rotation, sibling route, software-update authority,
+or fallback secret.
 
 ## Native Web Push actions
 

@@ -1,7 +1,12 @@
-import { parseFleetToml, type FleetConfig } from "./config.ts";
+import {
+  parseFleetToml,
+  type FleetSchema1LeadConfig,
+  type FleetSchema2LeadConfig,
+  type FleetSchema2PeerConfig,
+} from "./config.ts";
 
-export function fleetTestConfig(): FleetConfig {
-  return parseFleetToml(`schema_version = 1
+export function fleetTestConfig(): FleetSchema1LeadConfig {
+  const config = parseFleetToml(`schema_version = 1
 role = "lead"
 [listen]
 host = "127.0.0.1"
@@ -27,4 +32,50 @@ aggregate_block_seconds = 30
 [proxy]
 client_ip_header = "X-Forwarded-For"
 `);
+  if (config.schemaVersion !== 1) throw new Error("test configuration did not parse as schema 1");
+  return config;
+}
+
+export function fleetTestPackLeadConfig(): FleetSchema2LeadConfig {
+  const config = parseFleetToml(`schema_version = 2
+role = "lead"
+[lifecycle]
+mode = "native-pack"
+pack_state = "collie"
+[listen]
+host = "127.0.0.1"
+port = 18787
+[public]
+origin = "https://fleet.example.com"
+[collie]
+host = "127.0.0.1"
+port = 8787
+[auth]
+username = "operator"
+password_hash = "$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA"
+session_secret = "${Buffer.alloc(32, 12).toString("base64url")}"
+session_ttl_seconds = 3600
+[proxy]
+client_ip_header = "X-Forwarded-For"
+`);
+  if (config.schemaVersion !== 2 || config.role !== "lead") {
+    throw new Error("test configuration did not parse as schema 2 lead");
+  }
+  return config;
+}
+
+export function fleetTestPackPeerConfig(): FleetSchema2PeerConfig {
+  const config = parseFleetToml(`schema_version = 2
+role = "peer"
+[lifecycle]
+mode = "native-pack"
+pack_state = "collie"
+[collie]
+host = "::1"
+port = 8787
+`);
+  if (config.schemaVersion !== 2 || config.role !== "peer") {
+    throw new Error("test configuration did not parse as schema 2 peer");
+  }
+  return config;
 }

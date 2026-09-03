@@ -3,16 +3,18 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
+import { validatePackAuthority } from "./pack-authority.ts";
 import { isUnavailableControlError, sendControl, type ControlOperation, type ControlResponse } from "./protocol.ts";
 import { ensurePrivateRuntime, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
 
 const sleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-function formatStatus(result: ControlResponse): string {
+export function formatStatus(result: ControlResponse): string {
   const children = result.children
     .map((child) => `${child.name}=${child.running ? `running(pid=${child.pid})` : "stopped"}`)
     .join(" ");
-  return `herdr-fleet: supervisor ${result.status} generation=${result.generation} pid=${result.pid}${children === "" ? "" : ` ${children}`}`;
+  const role = result.role === undefined ? "" : ` role=${result.role}`;
+  return `herdr-fleet: supervisor ${result.status} generation=${result.generation}${role} pid=${result.pid}${children === "" ? "" : ` ${children}`}`;
 }
 
 async function query(socketPath: string, operation: ControlOperation, generation: string) {
@@ -76,7 +78,8 @@ async function launchLock(lockDir: string, socketPath: string, generation: strin
 async function ensureSupervisor(): Promise<ControlResponse> {
   const paths = resolveRuntimePaths();
   await ensurePrivateRuntime(paths);
-  await loadFleetConfig(paths.configPath);
+  const config = await loadFleetConfig(paths.configPath);
+  await validatePackAuthority(config, paths.collieStateDir);
   const current = await query(paths.socketPath, "ensure", paths.generation);
   if (current?.status === "running" && current.generation === paths.generation) return current;
   if (current?.status === "replacing") await waitForRelease(paths.socketPath, paths.generation);
@@ -116,6 +119,7 @@ async function main(): Promise<void> {
   const command = process.argv[2] ?? "status";
   if (command === "url") {
     const config = await loadFleetConfig(resolveFleetConfigPath());
+    if (config.role === "peer") throw new Error("public URL is unavailable for role peer");
     console.log(config.public.origin);
     return;
   }
@@ -144,7 +148,9 @@ async function main(): Promise<void> {
   if (operation === "restart") console.log(formatStatus(await waitForReady(paths.socketPath, paths.generation)));
 }
 
-main().catch((error) => {
-  console.error(`herdr-fleet: ${error instanceof Error ? error.message : "operation failed"}`);
-  process.exitCode = 1;
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(`herdr-fleet: ${error instanceof Error ? error.message : "operation failed"}`);
+    process.exitCode = 1;
+  });
+}

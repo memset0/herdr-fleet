@@ -12,11 +12,11 @@ import {
   verifyCredentials,
   verifySessionToken,
 } from "./auth.ts";
-import type { FleetConfig } from "./config.ts";
+import type { FleetLeadConfig } from "./config.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
 
-let config: FleetConfig;
+let config: FleetLeadConfig;
 
 beforeAll(async () => {
   const base = fleetTestConfig();

@@ -50,8 +50,10 @@ paths = [
 ]
 contracts = [
   "private fleet.toml",
-  "lead-only configuration",
+  "schema-1 lead configuration",
   "sanitized Collie child environment",
+  "native Pack authority selection",
+  "role-aware child lifecycle",
   "bounded browser-local Agent favorites",
   "explicit Herdr-only manual Pane fit",
   "permanently expanded native navigation rails"
@@ -63,6 +65,7 @@ verify = [
   "fleet/gateway.test.ts",
   "fleet/lifecycle.test.ts",
   "fleet/login-ui.test.ts",
+  "fleet/pack-authority.test.ts",
   "fleet/proxy.test.ts",
   "fleet/protocol.test.ts",
   "fleet/rate-limit.test.ts",

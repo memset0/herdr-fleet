@@ -34,6 +34,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Expose Collie's native Push-key generation and test delivery as Herdr Fleet actions.
 - Restore explicit Herdr Pane width fitting in native Display Settings.
 - Restore persistent native Space/Tab/Pane and Agent navigation sidebars.
+- Add role-aware Fleet lifecycle selection backed only by Collie's native Pack trust authority.
 
 ### Changed
 

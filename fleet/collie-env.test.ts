@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { collieChildEnv } from "./collie-env.ts";
 import { parseFleetToml } from "./config.ts";
+import { fleetTestPackPeerConfig } from "./test-helpers.ts";
 
 const config = parseFleetToml(`schema_version = 1
 role = "lead"
@@ -31,6 +32,8 @@ describe("Fleet Collie child environment", () => {
       COLLIE_SERVE_MODE: "https",
       COLLIE_DEVICE_HEADER: "X-Trusted",
       COLLIE_ALLOW_ANY_HOST: "1",
+      HERDR_FLEET_CONFIG: "/private/fleet.toml",
+      HERDR_FLEET_SESSION_STATE: "/private/sessions.json",
     };
     const env = collieChildEnv(config, inherited);
     expect(env).toMatchObject({
@@ -50,9 +53,37 @@ describe("Fleet Collie child environment", () => {
       "COLLIE_SERVE_MODE",
       "COLLIE_DEVICE_HEADER",
       "COLLIE_ALLOW_ANY_HOST",
+      "HERDR_FLEET_CONFIG",
+      "HERDR_FLEET_SESSION_STATE",
     ]) {
       expect(env[key]).toBeUndefined();
     }
     expect(inherited.COLLIE_HOST).toBe("0.0.0.0");
+  });
+
+  test("keeps a peer loopback-only without public browser or Fleet credential values", () => {
+    const env = collieChildEnv(fleetTestPackPeerConfig(), {
+      PATH: "/usr/bin",
+      COLLIE_PUBLIC_HOSTS: "inherited.example",
+      COLLIE_ALLOWED_ORIGINS: "https://inherited.example",
+      COLLIE_PUBLIC_URL: "https://inherited.example",
+      HERDR_FLEET_CONFIG: "/private/fleet.toml",
+      HERDR_FLEET_SESSION_STATE: "/private/sessions.json",
+    });
+    expect(env).toMatchObject({
+      PATH: "/usr/bin",
+      COLLIE_HOST: "::1",
+      COLLIE_PORT: "8787",
+      COLLIE_SKIP_SERVE: "1",
+    });
+    for (const key of [
+      "COLLIE_PUBLIC_HOSTS",
+      "COLLIE_ALLOWED_ORIGINS",
+      "COLLIE_PUBLIC_URL",
+      "HERDR_FLEET_CONFIG",
+      "HERDR_FLEET_SESSION_STATE",
+    ]) {
+      expect(env[key]).toBeUndefined();
+    }
   });
 });

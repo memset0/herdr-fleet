@@ -17,25 +17,57 @@ export interface FleetRateLimitConfig {
   readonly aggregateBlockSeconds: number;
 }
 
-export interface FleetConfig {
-  readonly schemaVersion: 1;
-  readonly role: "lead";
-  readonly listen: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
-  readonly public: FleetPublicConfig;
-  readonly collie: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
-  readonly auth: {
-    readonly username: string;
-    readonly passwordHash: string;
-    readonly sessionSecret: string;
-    readonly sessionTtlSeconds: number;
-    readonly rateLimit: FleetRateLimitConfig;
-  };
-  readonly proxy: { readonly clientIpHeader: string };
-}
-
 export interface FleetPublicConfig {
   readonly origin: string;
   readonly host: string;
+}
+
+export interface FleetAuthConfig {
+  readonly username: string;
+  readonly passwordHash: string;
+  readonly sessionSecret: string;
+  readonly sessionTtlSeconds: number;
+  readonly rateLimit: FleetRateLimitConfig;
+}
+
+export interface FleetGatewayConfig {
+  readonly listen: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
+  readonly public: FleetPublicConfig;
+  readonly auth: FleetAuthConfig;
+  readonly proxy: { readonly clientIpHeader: string };
+}
+
+export interface FleetSchema1LeadConfig extends FleetGatewayConfig {
+  readonly schemaVersion: 1;
+  readonly role: "lead";
+  readonly collie: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
+}
+
+export interface FleetNativePackLifecycle {
+  readonly mode: "native-pack";
+  readonly packState: "collie";
+}
+
+export interface FleetSchema2LeadConfig extends FleetGatewayConfig {
+  readonly schemaVersion: 2;
+  readonly role: "lead";
+  readonly lifecycle: FleetNativePackLifecycle;
+  readonly collie: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
+}
+
+export interface FleetSchema2PeerConfig {
+  readonly schemaVersion: 2;
+  readonly role: "peer";
+  readonly lifecycle: FleetNativePackLifecycle;
+  readonly collie: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
+}
+
+export type FleetLeadConfig = FleetSchema1LeadConfig | FleetSchema2LeadConfig;
+export type FleetNativePackConfig = FleetSchema2LeadConfig | FleetSchema2PeerConfig;
+export type FleetConfig = FleetSchema1LeadConfig | FleetNativePackConfig;
+
+export function isFleetLeadConfig(config: FleetConfig): config is FleetLeadConfig {
+  return config.role === "lead";
 }
 
 function table(value: JsonValue | undefined, label: string): JsonObject {
@@ -156,7 +188,7 @@ function rateLimit(value: JsonValue | undefined): FleetRateLimitConfig {
   };
 }
 
-function proxyConfig(value: JsonValue | undefined): FleetConfig["proxy"] {
+function proxyConfig(value: JsonValue | undefined): FleetGatewayConfig["proxy"] {
   const raw = value === undefined ? {} : table(value, "proxy");
   exactKeys(raw, ["client_ip_header"], "proxy");
   const header = text(raw.client_ip_header ?? "X-Forwarded-For", "proxy.client_ip_header");
@@ -168,35 +200,28 @@ function proxyConfig(value: JsonValue | undefined): FleetConfig["proxy"] {
   return { clientIpHeader: header };
 }
 
-export function parseFleetConfig(value: JsonValue): FleetConfig {
-  const root = table(value, "fleet.toml");
-  exactKeys(root, ["schema_version", "role", "listen", "public", "collie", "auth", "proxy"], "fleet.toml");
-  if (root.schema_version !== 1) throw new Error("schema_version must be 1");
-  if (root.role !== "lead") {
-    throw new Error(root.role === "peer" ? "role peer is not supported in schema version 1" : "role must be lead");
-  }
+function collieConfig(value: JsonValue | undefined): FleetConfig["collie"] {
+  const raw = table(value, "collie");
+  exactKeys(raw, ["host", "port"], "collie");
+  return {
+    host: loopbackHost(raw.host, "collie.host"),
+    port: integer(raw.port, "collie.port", 1, 65_535),
+  };
+}
 
+function gatewayConfig(root: JsonObject): FleetGatewayConfig {
   const listen = table(root.listen, "listen");
   exactKeys(listen, ["host", "port"], "listen");
-  const collie = table(root.collie, "collie");
-  exactKeys(collie, ["host", "port"], "collie");
   const publicTable = table(root.public, "public");
   exactKeys(publicTable, ["origin"], "public");
   const auth = table(root.auth, "auth");
   exactKeys(auth, ["username", "password_hash", "session_secret", "session_ttl_seconds", "rate_limit"], "auth");
-
-  const normalized: FleetConfig = {
-    schemaVersion: 1,
-    role: "lead",
+  const normalized: FleetGatewayConfig = {
     listen: {
       host: loopbackHost(listen.host, "listen.host"),
       port: integer(listen.port, "listen.port", 1, 65_535),
     },
     public: publicOrigin(publicTable.origin),
-    collie: {
-      host: loopbackHost(collie.host, "collie.host"),
-      port: integer(collie.port, "collie.port", 1, 65_535),
-    },
     auth: {
       username: text(auth.username, "auth.username"),
       passwordHash: passwordHash(auth.password_hash),
@@ -209,10 +234,68 @@ export function parseFleetConfig(value: JsonValue): FleetConfig {
   if (!/^[A-Za-z0-9_.-]{3,64}$/.test(normalized.auth.username)) {
     throw new Error("auth.username must be 3 to 64 safe characters");
   }
-  if (normalized.listen.host === normalized.collie.host && normalized.listen.port === normalized.collie.port) {
+  return normalized;
+}
+
+function assertDistinctEndpoints(config: FleetLeadConfig): void {
+  if (config.listen.host === config.collie.host && config.listen.port === config.collie.port) {
     throw new Error("listen and collie must use distinct loopback endpoints");
   }
+}
+
+function parseSchema1(root: JsonObject): FleetSchema1LeadConfig {
+  exactKeys(root, ["schema_version", "role", "listen", "public", "collie", "auth", "proxy"], "fleet.toml");
+  if (root.role !== "lead") {
+    throw new Error(root.role === "peer" ? "role peer is not supported in schema version 1" : "role must be lead");
+  }
+  const normalized: FleetSchema1LeadConfig = {
+    schemaVersion: 1,
+    role: "lead",
+    ...gatewayConfig(root),
+    collie: collieConfig(root.collie),
+  };
+  assertDistinctEndpoints(normalized);
   return normalized;
+}
+
+function nativePackLifecycle(value: JsonValue | undefined): FleetNativePackLifecycle {
+  const raw = table(value, "lifecycle");
+  exactKeys(raw, ["mode", "pack_state"], "lifecycle");
+  if (raw.mode !== "native-pack") throw new Error("lifecycle.mode must be native-pack");
+  if (raw.pack_state !== "collie") throw new Error("lifecycle.pack_state must be collie");
+  return { mode: "native-pack", packState: "collie" };
+}
+
+function parseSchema2(root: JsonObject): FleetNativePackConfig {
+  if (root.role !== "lead" && root.role !== "peer") throw new Error("role must be lead or peer");
+  const shared = {
+    schemaVersion: 2 as const,
+    lifecycle: nativePackLifecycle(root.lifecycle),
+    collie: collieConfig(root.collie),
+  };
+  if (root.role === "peer") {
+    exactKeys(root, ["schema_version", "role", "lifecycle", "collie"], "fleet.toml");
+    return { ...shared, role: "peer" };
+  }
+  exactKeys(
+    root,
+    ["schema_version", "role", "lifecycle", "listen", "public", "collie", "auth", "proxy"],
+    "fleet.toml",
+  );
+  const normalized: FleetSchema2LeadConfig = {
+    ...shared,
+    role: "lead",
+    ...gatewayConfig(root),
+  };
+  assertDistinctEndpoints(normalized);
+  return normalized;
+}
+
+export function parseFleetConfig(value: JsonValue): FleetConfig {
+  const root = table(value, "fleet.toml");
+  if (root.schema_version === 1) return parseSchema1(root);
+  if (root.schema_version === 2) return parseSchema2(root);
+  throw new Error("schema_version must be 1 or 2");
 }
 
 export function parseFleetToml(source: string): FleetConfig {

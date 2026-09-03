@@ -1,11 +1,12 @@
 import { isAbsolute } from "node:path";
 
-import { loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
+import { isFleetLeadConfig, loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
 import { startGateway } from "./server.ts";
 import { SessionStore } from "./session-store.ts";
 
 async function main(): Promise<void> {
   const config = await loadFleetConfig(resolveFleetConfigPath());
+  if (!isFleetLeadConfig(config)) throw new Error("Fleet Gateway is unavailable for role peer");
   const statePath = process.env.HERDR_FLEET_SESSION_STATE?.trim() ?? "";
   if (!isAbsolute(statePath)) throw new Error("HERDR_FLEET_SESSION_STATE must be an absolute path");
   const server = startGateway({ config, sessions: new SessionStore(statePath) });

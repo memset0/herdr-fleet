@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { jsonNumberField, jsonRecord, jsonStringField } from "../bridge/stt/json.ts";
 import type { JsonValue } from "../bridge/json.ts";
-import type { FleetConfig } from "./config.ts";
+import type { FleetLeadConfig } from "./config.ts";
 import type { LoginRateLimiter } from "./rate-limit.ts";
 
 export const SESSION_COOKIE_NAME = "__Host-herdr_fleet_session";
@@ -41,7 +41,7 @@ function signature(encoded: string, secret: string): Buffer {
 }
 
 export function createSessionToken(
-  config: FleetConfig,
+  config: FleetLeadConfig,
   now: number = Date.now(),
   sessionIdSource: SessionIdSource = randomSessionId,
 ): CreatedSession {
@@ -89,7 +89,7 @@ function parseClaims(encoded: string): SessionClaims | null {
   return { version: SESSION_VERSION, sessionId, issuedAt, expiresAt };
 }
 
-export function verifySessionToken(token: string, config: FleetConfig, now: number = Date.now()): SessionClaims | null {
+export function verifySessionToken(token: string, config: FleetLeadConfig, now: number = Date.now()): SessionClaims | null {
   if (token.length > 1_024) return null;
   const parts = token.split(".");
   if (parts.length !== 2) return null;
@@ -126,7 +126,7 @@ export function cookieValue(header: string | null, name: string): string | null 
   return found;
 }
 
-export function sessionCookie(config: FleetConfig, token: string): string {
+export function sessionCookie(config: FleetLeadConfig, token: string): string {
   return `${SESSION_COOKIE_NAME}=${token}; Path=/; Max-Age=${config.auth.sessionTtlSeconds}; Secure; HttpOnly; SameSite=Strict`;
 }
 
@@ -134,7 +134,7 @@ export function clearSessionCookie(): string {
   return `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Strict`;
 }
 
-export async function verifyCredentials(input: Pick<LoginInput, "username" | "password">, config: FleetConfig) {
+export async function verifyCredentials(input: Pick<LoginInput, "username" | "password">, config: FleetLeadConfig) {
   const passwordMatches = await Bun.password.verify(input.password, config.auth.passwordHash);
   const supplied = Buffer.from(input.username);
   const expected = Buffer.from(config.auth.username);
@@ -149,13 +149,13 @@ export interface LoginAttempt {
 
 export type CredentialVerifier = (
   input: Pick<LoginInput, "username" | "password">,
-  config: FleetConfig,
+  config: FleetLeadConfig,
 ) => Promise<boolean>;
 
 export async function attemptLogin(
   input: LoginInput,
   source: string,
-  config: FleetConfig,
+  config: FleetLeadConfig,
   limiter: LoginRateLimiter,
   verifier: CredentialVerifier = verifyCredentials,
   now: number = Date.now(),

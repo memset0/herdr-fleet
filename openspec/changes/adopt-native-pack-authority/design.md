@@ -75,11 +75,12 @@ Alternatives rejected:
 Keep one Collie child for every branch. Schema-1 and schema-2 Leads add the existing Gateway child;
 schema-2 Peer does not. Preserve child order (`collie`, then `gateway`) for Leads.
 
-Refactor readiness into role-aware targets: Collie `/api/config` is always checked; Gateway
-`/auth/login` is checked only when the child set includes Gateway. Child cleanup remains the current
-generation-owned `ManagedChild` flow. Control responses gain an optional role emitted only for
-schema 2, so schema-1 serialized responses and formatted status remain unchanged; schema-2 status
-adds the role and reports only its actual children.
+Refactor readiness by role: a Lead checks Collie `/api/config` and Gateway `/auth/login`; a Peer
+checks that the Collie loopback TCP listener accepts a connection because native Peer mTLS correctly
+refuses an unauthenticated HTTP readiness request. Child cleanup remains the current generation-owned
+`ManagedChild` flow. Control responses gain an optional role emitted only for schema 2, so schema-1
+serialized responses and formatted status remain unchanged; schema-2 status adds the role and
+reports only its actual children.
 
 Alternatives rejected:
 

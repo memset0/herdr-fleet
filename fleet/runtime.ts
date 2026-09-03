@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { collieChildEnv } from "./collie-env.ts";
-import type { FleetConfig } from "./config.ts";
+import { isFleetLeadConfig, type FleetConfig } from "./config.ts";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -122,7 +122,7 @@ export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: 
     ...shared,
     HERDR_PLUGIN_STATE_DIR: paths.collieStateDir,
   });
-  return [
+  const children: ChildSpec[] = [
     {
       name: "collie",
       command: [join(paths.pluginRoot, "bin", "collie"), "_exec-bridge"],
@@ -130,12 +130,15 @@ export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: 
       env: collieEnv,
       logPath: join(paths.stateDir, "collie.log"),
     },
-    {
+  ];
+  if (isFleetLeadConfig(config)) {
+    children.push({
       name: "gateway",
       command: [process.execPath, "run", join(paths.pluginRoot, "fleet", "gateway-main.ts")],
       cwd: paths.pluginRoot,
       env: { ...shared, HERDR_FLEET_SESSION_STATE: paths.sessionStatePath },
       logPath: join(paths.stateDir, "gateway.log"),
-    },
-  ];
+    });
+  }
+  return children;
 }

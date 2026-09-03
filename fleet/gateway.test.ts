@@ -4,14 +4,14 @@ import { join } from "node:path";
 
 import { beforeAll, describe, expect, test } from "bun:test";
 
-import type { FleetConfig } from "./config.ts";
+import type { FleetLeadConfig } from "./config.ts";
 import { createGatewayHandler, trustedClientSource } from "./gateway.ts";
 import type { FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import { SessionStore } from "./session-store.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
 
-let config: FleetConfig;
+let config: FleetLeadConfig;
 const loginCsrfToken = "C".repeat(43);
 
 beforeAll(async () => {
@@ -82,6 +82,29 @@ describe("authenticated solo Gateway", () => {
     }
     expect((await handler(request("/pack/v1/enroll"), { peerAddress: "127.0.0.1" })).status).toBe(404);
     expect(calls).toBe(0);
+  });
+
+  test("keeps Pack paths denied after login while normal native APIs remain proxied", async () => {
+    let calls = 0;
+    const { handler } = await setup(async () => {
+      calls += 1;
+      return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
+    });
+    const cookie = await login(handler);
+    for (const path of ["/pack/v1/hello", "/pack/v1/snapshot", "/pack/v1/pane/p1/reply"]) {
+      const response = await handler(
+        request(path, { headers: { cookie } }),
+        { peerAddress: "127.0.0.1" },
+      );
+      expect(response.status).toBe(404);
+    }
+    expect(calls).toBe(0);
+    const native = await handler(
+      request("/api/snapshot", { headers: { cookie } }),
+      { peerAddress: "127.0.0.1" },
+    );
+    expect(native.status).toBe(200);
+    expect(calls).toBe(1);
   });
 
   test("keeps only exact update assets public and sends documents to login", async () => {

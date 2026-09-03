@@ -24,6 +24,7 @@ export interface ControlResponse {
   readonly pid: number;
   readonly startedAt: number;
   readonly children: readonly ChildStatus[];
+  readonly role?: "lead" | "peer";
   readonly message?: string;
 }
 
@@ -84,6 +85,7 @@ export function parseControlResponse(source: string): ControlResponse | null {
   const pid = jsonNumberField(value.pid);
   const startedAt = jsonNumberField(value.startedAt);
   const message = value.message === undefined ? undefined : jsonStringField(value.message);
+  const role = value.role === undefined ? undefined : jsonStringField(value.role);
   const children = value.children.map(parseChild);
   if (
     status === null ||
@@ -92,6 +94,8 @@ export function parseControlResponse(source: string): ControlResponse | null {
     pid === null ||
     startedAt === null ||
     message === null ||
+    role === null ||
+    role !== undefined && role !== "lead" && role !== "peer" ||
     children.some((child) => child === null)
   ) {
     return null;
@@ -112,6 +116,7 @@ export function parseControlResponse(source: string): ControlResponse | null {
     pid,
     startedAt,
     children: normalizedChildren,
+    role,
     message,
   };
 }

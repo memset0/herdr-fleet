@@ -33,18 +33,72 @@ client_ip_header = "X-Forwarded-For"
 `;
 }
 
+function packLeadSource(extra = ""): string {
+  return source(extra)
+    .replace("schema_version = 1", "schema_version = 2")
+    .replace(`role = "lead"`, `role = "lead"
+[lifecycle]
+mode = "native-pack"
+pack_state = "collie"`);
+}
+
+function packPeerSource(extra = ""): string {
+  return `schema_version = 2
+role = "peer"
+${extra}
+[lifecycle]
+mode = "native-pack"
+pack_state = "collie"
+[collie]
+host = "127.0.0.1"
+port = 8787
+`;
+}
+
 describe("fleet.toml", () => {
   test("parses one strict lead with distinct loopback endpoints", () => {
     const config = parseFleetToml(source());
-    expect(config).toMatchObject({
+    expect(config).toEqual({
       schemaVersion: 1,
       role: "lead",
       listen: { host: "127.0.0.1", port: 18787 },
       public: { origin: "https://fleet.example.com", host: "fleet.example.com" },
       collie: { host: "127.0.0.1", port: 8787 },
+      auth: {
+        username: "operator",
+        passwordHash: "$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA",
+        sessionSecret: secret,
+        sessionTtlSeconds: 86_400,
+        rateLimit: {
+          maxFailures: 5,
+          windowSeconds: 600,
+          blockSeconds: 900,
+          maxSources: 10_000,
+          aggregateMaxFailures: 40,
+          aggregateWindowSeconds: 60,
+          aggregateBlockSeconds: 60,
+        },
+      },
       proxy: { clientIpHeader: "X-Forwarded-For" },
     });
-    expect(config.auth.rateLimit.aggregateMaxFailures).toBe(40);
+  });
+
+  test("parses strict native Pack lead and peer branches", () => {
+    expect(parseFleetToml(packLeadSource())).toMatchObject({
+      schemaVersion: 2,
+      role: "lead",
+      lifecycle: { mode: "native-pack", packState: "collie" },
+      listen: { host: "127.0.0.1", port: 18787 },
+      public: { origin: "https://fleet.example.com" },
+      collie: { host: "127.0.0.1", port: 8787 },
+      auth: { username: "operator" },
+    });
+    expect(parseFleetToml(packPeerSource())).toEqual({
+      schemaVersion: 2,
+      role: "peer",
+      lifecycle: { mode: "native-pack", packState: "collie" },
+      collie: { host: "127.0.0.1", port: 8787 },
+    });
   });
 
   test("rejects unknown and deferred multi-host fields", () => {
@@ -54,6 +108,31 @@ describe("fleet.toml", () => {
     );
     expect(() => parseFleetToml(`${source()}\n[transport]\ntype = "ssh-reverse"\n`)).toThrow(
       "unknown field transport",
+    );
+    for (const field of [
+      "hosts = []",
+      'ssh = "route"',
+      'address = "peer"',
+      'endpoint = "loopback-ref"',
+      'key = "private"',
+      'command = "connect"',
+      'member = "peer-a"',
+      'pack_secret = "secret"',
+      'certificate = "pem"',
+    ]) {
+      expect(() => parseFleetToml(packPeerSource(field))).toThrow(`unknown field ${field.split(" ")[0]}`);
+    }
+    expect(() => parseFleetToml(`${packPeerSource()}[auth]\nusername = "operator"\n`)).toThrow(
+      "unknown field auth",
+    );
+    expect(() => parseFleetToml(`${packPeerSource()}[listen]\nhost = "127.0.0.1"\nport = 18787\n`)).toThrow(
+      "unknown field listen",
+    );
+    expect(() => parseFleetToml(`${packPeerSource()}[public]\norigin = "https://fleet.example.com"\n`)).toThrow(
+      "unknown field public",
+    );
+    expect(() => parseFleetToml(`${packPeerSource()}[proxy]\nclient_ip_header = "X-Forwarded-For"\n`)).toThrow(
+      "unknown field proxy",
     );
   });
 
@@ -69,6 +148,24 @@ describe("fleet.toml", () => {
       "approved work factors",
     );
     expect(() => parseFleetToml(source().replace("port = 18787", "port = 8787"))).toThrow("distinct loopback");
+  });
+
+  test("rejects unsupported schema 2 lifecycle and role choices without echoing values", () => {
+    expect(() => parseFleetToml(packPeerSource().replace('mode = "native-pack"', 'mode = "other"'))).toThrow(
+      "lifecycle.mode must be native-pack",
+    );
+    expect(() => parseFleetToml(packPeerSource().replace('pack_state = "collie"', 'pack_state = "other"'))).toThrow(
+      "lifecycle.pack_state must be collie",
+    );
+    expect(() => parseFleetToml(packPeerSource().replace('role = "peer"', 'role = "deputy"'))).toThrow(
+      "role must be lead or peer",
+    );
+    expect(() => parseFleetToml(packPeerSource().replace("schema_version = 2", "schema_version = 3"))).toThrow(
+      "schema_version must be 1 or 2",
+    );
+    expect(() => parseFleetToml(packPeerSource('session_secret = "must-not-appear"'))).not.toThrow(
+      "must-not-appear",
+    );
   });
 
   test("resolves only an absolute explicit or Herdr-provided path", () => {

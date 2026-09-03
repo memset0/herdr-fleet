@@ -16,7 +16,7 @@ import {
   verifySessionToken,
   type SessionClaims,
 } from "./auth.ts";
-import type { FleetConfig } from "./config.ts";
+import type { FleetLeadConfig } from "./config.ts";
 import { LOGIN_CSS, loginPage } from "./login-ui.ts";
 import { proxyCollie, type FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
@@ -55,7 +55,7 @@ export interface GatewayContext {
 }
 
 export interface GatewayOptions {
-  readonly config: FleetConfig;
+  readonly config: FleetLeadConfig;
   readonly sessions: SessionStore;
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
@@ -112,7 +112,7 @@ function safeMethod(method: string): boolean {
   return method === "GET" || method === "HEAD" || method === "OPTIONS";
 }
 
-export function trustedClientSource(request: Request, context: GatewayContext, config: FleetConfig): string {
+export function trustedClientSource(request: Request, context: GatewayContext, config: FleetLeadConfig): string {
   if (!loopback(context.peerAddress)) return context.peerAddress || "non-loopback";
   const supplied = request.headers.get(config.proxy.clientIpHeader)?.trim() ?? "";
   if (supplied === "" || supplied.includes(",") || isIP(supplied) === 0) return "loopback";
@@ -121,7 +121,7 @@ export function trustedClientSource(request: Request, context: GatewayContext, c
 
 async function currentSession(
   request: Request,
-  config: FleetConfig,
+  config: FleetLeadConfig,
   sessions: SessionStore,
   now: number,
 ): Promise<SessionClaims | null> {

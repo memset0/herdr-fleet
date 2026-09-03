@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { loadFleetConfig } from "./config.ts";
 import { ManagedChild } from "./managed-child.ts";
+import { validatePackAuthority } from "./pack-authority.ts";
 import { parseControlRequest, type ControlResponse } from "./protocol.ts";
 import { childSpecs, ensurePrivateRuntime, resolveRuntimePaths } from "./runtime.ts";
 
@@ -36,10 +37,28 @@ async function endpointReady(url: string, host: string): Promise<boolean> {
   }
 }
 
+async function tcpReady(host: string, port: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+    const done = (ready: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(ready);
+    };
+    socket.setTimeout(400);
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+
 async function main(): Promise<void> {
   const paths = resolveRuntimePaths();
   await ensurePrivateRuntime(paths);
   const config = await loadFleetConfig(paths.configPath);
+  await validatePackAuthority(config, paths.collieStateDir);
   const children = childSpecs(config, paths, process.env).map(
     (spec) =>
       new ManagedChild({
@@ -60,6 +79,7 @@ async function main(): Promise<void> {
 
   const readiness = async () => {
     if (!children.every((child) => child.status().running)) return false;
+    if (config.role === "peer") return await tcpReady(config.collie.host, config.collie.port);
     const collie = await endpointReady(
       endpoint(config.collie.host, config.collie.port, "/api/config"),
       config.collie.host.includes(":") ? `[${config.collie.host}]:${config.collie.port}` : `${config.collie.host}:${config.collie.port}`,
@@ -83,14 +103,17 @@ async function main(): Promise<void> {
     throw new Error("Fleet children did not become ready within 10 seconds");
   };
 
-  const response = (status: ControlResponse["status"], message?: string): ControlResponse => ({
-    status,
-    generation: paths.generation,
-    pid: process.pid,
-    startedAt,
-    children: children.map((child) => child.status()),
-    message,
-  });
+  const response = (status: ControlResponse["status"], message?: string): ControlResponse => {
+    const base: ControlResponse = {
+      status,
+      generation: paths.generation,
+      pid: process.pid,
+      startedAt,
+      children: children.map((child) => child.status()),
+      message,
+    };
+    return config.schemaVersion === 2 ? { ...base, role: config.role } : base;
+  };
 
   const server = net.createServer((socket) => {
     socket.setEncoding("utf8");

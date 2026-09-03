@@ -5,28 +5,28 @@
 
 ## 2. Add strict backward-compatible role configuration
 
-- [ ] 2.1 Refactor Fleet configuration into explicit schema-1 Lead, schema-2 Lead, and schema-2 Peer branches; verify focused tests pin the unchanged schema-1 normalized object and accept only the exact schema-2 lifecycle literals and role-appropriate tables.
-- [ ] 2.2 Reject role-incompatible, unknown, transport, SSH, endpoint, key, command, membership, credential, and trust-material fields with qualified safe diagnostics; verify focused tests cover Lead/Peer omissions, distinct loopback endpoints, and secret-free errors.
-- [ ] 2.3 Update synthetic public configuration documentation for both schema branches without adding a live config or transport field; verify the examples parse and the privacy scan finds no deployment fact.
+- [x] 2.1 Refactor Fleet configuration into explicit schema-1 Lead, schema-2 Lead, and schema-2 Peer branches; verify focused tests pin the unchanged schema-1 normalized object and accept only the exact schema-2 lifecycle literals and role-appropriate tables.
+- [x] 2.2 Reject role-incompatible, unknown, transport, SSH, endpoint, key, command, membership, credential, and trust-material fields with qualified safe diagnostics; verify focused tests cover Lead/Peer omissions, distinct loopback endpoints, and secret-free errors.
+- [x] 2.3 Update synthetic public configuration documentation for both schema branches without adding a live config or transport field; verify the examples parse and the privacy scan finds no deployment fact.
 
 ## 3. Validate Collie's native Pack authority without mutation
 
-- [ ] 3.1 Add one owned read-only Pack authority module that uses Collie's existing trust reader plus enrollment/mode derivation; verify focused tests accept matching Lead/Peer state and reject missing, invalid, solo, conflicted, and mismatched state.
-- [ ] 3.2 Prove schema-2 authority validation runs before child construction and never calls a trust writer or changes trust-store bytes; verify focused filesystem/injected-seam tests cover both successful and failed validation.
-- [ ] 3.3 Verify no enrollment, invitation, join/remove/leave/rotate, Pack secret grace, alternate roster, Pack wire, router, loader, UI, Host aggregation, remote write, update, deputy, or transport logic entered Fleet-owned modules.
+- [x] 3.1 Add one owned read-only Pack authority module that uses Collie's existing trust reader plus enrollment/mode derivation; verify focused tests accept matching Lead/Peer state and reject missing, invalid, solo, conflicted, and mismatched state.
+- [x] 3.2 Prove schema-2 authority validation runs before child construction and never calls a trust writer or changes trust-store bytes; verify focused filesystem/injected-seam tests cover both successful and failed validation.
+- [x] 3.3 Verify no enrollment, invitation, join/remove/leave/rotate, Pack secret grace, alternate roster, Pack wire, router, loader, UI, Host aggregation, remote write, update, deputy, or transport logic entered Fleet-owned modules.
 
 ## 4. Make child lifecycle and browser boundaries role-aware
 
-- [ ] 4.1 Make Collie child environment construction role-aware: every role stays loopback with Tailscale publication disabled, Lead retains normal Gateway-facing origin values, Peer receives no public browser values, and neither receives Fleet credential/session or Pack trust material; verify focused environment tests.
-- [ ] 4.2 Compose `collie + gateway` for schema-1/schema-2 Lead and `collie` only for schema-2 Peer; verify child order, isolated state, no Peer session-store/Gateway listener, bounded restart cleanup, and unchanged schema-1 child inputs.
-- [ ] 4.3 Make readiness and control status role-aware while keeping schema-1 control JSON/text byte-compatible; verify focused protocol/lifecycle tests report schema-2 role and exact children without secrets.
-- [ ] 4.4 Extend Gateway tests so both unauthenticated and authenticated `/pack/v1/*` requests remain public 404s with zero Collie calls while authenticated normal native `/api/*` requests retain existing behavior.
+- [x] 4.1 Make Collie child environment construction role-aware: every role stays loopback with Tailscale publication disabled, Lead retains normal Gateway-facing origin values, Peer receives no public browser values, and neither receives Fleet credential/session or Pack trust material; verify focused environment tests.
+- [x] 4.2 Compose `collie + gateway` for schema-1/schema-2 Lead and `collie` only for schema-2 Peer; verify child order, isolated state, no Peer session-store/Gateway listener, bounded restart cleanup, and unchanged schema-1 child inputs.
+- [x] 4.3 Make readiness and control status role-aware while keeping schema-1 control JSON/text byte-compatible; verify focused protocol/lifecycle tests report schema-2 role and exact children without secrets.
+- [x] 4.4 Extend Gateway tests so both unauthenticated and authenticated `/pack/v1/*` requests remain public 404s with zero Collie calls while authenticated normal native `/api/*` requests retain existing behavior.
 
 ## 5. Reconcile the fork and source artifacts
 
-- [ ] 5.1 Extend the existing `fleet-runtime` contracts and focused verification in `FORK.toml` without a redundant owned block or invasive path; verify the fork checker accepts only owned `fleet/**`, docs, Changelog, and OpenSpec edits.
-- [ ] 5.2 Add one concise `CHANGELOG.md` entry and reconcile proposal/spec/design/tasks with implementation reality; verify `PACK_PROTOCOL.md`, `bridge/pack/**`, native router/loaders/Pack UI, and every excluded product family remain unchanged.
-- [ ] 5.3 Run focused config/authority/environment/lifecycle/protocol/Gateway tests plus affected typecheck, lint, fork, version, OpenSpec, and privacy checks during implementation; resolve failures without weakening strict role or trust boundaries.
+- [x] 5.1 Extend the existing `fleet-runtime` contracts and focused verification in `FORK.toml` without a redundant owned block or invasive path; verify the fork checker accepts only owned `fleet/**`, docs, Changelog, and OpenSpec edits.
+- [x] 5.2 Add one concise `CHANGELOG.md` entry and reconcile proposal/spec/design/tasks with implementation reality; verify `PACK_PROTOCOL.md`, `bridge/pack/**`, native router/loaders/Pack UI, and every excluded product family remain unchanged.
+- [x] 5.3 Run focused config/authority/environment/lifecycle/protocol/Gateway tests plus affected typecheck, lint, fork, version, OpenSpec, and privacy checks during implementation; resolve failures without weakening strict role or trust boundaries.
 
 ## 6. Validate, publish, stage, and archive
 

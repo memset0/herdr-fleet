@@ -1,4 +1,4 @@
-import type { FleetConfig } from "./config.ts";
+import type { FleetLeadConfig } from "./config.ts";
 import { SESSION_COOKIE_NAME } from "./auth.ts";
 
 const REQUEST_HEADERS = [
@@ -49,7 +49,7 @@ function stripResponseCookie(headers: Headers, name: string): void {
   }
 }
 
-export function upstreamRequestHeaders(request: Request, config: FleetConfig): Headers {
+export function upstreamRequestHeaders(request: Request, config: FleetLeadConfig): Headers {
   const headers = new Headers();
   for (const name of REQUEST_HEADERS) {
     const value = request.headers.get(name);
@@ -66,7 +66,7 @@ export function upstreamRequestHeaders(request: Request, config: FleetConfig): H
   return headers;
 }
 
-function upstreamUrl(request: Request, config: FleetConfig): URL {
+function upstreamUrl(request: Request, config: FleetLeadConfig): URL {
   const incoming = new URL(request.url);
   const base = new URL(`http://${config.collie.host.includes(":") ? `[${config.collie.host}]` : config.collie.host}:${config.collie.port}/`);
   const target = new URL(`${incoming.pathname}${incoming.search}`, base);
@@ -74,7 +74,7 @@ function upstreamUrl(request: Request, config: FleetConfig): URL {
   return target;
 }
 
-function publicLocation(location: string, upstream: URL, config: FleetConfig): string | null {
+function publicLocation(location: string, upstream: URL, config: FleetLeadConfig): string | null {
   let parsed: URL;
   try {
     parsed = new URL(location, upstream);
@@ -89,7 +89,7 @@ export type FleetFetcher = (input: string | URL | Request, init?: RequestInit) =
 
 export async function proxyCollie(
   request: Request,
-  config: FleetConfig,
+  config: FleetLeadConfig,
   fetcher: FleetFetcher = fetch,
 ): Promise<Response> {
   const target = upstreamUrl(request, config);

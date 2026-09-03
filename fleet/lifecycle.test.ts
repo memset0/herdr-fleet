@@ -5,7 +5,11 @@ import { describe, expect, test } from "bun:test";
 
 import { childBackoffMs } from "./managed-child.ts";
 import { childSpecs, computeGeneration, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
-import { fleetTestConfig } from "./test-helpers.ts";
+import {
+  fleetTestConfig,
+  fleetTestPackLeadConfig,
+  fleetTestPackPeerConfig,
+} from "./test-helpers.ts";
 
 const root = resolve(import.meta.dir, "..");
 
@@ -68,8 +72,36 @@ describe("Herdr-owned Fleet lifecycle", () => {
       HERDR_PLUGIN_STATE_DIR: "/private/state/collie",
     });
     expect(specs[0]?.env.COLLIE_TRUSTED_USER).toBeUndefined();
+    expect(specs[0]?.env.HERDR_FLEET_CONFIG).toBeUndefined();
+    expect(specs[0]?.env.HERDR_FLEET_SESSION_STATE).toBeUndefined();
     expect(specs[1]?.command).toEqual([process.execPath, "run", `${root}/fleet/gateway-main.ts`]);
     expect(specs[1]?.env.HERDR_FLEET_SESSION_STATE).toBe("/private/state/sessions.json");
+  });
+
+  test("composes native Pack lead and peer children without a peer Gateway", () => {
+    const paths = resolveRuntimePaths({
+      HERDR_PLUGIN_ROOT: root,
+      HERDR_FLEET_CONFIG: "/private/config/fleet.toml",
+      HERDR_PLUGIN_STATE_DIR: "/private/state",
+      XDG_RUNTIME_DIR: "/private/runtime",
+      HERDR_FLEET_GENERATION: "generation-a",
+    });
+    const lead = childSpecs(fleetTestPackLeadConfig(), paths, { PATH: "/usr/bin" });
+    expect(lead.map((spec) => spec.name)).toEqual(["collie", "gateway"]);
+    const peer = childSpecs(fleetTestPackPeerConfig(), paths, {
+      PATH: "/usr/bin",
+      HERDR_FLEET_SESSION_STATE: "/inherited/sessions.json",
+      COLLIE_PUBLIC_URL: "https://inherited.example",
+    });
+    expect(peer.map((spec) => spec.name)).toEqual(["collie"]);
+    expect(peer[0]?.env).toMatchObject({
+      COLLIE_HOST: "::1",
+      COLLIE_PORT: "8787",
+      COLLIE_SKIP_SERVE: "1",
+      HERDR_PLUGIN_STATE_DIR: "/private/state/collie",
+    });
+    expect(peer[0]?.env.HERDR_FLEET_SESSION_STATE).toBeUndefined();
+    expect(peer[0]?.env.COLLIE_PUBLIC_URL).toBeUndefined();
   });
 
   test("uses bounded exponential child restart delays", () => {
@@ -106,6 +138,7 @@ describe("Herdr-owned Fleet lifecycle", () => {
       "gateway.ts",
       "login-ui.ts",
       "managed-child.ts",
+      "pack-authority.ts",
       "protocol.ts",
       "proxy.ts",
       "rate-limit.ts",
@@ -117,6 +150,13 @@ describe("Herdr-owned Fleet lifecycle", () => {
     for (const forbidden of ["iframe", "ttyd", "discord", "ssh-reverse", "ssh-forward"]) {
       expect(source.toLowerCase()).not.toContain(forbidden);
     }
+  });
+
+  test("validates native Pack authority before constructing children", () => {
+    const source = readFileSync(resolve(import.meta.dir, "daemon.ts"), "utf8");
+    expect(source.indexOf("await validatePackAuthority(config, paths.collieStateDir);")).toBeLessThan(
+      source.indexOf("const children = childSpecs(config, paths, process.env)"),
+    );
   });
 
   test("the plugin manifest delegates only to the thin Fleet launcher", () => {
