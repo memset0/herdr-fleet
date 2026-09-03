@@ -6,6 +6,13 @@ All notable changes to Herdr Web Remote and its Collie-derived node UI are recor
 `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json` (enforced by
 `scripts/check-version.sh`). See [`CLAUDE.md`](./CLAUDE.md) → *Versioning* for the bump policy.
 
+## [2.10.1] - 2026-09-03
+
+### Fixed
+
+- Preserve valid light and dark Fleet status colors through the production asset build so every
+  Agent avatar's state dot remains visible instead of becoming transparent (62408cc).
+
 ## [2.10.0] - 2026-09-03
 
 ### Changed
