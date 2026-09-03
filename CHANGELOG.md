@@ -35,6 +35,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.
 - Accept header-stripped browser login submissions through an unguessable no-store CSRF form token.
+- Allow the authenticated same-origin UI to request microphone access without delegating it cross-origin.
 
 ## [1.2.0] - 2026-09-02
 

@@ -156,6 +156,11 @@ when its parsed origin exactly equals the configured Collie origin; relative red
 relative, and every other absolute origin is rejected rather than string-rewritten. Protected and
 authentication responses use `no-store`; hop-by-hop and stale encoding/length headers are removed.
 
+Gateway security headers retain the stock Collie UI's same-origin microphone request path for an
+operator-configured speech-to-text provider. `Permissions-Policy` therefore allows
+`microphone=(self)` while denying camera, geolocation, and cross-origin microphone delegation; the
+Gateway does not configure, enable, or receive the provider credential.
+
 ### 8. Put document navigation before Collie's precache route
 
 The upstream service worker excludes authentication/API paths from its SPA fallback, but registers

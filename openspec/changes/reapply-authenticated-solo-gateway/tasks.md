@@ -44,12 +44,13 @@
 - [x] 5.6 Update `FORK.toml` and `CHANGELOG.md`, commit the security/documentation candidate separately, fetch/verify `origin/v3-dev`, push normally, and verify the remote exact candidate commit is independently buildable.
 - [x] 5.7 Fix the staging-discovered browser form compatibility bug without weakening CSRF checks: preserve the same-origin Referer fallback and add a random no-store form token when browser containers omit both Origin and Referer, with focused Gateway coverage and aligned authentication spec/design/Changelog.
 - [x] 5.8 Record the owner-selected future routing boundary: extend Collie's native router, loaders, data model, and resident UI in later source changes rather than restoring the v2 outer Fleet shell or iframe stitching.
+- [x] 5.9 Fix the staging-discovered microphone denial by allowing only same-origin microphone requests in the Gateway Permissions Policy, retain camera/geolocation and cross-origin denial, and record the invariant in focused tests and the authentication spec/design.
 
 ## 6. Validate the isolated staging deployment
 
 - [x] 6.1 From private operator guidance, deploy only the exact pushed candidate to separate loopback ports and a separate HTTPS staging origin, recording concrete configuration solely in ignored `LOCAL.md`; verify the previous service, plugin, Herdr process, and panes remain unchanged.
-- [ ] 6.2 Verify through the public HTTPS origin that correct login succeeds; wrong/oversized/cross-origin attempts are generic and bounded; cookie flags, expiry, restart persistence, logout revocation, copied-token refusal, and safe returns satisfy the authentication spec.
-- [ ] 6.3 Probe every public API family plus representative unknown/encoded paths without a session and verify no request reaches Collie; verify authenticated reads/writes work through the stock Collie UI and the session credential never reaches the upstream.
+- [x] 6.2 Verify through the public HTTPS origin that correct login succeeds; wrong/oversized/cross-origin attempts are generic and bounded; cookie flags, expiry, restart persistence, logout revocation, copied-token refusal, and safe returns satisfy the authentication spec.
+- [x] 6.3 Probe every public API family plus representative unknown/encoded paths without a session and verify no request reaches Collie; verify authenticated reads/writes work through the stock Collie UI and the session credential never reaches the upstream.
 - [x] 6.4 Verify Host/Origin/forwarded-header/redirect/cache/service-worker negatives, security headers, TLS behavior, Caddy header replacement, loopback-only listeners, and the absence of a public raw Collie or Gateway port.
 - [x] 6.5 Exercise removal and exact-commit redeployment of only the staging generation as rollback evidence, then present the candidate commit, source links, security results, known residual risks, and unchanged-service evidence for owner acceptance.
 

@@ -158,7 +158,9 @@ The Gateway and Collie SHALL bind only to configured loopback addresses. The pub
 target the Gateway rather than Collie, preserve or set the exact configured public Host, replace
 client attribution headers, and expose no raw application port. The Gateway SHALL emit strict CSP,
 content-type, frame, referrer, permission, and transport-security headers appropriate to each login,
-document, API, and static response.
+document, API, and static response. Its permission policy MUST retain same-origin microphone access
+for Collie's operator-enabled speech-to-text input while denying microphone delegation to another
+origin and continuing to disable camera and geolocation.
 
 #### Scenario: A request uses an unknown Host or Origin
 - **WHEN** a request reaches the Gateway with a Host outside the single configured origin or an unsafe method carries a different Origin
@@ -171,3 +173,7 @@ document, API, and static response.
 #### Scenario: Tailscale identity is absent
 - **WHEN** the Fleet lead operates with external ingress and no Tailscale identity header
 - **THEN** its own password/session gate remains authoritative and Collie does not publish or depend on a Tailscale serve mapping
+
+#### Scenario: The operator enables speech input
+- **WHEN** the authenticated stock Collie UI requests microphone access for its configured speech-to-text provider
+- **THEN** the Gateway permission policy allows the same-origin document to request it without granting microphone access to a framed or cross-origin site

@@ -28,7 +28,7 @@ const HTML_CSP =
 
 const BASE_HEADERS = {
   "cross-origin-opener-policy": "same-origin",
-  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "permissions-policy": "camera=(), microphone=(self), geolocation=()",
   "referrer-policy": "no-referrer",
   "strict-transport-security": "max-age=31536000; includeSubDomains",
   "x-content-type-options": "nosniff",

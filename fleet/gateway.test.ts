@@ -196,6 +196,7 @@ describe("authenticated solo Gateway", () => {
     const loginPage = await handler(request("/auth/login"), { peerAddress: "127.0.0.1" });
     expect(loginPage.headers.get("content-security-policy")).toContain("default-src 'none'");
     expect(loginPage.headers.get("referrer-policy")).toBe("same-origin");
+    expect(loginPage.headers.get("permissions-policy")).toBe("camera=(), microphone=(self), geolocation=()");
     expect(await loginPage.text()).toContain(`name="csrf_token" value="${loginCsrfToken}"`);
     expect(loginPage.headers.get("x-frame-options")).toBe("DENY");
     expect(loginPage.headers.get("cache-control")).toBe("no-store");
