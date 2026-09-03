@@ -3,7 +3,6 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { useNavigate, useRevalidator } from "react-router";
 import {
   ArrowUpToLine,
-  ChevronUp,
   EllipsisVertical,
   Loader2,
   Minimize2,
@@ -19,7 +18,7 @@ import { mirrorFont, useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
 import { isConnecting } from "@/lib/connection";
-import { t, type MessageKey } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
 import { useZenEnabled } from "@/lib/zen";
 import { setStripsCollapsed, useStripsCollapsed } from "@/lib/strips-collapsed";
@@ -44,14 +43,14 @@ import { TabStrip } from "@/components/tab-strip";
 import { PaneStrip } from "@/components/pane-strip";
 import { StripsSummary } from "@/components/strips-summary";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
-import { CompactStripLabels, STRIP_TAP_TARGET_SQUARE } from "@/components/ui/labelled-strip";
+import { CompactStripLabels } from "@/components/ui/labelled-strip";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
 import { useHostHealth } from "@/components/pack-provider";
 import { writeRefusal } from "@/lib/host-health";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
-import { StatusBadge, StatusDot } from "@/components/status-badge";
+import { StatusBadge, StatusDot, StatusWord } from "@/components/status-badge";
 import { submitPromptFeedback, submitPromptOption } from "@/lib/prompt-action";
 import { submitWizardKeys } from "@/lib/wizard-action";
 import { submitPreviewKeys, submitPreviewNote, submitPreviewOption } from "@/lib/preview-action";
@@ -109,17 +108,6 @@ interface AgentChatProps {
   stalled?: boolean;
   onBack: () => void;
   onSelect: (paneId: string) => void;
-}
-
-/**
- * The fold chevron's accessible name, chosen for what is actually on screen. The glyph names
- * nothing, and "Hide tabs and panes" over a screen with no pane row is a promise about a row that
- * is not there — the summary bar's own name is built the same way, from the same two counts.
- */
-function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
-  if (tabCount > 0 && paneCount > 1) return "chat.strips.hide.both";
-  if (tabCount > 0) return "chat.strips.hide.tabs";
-  return "chat.strips.hide.panes";
 }
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
@@ -487,7 +475,7 @@ export function AgentChat({
   // height at all — which is the whole complaint about a 14px band of its own down in the dock. It
   // can only carry the word while that row is actually drawn, so every state where it is not
   // (folded to the bead bar, zen, or a pane with no strips) hands the word back to the composer.
-  const statusInStrips = agent !== undefined && stripsExist && !folded && !zen;
+  const statusInStrips = agent !== undefined && stripsExist && !zen;
   // WHO OWNS THE 4px ABOVE THE MIRROR'S RULE.
   //
   // It reads as the mirror's own margin and it is not: it is the PAGE AN OPEN FOLDER TAB SITS ON,
@@ -1403,6 +1391,17 @@ export function AgentChat({
                       panes={tabPanes}
                       currentPaneId={paneId}
                       onExpand={toggleStrips}
+                      // DOWNSTREAM PORT — the state, as a WORD. A badge is a pill with a ground and
+                      // its own padding; this bar is 24px tall and spends none. The colour and the
+                      // word are the same pair the badge carries, which is what keeps the fact
+                      // readable for a reader the colour alone fails (status-badge.tsx measures it).
+                      trailing={
+                        <StatusWord
+                          status={agent.status}
+                          stale={connecting}
+                          className="shrink-0"
+                        />
+                      }
                     />
                   )
                 }
@@ -1431,32 +1430,16 @@ export function AgentChat({
                     // the space has nothing left to land on. Closing any other tab just revalidates so it
                     // drops out of the strip.
                     onClosed={(tabId) => (agent?.tabId === tabId ? closeCurrentTab(tabId) : revalidator.revalidate())}
-                    // The fold's own control, pinned to the row's trailing end where it costs no height
-                    // — the tab row is already 44px, so this centres in pixels the row was spending
-                    // anyway. Same 32px square recipe as the "+" beside it: they are two controls of the
-                    // same rank in the same row, and drawing them differently would rank them.
+                    // DOWNSTREAM PORT — the pane's state, pinned to the row's trailing end where it
+                    // costs no height: the tab row is already 44px, so this centres in pixels the row
+                    // was spending anyway.
+                    //
+                    // THE MANUAL FOLD CONTROL IS GONE FROM HERE. The fold is automatic — the strips
+                    // stand down while the keyboard is up and come back when it closes — and a second,
+                    // manual way to reach the same state was one control the operator had to keep in
+                    // their head. Expanding is still one tap on the whole folded bar.
                     trailing={
-                      <>
-                        {/* Right-aligned and INSIDE the trailing group, so it sits just left of the
-                            fold control and the two read as one cluster at the row's end. */}
-                        <StatusBadge
-                          status={agent.status}
-                          stale={connecting}
-                          className="mr-1 shrink-0"
-                        />
-                      <button
-                        type="button"
-                        onClick={toggleStrips}
-                        aria-expanded={true}
-                        aria-label={t(foldLabelKey(stripTabs.length, tabPanes.length))}
-                        className={cn(
-                          STRIP_TAP_TARGET_SQUARE,
-                          "flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent active:scale-95",
-                        )}
-                      >
-                        <ChevronUp className="size-4" />
-                      </button>
-                      </>
+                      <StatusBadge status={agent.status} stale={connecting} className="shrink-0" />
                     }
                   />
                 )}

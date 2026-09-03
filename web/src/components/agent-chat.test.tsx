@@ -1896,11 +1896,12 @@ describe("AgentChat — folding the tab and pane rows", () => {
   });
 
   it("folds both rows together, and remembers it on this device", async () => {
-    const user = userEvent.setup();
     renderStrips();
-    // ONE toggle for both rows, pinned to the tab row's trailing end where it costs no height —
-    // that row is already 44px. Its name says which rows it is about, because the glyph says none.
-    await user.click(screen.getByRole("button", { name: "Hide tabs and panes" }));
+    // THE FOLD IS AUTOMATIC AND THE PREFERENCE IS ITS ONLY OTHER INPUT. The manual control that
+    // used to sit at the tab row's trailing end is gone — the rows stand down while the keyboard is
+    // up and come back when it closes, and a second way to reach the same state was one control the
+    // operator had to keep in their head. Getting them back is still one tap on the folded bar.
+    act(() => setStripsCollapsed(true));
 
     // `Collapse` unmounts at the END of its exit, so both rows leave the tree — which is the a11y
     // half of the claim: a pill that is not on screen must not still be focusable.
@@ -1926,9 +1927,8 @@ describe("AgentChat — folding the tab and pane rows", () => {
     // has to own the line it breaks, and folded there is no folder tab. So the bar draws nothing and
     // the mirror keeps the one seam — which is also the half that may not move, being unconditional
     // by design (one geometry, no state in which the seam is drawn differently).
-    const user = userEvent.setup();
     const { container } = renderStrips();
-    await user.click(screen.getByRole("button", { name: "Hide tabs and panes" }));
+    act(() => setStripsCollapsed(true));
     const bar = await screen.findByRole("button", { name: /^Show tabs and panes/ });
 
     expect(bar.className).not.toMatch(/border-b/);
@@ -1949,9 +1949,8 @@ describe("AgentChat — folding the tab and pane rows", () => {
     // It belongs to the tab row, so it travels with it: `pb-1` inside the band's own Collapse, which
     // also means it animates with the fold instead of popping on a boolean. Folded, the band is
     // exactly the bar between the header's rule and the mirror's.
-    const user = userEvent.setup();
     const { container } = renderStrips();
-    await user.click(screen.getByRole("button", { name: "Hide tabs and panes" }));
+    act(() => setStripsCollapsed(true));
     await screen.findByRole("button", { name: /^Show tabs and panes/ });
 
     const mirror = container
@@ -1974,9 +1973,8 @@ describe("AgentChat — folding the tab and pane rows", () => {
     // The floor is bought as HIT area, not drawn height (DESIGN.md §6). Both halves are asserted
     // because they are ONE number: 24 + 10 + 10 = 44, so shrinking the bar without re-cutting the
     // inset silently drops the target.
-    const user = userEvent.setup();
     renderStrips();
-    await user.click(screen.getByRole("button", { name: "Hide tabs and panes" }));
+    act(() => setStripsCollapsed(true));
     const bar = await screen.findByRole("button", { name: /^Show tabs and panes/ });
     expect(bar.className).toMatch(/(?:^|\s)h-6(?=\s|$)/);
     expect(bar.className).toMatch(/(?:^|\s)before:-inset-y-2\.5(?=\s|$)/);
@@ -1996,9 +1994,8 @@ describe("AgentChat — folding the tab and pane rows", () => {
   it("names only the rows that are actually there", async () => {
     // A tab holding one pane draws no pane row, so the bar must not offer a pane bead group and the
     // chevron must not promise to hide one. Naming both unconditionally is the easy bug here.
-    const user = userEvent.setup();
     renderChat({ tabs: fixtureTabs });
-    await user.click(screen.getByRole("button", { name: "Hide tabs" }));
+    act(() => setStripsCollapsed(true));
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Show tabs. 1 tab hidden." })).not.toBeNull(),
     );

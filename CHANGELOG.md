@@ -61,6 +61,9 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - A hierarchy row opens Collie's own Pane or Tab actions on a right-click or a long press, so a rename or a close is reachable from the tree; a Space row offers none, because the bridge defines none.
 - The Agent rail's rows have more air between them.
 
+- The strips fold automatically and only automatically: the manual control is gone, and the pane's state rides the folded bar as a word so the composer's band no longer comes back the moment the keyboard does.
+- The Agent rail's row puts its favourite control at the top-right and its age at the bottom-right, and the phone's hierarchy drawer wears the rail's own ground and title.
+
 ### Fixed
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.

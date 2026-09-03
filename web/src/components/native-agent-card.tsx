@@ -64,12 +64,12 @@ export function NativeAgentCard({
   return (
     <div
       data-slot="native-agent-card"
-      className="group flex min-w-0 items-center gap-1 rounded-md pr-1 hover:bg-muted"
+      className="group relative flex min-w-0 items-center rounded-md hover:bg-muted"
     >
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-8 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
       >
         {/* The avatar carries both marks the row needs and neither costs a column: the state at the
             corner the eye already lands on, and the shortcut ordinal at the one it does not. */}
@@ -104,17 +104,17 @@ export function NativeAgentCard({
             {/* Both truncate. The name was `shrink-0`, which let a long Tab name push the row past
                 its container — on a phone the whole sheet then read as shifted left. */}
             <span className="min-w-0 truncate text-foreground">{name}</span>
-            {stamp !== undefined && (
-              <span className="ml-auto shrink-0 pl-1 text-[11px] tabular-nums text-muted-foreground">
-                {timeAgoShort(stamp)}
-              </span>
-            )}
           </span>
           {/* Line 2 — what. Absent rather than padded: a row with nothing to say here is one line
               tall, which is the honest height for it. */}
-          {doing !== null && (
-            <span className="min-w-0 truncate text-[11px] leading-tight text-muted-foreground">
-              {doing}
+          {/* Line 2 — what, with the age at its trailing end so the row's right edge reads top to
+              bottom: the control first, then the fact. */}
+          {(doing !== null || stamp !== undefined) && (
+            <span className="flex min-w-0 items-baseline gap-2 text-[11px] leading-tight text-muted-foreground">
+              <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
+              {stamp !== undefined && (
+                <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>
+              )}
             </span>
           )}
         </span>
@@ -131,7 +131,7 @@ export function NativeAgentCard({
         }
         onClick={onFavoriteToggle}
         className={cn(
-          "grid size-7 shrink-0 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+          "absolute right-0.5 top-0.5 grid size-6 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
           favorite ? "text-foreground" : "text-muted-foreground/50 hover:text-foreground",
         )}
       >

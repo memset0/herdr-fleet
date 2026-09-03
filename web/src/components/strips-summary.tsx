@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { StatusDot } from "@/components/status-badge";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,15 @@ interface StripsSummaryProps {
   panes: AgentView[];
   currentPaneId: string;
   onExpand: () => void;
+  /**
+   * DOWNSTREAM PORT — one node pinned to the bar's trailing end, inside the button's own box.
+   *
+   * The bar is what the pane screen shows while the keyboard is up, and the fold takes both strips
+   * away with it. Fleet puts the pane's STATE here so that the one fact worth a glance mid-sentence
+   * survives the fold, in the pixels the bar is already spending. Absent by default, which is the
+   * whole of Collie's own bar.
+   */
+  trailing?: ReactNode;
 }
 
 // The tab row and the pane row, folded down to one 24px bar of beads.
@@ -50,6 +60,7 @@ export function StripsSummary({
   panes,
   currentPaneId,
   onExpand,
+  trailing,
 }: StripsSummaryProps) {
   useLocale();
   // The SAME two derivations `tab-strip.tsx` runs, and they may not drift: the tabs of this space,
@@ -61,7 +72,7 @@ export function StripsSummary({
   // stands for what the rows would have drawn, never for more.
   const paneBeads = panes.length < 2 ? [] : panes;
 
-  return (
+  const bar = (
     <button
       type="button"
       onClick={onExpand}
@@ -145,6 +156,20 @@ export function StripsSummary({
 
       <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
     </button>
+  );
+
+  if (trailing === undefined) return bar;
+  return (
+    <div className="relative">
+      {bar}
+      {/* OUTSIDE the button, over its own row. Inside it, this node's text would join the button's
+          accessible name — which is one exact sentence about what the control does, and "Show tabs
+          and panes. 3 tabs, 2 panes hidden. needs you" is not that sentence. `pointer-events-none`
+          keeps the whole bar one 44px target. */}
+      <span className="pointer-events-none absolute inset-y-0 right-10 flex items-center">
+        {trailing}
+      </span>
+    </div>
   );
 }
 

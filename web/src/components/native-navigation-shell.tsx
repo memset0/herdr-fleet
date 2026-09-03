@@ -461,27 +461,35 @@ function HierarchyOverlay({
           open ? "opacity-100" : "opacity-0",
         )}
       />
+      {/* THE SAME RAIL, ARRIVING FROM THE EDGE. It wears the rail's ground and the rail's title —
+          same token, same 11px uppercase caption, same absence of a rule under it — so the surface a
+          phone slides in is the one a desktop keeps open, rather than a second design of it. What it
+          adds is the one thing a drawer needs and a rail does not: a way to send it back. */}
       <section
         id="fleet-hierarchy-overlay"
         role="dialog"
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "absolute inset-y-0 left-0 flex w-[min(90vw,24rem)] flex-col border-r border-rule bg-card shadow-xl transition-transform duration-200 motion-reduce:transition-none",
+          "absolute inset-y-0 left-0 flex w-[min(90vw,24rem)] flex-col border-r border-rule bg-chrome shadow-xl transition-transform duration-200 motion-reduce:transition-none",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-12 shrink-0 items-center justify-between border-b border-rule px-3">
-          <span className="text-sm font-semibold">{title}</span>
-          <button
-            ref={closeRef}
-            type="button"
-            aria-label={t("fleet.navigation.close")}
-            onClick={onClose}
-            className="flex size-9 items-center justify-center rounded-md border border-transparent hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          >
-            <X className="size-4" aria-hidden />
-          </button>
+        <div className="shrink-0 [padding-top:env(safe-area-inset-top)]">
+          <div className="flex items-center justify-between gap-2 pb-1 pl-3 pr-1 pt-2">
+            <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {title}
+            </span>
+            <button
+              ref={closeRef}
+              type="button"
+              aria-label={t("fleet.navigation.close")}
+              onClick={onClose}
+              className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              <X className="size-4" aria-hidden />
+            </button>
+          </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       </section>

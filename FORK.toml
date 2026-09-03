@@ -245,13 +245,16 @@ id = "native-pane-chrome-port"
 intent = "Let the Pane screen say its state in a row it already spends, rank its controls as one, and decline the shared mark, without moving product logic into Collie-owned files."
 strategy = "adapt"
 review = "every-upstream-sync"
-paths = ["web/src/components/collie-home.tsx#paper?: string"]
+paths = [
+  "web/src/components/collie-home.tsx#paper?: string",
+  "web/src/components/strips-summary.tsx#trailing"
+]
 verify = [
   "web/src/components/app-header.test.tsx",
   "web/src/components/agent-chat.test.tsx",
   "web/src/components/composer.test.tsx"
 ]
-reason = "Moving the header onto the chrome ground breaks the mark's knockout, which was written as the page colour inside the drawing. The mark takes the ground as a value with the page as its default, so a caller that says nothing gets Collie's own rendering and the existing coupling test keeps failing when the fill and the knockout disagree. The rest of this capability rides paths this manifest has already attributed once: the composer's status-word switch and dock anchor and the Pane page's badge and control row under native-manual-pane-fit-port, and the header's mark claim under native-navigation-sidebars-port."
+reason = "The folded strips bar takes one trailing node so the pane's state survives the fold, drawn beside its button rather than inside it — the bar's accessible name is one exact sentence about what the control does, and a word appended to it would not be that sentence. Moving the header onto the chrome ground breaks the mark's knockout, which was written as the page colour inside the drawing. The mark takes the ground as a value with the page as its default, so a caller that says nothing gets Collie's own rendering and the existing coupling test keeps failing when the fill and the knockout disagree. The rest of this capability rides paths this manifest has already attributed once: the composer's status-word switch and dock anchor and the Pane page's badge and control row under native-manual-pane-fit-port, and the header's mark claim under native-navigation-sidebars-port."
 [[invasive]]
 id = "native-webfont-port"
 intent = "Put one fetched fallback face under every font stack, after the operator's own and before the system's, and offer it and its Latin twin in the existing pickers."
