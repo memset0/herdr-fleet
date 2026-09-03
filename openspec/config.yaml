@@ -1,0 +1,31 @@
+schema: spec-driven
+
+context: |
+  Herdr Fleet v3 is a downstream reapplication based on Collie. The stack and unchanged behavior
+  remain governed by the upstream repository guidance in AGENTS.md. OpenSpec in this repository
+  owns only downstream product additions, changed behavior, and the reviewable fork boundary.
+  Tracked artifacts must remain generic and public-safe; deployment-specific context belongs only
+  in ignored LOCAL.md.
+
+rules:
+  proposal:
+    - State the exact Collie baseline and the downstream behavior being added or changed.
+    - Include explicit non-goals and distinguish reused upstream behavior from fork-owned behavior.
+  specs:
+    - Specify only downstream additions or changes; do not restate unchanged Collie capabilities.
+    - Keep private deployment, device, domain, and parent-repository details out of tracked artifacts.
+  design:
+    - Prefer fork-owned modules and narrow, enumerated ports in upstream-owned paths.
+    - Record every invasive path and its justification in FORK.toml.
+  tasks:
+    - Include focused verification for owned behavior and each invasive port without duplicating upstream coverage.
+    - Include public-tree and FORK.toml boundary audits before archive.
+
+operations:
+  apply:
+    guidance:
+      - Preserve unchanged Collie behavior and keep implementation aligned with the active change and FORK.toml.
+      - Stop when implementation would expand the approved change or decide a deferred trust boundary.
+  archive:
+    guidance:
+      - Verify source artifacts contain no private operator or deployment context before committing and pushing.
