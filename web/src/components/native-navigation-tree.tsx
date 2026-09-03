@@ -1,7 +1,11 @@
 import { ChevronRight, Folder, TerminalSquare } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
-import type { NavigationRow, NavigationTree } from "../../../fleet/ui/native-navigation/model.ts";
+import type {
+  NavigationRow,
+  NavigationSubject,
+  NavigationTree,
+} from "../../../fleet/ui/native-navigation/model.ts";
 import type { NativeNavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { nativeNavigationPreferences } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { AgentIcon } from "@/components/agent-icon";
@@ -11,12 +15,15 @@ import { t } from "@/lib/i18n";
 import { statusLabel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
+import { useLongPress } from "@/hooks/use-long-press";
 
 interface NativeNavigationTreeProps {
   tree: NavigationTree;
   selectedSpaceId?: string;
   onOpenSpace: (spaceId: string) => void;
   onOpenPane: (paneId: string) => void;
+  /** Open the row's own actions — a right-click on a pointer, a long press on a thumb. */
+  onRowActions?: (subject: NavigationSubject) => void;
   preferenceStore?: NativeNavigationPreferenceStore;
 }
 
@@ -25,6 +32,7 @@ export function NativeNavigationTree({
   selectedSpaceId,
   onOpenSpace,
   onOpenPane,
+  onRowActions,
   preferenceStore = nativeNavigationPreferences,
 }: NativeNavigationTreeProps) {
   useLocale();
@@ -70,6 +78,7 @@ export function NativeNavigationTree({
           onToggle={(id) => preferenceStore.toggleDisclosure(id)}
           onOpenSpace={onOpenSpace}
           onOpenPane={onOpenPane}
+          onRowActions={onRowActions}
         />
       ))}
     </nav>
@@ -84,6 +93,7 @@ interface RowProps {
   onToggle: (disclosureId: string) => void;
   onOpenSpace: (spaceId: string) => void;
   onOpenPane: (paneId: string) => void;
+  onRowActions: ((subject: NavigationSubject) => void) | undefined;
 }
 
 /**
@@ -108,6 +118,7 @@ function Row({
   onToggle,
   onOpenSpace,
   onOpenPane,
+  onRowActions,
 }: RowProps) {
   const disclosureId = row.disclosureId;
   // A Host's identity means CONCEALED (model.ts, `hostCollapseId`), so the same set answers both
@@ -132,9 +143,21 @@ function Row({
     else if (row.target?.kind === "pane") onOpenPane(row.target.paneId);
   };
 
+  // A row's own actions, reached the two ways a row is asked for them: a pointer's context menu and
+  // a thumb's long press. Both resolve to the same sheet Collie already opens from its strips, so a
+  // rename here is the rename the pane pill does — one write, one set of rules, one place.
+  const subject = row.subject;
+  const openActions =
+    subject !== undefined && onRowActions !== undefined ? () => onRowActions(subject) : undefined;
+  const longPress = useLongPress(openActions);
+
   return (
     <div className="min-w-0">
+      {/* The gesture handlers sit on the ROW, not on one of its controls: a right-click or a long
+          press anywhere in the row — the chevron included — asks for the same actions, and the
+          hook's own capture-phase guard is what stops the long press from also activating the row. */}
       <div
+        {...longPress}
         className={cn(
           "flex min-h-11 min-w-0 items-stretch rounded-md xl:min-h-7",
           selected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
@@ -202,6 +225,7 @@ function Row({
                   onToggle={onToggle}
                   onOpenSpace={onOpenSpace}
                   onOpenPane={onOpenPane}
+                  onRowActions={onRowActions}
                 />
               ))}
             </div>

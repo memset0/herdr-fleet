@@ -11,11 +11,12 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useLocation, useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams, useRevalidator } from "react-router";
 
 import {
   deriveNavigationTree,
   type NavigationPaneInput,
+  type NavigationSubject,
 } from "../../../fleet/ui/native-navigation/model.ts";
 import {
   nativeNavigationPreferences,
@@ -29,11 +30,14 @@ import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
+import { PaneActionsSheet } from "@/components/pane-actions-sheet";
+import { TabActionsSheet } from "@/components/tab-actions-sheet";
 import { ambientPanes, hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
-import { panePath, spacePath } from "@/lib/nav";
-import { paneDisplayName, type AgentView } from "@/lib/types";
+import { homePath, panePath, spacePath } from "@/lib/nav";
+import { usePairing } from "@/lib/pairing";
+import { isReadOnly, paneDisplayName, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -104,6 +108,22 @@ export function NativeNavigationShell({
       paneId,
     ],
   );
+
+  const revalidator = useRevalidator();
+  const { refused: notPaired } = usePairing();
+  // The same two gates every other write surface composes by AND: a device the operator has not
+  // authorised, and one that holds no pairing credential. The sheets below show their own read-only
+  // note rather than offering an action that would be refused.
+  const readOnly = isReadOnly(data.device) || notPaired;
+  // Which row's actions are open, if any. Resolved to Collie's own row objects at render, so the
+  // sheets act on exactly the pane or tab the snapshot describes rather than on a copy of it.
+  const [actions, setActions] = useState<NavigationSubject | null>(null);
+  const actionPane =
+    actions?.kind === "pane"
+      ? (allLocalPanes.find((pane) => pane.paneId === actions.paneId) ?? null)
+      : null;
+  const actionTab =
+    actions?.kind === "tab" ? (data.tabs.find((tab) => tab.tabId === actions.tabId) ?? null) : null;
 
   const [hierarchyOpen, setHierarchyOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -183,6 +203,7 @@ export function NativeNavigationShell({
       selectedSpaceId={spaceId}
       onOpenSpace={openSpace}
       onOpenPane={openPaneId}
+      onRowActions={setActions}
       preferenceStore={preferenceStore}
     />
   );
@@ -256,6 +277,33 @@ export function NativeNavigationShell({
         >
           {hierarchyOpen ? hierarchy : null}
         </HierarchyOverlay>
+
+        {/* Collie's OWN action sheets, opened from a hierarchy row. Renaming and closing a Pane or a
+            Tab is one write with one set of rules, already spelled here — a second copy of it in the
+            tree would be a second place for those rules to drift. Nothing here can act on a Space:
+            the bridge has no rename or close for one, and a row that offered it would be offering an
+            action that cannot land. */}
+        <PaneActionsSheet
+          open={actionPane !== null}
+          onClose={() => setActions(null)}
+          pane={actionPane}
+          scope={data.scope}
+          readOnly={readOnly}
+          onRenamed={() => revalidator.revalidate()}
+          onClosed={(closed) => {
+            if (closed === paneId) navigate(homePath(data.scope));
+            else revalidator.revalidate();
+          }}
+        />
+        <TabActionsSheet
+          open={actionTab !== null}
+          onClose={() => setActions(null)}
+          tab={actionTab}
+          scope={data.scope}
+          readOnly={readOnly}
+          onRenamed={() => revalidator.revalidate()}
+          onClosed={() => revalidator.revalidate()}
+        />
       </div>
     </NativeNavigationProvider>
   );

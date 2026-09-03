@@ -58,6 +58,9 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The Agent rail draws its own row over Collie's own triage order: the Agent's mark with the Pane's state and a shortcut ordinal badged at its corners, the Space then the work's name on line one with its age, and what the Pane is doing beneath. Collie's own Agent list and card are untouched.
 - The hierarchy's guide line falls on the centre of the control that opened its level, children begin one control-width in, and a row with no children draws no disclosure column.
 
+- A hierarchy row opens Collie's own Pane or Tab actions on a right-click or a long press, so a rename or a close is reachable from the tree; a Space row offers none, because the bridge defines none.
+- The Agent rail's rows have more air between them.
+
 ### Fixed
 
 - Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.

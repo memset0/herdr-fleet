@@ -69,24 +69,26 @@ export function NativeAgentCard({
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
       >
         {/* The avatar carries both marks the row needs and neither costs a column: the state at the
             corner the eye already lands on, and the shortcut ordinal at the one it does not. */}
+        {/* NO BOX BEHIND THE MARK. `AgentIcon` draws its own tile — a brand gradient, or a bordered
+            initials chip — so a wrapper with a ground of its own put a second, differently-coloured
+            square behind it and made both badges read as blobs sitting on that square rather than on
+            the row. The badges carry no ring for the same reason: the row is their ground. */}
         <span className="relative shrink-0">
-          <span className="grid size-8 place-items-center overflow-hidden rounded-md bg-background">
-            <AgentIcon agent={agent.agent} className="size-5" />
-          </span>
+          <AgentIcon agent={agent.agent} className="size-8" />
           <StatusDot
             status={agent.status}
             surface="bg-chrome"
-            className="absolute -bottom-0.5 -right-0.5 size-2.5 ring-2 ring-chrome"
+            className="absolute -bottom-0.5 -right-0.5 size-2.5"
           />
           <span className="sr-only">{statusLabel(agent.status)}</span>
           {badge !== null && (
             <span
               aria-hidden
-              className="absolute -bottom-1 -left-1 grid min-w-3.5 place-items-center rounded-full bg-chrome px-0.5 text-[9px] font-medium leading-[1.4] tabular-nums text-muted-foreground ring-2 ring-chrome"
+              className="absolute -bottom-1.5 -left-1 text-[9px] font-medium leading-none tabular-nums text-muted-foreground"
             >
               {badge}
             </span>
@@ -99,7 +101,9 @@ export function NativeAgentCard({
           <span className="flex min-w-0 items-baseline gap-1 overflow-hidden text-[13px] leading-tight">
             <span className="min-w-0 truncate text-muted-foreground">{project}</span>
             <span className="shrink-0 text-muted-foreground">·</span>
-            <span className="min-w-0 shrink-0 truncate text-foreground">{name}</span>
+            {/* Both truncate. The name was `shrink-0`, which let a long Tab name push the row past
+                its container — on a phone the whole sheet then read as shifted left. */}
+            <span className="min-w-0 truncate text-foreground">{name}</span>
             {stamp !== undefined && (
               <span className="ml-auto shrink-0 pl-1 text-[11px] tabular-nums text-muted-foreground">
                 {timeAgoShort(stamp)}
@@ -117,16 +121,18 @@ export function NativeAgentCard({
       </button>
 
       {/* A sibling and never a child: a button inside a button is invalid markup, and nesting would
-          make favouriting a row also open it. Present for a favourite, and on hover or keyboard
-          focus otherwise, so the rail is not a column of stars. */}
+          make favouriting a row also open it. ALWAYS DRAWN, muted until it is set — a control that
+          appears on hover is a control a phone does not have. */}
       <button
         type="button"
         aria-pressed={favorite}
-        aria-label={favorite ? t("home.favorite.remove") : t("home.favorite.add")}
+        aria-label={
+          favorite ? t("home.favorite.remove", { name }) : t("home.favorite.add", { name })
+        }
         onClick={onFavoriteToggle}
         className={cn(
-          "grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-opacity hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
-          favorite ? "opacity-100" : "opacity-0 focus:opacity-100 group-hover:opacity-100",
+          "grid size-7 shrink-0 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+          favorite ? "text-foreground" : "text-muted-foreground/50 hover:text-foreground",
         )}
       >
         <Star className={cn("size-3.5", favorite && "fill-current")} aria-hidden />

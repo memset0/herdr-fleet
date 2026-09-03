@@ -184,4 +184,39 @@ describe("NativeNavigationTree", () => {
       expect(chevron.querySelector("svg")?.getAttribute("class")).toContain("size-3.5");
     }
   });
+
+  it("asks for a row's own actions on a right-click, and offers none where there is nothing to act on", async () => {
+    const user = userEvent.setup();
+    const onRowActions = vi.fn();
+    render(
+      <NativeNavigationTree
+        tree={tree()}
+        onOpenSpace={vi.fn()}
+        onOpenPane={vi.fn()}
+        onRowActions={onRowActions}
+        preferenceStore={new NavigationPreferenceStore()}
+      />,
+    );
+
+    // A Space has no rename or close on the bridge, so its row asks for nothing.
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "Project One" }) });
+    expect(onRowActions).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Expand Project One" }));
+    // A Tab that survived elision acts on the Tab…
+    await user.pointer({
+      keys: "[MouseRight]",
+      target: await screen.findByRole("button", { name: "Main" }),
+    });
+    expect(onRowActions).toHaveBeenCalledExactlyOnceWith({ kind: "tab", tabId: "t1" });
+
+    // …and a row that stands for a Pane acts on the Pane.
+    onRowActions.mockClear();
+    await user.click(screen.getByRole("button", { name: "Expand Main" }));
+    await user.pointer({
+      keys: "[MouseRight]",
+      target: await screen.findByRole("button", { name: "First task" }),
+    });
+    expect(onRowActions).toHaveBeenCalledExactlyOnceWith({ kind: "pane", paneId: "p1" });
+  });
 });

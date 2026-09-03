@@ -59,6 +59,17 @@ export type NavigationIcon = "group" | "agent" | "shell" | "none";
  */
 export type NavigationStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
+/**
+ * What a row's own actions would act on — the Pane it stands for, or the Tab it groups.
+ *
+ * Separate from {@link NavigationTarget} because the two answer different questions: a Space row can
+ * be activated and has nothing to rename here, and a Tab group row can be renamed and activates
+ * nothing. A row with neither offers no actions at all.
+ */
+export type NavigationSubject =
+  | { kind: "pane"; paneId: string }
+  | { kind: "tab"; tabId: string };
+
 /** What activating a row does. A row without one only discloses. */
 export type NavigationTarget =
   | { kind: "space"; workspaceId: string }
@@ -85,6 +96,8 @@ export interface NavigationRow {
    */
   disclosureInverted?: true;
   target?: NavigationTarget;
+  /** What this row's own actions would rename or close. Absent on a Host and on a Space. */
+  subject?: NavigationSubject;
   selected: boolean;
   children: NavigationRow[];
 }
@@ -130,6 +143,7 @@ function paneRow(pane: NavigationPaneInput, selected: boolean): NavigationRow {
     label: pane.label,
     icon: pane.kind === "shell" ? "shell" : "agent",
     target: { kind: "pane", paneId: pane.paneId },
+    subject: { kind: "pane", paneId: pane.paneId },
     selected,
     children: [],
   };
@@ -244,6 +258,7 @@ export function deriveNavigationTree(input: {
             label: entry.tab.label,
             icon: "group",
             disclosureId: tabId,
+            subject: { kind: "tab", tabId: entry.tab.tabId },
             selected: false,
             children: paneRows,
           },

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Link, Outlet, Route, Routes, MemoryRouter } from "react-router";
+import { createMemoryRouter, Link, Outlet, RouterProvider } from "react-router";
 import { useEffect } from "react";
 
 import { NavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
@@ -80,17 +80,23 @@ function renderShell(store = new NavigationPreferenceStore(), onMount = vi.fn())
     );
   }
 
-  render(
-    <MemoryRouter initialEntries={["/"]}>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route index element={<Link to="/pane/p1">Open direct</Link>} />
-          <Route path="space/:spaceId" element={<div>Space route</div>} />
-          <Route path="pane/:paneId" element={<div>Pane route</div>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
+  // A DATA router, as the app's own root is: the shell revalidates after a rename or a close from a
+  // hierarchy row, and `useRevalidator` exists only under one.
+  const router = createMemoryRouter(
+    [
+      {
+        path: "/",
+        element: <Layout />,
+        children: [
+          { index: true, element: <Link to="/pane/p1">Open direct</Link> },
+          { path: "space/:spaceId", element: <div>Space route</div> },
+          { path: "pane/:paneId", element: <div>Pane route</div> },
+        ],
+      },
+    ],
+    { initialEntries: ["/"] },
   );
+  render(<RouterProvider router={router} />);
   return { store, onMount };
 }
 
