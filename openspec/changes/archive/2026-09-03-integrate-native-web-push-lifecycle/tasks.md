@@ -16,10 +16,10 @@
 - [x] 3.2 Run the full root and Web suites once at commit readiness with Bun 1.3.14, both typechecks, full-tree lint, production build, fork/version/OpenSpec checks, and exact staged diff review.
 - [x] 3.3 Run the public-tree/scope audit and verify no VAPID value, subscription endpoint, private config, new Push implementation, Gateway/service-worker/UI change, Discord collector, Pack, SSH, ttyd, or STT change entered the candidate.
 - [x] 3.4 Commit the complete action integration as one conventional commit on `v3-dev`, fetch/verify `origin/v3-dev`, push normally, and verify the exact remote commit remains public-safe and independently buildable.
-- [ ] 3.5 Update only the isolated v3 staging checkout to that exact commit, re-link/restart v3 without invoking either Push action, and verify Herdr reports both actions while live VAPID/subscription/STT state and all v2 processes remain unchanged.
+- [x] 3.5 Update only the isolated v3 staging checkout to that exact commit, re-link/restart v3 without invoking either Push action, and verify Herdr reports both actions while live VAPID/subscription/STT state and all v2 processes remain unchanged.
 
 ## 4. Reconcile and archive
 
-- [ ] 4.1 Present the action ids, exact commands, candidate commit, source link, verification, unchanged-live-state evidence, and rollback for owner acceptance.
-- [ ] 4.2 After acceptance, re-read the final implementation/artifacts, sync `fleet-native-web-push-actions` into canonical source specs, and archive the change through the generated workflow.
-- [ ] 4.3 Commit/push only the canonical spec and archive paths in a separate OpenSpec commit, redeploy the new exact archive HEAD without invoking Push, and report all source/deployment identities.
+- [x] 4.1 Present the action ids, exact commands, candidate commit, source link, verification, unchanged-live-state evidence, and rollback for owner acceptance.
+- [x] 4.2 After acceptance, re-read the final implementation/artifacts, sync `fleet-native-web-push-actions` into canonical source specs, and archive the change through the generated workflow.
+- [x] 4.3 Commit/push only the canonical spec and archive paths in a separate OpenSpec commit, redeploy the new exact archive HEAD without invoking Push, and report all source/deployment identities.
