@@ -126,7 +126,7 @@ describe("authenticated solo Gateway", () => {
     ).toBe(401);
   });
 
-  test("requires exact Origin for login and authenticated writes", async () => {
+  test("requires exact same-origin evidence for login and authenticated writes", async () => {
     const { handler } = await setup(async () => new Response("ok"));
     const crossOriginLogin = await handler(
       request("/auth/login", {
@@ -137,6 +137,18 @@ describe("authenticated solo Gateway", () => {
       { peerAddress: "127.0.0.1" },
     );
     expect(crossOriginLogin.status).toBe(403);
+    const refererLogin = await handler(
+      request("/auth/login", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          referer: `${config.public.origin}/auth/login`,
+        },
+        body: new URLSearchParams({ username: "operator", password: "gateway-test-password" }),
+      }),
+      { peerAddress: "127.0.0.1" },
+    );
+    expect(refererLogin.status).toBe(303);
     const cookie = await login(handler);
     const write = await handler(
       request("/api/pane/p1/reply", { method: "POST", headers: { cookie, origin: "https://evil.example" }, body: "x" }),
@@ -160,6 +172,7 @@ describe("authenticated solo Gateway", () => {
     expect((await handler(unknown, { peerAddress: "127.0.0.1" })).status).toBe(404);
     const loginPage = await handler(request("/auth/login"), { peerAddress: "127.0.0.1" });
     expect(loginPage.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(loginPage.headers.get("referrer-policy")).toBe("same-origin");
     expect(loginPage.headers.get("x-frame-options")).toBe("DENY");
     expect(loginPage.headers.get("cache-control")).toBe("no-store");
   });

@@ -31,6 +31,10 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Run the Gateway and Collie under one generation-qualified Herdr Fleet supervisor without an operating-system service.
 - Require a fresh Gateway decision for every PWA navigation and document the private authenticated lead contract.
 
+### Fixed
+
+- Preserve an exact same-origin Referer fallback for browsers that omit Origin on the login form POST.
+
 ## [1.2.0] - 2026-09-02
 
 ### Added

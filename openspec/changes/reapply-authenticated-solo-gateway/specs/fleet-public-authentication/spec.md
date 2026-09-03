@@ -71,7 +71,9 @@ Login and logout MUST use state-changing methods and exact configured-origin val
 return value SHALL be represented and accepted only as a normalized application-absolute path; it
 MUST reject an authority, alternate scheme, alternate port, user information, encoded authority,
 backslash ambiguity, control character, or path outside the application origin. Invalid input SHALL
-fall back to `/`.
+fall back to `/`. Login HTML SHALL retain enough same-origin referrer information for a browser that
+omits the `Origin` header to submit the form with an exact-origin `Referer`, while requests to another
+origin MUST receive no referrer information from that policy.
 
 #### Scenario: A valid deep link is requested
 - **WHEN** an unauthenticated navigation targets a normalized path and query within the public application origin
@@ -84,6 +86,10 @@ fall back to `/`.
 #### Scenario: A cross-origin form submits login or logout
 - **WHEN** the request Origin or fallback Referer does not exactly match the configured public origin
 - **THEN** the Gateway rejects the transition and neither creates nor revokes a session
+
+#### Scenario: A browser omits Origin on the login form
+- **WHEN** a browser submits the served login form without an Origin header
+- **THEN** its same-origin Referer supplies the existing exact-origin evidence and the Gateway does not reject a correct login as forbidden
 
 ### Requirement: Every public application API is session authenticated
 The Gateway SHALL be the only publicly reachable application listener. Every public `/api/*` request

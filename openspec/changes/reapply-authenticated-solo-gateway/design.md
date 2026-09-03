@@ -115,10 +115,12 @@ contract. Sliding renewal is deferred: the configured absolute lifetime remains 
 ### 5. Treat login transitions as exact-origin operations
 
 Both login and logout require POST plus exact configured Origin, falling back to an exact parsed
-Referer only when Origin is absent. Safe return values are stored as normalized paths beginning with
-one `/`; values beginning with `//`, containing authority/userinfo/control/backslash ambiguity, or
-resolving outside the application origin fall back to `/`. No absolute user-provided destination is
-ever emitted.
+Referer only when Origin is absent. Login HTML uses `Referrer-Policy: same-origin` so browsers that
+omit Origin can supply that exact fallback without disclosing navigation to another origin; other
+Gateway responses retain `no-referrer`. Safe return values are stored as normalized paths beginning
+with one `/`; values beginning with `//`, containing authority/userinfo/control/backslash ambiguity,
+or resolving outside the application origin fall back to `/`. No absolute user-provided destination
+is ever emitted.
 
 All form and credential lengths are checked before Argon2 work. Validly shaped failures run the same
 password verification and return the same message/status regardless of which credential was wrong.

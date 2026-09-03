@@ -42,14 +42,15 @@
 - [x] 5.4 Run the fork checker and tracked-tree privacy scan, verify no v2 multi-host/iframe/SSH/ttyd/Discord module or private deployment term entered the tree, and reconcile proposal/design/specs/tasks with the implementation.
 - [x] 5.5 Run all root and web tests, both typechecks, lint, version checks, production build, strict OpenSpec validation, and the exact staged diff review; resolve failures without weakening an existing upstream gate.
 - [x] 5.6 Update `FORK.toml` and `CHANGELOG.md`, commit the security/documentation candidate separately, fetch/verify `origin/v3-dev`, push normally, and verify the remote exact candidate commit is independently buildable.
+- [x] 5.7 Fix the staging-discovered browser form compatibility bug without weakening exact-origin CSRF checks: preserve a same-origin Referer fallback when Origin is omitted, add focused Gateway coverage, update the authentication spec/design and Changelog, and keep cross-origin referrers suppressed.
 
 ## 6. Validate the isolated staging deployment
 
-- [ ] 6.1 From private operator guidance, deploy only the exact pushed candidate to separate loopback ports and a separate HTTPS staging origin, recording concrete configuration solely in ignored `LOCAL.md`; verify the previous service, plugin, Herdr process, and panes remain unchanged.
+- [x] 6.1 From private operator guidance, deploy only the exact pushed candidate to separate loopback ports and a separate HTTPS staging origin, recording concrete configuration solely in ignored `LOCAL.md`; verify the previous service, plugin, Herdr process, and panes remain unchanged.
 - [ ] 6.2 Verify through the public HTTPS origin that correct login succeeds; wrong/oversized/cross-origin attempts are generic and bounded; cookie flags, expiry, restart persistence, logout revocation, copied-token refusal, and safe returns satisfy the authentication spec.
 - [ ] 6.3 Probe every public API family plus representative unknown/encoded paths without a session and verify no request reaches Collie; verify authenticated reads/writes work through the stock Collie UI and the session credential never reaches the upstream.
-- [ ] 6.4 Verify Host/Origin/forwarded-header/redirect/cache/service-worker negatives, security headers, TLS behavior, Caddy header replacement, loopback-only listeners, and the absence of a public raw Collie or Gateway port.
-- [ ] 6.5 Exercise removal and exact-commit redeployment of only the staging generation as rollback evidence, then present the candidate commit, source links, security results, known residual risks, and unchanged-service evidence for owner acceptance.
+- [x] 6.4 Verify Host/Origin/forwarded-header/redirect/cache/service-worker negatives, security headers, TLS behavior, Caddy header replacement, loopback-only listeners, and the absence of a public raw Collie or Gateway port.
+- [x] 6.5 Exercise removal and exact-commit redeployment of only the staging generation as rollback evidence, then present the candidate commit, source links, security results, known residual risks, and unchanged-service evidence for owner acceptance.
 
 ## 7. Reconcile and archive the source change
 

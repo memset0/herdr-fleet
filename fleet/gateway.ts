@@ -82,12 +82,14 @@ function json(body: JsonValue, status: number, headers: HeadersInit = {}): Respo
 }
 
 function html(body: string, status = 200, headers: HeadersInit = {}): Response {
-  return withBaseHeaders(
+  const response = withBaseHeaders(
     new Response(body, {
       status,
       headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": HTML_CSP, ...headers },
     }),
   );
+  response.headers.set("referrer-policy", "same-origin");
+  return response;
 }
 
 function redirect(location: string, headers: HeadersInit = {}): Response {
