@@ -214,8 +214,6 @@ strategy = "adapt"
 review = "every-upstream-sync"
 paths = [
   "web/src/routes/root.tsx#NativeNavigationShell",
-  "web/src/hooks/use-poll-busy.ts#navThresholdMs: number | null",
-  "web/src/hooks/use-poll-busy.test.ts#own chrome reports them",
   "web/src/components/app-header.tsx#leading?: ReactNode",
   "web/src/components/app-header.test.tsx#downstream leading node",
   "web/src/routes/home.tsx#flex min-h-0 w-full flex-1 flex-col",
@@ -243,7 +241,7 @@ verify = [
   "web/src/components/agent-list.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one slow-load signal a caller can decline outright, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list."
+reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list."
 [[invasive]]
 id = "native-pane-chrome-port"
 intent = "Let the Pane screen say its state in a row it already spends, rank its controls as one, and decline the shared mark, without moving product logic into Collie-owned files."

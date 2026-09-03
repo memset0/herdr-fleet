@@ -65,7 +65,6 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The strips fold automatically and only automatically: the manual control is gone, and the pane's state rides the folded bar as a word so the composer's band no longer comes back the moment the keyboard does.
 - The Agent rail's row puts its favourite control at the top-right and its age at the bottom-right, and the phone's hierarchy drawer wears the rail's own ground and title.
 
-- The shell reports its own route changes: opening a Pane no longer puts a wordless strip across the top of the phone. A write in flight and a genuinely hung poll still surface it.
 - The hierarchy has one compact density at every width, and its rows carry their own horizontal padding.
 
 ### Fixed

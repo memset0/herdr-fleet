@@ -23,9 +23,8 @@ export const POLL_BUSY_THRESHOLD_MS = 6_000;
 /**
  * Feed the app-wide busy bar from two independent slow-load signals, each against its own
  * threshold: a route navigation (`useNavigation`, e.g. opening a pane — user-blocking,
- * `navThresholdMs`, or `null` to leave navigations to the caller's own chrome) and a background
- * revalidation (`useRevalidator`, the poll — ambient, `pollThresholdMs`). Mount ONCE inside the
- * router (RootLayout).
+ * `navThresholdMs`) and a background revalidation (`useRevalidator`, the poll — ambient,
+ * `pollThresholdMs`). Mount ONCE inside the router (RootLayout).
  *
  * The two signals OR together into the shared `setPollBusy`: they can overlap (a poll already
  * stalled when you open a pane), and the bar shows the instant EITHER is past its own threshold,
@@ -34,10 +33,7 @@ export const POLL_BUSY_THRESHOLD_MS = 6_000;
  * unmount clears both. Complements the mutation counter in lib/busy.
  */
 export function usePollBusy(
-  // DOWNSTREAM PORT — `null` turns the navigation signal off entirely, which a threshold cannot say:
-  // there is no number that means "never", and a very large one is still a timer that eventually
-  // fires. A caller whose own chrome already reports a route change passes it (see routes/root.tsx).
-  navThresholdMs: number | null = NAV_BUSY_THRESHOLD_MS,
+  navThresholdMs = NAV_BUSY_THRESHOLD_MS,
   pollThresholdMs = POLL_BUSY_THRESHOLD_MS,
 ): void {
   const revalidator = useRevalidator();
@@ -46,7 +42,7 @@ export function usePollBusy(
   // string/object), so each effect re-runs only on its own true↔false edge. A burst of fast polls
   // never trips the poll timer, and it can't be reset early by an unrelated navigation edge (or
   // vice versa) since the two timers are fully decoupled.
-  const navLoading = navThresholdMs !== null && navigation.state !== "idle";
+  const navLoading = navigation.state !== "idle";
   const pollLoading = revalidator.state === "loading";
 
   const [navPast, setNavPast] = useState(false);
@@ -57,9 +53,7 @@ export function usePollBusy(
       setNavPast(false);
       return;
     }
-    // SAFETY: `navLoading` is false whenever the threshold is null, so this branch is unreachable
-    // without a number — the guard above is the narrowing.
-    const id = window.setTimeout(() => setNavPast(true), navThresholdMs ?? 0);
+    const id = window.setTimeout(() => setNavPast(true), navThresholdMs);
     return () => clearTimeout(id);
   }, [navLoading, navThresholdMs]);
 
