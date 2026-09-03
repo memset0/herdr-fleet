@@ -30,11 +30,11 @@
 ## 6. Validate, commit, push, and stage
 
 - [x] 6.1 At commit readiness run the full root and Web suites exactly once with Bun 1.3.14, both typechecks, full-tree lint, production build, version/fork/strict OpenSpec checks, privacy/scope audit, and exact staged-diff review; record test counts and do not rerun passing full suites.
-- [ ] 6.2 Commit the complete implementation as one conventional feature commit with the required co-author trailer, fetch and verify `origin/v3-dev`, push normally with `SKIP_TESTS=1` only after the final suite passes, and verify the remote exact commit is public-safe.
-- [ ] 6.3 Deploy only the exact pushed candidate to isolated v3 staging with pinned Bun and the existing pattern; preserve browser settings, STT, Push state, v2, and Herdr, re-link/restart only `memset0.herdr-fleet`, verify readiness, and update deployment state only afterward.
-- [ ] 6.4 Report planning and implementation commits, test counts, deployment identity, rollback, unchanged-service evidence, and the remaining owner browser checks without claiming acceptance.
+- [x] 6.2 Commit the complete implementation as one conventional feature commit with the required co-author trailer, fetch and verify `origin/v3-dev`, push normally with `SKIP_TESTS=1` only after the final suite passes, and verify the remote exact commit is public-safe.
+- [x] 6.3 Deploy only the exact pushed candidate to isolated v3 staging with pinned Bun and the existing pattern; preserve browser settings, STT, Push state, v2, and Herdr, re-link/restart only `memset0.herdr-fleet`, verify readiness, and update deployment state only afterward.
+- [x] 6.4 Report planning and implementation commits, test counts, deployment identity, rollback, unchanged-service evidence, and the remaining owner browser checks without claiming acceptance.
 
 ## 7. Archive only after owner browser acceptance
 
-- [ ] 7.1 After explicit owner acceptance, re-read all artifacts and implementation paths, incorporate any reality-driven corrections, and strictly validate the completed change.
-- [ ] 7.2 Sync `fleet-native-navigation-sidebars` into canonical specs and archive through the generated workflow, then commit/push only the archive/spec paths and redeploy that exact archive HEAD without changing code or local settings.
+- [x] 7.1 After explicit owner functional acceptance, re-read all artifacts and implementation paths, preserve the accepted behavior, defer remaining minor non-functional styling to a dedicated later style change, and strictly validate the completed change.
+- [x] 7.2 Sync `fleet-native-navigation-sidebars` into canonical specs and archive through the generated workflow, then commit/push only the archive/spec paths and deploy the final cumulative archive HEAD without changing code or local settings.
