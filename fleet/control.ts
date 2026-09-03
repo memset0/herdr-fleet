@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
 import { isUnavailableControlError, sendControl, type ControlOperation, type ControlResponse } from "./protocol.ts";
-import { ensurePrivateRuntime, resolveRuntimePaths } from "./runtime.ts";
+import { ensurePrivateRuntime, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
 
 const sleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
@@ -98,7 +98,7 @@ async function ensureSupervisor(): Promise<ControlResponse> {
       detached: true,
       stdio: "ignore",
       env: {
-        ...process.env,
+        ...sanitizedDaemonEnv(process.env),
         HERDR_FLEET_CONFIG: paths.configPath,
         HERDR_FLEET_GENERATION: paths.generation,
         HERDR_PLUGIN_ROOT: paths.pluginRoot,

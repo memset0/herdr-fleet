@@ -36,7 +36,7 @@ verify = ["scripts/check-fork.test.ts", "scripts/fork-manifest.test.ts"]
 [[owned]]
 id = "fleet-runtime"
 intent = "Provide the private authenticated Fleet runtime outside Collie-owned modules."
-paths = ["fleet/**", "scripts/herdr-fleet.sh"]
+paths = ["docs/herdr-fleet.md", "fleet/**", "scripts/herdr-fleet.sh"]
 contracts = ["private fleet.toml", "lead-only configuration", "sanitized Collie child environment"]
 verify = [
   "fleet/auth.test.ts",
@@ -49,7 +49,8 @@ verify = [
   "fleet/protocol.test.ts",
   "fleet/rate-limit.test.ts",
   "fleet/server.test.ts",
-  "fleet/session-store.test.ts"
+  "fleet/session-store.test.ts",
+  "fleet/sw-boundary.test.ts"
 ]
 
 [[invasive]]
@@ -91,3 +92,12 @@ review = "every-upstream-sync"
 paths = ["CHANGELOG.md#private Fleet configuration"]
 verify = ["CHANGELOG.md", "scripts/check-version.sh"]
 reason = "The existing changelog is the single release history enforced by the upstream version gate."
+
+[[invasive]]
+id = "authenticated-navigation-cache"
+intent = "Require a fresh Gateway decision before every document navigation."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = ["web/src/sw.ts#Authenticated app-shell boundary"]
+verify = ["fleet/sw-boundary.test.ts", "web/src/lib/sw-routes.test.ts"]
+reason = "The upstream service worker owns the app-shell navigation order and is the only place an authenticated document cache can be bypassed."

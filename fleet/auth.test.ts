@@ -44,6 +44,7 @@ describe("Fleet authentication", () => {
       expiresAt: 3_601_000,
     });
     expect(verifySessionToken(`${created.token.slice(0, -1)}x`, config, 1_000)).toBeNull();
+    expect(verifySessionToken("x".repeat(2_000), config, 1_000)).toBeNull();
     expect(verifySessionToken(created.token, config, created.expiresAt)).toBeNull();
     expect(verifySessionToken(created.token, config, -60_001)).toBeNull();
     const rotated = { ...config, auth: { ...config.auth, sessionSecret: Buffer.alloc(32, 12).toString("base64url") } };

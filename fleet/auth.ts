@@ -88,6 +88,7 @@ function parseClaims(encoded: string): SessionClaims | null {
 }
 
 export function verifySessionToken(token: string, config: FleetConfig, now: number = Date.now()): SessionClaims | null {
+  if (token.length > 1_024) return null;
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const encoded = parts[0] ?? "";

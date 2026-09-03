@@ -12,3 +12,7 @@ and source. Unchanged Collie behavior is upstream behavior, not a Herdr Fleet ca
 [`FORK.toml`](./FORK.toml) is the machine-readable boundary. New downstream behavior belongs in a
 declared owned root. A change to an upstream-owned file must expose a narrow port, carry a stable
 anchor and reason, and be reviewed again at every upstream synchronization.
+
+The generic downstream runtime and security contract is documented in
+[`docs/herdr-fleet.md`](./docs/herdr-fleet.md). Live configuration and deployment details are not
+part of this public repository.

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { childBackoffMs } from "./managed-child.ts";
-import { childSpecs, computeGeneration, resolveRuntimePaths } from "./runtime.ts";
+import { childSpecs, computeGeneration, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
 
 const root = resolve(import.meta.dir, "..");
@@ -63,6 +63,17 @@ describe("Herdr-owned Fleet lifecycle", () => {
       30_000,
       30_000,
     ]);
+  });
+
+  test("drops transient Herdr action context before the daemon outlives the action", () => {
+    const inherited = {
+      PATH: "/usr/bin",
+      HERDR_PLUGIN_ACTION_ID: "start",
+      HERDR_PLUGIN_CONTEXT_JSON: "sensitive action context",
+      HERDR_PANE_ID: "pane-a",
+    };
+    expect(sanitizedDaemonEnv(inherited)).toEqual({ PATH: "/usr/bin" });
+    expect(inherited.HERDR_PLUGIN_ACTION_ID).toBe("start");
   });
 
   test("keeps deferred product families out of production Fleet modules", () => {

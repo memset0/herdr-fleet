@@ -151,14 +151,15 @@ when its parsed origin exactly equals the configured Collie origin; relative red
 relative, and every other absolute origin is rejected rather than string-rewritten. Protected and
 authentication responses use `no-store`; hop-by-hop and stale encoding/length headers are removed.
 
-### 8. Preserve Collie's browser-cache boundary
+### 8. Put document navigation before Collie's precache route
 
-The upstream service worker already has a network-first exclusion for authentication routes. The
-fork will keep that behavior and add only the minimum assertion needed to ensure all document
-navigations reach the Gateway before an app-shell fallback. API and authentication responses never
-enter a runtime or precache path. Public static assets are restricted to known PWA update resources
-and validated immutable assets; source maps and arbitrary files do not inherit an asset-prefix
-exception.
+The upstream service worker excludes authentication/API paths from its SPA fallback, but registers
+`precacheAndRoute` before that fallback; an exact cached document can therefore answer without a
+fresh Gateway decision. The fork replaces only this ordering with the reviewed v2 behavior: one
+network-first NavigationRoute is registered before precaching, and the cached SPA document fallback
+is removed. API and authentication responses never enter a runtime or precache path. Public static
+assets remain available for PWA updates, while source maps and arbitrary files do not inherit an
+asset-prefix exception. Offline document navigation is deliberately traded for authentication.
 
 ### 9. Select, do not delete, the upstream Tailscale alternative
 
@@ -200,6 +201,9 @@ than pushed broken. No commit contains a live configuration or deployment value.
   broad process-name matching.
 - **[Release version remains upstream-derived during development]** -> Identify every staging build
   by exact commit; change versions and tags only in a separately authorized release operation.
+- **[Pack TLS behavior depends on the Bun runtime]** -> The complete Pack harness is verified on Bun
+  1.3.14; its unpinned-client canary fails on 1.3.12. Keep Pack disabled in this solo schema and do
+  not enable a later multi-host change on an older, unverified runtime.
 
 ## Migration Plan
 

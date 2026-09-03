@@ -1,10 +1,10 @@
 /// <reference lib="webworker" />
-import { precacheAndRoute, createHandlerBoundToURL } from "workbox-precaching";
+import { precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { clientsClaim } from "workbox-core";
 
 import { decidePush, notificationPath, type NotifData, type PushPayload } from "./lib/push-decision";
-import { FONT_URLS, NAVIGATION_NETWORK_ONLY } from "./lib/sw-routes";
+import { FONT_URLS } from "./lib/sw-routes";
 
 // Custom service worker (vite-plugin-pwa `injectManifest`). It does everything the old generated
 // Workbox SW did — precache the app shell + SPA-fallback navigations — PLUS the two handlers a
@@ -20,18 +20,14 @@ declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: (string | { url: string; revision: string | null })[];
 };
 
-// ── App-shell caching (parity with the previous generateSW config) ──────────────────────────────
+// ── Authenticated app-shell boundary ───────────────────────────────────────────────────────────
+// Every document navigation goes to the network before Workbox's precache routes are installed.
+// The Gateway, not a previously authenticated app-shell cache, therefore decides whether the
+// current request still owns a live session. Collie's bridge already serves the SPA fallback for
+// online deep links; authenticated Fleet deliberately gives up offline document navigation while
+// retaining immutable JS/CSS/icons in the precache.
+registerRoute(new NavigationRoute(({ request }) => fetch(request)));
 precacheAndRoute(self.__WB_MANIFEST);
-// SPA fallback so deep links (/pane/:id) resolve offline too. The denylist is the set of paths this
-// SW must never answer from the precache — the API, and the `/auth/` namespace reserved for a
-// fronting proxy's sign-in page. Without that second entry an installed PWA, which has no address
-// bar, has no reachable path to the proxy at all: every navigation, including a reload, is answered
-// by the cached app shell. See lib/sw-routes for the contract.
-registerRoute(
-  new NavigationRoute(createHandlerBoundToURL("/index.html"), {
-    denylist: [...NAVIGATION_NETWORK_ONLY],
-  }),
-);
 
 // The bundled Nerd Font faces are out of the precache on purpose — `unicode-range` keeps them lazy,
 // and ~1.1 MB is not something to charge an install for (vite.config.ts, index.css). Cache-first on

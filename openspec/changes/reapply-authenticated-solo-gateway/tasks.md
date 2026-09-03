@@ -36,12 +36,12 @@
 
 ## 5. Close the browser and public-source security boundary
 
-- [ ] 5.1 Inspect the Collie v1.2.0 service-worker navigation order, make only the minimum invasive change if the authenticated document boundary is not already guaranteed, and verify one focused test proves an expired/logged-out navigation cannot be satisfied by an app-shell or API cache.
-- [ ] 5.2 Add concise public documentation for the generic private `fleet.toml` schema, lead-only first-stage role, external HTTPS proxy contract, retained-but-inactive Tailscale path, and secret/logging boundary without committing a complete live configuration or deployment-specific value.
-- [ ] 5.3 Audit every public route and API classification, cookie attribute, Origin/Host/return path, forwarded/trusted header, redirect, cache rule, listener bind, error body, log line, and runtime file permission against the specs; add only missing focused regression cases.
-- [ ] 5.4 Run the fork checker and tracked-tree privacy scan, verify no v2 multi-host/iframe/SSH/ttyd/Discord module or private deployment term entered the tree, and reconcile proposal/design/specs/tasks with the implementation.
-- [ ] 5.5 Run all root and web tests, both typechecks, lint, version checks, production build, strict OpenSpec validation, and the exact staged diff review; resolve failures without weakening an existing upstream gate.
-- [ ] 5.6 Update `FORK.toml` and `CHANGELOG.md`, commit the security/documentation candidate separately, fetch/verify `origin/v3-dev`, push normally, and verify the remote exact candidate commit is independently buildable.
+- [x] 5.1 Inspect the Collie v1.2.0 service-worker navigation order, make only the minimum invasive change if the authenticated document boundary is not already guaranteed, and verify one focused test proves an expired/logged-out navigation cannot be satisfied by an app-shell or API cache.
+- [x] 5.2 Add concise public documentation for the generic private `fleet.toml` schema, lead-only first-stage role, external HTTPS proxy contract, retained-but-inactive Tailscale path, and secret/logging boundary without committing a complete live configuration or deployment-specific value.
+- [x] 5.3 Audit every public route and API classification, cookie attribute, Origin/Host/return path, forwarded/trusted header, redirect, cache rule, listener bind, error body, log line, and runtime file permission against the specs; add only missing focused regression cases.
+- [x] 5.4 Run the fork checker and tracked-tree privacy scan, verify no v2 multi-host/iframe/SSH/ttyd/Discord module or private deployment term entered the tree, and reconcile proposal/design/specs/tasks with the implementation.
+- [x] 5.5 Run all root and web tests, both typechecks, lint, version checks, production build, strict OpenSpec validation, and the exact staged diff review; resolve failures without weakening an existing upstream gate.
+- [x] 5.6 Update `FORK.toml` and `CHANGELOG.md`, commit the security/documentation candidate separately, fetch/verify `origin/v3-dev`, push normally, and verify the remote exact candidate commit is independently buildable.
 
 ## 6. Validate the isolated staging deployment
 

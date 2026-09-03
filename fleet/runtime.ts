@@ -91,6 +91,24 @@ export async function ensurePrivateRuntime(paths: RuntimePaths): Promise<void> {
   }
 }
 
+export function sanitizedDaemonEnv(inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...inherited };
+  for (const key of [
+    "HERDR_PLUGIN_ACTION_ID",
+    "HERDR_PLUGIN_CLICKED_URL",
+    "HERDR_PLUGIN_CONTEXT_JSON",
+    "HERDR_PLUGIN_EVENT",
+    "HERDR_PLUGIN_EVENT_JSON",
+    "HERDR_PLUGIN_LINK_HANDLER_ID",
+    "HERDR_PANE_ID",
+    "HERDR_TAB_ID",
+    "HERDR_WORKSPACE_ID",
+  ]) {
+    delete env[key];
+  }
+  return env;
+}
+
 export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: NodeJS.ProcessEnv): ChildSpec[] {
   const shared = {
     ...inherited,
