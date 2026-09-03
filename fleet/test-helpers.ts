@@ -57,6 +57,10 @@ session_secret = "${Buffer.alloc(32, 12).toString("base64url")}"
 session_ttl_seconds = 3600
 [proxy]
 client_ip_header = "X-Forwarded-For"
+[[reachability]]
+member_id = "peer-a"
+host = "127.0.0.1"
+port = 18901
 `);
   if (config.schemaVersion !== 2 || config.role !== "lead") {
     throw new Error("test configuration did not parse as schema 2 lead");
@@ -73,6 +77,20 @@ pack_state = "collie"
 [collie]
 host = "::1"
 port = 8787
+[transport]
+mode = "ssh-reverse"
+ssh_host = "lead.example.com"
+ssh_port = 22
+ssh_user = "fleet-tunnel"
+identity_file = "/synthetic/fleet/id_ed25519"
+known_hosts_file = "/synthetic/fleet/known_hosts"
+lead_bind_host = "127.0.0.1"
+lead_bind_port = 18901
+peer_bind_host = "::1"
+peer_bind_port = 18902
+lead_collie_host = "127.0.0.1"
+lead_collie_port = 8787
+retry_max_seconds = 60
 `);
   if (config.schemaVersion !== 2 || config.role !== "peer") {
     throw new Error("test configuration did not parse as schema 2 peer");

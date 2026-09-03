@@ -93,7 +93,7 @@ describe("Herdr-owned Fleet lifecycle", () => {
       HERDR_FLEET_SESSION_STATE: "/inherited/sessions.json",
       COLLIE_PUBLIC_URL: "https://inherited.example",
     });
-    expect(peer.map((spec) => spec.name)).toEqual(["collie"]);
+    expect(peer.map((spec) => spec.name)).toEqual(["collie", "link"]);
     expect(peer[0]?.env).toMatchObject({
       COLLIE_HOST: "::1",
       COLLIE_PORT: "8787",
@@ -102,6 +102,20 @@ describe("Herdr-owned Fleet lifecycle", () => {
     });
     expect(peer[0]?.env.HERDR_FLEET_SESSION_STATE).toBeUndefined();
     expect(peer[0]?.env.COLLIE_PUBLIC_URL).toBeUndefined();
+
+    // The link runs the platform SSH client and carries none of Fleet's own environment.
+    const link = peer[1];
+    expect(link?.command[0]).toBe("ssh");
+    expect(link?.logPath).toBe("/private/state/link.log");
+    expect(link?.maxBackoffMs).toBe(60_000);
+    expect(link?.env.HERDR_FLEET_CONFIG).toBeUndefined();
+    expect(link?.env.HERDR_FLEET_SESSION_STATE).toBeUndefined();
+    expect(link?.env.HERDR_PLUGIN_STATE_DIR).toBeUndefined();
+    // A Lead has no link child, and neither Lead branch gains one.
+    expect(childSpecs(fleetTestConfig(), paths, { PATH: "/usr/bin" }).map((spec) => spec.name)).toEqual([
+      "collie",
+      "gateway",
+    ]);
   });
 
   test("uses bounded exponential child restart delays", () => {
@@ -139,6 +153,7 @@ describe("Herdr-owned Fleet lifecycle", () => {
       "login-ui.ts",
       "managed-child.ts",
       "pack-authority.ts",
+      "pack-reachability.ts",
       "protocol.ts",
       "proxy.ts",
       "rate-limit.ts",
@@ -147,16 +162,24 @@ describe("Herdr-owned Fleet lifecycle", () => {
       "session-store.ts",
     ];
     const source = files.map((file) => readFileSync(resolve(import.meta.dir, file), "utf8")).join("\n");
-    for (const forbidden of ["iframe", "ttyd", "discord", "ssh-reverse", "ssh-forward"]) {
+    // `ssh-reverse` is now implemented, so it left this list. Everything here is still deferred, and
+    // `ssh-forward` stays out precisely because nothing consumes it yet.
+    for (const forbidden of ["iframe", "ttyd", "discord", "ssh-forward"]) {
+      expect(source.toLowerCase()).not.toContain(forbidden);
+    }
+    // The enrolment, rotation and aggregation verbs stay Collie's, not Fleet's.
+    for (const forbidden of ["pack invite", "pack join", "pack rotate", "pack approve", "truststore.update"]) {
       expect(source.toLowerCase()).not.toContain(forbidden);
     }
   });
 
-  test("validates native Pack authority before constructing children", () => {
+  test("validates native Pack authority and link material before constructing children", () => {
     const source = readFileSync(resolve(import.meta.dir, "daemon.ts"), "utf8");
+    const children = source.indexOf("const children = childSpecs(config, paths, process.env)");
     expect(source.indexOf("await validatePackAuthority(config, paths.collieStateDir);")).toBeLessThan(
-      source.indexOf("const children = childSpecs(config, paths, process.env)"),
+      children,
     );
+    expect(source.indexOf("await assertLinkFiles(config.transport);")).toBeLessThan(children);
   });
 
   test("the plugin manifest delegates only to the thin Fleet launcher", () => {

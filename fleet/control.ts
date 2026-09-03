@@ -4,14 +4,19 @@ import { join } from "node:path";
 
 import { loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
 import { validatePackAuthority } from "./pack-authority.ts";
+import { assertLinkFiles } from "./pack-reachability.ts";
 import { isUnavailableControlError, sendControl, type ControlOperation, type ControlResponse } from "./protocol.ts";
 import { ensurePrivateRuntime, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
 
 const sleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 export function formatStatus(result: ControlResponse): string {
+  // Schema 1 keeps its exact wording. Schema 2 adds the retry posture a stopped child is in, which
+  // is what tells an operator whether a down link is being recovered or has simply not started.
+  const posture = (child: ControlResponse["children"][number]): string =>
+    result.role !== undefined && child.restarts > 0 ? `stopped(retries=${child.restarts})` : "stopped";
   const children = result.children
-    .map((child) => `${child.name}=${child.running ? `running(pid=${child.pid})` : "stopped"}`)
+    .map((child) => `${child.name}=${child.running ? `running(pid=${child.pid})` : posture(child)}`)
     .join(" ");
   const role = result.role === undefined ? "" : ` role=${result.role}`;
   return `herdr-fleet: supervisor ${result.status} generation=${result.generation}${role} pid=${result.pid}${children === "" ? "" : ` ${children}`}`;
@@ -80,6 +85,7 @@ async function ensureSupervisor(): Promise<ControlResponse> {
   await ensurePrivateRuntime(paths);
   const config = await loadFleetConfig(paths.configPath);
   await validatePackAuthority(config, paths.collieStateDir);
+  if (config.schemaVersion === 2 && config.role === "peer") await assertLinkFiles(config.transport);
   const current = await query(paths.socketPath, "ensure", paths.generation);
   if (current?.status === "running" && current.generation === paths.generation) return current;
   if (current?.status === "replacing") await waitForRelease(paths.socketPath, paths.generation);

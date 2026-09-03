@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { jsonNumberField, jsonRecord, jsonStringField } from "../bridge/stt/json.ts";
 import type { JsonObject, JsonValue } from "../bridge/json.ts";
+import { isMemberId } from "../bridge/pack/identity.ts";
 
 export const FLEET_CONFIG_FILENAME = "fleet.toml";
 export const FLEET_CONFIG_ENV = "HERDR_FLEET_CONFIG";
@@ -40,7 +41,7 @@ export interface FleetGatewayConfig {
 export interface FleetSchema1LeadConfig extends FleetGatewayConfig {
   readonly schemaVersion: 1;
   readonly role: "lead";
-  readonly collie: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
+  readonly collie: FleetLoopbackEndpoint;
 }
 
 export interface FleetNativePackLifecycle {
@@ -48,18 +49,52 @@ export interface FleetNativePackLifecycle {
   readonly packState: "collie";
 }
 
+export interface FleetLoopbackEndpoint {
+  readonly host: "127.0.0.1" | "::1";
+  readonly port: number;
+}
+
+/**
+ * One member id projected onto the loopback endpoint the Lead dials it at. It is a projection of the
+ * membership Collie's trust store already owns, never a source of it, so it carries no certificate,
+ * secret, key, account or command.
+ */
+export interface FleetReachabilityEntry extends FleetLoopbackEndpoint {
+  readonly memberId: string;
+}
+
+/**
+ * The Peer's single outbound link. `leadBind` is where the Lead dials this Peer; the endpoint behind
+ * it is the Peer's own `collie` table rather than a second copy of that fact. `peerBind` is this
+ * Peer's local projection of `leadCollie`.
+ */
+export interface FleetTransportConfig {
+  readonly mode: "ssh-reverse";
+  readonly sshHost: string;
+  readonly sshPort: number;
+  readonly sshUser: string;
+  readonly identityFile: string;
+  readonly knownHostsFile: string;
+  readonly leadBind: FleetLoopbackEndpoint;
+  readonly peerBind: FleetLoopbackEndpoint;
+  readonly leadCollie: FleetLoopbackEndpoint;
+  readonly retryMaxSeconds: number;
+}
+
 export interface FleetSchema2LeadConfig extends FleetGatewayConfig {
   readonly schemaVersion: 2;
   readonly role: "lead";
   readonly lifecycle: FleetNativePackLifecycle;
-  readonly collie: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
+  readonly collie: FleetLoopbackEndpoint;
+  readonly reachability: readonly FleetReachabilityEntry[];
 }
 
 export interface FleetSchema2PeerConfig {
   readonly schemaVersion: 2;
   readonly role: "peer";
   readonly lifecycle: FleetNativePackLifecycle;
-  readonly collie: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
+  readonly collie: FleetLoopbackEndpoint;
+  readonly transport: FleetTransportConfig;
 }
 
 export type FleetLeadConfig = FleetSchema1LeadConfig | FleetSchema2LeadConfig;
@@ -200,13 +235,120 @@ function proxyConfig(value: JsonValue | undefined): FleetGatewayConfig["proxy"] 
   return { clientIpHeader: header };
 }
 
-function collieConfig(value: JsonValue | undefined): FleetConfig["collie"] {
+function collieConfig(value: JsonValue | undefined): FleetLoopbackEndpoint {
   const raw = table(value, "collie");
   exactKeys(raw, ["host", "port"], "collie");
   return {
     host: loopbackHost(raw.host, "collie.host"),
     port: integer(raw.port, "collie.port", 1, 65_535),
   };
+}
+
+/**
+ * A loopback endpoint spelled as two sibling fields inside a larger table. Every projection endpoint
+ * this schema admits goes through `loopbackHost`, so a wildcard, any-address or empty bind is
+ * refused here rather than by the SSH client after a connection has already been attempted.
+ */
+function loopbackEndpoint(raw: JsonObject, prefix: string, label: string): FleetLoopbackEndpoint {
+  return {
+    host: loopbackHost(raw[`${prefix}_host`], `${label}.${prefix}_host`),
+    port: integer(raw[`${prefix}_port`], `${label}.${prefix}_port`, 1, 65_535),
+  };
+}
+
+function sameEndpoint(left: FleetLoopbackEndpoint, right: FleetLoopbackEndpoint): boolean {
+  return left.host === right.host && left.port === right.port;
+}
+
+function absolutePath(value: JsonValue | undefined, label: string): string {
+  const path = text(value, label);
+  if (!isAbsolute(path)) throw new Error(`${label} must be an absolute path`);
+  return path;
+}
+
+function transportConfig(value: JsonValue | undefined, collie: FleetLoopbackEndpoint): FleetTransportConfig {
+  const raw = table(value, "transport");
+  exactKeys(
+    raw,
+    [
+      "mode",
+      "ssh_host",
+      "ssh_port",
+      "ssh_user",
+      "identity_file",
+      "known_hosts_file",
+      "lead_bind_host",
+      "lead_bind_port",
+      "peer_bind_host",
+      "peer_bind_port",
+      "lead_collie_host",
+      "lead_collie_port",
+      "retry_max_seconds",
+    ],
+    "transport",
+  );
+  // One mode literal, and only the one with a runtime behind it. A second literal accepted here
+  // would read as supported while nothing consumes it.
+  if (raw.mode !== "ssh-reverse") throw new Error("transport.mode must be ssh-reverse");
+  const sshHost = text(raw.ssh_host, "transport.ssh_host");
+  if (!/^[A-Za-z0-9._:-]{1,253}$/.test(sshHost)) {
+    throw new Error("transport.ssh_host must be a hostname or address");
+  }
+  const sshUser = text(raw.ssh_user, "transport.ssh_user");
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(sshUser)) {
+    throw new Error("transport.ssh_user must be 1 to 64 safe characters");
+  }
+  const leadBind = loopbackEndpoint(raw, "lead_bind", "transport");
+  const peerBind = loopbackEndpoint(raw, "peer_bind", "transport");
+  const leadCollie = loopbackEndpoint(raw, "lead_collie", "transport");
+  // Both Lead-side endpoints live on one machine, so a collision would have the reverse projection
+  // fight the Lead's own Collie listener for the port.
+  if (sameEndpoint(leadBind, leadCollie)) {
+    throw new Error("transport.lead_bind and transport.lead_collie must use distinct endpoints");
+  }
+  // Both Peer-side endpoints live on this machine, and the local projection must not shadow the
+  // Collie listener the reverse projection publishes.
+  if (sameEndpoint(peerBind, collie)) {
+    throw new Error("transport.peer_bind and collie must use distinct endpoints");
+  }
+  return {
+    mode: "ssh-reverse",
+    sshHost,
+    sshPort: integer(raw.ssh_port ?? 22, "transport.ssh_port", 1, 65_535),
+    sshUser,
+    identityFile: absolutePath(raw.identity_file, "transport.identity_file"),
+    knownHostsFile: absolutePath(raw.known_hosts_file, "transport.known_hosts_file"),
+    leadBind,
+    peerBind,
+    leadCollie,
+    retryMaxSeconds: integer(raw.retry_max_seconds ?? 60, "transport.retry_max_seconds", 1, 3_600),
+  };
+}
+
+function reachabilityList(value: JsonValue | undefined): readonly FleetReachabilityEntry[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("reachability must be a list of tables");
+  const entries: FleetReachabilityEntry[] = [];
+  for (const [index, item] of value.entries()) {
+    const label = `reachability[${index}]`;
+    const raw = table(item, label);
+    exactKeys(raw, ["member_id", "host", "port"], label);
+    const memberId = text(raw.member_id, `${label}.member_id`);
+    if (!isMemberId(memberId)) throw new Error(`${label}.member_id must be a Pack member id`);
+    const entry: FleetReachabilityEntry = {
+      memberId,
+      host: loopbackHost(raw.host, `${label}.host`),
+      port: integer(raw.port, `${label}.port`, 1, 65_535),
+    };
+    if (entries.some((seen) => seen.memberId === entry.memberId)) {
+      throw new Error(`${label}.member_id is already mapped`);
+    }
+    if (entries.some((seen) => sameEndpoint(seen, entry))) {
+      throw new Error(`${label} reuses an endpoint already mapped to another member`);
+    }
+    entries.push(entry);
+  }
+  return entries;
 }
 
 function gatewayConfig(root: JsonObject): FleetGatewayConfig {
@@ -268,23 +410,38 @@ function nativePackLifecycle(value: JsonValue | undefined): FleetNativePackLifec
 
 function parseSchema2(root: JsonObject): FleetNativePackConfig {
   if (root.role !== "lead" && root.role !== "peer") throw new Error("role must be lead or peer");
-  const shared = {
-    schemaVersion: 2 as const,
-    lifecycle: nativePackLifecycle(root.lifecycle),
-    collie: collieConfig(root.collie),
-  };
   if (root.role === "peer") {
-    exactKeys(root, ["schema_version", "role", "lifecycle", "collie"], "fleet.toml");
-    return { ...shared, role: "peer" };
+    exactKeys(root, ["schema_version", "role", "lifecycle", "collie", "transport"], "fleet.toml");
+    const collie = collieConfig(root.collie);
+    return {
+      schemaVersion: 2,
+      role: "peer",
+      lifecycle: nativePackLifecycle(root.lifecycle),
+      collie,
+      transport: transportConfig(root.transport, collie),
+    };
   }
   exactKeys(
     root,
-    ["schema_version", "role", "lifecycle", "listen", "public", "collie", "auth", "proxy"],
+    [
+      "schema_version",
+      "role",
+      "lifecycle",
+      "listen",
+      "public",
+      "collie",
+      "auth",
+      "proxy",
+      "reachability",
+    ],
     "fleet.toml",
   );
   const normalized: FleetSchema2LeadConfig = {
-    ...shared,
+    schemaVersion: 2,
     role: "lead",
+    lifecycle: nativePackLifecycle(root.lifecycle),
+    collie: collieConfig(root.collie),
+    reachability: reachabilityList(root.reachability),
     ...gatewayConfig(root),
   };
   assertDistinctEndpoints(normalized);

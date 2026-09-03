@@ -103,10 +103,12 @@ Alternatives rejected:
 
 ### 6. Recovery is bounded, Peer-owned and does not disturb Collie
 
-The link child retries on its own bounded exponential backoff with jitter, capped by the configured
-ceiling. A link failure never restarts the Collie child, and the Lead never creates or adopts a Peer's
-connection. Stopping the plugin ends the link child with the generation, leaving no orphaned process
-and no published projection.
+The link child rides the supervisor's existing per-child bounded exponential backoff, with its
+maximum interval set from the configured ceiling rather than the supervisor default. A second retry
+mechanism would be one more thing to reason about for behavior the generation-owned supervisor
+already provides per child. A link failure never restarts the Collie child, and the Lead never
+creates or adopts a Peer's connection. Stopping the plugin ends the link child with the generation,
+leaving no orphaned process and no published projection.
 
 Alternative rejected: restarting the runtime on link loss. It would take a working local Collie down
 for a network fault, which is precisely the "a peer that cannot reach its lead keeps working locally"

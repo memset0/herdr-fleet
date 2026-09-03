@@ -63,6 +63,54 @@ describe("Fleet native Pack authority", () => {
     ).rejects.toThrow("trust state is conflicted");
   });
 
+  test("a lead's reachability list must equal Collie's enrolled member set", async () => {
+    const lead = fleetTestPackLeadConfig();
+    const roster = (...ids: string[]) =>
+      leadStore({ peers: ids.map((memberId) => member({ memberId })) });
+
+    // The fixture maps exactly `peer-a`, so agreement is the passing case.
+    await expect(
+      validatePackAuthority(lead, "/unused", async () => roster("peer-a")),
+    ).resolves.toBeUndefined();
+
+    // Enrolled but unmapped: the Lead would believe in a member it cannot dial.
+    await expect(
+      validatePackAuthority(lead, "/unused", async () => roster("peer-a", "peer-b")),
+    ).rejects.toThrow("Collie Pack member peer-b has no fleet.toml reachability entry");
+
+    // Mapped but not enrolled: configuration trying to be a second roster.
+    const overMapped = {
+      ...lead,
+      reachability: [...lead.reachability, { memberId: "peer-b", host: "127.0.0.1", port: 18_902 }],
+    } as const;
+    await expect(
+      validatePackAuthority(overMapped, "/unused", async () => roster("peer-a")),
+    ).rejects.toThrow("fleet.toml reachability names peer-b, which Collie has not enrolled");
+
+    // A peer carries no mapping at all, so the check never runs against one.
+    await expect(
+      validatePackAuthority(fleetTestPackPeerConfig(), "/unused", async () => peerStore()),
+    ).resolves.toBeUndefined();
+  });
+
+  test("a mismatched reachability list leaves the store byte-for-byte unchanged", async () => {
+    const root = await mkdtemp(join(import.meta.dir, ".pack-reachability-"));
+    try {
+      await mkdir(root, { recursive: true, mode: 0o700 });
+      const path = join(root, TRUST_STORE_FILENAME);
+      await writeFile(path, serializeTrustStore(leadStore({ peers: [member({ memberId: "peer-z" })] })), {
+        mode: 0o600,
+      });
+      const before = await readFile(path);
+      await expect(validatePackAuthority(fleetTestPackLeadConfig(), root)).rejects.toThrow(
+        "has no fleet.toml reachability entry",
+      );
+      expect(await readFile(path)).toEqual(before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("production validation reads Collie's store without changing its bytes", async () => {
     const root = await mkdtemp(join(import.meta.dir, ".pack-authority-"));
     try {

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { collieChildEnv } from "./collie-env.ts";
 import { isFleetLeadConfig, type FleetConfig } from "./config.ts";
+import { sshLinkCommand } from "./pack-reachability.ts";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -24,11 +25,13 @@ export interface RuntimePaths {
 }
 
 export interface ChildSpec {
-  readonly name: "collie" | "gateway";
+  readonly name: "collie" | "gateway" | "link";
   readonly command: readonly string[];
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly logPath: string;
+  /** The link child's recovery ceiling; omitted children keep the supervisor's own default. */
+  readonly maxBackoffMs?: number;
 }
 
 function productionFiles(root: string, relative: string): string[] {
@@ -138,6 +141,21 @@ export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: 
       cwd: paths.pluginRoot,
       env: { ...shared, HERDR_FLEET_SESSION_STATE: paths.sessionStatePath },
       logPath: join(paths.stateDir, "gateway.log"),
+    });
+  } else {
+    // The link runs the platform SSH client, so it receives the ambient environment and none of
+    // Fleet's own: no configuration path, no session state, no Collie state directory.
+    const linkEnv = { ...inherited };
+    for (const key of ["HERDR_FLEET_CONFIG", "HERDR_FLEET_SESSION_STATE", "HERDR_PLUGIN_STATE_DIR"]) {
+      delete linkEnv[key];
+    }
+    children.push({
+      name: "link",
+      command: sshLinkCommand(config),
+      cwd: paths.pluginRoot,
+      env: linkEnv,
+      logPath: join(paths.stateDir, "link.log"),
+      maxBackoffMs: config.transport.retryMaxSeconds * 1_000,
     });
   }
   return children;

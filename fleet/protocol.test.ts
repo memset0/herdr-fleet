@@ -48,6 +48,18 @@ describe("Fleet supervisor protocol", () => {
     expect(formatStatus({ ...base, role: "peer" })).toBe(
       "herdr-fleet: supervisor running generation=abc role=peer pid=7 collie=running(pid=8)",
     );
+
+    // A stopped child's retry posture is schema-2 only, so schema 1 text stays byte-identical.
+    const retrying = {
+      ...base,
+      children: [{ name: "link", pid: null, running: false, restarts: 3, nextRestartAt: 42 }],
+    };
+    expect(formatStatus(retrying)).toBe(
+      "herdr-fleet: supervisor running generation=abc pid=7 link=stopped",
+    );
+    expect(formatStatus({ ...retrying, role: "peer" })).toBe(
+      "herdr-fleet: supervisor running generation=abc role=peer pid=7 link=stopped(retries=3)",
+    );
   });
 
   test("exchanges one bounded line over a private Unix socket", async () => {

@@ -33,8 +33,8 @@ Schema version 1 accepts these fields:
 | `auth.rate_limit` | bounded failure/window/block/source and aggregate fields | Optional overrides for the finite login budgets. |
 | `proxy` | `client_ip_header` | Header the loopback HTTPS proxy replaces with one client IP. |
 
-Every table rejects unknown fields. `peer`, `hosts`, `transport`, `ssh`, and `pack` are not dormant
-options in version 1: supplying one fails startup without partially enabling it. The Pack trust and
+Every table rejects unknown fields. `peer`, `hosts`, `transport`, `reachability`, `ssh`, and `pack`
+are not dormant options in version 1: supplying one fails startup without partially enabling it. The Pack trust and
 operations JSON files remain Collie-managed state and are never configuration inputs.
 
 Do not commit a complete configuration, password hash, signing secret, session state, hostname,
@@ -44,8 +44,8 @@ Schema version 2 selects Collie's native Pack lifecycle without copying its trus
 
 | Role | Required tables | Runtime |
 | --- | --- | --- |
-| `lead` | root, `lifecycle`, `listen`, `public`, `collie`, `auth`; optional `auth.rate_limit` and `proxy` | One loopback Collie plus one loopback authenticated Gateway. |
-| `peer` | root, `lifecycle`, `collie` | One loopback Collie only; no Gateway, browser account, session store, or public listener. |
+| `lead` | root, `lifecycle`, `listen`, `public`, `collie`, `auth`; optional `auth.rate_limit`, `proxy` and `reachability` | One loopback Collie plus one loopback authenticated Gateway. |
+| `peer` | root, `lifecycle`, `collie`, `transport` | One loopback Collie plus one supervised SSH link; no Gateway, browser account, session store, or public listener. |
 
 Both roles require:
 
@@ -63,9 +63,60 @@ port = 8787
 ```
 
 A Lead then supplies the same synthetic-shape Gateway tables documented for schema 1. A Peer must
-not supply them. Neither role accepts members, addresses, transport endpoints, SSH keys/commands,
-Pack secrets, certificates, or alternate trust paths. Future reachability configuration belongs to
-a later schema change rather than a dormant field here.
+not supply them. Neither role accepts members, Pack secrets, certificates, fingerprints, passwords,
+remote commands, or alternate trust paths.
+
+### Reachability
+
+Reachability is the operator's, exactly as `PACK_PROTOCOL.md` §8.2 states: Collie authenticates a
+member, and nothing here does. A Peer opens one outbound SSH connection carrying two loopback
+projections and nothing else — a remote projection publishing this Peer's own `[collie]` endpoint at
+a Lead-local address, and a local projection publishing the Lead's Collie at a Peer-local address.
+The Peer's own projected endpoint is derived from `[collie]` rather than restated here.
+
+```toml
+[transport]
+mode = "ssh-reverse"
+ssh_host = "lead.example.com"
+ssh_port = 22
+ssh_user = "fleet-tunnel"
+identity_file = "/private/fleet/id_ed25519"
+known_hosts_file = "/private/fleet/known_hosts"
+lead_bind_host = "127.0.0.1"
+lead_bind_port = 18901
+peer_bind_host = "127.0.0.1"
+peer_bind_port = 18902
+lead_collie_host = "127.0.0.1"
+lead_collie_port = 8787
+retry_max_seconds = 60
+```
+
+A Lead names where it dials each member, and only that:
+
+```toml
+[[reachability]]
+member_id = "peer-a"
+host = "127.0.0.1"
+port = 18901
+```
+
+`mode` admits exactly `ssh-reverse`; a mode with no runtime behind it is refused rather than accepted
+as dormant. Every projection bind must be loopback, a Lead rejects `[transport]`, a Peer rejects
+`[[reachability]]`, and neither table accepts trust material of any kind. The identity file must be
+owner-only and is checked before a connection is attempted.
+
+The link is restricted by construction: no remote command, shell, or PTY; no inherited user SSH
+configuration; no agent, X11, dynamic, or additional forwarding; no multiplexing; strict host-key
+checking against the configured `known_hosts`; and `ExitOnForwardFailure`, so a projection that
+cannot bind ends the attempt instead of leaving one direction silently missing. The Peer owns
+recovery under bounded backoff capped by `retry_max_seconds`, and a link failure never restarts the
+Collie child.
+
+An established link asserts nothing. It grants TCP reachability and no membership, admission, or
+role, and a dead link revokes nothing and changes no trust state. A Lead's `[[reachability]]` list is
+a projection of the membership Collie already owns: its member ids must equal Collie's enrolled set,
+checked read-only before any child starts, and a disagreement fails closed rather than being
+reconciled.
 
 Before a schema-2 child starts, Fleet uses Collie's existing trust reader and mode derivation against
 the Collie child's isolated state directory. The configured role must match a valid active native

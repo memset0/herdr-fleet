@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { loadFleetConfig } from "./config.ts";
 import { ManagedChild } from "./managed-child.ts";
 import { validatePackAuthority } from "./pack-authority.ts";
+import { assertLinkFiles, probeEndpoint } from "./pack-reachability.ts";
 import { parseControlRequest, type ControlResponse } from "./protocol.ts";
 import { childSpecs, ensurePrivateRuntime, resolveRuntimePaths } from "./runtime.ts";
 
@@ -37,34 +38,18 @@ async function endpointReady(url: string, host: string): Promise<boolean> {
   }
 }
 
-async function tcpReady(host: string, port: number): Promise<boolean> {
-  return await new Promise((resolve) => {
-    const socket = net.createConnection({ host, port });
-    let settled = false;
-    const done = (ready: boolean): void => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(ready);
-    };
-    socket.setTimeout(400);
-    socket.once("connect", () => done(true));
-    socket.once("timeout", () => done(false));
-    socket.once("error", () => done(false));
-  });
-}
-
 async function main(): Promise<void> {
   const paths = resolveRuntimePaths();
   await ensurePrivateRuntime(paths);
   const config = await loadFleetConfig(paths.configPath);
   await validatePackAuthority(config, paths.collieStateDir);
+  if (config.schemaVersion === 2 && config.role === "peer") await assertLinkFiles(config.transport);
   const children = childSpecs(config, paths, process.env).map(
     (spec) =>
       new ManagedChild({
         ...spec,
         minBackoffMs: 1_000,
-        maxBackoffMs: 30_000,
+        maxBackoffMs: spec.maxBackoffMs ?? 30_000,
       }),
   );
   const startedAt = Date.now();
@@ -79,7 +64,14 @@ async function main(): Promise<void> {
 
   const readiness = async () => {
     if (!children.every((child) => child.status().running)) return false;
-    if (config.role === "peer") return await tcpReady(config.collie.host, config.collie.port);
+    if (config.role === "peer") {
+      // Native Peer mTLS correctly refuses an unauthenticated HTTP readiness request, so both peer
+      // checks are TCP connects: Collie's own listener, then the link's local projection. The remote
+      // projection needs no probe from here — `ExitOnForwardFailure` ends the attempt when it fails,
+      // so a running link child has already bound it.
+      if (!(await probeEndpoint(config.collie))) return false;
+      return await probeEndpoint(config.transport.peerBind);
+    }
     const collie = await endpointReady(
       endpoint(config.collie.host, config.collie.port, "/api/config"),
       config.collie.host.includes(":") ? `[${config.collie.host}]:${config.collie.port}` : `${config.collie.host}:${config.collie.port}`,
