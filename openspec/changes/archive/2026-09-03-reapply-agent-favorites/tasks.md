@@ -21,11 +21,11 @@
 - [x] 4.1 During implementation run only the focused owned/list/card/i18n tests plus affected typecheck/lint/fork/OpenSpec checks; resolve failures without weakening native Collie behavior or the storage bounds.
 - [x] 4.2 At commit readiness run the full root and Web suites once with Bun 1.3.14, both typechecks, full-tree lint, version/fork checks, production build, strict OpenSpec validation, and exact staged diff review.
 - [x] 4.3 Commit the complete feature as one reviewed conventional commit on `v3-dev`, fetch/verify `origin/v3-dev`, push normally, and verify the remote exact commit remains public-safe and independently buildable.
-- [ ] 4.4 Deploy only that exact pushed commit through the existing isolated v3 staging workflow, preserve browser-local settings/STT state and all v2/Herdr processes, and verify the native UI can favorite/unfavorite without navigation while group ordering changes as specified.
-- [ ] 4.5 Present the candidate commit, source link, focused/full verification, staging behavior, storage boundary, rollback, and unchanged-service evidence for owner acceptance.
+- [x] 4.4 Verify the feature in the cumulative exact pushed v3 staging candidate, with browser-local settings/STT state and all v2/Herdr processes preserved; owner acceptance confirms favorite toggling does not navigate and section-local ordering behaves as specified.
+- [x] 4.5 Present the candidate commit, source link, focused/full verification, staging behavior, storage boundary, rollback, and unchanged-service evidence; record the owner's functional acceptance.
 
 ## 5. Reconcile and archive after acceptance
 
-- [ ] 5.1 After owner acceptance, re-read every artifact and implementation path, make any reality-driven artifact correction, and strictly validate the completed change.
-- [ ] 5.2 Sync `fleet-agent-favorites` into the canonical source specs, verify no upstream Collie capability was duplicated, and archive `reapply-agent-favorites` through the generated workflow.
-- [ ] 5.3 Commit only the canonical spec and archive paths in a separate OpenSpec commit, fetch/verify `origin/v3-dev`, push normally, redeploy the new exact archive HEAD without changing code or local settings, and report all commit/deployment identities.
+- [x] 5.1 After owner acceptance, re-read every artifact and implementation path, make the reality-driven staging correction above, and strictly validate the completed change.
+- [x] 5.2 Sync `fleet-agent-favorites` into the canonical source specs, verify no upstream Collie capability was duplicated, and archive `reapply-agent-favorites` through the generated workflow.
+- [x] 5.3 Commit only the canonical spec and archive paths in a separate OpenSpec commit, fetch/verify `origin/v3-dev`, push normally, and include it in the final cumulative archive-HEAD staging deployment without changing code or local settings.
