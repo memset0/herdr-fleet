@@ -173,6 +173,17 @@ export const ko: Dictionary = {
   "settings.display.textSize.label": "글꼴 크기",
   "settings.display.textSize.decrease": "글꼴 축소",
   "settings.display.textSize.increase": "글꼴 확대",
+  "settings.display.resize.label": "크기 조정",
+  "settings.display.resize.badge": "사용자 지정",
+  "settings.display.resize.hint":
+    "공유 Pane 너비를 현재 보기에 한 번 맞춥니다. 이후 레이아웃 변경은 크기를 바꾸지 않습니다.",
+  "settings.display.resize.aria": "Pane을 현재 보기에 맞추기",
+  "settings.display.resize.busy": "크기 조정 중…",
+  "settings.display.resize.success": "{cols}열 × {rows}행으로 조정했습니다.",
+  "settings.display.resize.geometryError": "아직 터미널 너비를 측정할 수 없습니다.",
+  "settings.display.resize.unsupported": "이 멀티플렉서는 Pane 크기 조정을 지원하지 않습니다.",
+  "settings.display.resize.conflict": "다른 컨트롤러가 이미 이 Pane을 제어하고 있습니다.",
+  "settings.display.resize.failed": "Pane 크기를 조정하지 못했습니다.",
 
   // --- settings.buildStamp ---
   "settings.buildStamp.tapToUpdate": "새 빌드 있음. 탭하여 업데이트",

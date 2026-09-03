@@ -87,6 +87,8 @@ export interface SessionParts {
   engine: StateEngine;
   poker: EventPoker;
   notifications: NotificationCoordinator;
+  /** Optional downstream-owned session cleanup, invoked before the runtime is forgotten. */
+  dispose?: () => void;
 }
 
 /** A fully-built, running session runtime: its parts plus its identity in the registry. */
@@ -259,6 +261,7 @@ export class SessionRegistry {
   }
 
   private dispose(rt: SessionRuntime): void {
+    rt.dispose?.();
     rt.engine.stop();
     rt.poker.stop();
     // Retract anything this session had on the lock screen — its slot must not linger.

@@ -165,6 +165,16 @@ export const zh: Dictionary = {
   "settings.display.textSize.label": "字号大小",
   "settings.display.textSize.decrease": "缩小字号",
   "settings.display.textSize.increase": "放大字号",
+  "settings.display.resize.label": "调整大小",
+  "settings.display.resize.badge": "自定义",
+  "settings.display.resize.hint": "仅将共享 Pane 宽度适配当前视图一次；后续布局变化不会自动调整。",
+  "settings.display.resize.aria": "将 Pane 调整为当前视图宽度",
+  "settings.display.resize.busy": "正在调整…",
+  "settings.display.resize.success": "已调整为 {cols} 列 × {rows} 行。",
+  "settings.display.resize.geometryError": "终端宽度尚无法测量。",
+  "settings.display.resize.unsupported": "当前多路复用器不支持调整 Pane 大小。",
+  "settings.display.resize.conflict": "另一个控制器已在控制此 Pane。",
+  "settings.display.resize.failed": "无法调整 Pane 大小。",
 
   // --- settings.buildStamp ---
   "settings.buildStamp.tapToUpdate": "检测到新版本，点击更新",

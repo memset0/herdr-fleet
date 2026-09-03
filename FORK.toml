@@ -41,7 +41,8 @@ contracts = [
   "private fleet.toml",
   "lead-only configuration",
   "sanitized Collie child environment",
-  "bounded browser-local Agent favorites"
+  "bounded browser-local Agent favorites",
+  "explicit Herdr-only manual Pane fit"
 ]
 verify = [
   "fleet/auth.test.ts",
@@ -56,7 +57,11 @@ verify = [
   "fleet/server.test.ts",
   "fleet/session-store.test.ts",
   "fleet/sw-boundary.test.ts",
-  "fleet/ui/agent-favorites.test.ts"
+  "fleet/ui/agent-favorites.test.ts",
+  "fleet/manual-pane-fit/action.test.ts",
+  "fleet/manual-pane-fit/capability.test.ts",
+  "fleet/manual-pane-fit/controller.test.ts",
+  "fleet/ui/manual-pane-fit.test.ts"
 ]
 
 [[invasive]]
@@ -134,3 +139,45 @@ review = "every-upstream-sync"
 paths = ["web/src/sw.ts#Authenticated app-shell boundary"]
 verify = ["fleet/sw-boundary.test.ts", "web/src/lib/sw-routes.test.ts"]
 reason = "The upstream service worker owns the app-shell navigation order and is the only place an authenticated document cache can be bypassed."
+
+[[invasive]]
+id = "native-manual-pane-fit-port"
+intent = "Expose one explicit Herdr-only Pane fit through Collie's native Display Settings and protected Pane lifecycle."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "bridge/index.ts#manualPaneFit",
+  "bridge/mux/capabilities.ts#resizePane",
+  "bridge/mux/herdr/adapter.ts#resizePane",
+  "bridge/mux/types.ts#viewportRows",
+  "bridge/server.ts#manualPaneFit",
+  "bridge/solo-baseline.test.ts#resize",
+  "bridge/sessions.ts#dispose",
+  "bridge/sessions.test.ts#downstream",
+  "bridge/state-engine.ts#paneViewportRows",
+  "bridge/state-engine.test.ts#viewportRows",
+  "bridge/types.ts#viewportRows",
+  "web/src/components/agent-chat.tsx#runManualPaneFit",
+  "web/src/components/agent-chat.test.tsx#explicit manual Pane fit",
+  "web/src/components/composer.tsx#displayPrefsAfterTextSize",
+  "web/src/components/composer.test.tsx#Custom",
+  "web/src/components/display-prefs.tsx#afterTextSize",
+  "web/src/lib/api.ts#resizePane",
+  "web/src/lib/ack-manifest.ts#resizePane",
+  "web/src/lib/mux-capability.ts#resizePane",
+  "web/src/lib/mux-capability.test.ts#manual Pane fit",
+  "web/src/lib/types.ts#resizePane"
+]
+verify = [
+  "fleet/manual-pane-fit/action.test.ts",
+  "fleet/manual-pane-fit/capability.test.ts",
+  "fleet/manual-pane-fit/controller.test.ts",
+  "fleet/ui/manual-pane-fit.test.ts",
+  "bridge/state-engine.test.ts",
+  "bridge/sessions.test.ts",
+  "web/src/components/agent-chat.test.tsx",
+  "web/src/components/composer.test.tsx",
+  "web/src/lib/mux-capability.test.ts",
+  "web/src/lib/i18n/i18n.test.ts"
+]
+reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/."

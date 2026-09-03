@@ -26,6 +26,7 @@ interface DisplayPrefsContentProps {
   stepFontSize: (delta: number) => void;
   setRawTerminal: (raw: boolean) => void;
   setTapToFocus: (tapToFocus: boolean) => void;
+  afterTextSize?: ReactNode;
 }
 
 // One settings row: name (+ optional explanation) on the left, control on the right. Module-level so
@@ -60,6 +61,7 @@ export function DisplayPrefsContent({
   stepFontSize,
   setRawTerminal,
   setTapToFocus,
+  afterTextSize,
 }: DisplayPrefsContentProps) {
   useLocale();
   return (
@@ -133,6 +135,7 @@ export function DisplayPrefsContent({
           </div>
         }
       />
+      {afterTextSize}
     </div>
   );
 }

@@ -3,9 +3,8 @@ import { describe, expect, it } from "vitest";
 import { keysSendable, muxCapability, muxTopologyLatency } from "./mux-capability";
 import type { MuxConfig } from "./types";
 
-// The two rules every gated control in the app leans on, asserted where they live rather than
-// through eight rendered components: an unanswered capability is PRESENT, and an explanation's words
-// are the adapter's own. mux-gated-controls.test.tsx then proves each control obeys them.
+// The compatibility rule every ordinary gated control leans on, plus the explicit fail-closed
+// exception for shared-PTY resize, asserted where they live rather than through rendered components.
 
 /** A fabricated declaration. The name is deliberately not a real multiplexer's — nothing reads it. */
 function cfg(over: Partial<MuxConfig> = {}): MuxConfig {
@@ -21,6 +20,12 @@ describe("muxCapability — the default is CAPABLE, and only an explicit no is a
   it("a config that does not mention the capability reads as capable", () => {
     // The mid-upgrade case: a bridge that has never heard of a capability this bundle knows.
     expect(muxCapability(cfg(), "createSpace").capable).toBe(true);
+  });
+
+  it("manual Pane fit is the fail-closed exception on an older bridge", () => {
+    expect(muxCapability(null, "resizePane").capable).toBe(false);
+    expect(muxCapability(cfg(), "resizePane").capable).toBe(false);
+    expect(muxCapability(cfg({ capabilities: { resizePane: true } }), "resizePane").capable).toBe(true);
   });
 
   it("`true` is capable and `false` is not — nothing else moves the answer", () => {

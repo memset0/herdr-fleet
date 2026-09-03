@@ -178,6 +178,17 @@ export const es: Dictionary = {
   "settings.display.textSize.label": "Tamano del texto",
   "settings.display.textSize.decrease": "Reducir fuente",
   "settings.display.textSize.increase": "Aumentar fuente",
+  "settings.display.resize.label": "Redimensionar",
+  "settings.display.resize.badge": "Personalizado",
+  "settings.display.resize.hint":
+    "Ajusta una vez el ancho compartido del panel. Los cambios posteriores no lo redimensionan.",
+  "settings.display.resize.aria": "Ajustar el panel a esta vista",
+  "settings.display.resize.busy": "Redimensionando…",
+  "settings.display.resize.success": "Ajustado a {cols} columnas × {rows} filas.",
+  "settings.display.resize.geometryError": "El ancho del terminal aún no se puede medir.",
+  "settings.display.resize.unsupported": "Este multiplexor no admite redimensionar paneles.",
+  "settings.display.resize.conflict": "Otro controlador ya controla este panel.",
+  "settings.display.resize.failed": "No se pudo redimensionar el panel.",
 
   // --- settings.buildStamp ---
   "settings.buildStamp.tapToUpdate": "Nueva compilacion disponible. Pulsa para actualizar",

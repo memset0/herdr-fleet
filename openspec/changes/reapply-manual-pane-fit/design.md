@@ -25,10 +25,12 @@ controller exists.
 
 ### 1. Split owned browser geometry from owned server controller state
 
-Use `fleet/ui/manual-pane-fit.tsx` for measurement, busy/result state, the `Resize`/`Custom` row, and
-one typed API call. Use `fleet/manual-pane-fit/` for request validation, trusted row lookup,
-controller acquisition/reuse, resize execution, conflict mapping, and disposal. This keeps complex
-downstream behavior out of Collie-owned components and server routing.
+Use `fleet/ui/manual-pane-fit.ts` for measurement and the explicit request controller. `AgentChat`
+supplies only native Button/Badge presentation, one busy flag, status/i18n mapping, and the typed API
+callback. Use `fleet/manual-pane-fit/` for request validation, trusted row lookup, controller
+acquisition/reuse, resize execution, conflict mapping, and disposal. This keeps geometry and request
+policy out of Collie-owned components and server routing while allowing the root verification gate
+to cover the owned browser logic.
 
 ### 2. Publish a total `resizePane` multiplexer capability
 
@@ -64,15 +66,16 @@ observer, resize listener, effect, font subscription, or display-pref callback c
 ### 7. Add one native Display Settings extension slot
 
 `DisplayPrefs` receives one optional row slot rendered immediately after Text size. `AgentChat`
-constructs the owned manual-fit row from its existing scroll ref, display font size, Pane/session,
-capability, and write-lock facts. This avoids placing Fleet logic in the generic settings component.
+constructs the manual-fit row from its existing scroll ref, display font size, Pane/session,
+capability, and write-lock facts, threading the slot through `Composer`. This avoids placing Fleet
+logic in the generic settings component.
 
 ### 8. Extend existing owned and invasive boundaries
 
 The existing `fleet-runtime` owned root already covers all new modules; extend its contracts/tests
 instead of adding a child owned block. Add one exact invasive entry enumerating the capability,
-Pane metadata, Herdr adapter, state lookup, server route/shutdown, browser API/type, Display slot,
-AgentChat wiring, focused tests, and i18n ports.
+Pane metadata, Herdr adapter, state lookup, server route/shutdown, browser API/type,
+Display/Composer slot, AgentChat wiring, focused tests, and typed dictionary ports.
 
 ## Risks / Trade-offs
 

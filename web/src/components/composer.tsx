@@ -116,6 +116,8 @@ interface ComposerProps {
   stepFontSize: (delta: number) => void;
   setRawTerminal: (raw: boolean) => void;
   setTapToFocus: (tapToFocus: boolean) => void;
+  /** Optional native Display row exposed for downstream extensions. */
+  displayPrefsAfterTextSize?: ReactNode;
   /** Snap the mirror to the live tail (follow + revalidate + scroll) after a successful send. */
   onSent: () => void;
 }
@@ -225,7 +227,7 @@ function ComposerDock({
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, status, stale, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, onSent },
+  { paneId, scope, agent, isShell, status, stale, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, displayPrefsAfterTextSize, onSent },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -1052,6 +1054,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               stepFontSize={stepFontSize}
               setRawTerminal={setRawTerminal}
               setTapToFocus={setTapToFocus}
+              afterTextSize={displayPrefsAfterTextSize}
             />
           </ComposerDock>
         )}

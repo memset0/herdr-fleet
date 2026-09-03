@@ -5,6 +5,10 @@ import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider, useParams } from "react-router";
 
 import { __resetConnectionHealth } from "@/lib/connection-health";
+import {
+  __resetOperatorCommands,
+  getMuxConfig,
+} from "@/lib/operator-config";
 
 // Mock the race guard at AgentChat's seam so the frozen-revision tests can observe exactly what
 // `detectedRevision` the tap handler passes (the guard's own behaviour is covered in
@@ -45,6 +49,7 @@ beforeEach(() => {
   // Same shape, same reason: a case that folds the strips would otherwise leave every later case
   // rendering a bead bar it never asked for.
   __resetStripsCollapsed();
+  __resetOperatorCommands();
 });
 
 function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
@@ -64,6 +69,107 @@ function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
   const { container } = render(<RouterProvider router={router} />);
   return { props, container };
 }
+
+function manualPaneFitConfig(supported: boolean) {
+  return HttpResponse.json({
+    mux: {
+      name: "reference",
+      capabilities: { resizePane: supported },
+      unsupportedKeys: [],
+      notes: {},
+      spaces: "many",
+      topologyLatency: { kind: "push" },
+    },
+  });
+}
+
+describe("AgentChat — explicit manual Pane fit", () => {
+  it("renders the Custom Resize row immediately below Text size and sends one measured request", async () => {
+    let requestBody: unknown;
+    let requests = 0;
+    server.use(
+      http.get(/\/api\/config$/, () => manualPaneFitConfig(true)),
+      http.post(/\/api\/pane\/[^/]+\/resize(?:\?.*)?$/, async ({ request }) => {
+        requests += 1;
+        requestBody = await request.json();
+        return HttpResponse.json({ ok: true, cols: 80, rows: 31 });
+      }),
+    );
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      width: 1_000,
+      height: 10,
+      top: 0,
+      right: 1_000,
+      bottom: 10,
+      left: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const user = userEvent.setup();
+    const { container } = renderChat();
+    const scrollport = container.querySelector<HTMLElement>(".overflow-y-auto.overflow-x-hidden");
+    expect(scrollport).not.toBeNull();
+    Object.defineProperty(scrollport, "clientWidth", { configurable: true, value: 816 });
+    if (scrollport !== null) {
+      scrollport.style.paddingLeft = "8px";
+      scrollport.style.paddingRight = "8px";
+    }
+
+    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    const textSize = screen.getByText("Text size");
+    const resize = screen.getByRole("button", { name: "Resize Pane to this view" });
+    expect(screen.getByText("Custom")).toBeInTheDocument();
+    expect(textSize.compareDocumentPosition(resize) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    fireEvent.click(resize);
+    fireEvent.click(resize);
+    await waitFor(() => expect(requests).toBe(1));
+    expect(requestBody).toEqual({ cols: 80 });
+    expect(await screen.findByText("Resized to 80 columns × 31 rows.")).toBeInTheDocument();
+    rect.mockRestore();
+  });
+
+  it("never sends from render, font, viewport, or drawer changes", async () => {
+    let requests = 0;
+    server.use(
+      http.get(/\/api\/config$/, () => manualPaneFitConfig(true)),
+      http.post(/\/api\/pane\/[^/]+\/resize(?:\?.*)?$/, () => {
+        requests += 1;
+        return HttpResponse.json({ ok: true, cols: 80, rows: 31 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderChat();
+    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    await user.click(screen.getByRole("button", { name: "Increase font size" }));
+    window.dispatchEvent(new Event("resize"));
+    await user.click(screen.getByRole("button", { name: "Close Display" }));
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(requests).toBe(0);
+  });
+
+  it("fails closed for unsupported bridges and leaves read-only clients no usable action", async () => {
+    const user = userEvent.setup();
+    server.use(http.get(/\/api\/config$/, () => manualPaneFitConfig(false)));
+    renderChat();
+    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(false));
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(screen.queryByText("Custom")).not.toBeInTheDocument();
+
+    cleanup();
+    __resetOperatorCommands();
+    server.use(http.get(/\/api\/config$/, () => manualPaneFitConfig(true)));
+    renderChat({
+      device: { enforced: true, device: "viewer", authorized: false },
+    });
+    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(screen.getByRole("button", { name: "Resize Pane to this view" })).toBeDisabled();
+  });
+});
 
 // Find and History are ROWS in the pane's actions sheet now — the header spends ONE ⋮ on the whole
 // menu instead of two icons on two actions. Every test that used to click a header icon goes through

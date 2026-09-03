@@ -179,6 +179,17 @@ export const de: Dictionary = {
   "settings.display.textSize.label": "Textgröße",
   "settings.display.textSize.decrease": "Schriftgröße verringern",
   "settings.display.textSize.increase": "Schriftgröße erhöhen",
+  "settings.display.resize.label": "Größe anpassen",
+  "settings.display.resize.badge": "Benutzerdefiniert",
+  "settings.display.resize.hint":
+    "Passt die gemeinsame Pane-Breite einmalig an. Spätere Layoutänderungen ändern sie nicht.",
+  "settings.display.resize.aria": "Pane an diese Ansicht anpassen",
+  "settings.display.resize.busy": "Größe wird angepasst…",
+  "settings.display.resize.success": "Auf {cols} Spalten × {rows} Zeilen angepasst.",
+  "settings.display.resize.geometryError": "Die Terminalbreite kann noch nicht gemessen werden.",
+  "settings.display.resize.unsupported": "Dieser Multiplexer unterstützt keine Pane-Größenänderung.",
+  "settings.display.resize.conflict": "Ein anderer Controller steuert dieses Pane bereits.",
+  "settings.display.resize.failed": "Die Größe des Panes konnte nicht geändert werden.",
 
   // --- settings.buildStamp ---
   "settings.buildStamp.tapToUpdate": "Neuer Build verfügbar, zum Aktualisieren antippen",

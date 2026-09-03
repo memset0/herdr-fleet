@@ -62,6 +62,8 @@ export interface AgentView {
    * here, because the alt screen keeps no scrollback ring at all. Absent on older Herdr servers.
    */
   readableLines?: number;
+  /** Trusted current viewport height. Server-side only; the browser never submits or receives it. */
+  viewportRows?: number;
   /**
    * The pane's tab label, denormalised from `tab.list` exactly as `workspaceLabel` already is — so
    * every client surface (card, sidebar, palette, space view) gets it without joining `tabs[]`.
@@ -123,7 +125,7 @@ export interface AgentView {
  * NOTE the `Omit` is opt-OUT: a future server-only field on AgentView goes on the wire unless it is
  * added to the omit list here. If you add one, strip it here in the same change.
  */
-export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent"> & {
+export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent" | "viewportRows"> & {
   /** True when this pane's history is actually offerable: the agent named a session AND its harness
    *  has a journal adapter. Says nothing about whether the log is readable — a named session whose
    *  file is missing still answers `available:false` with reason `no-log`. */
@@ -176,7 +178,12 @@ export function journalAgentOf(pane: AgentView): string {
 }
 
 export function toPaneWire(pane: AgentView, hasJournal: (agent: string) => boolean): PaneWire {
-  const { agentSession, sessionAgent: _sessionAgent, ...rest } = pane;
+  const {
+    agentSession,
+    sessionAgent: _sessionAgent,
+    viewportRows: _viewportRows,
+    ...rest
+  } = pane;
   return agentSession && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
 }
 

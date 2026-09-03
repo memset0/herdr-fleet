@@ -121,7 +121,7 @@ const agent = (paneId: string, status: AgentStatus): AgentView => ({
 
 /** A stand-in runtime: a controllable engine snapshot + stop/clearAll spies (no real socket). */
 class FakeSession {
-  readonly disposed = { engine: 0, poker: 0, notifications: 0 };
+  readonly disposed = { downstream: 0, engine: 0, poker: 0, notifications: 0 };
   snap: EngineSnapshot;
   constructor(bridge: "connected" | "disconnected", agents: AgentView[]) {
     this.snap = { agents, shellPanes: [], workspaces: [], tabs: [], bridge };
@@ -135,6 +135,7 @@ class FakeSession {
       engine: stubPart<SessionParts["engine"]>(engine),
       poker: stubPart<SessionParts["poker"]>(poker),
       notifications: stubPart<SessionParts["notifications"]>(notifications),
+      dispose: () => void this.disposed.downstream++,
     };
   }
 }
@@ -359,7 +360,7 @@ describe("SessionRegistry — refresh() lifecycle", () => {
     h.setDirs([]);
     h.setPresent(["/cfg/herdr/herdr.sock"]);
     await h.registry.refresh();
-    expect(demo.disposed).toEqual({ engine: 1, poker: 1, notifications: 1 });
+    expect(demo.disposed).toEqual({ downstream: 1, engine: 1, poker: 1, notifications: 1 });
     expect(h.registry.get("demo")).toBeUndefined();
   });
 
@@ -375,7 +376,12 @@ describe("SessionRegistry — refresh() lifecycle", () => {
     h.setPresent([]);
     await h.registry.refresh();
     expect(h.registry.get()?.name).toBe("default"); // primary still resolvable
-    expect(primaryFake.disposed).toEqual({ engine: 0, poker: 0, notifications: 0 });
+    expect(primaryFake.disposed).toEqual({
+      downstream: 0,
+      engine: 0,
+      poker: 0,
+      notifications: 0,
+    });
   });
 
   test("multi-session off pins to the primary — refresh never scans or spawns", async () => {
@@ -399,8 +405,18 @@ describe("SessionRegistry — refresh() lifecycle", () => {
     const primaryFake = h.fakes.get("default")!;
     const demoFake = h.fakes.get("demo")!;
     h.registry.disposeAll();
-    expect(primaryFake.disposed).toEqual({ engine: 1, poker: 1, notifications: 1 });
-    expect(demoFake.disposed).toEqual({ engine: 1, poker: 1, notifications: 1 });
+    expect(primaryFake.disposed).toEqual({
+      downstream: 1,
+      engine: 1,
+      poker: 1,
+      notifications: 1,
+    });
+    expect(demoFake.disposed).toEqual({
+      downstream: 1,
+      engine: 1,
+      poker: 1,
+      notifications: 1,
+    });
     expect(h.registry.get()).toBeUndefined();
   });
 });

@@ -18,6 +18,7 @@ import type {
   PaneHistoryResponse,
   PackStatusResponse,
   PaneReadResponse,
+  PaneResizeResponse,
   PairFailure,
   SnapshotResponse,
   UpdateInfo,
@@ -516,6 +517,21 @@ export function focusPane(paneId: string, scope?: Scope): Promise<ActionResponse
   return req<ActionResponse>(withScope(`/api/pane/${encodeURIComponent(paneId)}/focus`, scope), {
     method: "POST",
   });
+}
+
+/** Explicitly fit a Herdr Pane to the current mirror width; rows remain server-owned. */
+export function resizePane(
+  paneId: string,
+  cols: number,
+  scope?: Scope,
+): Promise<PaneResizeResponse> {
+  return req<PaneResizeResponse>(
+    withScope(`/api/pane/${encodeURIComponent(paneId)}/resize`, scope),
+    {
+      method: "POST",
+      body: JSON.stringify({ cols }),
+    },
+  );
 }
 
 /** Set (or clear) a pane's label. An empty/blank `label` clears it (the bridge sends `null` on). */

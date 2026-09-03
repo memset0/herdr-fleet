@@ -69,6 +69,7 @@ import type {
   SttCapability,
   UploadResponse,
 } from "./types.ts";
+import type { ManualPaneFitAction } from "../fleet/manual-pane-fit/action.ts";
 
 // Hard cap the runtime enforces on ANY request body (Bun.serve maxRequestBodySize). Bigger than the
 // upload cap + overhead so the handler's own 413 fires first for honest clients; this cuts off a
@@ -135,6 +136,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
 }
 
 const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|focus))?$/;
+const PANE_RESIZE_ROUTE = /^\/api\/pane\/([^/]+)\/resize$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -515,6 +517,8 @@ export function startServer(opts: {
    * answers 503, and one that was never given it does the same.
    */
   stt?: () => Promise<SttProvider | null>;
+  /** Downstream-owned explicit Herdr Pane fit action and controller lifecycle. */
+  manualPaneFit: ManualPaneFitAction;
 }) {
   const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity, pack } = opts;
   const pairing = opts.pairing;
@@ -527,6 +531,7 @@ export function startServer(opts: {
   const packLead = opts.packLead;
   const packStatus = opts.packStatus;
   const peerNotifier = opts.peerNotifier;
+  const manualPaneFit = opts.manualPaneFit;
   // One journal registry + store for the process. The store's cache is keyed by absolute path, so
   // sharing it across herdr sessions AND across harnesses is correct — two sessions can front panes
   // whose agents write into the same root. Which harnesses have journals at all is decided in
@@ -748,10 +753,11 @@ export function startServer(opts: {
     }
 
     // ── Per-pane read / send ─────────────────────────────────────────────
-    const paneMatch = pathname.match(PANE_ROUTE);
+    const paneResizeMatch = pathname.match(PANE_RESIZE_ROUTE);
+    const paneMatch = paneResizeMatch ?? pathname.match(PANE_ROUTE);
     if (paneMatch) {
       const paneId = decodeURIComponent(paneMatch[1]!);
-      const action = paneMatch[2];
+      const action = paneResizeMatch === null ? paneMatch[2] : "resize";
       // Reading a pane is allowed for any access-gated client; every action (reply/keys/upload/
       // close) types into or restructures a terminal, so it additionally needs an authorised device.
       // `history` is a READ despite being an action segment — it only ever reads a log off disk.
@@ -797,6 +803,9 @@ export function startServer(opts: {
       if (action === "close" && req.method === "POST") return closePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "rename" && req.method === "POST") return renamePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "focus" && req.method === "POST") return focusPane(herdr, rt.engine, paneId, req, audit_, device, session);
+      if (action === "resize" && req.method === "POST") {
+        return manualPaneFit.resize(rt, paneId, req, audit_, device, { json, text });
+      }
       return text("method not allowed", 405);
     }
 

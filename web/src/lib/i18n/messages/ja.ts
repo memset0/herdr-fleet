@@ -174,6 +174,17 @@ export const ja: Dictionary = {
   "settings.display.textSize.label": "文字サイズ",
   "settings.display.textSize.decrease": "文字サイズを縮小",
   "settings.display.textSize.increase": "文字サイズを拡大",
+  "settings.display.resize.label": "リサイズ",
+  "settings.display.resize.badge": "カスタム",
+  "settings.display.resize.hint":
+    "共有ペインの幅を一度だけ表示に合わせます。以後のレイアウト変更ではリサイズしません。",
+  "settings.display.resize.aria": "ペインをこの表示幅に合わせる",
+  "settings.display.resize.busy": "リサイズ中…",
+  "settings.display.resize.success": "{cols} 列 × {rows} 行にリサイズしました。",
+  "settings.display.resize.geometryError": "ターミナル幅をまだ測定できません。",
+  "settings.display.resize.unsupported": "このマルチプレクサーはペインのリサイズに対応していません。",
+  "settings.display.resize.conflict": "別のコントローラーがこのペインを制御しています。",
+  "settings.display.resize.failed": "ペインをリサイズできませんでした。",
 
   // --- settings.buildStamp ---
   "settings.buildStamp.tapToUpdate": "新しいビルドがあります。タップして更新",

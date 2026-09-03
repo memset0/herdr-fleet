@@ -88,6 +88,10 @@ export const ACK_MANIFEST = {
     channel: "status",
     why: "The one act whose outcome lands on a screen the operator is not looking at (the terminal, ADR 0031) — nothing here can show it, so the phone has to say it.",
   },
+  resizePane: {
+    channel: "status",
+    why: "The shared PTY changes outside the browser layout, so the existing status line names the applied dimensions or the closed refusal after the explicit Display Settings tap.",
+  },
   renamePane: {
     channel: "status",
     why: "The sheet closes on success and the new label only reaches the strip on the next poll, so at the moment of the tap there is nothing on screen that changed.",

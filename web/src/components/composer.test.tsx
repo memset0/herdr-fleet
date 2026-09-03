@@ -2354,6 +2354,7 @@ describe("Composer — display prefs behind the gear", () => {
     expect(screen.getByRole("switch", { name: "Wrap lines" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Raw terminal" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Decrease font size" })).toBeInTheDocument();
+    expect(screen.queryByText("Custom")).not.toBeInTheDocument();
   });
 
   it("the Display dock shares the single drawer slot with Keys", async () => {

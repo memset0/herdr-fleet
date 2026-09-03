@@ -88,6 +88,7 @@ const HERDR_CAPABILITIES = declareCapabilities({
     "agentSessionRef",
     "typeText",
     "sendKeys",
+    "resizePane",
     "renamePane",
     "closePane",
     "setFocus",
@@ -521,7 +522,12 @@ function toMuxPane(
   }
   // Scrollback depth + viewport = what a `recent` read can yield. Omitted when the server predates
   // `scroll`, so an older Herdr reads as "unknown" rather than "zero".
-  if (raw.scroll) pane.readableLines = raw.scroll.max_offset_from_bottom + raw.scroll.viewport_rows;
+  if (raw.scroll) {
+    pane.readableLines = raw.scroll.max_offset_from_bottom + raw.scroll.viewport_rows;
+    if (Number.isInteger(raw.scroll.viewport_rows) && raw.scroll.viewport_rows > 0) {
+      pane.viewportRows = raw.scroll.viewport_rows;
+    }
+  }
   return pane;
 }
 

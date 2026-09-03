@@ -32,6 +32,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Require a fresh Gateway decision for every PWA navigation and document the private authenticated lead contract.
 - Restore bounded browser-local Agent favorites inside Collie's native triage lists.
 - Expose Collie's native Push-key generation and test delivery as Herdr Fleet actions.
+- Restore explicit Herdr Pane width fitting in native Display Settings.
 
 ### Fixed
 

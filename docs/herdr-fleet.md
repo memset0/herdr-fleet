@@ -99,6 +99,20 @@ rotation and subscription list/forget operations remain terminal commands becaus
 explicit arguments or review. See [`voice-and-push.md`](voice-and-push.md#web-push-optional) for the
 native Collie workflow.
 
+## Manual Pane fit
+
+On a writable Herdr Pane, native Display Settings includes a `Resize` row directly below
+`Text size`, marked `Custom`. A tap measures the current terminal mirror, converts its usable width
+to complete monospace cells, clamps the result to 20–500 columns, and preserves the trusted current
+viewport row count.
+
+This is an explicit action only. Opening the drawer or changing the browser, font, route, or layout
+does not resize the shared PTY. The bridge retains one no-takeover Herdr controller per session
+socket and Pane, reuses it for later taps, reports ownership conflicts, and releases only its own
+controllers when the Pane, session, or bridge ends. Browser requests carry columns only; socket paths
+and rows stay server-owned. tmux, zellij, older bridges, unavailable Panes, and read-only clients do
+not receive a usable action.
+
 ## Retained Collie deployment alternatives
 
 Collie's Tailscale serve and `Tailscale-User-Login` implementation remains in the repository to keep

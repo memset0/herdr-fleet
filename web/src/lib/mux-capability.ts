@@ -8,7 +8,7 @@ import type { MuxCapability, MuxConfig, MuxTopologyLatency } from "@/lib/types";
 // answer arrives already true for whichever multiplexer is underneath, so no component learns a
 // name. scripts/check-mux-names.sh keeps it that way.
 //
-// ── The default is CAPABLE, and that direction is deliberate ────────────────────────────────────
+// ── The compatibility default is CAPABLE, except for shared-PTY resize ──────────────────────────
 //
 // The bridge's own declaration fails CLOSED (bridge/mux/capabilities.ts: a capability nobody
 // answered for is absent), because there the risk is promising behaviour no adapter implements.
@@ -21,6 +21,8 @@ import type { MuxCapability, MuxConfig, MuxTopologyLatency } from "@/lib/types";
 // The cost of that choice is bounded and visible: a control that should have been hidden is offered
 // once, the call answers `unsupported`, and the operator sees a refusal instead of an explanation.
 // A control that should have been offered and was hidden is invisible, and invisible is unfixable.
+// `resizePane` is the one exception: changing shared PTY geometry is unsafe to offer to an older
+// bridge that never declared support, so omission for that capability is a closed answer.
 //
 // ── Where the words come from ───────────────────────────────────────────────────────────────────
 //
@@ -73,9 +75,13 @@ export interface MuxCapabilityState {
  */
 export function muxCapability(cfg: MuxConfig | null, capability: MuxCapability): MuxCapabilityState {
   const mux = cfg?.name ?? "";
-  // `!== false` rather than `?? true` for the same reason spelled out above, one step finer: a
-  // bridge that answered `undefined` for this capability has not said no.
-  const capable = cfg?.capabilities?.[capability] !== false;
+  // Manual Pane fit directly changes shared PTY geometry, so an older bridge that never declared
+  // that new capability must fail closed. Existing capabilities retain the compatibility rule
+  // above: omission means the older bridge has not said no.
+  const capable =
+    capability === "resizePane"
+      ? cfg?.capabilities?.resizePane === true
+      : cfg?.capabilities?.[capability] !== false;
   return { capable, note: capable ? "" : (cfg?.notes?.[capability] ?? ""), mux };
 }
 

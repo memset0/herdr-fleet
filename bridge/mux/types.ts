@@ -205,6 +205,8 @@ export interface MuxPane extends MuxIdentity {
    * signal, and it means something only with `gridScrollback`.
    */
   readonly readableLines?: number;
+  /** Current trusted viewport height, retained server-side for explicit manual Pane fit. */
+  readonly viewportRows?: number;
   /**
    * The command name the multiplexer says is in this pane's foreground right now — tmux's
    * `pane_current_command`, zellij's `terminal_command`. Absent when the multiplexer reports none.

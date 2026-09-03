@@ -191,6 +191,17 @@ export const en = {
   "settings.display.textSize.label": "Text size",
   "settings.display.textSize.decrease": "Decrease font size",
   "settings.display.textSize.increase": "Increase font size",
+  "settings.display.resize.label": "Resize",
+  "settings.display.resize.badge": "Custom",
+  "settings.display.resize.hint":
+    "Fits the shared Pane width once. Later layout changes do not resize it.",
+  "settings.display.resize.aria": "Resize Pane to this view",
+  "settings.display.resize.busy": "Resizing…",
+  "settings.display.resize.success": "Resized to {cols} columns × {rows} rows.",
+  "settings.display.resize.geometryError": "The terminal width is not ready to measure.",
+  "settings.display.resize.unsupported": "This multiplexer does not support Pane resize.",
+  "settings.display.resize.conflict": "Another controller already owns this Pane.",
+  "settings.display.resize.failed": "The Pane could not be resized.",
 
   // --- settings.buildStamp ---
   "settings.buildStamp.tapToUpdate": "new build — tap to update",
