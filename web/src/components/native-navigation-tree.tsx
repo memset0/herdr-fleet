@@ -1,4 +1,4 @@
-import { ChevronRight, Folder, TerminalSquare } from "lucide-react";
+import { ChevronRight, Folder, Server, ServerOff, TerminalSquare } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import type {
@@ -9,7 +9,9 @@ import type {
 import type { NativeNavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { nativeNavigationPreferences } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { AgentIcon } from "@/components/agent-icon";
+import { usePack, useHostHealth } from "@/components/pack-provider";
 import { StatusDot } from "@/components/status-badge";
+import { HOST_TEXT_CLASSES, hostSlot } from "@/lib/hosts";
 import { Collapse } from "@/components/ui/collapse";
 import { t } from "@/lib/i18n";
 import { statusLabel } from "@/lib/types";
@@ -169,7 +171,19 @@ function Row({
           selected ? "bg-accent text-accent-foreground" : "hover:bg-muted",
         )}
       >
-        {disclosureId !== undefined ? (
+        {/* THE MACHINE TAKES THE ARROW'S COLUMN, on a Host row and only there.
+            A Host row is the one row whose identity is worth more than its disclosure state. Every
+            member of the roster is a row here — present or not, holding panes or not — so this list
+            is scanned for "which machine is this, and is it up?", and an arrow answers neither. The
+            glyph carries both: the machine's own tint (the same slot every other host-aware surface
+            in Collie tints by) and, when it stops answering, a different glyph in the refusal colour.
+            The row still discloses on click; what moved is where that state is announced — onto the
+            label control below, which is the only control left on the row. */}
+        {row.icon === "host" ? (
+          <span className="grid w-5 shrink-0 place-items-center">
+            <HostGlyph hostId={row.hostId ?? ""} />
+          </span>
+        ) : disclosureId !== undefined ? (
           <button
             type="button"
             aria-expanded={open}
@@ -194,6 +208,11 @@ function Row({
         <button
           type="button"
           aria-current={selected ? "page" : undefined}
+          // The disclosure state rides the LABEL on a Host row, because the arrow that used to carry
+          // it is gone and a disclosure with no announced state is one a screen reader cannot use.
+          {...(row.icon === "host" && disclosureId !== undefined
+            ? { "aria-expanded": open, "aria-controls": childrenId }
+            : {})}
           onClick={activate}
           className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-left text-[13px] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
         >
@@ -209,6 +228,10 @@ function Row({
               <span className="sr-only">{statusLabel(row.status)}</span>
             </>
           )}
+          {/* …and the machine's own reading, in the same trailing position a Pane's state takes. A
+              tinted glyph says WHICH machine but cannot say a machine is down without relying on
+              colour alone (WCAG 1.4.1), so the word stands here when there is one to say. */}
+          {row.icon === "host" && <HostState hostId={row.hostId ?? ""} />}
         </button>
       </div>
 
@@ -244,6 +267,67 @@ function Row({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Is this machine answering the lead?
+ *
+ * `useHostHealth` returns nothing at all on a solo snapshot — there is no roster, so there is no
+ * such question — which is exactly the reading a single-machine tree should get: the plain glyph,
+ * untinted, and no word.
+ *
+ * DEGRADED IS THE UNION, deliberately wider than `writeRefusal`'s: this is a label on a list of
+ * machines rather than a gate on a write, so "the lead has not heard from it" belongs here even
+ * inside the tolerance that keeps a pane's own banner quiet.
+ */
+interface HostReading {
+  /** The machine is not answering: a different glyph, in the refusal colour. */
+  degraded: boolean;
+  /** What to say about it, or nothing — a machine that is answering says nothing. */
+  word: string | null;
+}
+
+function useHostReading(hostId: string): HostReading {
+  const health = useHostHealth(hostId === "" ? undefined : hostId);
+  if (health === undefined) return { degraded: false, word: null };
+  if (health.incompatible) return { degraded: true, word: t("connection.host.incompatible") };
+  if (!health.writable || health.state !== "live") {
+    return { degraded: true, word: t("connection.host.unreachablePlain") };
+  }
+  return { degraded: false, word: null };
+}
+
+function HostGlyph({ hostId }: { hostId: string }) {
+  const { servers } = usePack();
+  const { degraded } = useHostReading(hostId);
+  const slot = hostSlot(servers, hostId === "" ? undefined : hostId);
+  const Glyph = degraded ? ServerOff : Server;
+  return (
+    <Glyph
+      className={cn(
+        "size-3.5 shrink-0",
+        // Alert outranks identity, the same order `AddressTag` keeps: which machine matters less
+        // than the machine not being there.
+        degraded
+          ? "text-status-blocked"
+          : slot !== null
+            ? HOST_TEXT_CLASSES[slot]
+            : "text-muted-foreground",
+      )}
+      aria-hidden
+    />
+  );
+}
+
+function HostState({ hostId }: { hostId: string }) {
+  useLocale();
+  const { word } = useHostReading(hostId);
+  if (word === null) return null;
+  return (
+    <span className="ml-auto shrink-0 text-[10px] font-medium uppercase tracking-wide text-status-blocked">
+      {word}
+    </span>
   );
 }
 

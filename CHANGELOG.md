@@ -43,6 +43,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ### Changed
 
+- A Host row in the hierarchy draws its machine's own tinted glyph where the disclosure arrow was, and says in words when that machine is not answering.
 - The Agent rail row names its host with Collie's ordinary bordered chip, on the line of the text beside it, rather than the borderless caption form.
 - The machine a pane writes to is named in the app bar's trailing cluster instead of the composer's status band, so a pack no longer spends a row on one name.
 - The row-actions menu opens out of the cursor and wears a menu's chrome rather than a sheet's, the device rather than the gesture decides which surface it is, and the phone's hierarchy drawer is narrower.

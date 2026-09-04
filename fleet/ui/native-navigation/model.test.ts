@@ -37,7 +37,10 @@ describe("native navigation hierarchy", () => {
     expect(tree.rows).toHaveLength(1);
     expect(tree.rows[0]).toMatchObject({
       label: "peer-a",
-      icon: "none",
+      // A Host row is a MACHINE, and it carries the id the component looks its tint and its health
+      // up with — the reading that replaced the disclosure arrow in that column.
+      icon: "host",
+      hostId: "peer-a",
       disclosureId: hostCollapseId("peer-a"),
       disclosureInverted: true,
     });

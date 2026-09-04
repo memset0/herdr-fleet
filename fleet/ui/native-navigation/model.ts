@@ -47,8 +47,14 @@ export interface NavigationPaneInput {
  * gets it when it still groups more than one child after {@link deriveNavigationTree}'s elision.
  * A Space row that merely happens to have children is not a folder — it is a place, and a place
  * named by its own label needs no picture of a place.
+ *
+ * `host` is a MACHINE, and it is the one icon that is also a reading: the component draws it in that
+ * machine's own tint and swaps the glyph when the machine is not answering, so the roster's health
+ * is legible from the tree without a second surface. It takes the disclosure control's column
+ * because a Host row is the one row whose identity is worth more than an arrow — every member is a
+ * row here, present or not, and "which of these is down" is the question this list is scanned for.
  */
-export type NavigationIcon = "group" | "agent" | "shell" | "none";
+export type NavigationIcon = "group" | "agent" | "shell" | "host" | "none";
 
 /**
  * The Pane state a row shows, carried through as data so the tree never asks a second source.
@@ -82,6 +88,15 @@ export interface NavigationRow {
   icon: NavigationIcon;
   /** The Agent implementation behind an `agent` icon. */
   agent?: string;
+  /**
+   * The member this row IS, on a `host` row and nowhere else — the `?h=` value, with `""` spelling
+   * the lead or a solo snapshot exactly as it does everywhere else in this module.
+   *
+   * Carried as data rather than parsed back out of {@link key}, because the component looks two
+   * things up with it — the machine's tint and its health — and a row that had to re-derive its own
+   * identity from a display string would be one rename away from looking them up for nobody.
+   */
+  hostId?: string;
   /** The Pane state this row stands for, when it stands for a Pane. */
   status?: NavigationStatus;
   /**
@@ -324,7 +339,8 @@ function hostRow(
   const host: NavigationRow = {
     key: `host:${hostId}`,
     label: input.hostLabel,
-    icon: "none",
+    icon: "host",
+    hostId,
     selected: false,
     children: spaces,
   };

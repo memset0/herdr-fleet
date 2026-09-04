@@ -9,6 +9,8 @@ import {
 } from "../../../fleet/ui/native-navigation/model.ts";
 import { NavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { NativeNavigationTree } from "./native-navigation-tree";
+import { PackProvider } from "./pack-provider";
+import type { ServerSummary } from "@/lib/types";
 
 function tree(selectedPaneId?: string) {
   return deriveNavigationTree({
@@ -90,10 +92,58 @@ describe("NativeNavigationTree", () => {
       />,
     );
 
+    // THE HOST ROW HAS NO ARROW. Its disclosure column carries the machine itself — the tint and,
+    // when it stops answering, the refusal — so the row's own label is the disclosure control and
+    // the only place its state can be announced.
     expect(screen.getByRole("button", { name: "Project One" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Collapse This host" }));
+    const host = screen.getByRole("button", { name: "This host" });
+    expect(host).toHaveAttribute("aria-expanded", "true");
+    await user.click(host);
     expect(store.snapshot().disclosed).toEqual([hostCollapseId("")]);
-    expect(screen.getByRole("button", { name: "Expand This host" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "This host" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("draws each member as itself and says so when one is not answering", () => {
+    // Every member of the roster is a row, present or not — so this list is where "which machine is
+    // down" is read, and it must not be readable by colour alone (WCAG 1.4.1).
+    const roster: ServerSummary[] = [
+      { id: "lead", name: "lead", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 9_000 },
+      { id: "down", name: "down", isLead: false, reachable: false, protocol: "ok", lastSeenAt: 1_000 },
+    ];
+    render(
+      <PackProvider servers={roster} ts={10_000} pollMs={1500}>
+        <NativeNavigationTree
+          tree={deriveNavigationTree({
+            hosts: roster.map((server) => ({
+              hostId: server.id,
+              hostLabel: server.name,
+              workspaces: [{ workspaceId: "w1", label: "One" }],
+              tabs: [],
+              agents: [],
+              shellPanes: [],
+            })),
+          })}
+          onOpenSpace={vi.fn()}
+          onOpenPane={vi.fn()}
+        />
+      </PackProvider>,
+    );
+
+    // The Host rows are the ones that announce their own disclosure, because the arrow that used to
+    // is now the machine's glyph.
+    const rows = screen
+      .getAllByRole("button")
+      .filter((row) => row.getAttribute("aria-expanded") !== null);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "lead",
+      expect.stringContaining("down"),
+    ]);
+    // The machine that is answering says nothing; the one that is not says why, in words.
+    expect(rows[0]?.textContent).not.toMatch(/unreachable/i);
+    expect(rows[1]?.textContent).toMatch(/unreachable/i);
   });
 
   it("elides a lone Tab so its Pane hangs off the Space", async () => {
