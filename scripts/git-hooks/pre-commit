@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Three independent guards. Install with: scripts/install-hooks.sh (sets core.hooksPath).
+# Four independent guards. Install with: scripts/install-hooks.sh (sets core.hooksPath).
 #
 # A) Versioning guard — override with: SKIP_VERSION_CHECK=1 git commit …
 #    1) versions must be consistent (check-version.sh)
@@ -16,12 +16,18 @@
 # C) Pack-wire guard — override with: SKIP_PACK_WIRE_CHECK=1 git commit …
 #    A staged change to the pack wire surface must record a protocol decision (check-pack-wire.sh).
 #
-# The three are skippable independently: SKIP_VERSION_CHECK=1 does not disarm the lint guard.
+# D) Private-fact guard — override with: SKIP_PRIVACY_CHECK=1 git commit …
+#    This product is developed against its operator's own production environment, so a real host,
+#    address or path is one paste away from a fixture. The check refuses one in the tree we own
+#    (check-private-facts.ts). It matches SHAPES, never a list of forbidden values — a deny-list has
+#    to name what it forbids, which is the leak it exists to prevent.
+#
+# The four are skippable independently: SKIP_VERSION_CHECK=1 does not disarm the lint guard.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 
-# The one staged-file list, shared by all three guards.
+# The one staged-file list, shared by all four guards.
 staged="$(git diff --cached --name-only --diff-filter=ACMR)"
 
 # ---- (A) versioning ---------------------------------------------------------------------------
@@ -93,16 +99,18 @@ fi
 STAGED_FILES="$staged" "$ROOT/scripts/check-pack-wire.sh" >/dev/null
 
 # ---- (B) lint ---------------------------------------------------------------------------------
+# Skipping empties the file set rather than exiting: guard D runs after this one, and an early exit
+# here would disarm it — the hatches are independent.
 if [ "${SKIP_LINT_CHECK:-}" = "1" ]; then
   echo "pre-commit: SKIP_LINT_CHECK=1 — skipping lint guard" >&2
-  exit 0
+  lintable=""
+else
+  # Lintable staged files, minus the vendored plugin sources (.oxlintrc.json ignores them too, but
+  # naming one explicitly on the command line would override that ignore).
+  lintable="$(echo "$staged" \
+    | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' \
+    | grep -vE '^(tools/oxlint/anti-slop/|contrib/)' || true)"
 fi
-
-# Lintable staged files, minus the vendored plugin sources (.oxlintrc.json ignores them too, but
-# naming one explicitly on the command line would override that ignore).
-lintable="$(echo "$staged" \
-  | grep -E '\.(ts|tsx|js|jsx|mjs|cjs)$' \
-  | grep -vE '^(tools/oxlint/anti-slop/|contrib/)' || true)"
 
 # Fast path: nothing lintable staged (doc-only commits, config-only commits) — don't spawn oxlint.
 [ -z "$lintable" ] || {
@@ -119,5 +127,22 @@ lintable="$(echo "$staged" \
     exit 1
   fi
 }
+
+# ---- (D) private facts ------------------------------------------------------------------------
+if [ "${SKIP_PRIVACY_CHECK:-}" = "1" ]; then
+  echo "pre-commit: SKIP_PRIVACY_CHECK=1 — skipping private-fact guard" >&2
+else
+  if ! out="$(cd "$ROOT" && bun scripts/check-private-facts.ts 2>&1)"; then
+    {
+      echo "✗ pre-commit: a private fact reached the tree we own."
+      echo
+      echo "$out"
+      echo
+      echo "  Make the value synthetic — a reserved example domain, a documentation address, a"
+      echo "  placeholder path. (Override once with SKIP_PRIVACY_CHECK=1 git commit.)"
+    } >&2
+    exit 1
+  fi
+fi
 
 exit 0

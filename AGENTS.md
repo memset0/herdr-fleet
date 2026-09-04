@@ -211,12 +211,13 @@ a single command; never export one.
 | `SKIP_VERSION_CHECK=1` | `git commit` (pre-commit hook) | the version-consistency + bump-on-change guard |
 | `SKIP_LINT_CHECK=1` | `git commit` (pre-commit hook) | oxlint over the staged files |
 | `SKIP_PACK_WIRE_CHECK=1` | `git commit` (pre-commit hook) | the pack-wire decision guard |
+| `SKIP_PRIVACY_CHECK=1` | `git commit` (pre-commit hook) | the private-fact guard over the fork-owned tree |
 | `SKIP_TYPECHECK=1` | `bun run build` / `collie build` | both typecheck steps |
 | `SKIP_TESTS=1` | `git push` (pre-push hook) | both test suites |
 | `SKIP_TAG_CHECK=1` | `git push` (pre-push hook) | the untagged-release warning |
 
-The pre-commit hook's three guards are **independent** — `SKIP_VERSION_CHECK=1` does not disarm the
-lint guard or the pack-wire guard.
+The pre-commit hook's four guards are **independent** — `SKIP_VERSION_CHECK=1` does not disarm the
+lint guard, the pack-wire guard or the privacy guard.
 
 ## Frontend data layer (React Router, not TanStack)
 
@@ -420,6 +421,23 @@ wire-shape files in `bridge/pack/` must also stage `PACK_PROTOCOL.md` (additive-
 bump `PACK_PROTOCOL_VERSION` (not expressible that way). `scripts/check-pack-wire.sh` is guard C of
 the pre-commit hook; a pure refactor takes the `SKIP_PACK_WIRE_CHECK=1` hatch
 ([ADR 0025](./.adr/0025-the-wire-guard-forces-a-decision-never-a-bump.md)).
+
+**This product is developed against its operator's own production environment, so a real host, a
+real address or a real path is one paste away from the tree.** `scripts/check-private-facts.ts` is
+guard D of the pre-commit hook and the hatch is `SKIP_PRIVACY_CHECK=1`. Three things about it are
+load-bearing:
+
+- It scans **what this fork owns**, read from `FORK.toml`. Upstream's own fixtures name upstream's
+  own author and are already public in its repository; reporting them is how a guard gets ignored.
+- It matches **shapes, never a list of forbidden values** — a deny-list has to spell out what it
+  forbids, which commits the leak it exists to prevent. A public value looks like a reserved example
+  domain, loopback, an RFC 5737 address or a placeholder account; anything else is reported.
+- A machine named by an ordinary word has no shape. Those names live in the **gitignored `LOCAL.md`**,
+  in one ```` ```private-names ```` block, and a finding from that source never echoes the value. With
+  no such block the guard says so, so a green run on a fresh clone is not read as proof.
+
+Add the value's synthetic form rather than taking the hatch. When a finding is genuinely public,
+widen the shape rule and say why in a comment — never add the literal to an allow-list.
 
 **Code reaches a peer over the operator's own SSH, never over the pack link** — `pack add` installs
 it and `pack update` levels it, both pushing the lead's own commit as a `git bundle`; the link

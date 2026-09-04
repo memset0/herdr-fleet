@@ -237,7 +237,7 @@ port = 18902
       ["lead_bind_host", '"0.0.0.0"', "transport.lead_bind_host must be a loopback address"],
       ["peer_bind_host", '""', "transport.peer_bind_host must be a non-empty string"],
       ["peer_bind_host", '"::"', "transport.peer_bind_host must be a loopback address"],
-      ["lead_collie_host", '"10.0.0.1"', "transport.lead_collie_host must be a loopback address"],
+      ["lead_collie_host", '"203.0.113.1"', "transport.lead_collie_host must be a loopback address"],
       ["identity_file", '"relative/id"', "transport.identity_file must be an absolute path"],
       ["known_hosts_file", '"hosts"', "transport.known_hosts_file must be an absolute path"],
       ["ssh_user", '"root user"', "transport.ssh_user must be 1 to 64 safe characters"],

@@ -15,12 +15,14 @@ runs whether or not anyone remembered.
 
 - Add a check that refuses a tree carrying a private fact, and run it as a fourth pre-commit guard
   beside the three that already exist, with its own independent escape hatch.
-- Detect by SHAPE rather than by a list of forbidden values: a host that is not a reserved example
-  domain, an address outside loopback and the documentation ranges, a path under someone's home, and
-  material shaped like a credential. A guard that names the values it excludes is itself the leak.
-- Read the operator's own names from the ignored local context file when it is present, so the bare
-  words that have no shape — a machine called by a name that is just a word — are caught too without
-  any of them entering the repository.
+- Detect by SHAPE rather than by a list of forbidden values: an address outside loopback and the
+  documentation ranges, a path under someone's home, and material shaped like a credential. A guard
+  that names the values it excludes is itself the leak.
+- Scan what this fork owns, read from the fork manifest. Upstream's own fixtures name upstream's own
+  author and are already public in its repository; reporting them is how a guard gets switched off.
+- Read the operator's own names from the ignored local context file when it is present, so the values
+  that have no usable shape — a machine called by an ordinary word, and every hostname — are caught
+  too without any of them entering the repository.
 - Exempt the publisher's own identity explicitly: the repository owner, the license attribution and
   the stable plugin identifier are intentional public metadata.
 

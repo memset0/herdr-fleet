@@ -34,6 +34,19 @@ contracts = ["exact upstream identity", "complete changed-path classification"]
 verify = ["scripts/check-fork.test.ts", "scripts/fork-manifest.test.ts"]
 
 [[owned]]
+id = "public-safety-guard"
+intent = "Refuse a tracked tree carrying one of this operator's real deployment facts."
+paths = [
+  "scripts/check-private-facts.ts",
+  "scripts/check-private-facts.test.ts"
+]
+contracts = [
+  "shape rules over the fork-owned tree",
+  "shapeless names read from the ignored local context file and never echoed"
+]
+verify = ["scripts/check-private-facts.test.ts"]
+
+[[owned]]
 id = "fleet-runtime"
 intent = "Provide the private authenticated Fleet runtime outside Collie-owned modules."
 paths = [
@@ -364,3 +377,14 @@ verify = [
   "web/src/lib/i18n/i18n.test.ts"
 ]
 reason = "A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the CSP origin in bridge/server.ts rides native-manual-pane-fit-port, the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and the six typed dictionaries ride native-agent-favorites-port."
+
+[[invasive]]
+id = "private-fact-guard-port"
+intent = "Add a fourth commit-time guard to the hook that already runs three, without changing any of them."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "scripts/git-hooks/pre-commit#SKIP_PRIVACY_CHECK"
+]
+verify = ["scripts/check-private-facts.test.ts"]
+reason = "Upstream is developed against example data; this fork is developed against its operator's own production environment, so a real address or a real path is one paste away from a fixture. The hook is where the other three guards already live and the only place a check runs whether or not anyone remembered, so guard D is appended after them in upstream's own shape: one SKIP_ variable, one else-branch, one message naming the hatch. The one upstream line that had to move is the lint guard's skip branch, which exited the hook outright — harmless while lint was last, and a silent disarm of anything after it; it now empties the file set instead, so each hatch skips exactly its own guard. Nothing upstream checks changes, and removing this block restores the file byte-for-byte."

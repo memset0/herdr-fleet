@@ -18,15 +18,29 @@ it is honest about its blind spot.
 
 A deny-list has to name what it forbids, which puts those names in the tree — the exact failure this
 guard exists to prevent, and one that already happened here. So the check asserts what a PUBLIC value
-looks like: reserved example domains, loopback and RFC 5737 documentation addresses, synthetic paths.
-Anything outside those shapes is reported.
+looks like: loopback and RFC 5737 documentation addresses, placeholder accounts, a verifier whose salt
+and hash are too short to be either. Anything outside those shapes is reported.
 
 Rejected: scanning for the operator's known values only. It is the leak, and it also misses the next
 machine, which is the case that matters.
 
+There is deliberately **no hostname shape rule**. A hostname's shape cannot separate the operator's
+own domain from a public one — a documentation link's host and a real deployment host are the same
+shape, and so is every dotted identifier in the codebase, from an i18n key to `vite.config.ts`. A rule
+loose enough to catch the second reports thousands of the third and is switched off within a day.
+Hostnames are therefore decision 2's job, where one entry covers every host under a domain.
+
+### 1b. It scans what this fork owns
+
+The scan set is the owned-path list already declared in `FORK.toml`, so it maintains itself as the
+boundary moves. Upstream's files are upstream's business: its fixtures name its own author's home
+directory and its own example addresses, all of them already public in its repository. An early run
+that included them produced 130 findings, none of them ours — the shape of a guard nobody keeps.
+
 ### 2. The shapeless names come from the ignored file, or not at all
 
-A machine named by an ordinary word has no shape to match. Those names live in the local context file
+A machine named by an ordinary word has no shape to match, and by decision 1 neither does a hostname.
+Those names live in the local context file
 the repository already ignores, and the check reads them when it is there. They are therefore usable
 by the guard and absent from the tree, which is the whole point. When the file is missing the check
 still runs its shape rules and says which case it could not cover, so a green run on a fresh clone is

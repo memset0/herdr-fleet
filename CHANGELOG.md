@@ -46,6 +46,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Believe that refusal only once the lead has missed more than one sweep, so a single slow exchange does not repaint the rail.
 - Add a fetched CJK fallback face under every font stack, chosen in Settings from a closed catalog and delivered in `unicode-range` pieces, so a mirror stays a grid in Chinese without shipping a font.
 - Offer that face as a Latin choice in the app's typeface and the terminal font pickers; it is the same family and the same download.
+- Refuse a commit that carries one of this fork's own deployment facts: a fourth pre-commit guard matches shapes rather than a list of values, reads the names that have no shape from the ignored local file, and says in its own output which case it cannot see.
 
 ### Changed
 
