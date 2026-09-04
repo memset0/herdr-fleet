@@ -384,60 +384,66 @@ control row — keep their own touch-sized floors.
 
 ### Requirement: A row's actions stand where the gesture asked for them
 
-The actions a row offers SHALL be presented where the gesture that asked for them can be answered.
-WHICH of the two surfaces exists is decided by the DEVICE — a machine driven by a fine, hovering
-pointer gets the menu; every other machine gets the existing bottom sheet, unchanged, whatever kind
-of event raised the gesture. WHERE the chosen surface stands is decided by the gesture: a context
-gesture made with a mouse places the menu at the cursor. A recorded gesture SHALL be consumed
-whichever surface is chosen, so one a phone made can never place a surface opened later.
+A row's actions SHALL be answered by ONE OF TWO SURFACES, and they SHALL be two components rather
+than one component in two poses. Collie's own bottom sheet answers a device with a thumb and MUST
+remain exactly as upstream draws it — its ground, its header, its handle, its close control, its row
+height and its entrance. The fork's own context menu answers a mouse, at the cursor.
 
-A menu SHALL NOT dim the surface behind it, because the row it is about is the thing the operator is
-checking it against; a sheet and a centred prompt MAY, because the panel has taken the screen over.
+WHICH surface answers is decided at the INVOKE SITE, by the device: a machine driven by a fine,
+hovering pointer whose context gesture opened the row gets the menu; every other machine, and every
+other way of opening a row, gets the sheet. A recorded gesture SHALL be consumed whichever surface is
+chosen, so one a phone made can never place a surface opened later.
 
-A menu SHALL APPEAR TO COME OUT OF THE CURSOR: it SHALL grow from the corner it is anchored by,
-never from its own middle, which reads as the box being squeezed in from every side at once.
-
-A menu SHALL wear a menu's chrome and not a sheet's. It MAY name the target it acts on as a caption,
-and SHALL NOT carry a sticky or frosted title bar or a close control — it is dismissed by Escape, by
-a click outside it, or by looking away, and a close button makes four verbs read as a dialog. The
-bottom sheet's own header, handle and dismiss MUST remain exactly as they are.
-
-When those rows become a QUESTION rather than a list of verbs — a rename's field — the same surface
-SHALL move to the centre of the screen, because a question is not answered in a popover pinned to a
-corner.
+The menu SHALL NOT dim the surface behind it, because the row it is about is the thing the operator
+is checking it against. It SHALL leave on a press outside it, on Escape, and when the surface under
+it moves, because it is anchored to a coordinate and a coordinate stops meaning anything once the
+page scrolls. Its items SHALL be walkable by the arrow keys. It SHALL enter WITHOUT SCALING AND
+WITHOUT TRAVEL: the box is already where the cursor is, so any motion is motion away from the thing
+that caused it.
 
 A menu SHALL be placed so that it is fully reachable: opening away from the cursor where there is
 room, flipping to the other side of the cursor where there is not, and pinning inside the viewport
 only when the surface is larger than the space on either side.
 
-This is a PRESENTATION only. Fleet MUST NOT define a second set of actions, a second rename, a
-second confirm, or a second write; the rows, their capability gating, their host block, their
-read-only refusal and their outcomes remain exactly Collie's.
+When the actions become a QUESTION rather than a list of verbs — a rename's field — the menu SHALL
+give way to a prompt standing in the centre of the screen over a scrim, because a question is not
+answered in a box pinned to a corner and sized for one-word rows. The sheet SHALL keep asking the
+same question its own way, unchanged.
+
+The menu MAY compose its own rows, and MUST NOT re-decide anything behind them: the capability gates,
+the write refusals, the read-only refusal, the confirmation required before a destructive act, and
+the writes themselves SHALL be the ones the sheet uses. The two surfaces MAY differ in shape and MUST
+NOT differ in what they do.
 
 #### Scenario: Operator right-clicks a row with a mouse
 
 - **WHEN** the operator opens a row's actions with a mouse's context gesture on a machine with a fine pointer
-- **THEN** the same actions are presented at the cursor, the surface behind them is not dimmed, the box grows out of the corner the cursor is on, and the menu is placed so that all of it is on screen
+- **THEN** the fork's menu is presented at the cursor with the same actions, the surface behind it is not dimmed, the bottom sheet is not mounted, and the menu is placed so that all of it is on screen
 
 #### Scenario: Operator long-presses a row on a touch device
 
 - **WHEN** the operator opens a row's actions with a touch long press
-- **THEN** the existing bottom sheet is presented, unchanged, including its grab handle, its title bar and its close control
+- **THEN** Collie's bottom sheet is presented, unchanged, and the fork's menu is not mounted
 
 #### Scenario: The actions become a question
 
-- **WHEN** the operator chooses rename from a menu opened at the cursor
-- **THEN** the same surface stands in the centre of the screen with the existing rename field, and the write it performs is unchanged
+- **WHEN** the operator chooses rename from the menu
+- **THEN** the menu gives way to a prompt in the centre of the screen, carrying the row's current name, and the write it performs is unchanged
 
 #### Scenario: A gesture that opened nothing
 
 - **WHEN** a context gesture is made and no actions surface opens promptly after it
-- **THEN** that gesture places nothing later, and the next surface opened by any other means stands where it always did
+- **THEN** that gesture places nothing later, and the next surface opened by any other means is the bottom sheet
 
 #### Scenario: A machine with no fine pointer raises a context event
 
 - **WHEN** a device without a fine, hovering pointer raises a context gesture, however it was typed
 - **THEN** the bottom sheet is presented, and the gesture is discarded rather than left to place a later surface
+
+#### Scenario: The page moves under an open menu
+
+- **WHEN** the surface beneath an open menu scrolls or the window is resized
+- **THEN** the menu closes, because what it was anchored to has moved
 
 ### Requirement: A rail row wears Collie's own treatment, and drops it where Collie drops it
 
