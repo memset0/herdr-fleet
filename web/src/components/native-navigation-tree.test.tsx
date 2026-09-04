@@ -12,6 +12,8 @@ import { NativeNavigationTree } from "./native-navigation-tree";
 
 function tree(selectedPaneId?: string) {
   return deriveNavigationTree({
+    // One member, which is what a solo snapshot is; the rest of this fixture is unchanged.
+    hosts: [{
     hostId: "",
     hostLabel: "This host",
     workspaces: [
@@ -46,6 +48,7 @@ function tree(selectedPaneId?: string) {
         kind: "shell",
       },
     ],
+    }],
     selectedPaneId,
   });
 }
@@ -138,10 +141,10 @@ describe("NativeNavigationTree", () => {
 
     // A Space with nothing under it has nothing to disclose, so it keeps its route.
     await user.click(screen.getByRole("button", { name: "Empty Project" }));
-    expect(onOpenSpace).toHaveBeenCalledExactlyOnceWith("w3");
+    expect(onOpenSpace).toHaveBeenCalledExactlyOnceWith("w3", undefined);
 
     await user.click(await screen.findByRole("button", { name: "First task" }));
-    expect(onOpenPane).toHaveBeenCalledExactlyOnceWith("p1");
+    expect(onOpenPane).toHaveBeenCalledExactlyOnceWith("p1", undefined);
   });
 
   it("highlights the whole selected row, disclosure control included", () => {

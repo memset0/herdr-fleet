@@ -2,6 +2,7 @@ import { Star } from "lucide-react";
 
 import { operatorChosenName } from "../../../fleet/ui/pane-naming.ts";
 import { AgentIcon } from "@/components/agent-icon";
+import { HostChip } from "@/components/host-chip";
 import { StatusDot } from "@/components/status-badge";
 import { Card } from "@/components/ui/card";
 import { shortCwd, timeAgoShort } from "@/lib/format";
@@ -154,8 +155,13 @@ export function NativeAgentCard({
                 tall, which is the honest height for it. */}
             {/* Line 2 — what, with the age at its trailing end so the row's right edge reads top to
                 bottom: the control first, then the fact. */}
-            {(doing !== null || stamp !== undefined) && (
+            {/* WHICH MACHINE, in Collie's own chip rather than a second vocabulary for one fact. It
+                hides itself on a solo snapshot (components/host-chip.tsx), so a single-host rail is
+                unchanged; `caption` is its borderless form, which belongs in a line of chrome type
+                rather than a pill dropped into it. */}
+            {(doing !== null || stamp !== undefined || agent.host !== undefined) && (
               <span className="flex min-w-0 items-baseline gap-2 text-[11px] leading-tight text-muted-foreground">
+                <HostChip host={agent.host} variant="caption" className="shrink-0" />
                 <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
                 {stamp !== undefined && (
                   <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>

@@ -65,6 +65,7 @@ contracts = [
   "bounded browser-local Agent favorites",
   "explicit Herdr-only manual Pane fit",
   "permanently expanded native navigation rails",
+  "every pack member in both navigation rails",
   "one fetched CJK fallback face",
   "one recorded pointer gesture behind the row actions' stand"
 ]

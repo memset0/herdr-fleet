@@ -72,8 +72,8 @@ export type NavigationSubject =
 
 /** What activating a row does. A row without one only discloses. */
 export type NavigationTarget =
-  | { kind: "space"; workspaceId: string }
-  | { kind: "pane"; paneId: string };
+  | { kind: "space"; workspaceId: string; host?: string }
+  | { kind: "pane"; paneId: string; host?: string };
 
 export interface NavigationRow {
   /** Unique within the tree; the React key and nothing else. */
@@ -129,20 +129,48 @@ export function hostCollapseId(hostId: string): string {
   return JSON.stringify(["host-collapsed", hostId]);
 }
 
-export function spaceDisclosureId(workspaceId: string): string {
-  return JSON.stringify(["space", workspaceId]);
+/**
+ * A Space's disclosure identity, scoped to its host.
+ *
+ * The host segment is APPENDED rather than inserted, and omitted entirely for the empty host id a
+ * solo snapshot carries, so every identity a solo install has already stored keeps meaning what it
+ * meant. Two members legitimately number their spaces the same way, so without the segment one
+ * machine's disclosure would open another's.
+ */
+export function spaceDisclosureId(workspaceId: string, hostId = ""): string {
+  return hostId === ""
+    ? JSON.stringify(["space", workspaceId])
+    : JSON.stringify(["space", workspaceId, hostId]);
 }
 
-export function tabDisclosureId(workspaceId: string, tabId: string): string {
-  return JSON.stringify(["tab", workspaceId, tabId]);
+export function tabDisclosureId(workspaceId: string, tabId: string, hostId = ""): string {
+  return hostId === ""
+    ? JSON.stringify(["tab", workspaceId, tabId])
+    : JSON.stringify(["tab", workspaceId, tabId, hostId]);
 }
 
-function paneRow(pane: NavigationPaneInput, selected: boolean): NavigationRow {
+/** A row key's host suffix, on the same omit-when-solo rule as the disclosure identities. */
+function hostSuffix(hostId: string): string {
+  return hostId === "" ? "" : `@${hostId}`;
+}
+
+/** A target names its member, and omits the field entirely for the empty host id of a solo row. */
+function paneTarget(paneId: string, hostId: string): NavigationTarget {
+  if (hostId === "") return { kind: "pane", paneId };
+  return { kind: "pane", paneId, host: hostId };
+}
+
+function spaceTarget(workspaceId: string, hostId: string): NavigationTarget {
+  if (hostId === "") return { kind: "space", workspaceId };
+  return { kind: "space", workspaceId, host: hostId };
+}
+
+function paneRow(pane: NavigationPaneInput, selected: boolean, hostId: string): NavigationRow {
   const row: NavigationRow = {
-    key: `pane:${pane.workspaceId}:${pane.tabId}:${pane.paneId}`,
+    key: `pane:${pane.workspaceId}:${pane.tabId}:${pane.paneId}${hostSuffix(hostId)}`,
     label: pane.label,
     icon: pane.kind === "shell" ? "shell" : "agent",
-    target: { kind: "pane", paneId: pane.paneId },
+    target: paneTarget(pane.paneId, hostId),
     subject: { kind: "pane", paneId: pane.paneId },
     selected,
     children: [],
@@ -150,6 +178,23 @@ function paneRow(pane: NavigationPaneInput, selected: boolean): NavigationRow {
   if (pane.kind !== "shell") row.agent = pane.agent;
   if (pane.status) row.status = pane.status;
   return row;
+}
+
+/** One member's rows, as the caller hands them over already tagged with that member. */
+export interface NavigationHostInput {
+  hostId: string;
+  hostLabel: string;
+  workspaces: readonly NavigationWorkspaceInput[];
+  tabs: readonly NavigationTabInput[];
+  agents: readonly NavigationPaneInput[];
+  shellPanes: readonly NavigationPaneInput[];
+}
+
+/** The per-kind ceilings, spent ACROSS the whole tree rather than refilled for every member. */
+interface Budget {
+  spaces: number;
+  tabs: number;
+  panes: number;
 }
 
 /**
@@ -164,25 +209,21 @@ function paneRow(pane: NavigationPaneInput, selected: boolean): NavigationRow {
  *
  * Hosts and Spaces are NOT elided even when they hold one child. Both are places the operator
  * navigates to or reasons about — a Space has its own route — so removing one would hide a name
- * rather than a redundancy.
- *
- * A Tab with no Pane is dropped. It has no route of its own, so a row for it can neither be opened
- * nor disclosed; it would be a dead line in a tree whose whole purpose is reaching Panes. An empty
- * SPACE is kept, because its row still opens the Space route.
+ * rather than a redundancy. That holds for a pack too: every member keeps its own row even when it
+ * contributes nothing, because a member that is present and empty is a fact worth showing.
  *
  * `hostLabel` arrives resolved. Naming a host is Collie's job (its roster names members and its
  * helper falls back to the id), and this module stays free of the web tree so it can be tested as
- * pure data.
+ * pure data. The caller also fixes the ORDER of `hosts`; this module never sorts them, so the rail
+ * cannot reorder itself as panes come and go.
  */
-export function deriveNavigationTree(input: {
-  hostId: string;
-  hostLabel: string;
-  workspaces: readonly NavigationWorkspaceInput[];
-  tabs: readonly NavigationTabInput[];
-  agents: readonly NavigationPaneInput[];
-  shellPanes: readonly NavigationPaneInput[];
-  selectedPaneId?: string;
-}): NavigationTree {
+function hostRow(
+  input: NavigationHostInput,
+  budget: Budget,
+  selectedPaneId: string | undefined,
+  remember: (paneId: string, ancestors: readonly string[]) => void,
+): NavigationRow {
+  const hostId = input.hostId;
   const panes = [...input.agents, ...input.shellPanes]
     .filter(
       (pane) =>
@@ -191,7 +232,9 @@ export function deriveNavigationTree(input: {
         validId(pane.tabId) &&
         pane.label.length <= MAX_NAVIGATION_ID_LENGTH,
     )
-    .slice(0, MAX_NAVIGATION_PANES);
+    .slice(0, Math.max(0, budget.panes));
+  budget.panes -= panes.length;
+
   const tabs = input.tabs
     .filter(
       (tab) =>
@@ -199,95 +242,112 @@ export function deriveNavigationTree(input: {
         validId(tab.workspaceId) &&
         tab.label.length <= MAX_NAVIGATION_ID_LENGTH,
     )
-    .slice(0, MAX_NAVIGATION_TABS);
+    .slice(0, Math.max(0, budget.tabs));
+  budget.tabs -= tabs.length;
 
-  let selection: NavigationSelection | null = null;
-  const remember = (paneId: string, ancestors: readonly string[]): void => {
-    selection = { paneId, ancestors };
-  };
-
-  const spaces = input.workspaces
+  const workspaces = input.workspaces
     .filter(
       (workspace) =>
         validId(workspace.workspaceId) && workspace.label.length <= MAX_NAVIGATION_ID_LENGTH,
     )
-    .slice(0, MAX_NAVIGATION_SPACES)
-    .map((workspace): NavigationRow => {
-      const spaceId = spaceDisclosureId(workspace.workspaceId);
-      const spaceTabs = tabs
-        .filter((tab) => tab.workspaceId === workspace.workspaceId)
-        .map((tab) => ({
-          tab,
-          panes: panes.filter(
-            (pane) => pane.workspaceId === workspace.workspaceId && pane.tabId === tab.tabId,
-          ),
-        }))
-        .filter((entry) => entry.panes.length > 0);
+    .slice(0, Math.max(0, budget.spaces));
+  budget.spaces -= workspaces.length;
 
-      // A lone Tab is not a level; its Panes belong to the Space itself.
-      const elideTabLevel = spaceTabs.length === 1;
+  const spaces = workspaces.map((workspace): NavigationRow => {
+    const spaceId = spaceDisclosureId(workspace.workspaceId, hostId);
+    const spaceTabs = tabs
+      .filter((tab) => tab.workspaceId === workspace.workspaceId)
+      .map((tab) => ({
+        tab,
+        panes: panes.filter(
+          (pane) => pane.workspaceId === workspace.workspaceId && pane.tabId === tab.tabId,
+        ),
+      }))
+      .filter((entry) => entry.panes.length > 0);
 
-      const children = spaceTabs.flatMap((entry): NavigationRow[] => {
-        const tabId = tabDisclosureId(workspace.workspaceId, entry.tab.tabId);
-        const ancestorsOfPane = elideTabLevel ? [spaceId] : [spaceId, tabId];
+    // A lone Tab is not a level; its Panes belong to the Space itself.
+    const elideTabLevel = spaceTabs.length === 1;
 
-        // A Tab with one Pane is not a level either: the Pane takes its row and icon. The NAME is
-        // whichever of the two the operator chose — their Pane name if they gave one, otherwise the
-        // Tab's, which on a herd where no Pane is named is the only name in that branch at all.
-        if (entry.panes.length === 1) {
-          const only = entry.panes[0];
-          if (!only) return [];
-          const selected = only.paneId === input.selectedPaneId;
-          if (selected) remember(only.paneId, [spaceId]);
-          return [
-            { ...paneRow(only, selected), label: operatorChosenName(only.ownLabel) ?? entry.tab.label },
-          ];
-        }
+    const children = spaceTabs.flatMap((entry): NavigationRow[] => {
+      const tabId = tabDisclosureId(workspace.workspaceId, entry.tab.tabId, hostId);
+      const ancestorsOfPane = elideTabLevel ? [spaceId] : [spaceId, tabId];
 
-        const paneRows = entry.panes.map((pane) => {
-          const selected = pane.paneId === input.selectedPaneId;
-          if (selected) remember(pane.paneId, ancestorsOfPane);
-          return paneRow(pane, selected);
-        });
-
-        if (elideTabLevel) return paneRows;
-
+      // A Tab with one Pane is not a level either: the Pane takes its row and icon. The NAME is
+      // whichever of the two the operator chose — their Pane name if they gave one, otherwise the
+      // Tab's, which on a herd where no Pane is named is the only name in that branch at all.
+      if (entry.panes.length === 1) {
+        const only = entry.panes[0];
+        if (!only) return [];
+        const selected = only.paneId === selectedPaneId;
+        if (selected) remember(only.paneId, [spaceId]);
         return [
           {
-            key: `tab:${workspace.workspaceId}:${entry.tab.tabId}`,
-            label: entry.tab.label,
-            icon: "group",
-            disclosureId: tabId,
-            subject: { kind: "tab", tabId: entry.tab.tabId },
-            selected: false,
-            children: paneRows,
+            ...paneRow(only, selected, hostId),
+            label: operatorChosenName(only.ownLabel) ?? entry.tab.label,
           },
         ];
+      }
+
+      const paneRows = entry.panes.map((pane) => {
+        const selected = pane.paneId === selectedPaneId;
+        if (selected) remember(pane.paneId, ancestorsOfPane);
+        return paneRow(pane, selected, hostId);
       });
 
-      const row: NavigationRow = {
-        key: `space:${workspace.workspaceId}`,
-        label: workspace.label,
-        icon: "none",
-        target: { kind: "space", workspaceId: workspace.workspaceId },
-        selected: false,
-        children,
-      };
-      if (children.length > 0) row.disclosureId = spaceId;
-      return row;
+      if (elideTabLevel) return paneRows;
+
+      return [
+        {
+          key: `tab:${workspace.workspaceId}:${entry.tab.tabId}${hostSuffix(hostId)}`,
+          label: entry.tab.label,
+          icon: "group",
+          disclosureId: tabId,
+          subject: { kind: "tab", tabId: entry.tab.tabId },
+          selected: false,
+          children: paneRows,
+        },
+      ];
     });
 
+    const row: NavigationRow = {
+      key: `space:${workspace.workspaceId}${hostSuffix(hostId)}`,
+      label: workspace.label,
+      icon: "none",
+      target: spaceTarget(workspace.workspaceId, hostId),
+      selected: false,
+      children,
+    };
+    if (children.length > 0) row.disclosureId = spaceId;
+    return row;
+  });
+
   const host: NavigationRow = {
-    key: `host:${input.hostId}`,
+    key: `host:${hostId}`,
     label: input.hostLabel,
     icon: "none",
     selected: false,
     children: spaces,
   };
   if (spaces.length > 0) {
-    host.disclosureId = hostCollapseId(input.hostId);
+    host.disclosureId = hostCollapseId(hostId);
     host.disclosureInverted = true;
   }
+  return host;
+}
 
-  return { rows: [host], selection };
+export function deriveNavigationTree(input: {
+  hosts: readonly NavigationHostInput[];
+  selectedPaneId?: string;
+}): NavigationTree {
+  let selection: NavigationSelection | null = null;
+  const remember = (paneId: string, ancestors: readonly string[]): void => {
+    selection = { paneId, ancestors };
+  };
+  const budget: Budget = {
+    spaces: MAX_NAVIGATION_SPACES,
+    tabs: MAX_NAVIGATION_TABS,
+    panes: MAX_NAVIGATION_PANES,
+  };
+  const rows = input.hosts.map((host) => hostRow(host, budget, input.selectedPaneId, remember));
+  return { rows, selection };
 }

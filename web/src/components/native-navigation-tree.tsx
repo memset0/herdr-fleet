@@ -20,8 +20,8 @@ import { useLongPress } from "@/hooks/use-long-press";
 interface NativeNavigationTreeProps {
   tree: NavigationTree;
   selectedSpaceId?: string;
-  onOpenSpace: (spaceId: string) => void;
-  onOpenPane: (paneId: string) => void;
+  onOpenSpace: (spaceId: string, host?: string) => void;
+  onOpenPane: (paneId: string, host?: string) => void;
   /** Open the row's own actions — a right-click on a pointer, a long press on a thumb. */
   onRowActions?: (subject: NavigationSubject) => void;
   preferenceStore?: NativeNavigationPreferenceStore;
@@ -91,8 +91,8 @@ interface RowProps {
   spaceIsCurrent: boolean;
   selectedSpaceId: string | undefined;
   onToggle: (disclosureId: string) => void;
-  onOpenSpace: (spaceId: string) => void;
-  onOpenPane: (paneId: string) => void;
+  onOpenSpace: (spaceId: string, host?: string) => void;
+  onOpenPane: (paneId: string, host?: string) => void;
   onRowActions: ((subject: NavigationSubject) => void) | undefined;
 }
 
@@ -139,8 +139,8 @@ function Row({
   // that has nothing to open — and from every native surface that already offers it.
   const activate = () => {
     if (disclosureId !== undefined) onToggle(disclosureId);
-    else if (row.target?.kind === "space") onOpenSpace(row.target.workspaceId);
-    else if (row.target?.kind === "pane") onOpenPane(row.target.paneId);
+    else if (row.target?.kind === "space") onOpenSpace(row.target.workspaceId, row.target.host);
+    else if (row.target?.kind === "pane") onOpenPane(row.target.paneId, row.target.host);
   };
 
   // A row's own actions, reached the two ways a row is asked for them: a pointer's context menu and

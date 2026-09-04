@@ -6,13 +6,26 @@ import {
   MAX_NAVIGATION_PANES,
   spaceDisclosureId,
   tabDisclosureId,
+  type NavigationHostInput,
+  type NavigationTree,
 } from "./model";
+
+/**
+ * The single-host call this suite was written against, now one member of a pack of one.
+ *
+ * Every assertion below is unchanged: that is the proof that a solo install renders exactly as it
+ * did, keys, disclosure identities and order included.
+ */
+function singleHost(input: NavigationHostInput & { selectedPaneId?: string }): NavigationTree {
+  const { selectedPaneId, ...host } = input;
+  return deriveNavigationTree({ hosts: [host], selectedPaneId });
+}
 
 const HOST = { hostId: "", hostLabel: "This host" };
 
 describe("native navigation hierarchy", () => {
   test("puts every Space under one Host row that is open until it is closed", () => {
-    const tree = deriveNavigationTree({
+    const tree = singleHost({
       hostId: "peer-a",
       hostLabel: "peer-a",
       workspaces: [{ workspaceId: "w1", label: "One" }],
@@ -33,7 +46,7 @@ describe("native navigation hierarchy", () => {
   });
 
   test("preserves Space, Tab, Agent, and shell order while selecting ancestry", () => {
-    const tree = deriveNavigationTree({
+    const tree = singleHost({
       ...HOST,
       workspaces: [
         { workspaceId: "w2", label: "Two" },
@@ -78,7 +91,7 @@ describe("native navigation hierarchy", () => {
   test("elides a lone Tab, keeps the Pane's icon, and names the row for the operator", () => {
     // No Pane here was named by a person, so the Tab's name is the only name in the branch —
     // `label` is a terminal title, which every sibling on this herd would repeat.
-    const unnamed = deriveNavigationTree({
+    const unnamed = singleHost({
       ...HOST,
       workspaces: [{ workspaceId: "w1", label: "One" }],
       tabs: [{ workspaceId: "w1", tabId: "t1", label: "Rename the tree" }],
@@ -104,7 +117,7 @@ describe("native navigation hierarchy", () => {
     expect(unnamed.selection?.ancestors).toEqual([spaceDisclosureId("w1")]);
 
     // The operator named the Pane, so their name wins over the Tab's.
-    const named = deriveNavigationTree({
+    const named = singleHost({
       ...HOST,
       workspaces: [{ workspaceId: "w1", label: "One" }],
       tabs: [{ workspaceId: "w1", tabId: "t1", label: "Rename the tree" }],
@@ -123,7 +136,7 @@ describe("native navigation hierarchy", () => {
     expect(named.rows[0]?.children[0]?.children[0]?.label).toBe("guard work");
 
     // …and a multiplexer's own ordinal is not a name, so the Tab's still wins.
-    const numbered = deriveNavigationTree({
+    const numbered = singleHost({
       ...HOST,
       workspaces: [{ workspaceId: "w1", label: "One" }],
       tabs: [{ workspaceId: "w1", tabId: "t1", label: "Rename the tree" }],
@@ -143,7 +156,7 @@ describe("native navigation hierarchy", () => {
   });
 
   test("keeps a group row and its folder only where more than one child survives", () => {
-    const tree = deriveNavigationTree({
+    const tree = singleHost({
       ...HOST,
       workspaces: [{ workspaceId: "w1", label: "One" }],
       tabs: [
@@ -172,7 +185,7 @@ describe("native navigation hierarchy", () => {
   });
 
   test("drops orphaned, invalid and empty rows and leaves an empty Space openable", () => {
-    const tree = deriveNavigationTree({
+    const tree = singleHost({
       ...HOST,
       workspaces: [{ workspaceId: "w1", label: "One" }],
       tabs: [
@@ -201,7 +214,7 @@ describe("native navigation hierarchy", () => {
       label: `Pane ${index}`,
       agent: "claude",
     }));
-    const tree = deriveNavigationTree({
+    const tree = singleHost({
       ...HOST,
       workspaces: [{ workspaceId: "w1", label: "One" }],
       tabs: [{ workspaceId: "w1", tabId: "t1", label: "First" }],
@@ -209,5 +222,78 @@ describe("native navigation hierarchy", () => {
       shellPanes: [],
     });
     expect(tree.rows[0]?.children[0]?.children).toHaveLength(MAX_NAVIGATION_PANES);
+  });
+
+  test("a pack draws one collapsible Host row per member, in the order the caller fixed", () => {
+    const paneOn = (host: string) => ({
+      workspaceId: "w1",
+      tabId: "t1",
+      paneId: `p-${host}`,
+      label: `work on ${host}`,
+      agent: "claude",
+    });
+    const tree = deriveNavigationTree({
+      hosts: [
+        {
+          hostId: "lead",
+          hostLabel: "north",
+          workspaces: [{ workspaceId: "w1", label: "Project" }],
+          tabs: [{ workspaceId: "w1", tabId: "t1", label: "Main" }],
+          agents: [paneOn("lead")],
+          shellPanes: [],
+        },
+        {
+          hostId: "peer-a",
+          hostLabel: "attic",
+          workspaces: [{ workspaceId: "w1", label: "Project" }],
+          tabs: [{ workspaceId: "w1", tabId: "t1", label: "Main" }],
+          agents: [paneOn("peer-a")],
+          shellPanes: [],
+        },
+      ],
+    });
+
+    expect(tree.rows).toHaveLength(2);
+    expect(tree.rows.map((row) => row.label)).toEqual(["north", "attic"]);
+    // Each member collapses on its own.
+    expect(tree.rows[0]?.disclosureId).toBe(hostCollapseId("lead"));
+    expect(tree.rows[1]?.disclosureId).toBe(hostCollapseId("peer-a"));
+
+    // Two members legitimately number their spaces the same way, so neither the keys nor the
+    // disclosure identities may collide across them.
+    const spaces = tree.rows.map((row) => row.children[0]);
+    expect(spaces[0]?.key).not.toBe(spaces[1]?.key);
+    expect(spaces[0]?.disclosureId).toBe(spaceDisclosureId("w1", "lead"));
+    expect(spaces[1]?.disclosureId).toBe(spaceDisclosureId("w1", "peer-a"));
+
+    // And a row carries the member it belongs to, so activating it opens that member.
+    const paneRows = tree.rows.map((row) => row.children[0]?.children[0]);
+    expect(paneRows[0]?.target).toEqual({ kind: "pane", paneId: "p-lead", host: "lead" });
+    expect(paneRows[1]?.target).toEqual({ kind: "pane", paneId: "p-peer-a", host: "peer-a" });
+  });
+
+  test("the per-kind ceilings are spent across the whole pack, not refilled per member", () => {
+    const panes = (host: string, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        workspaceId: "w1",
+        tabId: "t1",
+        paneId: `${host}-p${index}`,
+        label: `pane ${index}`,
+        agent: "claude",
+      }));
+    const member = (hostId: string) => ({
+      hostId,
+      hostLabel: hostId,
+      workspaces: [{ workspaceId: "w1", label: "Project" }],
+      tabs: [{ workspaceId: "w1", tabId: "t1", label: "Main" }],
+      agents: panes(hostId, MAX_NAVIGATION_PANES),
+      shellPanes: [],
+    });
+    const tree = deriveNavigationTree({ hosts: [member("a"), member("b")] });
+    const drawn = tree.rows
+      .flatMap((row) => row.children)
+      .flatMap((space) => space.children)
+      .filter((row) => row.target?.kind === "pane").length;
+    expect(drawn).toBe(MAX_NAVIGATION_PANES);
   });
 });

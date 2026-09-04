@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { agentFavoriteStore, __resetAgentFavorites } from "../../../fleet/ui/agent-favorites.ts";
 import type { AgentView } from "@/lib/types";
 import { NativeAgentRail } from "./native-agent-rail";
+import { PackProvider } from "@/components/pack-provider";
+import type { ServerSummary } from "@/lib/types";
 
 function agent(paneId: string, overrides: Partial<AgentView> = {}): AgentView {
   return {
@@ -140,5 +142,28 @@ describe("NativeAgentRail", () => {
     expect(/\bpr-\d/.test(age.parentElement?.className ?? "")).toBe(false);
     expect(/\bpr-\d/.test(age.closest("button")?.className ?? "")).toBe(false);
   });
-});
+  test("a row names the member it came from, and a solo rail names none", () => {
+    const servers: ServerSummary[] = [
+      { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 2 },
+      { id: "peer-a", name: "attic", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 2 },
+    ];
+    const here = agent("here", { host: "lead" });
+    const there = agent("there", { host: "peer-a" });
 
+    const pack = render(
+      <PackProvider servers={servers} sessions={[]}>
+        <NativeAgentRail agents={[here, there]} onOpen={() => undefined} />
+      </PackProvider>,
+    );
+    // Collie's own chip, not a second vocabulary: one marker per row, naming that row's machine.
+    expect(screen.getAllByText("north")).not.toHaveLength(0);
+    expect(screen.getAllByText("attic")).not.toHaveLength(0);
+    pack.unmount();
+
+    // The same rows with no roster are a solo install, and a solo install has no host to name.
+    render(<NativeAgentRail agents={[here, there]} onOpen={() => undefined} />);
+    expect(screen.queryByText("north")).toBeNull();
+    expect(screen.queryByText("attic")).toBeNull();
+    expect(rows()).toHaveLength(2);
+  });
+});

@@ -33,7 +33,7 @@ import { NativeNavigationProvider } from "@/components/native-navigation-context
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { TabActionsSheet } from "@/components/tab-actions-sheet";
-import { ambientPanes, hostName, paneScope } from "@/lib/hosts";
+import { hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
 import { homePath, panePath, spacePath } from "@/lib/nav";
@@ -81,37 +81,45 @@ export function NativeNavigationShell({
     preferenceStore.snapshot,
     preferenceStore.snapshot,
   );
-  const localPanes = useMemo(
-    () => ambientPanes(data.agents, data.shellPanes, data.scope, data.servers, data.sessions),
-    [data.agents, data.shellPanes, data.scope, data.servers, data.sessions],
+  // THE RAILS ASK A DIFFERENT QUESTION FROM THE ROUTE. `ambientPanes` narrows rows to the address
+  // the URL is on, which is exactly right for the route and exactly wrong here: a rail's job is to
+  // say what this pack contains, so it takes the merged rows and groups them by member.
+  const allPanes = useMemo(
+    () => [...data.agents, ...data.shellPanes],
+    [data.agents, data.shellPanes],
   );
-  const allLocalPanes = useMemo(
-    () => [...localPanes.agents, ...localPanes.shellPanes],
-    [localPanes.agents, localPanes.shellPanes],
-  );
-  // The machine whose rows these are. A solo snapshot has no roster, so Collie's own resolver
-  // returns nothing and the tree says "this host" rather than inventing a name for it.
-  const hostLabel = hostName(data.servers, data.scope.host) ?? t("fleet.navigation.thisHost");
+  // The member order is the ROSTER's, lead first, so the rail does not reorder itself as panes come
+  // and go. A host present only in the rows sorts after the roster's, by id, rather than vanishing.
+  const hostIds = useMemo(() => {
+    const roster = (data.servers ?? []).toSorted((a, b) => Number(b.isLead) - Number(a.isLead));
+    const ordered = roster.map((server) => server.id);
+    const known = new Set(ordered);
+    const extra = [...new Set(allPanes.map((pane) => pane.host ?? ""))]
+      .filter((host) => host !== "" && !known.has(host))
+      .toSorted();
+    // A solo snapshot has no roster at all, and its rows carry no host: one member, spelled "".
+    return ordered.length === 0 && extra.length === 0 ? [""] : [...ordered, ...extra];
+  }, [data.servers, allPanes]);
   const tree = useMemo(
     () =>
       deriveNavigationTree({
-        hostId: data.scope.host ?? "",
-        hostLabel,
-        workspaces: data.workspaces,
-        tabs: data.tabs,
-        agents: localPanes.agents.map(toNavigationPane),
-        shellPanes: localPanes.shellPanes.map(toNavigationPane),
+        hosts: hostIds.map((hostId) => {
+          const on = <T extends { host?: string }>(rows: readonly T[]): T[] =>
+            hostId === "" ? [...rows] : rows.filter((row) => (row.host ?? "") === hostId);
+          return {
+            hostId,
+            // Naming a host is Collie's job; its resolver falls back to the id, and a solo snapshot
+            // has no roster at all, so the tree says "this host" rather than inventing a name.
+            hostLabel: hostName(data.servers, hostId || undefined) ?? t("fleet.navigation.thisHost"),
+            workspaces: on(data.workspaces),
+            tabs: on(data.tabs),
+            agents: on(data.agents).map(toNavigationPane),
+            shellPanes: on(data.shellPanes).map(toNavigationPane),
+          };
+        }),
         selectedPaneId: paneId,
       }),
-    [
-      data.scope.host,
-      hostLabel,
-      data.workspaces,
-      data.tabs,
-      localPanes.agents,
-      localPanes.shellPanes,
-      paneId,
-    ],
+    [hostIds, data.servers, data.workspaces, data.tabs, data.agents, data.shellPanes, paneId],
   );
 
   const revalidator = useRevalidator();
@@ -125,7 +133,7 @@ export function NativeNavigationShell({
   const [actions, setActions] = useState<NavigationSubject | null>(null);
   const actionPane =
     actions?.kind === "pane"
-      ? (allLocalPanes.find((pane) => pane.paneId === actions.paneId) ?? null)
+      ? (allPanes.find((pane) => pane.paneId === actions.paneId) ?? null)
       : null;
   const actionTab =
     actions?.kind === "tab" ? (data.tabs.find((tab) => tab.tabId === actions.tabId) ?? null) : null;
@@ -185,12 +193,16 @@ export function NativeNavigationShell({
     }
   }, [location.pathname, location.search]);
 
-  const openSpace = (id: string) => {
-    navigate(spacePath(id, data.scope));
+  // A row carries the member it belongs to, so activating one opens THAT member rather than the one
+  // the current address happens to name.
+  const openSpace = (id: string, host?: string) => {
+    navigate(spacePath(id, host === undefined ? data.scope : { ...data.scope, host }));
     closeHierarchy();
   };
-  const openPaneId = (id: string) => {
-    const pane = allLocalPanes.find((candidate) => candidate.paneId === id);
+  const openPaneId = (id: string, host?: string) => {
+    const pane = allPanes.find(
+      (candidate) => candidate.paneId === id && (host === undefined || (candidate.host ?? "") === host),
+    );
     navigate(panePath(id, paneScope(data.scope, pane, data.servers, data.sessions)));
     closeHierarchy();
   };
@@ -218,14 +230,14 @@ export function NativeNavigationShell({
   const agents = useMemo(
     () => (
       <NativeAgentRail
-        agents={localPanes.agents}
+        agents={data.agents}
         bridge={data.bridge}
         error={data.error}
         lastSeenAt={data.lastSeenAt}
         onOpen={openAgent}
       />
     ),
-    [localPanes.agents, data.bridge, data.error, data.lastSeenAt, openAgent],
+    [data.agents, data.bridge, data.error, data.lastSeenAt, openAgent],
   );
 
   const navigation = useMemo(
