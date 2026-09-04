@@ -19,6 +19,6 @@
 
 ## 4. Validate, publish, and archive
 
-- [ ] 4.1 At commit readiness run the full root suite and the full Web suite once with pinned Bun 1.3.14, both typechecks, lint over the changed files, production build, version and fork checks, strict OpenSpec validation, a privacy audit and an exact staged-diff review.
-- [ ] 4.2 Commit the complete feature with the required trailers, fetch and verify the remote, push, and verify the exact commit.
-- [ ] 4.3 Deploy the exact pushed candidate to existing staging, verify the lead's behaviour is unchanged and that no membership exists, then sync, archive, push the archive separately, and redeploy the archive HEAD.
+- [x] 4.1 At commit readiness run the full root suite and the full Web suite once with pinned Bun 1.3.14, both typechecks, lint over the changed files, production build, version and fork checks, strict OpenSpec validation, a privacy audit and an exact staged-diff review.
+- [x] 4.2 Commit the complete feature with the required trailers, fetch and verify the remote, push, and verify the exact commit.
+- [x] 4.3 Deploy the exact pushed candidate to existing staging, verify the lead's behaviour is unchanged and that no membership exists, then sync, archive, push the archive separately, and redeploy the archive HEAD.

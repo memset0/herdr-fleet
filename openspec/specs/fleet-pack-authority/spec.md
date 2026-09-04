@@ -8,6 +8,7 @@ keeping browser authentication, lifecycle selection, and future reachability tra
 ## Requirements
 
 ### Requirement: Browser sessions and Pack admission are separate authority planes
+
 Herdr Fleet SHALL use its configured browser session only to authorize a browser's requests to the
 Lead Gateway. It MUST NOT send, copy, translate, expose, or derive the Fleet username, password,
 password hash, session secret, session identifier, or signed session cookie into a Pack request,
@@ -36,10 +37,14 @@ state through Collie's own trust reader and mode derivation. That state SHALL re
 source of Pack identity, local member identity, membership, pinned certificates, Pack secret
 generation, signatures, and native Lead or Peer mode.
 
-Fleet MUST NOT create, initialize, repair, rewrite, migrate, enroll, remove, rotate, or otherwise
-modify Pack trust state. A missing, unreadable, structurally invalid, conflicting, solo, or
+The Fleet runtime MUST NOT create, initialize, repair, rewrite, migrate, enroll, remove, rotate, or
+otherwise modify Pack trust state. A missing, unreadable, structurally invalid, conflicting, solo, or
 configured-role-mismatched trust state MUST fail schema-2 startup before any child starts, without
 replacing the file or falling back to a Fleet-maintained roster.
+
+An explicit operator-invoked enrolment is the one exception, and it is not a runtime path: it applies
+Collie's own transitions through Collie's own persistence seam, never a Fleet-defined record, and
+never as a side effect of starting, restarting or supervising anything.
 
 #### Scenario: Configured Lead matches native trust state
 - **WHEN** schema 2 declares `role = "lead"` and Collie's valid trust state derives native Lead mode
@@ -53,7 +58,12 @@ replacing the file or falling back to a Fleet-maintained roster.
 - **WHEN** native Pack lifecycle is selected but Collie's trust state is absent, invalid, conflicted, solo, or derives a different role
 - **THEN** Fleet fails closed before starting Collie or Gateway and leaves the trust state byte-for-byte unchanged
 
+#### Scenario: An operator enrols a peer
+- **WHEN** an operator invokes enrolment explicitly
+- **THEN** Collie's own transitions persist the change through Collie's own seam, and no runtime path gains the ability to do so
+
 ### Requirement: Fleet preserves native Pack authority boundaries without reimplementation
+
 Herdr Fleet SHALL leave Pack request admission, pinned mutual TLS, Pack secret and signature checks,
 membership transitions, strict secret rotation, native router/loaders, Pack UI, member access, and
 software-update authority to Collie's existing Pack implementation and `PACK_PROTOCOL.md`.
