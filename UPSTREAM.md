@@ -7,7 +7,21 @@ Herdr Fleet v3 began as a downstream reapplication of
 - commit: `4618c90534d6f818ed6788b8db00e1582c5abfdc`
 
 Collie remains MIT-licensed and attributed through its existing license, history, documentation,
-and source. Unchanged Collie behavior is upstream behavior, not a Herdr Fleet capability.
+and source. Unchanged Collie behavior is upstream behavior, not a Herdr Fleet capability. Collie's own
+changelog is retained byte-identical in [`COLLIE_CHANGELOG.md`](./COLLIE_CHANGELOG.md); Herdr Fleet's
+own is [`CHANGELOG.md`](./CHANGELOG.md).
+
+## Version correspondence
+
+| Herdr Fleet | corresponds to Collie |
+| --- | --- |
+| `3.0.0` | `1.2.0` |
+
+**This is provenance, not a version component.** Herdr Fleet's version line is its own and begins at
+`3.0.0`; Collie's is Collie's. Adopting a newer Collie release adds a row here and does not move this
+product's number, and a Herdr Fleet release moves this product's number without claiming anything
+about Collie's. Encoding the correspondence in the version itself — as a build-metadata suffix, say —
+would make every upstream adoption look like a release of ours.
 
 [`FORK.toml`](./FORK.toml) is the machine-readable boundary. New downstream behavior belongs in a
 declared owned root. A change to an upstream-owned file must expose a narrow port, carry a stable

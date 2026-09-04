@@ -16,16 +16,47 @@ decisions [`.adr/`](./.adr/) · adding a harness
 
 [`.adr/`](./.adr/) holds the decisions whose reasoning would otherwise live only in a PR thread —
 specifically the ones that **close off an option someone will reasonably propose again**. If you're
-about to argue *why not* rather than *how*, check there first; if the answer isn't there and the
-decision is that shape, add one (numbering + format: [`.adr/README.md`](./.adr/README.md)).
+about to argue *why not* rather than *how*, check there first.
+
+**`.adr/` is Collie's, and this fork reads it and never writes to it** — no edit to a file in it, and
+no new file added to it, including one that would merely record a decision of ours. Our decisions of
+that shape go in the owning OpenSpec change's `design.md`, with the short normative form here; see
+*Fork boundary* below. An upstream ADR that our own decision has overtaken is not edited into
+agreement with us either — this file says what holds, and says which ADR it departs from.
 
 Rules elsewhere in this file stay short and normative and link to the ADR for the argument. Don't
-restate an ADR's reasoning here, and don't edit a superseded ADR into agreement with the present —
-mark it superseded and write the next one.
+restate an ADR's reasoning here.
 
-## Versioning — MANDATORY
+## Fork boundary — MANDATORY
 
-Collie is **SemVer**ed, and the version is **enforced**, so it never silently drifts.
+[`FORK.toml`](./FORK.toml) is the machine-readable boundary and [`UPSTREAM.md`](./UPSTREAM.md) the
+provenance. Four rules govern how both are maintained; `scripts/check-fork.ts` enforces only the
+bookkeeping, and the judgement is yours.
+
+- **Invasiveness is minimised, not merely declared.** An upstream file is edited only when the same
+  result genuinely cannot be reached from a file we own, and then through the narrowest port that
+  works — an optional field, one imported name, one `var()` hole. "It is declared in the manifest" is
+  bookkeeping, not permission. When two designs satisfy the same requirement, the one that spends
+  fewer invasive paths wins, and the reason field says so.
+- **`FORK.toml` moves in the same commit as the boundary it describes.** A new owned root, a new
+  port, a path that stopped being ours — each lands with its entry, its stable anchor, its reason and
+  its `verify` list. A manifest that describes last week's tree is worse than none, because the next
+  upstream sync trusts it.
+- **Upstream's `.adr/` is never written to**, per the section above.
+- **This file governs any conflict.** Where an upstream document, comment or ADR and this agreement
+  disagree, this agreement holds — and the disagreement is recorded *here*, at the rule, rather than
+  settled silently at the call site by whoever hit it first.
+
+## Versioning and releases — MANDATORY
+
+**This product's version line is its own, beginning at `3.0.0`.** It is not Collie's.
+[`UPSTREAM.md`](./UPSTREAM.md) records which exact Collie release the tree corresponds to, and
+adopting a newer one moves that record and not this number. The version is **SemVer** and
+**enforced**, so it never silently drifts. Development happens on the default branch; there is no
+separate integration branch to open a change against.
+
+**Write in `CHANGELOG.md`, never in `COLLIE_CHANGELOG.md`.** The second is Collie's own history,
+retained byte-identical, and a line of ours added to it would claim upstream wrote it.
 
 **The version lives in three files that must always agree, plus a matching CHANGELOG entry:**
 `herdr-plugin.toml` (canonical — Herdr reads it) · `package.json` · `web/package.json` ·
@@ -45,24 +76,39 @@ the release commit adds it. Do not touch the three version files.
 
 **Cutting a release is one `chore(release): x.y.z` commit** that does all of this and nothing else:
 
-1. **Pick the axis** from the *sum* of the Unreleased entries — what the operator has to do, not how
-   visible any one change is:
-   - **PATCH** (`0.2.0 → 0.2.1`): the code now does what it was always meant to do — bug fixes and
-     internal refactors. A fix may well change what you see; that alone never promotes it. When the
-     correction is big enough that someone should read the notes, say so loudly in the CHANGELOG
-     entry rather than inflating the bump.
-   - **MINOR** (`0.2.0 → 0.3.0`): something is there that wasn't — a new capability, setting,
-     surface, or action. Existing setups keep working untouched.
-   - **MAJOR** (`0.2.0 → 1.0.0`): the operator must change something — a config key renamed or
-     removed, a contract broken, a workflow that used to work and now doesn't.
+1. **Pick the axis** from the *sum* of the Unreleased entries. The axis is **how far the change has
+   to travel** — which machines must redeploy before the fleet is consistent again. That is what a
+   release costs the operator, and it is the only thing the number has to predict. How visible a
+   change is, and how hard it was, decide nothing here.
+   - **PATCH** (`3.0.0 → 3.0.1`): the lead alone redeploys. A change confined to the frontend
+     bundle, or to the gateway that serves it, reaches every viewer the moment the lead is levelled,
+     because that machine is where the code they run comes from.
+   - **MINOR** (`3.0.0 → 3.1.0`): every other member redeploys too. Anything a peer executes — the
+     supervisor, the pack link, the reachability transport, a bridge surface a peer answers on — is
+     half deployed while one member still runs the old code, and the half that is stale is the one
+     nobody is looking at.
+   - **MAJOR** (`3.0.0 → 4.0.0`): the operator changes something that is not code — a configuration
+     key renamed or removed, a contract broken, an enrolment step, a workflow that worked and now
+     doesn't.
 2. **Bump** all three version files to that number.
 3. **Rename `## [Unreleased]` to `## [x.y.z] - YYYY-MM-DD`**, real date, and **append each line's
    short commit hash** in the file's link style —
-   `([abc1234](https://github.com/AltanS/collie/commit/abc1234))`. Tidy while you're there: merge or
+   `([abc1234](https://github.com/memset0/herdr-fleet/commit/abc1234))`. Tidy while you're there: merge or
    reorder lines that grew untidy, and delete lines for changes that were reverted before the
    release ever shipped.
 4. **Re-create an empty `## [Unreleased]` heading above it.**
 5. **Run `scripts/check-version.sh`** — it must print `✓`. Then tag and push (next paragraph).
+
+**Who may cut which.** An agent cuts a PATCH or a MINOR itself and does not ask first. A MINOR
+obliges every other member to redeploy, which the operator has to sequence — say so in the release
+notes rather than withholding the release. **A MAJOR is the owner's, always, and cut by hand.** An
+agent that believes the sum sits on the MAJOR axis stops and says so; it never cuts one, and it never
+softens one into a MINOR to avoid stopping.
+
+**Assess every verified change against that axis in the turn that finished it**, not when someone
+next remembers. A change that has passed its gates either warrants a release now or it does not, and
+that answer is part of finishing it. Unreleased lines piling up behind an assessment nobody made is
+how a fleet ends up running three different versions of itself.
 
 **A PR from a fork is the exception: leave all four files alone.** Bump nothing, add no CHANGELOG
 line — send the functional commits only. The version is the maintainer's to pick, because it depends

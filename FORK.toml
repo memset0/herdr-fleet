@@ -34,6 +34,13 @@ contracts = ["exact upstream identity", "complete changed-path classification"]
 verify = ["scripts/check-fork.test.ts", "scripts/fork-manifest.test.ts"]
 
 [[owned]]
+id = "release-history"
+intent = "Keep this product's release history and Collie's separate, so neither is read as the other's."
+paths = ["COLLIE_CHANGELOG.md"]
+contracts = ["Collie's changelog retained byte-identical under its own name"]
+verify = ["scripts/check-version.sh"]
+
+[[owned]]
 id = "public-safety-guard"
 intent = "Refuse a tracked tree carrying one of this operator's real deployment facts."
 paths = [
@@ -210,6 +217,18 @@ verify = ["herdr-plugin.toml", "UPSTREAM.md", "fleet/lifecycle.test.ts"]
 reason = "Herdr reads plugin identity, build steps, and actions only from the upstream manifest path."
 
 [[invasive]]
+id = "downstream-version-line"
+intent = "Carry this product's own version and its own release history in the files upstream's version gate reads."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "CHANGELOG.md#private Fleet configuration",
+  "web/package.json#version"
+]
+verify = ["scripts/check-version.sh"]
+reason = "Three files plus the newest numbered changelog heading must agree on one version, and `scripts/check-version.sh` and the pre-commit changelog guard both read those filenames directly. Giving our changelog a new name would mean editing both of those upstream scripts — two invasive paths, in tooling — to say what this file now honestly is, so CHANGELOG.md keeps the canonical name and holds our entries, and Collie's own history is retained byte-identical beside it under its own name, which this file's header links. The bump in the root package.json is the same one change and rides fleet-build-port, because this manifest allows one entry per path."
+
+[[invasive]]
 id = "fleet-build-port"
 intent = "Include fork-owned Fleet modules in existing root test and typecheck gates."
 strategy = "adapt"
@@ -217,15 +236,6 @@ review = "every-upstream-sync"
 paths = ["package.json#./fleet", "tsconfig.json#\"fleet\""]
 verify = ["fleet/config.test.ts", "fleet/collie-env.test.ts"]
 reason = "The upstream root package and TypeScript configuration own the repository-wide verification entrypoints."
-
-[[invasive]]
-id = "downstream-changelog"
-intent = "Record functional downstream work under the existing unreleased release discipline."
-strategy = "adapt"
-review = "every-upstream-sync"
-paths = ["CHANGELOG.md#private Fleet configuration"]
-verify = ["CHANGELOG.md", "scripts/check-version.sh"]
-reason = "The existing changelog is the single release history enforced by the upstream version gate."
 
 [[invasive]]
 id = "native-agent-favorites-port"

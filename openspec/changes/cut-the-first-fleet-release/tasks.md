@@ -1,12 +1,12 @@
 ## 1. Cut the version
 
-- [ ] 1.1 Re-read the versioning and release sections of the working agreement, the provenance record, and `scripts/check-version.sh`; verify a clean tree equal to its upstream and record the task-owned paths.
-- [ ] 1.2 Set the three version files to `3.0.0`, rename the unreleased changelog heading to `3.0.0` with its real date and each entry's short commit hash in the file's link style, and re-create an empty unreleased heading above it.
-- [ ] 1.3 Record the exact Collie release this tree corresponds to as provenance, and state in the working agreement that the version line is this product's and that development happens on the default branch.
-- [ ] 1.4 State the release policy in the working agreement — the redeploy-reach axis, who may cut each level, the per-change assessment, and the release commit's exact shape — and reconcile it with the axis the agreement inherited from upstream rather than leaving both standing.
-- [ ] 1.5 Separate the changelogs: retain upstream's byte-identical under its own name, leave this product's entries in the canonical file, and retire the invasive declaration that existed only because the two were interleaved.
-- [ ] 1.6 State the fork-boundary rules in the working agreement — minimal invasiveness, `FORK.toml` moving with the boundary, upstream `.adr/` left untouched, and the working agreement governing any conflict — and reconcile the existing decision-record guidance with the last of them rather than leaving both standing.
-- [ ] 1.7 Run the version check, both typechecks, lint, the fork check, the production build and strict OpenSpec validation.
+- [x] 1.1 Re-read the versioning and release sections of the working agreement, the provenance record, and `scripts/check-version.sh`; verify a clean tree equal to its upstream and record the task-owned paths.
+- [x] 1.2 Set the three version files to `3.0.0`, rename the unreleased changelog heading to `3.0.0` with its real date and each entry's short commit hash in the file's link style, and re-create an empty unreleased heading above it.
+- [x] 1.3 Record the exact Collie release this tree corresponds to as provenance, and state in the working agreement that the version line is this product's and that development happens on the default branch.
+- [x] 1.4 State the release policy in the working agreement — the redeploy-reach axis, who may cut each level, the per-change assessment, and the release commit's exact shape — and reconcile it with the axis the agreement inherited from upstream rather than leaving both standing.
+- [x] 1.5 Separate the changelogs: retain upstream's byte-identical under its own name, leave this product's entries in the canonical file, and retire the invasive declaration that existed only because the two were interleaved.
+- [x] 1.6 State the fork-boundary rules in the working agreement — minimal invasiveness, `FORK.toml` moving with the boundary, upstream `.adr/` left untouched, and the working agreement governing any conflict — and reconcile the existing decision-record guidance with the last of them rather than leaving both standing.
+- [x] 1.7 Run the version check, both typechecks, lint, the fork check, the production build and strict OpenSpec validation.
 
 ## 2. Publish it
 
