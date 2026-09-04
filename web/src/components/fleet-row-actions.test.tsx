@@ -19,7 +19,14 @@ const pane: AgentView = {
   focused: false,
 };
 
-const tab: TabView = { tabId: "w1:t1", workspaceId: "w1", label: "one", paneCount: 2 };
+const tab: TabView = {
+  tabId: "w1:t1",
+  workspaceId: "w1",
+  number: 1,
+  label: "one",
+  focused: false,
+  paneCount: 2,
+};
 
 /** jsdom answers every media query false, so a case that wants the menu has to say so. */
 function setPointer(kind: "fine" | "coarse") {
