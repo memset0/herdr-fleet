@@ -620,3 +620,80 @@ own density everywhere it is shown.
 
 - **WHEN** the bottom sheet is presented instead
 - **THEN** it still names the row in its own title row, at its own density
+
+### Requirement: A Host row's unreachable wording is the lead's own refusal
+A Host row SHALL present a member as unreachable only when the lead reports that member as not
+writable, or when its protocol is incompatible. Both are claims about the machine.
+
+A receipt the lead has not refreshed recently enough SHALL NOT be presented as a machine being
+unreachable, and SHALL NOT change the row's glyph or tint. Freshness is a statement about the lead's
+last poll, whose cadence is the lead's own, so a member answering every request must not read as
+down between two sweeps.
+
+#### Scenario: The lead refuses writes to a member
+- **WHEN** the lead reports a member as not writable, or as protocol-incompatible
+- **THEN** the row presents it as unreachable, in the refusal styling
+
+#### Scenario: The lead's receipt is merely old
+- **WHEN** a member the lead still reports reachable has a receipt older than the presented tolerance
+- **THEN** the row says nothing about reachability and keeps its ordinary glyph and tint
+
+#### Scenario: The snapshot carries no roster
+- **WHEN** a solo snapshot renders the row
+- **THEN** the row asks no reachability question at all and presents the plain untinted glyph
+
+### Requirement: A member that is genuinely not answering sits at the bottom, closed
+A Host row the lead reports as not writable, or as protocol-incompatible, SHALL sort after every
+member that is answering, and SHALL render closed rather than spilling its last-good rows into the
+hierarchy. Among the members that are answering the lead SHALL come first, and the order SHALL
+otherwise stay the roster's so the list does not reshuffle as panes come and go.
+
+A closed unanswering member SHALL remain openable: its rows are the snapshot's last-good content, not
+an error, and an operator who wants to look at them may. A member that is merely between the lead's
+sweeps is answering, and is neither moved nor closed.
+
+#### Scenario: One member stops answering
+- **WHEN** the lead reports one member as not writable while the others answer
+- **THEN** that member's row moves below the answering ones and renders closed, and the answering ones keep the roster's order with the lead first
+
+#### Scenario: The operator opens an unanswering member
+- **WHEN** the operator activates the disclosure of a member that is not answering
+- **THEN** its last-good rows are shown, and closing it returns to the default
+
+#### Scenario: A member is merely between sweeps
+- **WHEN** a member the lead still reports reachable has an old receipt
+- **THEN** its row keeps its place in the roster's order and stays open
+
+### Requirement: A Space row opens a Tab, and offers nothing that cannot land
+
+A Space row SHALL offer its own actions, containing every verb the chain from this tree to the
+multiplexer can actually perform on a Space — today exactly one: open a new Tab in it. The act SHALL
+be Collie's existing one, so its read-only gate, its refusal copy, its revalidation and its
+navigation into the new Pane are unchanged, and Fleet MUST NOT define a second way to create a Tab.
+
+It SHALL be offered through the same two surfaces every other row uses and chosen the same way: the
+fork's menu for a pointer, Collie's bottom sheet for a thumb.
+
+A Space row MUST NOT offer to rename a Space while no multiplexer capability, adapter verb, bridge
+route or client call carries that write, whatever the multiplexer underneath may support on its own —
+a row must never offer what cannot land. A Host row SHALL continue to offer nothing.
+
+#### Scenario: Operator asks a Space row for its actions
+
+- **WHEN** the operator right-clicks or long-presses a Space row
+- **THEN** its actions open with the verb that opens a Tab in that Space, and no rename
+
+#### Scenario: Operator opens a Tab from the tree
+
+- **WHEN** the operator chooses that verb
+- **THEN** Collie's own create runs, the herd revalidates, and the application navigates into the new Pane exactly as the tab strip's own control does
+
+#### Scenario: The device may not write
+
+- **WHEN** the device is not authorised, or holds no pairing credential
+- **THEN** the surface shows the existing read-only notice instead of the verb
+
+#### Scenario: The multiplexer cannot open a Tab
+
+- **WHEN** the multiplexer does not declare that it can create a Tab
+- **THEN** the verb is not drawn, and the adapter's own note takes its place
