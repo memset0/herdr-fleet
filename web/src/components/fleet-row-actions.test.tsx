@@ -1,9 +1,11 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePointerMenuGestures } from "@/components/fleet-context-menu";
 import { FleetPaneActions, FleetTabActions } from "@/components/fleet-row-actions";
 import type { AgentView, TabView } from "@/lib/types";
+import { server } from "@/test/setup";
 
 const pane: AgentView = {
   paneId: "w1:p1",
@@ -65,17 +67,11 @@ function Recorder() {
   return null;
 }
 
-function Harness({ kind }: { kind: "pane" | "tab" }) {
+function Harness({ kind, onClosed = vi.fn() }: { kind: "pane" | "tab"; onClosed?: () => void }) {
   return kind === "pane" ? (
-    <FleetPaneActions
-      open
-      onClose={vi.fn()}
-      pane={pane}
-      onRenamed={vi.fn()}
-      onClosed={vi.fn()}
-    />
+    <FleetPaneActions open onClose={vi.fn()} pane={pane} onRenamed={vi.fn()} onClosed={onClosed} />
   ) : (
-    <FleetTabActions open onClose={vi.fn()} tab={tab} onRenamed={vi.fn()} onClosed={vi.fn()} />
+    <FleetTabActions open onClose={vi.fn()} tab={tab} onRenamed={vi.fn()} onClosed={onClosed} />
   );
 }
 
@@ -139,13 +135,15 @@ describe("FleetTabActions", () => {
     rightClick(1, 1, "touch");
   });
 
-  it("names the blast radius on the second tap, exactly as the sheet does", () => {
+  it("closes on the first activation, without arming and asking again", async () => {
+    server.use(http.post("*/api/tab/:id/close", () => HttpResponse.json({ ok: true })));
+    const onClosed = vi.fn();
     rightClick(120, 160);
-    render(<Harness kind="tab" />);
-    const menu = screen.getByRole("menu");
-    const close = within(menu).getByText(/close tab/i);
-    fireEvent.click(close);
-    // Armed, the row says what closing costs rather than repeating the verb.
-    expect(within(screen.getByRole("menu")).getByText(/2 panes/i)).toBeInTheDocument();
+    render(<Harness kind="tab" onClosed={onClosed} />);
+    fireEvent.click(within(screen.getByRole("menu")).getByText(/close tab/i));
+    // The menu did not exist until a deliberate secondary click, and reaching this row took a second
+    // deliberate press — a third is asking the operator to confirm what they have already done twice.
+    await waitFor(() => expect(onClosed).toHaveBeenCalledExactlyOnceWith("w1:t1"));
+    expect(screen.queryByText(/tap again/i)).toBeNull();
   });
 });

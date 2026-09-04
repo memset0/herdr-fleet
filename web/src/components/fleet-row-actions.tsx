@@ -17,10 +17,9 @@ import { TabActionsSheet } from "@/components/tab-actions-sheet";
 import { useHostWriteBlock, usePack } from "@/components/pack-provider";
 import { useActionEcho } from "@/hooks/use-action-echo";
 import { useLocale } from "@/hooks/use-locale";
-import { usePendingConfirm } from "@/hooks/use-pending-confirm";
 import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
-import { t, tn } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { useMuxCapability, useMuxName } from "@/lib/mux-capability";
 import { setStatus } from "@/lib/status";
 import { paneDisplayName } from "@/lib/types";
@@ -120,7 +119,6 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
   const [saving, setSaving] = useState(false);
   const [focusing, setFocusing] = useState(false);
   const closeEcho = useActionEcho();
-  const { pending, confirm, reset } = usePendingConfirm();
 
   // Every gate the sheet asks, asked the same way. `pane?.host` and not the ambient scope: a pane's
   // own machine is the only thing that says where closing it kills a terminal.
@@ -138,8 +136,6 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
   useEffect(() => {
     if (open) return;
     setRenaming(false);
-    reset();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   if (at === null) return <PaneActionsSheet {...props} />;
@@ -169,10 +165,10 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
     }
   }
 
+  // FIRST activation, no arming — see FleetMenuDestructiveItem for why a menu does not ask again.
   async function requestClose() {
     if (!pane || closeEcho.pending) return;
     const target = pane;
-    if (!confirm(target.paneId)) return;
     await closeEcho.run(target.paneId, async () => {
       try {
         const res = await api.closePane(target.paneId, scope);
@@ -276,9 +272,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
               <FleetMenuDestructiveItem
                 icon={<XCircle className="size-3 shrink-0" />}
                 label={t("paneActions.close.label")}
-                confirmLabel={t("paneActions.close.confirm")}
                 busyLabel={t("paneActions.close.closing")}
-                armed={pane !== null && pending === pane.paneId}
                 busy={closeEcho.pending}
                 onSelect={() => void requestClose()}
               />
@@ -320,7 +314,6 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
   const [renaming, setRenaming] = useState(false);
   const [saving, setSaving] = useState(false);
   const closeEcho = useActionEcho();
-  const { pending, confirm, reset } = usePendingConfirm();
 
   // A tab has no host of its own — the tab list is the LEAD's, and both writes are addressed by the
   // ambient scope, so the block is asked one dimension up. Same gate as the sheet's.
@@ -331,18 +324,12 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
   useEffect(() => {
     if (open) return;
     setRenaming(false);
-    reset();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   if (at === null) return <TabActionsSheet {...props} />;
 
   const name = tab ? t("space.tab.titleWithLabel", { label: tab.label }) : t("space.tab.titleFallback");
   const blocked = readOnly || hostBlock !== undefined;
-  // Closing a tab kills every pane in it — name the blast radius on the confirm so it is honest.
-  const paneCount = tab?.paneCount ?? 0;
-  const confirmLabel =
-    paneCount > 0 ? tn("space.tab.closeConfirm", paneCount) : t("space.tab.closeConfirmPlain");
 
   async function save(next: string) {
     if (!tab || saving || !next) return;
@@ -363,10 +350,10 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
     }
   }
 
+  // FIRST activation, no arming — see FleetMenuDestructiveItem for why a menu does not ask again.
   async function requestClose() {
     if (!tab || closeEcho.pending) return;
     const target = tab;
-    if (!confirm(target.tabId)) return;
     await closeEcho.run(target.tabId, async () => {
       try {
         const res = await api.closeTab(target.tabId, scope);
@@ -406,9 +393,7 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
               <FleetMenuDestructiveItem
                 icon={<XCircle className="size-3 shrink-0" />}
                 label={t("space.tab.close")}
-                confirmLabel={confirmLabel}
                 busyLabel={t("space.tab.closing")}
-                armed={tab !== null && pending === tab.tabId}
                 busy={closeEcho.pending}
                 onSelect={() => void requestClose()}
               />

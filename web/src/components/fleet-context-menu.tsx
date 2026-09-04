@@ -235,25 +235,33 @@ export function FleetMenuItem({ icon, label, onSelect, disabled, busy }: FleetMe
 export interface FleetMenuDestructiveItemProps {
   icon: ReactNode;
   label: string;
-  /** What the row says once it is armed — the blast radius, in the caller's words. */
-  confirmLabel: string;
   busyLabel: string;
-  armed: boolean;
   busy: boolean;
   onSelect: () => void;
 }
 
 /**
- * The two-tap verb, and the two taps are not negotiable here either: this is the same act Collie's
- * sheet performs with the same confirmation, so a pointer does not get a shortcut to it that a thumb
- * does not have. Armed, the row says the blast radius rather than repeating the verb.
+ * The destructive verb, and it runs on the FIRST activation.
+ *
+ * The bottom sheet arms and asks again, and that is right where it lives: a sheet slides up under a
+ * thumb that was resting on the row it just long-pressed, its rows are 44px of a surface the finger
+ * is already touching, and the tap that opened it and the tap that acts are the same gesture
+ * continued. A confirm there is buying protection from a real slip.
+ *
+ * A context menu is not that. It does not exist until a deliberate secondary click has been made,
+ * it appears beside the pointer rather than under it, and reaching a row means moving to it and
+ * pressing again — the two deliberate acts the sheet's second tap was standing in for. Asking a
+ * third time is asking the operator to confirm that they meant the thing they have already done
+ * twice, which is how a confirmation stops being read at all.
+ *
+ * The refusals that actually protect anything are unchanged and are not confirmations: the
+ * capability gate, the read-only refusal and the host write block all still decide whether this row
+ * is drawn at all.
  */
 export function FleetMenuDestructiveItem({
   icon,
   label,
-  confirmLabel,
   busyLabel,
-  armed,
   busy,
   onSelect,
 }: FleetMenuDestructiveItemProps) {
@@ -263,15 +271,10 @@ export function FleetMenuDestructiveItem({
       role="menuitem"
       disabled={busy}
       onClick={onSelect}
-      className={cn(
-        "flex min-h-6 w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left text-xs transition-colors focus-visible:outline-none disabled:pointer-events-none",
-        armed
-          ? "bg-status-blocked/10 font-medium text-status-blocked"
-          : "text-status-blocked hover:bg-status-blocked/10 focus-visible:bg-status-blocked/10",
-      )}
+      className="flex min-h-6 w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left text-xs text-status-blocked transition-colors hover:bg-status-blocked/10 focus-visible:bg-status-blocked/10 focus-visible:outline-none disabled:pointer-events-none"
     >
       {busy ? <Loader2 className="size-3 shrink-0 animate-spin" /> : icon}
-      <span className="truncate">{busy ? busyLabel : armed ? confirmLabel : label}</span>
+      <span className="truncate">{busy ? busyLabel : label}</span>
     </button>
   );
 }
