@@ -43,6 +43,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ### Changed
 
+- The row-actions menu opens out of the cursor and wears a menu's chrome rather than a sheet's, the device rather than the gesture decides which surface it is, and the phone's hierarchy drawer is narrower.
 - A row's actions stand where the gesture asked: a menu at the cursor for a right-click, the bottom sheet for a long press, and the centre once they hold a rename's question.
 - The Agent rail reserves the card for the sections the dashboard reserves it for, and draws the rest as flat rows in one bordered group, so Ready · unseen stands out here as it does there.
 - The Agent rail's row wears Collie's own card — the same edge, ground, shadow and press — with the fork's reading order inside it and the card's own padding around it.

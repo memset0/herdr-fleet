@@ -9,6 +9,7 @@ describe("placeMenu", () => {
     expect(placeMenu({ x: 100, y: 200 }, { width: 240, height: 180 }, VIEWPORT)).toEqual({
       left: 100,
       top: 200,
+      origin: "left top",
     });
   });
 
@@ -17,6 +18,7 @@ describe("placeMenu", () => {
     expect(placeMenu({ x: 900, y: 750 }, { width: 240, height: 180 }, VIEWPORT)).toEqual({
       left: 660,
       top: 570,
+      origin: "right bottom",
     });
   });
 
@@ -24,6 +26,7 @@ describe("placeMenu", () => {
     expect(placeMenu({ x: 900, y: 100 }, { width: 240, height: 180 }, VIEWPORT)).toEqual({
       left: 660,
       top: 100,
+      origin: "right top",
     });
   });
 
@@ -35,12 +38,18 @@ describe("placeMenu", () => {
 
   it("pins to the margin when neither side of the point fits", () => {
     expect(placeMenu({ x: 5, y: 5 }, { width: 240, height: 20 }, { width: 200, height: 800 })).toEqual(
-      { left: MENU_MARGIN, top: 5 },
+      { left: MENU_MARGIN, top: 5, origin: "left top" },
     );
   });
 
   it("pins a box larger than the space rather than anchoring it off screen", () => {
     const placed = placeMenu({ x: 500, y: 400 }, { width: 240, height: 900 }, VIEWPORT);
     expect(placed.top).toBe(MENU_MARGIN);
+  });
+
+  it("names the corner the cursor is on, so the box grows out of it and not out of its middle", () => {
+    expect(placeMenu({ x: 100, y: 200 }, { width: 240, height: 180 }, VIEWPORT).origin).toBe("left top");
+    expect(placeMenu({ x: 900, y: 750 }, { width: 240, height: 180 }, VIEWPORT).origin).toBe("right bottom");
+    expect(placeMenu({ x: 100, y: 750 }, { width: 240, height: 180 }, VIEWPORT).origin).toBe("left bottom");
   });
 });

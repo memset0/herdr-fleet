@@ -223,6 +223,10 @@ export function BottomSheet({ open, onClose, title, children, className, place }
             ? {
                 left: offset?.left ?? 0,
                 top: offset?.top ?? 0,
+                // THE CORNER IT GROWS OUT OF, and it is the corner the cursor is on — see
+                // `MenuOrigin`. Left at the default centre, the entrance reads as the box being
+                // squeezed in from all four sides at once rather than opening from the cursor.
+                transformOrigin: offset?.origin ?? "left top",
                 // Hidden, not unmounted: the box has to be in the layout to be measured, and one
                 // frame at the origin is a menu that visibly jumps into place.
                 visibility: offset === null ? "hidden" : "visible",
@@ -258,7 +262,19 @@ export function BottomSheet({ open, onClose, title, children, className, place }
           className,
         )}
       >
-        <div className="sticky top-0 z-10 border-b border-rule bg-card/95 backdrop-blur-md">
+        <div
+          className={cn(
+            "z-10 border-b border-rule",
+            // A MENU'S HEADER IS NOT A SHEET'S. A sheet is a screen you have entered, so its header
+            // sticks, frosts over what scrolls under it, and carries a real ✕ — the one accessible
+            // way out of a surface that covers the app. A menu is a small box beside the row it is
+            // about, dismissed by looking away, by Escape, or by a click anywhere else, and pinning
+            // a heavy title bar and a close button on top of four verbs makes it read as a tiny
+            // dialog instead of a menu. So here the title stays only as a caption naming the target
+            // — which is also what keeps the dialog's accessible name — and nothing else.
+            anchored === null && "sticky top-0 bg-card/95 backdrop-blur-md",
+          )}
+        >
           {/* Grab handle — pull down (from anywhere at the top) to dismiss. Drawn only where the pull
               exists: a placed sheet does not drag away, and an affordance for a gesture that is not
               armed is a promise the surface does not keep. */}
@@ -275,6 +291,9 @@ export function BottomSheet({ open, onClose, title, children, className, place }
               // The handle carried the top padding for the bottom sheet. Without it the row needs
               // its own, or the title sits flush against the panel's cut edge.
               place !== undefined && "pt-3",
+              // A caption, not a title bar: less air, and no room reserved for a control that is
+              // not drawn.
+              anchored !== null && "px-3 pb-2 pt-2",
             )}
           >
             <span
@@ -285,10 +304,16 @@ export function BottomSheet({ open, onClose, title, children, className, place }
               // renders as one line) and is what lets THAT caller's composed node — the pane name
               // plus a `HostChip` — share the row and shrink into it instead of overflowing past
               // the close button.
-              className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-semibold"
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-1.5",
+                anchored !== null
+                  ? "truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
+                  : "text-sm font-semibold",
+              )}
             >
               {title}
             </span>
+            {anchored === null && (
             <Button
               variant="ghost"
               size="icon"
@@ -298,9 +323,10 @@ export function BottomSheet({ open, onClose, title, children, className, place }
             >
               <X className="size-4" />
             </Button>
+            )}
           </div>
         </div>
-        <div className="px-4 py-3">{children}</div>
+        <div className={cn("px-4 py-3", anchored !== null && "p-1.5")}>{children}</div>
       </div>
     </div>
   );

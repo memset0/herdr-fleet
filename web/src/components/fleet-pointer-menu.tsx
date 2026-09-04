@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { pointerMenuGestures } from "../../../fleet/ui/pointer-menu.ts";
 import type { SheetPlace, SheetPoint } from "@/components/ui/sheet";
@@ -23,6 +23,30 @@ import type { SheetPlace, SheetPoint } from "@/components/ui/sheet";
 const CENTRE: SheetPlace = { kind: "center" };
 
 /**
+ * A machine driven by a POINTER, which is the honest spelling of "a computer, not a phone".
+ *
+ * The gesture's own pointer type already says a mouse made it, and that is nearly the same answer —
+ * but only nearly: a phone browser can raise a context menu whose recorded press was typed anything
+ * at all, and a menu 288px wide pinned to a coordinate is the wrong surface for a thumb no matter
+ * what raised it. So the DEVICE decides which of the two surfaces exists at all, and the gesture
+ * only decides where the one it chose stands. Live, because a tablet gains and loses a mouse.
+ */
+function useFinePointer(): boolean {
+  const [fine, setFine] = useState(
+    () => window.matchMedia?.("(pointer: fine) and (hover: hover)").matches ?? false,
+  );
+  useEffect(() => {
+    const query = window.matchMedia?.("(pointer: fine) and (hover: hover)");
+    if (!query) return;
+    const sync = () => setFine(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+  return fine;
+}
+
+/**
  * Where an actions sheet should stand, given how it was opened and what it is currently showing.
  *
  * `asking` is the caller's own answer to one question: has my content stopped being a list of verbs
@@ -33,17 +57,20 @@ const CENTRE: SheetPlace = { kind: "center" };
  * painted.
  */
 export function useRowActionsPlace(open: boolean, asking: boolean): SheetPlace | undefined {
+  const fine = useFinePointer();
   const [point, setPoint] = useState<SheetPoint | null>(null);
   const wasOpen = useRef(false);
   useLayoutEffect(() => {
     if (open && !wasOpen.current) {
+      // Claimed either way, so a gesture a phone made cannot sit in the store and place something
+      // later; only what is done with it differs.
       const gesture = pointerMenuGestures.take();
-      setPoint(gesture === null ? null : { kind: "point", x: gesture.x, y: gesture.y });
+      setPoint(gesture === null || !fine ? null : { kind: "point", x: gesture.x, y: gesture.y });
     } else if (!open) {
       setPoint(null);
     }
     wasOpen.current = open;
-  }, [open]);
+  }, [open, fine]);
   if (point === null) return undefined;
   return asking ? CENTRE : point;
 }

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useRowActionsPlace, usePointerMenuGestures } from "@/components/fleet-pointer-menu";
 import { BottomSheet } from "@/components/ui/sheet";
@@ -18,6 +18,29 @@ function rightClick(x: number, y: number) {
   act(() => {
     document.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: x, clientY: y }));
   });
+}
+
+/**
+ * jsdom answers every media query `false`, so the fine-pointer gate reads as a phone unless a case
+ * says otherwise. Both answers matter here — that is the gate under test.
+ */
+function setPointer(kind: "fine" | "coarse") {
+  const original = window.matchMedia;
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches: kind === "fine" && query.includes("pointer: fine"),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }),
+  });
+  return original;
 }
 
 function panel() {
@@ -80,10 +103,17 @@ describe("BottomSheet placement", () => {
 });
 
 describe("useRowActionsPlace", () => {
+  let original: typeof window.matchMedia;
+
   beforeEach(() => {
+    original = setPointer("fine");
     // Drain anything a previous case armed, so a stale gesture can never place the next sheet.
     pointerDown("touch");
     rightClick(1, 1);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "matchMedia", { writable: true, configurable: true, value: original });
   });
 
   it("stands a mouse's right-click at the cursor", () => {
@@ -97,6 +127,15 @@ describe("useRowActionsPlace", () => {
   it("leaves a touch's context menu as the bottom sheet", () => {
     render(<Harness />);
     pointerDown("touch");
+    rightClick(200, 300);
+    fireEvent.click(screen.getByText("open"));
+    expect(panel()?.className ?? "").toContain("rounded-t-md");
+  });
+
+  it("keeps the sheet on a machine with no fine pointer, whatever raised the gesture", () => {
+    setPointer("coarse");
+    render(<Harness />);
+    pointerDown("mouse");
     rightClick(200, 300);
     fireEvent.click(screen.getByText("open"));
     expect(panel()?.className ?? "").toContain("rounded-t-md");

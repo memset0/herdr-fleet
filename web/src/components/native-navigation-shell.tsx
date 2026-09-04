@@ -498,7 +498,12 @@ function HierarchyOverlay({
         aria-modal="true"
         aria-label={title}
         className={cn(
-          "absolute inset-y-0 left-0 flex w-[min(90vw,24rem)] flex-col border-r border-rule bg-chrome shadow-xl transition-transform duration-200 motion-reduce:transition-none",
+          // A DRAWER IS NOT THE SCREEN. At 90vw it covered all but a sliver of the page, which reads
+          // as a route change rather than as a panel you can dismiss by tapping past — and the rows
+          // inside are a tree of short names that never needed that width. 76vw leaves a real strip
+          // of the pane visible to tap back to; the 20rem cap is the wide-phone/tablet end, where the
+          // rail's own resting width is the honest number rather than a share of the viewport.
+          "absolute inset-y-0 left-0 flex w-[min(76vw,20rem)] flex-col border-r border-rule bg-chrome shadow-xl transition-transform duration-200 motion-reduce:transition-none",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
