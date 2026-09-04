@@ -46,7 +46,8 @@ import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { CompactStripLabels } from "@/components/ui/labelled-strip";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
-import { useHostHealth } from "@/components/pack-provider";
+import { useAmbientHost, useHostHealth } from "@/components/pack-provider";
+import { HostChip } from "@/components/host-chip";
 import { writeRefusal } from "@/lib/host-health";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
@@ -261,6 +262,9 @@ export function AgentChat({
   // currently believes unreachable is refused the instant it says so. Neither one touches the global
   // clock: the lead answered, so this poll was live, and the ConnectionBanner stays silent.
   const hostHealth = useHostHealth(agent?.host ?? scope?.host);
+  // The machine this pane's writes land on — the composer's own `writeHost`, read here because the
+  // app bar names it now (see rightLead) and the composer stands its copy down.
+  const writeHost = useAmbientHost(scope?.host);
   const hostBlock = writeRefusal(hostHealth);
   /**
    * The ONE reason this pane currently refuses a write, or undefined when it accepts them. Every
@@ -1080,6 +1084,15 @@ export function AgentChat({
           // callbacks rather than unrendered buttons; the sheet hides a row it was given no callback for.
           rightLead={
             agent ? (
+              <>
+              {/* DOWNSTREAM PORT — WHICH MACHINE, in the row that already has room for it.
+                  It stood in the composer's 14px status band, and once the state word moved up to
+                  the strips that band was a bordered strip of nothing on a solo install and a whole
+                  row spent on one name on a pack. The app bar is where the pane's identity already
+                  lives, the chip is a pill among the one control here, and it renders nothing at all
+                  on a single-machine install — so this costs no height anywhere. The composer keeps
+                  the fact for every other caller (`showHost`). */}
+              <HostChip host={writeHost} className="shrink-0" />
               <button
                 type="button"
                 onClick={() => setDrawer("paneMenu")}
@@ -1092,6 +1105,7 @@ export function AgentChat({
               >
                 <EllipsisVertical className="size-5" />
               </button>
+              </>
             ) : undefined
           }
         >
@@ -1819,6 +1833,8 @@ export function AgentChat({
                   status={agent?.status}
                   stale={connecting}
                   showStatusWord={!statusInStrips}
+                  // The machine is named in the app bar now — see the header's rightLead.
+                  showHost={false}
                   // The one read of the keyboard, handed down. See `composing` above.
                   composing={composing}
                   gone={gone}

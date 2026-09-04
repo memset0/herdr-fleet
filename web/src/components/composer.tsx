@@ -80,6 +80,15 @@ interface ComposerProps {
    * behavior unchanged.
    */
   showStatusWord?: boolean;
+  /** DOWNSTREAM PORT — draw the machine this pane writes to, or leave it to a surface that already
+   *  has room. Default true, which is Collie's own behavior on every install.
+   *
+   *  The band this chip stands in is a 14px strip between two rules, and it exists for the two facts
+   *  it carries. Once the state moved up to the strips (see `showStatusWord`), a pack install kept
+   *  the whole band — its rules, its height and the row it costs — to say one word that the app bar
+   *  above has room for. So the caller may take the fact and the band goes with it; a solo install
+   *  is unaffected either way, because the chip already renders nothing there. */
+  showHost?: boolean;
   /** Pane is gone (no agent) — locks the composer with a distinct placeholder. */
   gone: boolean;
   /** This device isn't authorised to type — locks the composer with a distinct placeholder. */
@@ -242,7 +251,7 @@ function ComposerDock({
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, status, stale, showStatusWord = true, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, displayPrefsAfterTextSize, onSent },
+  { paneId, scope, agent, isShell, status, stale, showStatusWord = true, showHost = true, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, displayPrefsAfterTextSize, onSent },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -1191,12 +1200,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             does not teleport by 16px the moment the strips fold. A solo install with the word
             standing down has neither a host to name nor a state to spell, and a bordered 14px strip
             of nothing is exactly the row the operator asked to get back. */}
-        <Collapse open={showStatusWord || writeHost !== undefined}>
+        <Collapse open={showStatusWord || (showHost && writeHost !== undefined)}>
           <div
             data-slot="composer-status"
             className="-mx-3 flex h-[14px] items-center justify-end gap-1.5 border-y border-border px-2.5 text-[10px]/3"
           >
-            <HostChip host={writeHost} variant="caption" className="min-w-0" />
+            {showHost && <HostChip host={writeHost} variant="caption" className="min-w-0" />}
             {showStatusWord && <StatusWordSlot status={statusWord} stale={stale} />}
           </div>
         </Collapse>

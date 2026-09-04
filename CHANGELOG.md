@@ -43,6 +43,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ### Changed
 
+- The machine a pane writes to is named in the app bar's trailing cluster instead of the composer's status band, so a pack no longer spends a row on one name.
 - The row-actions menu opens out of the cursor and wears a menu's chrome rather than a sheet's, the device rather than the gesture decides which surface it is, and the phone's hierarchy drawer is narrower.
 - A row's actions stand where the gesture asked: a menu at the cursor for a right-click, the bottom sheet for a long press, and the centre once they hold a rename's question.
 - The Agent rail reserves the card for the sections the dashboard reserves it for, and draws the rest as flat rows in one bordered group, so Ready · unseen stands out here as it does there.

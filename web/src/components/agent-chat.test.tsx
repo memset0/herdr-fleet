@@ -341,11 +341,16 @@ describe("AgentChat — the pane header's identity block", () => {
     expect(names(shell.container)).toEqual([]); // no agent, no status, so no badge to name
   });
 
-  it("carries neither the host nor the state — both stand on the composer's strip, as one sentence", () => {
+  it("carries neither the host nor the state — the machine stands in the app bar, the state below", () => {
     // THE OTHER HALF, now complete. The caption line led with the machine, which spent the identity
     // block's width on an answer to a question nobody has while READING; the machine left first and
-    // the word followed it. Both are asserted absent HERE and present THERE, so a run deleted from
-    // both files passes neither test.
+    // the word followed it. Both are asserted absent HERE and present where they went, so a run
+    // deleted from both files passes neither test.
+    //
+    // THE MACHINE THEN LEFT THE COMPOSER'S STRIP TOO. Once the state moved up to the tab row, that
+    // 14px band between two rules existed on a pack to say one name — a whole row for a fact the app
+    // bar's right cluster already had room for. So the host is asserted in the HEADER now, and
+    // absent from the band, which is what lets the band disappear entirely on this screen.
     //
     // Scoped by data-slot, never by a bare role query: `ui/strip-host.tsx` mounts two permanent
     // sr-only live regions, so `getByRole("status")` is ambiguous in any tree with a host in it and
@@ -355,15 +360,16 @@ describe("AgentChat — the pane header's identity block", () => {
     const block = identity(container);
     expect(block?.textContent).not.toMatch(/workshop/i);
     expect(block?.textContent).not.toContain("needs you");
-    // …and one strip below carries the pair, in that order: which machine, then what it is doing.
+    // The state is still one strip below, and it is still the only thing there.
     const line = strip(container);
-    // Machine first, then what it is doing. The host is read off its own label rather than the
-    // strip's text, because the strip's text now includes the four words it is RESERVING for.
     expect(shownWord(line)).toBe("needs you");
-    // This pane's machine is unreachable, so the host run carries the fault with it rather than
-    // showing a calm name beside a placeholder that says the write will be refused.
+    expect(within(line!).queryByLabelText(/sends to host/i)).toBeNull();
+    // …and the machine is in the app bar's right cluster. This pane's machine is unreachable, so the
+    // chip carries the fault with it rather than showing a calm name beside a composer whose write
+    // will be refused.
+    const right = document.querySelector<HTMLElement>('[data-slot="header-right"]');
     expect(
-      within(line!).getByLabelText(/^sends to host: workshop \(unreachable\)$/i),
+      within(right!).getByLabelText(/^host: workshop \(unreachable\)$/i),
     ).toBeInTheDocument();
   });
 
