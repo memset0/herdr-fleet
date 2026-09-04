@@ -141,8 +141,17 @@ all: `.github/workflows/release.yml` triggers on
 `push: tags: ["v*.*.*"]` and nothing else creates the GitHub Release the in-app update banner links
 to, so an untagged version exists only as a CHANGELOG heading and nobody can install it. So when
 that release lands and you push, **always push a matching annotated git tag with it** —
-`git tag -a vX.Y.Z -m "Collie X.Y.Z" && git push origin vX.Y.Z` (or `git push --follow-tags` so the
-tag ships *with* the release). One `v<x.y.z>` tag per shipped version on the remote.
+`git tag -a vX.Y.Z -m "Herdr Fleet X.Y.Z" && git push origin <branch> vX.Y.Z`. One `v<x.y.z>` tag per
+shipped version on the remote.
+
+**Name the tag on the push line. Never `git push --follow-tags` here**, and never `--tags`. This
+checkout carries Collie's own release tags — it is a reapplication of Collie, so its history is
+Collie's and 55 upstream `v0.x`/`v1.x` tags came with it — and those switches push *every* local tag
+the remote is missing. That is not a tidy-up: `release.yml` fires on `v*.*.*`, so each upstream tag
+that lands builds a GitHub Release for a version of Collie this product never shipped, under this
+product's name. It has happened once, on the 3.0.1 push, and the five tags were deleted from the
+remote afterwards. Upstream's tags stay local, where `FORK.toml` and an upstream sync want them; the
+remote carries this product's line and nothing else.
 
 `scripts/check-tag.sh` checks this: with no arguments it asks whether the version the repo currently
 claims has a tag; given a rev-list selector it asks the same of every `chore(release):` commit the
