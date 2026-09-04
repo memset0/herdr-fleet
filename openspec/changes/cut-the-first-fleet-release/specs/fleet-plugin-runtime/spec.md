@@ -35,3 +35,44 @@ carried. No commit SHALL be rewritten and no branch force-updated to achieve eit
 #### Scenario: The repository is cloned
 - **WHEN** a clone is made with no branch named
 - **THEN** it arrives on the line development happens on, and the superseded generation remains reachable by its own branch and its tags
+
+### Requirement: Fleet-owned behavior stays outside upstream business logic
+The authenticated Gateway, private configuration reader, session state, login presentation, proxy,
+and Herdr-coupled lifecycle SHALL live in explicit downstream-owned roots. Any necessary edit to an
+upstream-owned path MUST expose only a narrow identity, lifecycle, configuration, static-routing, or
+service-worker port and MUST be listed exactly in `FORK.toml` with its reason and verification.
+
+Invasiveness SHALL be minimised rather than merely declared: where a downstream-owned module can
+carry the behaviour, it does, and an upstream-owned path is edited only when no owned module can
+reach what the change needs. `FORK.toml` SHALL be updated by the same change that moves the
+boundary, so the manifest is never a description of a previous tree.
+
+Collie's decision records under `.adr/` SHALL NOT be modified, added to, or removed. They record
+upstream's own reasoning about upstream's own tree, and a downstream edit to one makes an upstream
+document say something upstream never decided. A downstream decision that would otherwise want an
+ADR SHALL be recorded in this repository's root instruction file instead.
+
+Where a rule in this repository's root instruction file conflicts with any other guidance, including
+guidance inherited from upstream, the root instruction file governs, and the conflict SHALL be
+recorded there rather than resolved silently at the call site.
+
+#### Scenario: A downstream behavior is added
+- **WHEN** implementation places authentication, configuration, or lifecycle behavior in the source tree
+- **THEN** the behavior resides in a declared owned root and any upstream-owned edit contains only the minimum adapter port recorded by the same change
+
+#### Scenario: The fork boundary is audited
+- **WHEN** the implemented tree is compared with the exact Collie baseline
+- **THEN** every changed path is classified by `FORK.toml`, every invasive path has a specific reason and verification, and no unclassified downstream path remains
+
+#### Scenario: An owned module could carry the behaviour
+- **WHEN** a change could place behaviour either in an owned module or in an upstream-owned path
+- **THEN** it goes in the owned module, and no invasive path is declared for it
+
+#### Scenario: A downstream decision wants a record
+- **WHEN** a decision would close off an option someone will reasonably propose again
+- **THEN** it is recorded in the root instruction file and `.adr/` is left exactly as upstream wrote it
+
+#### Scenario: Guidance conflicts
+- **WHEN** the root instruction file and any other guidance disagree about this tree
+- **THEN** the root instruction file governs and the conflict is written down there
+
