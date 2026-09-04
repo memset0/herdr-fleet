@@ -96,7 +96,10 @@ describe("FleetPaneActions", () => {
     rightClick(200, 300);
     render(<Harness kind="pane" />);
     const menu = screen.getByRole("menu");
+    // The target is the menu's NAME and not a caption in it: the menu is standing on the row it
+    // would be repeating, and a screen reader is the one reader who cannot see that.
     expect(menu).toHaveAccessibleName(/editor/i);
+    expect(menu.textContent).not.toMatch(/editor/i);
     // A menu is a menu: its verbs are menu items, and it dims nothing.
     expect(within(menu).getAllByRole("menuitem").length).toBeGreaterThan(0);
     expect(document.querySelector(".bg-black\\/50")).toBeNull();

@@ -44,6 +44,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ### Changed
 
+- The row-actions menu takes a cursor's measurements and drops the caption naming the row it is standing on; the name stays as its accessible name.
 - A pointer's row actions are the fork's own context menu and centred prompt, chosen at the invoke site by the device; Collie's bottom sheet and its primitive are back to exactly upstream.
 - A Host row in the hierarchy draws its machine's own tinted glyph where the disclosure arrow was, and says in words when that machine is not answering.
 - The Agent rail row names its host with Collie's ordinary bordered chip, on the line of the text beside it, rather than the borderless caption form.

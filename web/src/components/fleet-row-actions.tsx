@@ -209,7 +209,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
     <>
       <FleetContextMenu open={open && !renaming} at={at} onClose={onClose} label={name}>
         {blocked ? (
-          <p className="px-2 py-1.5 text-xs leading-snug text-muted-foreground">
+          <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
             {readOnly
               ? t("paneActions.readOnly")
               : t("paneActions.hostBlockSuffix", { hostBlock: hostBlock ?? "" })}
@@ -220,7 +220,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
                 reason: rename and close are the half you arrive at deliberately. */}
             {props.onFind && (
               <FleetMenuItem
-                icon={<Search className="size-3.5 shrink-0 text-muted-foreground" />}
+                icon={<Search className="size-3 shrink-0 text-muted-foreground" />}
                 label={t("chat.find.label")}
                 onSelect={() => {
                   onClose();
@@ -230,7 +230,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
             )}
             {props.onHistory && (
               <FleetMenuItem
-                icon={<ScrollText className="size-3.5 shrink-0 text-muted-foreground" />}
+                icon={<ScrollText className="size-3 shrink-0 text-muted-foreground" />}
                 label={t("chat.history.label")}
                 onSelect={() => {
                   onClose();
@@ -240,7 +240,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
             )}
             {props.onZen && (
               <FleetMenuItem
-                icon={<Maximize2 className="size-3.5 shrink-0 text-muted-foreground" />}
+                icon={<Maximize2 className="size-3 shrink-0 text-muted-foreground" />}
                 label={t("chat.zen.label")}
                 onSelect={() => {
                   onClose();
@@ -252,14 +252,14 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
                 the sheet's rule, kept, because a permanently dead entry is worse than a short list. */}
             {canRename.capable && (
               <FleetMenuItem
-                icon={<Pencil className="size-3.5 shrink-0 text-muted-foreground" />}
+                icon={<Pencil className="size-3 shrink-0 text-muted-foreground" />}
                 label={t("paneActions.rename.label")}
                 onSelect={() => setRenaming(true)}
               />
             )}
             {canFocus.capable && (
               <FleetMenuItem
-                icon={<Monitor className="size-3.5 shrink-0 text-muted-foreground" />}
+                icon={<Monitor className="size-3 shrink-0 text-muted-foreground" />}
                 label={
                   focusMux
                     ? t("paneActions.focus.labelWithMux", { mux: focusMux })
@@ -271,7 +271,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
             )}
             {canClose.capable && (
               <FleetMenuDestructiveItem
-                icon={<XCircle className="size-3.5 shrink-0" />}
+                icon={<XCircle className="size-3 shrink-0" />}
                 label={t("paneActions.close.label")}
                 confirmLabel={t("paneActions.close.confirm")}
                 busyLabel={t("paneActions.close.closing")}
@@ -281,7 +281,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
               />
             )}
             {!canRename.capable && !canClose.capable && !canFocus.capable && (
-              <p className="px-2 py-1.5 text-xs leading-snug text-muted-foreground">
+              <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
                 {canRename.note || canClose.note || canFocus.note || t("paneActions.empty.fallback")}
               </p>
             )}
@@ -385,7 +385,7 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
     <>
       <FleetContextMenu open={open && !renaming} at={at} onClose={onClose} label={name}>
         {blocked ? (
-          <p className="px-2 py-1.5 text-xs leading-snug text-muted-foreground">
+          <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
             {readOnly
               ? t("space.tab.readOnly")
               : t("space.tab.hostBlockSuffix", { hostBlock: hostBlock ?? "" })}
@@ -394,14 +394,14 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
           <>
             {canRename.capable && (
               <FleetMenuItem
-                icon={<Pencil className="size-3.5 shrink-0 text-muted-foreground" />}
+                icon={<Pencil className="size-3 shrink-0 text-muted-foreground" />}
                 label={t("space.tab.rename")}
                 onSelect={() => setRenaming(true)}
               />
             )}
             {canClose.capable && (
               <FleetMenuDestructiveItem
-                icon={<XCircle className="size-3.5 shrink-0" />}
+                icon={<XCircle className="size-3 shrink-0" />}
                 label={t("space.tab.close")}
                 confirmLabel={confirmLabel}
                 busyLabel={t("space.tab.closing")}
@@ -411,7 +411,7 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
               />
             )}
             {!canRename.capable && !canClose.capable && (
-              <p className="px-2 py-1.5 text-xs leading-snug text-muted-foreground">
+              <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
                 {canRename.note || canClose.note || t("space.tab.empty.fallback")}
               </p>
             )}

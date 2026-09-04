@@ -69,7 +69,15 @@ export interface FleetContextMenuProps {
   /** Where the cursor was. A menu with no point is a menu with nothing to anchor to; it draws none. */
   at: MenuPoint | null;
   onClose: () => void;
-  /** The accessible name — what these verbs act on. Drawn as a caption too, quietly. */
+  /**
+   * What these verbs act on — the menu's ACCESSIBLE NAME, and nothing that is drawn.
+   *
+   * A sheet has to print it: it covers the app, so the surface underneath is gone and the operator
+   * needs telling which row they landed on. A menu is standing ON that row, four pixels from the
+   * name it would repeat — a caption there is the answer to a question the screen is already
+   * answering, in the one surface with the least room to spend on it. A screen reader has no such
+   * view, so it keeps the name.
+   */
   label: string;
   children: ReactNode;
 }
@@ -179,22 +187,17 @@ export function FleetContextMenu({ open, at, onClose, label, children }: FleetCo
         // `--card` and `--rule`, the ground and the edge every raised surface in this app stands on
         // (ui/sheet.tsx states the measurement). `z-50` puts it over the sheets' own rung, because a
         // menu is always the most recent thing the operator asked for.
-        "fixed z-50 w-56 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-md border border-rule bg-card p-1 shadow-lg",
+        // A CURSOR'S SIZE. 176px and 24px rows are what a desktop context menu is; the 44px row and
+        // the 288px box this started at are a thumb's measurements, and they made three verbs look
+        // like a panel. Nothing here is a tap target — the surface only exists on a machine that
+        // aims with a pointer.
+        "fixed z-50 w-44 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-md border border-rule bg-card p-1 shadow-lg",
         "max-h-[min(70dvh,26rem)]",
         // FADE ONLY. See the header: the box is already at the cursor, so there is nowhere to
         // travel from.
         "duration-150 animate-in fade-in",
       )}
     >
-      {/* The target, quietly — a menu that acts on one row should say which row, and this is the
-          only place left to say it once the sheet's title bar is gone. Not a heading a reader has to
-          step through: the menu's own `aria-label` already carries the name. */}
-      <div
-        aria-hidden
-        className="truncate px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-      >
-        {label}
-      </div>
       {children}
     </div>,
     document.body,
@@ -211,8 +214,8 @@ export interface FleetMenuItemProps {
 
 /**
  * One verb. The shape is Collie's `ActionRow` — glyph, then label, one line — at a POINTER's
- * density: 28px rather than the 44px a thumb is owed, because this surface only exists on a machine
- * that has a cursor.
+ * density: 24px rather than the 44px a thumb is owed, because this surface only exists on a machine
+ * that aims.
  */
 export function FleetMenuItem({ icon, label, onSelect, disabled, busy }: FleetMenuItemProps) {
   return (
@@ -221,9 +224,9 @@ export function FleetMenuItem({ icon, label, onSelect, disabled, busy }: FleetMe
       role="menuitem"
       disabled={disabled === true || busy === true}
       onClick={onSelect}
-      className="flex min-h-7 w-full items-center gap-2.5 rounded-sm px-2 py-1 text-left text-[13px] transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+      className="flex min-h-6 w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left text-xs transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
     >
-      {busy === true ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : icon}
+      {busy === true ? <Loader2 className="size-3 shrink-0 animate-spin" /> : icon}
       <span className="truncate">{label}</span>
     </button>
   );
@@ -261,13 +264,13 @@ export function FleetMenuDestructiveItem({
       disabled={busy}
       onClick={onSelect}
       className={cn(
-        "flex min-h-7 w-full items-center gap-2.5 rounded-sm px-2 py-1 text-left text-[13px] transition-colors focus-visible:outline-none disabled:pointer-events-none",
+        "flex min-h-6 w-full items-center gap-2 rounded-sm px-1.5 py-0.5 text-left text-xs transition-colors focus-visible:outline-none disabled:pointer-events-none",
         armed
           ? "bg-status-blocked/10 font-medium text-status-blocked"
           : "text-status-blocked hover:bg-status-blocked/10 focus-visible:bg-status-blocked/10",
       )}
     >
-      {busy ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : icon}
+      {busy ? <Loader2 className="size-3 shrink-0 animate-spin" /> : icon}
       <span className="truncate">{busy ? busyLabel : armed ? confirmLabel : label}</span>
     </button>
   );
