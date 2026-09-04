@@ -8,10 +8,9 @@
 // that owned a `setTimeout` would have to be tested by waiting; this one is tested by moving a
 // number.
 //
-// It never registers a listener. The component that mounts it decides which events reach it — one
-// always-present listener for direct chords, and one capture-phase listener armed only while a
-// prefix is pending, which is what lets an armed prefix take `Escape`, `Tab` and the arrows ahead of
-// the composer without the composer knowing anything about it.
+// It never registers a listener. The component that mounts it feeds it every keydown from ONE
+// capture-phase listener, which is what lets an armed prefix take `Escape`, `Tab` and the arrows
+// ahead of the composer without the composer knowing anything about it.
 
 import {
   chordMatchesEvent,
@@ -56,8 +55,15 @@ export interface RecognizerOptions {
   readonly prefix: Chord;
   /** How the prefix is spelled, for the acknowledgement's leading half. */
   readonly prefixLabel: string;
-  /** The effective bindings, after defaults and the operator's document have been resolved. */
-  readonly bindings: ReadonlyMap<CommandId, readonly Binding[]>;
+  /**
+   * The effective bindings, READ AT MATCH TIME rather than captured.
+   *
+   * A function and not a value, because the operator's document arrives after the first render: a
+   * machine that closed over the map it was built with kept matching the shipped defaults forever,
+   * and the only reason a changed PREFIX worked was that its own dependency happened to rebuild the
+   * machine. Reading them makes that staleness impossible instead of fixed by a dependency list.
+   */
+  readonly bindings: () => ReadonlyMap<CommandId, readonly Binding[]>;
   readonly now: () => number;
   readonly timeoutMs?: number;
 }
@@ -90,7 +96,7 @@ export function createRecognizer(options: RecognizerOptions): Recognizer {
     event: RecognizerKeyEvent,
     kind: Binding["kind"],
   ): { id: CommandId; binding: Binding } | null {
-    for (const [id, bindings] of options.bindings) {
+    for (const [id, bindings] of options.bindings()) {
       for (const binding of bindings) {
         if (binding.kind !== kind) continue;
         if (chordMatchesEvent(binding.chord, event)) return { id, binding };

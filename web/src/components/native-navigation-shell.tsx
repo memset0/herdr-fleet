@@ -62,6 +62,7 @@ import { hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
 import { paneRosterFrom } from "@/lib/fleet-roster";
+import { useFleetSettings } from "@/lib/fleet-settings";
 import { homePath, panePath, settingsPath, spacePath } from "@/lib/nav";
 import { triage } from "@/lib/triage";
 import { usePairing } from "@/lib/pairing";
@@ -204,6 +205,9 @@ export function NativeNavigationShell({
   // through navigation state. Without that last piece the new Pane is not in the snapshot yet, so
   // the page it lands on reports an Agent that is gone.
   const { newTab } = useSpaceActions();
+  // The operator's own bindings and prefix. Absent, unserved or unreadable answers the shipped
+  // defaults, so this can never leave the keyboard with nothing bound.
+  const fleetSettings = useFleetSettings();
   const { refused: notPaired } = usePairing();
   // The same two gates every other write surface composes by AND: a device the operator has not
   // authorised, and one that holds no pairing credential. The sheets below show their own read-only
@@ -496,6 +500,8 @@ export function NativeNavigationShell({
       available={available}
       roster={roster}
       onOpenPane={openEntry}
+      overrides={fleetSettings.bindings}
+      prefix={fleetSettings.prefix}
     >
       <NativeNavigationProvider value={navigation}>
       <div

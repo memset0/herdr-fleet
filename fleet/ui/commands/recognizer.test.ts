@@ -33,7 +33,7 @@ function harness(bindings: BindingFixture = []) {
   const recognizer = createRecognizer({
     prefix: binding("Ctrl+B").chord,
     prefixLabel: "Ctrl+B",
-    bindings: map,
+    bindings: () => map,
     now: () => clock,
   });
   return {

@@ -238,7 +238,7 @@ export function FleetCommandsProvider({
     const machine = createRecognizer({
       prefix: chord,
       prefixLabel: prefixChord.label,
-      bindings: latest.current.bindings,
+      bindings: () => latest.current.bindings,
       now: () => Date.now(),
     });
     recognizer.current = machine;

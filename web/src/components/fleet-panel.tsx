@@ -47,7 +47,10 @@ export function FleetPanel({ open, onClose, label, className, children }: FleetP
   return (
     <div
       data-slot="fleet-panel"
-      className="fixed inset-0 z-50 flex justify-center"
+      // `items-start`, and it is not cosmetic: a flex row stretches its children by default, so a
+      // panel that does not declare a height — the rename input — grew to the full height of the
+      // viewport. The command bar hid the bug by always declaring one.
+      className="fixed inset-0 z-50 flex items-start justify-center"
       role="presentation"
     >
       <button

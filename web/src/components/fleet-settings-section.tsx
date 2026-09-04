@@ -10,6 +10,7 @@ import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
 import {
   fetchFleetSettings,
+  notifyFleetSettingsSaved,
   saveFleetSettings,
   type FleetSettingsDocument,
 } from "@/lib/fleet-settings";
@@ -113,6 +114,9 @@ function FleetShortcutsControl() {
     if (result.ok) {
       version.current = result.document.version;
       setState({ kind: "saved" });
+      // The keyboard reads the document too. Telling it now is what makes a save take effect
+      // without a reload.
+      notifyFleetSettingsSaved();
       return;
     }
     if (result.kind === "conflict") {

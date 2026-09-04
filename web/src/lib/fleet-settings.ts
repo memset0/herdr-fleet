@@ -5,6 +5,13 @@
 // answers 404 here, which is why "unavailable" is a first-class answer rather than an error — the
 // settings page then simply does not offer the editor.
 
+import { useEffect, useState } from "react";
+
+import {
+  DEFAULT_FLEET_SETTINGS,
+  parseFleetSettingsText,
+  type FleetSettings,
+} from "../../../fleet/settings/document.ts";
 import { asJsonObject, asJsonString, type JsonValue } from "@/lib/json";
 
 /** Fleet's own API surface, matching `FLEET_SETTINGS_PATH` on the Gateway. */
@@ -89,4 +96,60 @@ export async function saveFleetSettings(
     };
   }
   return { ok: false, kind: "unavailable" };
+}
+
+// ── THE DOCUMENT REACHING THE KEYBOARD ────────────────────────────────────────────────────────────
+//
+// This half was missing, and its absence is the whole reason a binding written on disk did nothing:
+// the command provider took the operator's bindings as an input and nothing ever supplied them. The
+// document was written, served, read and validated — and never applied.
+//
+// Read ONCE on mount, and again when a save says so. Not polled: a settings document is a person's
+// decision, not a data feed, and a poll would spend a request every few seconds to notice something
+// that changes twice a year.
+
+const saved = new Set<() => void>();
+
+/** Tell every reader the document on disk has changed, so a save lands without a reload. */
+export function notifyFleetSettingsSaved(): void {
+  for (const listener of saved) listener();
+}
+
+/**
+ * The effective settings this browser should obey.
+ *
+ * Every failure answers the shipped defaults rather than an empty keyboard: no document, no Fleet
+ * Gateway in front of this Collie at all (the route 404s, which is Collie's own tests and its
+ * playground), a document the Gateway is holding because it stopped parsing, or a fetch that simply
+ * did not complete. None of those is a state in which the operator should be left with nothing bound.
+ *
+ * Parsed with the SAME validator the Gateway uses, so what the browser obeys and what the server
+ * accepted cannot come apart.
+ */
+export function useFleetSettings(): FleetSettings {
+  const [settings, setSettings] = useState<FleetSettings>(DEFAULT_FLEET_SETTINGS);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      void (async () => {
+        try {
+          const document = await fetchFleetSettings();
+          if (cancelled || document === null) return;
+          const parsed = parseFleetSettingsText(document.document);
+          if (parsed.ok) setSettings(parsed.settings);
+        } catch {
+          // Keep whatever is in force. The defaults are already the initial state.
+        }
+      })();
+    };
+    load();
+    saved.add(load);
+    return () => {
+      cancelled = true;
+      saved.delete(load);
+    };
+  }, []);
+
+  return settings;
 }

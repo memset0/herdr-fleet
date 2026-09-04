@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 
+import type { JsonValue } from "@/lib/json";
 import { server } from "@/test/setup";
 import { createMemoryRouter, Link, Outlet, RouterProvider } from "react-router";
 import { useEffect } from "react";
@@ -552,3 +553,69 @@ describe("the shell's command layer", () => {
   });
 });
 
+
+// ── THE PATH FROM THE DOCUMENT TO A KEY ───────────────────────────────────────────────────────────
+//
+// The test that was missing. Every other test here and in the provider's own suite hands `overrides`
+// straight to the recognizer, which proves the matching rules and CANNOT fail when nothing supplies
+// them — which is exactly what happened: a document written to disk, served, read and validated, and
+// never applied. These serve a document over the fake network and then press a key.
+describe("the operator's own settings document", () => {
+  function serve(document: JsonValue) {
+    server.use(
+      http.get("/fleet/api/settings", () =>
+        HttpResponse.json({ version: "v1", document: JSON.stringify(document), risky: [] }),
+      ),
+    );
+  }
+
+  it("makes a binding it adds actually fire", async () => {
+    const user = userEvent.setup();
+    // `open-fleet-settings` ships on `Prefix+S` and on no direct chord at all.
+    serve({ schemaVersion: 1, shortcuts: { bindings: { "open-fleet-settings": ["Alt+Q"] } } });
+    const shell = renderShell();
+    await waitFor(() => expect(document.querySelector('[data-slot="native-navigation-shell"]')).not.toBeNull());
+
+    await waitFor(async () => {
+      await user.keyboard("{Alt>}q{/Alt}");
+      expect(shell.router.state.location.pathname).toBe("/settings");
+    });
+  });
+
+  it("makes a default it removes stop firing", async () => {
+    const user = userEvent.setup();
+    serve({ schemaVersion: 1, shortcuts: { bindings: { "open-fleet-settings": [] } } });
+    const shell = renderShell();
+    // Give the document time to land before pressing the key it is meant to have unbound.
+    await waitFor(() => expect(document.querySelector('[data-slot="native-navigation-shell"]')).not.toBeNull());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("s");
+    expect(shell.router.state.location.pathname).not.toBe("/settings");
+  });
+
+  it("makes a prefix it names the one that arms", async () => {
+    const user = userEvent.setup();
+    serve({ schemaVersion: 1, shortcuts: { prefix: "Ctrl+A" } });
+    const shell = renderShell();
+    await waitFor(() => expect(document.querySelector('[data-slot="native-navigation-shell"]')).not.toBeNull());
+
+    await waitFor(async () => {
+      await user.keyboard("{Control>}a{/Control}");
+      await user.keyboard("s");
+      expect(shell.router.state.location.pathname).toBe("/settings");
+    });
+  });
+
+  it("keeps every shipped default when no document is served", async () => {
+    const user = userEvent.setup();
+    // The default handler answers 404 — a Collie with no Fleet Gateway in front of it.
+    const shell = renderShell();
+    await waitFor(() => expect(document.querySelector('[data-slot="native-navigation-shell"]')).not.toBeNull());
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("s");
+    await waitFor(() => expect(shell.router.state.location.pathname).toBe("/settings"));
+  });
+});
