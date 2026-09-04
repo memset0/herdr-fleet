@@ -10,8 +10,8 @@
 
 ## 2. Publish it
 
-- [ ] 2.1 Commit the release as one commit that does nothing else, with the required trailers.
-- [ ] 2.2 Tag it annotated as this product's version, push the commit and the tag, and verify both on the remote.
+- [x] 2.1 Commit the release as one commit that does nothing else, with the required trailers.
+- [x] 2.2 Tag it annotated as this product's version, push the commit and the tag, and verify both on the remote.
 
 ## 3. Move the branches
 
