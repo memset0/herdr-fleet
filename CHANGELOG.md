@@ -18,12 +18,12 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-09-04
+
 ### Fixed
 
-- The settings document now reaches the keyboard: bindings written on disk are the ones that fire, and a save takes effect without a reload.
-- The rename input's panel no longer stretches to the bottom of the viewport.
-
-## [3.0.1] - 2026-09-04
+- The settings document now reaches the keyboard: bindings written on disk are the ones that fire, and a save takes effect without a reload. ([2c46914](https://github.com/memset0/herdr-fleet/commit/2c46914))
+- The rename input's panel no longer stretches to the bottom of the viewport. ([2c46914](https://github.com/memset0/herdr-fleet/commit/2c46914))
 
 ### Changed
 
