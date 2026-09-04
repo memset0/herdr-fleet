@@ -123,6 +123,39 @@ the Collie child's isolated state directory. The configured role must match a va
 Lead or Peer state. Missing, invalid, conflicted, solo, or mismatched state fails closed. Fleet never
 creates, repairs, enrolls, rotates, or otherwise writes that state.
 
+## Membership
+
+Herdr Fleet performs membership changes itself, through Collie's own Pack transitions and Collie's own
+trust-store update seam. **Do not run Collie's `pack` verbs against a Fleet deployment.** Those verbs
+resolve an upstream plugin identity from a constant and pick a host supervision tier by probing for a
+service manager, so one of them writes a foreign configuration directory and registers a service
+unit — and a Fleet peer runs rootless on hosts that have no service manager at all.
+
+Fleet installs, enables and restarts no operating-system service anywhere. Its lifecycle is the
+Herdr plugin's: children are supervised by the plugin's own generation-owned supervisor, and a
+membership change reaches a running runtime when that plugin is restarted.
+
+Enrolling the first peer is an explicit, ordered operator sequence. Nothing about starting,
+restarting or supervising a runtime creates, spends or alters membership.
+
+```text
+on the lead    herdr-fleet pack-invite --label <name>
+               herdr plugin action invoke restart --plugin memset0.herdr-fleet
+on the peer    herdr-fleet pack-join --lead <origin> --address <host:port> -
+on the lead    herdr plugin action invoke restart --plugin memset0.herdr-fleet
+```
+
+`--lead` is the peer's own loopback projection of the lead's Collie, so the plaintext hop lives inside
+the SSH link rather than on a network. `--address` is where the lead will dial this peer, from the
+lead's point of view. The invite is single-use and short-lived; it is printed once, on standard
+output, and only its hash is stored. `pack-join` reads it from standard input (`-`) or an owner-only
+file (`@<path>`) and refuses it as an argument, because `/proc/<pid>/cmdline` is readable by every
+local uid.
+
+The lead's enrolment path does not exist until the running lead has read a trust store, which is why
+the first restart is part of the sequence rather than advice. A refused invite or an unreachable lead
+leaves the peer exactly as it was.
+
 ## Authentication boundary
 
 The Gateway owns `/auth/login` and `/auth/logout`. A successful login verifies the configured
