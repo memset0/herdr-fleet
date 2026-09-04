@@ -446,9 +446,14 @@ What the design settles, and what a later change must not quietly undo:
 
 Known rough edges, none of them settled: endpoint allocation and per-device configuration are
 hand-authored; the enrolment sequence needs a temporary projection and two restarts, and is not yet
-orchestrated behind one command; rotation, removal and deputy are unimplemented; and a member that is
-merely listed rather than watched has a receipt clock the presented-stale tolerance was not written
-for. Build on the boundaries above; do not treat the gaps as decisions.
+orchestrated behind one command; and rotation, removal and deputy are unimplemented. Build on the
+boundaries above; do not treat the gaps as decisions.
+
+One decision that IS settled, because it was reached by measurement rather than by taste: the lead's
+per-peer probe budget is strictly below its own poll interval, so on a loaded member a single slow
+exchange fails one sweep. A rail must therefore corroborate the lead's refusal with a receipt older
+than one of the lead's own sweeps before it presents a member as unreachable — measured on the lead's
+clock at both ends. A refusal is not a verdict until the lead has missed more than one sweep.
 
 ## OpenSpec and downstream fork workflow
 
