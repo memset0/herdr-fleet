@@ -518,12 +518,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useBusyWhile(uploading);
   useBusyWhile(recorder.phase === "transcribing");
 
-  // Whether the round button at the end of the row is the microphone rather than Send. True only on
-  // an EMPTY box, which is the one state where Send can do nothing anyway; the first character typed
-  // hands the button straight back. `direct.active` keeps it, because there the same button is the
-  // "stop typing into the terminal" control and that must not be displaceable.
-  const micIsPrimary = stt !== null && !direct.active && input.trim() === "";
-
   /**
    * What happens to a finished transcript.
    *
@@ -1447,6 +1441,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 : (e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                       e.preventDefault();
+                      // The same refusal the button wears, at the other way in: a disabled control
+                      // disables nothing about a key binding, and a clip is exactly as unfinished
+                      // whichever way the send was asked for.
+                      if (recorder.busy) return;
                       onSendClick();
                     }
                   }
@@ -1528,6 +1526,59 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               )}
             </Button>
           </div>
+          {/* THE RECORD CONTROL IS ITS OWN CONTROL, drawn on the capability alone — a provider the
+              bridge published and a browser that can record, the one predicate in lib/stt.ts.
+
+              It used to be the trailing slot's third branch, taken only while the box was empty. That
+              bought the field 44px and cost the operator every dictation after the first: the
+              transcript filled the box, the slot handed itself back to Send, and there was no way to
+              speak the next clause of the message being written. One message, one clip. Dictating in
+              TURNS is how a long reply gets written on a phone, and every part of the turn-taking
+              below this button already worked — the splice lands at the caret, hands-free withdraws
+              itself on a non-empty draft, and the recorder survives the operator typing during a clip.
+              Only the way back in was missing.
+
+              Drawn in EVERY branch, including while a confirm is armed. The field is the flexible
+              child and the confirm buttons do not shrink, so their words still get their natural width
+              without taking it from here; and a control that comes and goes with a confirm state is
+              one the hand cannot go to without looking first. */}
+          {stt !== null && (
+            <Button
+              type="button"
+              size="icon"
+              // `outline`, not `default`: Send is the row's primary action now, in every state. A
+              // live clip is the one thing that recolours this button, because stopping it is then
+              // the only thing it does.
+              variant={recorder.busy ? "destructive" : "outline"}
+              className="size-11 shrink-0 rounded-full"
+              disabled={
+                !stt.available || locked || direct.active || sending || recorder.phase === "transcribing"
+              }
+              aria-pressed={recorder.busy}
+              // The bridge's own words when it cannot serve — the operator's next move is on the
+              // host, so the button says what is wrong rather than just refusing.
+              aria-label={
+                !stt.available
+                  ? (stt.reason ?? translate("composer.mic.unavailable"))
+                  : recorder.phase === "recording"
+                    ? translate("composer.mic.stopAria")
+                    : translate("composer.mic.recordAria")
+              }
+              title={stt.available ? undefined : stt.reason}
+              // Leaves the field's focus and the soft keyboard where they are, so the caret this
+              // clip's transcript will splice into is still the one the operator left.
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => (recorder.phase === "recording" ? recorder.stopAndSend() : recorder.start())}
+            >
+              {recorder.phase === "transcribing" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : recorder.phase === "recording" ? (
+                <Square className="size-4 fill-current" />
+              ) : (
+                <Mic className="size-4" />
+              )}
+            </Button>
+          )}
           {!direct.active && forcingSend ? (
             // The pre-flight refused and the user is being offered the override. Labelled for what it
             // actually does — TYPE the text into whatever is on screen — not "send", because the
@@ -1559,48 +1610,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             >
               {translate("composer.send.reallySend")}
             </Button>
-          ) : micIsPrimary ? (
-            // THE MICROPHONE IS THE PRIMARY ACTION WHILE THE BOX IS EMPTY, and becomes Send the
-            // moment there is anything to send. It used to be a second, permanent control tucked
-            // inside the field beside the attach button — deliberately, to avoid a split primary
-            // action. The v1 beta said that reads the workflow wrong: you either dictate a message
-            // or you type one, and nobody dictates into the middle of a draft. So the field paid
-            // 36px of its width, on every render, for a control that is only ever wanted on an empty
-            // box. An empty box has no Send either (`send` refuses a blank value), so this branch
-            // takes over a button that could do nothing anyway — it replaces no capability.
-            <Button
-              size="icon"
-              variant={recorder.busy ? "destructive" : "default"}
-              className="size-11 shrink-0 rounded-full"
-              disabled={!stt.available || locked || sending || recorder.phase === "transcribing"}
-              aria-pressed={recorder.busy}
-              // The bridge's own words when it cannot serve — the operator's next move is on the
-              // host, so the button says what is wrong rather than just refusing.
-              aria-label={
-                !stt.available
-                  ? (stt.reason ?? translate("composer.mic.unavailable"))
-                  : recorder.phase === "recording"
-                    ? translate("composer.mic.stopAria")
-                    : translate("composer.mic.recordAria")
-              }
-              title={stt.available ? undefined : stt.reason}
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => (recorder.phase === "recording" ? recorder.stopAndSend() : recorder.start())}
-            >
-              {recorder.phase === "transcribing" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : recorder.phase === "recording" ? (
-                <Square className="size-4 fill-current" />
-              ) : (
-                <Mic className="size-4" />
-              )}
-            </Button>
           ) : (
             <Button
               size="icon"
               className="size-11 shrink-0 rounded-full"
               onClick={direct.active ? () => direct.deactivate() : onSendClick}
-              disabled={locked || sending}
+              // TWO REFUSALS THE SHARED SLOT USED TO GET FOR FREE. While the microphone lived in this
+              // slot there was no Send during a clip and none on an empty box, so neither state
+              // needed saying; with the two controls side by side, both do.
+              //
+              // A BLANK DRAFT: `send` has always returned false for one — this is the button finally
+              // agreeing with it, instead of accepting a tap that does nothing.
+              //
+              // A LIVE CLIP: sending now would send the message without the words still being spoken
+              // into it, and the transcript would then splice into a draft the operator had already
+              // given away.
+              //
+              // `!direct.active` is load-bearing for both. There this button ENDS direct typing
+              // rather than sending, so it must stay activatable; and the field is showing
+              // `direct.value` rather than `input`, so testing `input` there tests the wrong string.
+              disabled={locked || sending || (!direct.active && (!input.trim() || recorder.busy))}
               aria-label={
                 direct.active
                   ? translate("composer.send.stopTypingAria")

@@ -18,6 +18,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- The record button stands beside Send instead of replacing it on an empty box, so a reply can be dictated in turns; Send now refuses a blank draft and a live clip.
+
 ## [3.0.0] - 2026-09-04
 
 ### Added

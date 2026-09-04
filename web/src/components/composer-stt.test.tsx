@@ -190,23 +190,25 @@ describe("Composer — the record button is drawn only when there is a microphon
   });
 });
 
-// The primary button is the microphone while the box is empty and Send once there is anything to
-// send. It used to be a permanent second control inside the field; the v1 beta reported that as
-// width spent on a control only ever wanted on an empty box.
-describe("Composer — the microphone IS the primary button, until you type", () => {
-  it("is the only round button on an empty box, and the field keeps its full width", async () => {
+// The record control and Send are TWO controls, and which one you get is not decided by what the
+// draft holds. They shared one slot for one round — the microphone while the box was empty, Send the
+// moment it wasn't — which bought the field a button's width and cost the operator every dictation
+// after the first: the transcript filled the box and the way back to the microphone was gone.
+describe("Composer — the record control stands beside Send, not instead of it", () => {
+  it("draws both on an empty box, and the field keeps the padding it always had", async () => {
     let reads = 0;
     server.use(configHandler(CONFIG_WITH_STT, () => (reads += 1)));
     renderComposer();
     await waitFor(() => expect(reads).toBe(1));
 
     expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: /^send$/i })).toBeNull();
-    // Same padding as a collie with no microphone at all — the field pays nothing for the feature.
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeInTheDocument();
+    // The second control sits BESIDE the field, so the field's own reserved strip is the attach
+    // button's alone — the same one a collie with no microphone at all draws.
     expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-11");
   });
 
-  it("becomes Send on the first character, and the microphone on the last one deleted", async () => {
+  it("keeps both once there is a draft, so a clause can be dictated into what you typed", async () => {
     const user = userEvent.setup();
     server.use(configHandler(CONFIG_WITH_STT));
     renderComposer();
@@ -214,28 +216,12 @@ describe("Composer — the microphone IS the primary button, until you type", ()
     await screen.findByRole("button", { name: /record a voice message/i });
 
     await user.type(box, "x");
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /record a voice message/i })).toBeNull(),
-    );
-    expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument();
-
-    await user.clear(box);
+    // The one thing the old shared slot could not do.
     expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled();
   });
 
-  it("whitespace alone is not text — a box holding only spaces still offers the microphone", async () => {
-    const user = userEvent.setup();
-    server.use(configHandler(CONFIG_WITH_STT));
-    renderComposer();
-    const box = await screen.findByPlaceholderText(/type a reply/i);
-    await screen.findByRole("button", { name: /record a voice message/i });
-
-    await user.type(box, "   ");
-    // `send` refuses a blank value, so Send here could do nothing anyway.
-    expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
-  });
-
-  it("stays the microphone for the whole clip, so one button starts and stops it", async () => {
+  it("keeps one control for the whole clip, so the same button starts and stops it", async () => {
     const user = userEvent.setup();
     server.use(configHandler(CONFIG_WITH_STT), sttHandler("done"));
     renderComposer();
@@ -243,9 +229,83 @@ describe("Composer — the microphone IS the primary button, until you type", ()
     expect(await screen.findByRole("button", { name: /stop recording/i })).toBeInTheDocument();
 
     act(() => recorder.finish());
-    // The transcript arrives, the box is no longer empty, and the button hands itself back to Send.
     await waitFor(() => expect(screen.getByPlaceholderText(/type a reply/i)).toHaveValue("done"));
-    expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument();
+    // And it is a microphone again straight away, rather than waiting for the box to be emptied.
+    expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
+  });
+
+  it("dictates in turns: a second clip joins the draft the first one wrote", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT), sttHandler("first"));
+    renderComposer();
+
+    const one = await startRecording(user);
+    act(() => one.finish());
+    const box = await screen.findByPlaceholderText(/type a reply/i);
+    await waitFor(() => expect(box).toHaveValue("first"));
+
+    // The draft is no longer empty, and that is exactly the state the old slot had no microphone in.
+    server.use(sttHandler("second"));
+    await user.click(await screen.findByRole("button", { name: /record a voice message/i }));
+    await waitFor(() => expect(FakeMediaRecorder.instances).toHaveLength(2));
+    act(() => FakeMediaRecorder.instances[1]!.finish());
+
+    await waitFor(() => expect(box).toHaveValue("first second"));
+  });
+});
+
+// Both refusals below were structural while the two controls shared one slot: there was no Send
+// during a clip, and none on an empty box either. Separating the controls removes that guarantee, so
+// each becomes something the control has to say for itself.
+describe("Composer — what Send refuses now that it is always drawn", () => {
+  it("refuses a blank draft, and accepts on the first real character", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type a reply/i);
+
+    expect(await screen.findByRole("button", { name: /^send$/i })).toBeDisabled();
+    // Whitespace is not text: `send` trims before it decides, and so does the button.
+    await user.type(box, "   ");
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled();
+
+    await user.type(box, "x");
+    await waitFor(() => expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled());
+  });
+
+  it("refuses while a clip is live, and accepts again once the transcript lands", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT), sttHandler("spoken"));
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type a reply/i);
+    await user.type(box, "typed by hand");
+
+    const recorder = await startRecording(user);
+    // A draft with text in it would otherwise be sendable — the live clip is what forbids it.
+    await waitFor(() => expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled());
+
+    act(() => recorder.finish());
+    await waitFor(() => expect(box).toHaveValue("typed by hand spoken"));
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled();
+  });
+
+  it("refuses a live clip on the keyboard too — a disabled button disables no binding", async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    server.use(
+      configHandler(CONFIG_WITH_STT),
+      sttHandler("spoken"),
+      replyHandler(() => (posts += 1)),
+    );
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type a reply/i);
+    await user.type(box, "typed by hand");
+    await startRecording(user);
+
+    await user.type(box, "{Control>}{Enter}{/Control}");
+    // Nothing left for the pane, and the draft is still the operator's.
+    expect(posts).toBe(0);
+    expect(box).toHaveValue("typed by hand");
   });
 });
 

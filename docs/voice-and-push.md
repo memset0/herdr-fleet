@@ -9,9 +9,15 @@ A **microphone button in the composer**, and a **hands-free switch** in Settings
 speak, and the transcript lands in the message box for you to read and send. With hands-free on it is
 sent for you — down the same guarded reply path a typed message takes, never around it.
 
-The microphone **is** the round button at the end of the row, for as long as the box is empty; the
-first character you type turns it back into Send. You dictate a message or you type one, so there is
-one primary action rather than two competing for the width of the field.
+The microphone is its **own** round button, beside Send rather than instead of it, and it is there
+whatever the message box holds. So a reply can be dictated in turns: type a clause, speak the next
+one, type again — each transcript lands at the caret, in the draft you are already writing. Upstream
+Collie gives the two controls one slot and draws the microphone only while the box is empty, which
+allows exactly one dictation per message; this is where Herdr Fleet departs from it.
+
+**Send is refused while a clip is running**, on the button and on `Ctrl`/`Cmd`+`Enter` alike — the
+message would go without the words still being spoken into it. Stop the clip, or discard it with the
+`✕` on the recording strip, and Send comes back.
 
 **It does not exist until you run `collie stt setup`.** No button is drawn, no audio leaves the
 phone, no credential is held, no child process runs. Absent, not disabled. Two providers:
