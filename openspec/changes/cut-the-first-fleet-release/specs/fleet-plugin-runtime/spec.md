@@ -76,3 +76,58 @@ recorded there rather than resolved silently at the call site.
 - **WHEN** the root instruction file and any other guidance disagree about this tree
 - **THEN** the root instruction file governs and the conflict is written down there
 
+## ADDED Requirements
+
+### Requirement: The release axis is who must redeploy, and it decides who may cut it
+This product's version SHALL move on an axis of deployment reach: which machines a change obliges to
+be redeployed. That is the question its operator actually has to answer, and it is not the same
+question upstream's own axis asks.
+
+- **Major** — the operator must change something themselves: a configuration key, an enrolment, a
+  contract. A major release SHALL be cut by the owner and never automatically.
+- **Minor** — every member must take the change: it touches what a member runs, so each machine in
+  the pack is redeployed. A minor release MAY be cut without asking, once the change is verified.
+- **Patch** — only the machine serving the browser takes the change: nothing a member runs is
+  affected, a frontend-only change being the ordinary case, because a member serves no browser at
+  all. A patch release MAY be cut without asking and without announcement.
+
+A change that alters no released artifact — documentation alone — SHALL bump nothing, as it does
+today.
+
+Every implemented change SHALL be assessed against this axis when it is verified, and a release cut
+when the axis says one is warranted. Leaving a releasable change unreleased is a decision that
+SHALL be stated rather than a step quietly skipped.
+
+#### Scenario: A change alters what a member runs
+- **WHEN** a verified change means every member of the pack must be redeployed
+- **THEN** it is a minor release, cut without asking
+
+#### Scenario: A change reaches only the browser
+- **WHEN** a verified change needs redeploying only where the browser is served, a frontend change being the ordinary case
+- **THEN** it is a patch release, cut without asking
+
+#### Scenario: A change obliges the operator to act
+- **WHEN** a verified change requires the operator to alter configuration, membership or a contract
+- **THEN** it is a major release, and it waits for the owner rather than being cut
+
+#### Scenario: A change is released
+- **WHEN** any release is cut
+- **THEN** it is one commit that does nothing but the release, and an annotated tag on it, and the assessment that chose the level is recorded with the change
+
+### Requirement: A release is one commit that does nothing else
+A release SHALL be a single `chore(release): x.y.z` commit that bumps the three version files,
+renames the unreleased changelog heading to that version with its real date and each of its entries'
+short commit hash in the file's own link style, and re-creates an empty unreleased heading above it.
+It SHALL contain no other change, and no other commit SHALL touch the version files.
+
+The commit SHALL be tagged with an annotated `v<x.y.z>` tag and pushed with it, because the tag is
+what publishes the release and a cut version that is never tagged is not a release at all.
+
+#### Scenario: A release commit is inspected
+- **WHEN** a release commit is read
+- **THEN** it contains the three version files and the changelog and nothing else
+
+#### Scenario: A release is pushed
+- **WHEN** a release commit reaches the remote
+- **THEN** its annotated tag reaches it in the same push, and the version check passes on that commit
+

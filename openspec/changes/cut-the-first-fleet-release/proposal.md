@@ -19,6 +19,9 @@ on the wrong one.
   named for what it was — its own release and the Collie release it carried.
 - State in the working agreement that this repository's version is its own from here, and that the
   default branch is where development happens.
+- State this product's own release policy: the version moves on an axis of which machines a change
+  obliges to redeploy, that axis decides who may cut the release, and every verified change is
+  assessed against it rather than releases being remembered.
 - State the boundaries the fork is maintained by, which have been practice without being written:
   invasiveness is minimised rather than merely declared, `FORK.toml` moves with the boundary it
   describes, upstream's own decision records are never edited, and the working agreement governs any
@@ -35,8 +38,8 @@ Non-goals:
 ### Modified Capabilities
 
 - `fleet-plugin-runtime`: Record that the downstream version line and default branch are this
-  product's own, and state the fork-boundary rules the manifest and the upstream decision records
-  are maintained by.
+  product's own, state the release policy that line moves by, and state the fork-boundary rules the
+  manifest and the upstream decision records are maintained by.
 
 ## Impact
 
