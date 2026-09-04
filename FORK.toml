@@ -119,6 +119,21 @@ verify = [
 reason = "Three surfaces ask a row for its actions — the fork's hierarchy and Collie's tab and pane strips — and all three already route both gestures through one hook into these two sheets. Only the presentation follows the gesture, so the sheets keep every row, capability gate, host block, confirm flow and write they have: the primitive gains one optional placement, and each sheet passes it plus the one fact only it knows, which is whether its rows have become a question. The geometry that answers where a menu goes, and the record of which gesture opened it, are under fleet/ui; the sheets and the primitive hold no downstream logic. The port is declared once here and reaches the strips without touching them."
 
 [[invasive]]
+id = "unnarrowed-pack-rows-port"
+intent = "Let a navigator that presents the WHOLE pack read the rows the lead merged, without changing the narrowed lists every view of one machine already reads."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "web/src/lib/loaders.ts#allWorkspaces?: WorkspaceView[]"
+]
+verify = [
+  "fleet/ui/native-navigation/model.test.ts",
+  "web/src/components/native-navigation-shell.test.tsx",
+  "web/src/components/native-navigation-tree.test.tsx"
+]
+reason = "The loader narrows spaces and tabs to the address the URL is on, which is right for every Collie surface that reads them because each is a view OF one machine. The fork's hierarchy is the one surface that is a view of the PACK, and the narrowing cannot be undone downstream — the other machines' rows are simply gone by then. So the loader carries both answers: the narrowed lists keep their name, their type and their every consumer untouched, and two optional siblings — allWorkspaces and allTabs, anchored here by the first — carry the merged rows verbatim. Optional so that every existing constructor of this shape stays valid unedited, and a reader falls back to the narrowed list, which on the solo bodies those constructors describe is the same rows. No Collie surface reads the new fields, and the fork adds no logic to this file."
+
+[[invasive]]
 id = "repository-guidance"
 intent = "Make downstream instructions canonical and exclude machine-local Fleet configuration."
 strategy = "adapt"

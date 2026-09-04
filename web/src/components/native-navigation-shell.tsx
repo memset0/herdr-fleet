@@ -111,15 +111,25 @@ export function NativeNavigationShell({
             // Naming a host is Collie's job; its resolver falls back to the id, and a solo snapshot
             // has no roster at all, so the tree says "this host" rather than inventing a name.
             hostLabel: hostName(data.servers, hostId || undefined) ?? t("fleet.navigation.thisHost"),
-            workspaces: on(data.workspaces),
-            tabs: on(data.tabs),
+            workspaces: on(data.allWorkspaces ?? data.workspaces),
+            tabs: on(data.allTabs ?? data.tabs),
             agents: on(data.agents).map(toNavigationPane),
             shellPanes: on(data.shellPanes).map(toNavigationPane),
           };
         }),
         selectedPaneId: paneId,
       }),
-    [hostIds, data.servers, data.workspaces, data.tabs, data.agents, data.shellPanes, paneId],
+    [
+      hostIds,
+      data.servers,
+      data.allWorkspaces,
+      data.workspaces,
+      data.allTabs,
+      data.tabs,
+      data.agents,
+      data.shellPanes,
+      paneId,
+    ],
   );
 
   const revalidator = useRevalidator();

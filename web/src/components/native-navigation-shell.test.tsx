@@ -178,4 +178,63 @@ describe("NativeNavigationShell", () => {
     renderShell();
     expect(screen.getByTestId("switcher-title")).toHaveTextContent("Agents");
   });
+  test("every member expands, whichever member the address is on", async () => {
+    // The lead's merged body carries both machines' rows, and the loader narrows `workspaces`/`tabs`
+    // to the address the URL is on — which is why the hierarchy reads the unnarrowed siblings. A rail
+    // that read the narrowed lists could only ever open the machine you were already looking at.
+    const rowsOn = (host: string) => ({
+      workspace: {
+        workspaceId: "w1",
+        number: 1,
+        label: `Project on ${host}`,
+        focused: false,
+        activeTabId: "t1",
+        tabCount: 1,
+        paneCount: 1,
+        host,
+      },
+      tab: { tabId: "t1", workspaceId: "w1", number: 1, label: "Main", focused: false, paneCount: 1, host },
+      pane: { ...pane, paneId: `p-${host}`, host },
+    });
+    const here = rowsOn("lead");
+    const there = rowsOn("peer-a");
+    const packData: HomeData = {
+      ...data,
+      servers: [
+        { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 1 },
+        { id: "peer-a", name: "attic", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 1 },
+      ],
+      // The address is on the lead, so the narrowed lists hold only the lead's rows...
+      scope: { host: "lead" },
+      workspaces: [here.workspace],
+      tabs: [here.tab],
+      // ...while the merged ones hold both members'.
+      allWorkspaces: [here.workspace, there.workspace],
+      allTabs: [here.tab, there.tab],
+      agents: [here.pane, there.pane],
+    };
+
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <NativeNavigationShell data={packData} preferenceStore={new NavigationPreferenceStore()}>
+              <Outlet />
+            </NativeNavigationShell>
+          ),
+          children: [{ index: true, element: <div /> }],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    // Both members are present, and the one the address is NOT on carries its own rows rather than
+    // an empty row that cannot be opened.
+    expect(await screen.findByText("north")).toBeInTheDocument();
+    expect(screen.getByText("attic")).toBeInTheDocument();
+    expect(screen.getByText("Project on lead")).toBeInTheDocument();
+    expect(screen.getByText("Project on peer-a")).toBeInTheDocument();
+  });
 });

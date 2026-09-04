@@ -102,6 +102,22 @@ export interface HomeData {
   shellPanes: AgentView[];
   workspaces: WorkspaceView[];
   tabs: TabView[];
+  /**
+   * The same rows BEFORE the narrowing above, i.e. every machine's, host-tagged as the lead merged
+   * them.
+   *
+   * `workspaces`/`tabs` are the address's own and stay exactly that, because every Collie surface
+   * that reads them is a view OF one machine. A navigator that presents the whole pack is the one
+   * consumer that needs the other answer, and deriving it there is impossible once the narrowing has
+   * happened — so both answers are carried rather than one being recomputed or the other lost. On a
+   * solo body the two are the same rows.
+   *
+   * OPTIONAL so that every existing constructor of this shape — fixtures, playground, route tests —
+   * stays valid untouched. A reader falls back to the narrowed list, which is the same rows on the
+   * solo bodies those constructors describe.
+   */
+  allWorkspaces?: WorkspaceView[];
+  allTabs?: TabView[];
   /** The bridge's session registry (primary-first); empty on a single-session / older bridge. */
   sessions: SessionSummary[];
   /**
@@ -226,6 +242,8 @@ function toHomeData(
     // everything through by identity and nothing about a solo dashboard changes.
     workspaces: ambientSpaces(snap.workspaces ?? [], scope, snap.servers),
     tabs: ambientSpaces(snap.tabs ?? [], scope, snap.servers),
+    allWorkspaces: snap.workspaces ?? [],
+    allTabs: snap.tabs ?? [],
     sessions: snap.sessions ?? [],
     servers: snap.servers ?? [],
     ts: snap.ts ?? 0,
