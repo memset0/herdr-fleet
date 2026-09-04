@@ -23,9 +23,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 - The settings document now reaches the keyboard: bindings written on disk are the ones that fire, and a save takes effect without a reload.
 - The rename input's panel no longer stretches to the bottom of the viewport.
 
+## [3.0.1] - 2026-09-04
+
 ### Changed
 
-- The record button stands beside Send instead of replacing it on an empty box, so a reply can be dictated in turns; Send now refuses a blank draft and a live clip.
+- The record button stands beside Send instead of replacing it on an empty box, so a reply can be dictated in turns; Send now refuses a blank draft and a live clip. ([8faac43](https://github.com/memset0/herdr-fleet/commit/8faac43))
 
 ## [3.0.0] - 2026-09-04
 
