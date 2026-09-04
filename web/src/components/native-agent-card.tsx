@@ -3,6 +3,7 @@ import { Star } from "lucide-react";
 import { operatorChosenName } from "../../../fleet/ui/pane-naming.ts";
 import { AgentIcon } from "@/components/agent-icon";
 import { StatusDot } from "@/components/status-badge";
+import { Card } from "@/components/ui/card";
 import { shortCwd, timeAgoShort } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { statusLabel, type AgentView } from "@/lib/types";
@@ -21,6 +22,16 @@ interface NativeAgentCardProps {
   index?: number;
   /** Which timestamp the row dates itself by, or none — the same rule the herd list uses. */
   age?: "seen" | "active";
+  /**
+   * Collie's own emphasis, unchanged and read from Collie's own set (`components/agent-list.tsx`'s
+   * `ATTENTION`): "card" for the sections that mean a person is wanted here, "row" for the rest.
+   *
+   * The dashboard's argument applies verbatim in a 320px rail, and the rail proved it: card chrome
+   * on every row is wallpaper rather than emphasis — a Working row and a Recent row drawn
+   * identically throw away the four-level priority `triage()` had just computed. See a card,
+   * something wants you; all flat, nothing does.
+   */
+  density?: "card" | "row";
 }
 
 /** The highest row a single keypress can address. Past it the badge would promise a shortcut. */
@@ -52,8 +63,14 @@ export function NativeAgentCard({
   onFavoriteToggle,
   index,
   age,
+  density = "card",
 }: NativeAgentCardProps) {
   useLocale();
+  const flat = density === "row";
+  const blocked = agent.status === "blocked";
+  // Collie's own switch, for Collie's own reason: a card is a bordered object with air around it, a
+  // flat row is a line inside one bordered group, and the two cannot be one element with a class.
+  const Shell = flat ? "div" : Card;
   const project = agent.workspaceLabel || agent.workspaceId;
   const name = operatorChosenName(agent.paneLabel) ?? agent.tabLabel ?? agent.agent;
   const doing = secondaryLine(agent, name);
@@ -63,16 +80,36 @@ export function NativeAgentCard({
 
   return (
     <div data-slot="native-agent-card" className="group relative min-w-0">
-      {/* COLLIE'S OWN CARD TREATMENT, and deliberately not a lighter one. The rail's rows are the
-          same objects the dashboard lists, so they wear the same edge, the same ground, the same
-          shadow and the same press — a row that looked different here would read as a different
-          kind of thing. What the fork owns is the ORDER of the two lines inside it, not the box. */}
+      {/* COLLIE'S OWN TREATMENT, BOTH OF THEM, and deliberately not a third. The rail's rows are the
+          same objects the dashboard lists, so they wear the same edge, ground, shadow and press —
+          and, just as importantly, they DROP them in the same sections. What the fork owns is the
+          ORDER of the two lines inside the box, never the box. */}
       <button
         type="button"
         onClick={onOpen}
-        className="w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className={cn(
+          "w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+          // A flat row has no box of its own to light up, so the hover lives out here on the row.
+          flat && "transition-colors hover:bg-muted/50",
+        )}
       >
-        <div className="flex min-w-0 items-center gap-3 rounded-xl border bg-card px-3.5 py-3 shadow-sm transition-colors hover:bg-muted/50">
+        <Shell
+          className={cn(
+            "flex min-w-0 items-center gap-3",
+            // NO RADIUS ON A FLAT ROW, in any state: these sit in a `ListGroup`'s run of hairlines,
+            // and a rounded fill under a full-width straight line reads as a rendering fault. The
+            // 2px left rail is reserved transparent, so a blocked row changes colour without
+            // changing the box.
+            flat
+              ? "flex-row px-3.5 py-2.5 shadow-[inset_2px_0_0_0_transparent]"
+              : "flex-row rounded-xl px-3.5 py-3 shadow-sm transition-colors hover:bg-muted/50",
+            // The blocked tint survives both, because it is the one cue that reads at a glance.
+            blocked &&
+              (flat
+                ? "bg-status-blocked/5 shadow-[inset_2px_0_0_0_var(--color-status-blocked)]"
+                : "border-status-blocked/40 bg-status-blocked/5"),
+          )}
+        >
           {/* The avatar carries both marks the row needs and neither costs a column: the state at
               the corner the eye already lands on, and the shortcut ordinal at the one it does not.
               NO BOX BEHIND IT: `AgentIcon` draws its own tile, so a wrapper with a ground of its own
@@ -82,9 +119,10 @@ export function NativeAgentCard({
             <AgentIcon agent={agent.agent} className="size-8" />
             <StatusDot
               status={agent.status}
-              // A hollow resting ring is filled with the colour it actually sits on, which is the
-              // card's ground rather than the rail's.
-              surface="bg-card"
+              // A hollow resting ring is filled with the colour it actually sits on — a card is
+              // `--card`, and a flat row is the rail it sits on, because `ListGroup` draws a frame
+              // and no fill.
+              surface={flat ? "bg-chrome" : "bg-card"}
               className="absolute -bottom-0.5 -right-0.5 size-2.5"
             />
             <span className="sr-only">{statusLabel(agent.status)}</span>
@@ -125,7 +163,7 @@ export function NativeAgentCard({
               </span>
             )}
           </span>
-        </div>
+        </Shell>
       </button>
 
       {/* A sibling and never a child: a button inside a button is invalid markup, and nesting would
@@ -139,7 +177,9 @@ export function NativeAgentCard({
         }
         onClick={onFavoriteToggle}
         className={cn(
-          "absolute right-2 top-2 grid size-7 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+          "absolute right-2 grid size-7 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
+          // The corner it sits in is the box's, and the flat row's box is 4px shorter.
+          flat ? "top-1.5" : "top-2",
           favorite ? "text-foreground" : "text-muted-foreground/50 hover:text-foreground",
         )}
       >

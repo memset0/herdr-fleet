@@ -2,8 +2,10 @@ import { Check, Inbox, WifiOff } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
 import { agentFavoriteStore, favoriteFirst } from "../../../fleet/ui/agent-favorites.ts";
+import { ATTENTION } from "@/components/agent-list";
 import { NativeAgentCard } from "@/components/native-agent-card";
 import { SectionHeader } from "@/components/section-header";
+import { ListGroup } from "@/components/ui/list-group";
 import { clockTime } from "@/lib/format";
 import { paneRowKey } from "@/lib/hosts";
 import { sectionHeaderProps, triage, type TriageKey } from "@/lib/triage";
@@ -37,6 +39,12 @@ const AGE_BY_SECTION = new Map<TriageKey, "seen" | "active">([
  *
  * FAVOURITES ARE UNCHANGED: the same browser-local store, the same favourite-first ordering inside
  * each section, and the same toggle, now on the row itself.
+ *
+ * SO IS THE EMPHASIS. `ATTENTION` — Collie's own set, read rather than copied — decides which
+ * sections are drawn as cards with air between them and which are flat rows in one bordered group.
+ * Every row a card was the fork's mistake and the dashboard's file already warned about it: card
+ * chrome on 100% of rows is wallpaper, not emphasis, and it throws away the priority `triage()` has
+ * just computed. Ready·unseen stands out here for exactly the reason it stands out there.
  *
  * The shortcut ordinal is numbered across the WHOLE rail rather than per section, because a key the
  * operator presses addresses one row on screen and does not know which heading it fell under.
@@ -95,12 +103,14 @@ export function NativeAgentRail({
         )}
         {sections.map((section) => {
           const age = AGE_BY_SECTION.get(section.key);
-          return (
-            <section key={section.key} className="flex flex-col gap-2">
-              <SectionHeader {...sectionHeaderProps(section)} />
-              {section.agents.map((agent) => {
-                ordinal += 1;
-                return (
+          const attention = ATTENTION.has(section.key);
+          // A gap list for the cards, one bordered group for the flat rows — the dashboard's own
+          // pairing, and `ListGroup`'s own rule: a card already IS the container, so wrapping a run
+          // of them would be a box inside a box.
+          const Body = attention ? "div" : ListGroup;
+          const rows = section.agents.map((agent) => {
+            ordinal += 1;
+            return (
                   <NativeAgentCard
                     // The FULL row identity: a pane id is unique only within one session on one
                     // machine, so keyed by the id alone React would recycle one row's element for
@@ -108,13 +118,18 @@ export function NativeAgentRail({
                     key={paneRowKey(agent)}
                     agent={agent}
                     index={ordinal}
+                    density={attention ? "card" : "row"}
                     favorite={agentFavoriteStore.isFavorite(agent)}
                     onFavoriteToggle={() => agentFavoriteStore.toggle(agent)}
                     onOpen={() => onOpen(agent)}
                     {...(age ? { age } : {})}
                   />
-                );
-              })}
+            );
+          });
+          return (
+            <section key={section.key} className="flex flex-col gap-2">
+              <SectionHeader {...sectionHeaderProps(section)} />
+              <Body className={attention ? "flex flex-col gap-2" : undefined}>{rows}</Body>
             </section>
           );
         })}

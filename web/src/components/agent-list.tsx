@@ -53,7 +53,10 @@ const AGE_BY_SECTION = new Map<TriageKey, "seen" | "active">([
 ]);
 
 /** The sections that mean "a human is required here" — the only ones that get card chrome. */
-const ATTENTION: ReadonlySet<TriageKey> = new Set<TriageKey>(["needs", "ready"]);
+// DOWNSTREAM PORT — exported, and only exported. The Fleet rail lists the same objects in the same
+// triage order, so its emphasis has to be THIS set rather than a second copy of it: a rule about
+// which sections mean "a person is wanted here" that lives in two places is a rule that drifts.
+export const ATTENTION: ReadonlySet<TriageKey> = new Set<TriageKey>(["needs", "ready"]);
 
 // The herd in the one order the app agrees on: Needs you → Ready · unseen → Working → Recent
 // (lib/triage.ts). Only Recent folds, and only Recent takes the direction toggle; the three

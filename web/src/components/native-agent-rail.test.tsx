@@ -105,6 +105,22 @@ describe("NativeAgentRail", () => {
     expect(screen.getByText(/no agents running/i)).toBeInTheDocument();
   });
 
+  it("keeps the card for the sections that want a person and flattens the rest", () => {
+    // `done` with nothing seen since is Ready·unseen; `idle` with a later stamp is Recent.
+    const unseen = agent("unseen", { status: "done", lastActiveAt: 200, lastSeenAt: 100 });
+    const recent = agent("recent", { status: "idle", lastActiveAt: 100, lastSeenAt: 200 });
+    render(<NativeAgentRail agents={[unseen, recent]} onOpen={vi.fn()} />);
+
+    const [first, second] = rows();
+    // The card is the emphasis, and it is Collie's own `ATTENTION` set that decides which rows get
+    // it — every row a card would be wallpaper rather than emphasis.
+    expect(first?.querySelector("[data-slot='card']")).not.toBeNull();
+    expect(second?.querySelector("[data-slot='card']")).toBeNull();
+    // …and a run of flat rows is ONE bordered group, never an open-ended stack of hairlines.
+    expect(second?.closest("[data-slot='list-group']")).not.toBeNull();
+    expect(first?.closest("[data-slot='list-group']")).toBeNull();
+  });
+
   it("puts the age at the row's own trailing edge, under the favourite control", () => {
     render(
       <NativeAgentRail
