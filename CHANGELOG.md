@@ -20,6 +20,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Changed
 
+- Every question the keyboard asks is one shared panel, and a confirmation's `y/N` sits in its heading rather than beside the field.
 - Closing a tab or a pane from the keyboard now asks on the command bar's panel — `y/N`, already holding `y`, so Enter confirms and anything else declines.
 
 ## [3.0.1] - 2026-09-04

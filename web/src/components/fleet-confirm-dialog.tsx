@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-
-import { FleetPanel } from "@/components/fleet-panel";
+import { FleetPromptPanel } from "@/components/fleet-prompt-panel";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
 
@@ -18,6 +16,10 @@ import { t } from "@/lib/i18n";
  * The `y` is prefilled and selected, and that is not a contradiction of making the safe answer easy:
  * the safe answer is still whatever you get by typing literally anything over the selection. What the
  * prefill buys is that the common case — you meant it — costs one keystroke.
+ *
+ * `y/N` IS PART OF THE QUESTION, in the heading. In front of the field it read as a prefix of what
+ * you were typing, and an operator who selects-all and types had to work out whether it would be
+ * replaced.
  */
 
 export interface FleetConfirmDialogProps {
@@ -31,63 +33,18 @@ export interface FleetConfirmDialogProps {
 
 export function FleetConfirmDialog({ title, detail, onConfirm, onClose }: FleetConfirmDialogProps) {
   useLocale();
-  const [value, setValue] = useState("y");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const input = inputRef.current;
-    if (input === null) return;
-    input.focus();
-    input.select();
-  }, []);
-
-  const submit = () => {
-    // Trimmed and case-insensitive, and compared against the one answer that means yes.
-    if (value.trim().toLowerCase() === "y") onConfirm();
-    onClose();
-  };
-
   return (
-    <FleetPanel open onClose={onClose} label={title}>
-      <div data-slot="fleet-confirm-dialog" className="flex flex-col">
-        <div className="border-b border-rule px-3 pb-1.5 pt-2">
-          <div className="text-sm font-medium">{title}</div>
-          <p className="text-[11px] text-muted-foreground">{detail}</p>
-        </div>
-        <div className="flex items-center gap-2 px-3">
-          {/* The prompt spells the default in its capitalisation, which is the whole convention: the
-              safe answer is the one you get without aiming. */}
-          <span className="shrink-0 font-mono text-sm text-muted-foreground">
-            {t("fleet.confirm.prompt")}
-          </span>
-          <input
-            ref={inputRef}
-            type="text"
-            aria-label={t("fleet.confirm.prompt")}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                submit();
-                return;
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                onClose();
-              }
-            }}
-            className="h-12 w-full bg-transparent font-mono text-sm outline-none"
-          />
-        </div>
-        <p className="border-t border-rule px-3 py-2 text-[11px] text-muted-foreground">
-          {t("fleet.confirm.hint")}
-        </p>
-      </div>
-    </FleetPanel>
+    <FleetPromptPanel
+      title={`${title} ${t("fleet.confirm.prompt")}`}
+      detail={detail}
+      initialValue="y"
+      hint={t("fleet.confirm.hint")}
+      onClose={onClose}
+      onSubmit={(value) => {
+        // Trimmed and case-insensitive, and compared against the one answer that means yes.
+        if (value.trim().toLowerCase() === "y") onConfirm();
+        onClose();
+      }}
+    />
   );
 }

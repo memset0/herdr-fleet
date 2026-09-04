@@ -28,9 +28,11 @@ describe("confirming a close", () => {
     expect(document.activeElement).toBe(input);
     expect(input.selectionStart).toBe(0);
     expect(input.selectionEnd).toBe(1);
-    // The capital in `y/N` is the whole convention: it names the answer you get without aiming.
-    expect(panel.textContent).toContain("y/N");
-    expect(panel.textContent).toContain("Close tab “Main”?");
+    // The capital in `y/N` is the whole convention: it names the answer you get without aiming, and
+    // it belongs to the QUESTION — in front of the field it read as a prefix of what you were typing.
+    const heading = within(panel).getByText(/Close tab .Main.\?/);
+    expect(heading.textContent).toContain("y/N");
+    expect(input.previousElementSibling).toBe(heading.parentElement);
     expect(panel.textContent).toContain("Every pane in it is killed.");
   });
 
