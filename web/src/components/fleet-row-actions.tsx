@@ -1,4 +1,4 @@
-import { Maximize2, Monitor, Pencil, ScrollText, Search, XCircle } from "lucide-react";
+import { Maximize2, Monitor, Pencil, Plus, ScrollText, Search, XCircle } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 
 import { pointerMenuGestures } from "../../../fleet/ui/pointer-menu.ts";
@@ -9,6 +9,9 @@ import {
   FleetMenuItem,
 } from "@/components/fleet-context-menu";
 import { FleetPromptDialog } from "@/components/fleet-prompt-dialog";
+import { ActionRow } from "@/components/action-sheet-rows";
+import { BottomSheet } from "@/components/ui/sheet";
+import { useSpaceActions } from "@/hooks/use-spaces";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { TabActionsSheet } from "@/components/tab-actions-sheet";
 import { useHostWriteBlock, usePack } from "@/components/pack-provider";
@@ -431,5 +434,91 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
         onSubmit={(value) => void save(value)}
       />
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Space
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface FleetSpaceActionsProps {
+  open: boolean;
+  onClose: () => void;
+  /** The Space acted on, or null when nothing is open. */
+  space: { workspaceId: string; label: string } | null;
+  readOnly?: boolean;
+}
+
+/**
+ * A SPACE'S ACTIONS, and the short list is the honest one.
+ *
+ * Collie has no Space actions sheet, because until now a Space row offered nothing — so unlike the
+ * Pane and the Tab there is no upstream surface to wrap, and this draws both forms itself: Collie's
+ * own `BottomSheet` and `ActionRow` for a thumb, the fork's menu for a cursor. Same pair, same
+ * choice, same rule.
+ *
+ * WHAT IS NOT HERE, AND WHY. Renaming a Space is not offered. Herdr itself has `workspace.rename`
+ * (HERDR_API.md, live-verified), but nothing between here and it does: there is no `renameSpace` in
+ * the multiplexer capability set, no verb on the adapter contract, no route on the bridge and no
+ * client function — so a row offering it would be offering something that cannot land, which is the
+ * one thing a row in this tree may never do. Adding it is a change to Collie's own mux contract
+ * across three adapters, not a Fleet presentation decision.
+ *
+ * Opening a Tab, by contrast, is a verb the whole chain already has, and the act itself is Collie's:
+ * `useSpaceActions().newTab` carries the read-only gate, the refusal copy, the revalidation and the
+ * navigation into the new pane, exactly as the tab strip's own + button does.
+ */
+export function FleetSpaceActions({ open, onClose, space, readOnly = false }: FleetSpaceActionsProps) {
+  useLocale();
+  const coarse = useCoarseOnly();
+  const at = useClaimedPoint(open, coarse);
+  const { newTab } = useSpaceActions();
+  const canCreate = useMuxCapability("createTab");
+  const hostBlock = useHostWriteBlock(undefined);
+
+  const label = space?.label ?? "";
+  const blocked = readOnly || hostBlock !== undefined;
+  const add = () => {
+    if (!space) return;
+    onClose();
+    void newTab(space.workspaceId);
+  };
+
+  const rows = blocked ? (
+    <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
+      {readOnly ? t("paneActions.readOnly") : t("paneActions.hostBlockSuffix", { hostBlock: hostBlock ?? "" })}
+    </p>
+  ) : canCreate.capable ? null : (
+    <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
+      {canCreate.note || t("paneActions.empty.fallback")}
+    </p>
+  );
+
+  if (at !== null) {
+    return (
+      <FleetContextMenu open={open} at={at} onClose={onClose} label={label}>
+        {rows ?? (
+          <FleetMenuItem
+            icon={<Plus className="size-3 shrink-0 text-muted-foreground" />}
+            label={t("space.tabStrip.new.aria")}
+            onSelect={add}
+          />
+        )}
+      </FleetContextMenu>
+    );
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title={label}>
+      {rows ?? (
+        <div className="flex flex-col gap-1">
+          <ActionRow
+            icon={<Plus className="size-4 shrink-0 text-muted-foreground" />}
+            label={t("space.tabStrip.new.aria")}
+            onClick={add}
+          />
+        </div>
+      )}
+    </BottomSheet>
   );
 }

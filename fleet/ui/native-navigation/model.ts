@@ -77,7 +77,8 @@ export type NavigationStatus = "idle" | "working" | "blocked" | "done" | "unknow
  */
 export type NavigationSubject =
   | { kind: "pane"; paneId: string }
-  | { kind: "tab"; tabId: string };
+  | { kind: "tab"; tabId: string }
+  | { kind: "space"; workspaceId: string };
 
 /** What activating a row does. A row without one only discloses. */
 export type NavigationTarget =
@@ -367,6 +368,11 @@ function hostRow(
       label: workspace.label,
       icon: "none",
       target: spaceTarget(workspace.workspaceId, hostId),
+      // A Space's actions are what the bridge can actually do TO a Space, which today is one verb:
+      // open a Tab in it. It carries a subject rather than none because a row that can be acted on
+      // at all must say so; what it cannot do — rename — is absent rather than refused, and that is
+      // the rule this row has always followed.
+      subject: { kind: "space", workspaceId: workspace.workspaceId },
       selected: false,
       children,
     };

@@ -32,7 +32,7 @@ import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
-import { FleetPaneActions, FleetTabActions } from "@/components/fleet-row-actions";
+import { FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
 import { hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
@@ -184,6 +184,14 @@ export function NativeNavigationShell({
       : null;
   const actionTab =
     actions?.kind === "tab" ? (data.tabs.find((tab) => tab.tabId === actions.tabId) ?? null) : null;
+  // A Space is resolved to the snapshot's own row for the same reason a Pane and a Tab are: the
+  // sheet acts on what the current snapshot describes, never on a copy the tree took a poll ago.
+  const actionSpace =
+    actions?.kind === "space"
+      ? ((data.allWorkspaces ?? data.workspaces).find(
+          (workspace) => workspace.workspaceId === actions.workspaceId,
+        ) ?? null)
+      : null;
 
   const [hierarchyOpen, setHierarchyOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -358,6 +366,12 @@ export function NativeNavigationShell({
             if (closed === paneId) navigate(homePath(data.scope));
             else revalidator.revalidate();
           }}
+        />
+        <FleetSpaceActions
+          open={actionSpace !== null}
+          onClose={() => setActions(null)}
+          space={actionSpace}
+          readOnly={readOnly}
         />
         <FleetTabActions
           open={actionTab !== null}

@@ -290,10 +290,12 @@ describe("NativeNavigationTree", () => {
       />,
     );
 
-    // A Space has no rename or close on the bridge, so its row asks for nothing.
+    // A Space now has ONE verb the whole chain can land — opening a Tab in it — so its row asks for
+    // its own actions. Rename is still absent, because nothing between here and Herdr carries it.
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "Project One" }) });
-    expect(onRowActions).not.toHaveBeenCalled();
+    expect(onRowActions).toHaveBeenCalledExactlyOnceWith({ kind: "space", workspaceId: "w1" });
 
+    onRowActions.mockClear();
     await user.click(screen.getByRole("button", { name: "Expand Project One" }));
     // A Tab that survived elision acts on the Tab…
     await user.pointer({
