@@ -46,8 +46,10 @@ paths = [
   "web/src/components/native-navigation-context.tsx",
   "web/src/components/native-navigation-shell.test.tsx",
   "web/src/components/native-navigation-shell.tsx",
-  "web/src/components/fleet-pointer-menu.test.tsx",
-  "web/src/components/fleet-pointer-menu.tsx",
+  "web/src/components/fleet-context-menu.tsx",
+  "web/src/components/fleet-prompt-dialog.tsx",
+  "web/src/components/fleet-row-actions.test.tsx",
+  "web/src/components/fleet-row-actions.tsx",
   "web/src/components/fleet-webfonts.tsx",
   "web/src/components/native-navigation-tree.test.tsx",
   "web/src/components/native-navigation-tree.tsx",
@@ -67,7 +69,7 @@ contracts = [
   "permanently expanded native navigation rails",
   "every pack member in both navigation rails",
   "one fetched CJK fallback face",
-  "one recorded pointer gesture behind the row actions' stand"
+  "one context menu and one centred prompt beside Collie's untouched sheets"
 ]
 verify = [
   "fleet/auth.test.ts",
@@ -99,24 +101,24 @@ verify = [
 ]
 
 [[invasive]]
-id = "native-row-actions-placement-port"
-intent = "Let Collie's own Pane and Tab actions sheets stand where the gesture that opened them asks — at the cursor for a right-click, in the centre once they hold a rename's question — without changing a row, a rule, or a write."
+id = "native-row-actions-menu-port"
+intent = "Let a pointer's context gesture answer a row's actions with the fork's own context menu, while a touch keeps Collie's bottom sheet exactly as upstream wrote it."
 strategy = "adapt"
 review = "every-upstream-sync"
 paths = [
-  "web/src/components/pane-actions-sheet.tsx#useRowActionsPlace",
-  "web/src/components/tab-actions-sheet.tsx#useRowActionsPlace",
-  "web/src/components/ui/sheet.tsx#place?: SheetPlace"
+  "web/src/components/pane-strip.tsx#FleetPaneActions",
+  "web/src/components/tab-strip.tsx#FleetTabActions"
 ]
 verify = [
   "fleet/ui/menu-placement.test.ts",
   "fleet/ui/pointer-menu.test.ts",
-  "web/src/components/fleet-pointer-menu.test.tsx",
+  "web/src/components/fleet-row-actions.test.tsx",
   "web/src/components/pane-actions-sheet.test.tsx",
+  "web/src/components/pane-strip.test.tsx",
   "web/src/components/tab-actions-sheet.test.tsx",
-  "web/src/components/ui/sheet.test.tsx"
+  "web/src/components/tab-strip.test.tsx"
 ]
-reason = "Three surfaces ask a row for its actions — the fork's hierarchy and Collie's tab and pane strips — and all three already route both gestures through one hook into these two sheets. Only the presentation follows the gesture, so the sheets keep every row, capability gate, host block, confirm flow and write they have: the primitive gains one optional placement, and each sheet passes it plus the one fact only it knows, which is whether its rows have become a question. The geometry that answers where a menu goes, and the record of which gesture opened it, are under fleet/ui; the sheets and the primitive hold no downstream logic. The port is declared once here and reaches the strips without touching them."
+reason = "A bottom sheet and a context menu answer the same question and are not the same object: one dims the app, sticks a titled header over it and spends a thumb's 44px per verb; the other stands at the cursor, dims nothing and leaves when you look away. Collie's sheet primitive and both actions sheets are therefore untouched — the fork adds its own menu and its own centred prompt, and each strip changes by one imported name to a drop-in that takes the same props and renders the same sheet unless a mouse's context gesture opened it. The rows the menu draws are its own; every rule they run on — the capability gates, the host write block, the two-tap confirm, the press echo, the API calls and the status strings — is imported from where the sheet gets it, so the two surfaces can differ in shape and cannot differ in what they do. Geometry and the record of which gesture opened a surface stay under fleet/ui. The fork's hierarchy uses the same drop-in without any upstream change at all."
 
 [[invasive]]
 id = "unnarrowed-pack-rows-port"

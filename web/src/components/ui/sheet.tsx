@@ -1,7 +1,6 @@
 import * as React from "react";
 import { X } from "lucide-react";
 
-import { placeMenu, type MenuOffset } from "../../../../fleet/ui/menu-placement.ts";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { t as translate } from "@/lib/i18n";
@@ -40,34 +39,9 @@ interface BottomSheetProps {
   title?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
-  /** DOWNSTREAM PORT — where this sheet stands. Absent is the bottom sheet, unchanged.
-   *
-   *  A sheet reached by a right-click is a CONTEXT MENU, and a context menu that slides up from the
-   *  bottom of a desktop screen has left the pointer behind: the rows are 900px from the row they
-   *  are about. Same content, same writes, same rules — only the presentation follows the gesture
-   *  that asked for it, which is why this is a placement and not a second component.
-   *
-   *  `center` is the other half of the same idea: a menu that turns into a QUESTION (a rename's
-   *  field) must not answer it in a 288px popover pinned to a corner. The caller says when its own
-   *  content has become a prompt; the primitive only knows how to stand. */
-  place?: SheetPlace;
 }
 
-/** Anchored to a cursor — viewport coordinates, the ones a pointer event reports. */
-export interface SheetPoint {
-  readonly kind: "point";
-  readonly x: number;
-  readonly y: number;
-}
-
-/** Standing in the middle of the screen, which is where a question goes. */
-export interface SheetCentre {
-  readonly kind: "center";
-}
-
-export type SheetPlace = SheetPoint | SheetCentre;
-
-export function BottomSheet({ open, onClose, title, children, className, place }: BottomSheetProps) {
+export function BottomSheet({ open, onClose, title, children, className }: BottomSheetProps) {
   useLocale();
   const panelRef = React.useRef<HTMLDivElement>(null);
   const drag = React.useRef({ startY: 0, atTop: false, engaged: false, dy: 0 });
@@ -87,29 +61,6 @@ export function BottomSheet({ open, onClose, title, children, className, place }
     if (open) backdropArmed.current = false;
   }, [open]);
 
-  // THE MENU'S OWN POSITION, measured rather than guessed: the box's size is its rows', and its rows
-  // are the caller's, so nothing here can know the height before it is drawn. One layout pass — read
-  // the box, ask the fork's geometry where it goes, write the offset — which is why the panel is
-  // hidden until the answer arrives: `left: 0, top: 0` for one frame is a menu that visibly jumps.
-  const anchored = place?.kind === "point" ? place : null;
-  const [offset, setOffset] = React.useState<MenuOffset | null>(null);
-  React.useLayoutEffect(() => {
-    if (!open || anchored === null) {
-      setOffset(null);
-      return;
-    }
-    const panel = panelRef.current;
-    if (!panel) return;
-    const box = panel.getBoundingClientRect();
-    setOffset(
-      placeMenu(
-        { x: anchored.x, y: anchored.y },
-        { width: box.width, height: box.height },
-        { width: window.innerWidth, height: window.innerHeight },
-      ),
-    );
-  }, [open, anchored]);
-
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -126,8 +77,7 @@ export function BottomSheet({ open, onClose, title, children, className, place }
   // scrolling; only a pull that begins at the top engages the dismiss.
   React.useEffect(() => {
     const panel = panelRef.current;
-    // A placed sheet is not dragged away: a menu has no grab handle and a dialog is not pulled down.
-    if (!open || !panel || place !== undefined) return;
+    if (!open || !panel) return;
     setDragY(0);
     const SLOP = 6; // ignore taps / tiny jitter before engaging the drag
     const CLOSE = 90; // px past which release closes instead of snapping back
@@ -168,23 +118,13 @@ export function BottomSheet({ open, onClose, title, children, className, place }
       panel.removeEventListener("touchend", onEnd);
       panel.removeEventListener("touchcancel", onEnd);
     };
-  }, [open, onClose, place]);
+  }, [open, onClose]);
 
   if (!open) return null;
 
   return (
     <div
-      className={cn(
-        "fixed inset-0 z-50",
-        // Three stands, one panel. The bottom sheet is unchanged and is what every caller that says
-        // nothing still gets; a centred dialog holds a question; an anchored menu places itself, so
-        // this layer only has to stay out of its way.
-        anchored !== null
-          ? ""
-          : place?.kind === "center"
-            ? "flex items-center justify-center p-4"
-            : "flex flex-col justify-end",
-      )}
+      className="fixed inset-0 z-50 flex flex-col justify-end"
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? titleId : undefined}
@@ -196,16 +136,7 @@ export function BottomSheet({ open, onClose, title, children, className, place }
         type="button"
         aria-hidden="true"
         tabIndex={-1}
-        className={cn(
-          "absolute inset-0 duration-200 animate-in fade-in",
-          // A MENU DOES NOT DIM THE APP. The scrim belongs to the bottom sheet and the dialog, where
-          // the panel has taken the screen over and the page behind it is out of play. A context
-          // menu is a small, cheap, look-away-to-cancel thing standing ON the row it is about, and
-          // dimming that row dims the very thing the reader opened it to check against. It still
-          // catches the click that dismisses it, which is the scrim's other job and the only one a
-          // menu needs.
-          anchored === null && "bg-black/50",
-        )}
+        className="absolute inset-0 bg-black/50 duration-200 animate-in fade-in"
         onPointerDown={() => {
           backdropArmed.current = true;
         }}
@@ -218,24 +149,10 @@ export function BottomSheet({ open, onClose, title, children, className, place }
       <div
         ref={panelRef}
         tabIndex={-1}
-        style={
-          anchored !== null
-            ? {
-                left: offset?.left ?? 0,
-                top: offset?.top ?? 0,
-                // THE CORNER IT GROWS OUT OF, and it is the corner the cursor is on — see
-                // `MenuOrigin`. Left at the default centre, the entrance reads as the box being
-                // squeezed in from all four sides at once rather than opening from the cursor.
-                transformOrigin: offset?.origin ?? "left top",
-                // Hidden, not unmounted: the box has to be in the layout to be measured, and one
-                // frame at the origin is a menu that visibly jumps into place.
-                visibility: offset === null ? "hidden" : "visible",
-              }
-            : {
-                transform: dragY ? `translateY(${dragY}px)` : undefined,
-                transition: drag.current.engaged ? "none" : "transform 0.2s ease-out",
-              }
-        }
+        style={{
+          transform: dragY ? `translateY(${dragY}px)` : undefined,
+          transition: drag.current.engaged ? "none" : "transform 0.2s ease-out",
+        }}
         className={cn(
           // `rounded-t-md` (2px), not `rounded-t-2xl`: 16px was the roundest corner left in the app and it
           // sat on the most-seen surface. The sheet is a panel, and a panel has an edge.
@@ -249,53 +166,18 @@ export function BottomSheet({ open, onClose, title, children, className, place }
           // as raised rather than as a hole; --rule (2.06:1 dark) then draws the edge, because this
           // is a cut between two REGIONS and not a component's own outline (DESIGN.md §4). Light
           // gains the same separation for free: white on rgb(245) instead of rgb(245) on rgb(245).
-          "z-10 overflow-y-auto overscroll-contain bg-card shadow-2xl duration-200 animate-in",
-          // The three stands differ in exactly four things: where the box sits, how wide it is, which
-          // of its edges are cut, and which direction it arrives from. Everything else — the ground,
-          // the rule, the shadow, the scroll — is the panel's and is shared, because this is one
-          // surface presented three ways rather than three surfaces.
-          anchored !== null
-            ? "absolute max-h-[70dvh] w-72 max-w-[calc(100vw-1rem)] rounded-md border border-rule fade-in zoom-in-95"
-            : place?.kind === "center"
-              ? "relative max-h-[82dvh] w-full max-w-sm rounded-md border border-rule pb-4 fade-in zoom-in-95"
-              : "relative max-h-[82dvh] w-full rounded-t-md border-t border-rule slide-in-from-bottom pb-[calc(env(safe-area-inset-bottom)_+_1rem)]",
+          "relative z-10 max-h-[82dvh] w-full overflow-y-auto overscroll-contain rounded-t-md border-t border-rule bg-card shadow-2xl duration-200 animate-in slide-in-from-bottom",
+          "pb-[calc(env(safe-area-inset-bottom)_+_1rem)]",
           className,
         )}
       >
-        <div
-          className={cn(
-            "z-10 border-b border-rule",
-            // A MENU'S HEADER IS NOT A SHEET'S. A sheet is a screen you have entered, so its header
-            // sticks, frosts over what scrolls under it, and carries a real ✕ — the one accessible
-            // way out of a surface that covers the app. A menu is a small box beside the row it is
-            // about, dismissed by looking away, by Escape, or by a click anywhere else, and pinning
-            // a heavy title bar and a close button on top of four verbs makes it read as a tiny
-            // dialog instead of a menu. So here the title stays only as a caption naming the target
-            // — which is also what keeps the dialog's accessible name — and nothing else.
-            anchored === null && "sticky top-0 bg-card/95 backdrop-blur-md",
-          )}
-        >
-          {/* Grab handle — pull down (from anywhere at the top) to dismiss. Drawn only where the pull
-              exists: a placed sheet does not drag away, and an affordance for a gesture that is not
-              armed is a promise the surface does not keep. */}
-          {place === undefined && (
-            <div className="flex justify-center pt-2 pb-1">
-              {/* 4px tall, 36px wide — a stadium, so it takes the house 2px rather than full-round. */}
-              <span className="h-1 w-9 rounded-md bg-muted-foreground/40" />
-            </div>
-          )}
-          <div
-            data-slot="sheet-title-row"
-            className={cn(
-              "flex items-center justify-between px-4 pb-3",
-              // The handle carried the top padding for the bottom sheet. Without it the row needs
-              // its own, or the title sits flush against the panel's cut edge.
-              place !== undefined && "pt-3",
-              // A caption, not a title bar: less air, and no room reserved for a control that is
-              // not drawn.
-              anchored !== null && "px-3 pb-2 pt-2",
-            )}
-          >
+        <div className="sticky top-0 z-10 border-b border-rule bg-card/95 backdrop-blur-md">
+          {/* Grab handle — pull down (from anywhere at the top) to dismiss. */}
+          <div className="flex justify-center pt-2 pb-1">
+            {/* 4px tall, 36px wide — a stadium, so it takes the house 2px rather than full-round. */}
+            <span className="h-1 w-9 rounded-md bg-muted-foreground/40" />
+          </div>
+          <div data-slot="sheet-title-row" className="flex items-center justify-between px-4 pb-3">
             <span
               id={title ? titleId : undefined}
               data-slot="sheet-title"
@@ -304,16 +186,10 @@ export function BottomSheet({ open, onClose, title, children, className, place }
               // renders as one line) and is what lets THAT caller's composed node — the pane name
               // plus a `HostChip` — share the row and shrink into it instead of overflowing past
               // the close button.
-              className={cn(
-                "flex min-w-0 flex-1 items-center gap-1.5",
-                anchored !== null
-                  ? "truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-                  : "text-sm font-semibold",
-              )}
+              className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-semibold"
             >
               {title}
             </span>
-            {anchored === null && (
             <Button
               variant="ghost"
               size="icon"
@@ -323,10 +199,9 @@ export function BottomSheet({ open, onClose, title, children, className, place }
             >
               <X className="size-4" />
             </Button>
-            )}
           </div>
         </div>
-        <div className={cn("px-4 py-3", anchored !== null && "p-1.5")}>{children}</div>
+        <div className="px-4 py-3">{children}</div>
       </div>
     </div>
   );
@@ -370,7 +245,6 @@ export function SideSheet({
   React.useEffect(() => {
     if (open) backdropArmed.current = false;
   }, [open]);
-
 
   React.useEffect(() => {
     if (!open) return;

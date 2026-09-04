@@ -26,13 +26,12 @@ import {
   type NativeNavigationPreferenceStore,
   type SidebarSide,
 } from "../../../fleet/ui/native-navigation/preferences.ts";
-import { usePointerMenuGestures } from "@/components/fleet-pointer-menu";
+import { usePointerMenuGestures } from "@/components/fleet-context-menu";
 import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
-import { PaneActionsSheet } from "@/components/pane-actions-sheet";
-import { TabActionsSheet } from "@/components/tab-actions-sheet";
+import { FleetPaneActions, FleetTabActions } from "@/components/fleet-row-actions";
 import { hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
@@ -88,18 +87,34 @@ export function NativeNavigationShell({
     () => [...data.agents, ...data.shellPanes],
     [data.agents, data.shellPanes],
   );
+  // A member the LEAD is refusing — its plain boolean, or a protocol it cannot speak. Not staleness,
+  // which is the age of the lead's last receipt and says nothing about the machine.
+  const refusedHosts = useMemo(
+    () =>
+      new Set(
+        (data.servers ?? [])
+          .filter((server) => !server.isLead && (!server.reachable || server.protocol === "incompatible"))
+          .map((server) => server.id),
+      ),
+    [data.servers],
+  );
   // The member order is the ROSTER's, lead first, so the rail does not reorder itself as panes come
-  // and go. A host present only in the rows sorts after the roster's, by id, rather than vanishing.
+  // and go — except that a member which is not answering sinks below the ones that are, because it
+  // has nothing current to contribute and should not sit between two machines that do. A host
+  // present only in the rows sorts after the roster's, by id, rather than vanishing.
   const hostIds = useMemo(() => {
-    const roster = (data.servers ?? []).toSorted((a, b) => Number(b.isLead) - Number(a.isLead));
-    const ordered = roster.map((server) => server.id);
+    const rank = (server: { id: string; isLead: boolean }): number =>
+      refusedHosts.has(server.id) ? 2 : server.isLead ? 0 : 1;
+    const ordered = (data.servers ?? [])
+      .toSorted((a, b) => rank(a) - rank(b))
+      .map((server) => server.id);
     const known = new Set(ordered);
     const extra = [...new Set(allPanes.map((pane) => pane.host ?? ""))]
       .filter((host) => host !== "" && !known.has(host))
       .toSorted();
     // A solo snapshot has no roster at all, and its rows carry no host: one member, spelled "".
     return ordered.length === 0 && extra.length === 0 ? [""] : [...ordered, ...extra];
-  }, [data.servers, allPanes]);
+  }, [data.servers, allPanes, refusedHosts]);
   const tree = useMemo(
     () =>
       deriveNavigationTree({
@@ -111,6 +126,7 @@ export function NativeNavigationShell({
             // Naming a host is Collie's job; its resolver falls back to the id, and a solo snapshot
             // has no roster at all, so the tree says "this host" rather than inventing a name.
             hostLabel: hostName(data.servers, hostId || undefined) ?? t("fleet.navigation.thisHost"),
+            degraded: refusedHosts.has(hostId),
             workspaces: on(data.allWorkspaces ?? data.workspaces),
             tabs: on(data.allTabs ?? data.tabs),
             agents: on(data.agents).map(toNavigationPane),
@@ -121,6 +137,7 @@ export function NativeNavigationShell({
       }),
     [
       hostIds,
+      refusedHosts,
       data.servers,
       data.allWorkspaces,
       data.workspaces,
@@ -310,7 +327,7 @@ export function NativeNavigationShell({
             tree would be a second place for those rules to drift. Nothing here can act on a Space:
             the bridge has no rename or close for one, and a row that offered it would be offering an
             action that cannot land. */}
-        <PaneActionsSheet
+        <FleetPaneActions
           open={actionPane !== null}
           onClose={() => setActions(null)}
           pane={actionPane}
@@ -322,7 +339,7 @@ export function NativeNavigationShell({
             else revalidator.revalidate();
           }}
         />
-        <TabActionsSheet
+        <FleetTabActions
           open={actionTab !== null}
           onClose={() => setActions(null)}
           tab={actionTab}

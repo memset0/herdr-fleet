@@ -30,46 +30,24 @@ export interface MenuBox {
   readonly height: number;
 }
 
-/**
- * Which corner of the box the cursor ended up on. It is a CSS `transform-origin`, and it is part of
- * the placement rather than a detail of the drawing, because it is the same decision: the corner the
- * box was anchored by is the corner it must appear to come out of.
- *
- * A menu that scales up from its own CENTRE looks like it is being squeezed in from every side at
- * once, which is what a centre origin does to a box pinned by one corner — the three edges away from
- * the cursor all travel, and the one at the cursor travels too. Growing from the anchored corner is
- * the whole of the fix, and it cannot be decided anywhere but here: only the flip knows which corner
- * that is.
- */
-export type MenuOrigin = "left top" | "right top" | "left bottom" | "right bottom";
-
-/** Where to put the box, in the same viewport coordinates, and which corner it grew from. */
+/** Where to put the box, in the same viewport coordinates. */
 export interface MenuOffset {
   readonly left: number;
   readonly top: number;
-  readonly origin: MenuOrigin;
 }
 
 /** The gap kept between the menu and the edge it is nearest. */
 export const MENU_MARGIN = 8;
 
-interface Placed {
-  readonly value: number;
-  /** True when the box ends at the point rather than starting from it. */
-  readonly flipped: boolean;
-}
-
-function axis(at: number, size: number, bound: number, margin: number): Placed {
+function axis(at: number, size: number, bound: number, margin: number): number {
   // Room for the whole box on the far side of the point is the ordinary case.
-  if (at + size + margin <= bound) return { value: at, flipped: false };
+  if (at + size + margin <= bound) return at;
   // Otherwise flip: the box ends AT the point, so the cursor still sits on its corner.
   const flipped = at - size;
-  if (flipped >= margin) return { value: flipped, flipped: true };
+  if (flipped >= margin) return flipped;
   // Neither side fits, so the box is bigger than the space. Pin it and let it scroll — a menu the
-  // pointer cannot reach is worse than one that is not where the pointer left off. Nothing is
-  // anchored any more, so the origin stays the unflipped one rather than claiming a corner the
-  // cursor is not on.
-  return { value: Math.max(margin, Math.min(at, bound - size - margin)), flipped: false };
+  // pointer cannot reach is worse than one that is not where the pointer left off.
+  return Math.max(margin, Math.min(at, bound - size - margin));
 }
 
 export function placeMenu(
@@ -78,13 +56,8 @@ export function placeMenu(
   bounds: MenuBox,
   margin: number = MENU_MARGIN,
 ): MenuOffset {
-  const x = axis(at.x, box.width, bounds.width, margin);
-  const y = axis(at.y, box.height, bounds.height, margin);
   return {
-    left: x.value,
-    top: y.value,
-    // SAFETY: both halves come from the two-value unions below, so every combination is one of the
-    // four `MenuOrigin` strings; the type is stated because template literals widen to `string`.
-    origin: `${x.flipped ? "right" : "left"} ${y.flipped ? "bottom" : "top"}` as MenuOrigin,
+    left: axis(at.x, box.width, bounds.width, margin),
+    top: axis(at.y, box.height, bounds.height, margin),
   };
 }

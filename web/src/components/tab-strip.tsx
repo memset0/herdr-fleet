@@ -3,7 +3,12 @@ import { Plus } from "lucide-react";
 
 import { AgentIcon } from "@/components/agent-icon";
 import { STRIP_TAP_TARGET_SQUARE } from "@/components/ui/labelled-strip";
-import { TabActionsSheet } from "@/components/tab-actions-sheet";
+// DOWNSTREAM PORT — one name, and only the name. `FleetPaneActions`/`FleetTabActions` take exactly
+// the props this sheet takes and render exactly this sheet, unless the row was opened by a mouse's
+// context gesture on a machine with a pointer — in which case the fork's own context menu answers
+// instead, with the same rows, gates, confirms and writes. Nothing else in this file changes; see
+// components/fleet-row-actions.tsx for why the two surfaces are two components.
+import { FleetTabActions as TabActionsSheet } from "@/components/fleet-row-actions";
 import { StatusDot } from "@/components/status-badge";
 import { useLongPress } from "@/hooks/use-long-press";
 import { cn } from "@/lib/utils";

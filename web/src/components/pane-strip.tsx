@@ -4,7 +4,12 @@ import { TerminalSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LabelledStrip, STRIP_TAP_TARGET } from "@/components/ui/labelled-strip";
 import { StatusDot } from "@/components/status-badge";
-import { PaneActionsSheet } from "@/components/pane-actions-sheet";
+// DOWNSTREAM PORT — one name, and only the name. `FleetPaneActions`/`FleetTabActions` take exactly
+// the props this sheet takes and render exactly this sheet, unless the row was opened by a mouse's
+// context gesture on a machine with a pointer — in which case the fork's own context menu answers
+// instead, with the same rows, gates, confirms and writes. Nothing else in this file changes; see
+// components/fleet-row-actions.tsx for why the two surfaces are two components.
+import { FleetPaneActions as PaneActionsSheet } from "@/components/fleet-row-actions";
 import { useLongPress } from "@/hooks/use-long-press";
 import { paneDisplayName } from "@/lib/types";
 import { paneTag } from "@/lib/pane-tag";
