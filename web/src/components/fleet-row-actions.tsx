@@ -8,7 +8,7 @@ import {
   FleetMenuDestructiveItem,
   FleetMenuItem,
 } from "@/components/fleet-context-menu";
-import { FleetPromptDialog } from "@/components/fleet-prompt-dialog";
+import { FleetRenameDialog } from "@/components/fleet-rename-dialog";
 import { ActionRow } from "@/components/action-sheet-rows";
 import { BottomSheet } from "@/components/ui/sheet";
 import { useSpaceActions } from "@/hooks/use-spaces";
@@ -116,7 +116,6 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
   const at = useClaimedPoint(open, coarse);
 
   const [renaming, setRenaming] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [focusing, setFocusing] = useState(false);
   const closeEcho = useActionEcho();
 
@@ -142,28 +141,6 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
 
   const name = pane ? paneDisplayName(pane) : t("paneActions.title.fallback");
   const blocked = readOnly || hostBlock !== undefined;
-
-  async function save(next: string) {
-    if (!pane || saving) return;
-    setSaving(true);
-    try {
-      const res = await api.renamePane(pane.paneId, next, scope);
-      if (res.ok) {
-        setStatus(
-          next ? t("paneActions.status.renamed") : t("paneActions.status.labelCleared"),
-          "success",
-        );
-        onRenamed();
-        onClose();
-      } else {
-        setStatus(describeApiError(res, t("paneActions.status.renameFailed")), "error");
-      }
-    } catch (e) {
-      setStatus(describeThrownError(e), "error");
-    } finally {
-      setSaving(false);
-    }
-  }
 
   // FIRST activation, no arming — see FleetMenuDestructiveItem for why a menu does not ask again.
   async function requestClose() {
@@ -285,18 +262,21 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
           </>
         )}
       </FleetContextMenu>
-      <FleetPromptDialog
-        open={open && renaming}
-        title={name}
-        label={t("actionSheet.label")}
-        placeholder={t("paneActions.rename.placeholder")}
-        initialValue={pane?.paneLabel ?? ""}
-        saving={saving}
-        // A blank pane field CLEARS the label (blank → null on the bridge), so an empty value saves.
-        allowEmpty
-        onCancel={() => setRenaming(false)}
-        onSubmit={(value) => void save(value)}
-      />
+      {/* THE SAME RENAME THE KEYBOARD OPENS, not merely the same input. Sharing the field alone
+          would have left two saves calling the same endpoint with the same rules — the half of the
+          duplication that can actually drift. */}
+      {open && renaming && pane !== null && (
+        <FleetRenameDialog
+          key={pane.paneId}
+          target={{ kind: "pane", paneId: pane.paneId, label: pane.paneLabel ?? "" }}
+          scope={scope}
+          onClose={() => setRenaming(false)}
+          onRenamed={() => {
+            onRenamed();
+            onClose();
+          }}
+        />
+      )}
     </>
   );
 }
@@ -312,7 +292,6 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
   const at = useClaimedPoint(open, coarse);
 
   const [renaming, setRenaming] = useState(false);
-  const [saving, setSaving] = useState(false);
   const closeEcho = useActionEcho();
 
   // A tab has no host of its own — the tab list is the LEAD's, and both writes are addressed by the
@@ -330,25 +309,6 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
 
   const name = tab ? t("space.tab.titleWithLabel", { label: tab.label }) : t("space.tab.titleFallback");
   const blocked = readOnly || hostBlock !== undefined;
-
-  async function save(next: string) {
-    if (!tab || saving || !next) return;
-    setSaving(true);
-    try {
-      const res = await api.renameTab(tab.tabId, next, scope);
-      if (res.ok) {
-        setStatus(t("space.tab.renamed"), "success");
-        onRenamed();
-        onClose();
-      } else {
-        setStatus(describeApiError(res, t("space.tab.renameFailed")), "error");
-      }
-    } catch (e) {
-      setStatus(describeThrownError(e), "error");
-    } finally {
-      setSaving(false);
-    }
-  }
 
   // FIRST activation, no arming — see FleetMenuDestructiveItem for why a menu does not ask again.
   async function requestClose() {
@@ -406,18 +366,18 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
           </>
         )}
       </FleetContextMenu>
-      <FleetPromptDialog
-        open={open && renaming}
-        title={name}
-        label={t("actionSheet.label")}
-        placeholder={t("space.tab.placeholder")}
-        initialValue={tab?.label ?? ""}
-        saving={saving}
-        // A tab has no "clear": herdr stores "" literally and rejects null, so a blank cannot save.
-        allowEmpty={false}
-        onCancel={() => setRenaming(false)}
-        onSubmit={(value) => void save(value)}
-      />
+      {open && renaming && tab !== null && (
+        <FleetRenameDialog
+          key={tab.tabId}
+          target={{ kind: "tab", tabId: tab.tabId, label: tab.label }}
+          scope={scope}
+          onClose={() => setRenaming(false)}
+          onRenamed={() => {
+            onRenamed();
+            onClose();
+          }}
+        />
+      )}
     </>
   );
 }

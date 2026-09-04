@@ -117,14 +117,16 @@ describe("FleetPaneActions", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("asks a rename in the centre, not in the menu", () => {
+  it("asks the rename the keyboard asks, not one of its own", () => {
     rightClick(200, 300);
     render(<Harness kind="pane" />);
     fireEvent.click(within(screen.getByRole("menu")).getByText(/rename/i));
-    // The menu gives way to a question, and the question is a dialog with the pane's own value in it.
+    // The menu gives way to a question — and it is the SAME question a key opens: the shared prompt
+    // panel, holding the pane's own value. Two routes, one rename, one save.
     expect(screen.queryByRole("menu")).toBeNull();
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByLabelText(/label/i)).toHaveValue("editor");
+    expect(dialog.closest('[data-slot="fleet-panel"]')).not.toBeNull();
+    expect(within(dialog).getByRole("textbox")).toHaveValue("editor");
   });
 });
 

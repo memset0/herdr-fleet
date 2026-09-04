@@ -67,7 +67,6 @@ paths = [
   "web/src/components/native-navigation-shell.test.tsx",
   "web/src/components/native-navigation-shell.tsx",
   "web/src/components/fleet-context-menu.tsx",
-  "web/src/components/fleet-prompt-dialog.tsx",
   "web/src/components/fleet-row-actions.test.tsx",
   "web/src/components/fleet-row-actions.tsx",
   "web/src/components/fleet-webfonts.tsx",
