@@ -46,6 +46,8 @@ paths = [
   "web/src/components/native-navigation-context.tsx",
   "web/src/components/native-navigation-shell.test.tsx",
   "web/src/components/native-navigation-shell.tsx",
+  "web/src/components/fleet-pointer-menu.test.tsx",
+  "web/src/components/fleet-pointer-menu.tsx",
   "web/src/components/fleet-webfonts.tsx",
   "web/src/components/native-navigation-tree.test.tsx",
   "web/src/components/native-navigation-tree.tsx",
@@ -59,10 +61,12 @@ contracts = [
   "native Pack authority selection",
   "role-aware child lifecycle",
   "one peer-originated SSH link beneath native Pack",
+  "operator-driven Pack enrolment with no service manager",
   "bounded browser-local Agent favorites",
   "explicit Herdr-only manual Pane fit",
   "permanently expanded native navigation rails",
-  "one fetched CJK fallback face"
+  "one fetched CJK fallback face",
+  "one recorded pointer gesture behind the row actions' stand"
 ]
 verify = [
   "fleet/auth.test.ts",
@@ -71,7 +75,9 @@ verify = [
   "fleet/gateway.test.ts",
   "fleet/lifecycle.test.ts",
   "fleet/login-ui.test.ts",
+  "fleet/main.test.ts",
   "fleet/pack-authority.test.ts",
+  "fleet/pack-enrollment.test.ts",
   "fleet/pack-reachability.test.ts",
   "fleet/proxy.test.ts",
   "fleet/protocol.test.ts",
@@ -84,10 +90,32 @@ verify = [
   "fleet/manual-pane-fit/capability.test.ts",
   "fleet/manual-pane-fit/controller.test.ts",
   "fleet/ui/manual-pane-fit.test.ts",
+  "fleet/ui/menu-placement.test.ts",
   "fleet/ui/native-navigation/model.test.ts",
   "fleet/ui/native-navigation/preferences.test.ts",
+  "fleet/ui/pointer-menu.test.ts",
   "fleet/ui/webfonts.test.ts"
 ]
+
+[[invasive]]
+id = "native-row-actions-placement-port"
+intent = "Let Collie's own Pane and Tab actions sheets stand where the gesture that opened them asks — at the cursor for a right-click, in the centre once they hold a rename's question — without changing a row, a rule, or a write."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  "web/src/components/pane-actions-sheet.tsx#useRowActionsPlace",
+  "web/src/components/tab-actions-sheet.tsx#useRowActionsPlace",
+  "web/src/components/ui/sheet.tsx#place?: SheetPlace"
+]
+verify = [
+  "fleet/ui/menu-placement.test.ts",
+  "fleet/ui/pointer-menu.test.ts",
+  "web/src/components/fleet-pointer-menu.test.tsx",
+  "web/src/components/pane-actions-sheet.test.tsx",
+  "web/src/components/tab-actions-sheet.test.tsx",
+  "web/src/components/ui/sheet.test.tsx"
+]
+reason = "Three surfaces ask a row for its actions — the fork's hierarchy and Collie's tab and pane strips — and all three already route both gestures through one hook into these two sheets. Only the presentation follows the gesture, so the sheets keep every row, capability gate, host block, confirm flow and write they have: the primitive gains one optional placement, and each sheet passes it plus the one fact only it knows, which is whether its rows have become a question. The geometry that answers where a menu goes, and the record of which gesture opened it, are under fleet/ui; the sheets and the primitive hold no downstream logic. The port is declared once here and reaches the strips without touching them."
 
 [[invasive]]
 id = "repository-guidance"
@@ -154,7 +182,7 @@ verify = [
   "web/src/routes/home.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "Collie's native rows own rendering and navigation, so they expose only favorite state and toggle ports while all identity, storage, and ordering behavior remains under fleet/ui. This entry also carries the dashboard route test's coverage of the content width the native navigation shell removes so the route fills its column (native-navigation-sidebars-port), and the six typed dictionaries every downstream label lands in, including the CJK fallback card's (native-webfont-port), because the manifest attributes each of those paths to exactly one entry."
+reason = "Collie's native rows own rendering and navigation, so they expose only favorite state and toggle ports while all identity, storage, and ordering behavior remains under fleet/ui. This entry also carries the dashboard route test's coverage of the content width the native navigation shell removes so the route fills its column (native-navigation-sidebars-port), and the six typed dictionaries every downstream label lands in, including the CJK fallback card's (native-webfont-port), because the manifest attributes each of those paths to exactly one entry. It also carries one more named export out of the same file for the same one-rule reason: the dashboard's ATTENTION set, which decides where a card means 'a person is wanted here', is read by the Fleet Agent rail (native-navigation-sidebars-port) rather than copied into it."
 
 [[invasive]]
 id = "authenticated-navigation-cache"
@@ -241,7 +269,7 @@ verify = [
   "web/src/components/agent-list.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list."
+reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list. The rail's emphasis reads the dashboard's own exported set rather than copying it, because which sections mean a person is wanted here is one rule and two versions of it would drift; that export rides the native-agent-favorites-port declaration, since this manifest attributes web/src/components/agent-list.tsx to exactly one entry."
 [[invasive]]
 id = "native-pane-chrome-port"
 intent = "Let the Pane screen say its state in a row it already spends, rank its controls as one, and decline the shared mark, without moving product logic into Collie-owned files."

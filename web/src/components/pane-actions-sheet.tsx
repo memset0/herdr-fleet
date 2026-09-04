@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Maximize2, Monitor, Pencil, ScrollText, Search, XCircle } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
+import { useRowActionsPlace } from "@/components/fleet-pointer-menu";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
 import { HostChip } from "@/components/host-chip";
 import { useHostWriteBlock, usePack } from "@/components/pack-provider";
@@ -81,6 +82,11 @@ export function PaneActionsSheet({
 }: PaneActionsSheetProps) {
   useLocale();
   const [mode, setMode] = useState<Mode>("actions");
+  // DOWNSTREAM PORT — where this sheet stands, which follows the gesture that opened it: a bottom
+  // sheet for a long press, a menu at the cursor for a right-click, and the centre once the rows
+  // have become a rename's question. Content, writes and rules are untouched; see
+  // components/fleet-pointer-menu.tsx.
+  const place = useRowActionsPlace(open, mode === "rename");
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
   // Close runs under the shared press echo (hooks/use-action-echo.ts) rather than a bare `closing`
@@ -215,6 +221,7 @@ export function PaneActionsSheet({
     <BottomSheet
       open={open}
       onClose={onClose}
+      place={place}
       title={
         pane ? (
           // Every row below acts on THIS pane on THIS machine — rename, close, focus — so the

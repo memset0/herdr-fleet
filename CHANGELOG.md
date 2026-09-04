@@ -41,6 +41,8 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ### Changed
 
+- A row's actions stand where the gesture asked: a menu at the cursor for a right-click, the bottom sheet for a long press, and the centre once they hold a rename's question.
+- The Agent rail reserves the card for the sections the dashboard reserves it for, and draws the rest as flat rows in one bordered group, so Ready · unseen stands out here as it does there.
 - The Agent rail's row wears Collie's own card — the same edge, ground, shadow and press — with the fork's reading order inside it and the card's own padding around it.
 - Both navigation rails stay expanded on a wide viewport, the header heads only the route column, and every route that is not a Pane fills that column.
 - The hierarchy is one Host heading over elided Space/Tab/Pane rows, with whole-row selection, one shared disclosure control, animated disclosure and a denser row.

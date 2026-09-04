@@ -26,6 +26,7 @@ import {
   type NativeNavigationPreferenceStore,
   type SidebarSide,
 } from "../../../fleet/ui/native-navigation/preferences.ts";
+import { usePointerMenuGestures } from "@/components/fleet-pointer-menu";
 import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
@@ -68,6 +69,10 @@ export function NativeNavigationShell({
   preferenceStore = nativeNavigationPreferences,
 }: NativeNavigationShellProps) {
   useLocale();
+  // One recorder for the app's lifetime: every right-click in the document is noted here so the row
+  // actions a pointer opens can stand at the cursor. Mounted in the shell because the shell is what
+  // outlives every navigation, and claimed only by a surface that opens right after the gesture.
+  usePointerMenuGestures();
   const navigate = useNavigate();
   const location = useLocation();
   const { paneId, spaceId } = useParams();
