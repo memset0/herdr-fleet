@@ -619,3 +619,48 @@ describe("the operator's own settings document", () => {
     await waitFor(() => expect(shell.router.state.location.pathname).toBe("/settings"));
   });
 });
+
+describe("closing from the keyboard", () => {
+  it("asks on the panel rather than opening the pointer's surface", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.click(screen.getByRole("link", { name: "Open direct" }));
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("{Shift>}X{/Shift}");
+    const panel = await screen.findByRole("dialog");
+    expect(panel.closest('[data-slot="fleet-panel"]')).not.toBeNull();
+    expect(within(panel).getByRole("textbox")).toHaveValue("y");
+    expect(panel.textContent).toContain("y/N");
+  });
+
+  it("sends the close only when the answer was y", async () => {
+    const user = userEvent.setup();
+    const closed: string[] = [];
+    server.use(
+      http.post("/api/tab/:id/close", ({ params }) => {
+        closed.push(String(params.id));
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderShell();
+    await user.click(screen.getByRole("link", { name: "Open direct" }));
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+
+    // Declined first: the same chord, answered with anything else, must send nothing.
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("{Shift>}X{/Shift}");
+    const declining = await screen.findByRole("dialog");
+    await user.clear(within(declining).getByRole("textbox"));
+    await user.type(within(declining).getByRole("textbox"), "n{Enter}");
+    expect(closed).toEqual([]);
+
+    // Then confirmed.
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("{Shift>}X{/Shift}");
+    await screen.findByRole("dialog");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(closed).toEqual(["t1"]));
+  });
+});

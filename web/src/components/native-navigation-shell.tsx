@@ -56,12 +56,16 @@ import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
+import { FleetConfirmDialog } from "@/components/fleet-confirm-dialog";
 import { FleetRenameDialog, type RenameTarget } from "@/components/fleet-rename-dialog";
 import { FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
 import { hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
+import { closePane, closeTab } from "@/lib/api";
+import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { paneRosterFrom } from "@/lib/fleet-roster";
+import { setStatus } from "@/lib/status";
 import { useFleetSettings } from "@/lib/fleet-settings";
 import { homePath, panePath, settingsPath, spacePath } from "@/lib/nav";
 import { triage } from "@/lib/triage";
@@ -220,6 +224,11 @@ export function NativeNavigationShell({
   // keyboard has to put its field where the operator is already looking. Closing stays on Collie's
   // sheet above, which is where the blast-radius confirmation already lives.
   const [renaming, setRenaming] = useState<RenameTarget | null>(null);
+  // A close begun with a key is confirmed with a key. The row-actions surface keeps its own
+  // two-activation confirm for the pointer; this is the keyboard's, on the keyboard's own panel.
+  const [closing, setClosing] = useState<
+    { kind: "tab"; tabId: string; label: string } | { kind: "pane"; paneId: string; label: string } | null
+  >(null);
   const actionPane =
     actions?.kind === "pane"
       ? (allPanes.find((pane) => pane.paneId === actions.paneId) ?? null)
@@ -399,7 +408,12 @@ export function NativeNavigationShell({
             // it never had.
             label: currentPane.paneLabel ?? "",
           }),
-        "close-pane": () => setActions({ kind: "pane", paneId: currentPane.paneId }),
+        "close-pane": () =>
+          setClosing({
+            kind: "pane",
+            paneId: currentPane.paneId,
+            label: paneDisplayName(currentPane),
+          }),
         "rename-tab": () =>
           setRenaming({
             kind: "tab",
@@ -409,7 +423,15 @@ export function NativeNavigationShell({
               currentPane.tabLabel ??
               "",
           }),
-        "close-tab": () => setActions({ kind: "tab", tabId: currentPane.tabId }),
+        "close-tab": () =>
+          setClosing({
+            kind: "tab",
+            tabId: currentPane.tabId,
+            label:
+              tabsForCommands.find((tab) => tab.tabId === currentPane.tabId)?.label ??
+              currentPane.tabLabel ??
+              "",
+          }),
         "create-tab": () => newTab(currentPane.workspaceId),
         "copy-fleet-pane-link": async () => {
           // Built from the validated current route and nothing else: no cookie, no token, and
@@ -576,6 +598,41 @@ export function NativeNavigationShell({
             scope={data.scope}
             onClose={() => setRenaming(null)}
             onRenamed={() => revalidator.revalidate()}
+          />
+        )}
+
+        {closing !== null && (
+          <FleetConfirmDialog
+            key={closing.kind === "tab" ? closing.tabId : closing.paneId}
+            title={t(closing.kind === "tab" ? "fleet.confirm.closeTab" : "fleet.confirm.closePane", {
+              name: closing.label,
+            })}
+            detail={t(closing.kind === "tab" ? "fleet.confirm.closeTabCost" : "fleet.confirm.closePaneCost")}
+            onClose={() => setClosing(null)}
+            onConfirm={() => {
+              const target = closing;
+              void (async () => {
+                try {
+                  const result =
+                    target.kind === "tab"
+                      ? await closeTab(target.tabId, data.scope)
+                      : await closePane(target.paneId, data.scope);
+                  if (!result.ok) {
+                    setStatus(describeApiError(result, t("fleet.confirm.failed")), "error");
+                    return;
+                  }
+                  // Closing the Pane on screen leaves nowhere to be; every other close only needs
+                  // the snapshot to catch up.
+                  if (target.kind === "pane" && target.paneId === paneId) {
+                    navigate(homePath(data.scope));
+                  } else {
+                    revalidator.revalidate();
+                  }
+                } catch (thrown) {
+                  setStatus(describeThrownError(thrown), "error");
+                }
+              })();
+            }}
           />
         )}
 

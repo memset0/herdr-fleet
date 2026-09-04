@@ -79,6 +79,8 @@ paths = [
   "web/src/components/fleet-panel.tsx",
   "web/src/components/fleet-rename-dialog.tsx",
   "web/src/components/fleet-rename-dialog.test.tsx",
+  "web/src/components/fleet-confirm-dialog.tsx",
+  "web/src/components/fleet-confirm-dialog.test.tsx",
   "web/src/components/fleet-settings-section.tsx",
   "web/src/lib/fleet-settings.ts",
   "web/src/lib/fleet-roster.ts",
