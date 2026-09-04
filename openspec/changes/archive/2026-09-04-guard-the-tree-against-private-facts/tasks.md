@@ -12,4 +12,4 @@
 
 ## 3. Verify and publish
 
-- [ ] 3.1 Run the focused and full suites, both typechecks, lint, the fork check and strict OpenSpec validation; commit only this change's paths, push, then sync, archive, push the archive separately and redeploy the archive HEAD.
+- [x] 3.1 Run the focused and full suites, both typechecks, lint, the fork check and strict OpenSpec validation; commit only this change's paths, push, then sync, archive, push the archive separately and redeploy the archive HEAD.
