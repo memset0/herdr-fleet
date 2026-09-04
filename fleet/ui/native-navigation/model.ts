@@ -54,6 +54,9 @@ export interface NavigationPaneInput {
  * because a Host row is the one row whose identity is worth more than an arrow — every member is a
  * row here, present or not, and "which of these is down" is the question this list is scanned for.
  */
+/** Why a member is not answering. Absent everywhere else, including on a machine merely swept late. */
+export type NavigationHostFault = "refused" | "incompatible";
+
 export type NavigationIcon = "group" | "agent" | "shell" | "host" | "none";
 
 /**
@@ -97,6 +100,11 @@ export interface NavigationRow {
    * identity from a display string would be one rename away from looking them up for nobody.
    */
   hostId?: string;
+  /**
+   * Why this member is not answering, on a Host row and nowhere else. Absent when it is answering —
+   * including when the lead is merely between sweeps, which says nothing about the machine.
+   */
+  fault?: NavigationHostFault;
   /** The Pane state this row stands for, when it stands for a Pane. */
   status?: NavigationStatus;
   /**
@@ -215,10 +223,11 @@ export interface NavigationHostInput {
   hostId: string;
   hostLabel: string;
   /**
-   * The lead is refusing this member — arrives resolved, for the same reason `hostLabel` does: which
-   * machines are answering is the web tree's fact, and this module stays pure data.
+   * Why this member is not answering, or absent when it is — arrives resolved, for the same reason
+   * `hostLabel` does: which machines are answering is the web tree's fact, and this module stays
+   * pure data.
    */
-  degraded?: boolean;
+  fault?: NavigationHostFault;
   workspaces: readonly NavigationWorkspaceInput[];
   tabs: readonly NavigationTabInput[];
   agents: readonly NavigationPaneInput[];
@@ -310,6 +319,14 @@ function hostRow(
       // A Tab with one Pane is not a level either: the Pane takes its row and icon. The NAME is
       // whichever of the two the operator chose — their Pane name if they gave one, otherwise the
       // Tab's, which on a herd where no Pane is named is the only name in that branch at all.
+      //
+      // ITS ACTIONS ARE THE TAB'S, and that is the one thing the merged row does NOT take from the
+      // Pane. The row is standing in the Tab's slot — the Tab did not get a row of its own, so this
+      // is the only row that Tab has — and the operator reading the tree sees a tab holding one
+      // pane, not a pane that swallowed a tab. So renaming this row names the Tab, which is also the
+      // name the row falls back to and therefore the one that is usually on screen, and closing it
+      // closes the Tab rather than leaving the container behind with nothing in it. What the row
+      // OPENS is still the Pane: `target` is untouched, because a tab has no route.
       if (entry.panes.length === 1) {
         const only = entry.panes[0];
         if (!only) return [];
@@ -319,6 +336,7 @@ function hostRow(
           {
             ...paneRow(only, selected, hostId),
             label: operatorChosenName(only.ownLabel) ?? entry.tab.label,
+            subject: { kind: "tab", tabId: entry.tab.tabId },
           },
         ];
       }
@@ -364,8 +382,9 @@ function hostRow(
     selected: false,
     children: spaces,
   };
+  if (input.fault !== undefined) host.fault = input.fault;
   if (spaces.length > 0) {
-    if (input.degraded === true) {
+    if (input.fault !== undefined) {
       // Closed by default, and openable: the identity means OPENED here.
       host.disclosureId = hostOpenId(hostId);
     } else {

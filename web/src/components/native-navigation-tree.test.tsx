@@ -120,6 +120,9 @@ describe("NativeNavigationTree", () => {
             hosts: roster.map((server) => ({
               hostId: server.id,
               hostLabel: server.name,
+              // Why a member is not answering is decided by the caller now, and carried on the row —
+              // one derivation instead of two that could disagree.
+              fault: server.reachable ? undefined : ("refused" as const),
               workspaces: [{ workspaceId: "w1", label: "One" }],
               tabs: [],
               agents: [],

@@ -15,6 +15,7 @@ import { useLocation, useNavigate, useParams, useRevalidator } from "react-route
 
 import {
   deriveNavigationTree,
+  type NavigationHostFault,
   type NavigationPaneInput,
   type NavigationSubject,
 } from "../../../fleet/ui/native-navigation/model.ts";
@@ -62,6 +63,13 @@ interface NativeNavigationShellProps {
  * overlay from the header's leading trigger, while the Agent list is presented by the Pane page's
  * own switcher entry (components/native-navigation-context.tsx states that seam).
  */
+/**
+ * How old the lead's last receipt from a member may be before its refusal is believed as a label.
+ * Above the lead's own idle sweep and below two of them, so one missed exchange is invisible and a
+ * machine that has actually gone stays named within a sweep of going.
+ */
+const MISSED_SWEEP_MS = 20_000;
+
 export function NativeNavigationShell({
   data,
   children,
@@ -87,24 +95,36 @@ export function NativeNavigationShell({
     () => [...data.agents, ...data.shellPanes],
     [data.agents, data.shellPanes],
   );
-  // A member the LEAD is refusing — its plain boolean, or a protocol it cannot speak. Not staleness,
-  // which is the age of the lead's last receipt and says nothing about the machine.
-  const refusedHosts = useMemo(
-    () =>
-      new Set(
-        (data.servers ?? [])
-          .filter((server) => !server.isLead && (!server.reachable || server.protocol === "incompatible"))
-          .map((server) => server.id),
-      ),
-    [data.servers],
-  );
+  // WHY A MEMBER IS NOT ANSWERING, decided once, here, and carried down as data.
+  //
+  // The lead's own boolean is the honest signal for a WRITE, and it is deliberately unsmoothed there.
+  // A label in a list is a different question: the lead's per-peer probe budget is strictly below its
+  // poll interval, so one slow exchange on a loaded member fails a single sweep, and repainting the
+  // row for that is the same flap as calling a stale receipt unreachable — one layer down.
+  //
+  // So a refusal must be corroborated by a receipt old enough that it cannot be a single missed
+  // sweep. Both clocks here are the LEAD's — `ts` is when it assembled the body, `lastSeenAt` when it
+  // last heard from the member — so this subtraction is honest, unlike one against the phone's clock.
+  // An incompatible protocol needs no corroboration: it is a verdict, not a missed poll.
+  const hostFaults = useMemo(() => {
+    const faults = new Map<string, NavigationHostFault>();
+    for (const server of data.servers ?? []) {
+      if (server.isLead) continue;
+      if (server.protocol === "incompatible") {
+        faults.set(server.id, "incompatible");
+      } else if (!server.reachable && data.ts > 0 && data.ts - server.lastSeenAt > MISSED_SWEEP_MS) {
+        faults.set(server.id, "refused");
+      }
+    }
+    return faults;
+  }, [data.servers, data.ts]);
   // The member order is the ROSTER's, lead first, so the rail does not reorder itself as panes come
   // and go — except that a member which is not answering sinks below the ones that are, because it
   // has nothing current to contribute and should not sit between two machines that do. A host
   // present only in the rows sorts after the roster's, by id, rather than vanishing.
   const hostIds = useMemo(() => {
     const rank = (server: { id: string; isLead: boolean }): number =>
-      refusedHosts.has(server.id) ? 2 : server.isLead ? 0 : 1;
+      hostFaults.has(server.id) ? 2 : server.isLead ? 0 : 1;
     const ordered = (data.servers ?? [])
       .toSorted((a, b) => rank(a) - rank(b))
       .map((server) => server.id);
@@ -114,7 +134,7 @@ export function NativeNavigationShell({
       .toSorted();
     // A solo snapshot has no roster at all, and its rows carry no host: one member, spelled "".
     return ordered.length === 0 && extra.length === 0 ? [""] : [...ordered, ...extra];
-  }, [data.servers, allPanes, refusedHosts]);
+  }, [data.servers, allPanes, hostFaults]);
   const tree = useMemo(
     () =>
       deriveNavigationTree({
@@ -126,7 +146,7 @@ export function NativeNavigationShell({
             // Naming a host is Collie's job; its resolver falls back to the id, and a solo snapshot
             // has no roster at all, so the tree says "this host" rather than inventing a name.
             hostLabel: hostName(data.servers, hostId || undefined) ?? t("fleet.navigation.thisHost"),
-            degraded: refusedHosts.has(hostId),
+            fault: hostFaults.get(hostId),
             workspaces: on(data.allWorkspaces ?? data.workspaces),
             tabs: on(data.allTabs ?? data.tabs),
             agents: on(data.agents).map(toNavigationPane),
@@ -137,7 +157,7 @@ export function NativeNavigationShell({
       }),
     [
       hostIds,
-      refusedHosts,
+      hostFaults,
       data.servers,
       data.allWorkspaces,
       data.workspaces,

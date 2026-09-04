@@ -114,7 +114,12 @@ describe("native navigation hierarchy", () => {
       label: "Rename the tree",
       icon: "agent",
       agent: "claude",
+      // What it OPENS is the Pane — a Tab has no route.
       target: { kind: "pane", paneId: "p1" },
+      // …and what it ACTS ON is the Tab, because this row is standing in the Tab's slot: the Tab got
+      // no row of its own, so renaming here names the name that is on screen and closing here closes
+      // the container rather than leaving it behind empty.
+      subject: { kind: "tab", tabId: "t1" },
       selected: true,
     });
     expect(space?.children[0]?.disclosureId).toBeUndefined();
@@ -301,10 +306,10 @@ describe("native navigation hierarchy", () => {
     expect(drawn).toBe(MAX_NAVIGATION_PANES);
   });
   test("a member that is not answering closes by default and still opens by hand", () => {
-    const member = (hostId: string, degraded?: boolean) => ({
+    const member = (hostId: string, fault?: "refused" | "incompatible") => ({
       hostId,
       hostLabel: hostId,
-      degraded,
+      fault,
       workspaces: [{ workspaceId: "w1", label: "Project" }],
       tabs: [{ workspaceId: "w1", tabId: "t1", label: "Main" }],
       agents: [
@@ -312,7 +317,7 @@ describe("native navigation hierarchy", () => {
       ],
       shellPanes: [],
     });
-    const tree = deriveNavigationTree({ hosts: [member("up"), member("down", true)] });
+    const tree = deriveNavigationTree({ hosts: [member("up"), member("down", "refused")] });
 
     // The answering member keeps the sense it always had: present in the set means CLOSED.
     expect(tree.rows[0]?.disclosureId).toBe(hostCollapseId("up"));
@@ -325,5 +330,8 @@ describe("native navigation hierarchy", () => {
 
     // Its rows are still there — they are the snapshot's last-good content, not an error.
     expect(tree.rows[1]?.children).toHaveLength(1);
+    // And the row carries WHY, so the component renders one fact rather than deriving a second.
+    expect(tree.rows[0]?.fault).toBeUndefined();
+    expect(tree.rows[1]?.fault).toBe("refused");
   });
 });

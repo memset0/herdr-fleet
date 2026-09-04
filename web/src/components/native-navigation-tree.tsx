@@ -5,11 +5,12 @@ import type {
   NavigationRow,
   NavigationSubject,
   NavigationTree,
+  NavigationHostFault,
 } from "../../../fleet/ui/native-navigation/model.ts";
 import type { NativeNavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { nativeNavigationPreferences } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { AgentIcon } from "@/components/agent-icon";
-import { usePack, useHostHealth } from "@/components/pack-provider";
+import { usePack } from "@/components/pack-provider";
 import { StatusDot } from "@/components/status-badge";
 import { HOST_TEXT_CLASSES, hostSlot } from "@/lib/hosts";
 import { Collapse } from "@/components/ui/collapse";
@@ -181,7 +182,7 @@ function Row({
             label control below, which is the only control left on the row. */}
         {row.icon === "host" ? (
           <span className="grid w-5 shrink-0 place-items-center">
-            <HostGlyph hostId={row.hostId ?? ""} />
+            <HostGlyph hostId={row.hostId ?? ""} fault={row.fault} />
           </span>
         ) : disclosureId !== undefined ? (
           <button
@@ -231,7 +232,7 @@ function Row({
           {/* …and the machine's own reading, in the same trailing position a Pane's state takes. A
               tinted glyph says WHICH machine but cannot say a machine is down without relying on
               colour alone (WCAG 1.4.1), so the word stands here when there is one to say. */}
-          {row.icon === "host" && <HostState hostId={row.hostId ?? ""} />}
+          {row.icon === "host" && <HostState fault={row.fault} />}
         </button>
       </div>
 
@@ -271,50 +272,27 @@ function Row({
 }
 
 /**
- * Is this machine answering the lead?
+ * A member that is not answering, and the word for why.
  *
- * `useHostHealth` returns nothing at all on a solo snapshot — there is no roster, so there is no
- * such question — which is exactly the reading a single-machine tree should get: the plain glyph,
- * untinted, and no word.
+ * THE FACT ARRIVES ON THE ROW rather than being derived here, because it was being derived in two
+ * places and the two disagreed. The shell decides it once, from the lead's own refusal corroborated
+ * by a receipt old enough that it is not a single missed sweep, and the model carries it down.
  *
- * DEGRADED IS THE LEAD'S OWN REFUSAL, and not one fact wider. `writable` is the lead's plain boolean
- * about the machine; `state` is the age of the lead's last receipt, and the two answer different
- * questions (lib/host-health.ts states the rule in bold: a stale receipt is about the RECEIPT, never
- * about reachability, and a surface that spells it "unreachable" is wrong).
- *
- * This row read the union and flapped on it. The lead's peer sweep relaxes to its idle cadence while
- * the phone polls far faster, so a member answering every single request has its receipt age past
- * `3 × pollMs` and back on every sweep — and the row called it unreachable for most of each cycle.
- * Collie's own chip made this exact mistake and fixed it the same way (components/host-chip.tsx);
- * the two surfaces now agree.
- *
- * Upstream's smoothing does not reach this case: the receipt clock is kept fresh by folding landed
- * proxied forwards into it, which happens for a member whose pane is being WATCHED. A member that is
- * merely listed — which is every member, now that the rails present the whole pack — has only the
- * sweep. So the fix is here, in what the row says, rather than in a tolerance that is correct for
- * what it measures.
+ * What this row must never do is spell a stale receipt "unreachable". `lib/host-health.ts` states
+ * the rule at the definition of the state itself: a stale receipt is about the RECEIPT, never about
+ * reachability. Collie's own chip made that mistake once and fixed it; this row made it again, and a
+ * member answering every single request was repainted down on every sweep.
  */
-interface HostReading {
-  /** The machine is not answering: a different glyph, in the refusal colour. */
-  degraded: boolean;
-  /** What to say about it, or nothing — a machine that is answering says nothing. */
-  word: string | null;
+function faultWord(fault: NavigationHostFault | undefined): string | null {
+  if (fault === "incompatible") return t("connection.host.incompatible");
+  if (fault === "refused") return t("connection.host.unreachablePlain");
+  return null;
 }
 
-function useHostReading(hostId: string): HostReading {
-  const health = useHostHealth(hostId === "" ? undefined : hostId);
-  if (health === undefined) return { degraded: false, word: null };
-  if (health.incompatible) return { degraded: true, word: t("connection.host.incompatible") };
-  if (!health.writable) return { degraded: true, word: t("connection.host.unreachablePlain") };
-  // A stale receipt takes neither the word nor the styling. There is nothing for the operator to act
-  // on, and a tint they cannot name is a state they cannot act on either.
-  return { degraded: false, word: null };
-}
-
-function HostGlyph({ hostId }: { hostId: string }) {
+function HostGlyph({ hostId, fault }: { hostId: string; fault?: NavigationHostFault }) {
   const { servers } = usePack();
-  const { degraded } = useHostReading(hostId);
   const slot = hostSlot(servers, hostId === "" ? undefined : hostId);
+  const degraded = fault !== undefined;
   const Glyph = degraded ? ServerOff : Server;
   return (
     <Glyph
@@ -333,9 +311,9 @@ function HostGlyph({ hostId }: { hostId: string }) {
   );
 }
 
-function HostState({ hostId }: { hostId: string }) {
+function HostState({ fault }: { fault?: NavigationHostFault }) {
   useLocale();
-  const { word } = useHostReading(hostId);
+  const word = faultWord(fault);
   if (word === null) return null;
   return (
     <span className="ml-auto shrink-0 text-[10px] font-medium uppercase tracking-wide text-status-blocked">
