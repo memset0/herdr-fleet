@@ -288,6 +288,21 @@ sends. No `Alt` chord is a default.
 A Space has no rename or close command. The multiplexer exposes creating a Space and nothing else for
 one, and a command that can never land is worse than an absent command.
 
+### While the prefix waits
+
+Press the prefix and pause, and a compact panel appears at the bottom of the screen listing every
+second chord that currently leads somewhere, grouped by what it acts on. It is generated from YOUR
+effective bindings, so a command you rebound shows its new key and one you unbound is not there.
+
+It waits about four-tenths of a second before appearing, so completing a sequence at speed never
+shows it — the panel is for the moment you have forgotten, not for every press. It disappears as soon
+as the sequence completes, expires or is cancelled.
+
+It is a hint and nothing more: it takes no focus, holds no space, cannot be clicked or scrolled, and
+never intercepts the key it is describing. A command whose target does not currently exist is still
+listed, dimmed. The full catalog, including direct chords and unbound commands, is in the command
+bar.
+
 ### The command bar
 
 `Ctrl+Shift+P` opens it with a leading `/`, which searches the catalog by name, id and binding label.

@@ -19,6 +19,7 @@ import {
   type CommandScope,
 } from "../../../fleet/ui/commands/catalog.ts";
 import { commandRows, resolveBindings, type CommandRow } from "../../../fleet/ui/commands/effective.ts";
+import { prefixHints, type PrefixHints } from "../../../fleet/ui/commands/prefix-hints.ts";
 import {
   createRecognizer,
   shouldPrevent,
@@ -26,6 +27,7 @@ import {
 } from "../../../fleet/ui/commands/recognizer.ts";
 import type { PaneRoster, RosterEntry } from "../../../fleet/ui/pane-roster.ts";
 import { FleetCommandBar, type CommandBarMode } from "@/components/fleet-command-bar";
+import { FleetPrefixHints } from "@/components/fleet-prefix-hints";
 import { t } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
 
@@ -120,6 +122,16 @@ export interface FleetCommandsProviderProps {
   children: ReactNode;
 }
 
+/**
+ * How long a pending prefix waits before it offers help.
+ *
+ * Out of the recognizer's two-second budget, which leaves 1.6s of visibility — the part that has to
+ * be usable. It is also comfortably longer than a deliberate two-key sequence takes to type, so an
+ * operator who knows the key never learns this panel exists, which is the whole point of the delay:
+ * showing it instantly would flash it a hundred times a day to tell somebody what they already know.
+ */
+const PREFIX_HINT_DELAY_MS = 400;
+
 export function FleetCommandsProvider({
   adapters,
   available,
@@ -130,6 +142,8 @@ export function FleetCommandsProvider({
   children,
 }: FleetCommandsProviderProps) {
   const [bar, setBar] = useState<CommandBarMode | null>(null);
+  // `null` unless a prefix has been pending long enough to be worth helping with.
+  const [pending, setPending] = useState<PrefixHints | null>(null);
 
   const bindings = useMemo(() => resolveBindings(overrides), [overrides]);
   // A prefix that does not parse falls back to the shipped one rather than leaving the operator with
@@ -229,8 +243,24 @@ export function FleetCommandsProvider({
     });
     recognizer.current = machine;
 
+    let hintTimer: ReturnType<typeof setTimeout> | null = null;
+    const forgetHints = () => {
+      if (hintTimer !== null) clearTimeout(hintTimer);
+      hintTimer = null;
+      setPending(null);
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
       const outcome = machine.handle(event);
+      // Every outcome ends the previous wait. `prefix-armed` then starts a new one — including when
+      // the operator presses the prefix twice, which restarts the recognizer's clock too.
+      forgetHints();
+      if (outcome.kind === "prefix-armed") {
+        hintTimer = setTimeout(
+          () => setPending(prefixHints(latest.current.bindings)),
+          PREFIX_HINT_DELAY_MS,
+        );
+      }
       // Synchronously, in the event. Anything deferred here lets the browser print, reload, or type
       // the character before we have decided we wanted it.
       if (shouldPrevent(outcome)) {
@@ -239,7 +269,10 @@ export function FleetCommandsProvider({
       }
       if (outcome.kind === "command") invoke(outcome.id, "shortcut", outcome.label);
     };
-    const drop = () => machine.cancel();
+    const drop = () => {
+      machine.cancel();
+      forgetHints();
+    };
 
     document.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("blur", drop);
@@ -248,6 +281,7 @@ export function FleetCommandsProvider({
       document.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("blur", drop);
       document.removeEventListener("visibilitychange", drop);
+      forgetHints();
       recognizer.current = null;
     };
   }, [prefixChord, invoke]);
@@ -260,6 +294,11 @@ export function FleetCommandsProvider({
   return (
     <FleetCommandsContext.Provider value={value}>
       {children}
+      <FleetPrefixHints
+        hints={pending}
+        prefixLabel={prefixChord.label}
+        isAvailable={available}
+      />
       <FleetCommandBar
         mode={bar}
         onClose={() => setBar(null)}

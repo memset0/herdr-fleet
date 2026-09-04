@@ -1,12 +1,20 @@
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { parseBinding, type Binding } from "../../../fleet/ui/commands/bindings.ts";
+import type { CommandId } from "../../../fleet/ui/commands/catalog.ts";
 import { derivePaneRoster } from "../../../fleet/ui/pane-roster.ts";
 import {
   FleetCommandsProvider,
   useFleetCommandAdapters,
   type CommandAdapters,
 } from "./fleet-commands";
+
+function parsed(text: string): readonly Binding[] {
+  const result = parseBinding(text);
+  if (!result.ok) throw new Error(`bad fixture ${text}`);
+  return [result.binding];
+}
 
 const setStatus = vi.fn();
 vi.mock("@/lib/status", () => ({
@@ -216,3 +224,158 @@ describe("adapters a mounted surface registers", () => {
     expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Fit Current Pane Width"), "warn");
   });
 });
+
+describe("what a pending prefix shows", () => {
+  const HINTS = '[data-slot="fleet-prefix-hints"]';
+
+  function panel() {
+    return document.querySelector<HTMLElement>(HINTS);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stays away while nothing is pending", () => {
+    setup({});
+    expect(panel()).toBeNull();
+  });
+
+  it("appears once the operator has waited, listing the second chords", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    setup({});
+    await user.keyboard("{Control>}b{/Control}");
+    expect(panel()).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    const shown = panel();
+    expect(shown).not.toBeNull();
+    const text = shown?.textContent ?? "";
+    expect(text).toContain("Ctrl+B");
+    expect(text).toContain("Open Fleet Settings");
+    expect(text).toContain("Next Tab");
+    // The one direct default belongs to a command that also has a prefix binding, so its absence
+    // here is the filter working rather than the command being missing.
+    expect(text).not.toContain("Ctrl+Shift+P");
+  });
+
+  it("never appears for an operator who does not hesitate", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const fit = vi.fn();
+    setup({ "fit-pane-width": fit });
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("r");
+    expect(fit).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(panel()).toBeNull();
+  });
+
+  it("leaves the moment the sequence completes", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const fit = vi.fn();
+    setup({ "fit-pane-width": fit });
+    await user.keyboard("{Control>}b{/Control}");
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(panel()).not.toBeNull();
+
+    // …and the panel did not eat the key it was describing.
+    await user.keyboard("r");
+    expect(fit).toHaveBeenCalledTimes(1);
+    expect(panel()).toBeNull();
+  });
+
+  it("leaves on Escape and on the window losing focus", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    setup({});
+    await user.keyboard("{Control>}b{/Control}");
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    await user.keyboard("{Escape}");
+    expect(panel()).toBeNull();
+
+    await user.keyboard("{Control>}b{/Control}");
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(panel()).not.toBeNull();
+    await act(async () => {
+      globalThis.dispatchEvent(new Event("blur"));
+    });
+    expect(panel()).toBeNull();
+  });
+
+  it("holds no space, takes no pointer and is hidden from assistive technology", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    setup({});
+    await user.keyboard("{Control>}b{/Control}");
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    const shown = panel();
+    expect(shown).toHaveAttribute("aria-hidden", "true");
+    expect(shown?.className).toContain("pointer-events-none");
+    expect(shown?.className).toContain("fixed");
+    expect(shown?.querySelectorAll("button, a, input, [tabindex]")).toHaveLength(0);
+  });
+
+  it("shows the operator's own bindings, not the shipped ones", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const overrides = new Map<CommandId, readonly Binding[]>([["next-tab", parsed("Prefix+Right")]]);
+    render(
+      <FleetCommandsProvider
+        adapters={{}}
+        available={() => true}
+        roster={derivePaneRoster({ triaged: [], shellPanes: [] })}
+        onOpenPane={vi.fn()}
+        overrides={overrides}
+      >
+        <div>page</div>
+      </FleetCommandsProvider>,
+    );
+    await user.keyboard("{Control>}b{/Control}");
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    const rows = Array.from(
+      panel()?.querySelectorAll('[data-slot="fleet-prefix-hint"]') ?? [],
+    ).map((row) => row.textContent ?? "");
+    expect(rows.some((row) => row.startsWith("Right") && row.includes("Next Tab"))).toBe(true);
+    expect(rows.some((row) => row.startsWith("N") && row.includes("Next Tab"))).toBe(false);
+  });
+
+  it("dims an entry that has nowhere to act rather than hiding it", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    // Nothing is addressable: no Pane, no Tab, no Space.
+    render(
+      <FleetCommandsProvider
+        adapters={{}}
+        available={(scope) => scope === "global"}
+        roster={derivePaneRoster({ triaged: [], shellPanes: [] })}
+        onOpenPane={vi.fn()}
+      >
+        <div>page</div>
+      </FleetCommandsProvider>,
+    );
+    await user.keyboard("{Control>}b{/Control}");
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    const rows = Array.from(panel()?.querySelectorAll('[data-slot="fleet-prefix-hint"]') ?? []);
+    const settings = rows.find((row) => (row.textContent ?? "").includes("Open Fleet Settings"));
+    const renamePane = rows.find((row) => (row.textContent ?? "").includes("Rename Pane"));
+    // Both listed — the panel describes the keyboard, not only this moment — and only one dimmed.
+    expect(settings?.className).not.toContain("opacity-40");
+    expect(renamePane?.className).toContain("opacity-40");
+  });
+});
+

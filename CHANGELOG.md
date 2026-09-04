@@ -25,6 +25,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ### Added
 
+- A pending prefix shows what it leads to: pause after `Ctrl+B` and a compact panel lists your own second chords.
 - Drive Fleet from the keyboard: one command catalog, a `Ctrl+B` prefix, a `Ctrl+Shift+P` command bar that also finds a Pane, and Fleet's own settings document.
 - A Space row in the hierarchy opens a new Tab in that Space, through Collie's own create.
 - Establish the Herdr Fleet plugin identity, exact Collie fork boundary, and private Fleet configuration.
