@@ -17,8 +17,16 @@ neither may join the accessible name of the control it sits beside.
 
 Only where no strip surface exists at all — a pane with no strips, or zen — SHALL the composer's own
 status band carry the word instead, so the state is never spelled nowhere and never spelled twice. A
-band left with neither the state nor a machine to name MUST leave rather than stand empty, and MUST
-arrive and leave as an animated in-flow transition.
+band left with nothing to carry MUST leave rather than stand empty, and MUST arrive and leave as an
+animated in-flow transition.
+
+THE MACHINE THIS PANE WRITES TO SHALL BE NAMED IN THE APP BAR'S TRAILING CLUSTER, not in that band.
+The app bar already carries this pane's identity and spends no height on one more node, while the
+band is a row of its own — so a pack MUST NOT cost a row to say one name, and the band MUST be able
+to leave once the state has gone above it. On a single-machine install nothing is drawn in either
+place, by the chip's own existing rule. Every other surface that draws the composer keeps the machine
+where it already stood, and what the chip says, how it shows an unreachable machine, and its
+accessible name are unchanged wherever it stands.
 
 The strips SHALL fold and unfold automatically, and Fleet MUST NOT offer a second, manual control
 that reaches the same state. Expanding the folded surface remains available on that surface itself.
@@ -40,8 +48,12 @@ that reaches the same state. Expanding the folded surface remains available on t
 - **THEN** the composer's band carries the state word again
 
 #### Scenario: The band has nothing to carry
-- **WHEN** the state is shown above and no machine needs naming
-- **THEN** the band is not drawn at all and its removal is animated rather than instant
+- **WHEN** the state is shown above
+- **THEN** the band is not drawn at all — on a pack as well as on a single machine — and its removal is animated rather than instant
+
+#### Scenario: The pane is on a pack
+- **WHEN** the pane's writes land on a named machine
+- **THEN** that machine is named in the app bar's trailing cluster, carrying its own unreachable treatment and accessible name, and the composer's band is not drawn for it
 
 #### Scenario: The reading is stale
 - **WHEN** the connection is not live
