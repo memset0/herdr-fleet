@@ -59,14 +59,18 @@ import { paneDisplayName } from "@/lib/types";
  *
  * Live, because a tablet gains and loses a mouse.
  */
-function useCoarseOnly(): boolean {
-  const read = () =>
+function coarseOnly(): boolean {
+  return (
     (window.matchMedia?.("(pointer: coarse)").matches ?? false) &&
-    !(window.matchMedia?.("(any-pointer: fine)").matches ?? false);
-  const [coarse, setCoarse] = useState(read);
+    !(window.matchMedia?.("(any-pointer: fine)").matches ?? false)
+  );
+}
+
+function useCoarseOnly(): boolean {
+  const [coarse, setCoarse] = useState(coarseOnly);
   useEffect(() => {
     const queries = [window.matchMedia?.("(pointer: coarse)"), window.matchMedia?.("(any-pointer: fine)")];
-    const sync = () => setCoarse(read());
+    const sync = () => setCoarse(coarseOnly());
     sync();
     for (const query of queries) query?.addEventListener("change", sync);
     return () => {
