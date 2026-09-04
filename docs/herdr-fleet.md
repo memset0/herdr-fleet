@@ -285,8 +285,18 @@ Commands that ship unbound stay listed, searchable and bindable: the whole-hiera
 the Agent ordinals, `last-pane`, `copy-fleet-pane-link`, `toggle-type-mode` and the eight fixed key
 sends. No `Alt` chord is a default.
 
-A Space has no rename or close command. The multiplexer exposes creating a Space and nothing else for
-one, and a command that can never land is worse than an absent command.
+Renaming a Tab or a Pane opens an input where the command bar opens, holding the current name
+selected: type, press Enter, done. Closing keeps the row-actions surface, because a close needs the
+confirmation that already lives there. A Tab must be given a name; clearing a Pane's name is what an
+empty value has always meant.
+
+A Space has no rename or close command, and neither has "new Pane in this Tab". Both are gaps below
+this fork rather than choices it made. The multiplexer's own RPC surface does expose renaming a
+workspace, but every layer between it and the browser is missing — the capability is not declared,
+the multiplexer port carries no such verb, no route serves it, no client function calls it — and
+supplying them obliges every multiplexer adapter to answer, not only the default one. For a new Pane
+the gap is one layer lower still: the multiplexer has no split or pane-create call at all. A command
+that can never land is worse than an absent command.
 
 ### While the prefix waits
 

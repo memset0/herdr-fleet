@@ -1,5 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse, http } from "msw";
+
+import { server } from "@/test/setup";
 import { createMemoryRouter, Link, Outlet, RouterProvider } from "react-router";
 import { useEffect } from "react";
 
@@ -102,7 +105,7 @@ function renderShell(
     { initialEntries: ["/"] },
   );
   render(<RouterProvider router={router} />);
-  return { store, onMount };
+  return { store, onMount, router };
 }
 
 beforeEach(() => {
@@ -488,6 +491,64 @@ describe("the shell's command layer", () => {
     // so the assertion is about which row each puts FIRST, which is the thing that has to agree.
     expect(barOrder.map((text) => (text ?? "").startsWith("codex"))).toEqual([true, false]);
     expect(railOrder.map((text) => (text ?? "").includes("Second"))).toEqual([true, false]);
+  });
+
+  it("renames from the keyboard in the panel, not in the row-actions surface", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.click(screen.getByRole("link", { name: "Open direct" }));
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("{Shift>}T{/Shift}");
+    const panel = await screen.findByRole("dialog", { name: "Rename tab" });
+    // The command bar's own shell, holding the tab's current name selected.
+    expect(panel.closest('[data-slot="fleet-panel"]')).not.toBeNull();
+    expect(within(panel).getByRole("textbox")).toHaveValue("Main");
+  });
+
+  it("still uses the row-actions surface for a close", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.click(screen.getByRole("link", { name: "Open direct" }));
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("{Shift>}X{/Shift}");
+    // Whatever that surface is, it is NOT the rename panel — closing keeps its own confirmation.
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Rename tab" })).toBeNull(),
+    );
+  });
+
+  it("creates a tab and lands in it without waiting for a poll", async () => {
+    const user = userEvent.setup();
+    const created: string[] = [];
+    server.use(
+      http.post("/api/tab", async ({ request }) => {
+        created.push(JSON.stringify(await request.json()));
+        return HttpResponse.json({
+          ok: true,
+          pane: {
+            paneId: "p-new",
+            workspaceId: "w1",
+            workspaceLabel: "Project",
+            tabId: "t-new",
+            cwd: "/repo",
+          },
+        });
+      }),
+    );
+    const shell = renderShell();
+    await user.click(screen.getByRole("link", { name: "Open direct" }));
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("c");
+    // Exactly one create, and the route moves to the pane it returned — the snapshot still knows
+    // nothing about `p-new`, which is precisely the case the fresh-pane handoff exists for.
+    await waitFor(() => expect(created).toHaveLength(1));
+    await waitFor(() => expect(shell.router.state.location.pathname).toBe("/pane/p-new"));
   });
 });
 

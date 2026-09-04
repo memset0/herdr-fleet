@@ -56,15 +56,16 @@ import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
+import { FleetRenameDialog, type RenameTarget } from "@/components/fleet-rename-dialog";
 import { FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
 import { hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
-import { createTab } from "@/lib/api";
 import { paneRosterFrom } from "@/lib/fleet-roster";
 import { homePath, panePath, settingsPath, spacePath } from "@/lib/nav";
 import { triage } from "@/lib/triage";
 import { usePairing } from "@/lib/pairing";
+import { useSpaceActions } from "@/hooks/use-spaces";
 import { isReadOnly, paneDisplayName, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
@@ -197,6 +198,12 @@ export function NativeNavigationShell({
   );
 
   const revalidator = useRevalidator();
+  // Collie's own create-and-jump flow, reused whole rather than reimplemented. It carries four
+  // things a bare `createTab` call does not: the write gate, the API error message, the revalidate,
+  // and — the one that actually made the command look broken — the fresh Pane handed to the route
+  // through navigation state. Without that last piece the new Pane is not in the snapshot yet, so
+  // the page it lands on reports an Agent that is gone.
+  const { newTab } = useSpaceActions();
   const { refused: notPaired } = usePairing();
   // The same two gates every other write surface composes by AND: a device the operator has not
   // authorised, and one that holds no pairing credential. The sheets below show their own read-only
@@ -205,6 +212,10 @@ export function NativeNavigationShell({
   // Which row's actions are open, if any. Resolved to Collie's own row objects at render, so the
   // sheets act on exactly the pane or tab the snapshot describes rather than on a copy of it.
   const [actions, setActions] = useState<NavigationSubject | null>(null);
+  // Renaming is the fork's own input at the command bar's position — a rename begun from the
+  // keyboard has to put its field where the operator is already looking. Closing stays on Collie's
+  // sheet above, which is where the blast-radius confirmation already lives.
+  const [renaming, setRenaming] = useState<RenameTarget | null>(null);
   const actionPane =
     actions?.kind === "pane"
       ? (allPanes.find((pane) => pane.paneId === actions.paneId) ?? null)
@@ -375,16 +386,27 @@ export function NativeNavigationShell({
         // RENAME AND CLOSE ARE COLLIE'S OWN SHEETS, opened on the current target. The label input,
         // the blank-clears rule for a Pane, the read-only refusal and the two-tap confirmation all
         // already live there; a Fleet-owned copy would be a second place for those rules to drift.
-        "rename-pane": () => setActions({ kind: "pane", paneId: currentPane.paneId }),
+        "rename-pane": () =>
+          setRenaming({
+            kind: "pane",
+            paneId: currentPane.paneId,
+            // The operator's OWN name only. `paneDisplayName` falls back through a session name and
+            // an agent's name, and prefilling one of those would offer to rename a Pane to a label
+            // it never had.
+            label: currentPane.paneLabel ?? "",
+          }),
         "close-pane": () => setActions({ kind: "pane", paneId: currentPane.paneId }),
-        "rename-tab": () => setActions({ kind: "tab", tabId: currentPane.tabId }),
+        "rename-tab": () =>
+          setRenaming({
+            kind: "tab",
+            tabId: currentPane.tabId,
+            label:
+              tabsForCommands.find((tab) => tab.tabId === currentPane.tabId)?.label ??
+              currentPane.tabLabel ??
+              "",
+          }),
         "close-tab": () => setActions({ kind: "tab", tabId: currentPane.tabId }),
-        "create-tab": async () => {
-          const result = await createTab(currentPane.workspaceId, {}, data.scope);
-          // The returned Pane is opened through the same route every other selection uses; nothing
-          // here assigns a URL of its own.
-          if (result.ok) openEntry({ paneId: result.pane.paneId, host: currentPane.host });
-        },
+        "create-tab": () => newTab(currentPane.workspaceId),
         "copy-fleet-pane-link": async () => {
           // Built from the validated current route and nothing else: no cookie, no token, and
           // nothing at all when the route is not complete.
@@ -419,6 +441,7 @@ export function NativeNavigationShell({
     return built;
   }, [
     navigate,
+    newTab,
     data.scope,
     data.servers,
     data.sessions,
@@ -533,6 +556,23 @@ export function NativeNavigationShell({
             tree would be a second place for those rules to drift. Nothing here can act on a Space:
             the bridge has no rename or close for one, and a row that offered it would be offering an
             action that cannot land. */}
+        {/* RENAMING FROM THE KEYBOARD IS NOT THE ROW-ACTIONS SURFACE. A rename begun with a key has
+            to put its field where the operator is already looking, which is where the command bar
+            opens; the row actions stay exactly as they are for the pointer, and closing stays with
+            them either way because a close needs their blast-radius confirmation.
+
+            Mounted per target — the `key` is what makes the prefill an initial value rather than an
+            effect, so a poll landing a fresh label cannot overwrite a half-typed name. */}
+        {renaming !== null && (
+          <FleetRenameDialog
+            key={renaming.kind === "tab" ? renaming.tabId : renaming.paneId}
+            target={renaming}
+            scope={data.scope}
+            onClose={() => setRenaming(null)}
+            onRenamed={() => revalidator.revalidate()}
+          />
+        )}
+
         <FleetPaneActions
           open={actionPane !== null}
           onClose={() => setActions(null)}
