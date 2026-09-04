@@ -38,6 +38,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Give a native Pack peer one restricted, self-recovering SSH link that projects both loopback directions.
 - Enrol a Pack peer from Fleet itself, through Collie's own transitions, with no service manager anywhere in the path.
 - Show every pack member in both navigation rails, with each Agent row marked by the host it came from.
+- Say a member is unreachable only when the lead refuses it, and sink a refused member to the bottom of the rail, closed.
 - Add a fetched CJK fallback face under every font stack, chosen in Settings from a closed catalog and delivered in `unicode-range` pieces, so a mirror stays a grid in Chinese without shipping a font.
 - Offer that face as a Latin choice in the app's typeface and the terminal font pickers; it is the same family and the same download.
 

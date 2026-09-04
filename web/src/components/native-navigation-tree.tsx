@@ -277,9 +277,22 @@ function Row({
  * such question — which is exactly the reading a single-machine tree should get: the plain glyph,
  * untinted, and no word.
  *
- * DEGRADED IS THE UNION, deliberately wider than `writeRefusal`'s: this is a label on a list of
- * machines rather than a gate on a write, so "the lead has not heard from it" belongs here even
- * inside the tolerance that keeps a pane's own banner quiet.
+ * DEGRADED IS THE LEAD'S OWN REFUSAL, and not one fact wider. `writable` is the lead's plain boolean
+ * about the machine; `state` is the age of the lead's last receipt, and the two answer different
+ * questions (lib/host-health.ts states the rule in bold: a stale receipt is about the RECEIPT, never
+ * about reachability, and a surface that spells it "unreachable" is wrong).
+ *
+ * This row read the union and flapped on it. The lead's peer sweep relaxes to its idle cadence while
+ * the phone polls far faster, so a member answering every single request has its receipt age past
+ * `3 × pollMs` and back on every sweep — and the row called it unreachable for most of each cycle.
+ * Collie's own chip made this exact mistake and fixed it the same way (components/host-chip.tsx);
+ * the two surfaces now agree.
+ *
+ * Upstream's smoothing does not reach this case: the receipt clock is kept fresh by folding landed
+ * proxied forwards into it, which happens for a member whose pane is being WATCHED. A member that is
+ * merely listed — which is every member, now that the rails present the whole pack — has only the
+ * sweep. So the fix is here, in what the row says, rather than in a tolerance that is correct for
+ * what it measures.
  */
 interface HostReading {
   /** The machine is not answering: a different glyph, in the refusal colour. */
@@ -292,9 +305,9 @@ function useHostReading(hostId: string): HostReading {
   const health = useHostHealth(hostId === "" ? undefined : hostId);
   if (health === undefined) return { degraded: false, word: null };
   if (health.incompatible) return { degraded: true, word: t("connection.host.incompatible") };
-  if (!health.writable || health.state !== "live") {
-    return { degraded: true, word: t("connection.host.unreachablePlain") };
-  }
+  if (!health.writable) return { degraded: true, word: t("connection.host.unreachablePlain") };
+  // A stale receipt takes neither the word nor the styling. There is nothing for the operator to act
+  // on, and a tint they cannot name is a state they cannot act on either.
   return { degraded: false, word: null };
 }
 

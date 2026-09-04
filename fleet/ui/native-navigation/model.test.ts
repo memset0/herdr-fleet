@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   deriveNavigationTree,
   hostCollapseId,
+  hostOpenId,
   MAX_NAVIGATION_PANES,
   spaceDisclosureId,
   tabDisclosureId,
@@ -298,5 +299,31 @@ describe("native navigation hierarchy", () => {
       .flatMap((space) => space.children)
       .filter((row) => row.target?.kind === "pane").length;
     expect(drawn).toBe(MAX_NAVIGATION_PANES);
+  });
+  test("a member that is not answering closes by default and still opens by hand", () => {
+    const member = (hostId: string, degraded?: boolean) => ({
+      hostId,
+      hostLabel: hostId,
+      degraded,
+      workspaces: [{ workspaceId: "w1", label: "Project" }],
+      tabs: [{ workspaceId: "w1", tabId: "t1", label: "Main" }],
+      agents: [
+        { workspaceId: "w1", tabId: "t1", paneId: `${hostId}-p`, label: "work", agent: "claude" },
+      ],
+      shellPanes: [],
+    });
+    const tree = deriveNavigationTree({ hosts: [member("up"), member("down", true)] });
+
+    // The answering member keeps the sense it always had: present in the set means CLOSED.
+    expect(tree.rows[0]?.disclosureId).toBe(hostCollapseId("up"));
+    expect(tree.rows[0]?.disclosureInverted).toBe(true);
+
+    // The refused one takes the opposite sense, which is what makes "closed by default, opened by
+    // hand" expressible without either default inheriting the other's stored answer.
+    expect(tree.rows[1]?.disclosureId).toBe(hostOpenId("down"));
+    expect(tree.rows[1]?.disclosureInverted).toBeUndefined();
+
+    // Its rows are still there — they are the snapshot's last-good content, not an error.
+    expect(tree.rows[1]?.children).toHaveLength(1);
   });
 });

@@ -428,6 +428,28 @@ carries runtime data and never becomes a distribution channel
 remembered locally in `pack-ops.json`, which is never a wire field and never merged into the trust
 store.
 
+## Multi-host status — approved, and not yet production grade
+
+The owner approved the current multi-host design on 2026-09-04, as a whole and provisionally: it is
+the shape to keep building on, and it is **not** production grade yet. Improvement continues, so
+treat what follows as the standing frame for that work rather than as a finished contract.
+
+What the design settles, and what a later change must not quietly undo:
+
+- Collie's native Pack trust store is the only machine authority. Configuration projects membership
+  and never creates it, which is why a role that disagrees with the trust state fails closed.
+- Reachability is transport only. An established link asserts nothing and a dead one revokes
+  nothing; pinned mutual TLS and the Pack secret remain the only factors that admit a member.
+- Fleet installs, enables and restarts no operating-system service anywhere, and never invokes
+  Collie's own CLI verbs against a Fleet deployment. Lifecycle is the Herdr plugin's.
+- Enrolment is an explicit, ordered operator act driven through Collie's own transitions.
+
+Known rough edges, none of them settled: endpoint allocation and per-device configuration are
+hand-authored; the enrolment sequence needs a temporary projection and two restarts, and is not yet
+orchestrated behind one command; rotation, removal and deputy are unimplemented; and a member that is
+merely listed rather than watched has a receipt clock the presented-stale tolerance was not written
+for. Build on the boundaries above; do not treat the gaps as decisions.
+
 ## OpenSpec and downstream fork workflow
 
 ### Repository-specific OpenSpec and Git Workflow Requirements

@@ -237,4 +237,68 @@ describe("NativeNavigationShell", () => {
     expect(screen.getByText("Project on lead")).toBeInTheDocument();
     expect(screen.getByText("Project on peer-a")).toBeInTheDocument();
   });
+  test("a member the lead is refusing sinks below the ones that answer", async () => {
+    const rowsOn = (host: string) => ({
+      workspace: {
+        workspaceId: "w1",
+        number: 1,
+        label: `Project on ${host}`,
+        focused: false,
+        activeTabId: "t1",
+        tabCount: 1,
+        paneCount: 1,
+        host,
+      },
+      tab: { tabId: "t1", workspaceId: "w1", number: 1, label: "Main", focused: false, paneCount: 1, host },
+      pane: { ...pane, paneId: `p-${host}`, host },
+    });
+    const lead = rowsOn("lead");
+    const up = rowsOn("peer-up");
+    const down = rowsOn("peer-down");
+    const packData: HomeData = {
+      ...data,
+      servers: [
+        { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 1 },
+        // Roster order puts the refused member in the middle; the rail must not.
+        { id: "peer-down", name: "cellar", isLead: false, reachable: false, protocol: "ok", lastSeenAt: 1 },
+        { id: "peer-up", name: "attic", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 1 },
+      ],
+      scope: { host: "lead" },
+      workspaces: [lead.workspace],
+      tabs: [lead.tab],
+      allWorkspaces: [lead.workspace, up.workspace, down.workspace],
+      allTabs: [lead.tab, up.tab, down.tab],
+      agents: [lead.pane, up.pane, down.pane],
+    };
+
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <NativeNavigationShell data={packData} preferenceStore={new NavigationPreferenceStore()}>
+              <Outlet />
+            </NativeNavigationShell>
+          ),
+          children: [{ index: true, element: <div /> }],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    await screen.findByText("north");
+    // Space rows disclose too, so pick the rows that name a member.
+    const names = ["north", "attic", "cellar"];
+    const hostOrder = screen
+      .getAllByRole("button")
+      .filter((row) => row.getAttribute("aria-expanded") !== null)
+      .map((row) => names.find((name) => (row.textContent ?? "").includes(name)))
+      .filter((name): name is string => name !== undefined);
+    // Lead first, then the member that answers, and the refused one last.
+    expect(hostOrder).toEqual(["north", "attic", "cellar"]);
+    // And it is closed, rather than spilling its last-good rows into the hierarchy.
+    expect(screen.getByText("Project on peer-up")).toBeInTheDocument();
+    expect(screen.queryByText("Project on peer-down")).toBeNull();
+  });
 });

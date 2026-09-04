@@ -145,6 +145,21 @@ export function hostCollapseId(hostId: string): string {
 }
 
 /**
+ * The identity a member that is NOT answering discloses by, and it means OPENED — the opposite sense
+ * to {@link hostCollapseId}, because the default is the opposite too.
+ *
+ * A machine the lead is refusing has nothing current to contribute, so spilling its last-good rows
+ * into the hierarchy costs the operator a screenful to say "these are old". It is closed by default
+ * instead. But those rows are CONTENT rather than an error — the snapshot still carries them, and an
+ * operator may want to read them — so the row stays openable, and a separate identity is what lets
+ * "closed by default, opened by hand" exist beside "open by default, closed by hand" without either
+ * one inheriting the other's stored answer when a machine's health changes under it.
+ */
+export function hostOpenId(hostId: string): string {
+  return JSON.stringify(["host-opened", hostId]);
+}
+
+/**
  * A Space's disclosure identity, scoped to its host.
  *
  * The host segment is APPENDED rather than inserted, and omitted entirely for the empty host id a
@@ -199,6 +214,11 @@ function paneRow(pane: NavigationPaneInput, selected: boolean, hostId: string): 
 export interface NavigationHostInput {
   hostId: string;
   hostLabel: string;
+  /**
+   * The lead is refusing this member — arrives resolved, for the same reason `hostLabel` does: which
+   * machines are answering is the web tree's fact, and this module stays pure data.
+   */
+  degraded?: boolean;
   workspaces: readonly NavigationWorkspaceInput[];
   tabs: readonly NavigationTabInput[];
   agents: readonly NavigationPaneInput[];
@@ -345,8 +365,13 @@ function hostRow(
     children: spaces,
   };
   if (spaces.length > 0) {
-    host.disclosureId = hostCollapseId(hostId);
-    host.disclosureInverted = true;
+    if (input.degraded === true) {
+      // Closed by default, and openable: the identity means OPENED here.
+      host.disclosureId = hostOpenId(hostId);
+    } else {
+      host.disclosureId = hostCollapseId(hostId);
+      host.disclosureInverted = true;
+    }
   }
   return host;
 }

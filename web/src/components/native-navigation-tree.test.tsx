@@ -146,6 +146,42 @@ describe("NativeNavigationTree", () => {
     expect(rows[1]?.textContent).toMatch(/unreachable/i);
   });
 
+  it("does not call a member unreachable while the lead is merely between sweeps", () => {
+    // The lead's peer sweep relaxes to its own idle cadence while the phone polls far faster, so a
+    // member answering every request has its receipt age past `3 × pollMs` and back on every sweep.
+    // `reachable` stays true throughout: the lead never stopped believing in this machine.
+    const roster: ServerSummary[] = [
+      { id: "lead", name: "lead", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 19_000 },
+      // Receipt 10s old against a 4.5s tolerance — stale, and answering every request.
+      { id: "peer", name: "peer", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 10_000 },
+    ];
+    render(
+      <PackProvider servers={roster} ts={20_000} pollMs={1500}>
+        <NativeNavigationTree
+          tree={deriveNavigationTree({
+            hosts: roster.map((server) => ({
+              hostId: server.id,
+              hostLabel: server.name,
+              workspaces: [{ workspaceId: "w1", label: "One" }],
+              tabs: [],
+              agents: [],
+              shellPanes: [],
+            })),
+          })}
+          onOpenSpace={vi.fn()}
+          onOpenPane={vi.fn()}
+        />
+      </PackProvider>,
+    );
+
+    const rows = screen
+      .getAllByRole("button")
+      .filter((row) => row.getAttribute("aria-expanded") !== null);
+    // Neither row claims the machine is down. The word belongs to the lead's own refusal, and the
+    // lead is refusing nothing here — it is simply between polls.
+    for (const row of rows) expect(row.textContent).not.toMatch(/unreachable|不可达/i);
+  });
+
   it("elides a lone Tab so its Pane hangs off the Space", async () => {
     const user = userEvent.setup();
     const store = new NavigationPreferenceStore();
