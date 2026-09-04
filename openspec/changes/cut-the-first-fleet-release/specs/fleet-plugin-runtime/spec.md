@@ -131,3 +131,27 @@ what publishes the release and a cut version that is never tagged is not a relea
 - **WHEN** a release commit reaches the remote
 - **THEN** its annotated tag reaches it in the same push, and the version check passes on that commit
 
+### Requirement: This product's changelog is its own file, and upstream's is preserved verbatim
+This product SHALL keep its own changelog, in the same Keep a Changelog format, in a file distinct
+from the one upstream maintains. Entries for this product's changes SHALL NEVER be interleaved into
+upstream's, because a merged file cannot be read as either project's history and cannot be reconciled
+when upstream's own file moves.
+
+Upstream's changelog SHALL be retained exactly as upstream wrote it, as provenance, and SHALL NOT
+gain, lose or reorder an entry.
+
+The working agreement SHALL direct every functional change to this product's own file, so an agent
+adding a changelog line is told which file before it needs to ask.
+
+#### Scenario: A functional change is committed
+- **WHEN** a change adds its changelog line
+- **THEN** the line lands in this product's own changelog and upstream's is untouched
+
+#### Scenario: Upstream's changelog is read
+- **WHEN** upstream's changelog is compared with the release it came from
+- **THEN** it is byte-identical to what upstream wrote
+
+#### Scenario: The version is checked
+- **WHEN** the version consistency check runs
+- **THEN** it reads this product's own changelog for the newest numbered heading
+

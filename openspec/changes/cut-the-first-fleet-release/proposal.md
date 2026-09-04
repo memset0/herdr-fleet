@@ -19,6 +19,8 @@ on the wrong one.
   named for what it was — its own release and the Collie release it carried.
 - State in the working agreement that this repository's version is its own from here, and that the
   default branch is where development happens.
+- Separate the two changelogs: upstream's is retained exactly as upstream wrote it, this product's is
+  its own file, and the working agreement tells an agent which one to write in.
 - State this product's own release policy: the version moves on an axis of which machines a change
   obliges to redeploy, that axis decides who may cut the release, and every verified change is
   assessed against it rather than releases being remembered.

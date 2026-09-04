@@ -43,11 +43,29 @@ The Collie release this tree reapplies is written where provenance already lives
 files say nothing about it. Encoding it in the version — a build-metadata suffix, say — would make
 every upstream adoption look like a release of ours.
 
+### 4. The product's changelog keeps the canonical name; upstream's moves
+
+Two files are required either way. Which one keeps `CHANGELOG.md` is decided by what it costs, and the
+costs are not symmetric: the version check and the pre-commit changelog guard both read that filename
+directly, and both are upstream-owned. Giving the new name to OUR file means editing both of them —
+two new invasive paths, in tooling — while giving it to UPSTREAM's file means editing neither.
+
+So this product's changelog keeps `CHANGELOG.md`, which is also what it now honestly is, and
+upstream's is retained verbatim beside it under its own name. That also retires an invasive path
+rather than adding two: the existing declaration exists precisely because our entries were being
+interleaved into upstream's file, and after this they are not.
+
+Rejected: moving our entries to a new file and repointing the two scripts. It satisfies the same
+requirement while spending two invasive edits on upstream tooling to do it, which the minimal-
+invasiveness rule this change also records exists to prevent.
+
 ## Risks / Trade-offs
 
 - **[A clone or a deployment pinned to `v3-dev` breaks]** → the consuming repository's controller
   resolves a branch by name, so it is updated in the same effort; a rename leaves the old name gone
   rather than stale, which is the failure that gets noticed immediately rather than silently.
+- **[Upstream's changelog looks like it was rewritten]** → it is retained byte-identical under its own
+  name, and the provenance record names it.
 - **[The previous generation looks deleted]** → it keeps its own branch, its tags and its history; the
   archival name states both its own release and the Collie release it carried.
 
