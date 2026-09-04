@@ -45,21 +45,35 @@ import { paneDisplayName } from "@/lib/types";
  * what keeps the invoke sites to a one-word change.
  */
 
-/** A machine driven by a POINTER — the honest spelling of "a computer, not a phone". Live, because
- *  a tablet gains and loses a mouse. */
-function useFinePointer(): boolean {
-  const [fine, setFine] = useState(
-    () => window.matchMedia?.("(pointer: fine) and (hover: hover)").matches ?? false,
-  );
+/**
+ * A device whose ONLY pointer is a coarse one — a phone, a tablet with no mouse.
+ *
+ * A VETO, and deliberately not the decision. The decision is the gesture's own pointer type, which
+ * the recorder already checked: a long press reports `touch` and is refused there, so what reaches
+ * this hook was made by a mouse. Asking `(pointer: fine)` to CONFIRM that was measured and found
+ * wrong in both directions — an environment with no pointing device attached answers `none` to fine
+ * AND coarse, which silently took the menu away from a machine that had just right-clicked. So the
+ * media query only gets to say NO, on the one device where it can be sure: a screen whose primary
+ * pointer is coarse and which has no fine pointer at all is a phone, and a 224px box pinned to a
+ * coordinate is the wrong surface for a thumb however the event was typed.
+ *
+ * Live, because a tablet gains and loses a mouse.
+ */
+function useCoarseOnly(): boolean {
+  const read = () =>
+    (window.matchMedia?.("(pointer: coarse)").matches ?? false) &&
+    !(window.matchMedia?.("(any-pointer: fine)").matches ?? false);
+  const [coarse, setCoarse] = useState(read);
   useEffect(() => {
-    const query = window.matchMedia?.("(pointer: fine) and (hover: hover)");
-    if (!query) return;
-    const sync = () => setFine(query.matches);
+    const queries = [window.matchMedia?.("(pointer: coarse)"), window.matchMedia?.("(any-pointer: fine)")];
+    const sync = () => setCoarse(read());
     sync();
-    query.addEventListener("change", sync);
-    return () => query.removeEventListener("change", sync);
+    for (const query of queries) query?.addEventListener("change", sync);
+    return () => {
+      for (const query of queries) query?.removeEventListener("change", sync);
+    };
   }, []);
-  return fine;
+  return coarse;
 }
 
 /**
@@ -70,18 +84,18 @@ function useFinePointer(): boolean {
  * something later. The record itself is `fleet/ui/pointer-menu.ts`, which states the three bounds
  * that keep a claim-by-timing honest.
  */
-function useClaimedPoint(open: boolean, fine: boolean): MenuPoint | null {
+function useClaimedPoint(open: boolean, coarse: boolean): MenuPoint | null {
   const [at, setAt] = useState<MenuPoint | null>(null);
   const wasOpen = useRef(false);
   useLayoutEffect(() => {
     if (open && !wasOpen.current) {
       const gesture = pointerMenuGestures.take();
-      setAt(gesture === null || !fine ? null : { x: gesture.x, y: gesture.y });
+      setAt(gesture === null || coarse ? null : { x: gesture.x, y: gesture.y });
     } else if (!open) {
       setAt(null);
     }
     wasOpen.current = open;
-  }, [open, fine]);
+  }, [open, coarse]);
   return at;
 }
 
@@ -92,8 +106,8 @@ function useClaimedPoint(open: boolean, fine: boolean): MenuPoint | null {
 export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>) {
   useLocale();
   const { open, onClose, pane, scope, readOnly = false, onRenamed, onClosed } = props;
-  const fine = useFinePointer();
-  const at = useClaimedPoint(open, fine);
+  const coarse = useCoarseOnly();
+  const at = useClaimedPoint(open, coarse);
 
   const [renaming, setRenaming] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -293,8 +307,8 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
 export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
   useLocale();
   const { open, onClose, tab, scope, readOnly = false, onRenamed, onClosed } = props;
-  const fine = useFinePointer();
-  const at = useClaimedPoint(open, fine);
+  const coarse = useCoarseOnly();
+  const at = useClaimedPoint(open, coarse);
 
   const [renaming, setRenaming] = useState(false);
   const [saving, setSaving] = useState(false);

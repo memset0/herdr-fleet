@@ -28,13 +28,17 @@ const tab: TabView = {
   paneCount: 2,
 };
 
-/** jsdom answers every media query false, so a case that wants the menu has to say so. */
+/**
+ * jsdom answers every media query false, which is the "no pointing device attached" reading — and
+ * that reading must NOT take the menu away, so `fine` here is jsdom's own default and `coarse` is
+ * the one a phone gives.
+ */
 function setPointer(kind: "fine" | "coarse") {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     configurable: true,
     value: (query: string) => ({
-      matches: kind === "fine" && query.includes("pointer: fine"),
+      matches: kind === "coarse" && query === "(pointer: coarse)",
       media: query,
       onchange: null,
       addEventListener: vi.fn(),
@@ -100,7 +104,7 @@ describe("FleetPaneActions", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("keeps Collie's sheet when there is no fine pointer", () => {
+  it("keeps Collie's sheet on a device whose only pointer is coarse", () => {
     setPointer("coarse");
     rightClick(200, 300);
     render(<Harness kind="pane" />);
