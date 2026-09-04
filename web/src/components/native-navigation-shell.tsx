@@ -27,6 +27,30 @@ import {
   type NativeNavigationPreferenceStore,
   type SidebarSide,
 } from "../../../fleet/ui/native-navigation/preferences.ts";
+import { agentFavoriteStore } from "../../../fleet/ui/agent-favorites.ts";
+import { COMMAND_ORDINALS, type CommandId, type CommandScope } from "../../../fleet/ui/commands/catalog.ts";
+import {
+  EMPTY_PANE_HISTORY,
+  hierarchyPaneOrder,
+  paneForTab,
+  prunePaneHistory,
+  stepPaneEverywhere,
+  stepPaneInTab,
+  stepTabInSpace,
+  swapPaneHistory,
+  tabOrdinalInSpace,
+  visitPane,
+  type PaneHistory,
+} from "../../../fleet/ui/commands/targets.ts";
+import {
+  rosterEntryKey,
+  rosterOrdinal,
+  stepRoster,
+} from "../../../fleet/ui/pane-roster.ts";
+import {
+  FleetCommandsProvider,
+  type CommandAdapters,
+} from "@/components/fleet-commands";
 import { usePointerMenuGestures } from "@/components/fleet-context-menu";
 import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
@@ -36,7 +60,10 @@ import { FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/componen
 import { hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
-import { homePath, panePath, spacePath } from "@/lib/nav";
+import { createTab } from "@/lib/api";
+import { paneRosterFrom } from "@/lib/fleet-roster";
+import { homePath, panePath, settingsPath, spacePath } from "@/lib/nav";
+import { triage } from "@/lib/triage";
 import { usePairing } from "@/lib/pairing";
 import { isReadOnly, paneDisplayName, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -194,6 +221,10 @@ export function NativeNavigationShell({
       : null;
 
   const [hierarchyOpen, setHierarchyOpen] = useState(false);
+  // Both rails together, never one — the command collapses the CHROME, and a half-collapsed frame is
+  // an asymmetry nobody asked for. Not persisted: it is a "get out of my way for a minute" gesture,
+  // and a rail that stayed hidden across a reload would look like the feature had broken.
+  const [railsCollapsed, setRailsCollapsed] = useState(false);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const closeControl = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
@@ -269,6 +300,137 @@ export function NativeNavigationShell({
     [navigate, data.scope, data.servers, data.sessions, closeHierarchy],
   );
 
+  // Favourites are browser-local and change without the snapshot moving, so the roster has to be
+  // recomputed when they do. The rail already reads the store directly; this subscribes so the
+  // command layer's copy of the order cannot fall behind the one on screen.
+  useSyncExternalStore(
+    agentFavoriteStore.subscribe,
+    agentFavoriteStore.snapshot,
+    agentFavoriteStore.snapshot,
+  );
+
+  // Recomputed every render rather than memoised, which is what the rail beside it already does with
+  // the same two calls: `triage()` and the favourites partition are cheap, and a memo here would have
+  // to name the favourites revision as a dependency it never actually reads.
+  // The rail draws exactly these sections, from this same function — so `next-agent` and the ninth
+  // ordinal address the row the rail drew ninth, rather than agreeing by coincidence.
+  const roster = paneRosterFrom(triage(data.agents, "newest"), data.shellPanes);
+
+  // The whole pack's tabs, matching the rails: a Tab command must be able to address the Space the
+  // operator is actually on, and on a pack that Space may not be the one the URL's scope narrows to.
+  const tabsForCommands = data.allTabs ?? data.tabs;
+  const currentPane = allPanes.find((pane) => pane.paneId === paneId);
+  const hierarchyOrder = useMemo(() => hierarchyPaneOrder(tree), [tree]);
+
+  // The two-entry history behind `last-pane`, kept for the page session only.
+  const history = useRef<PaneHistory>(EMPTY_PANE_HISTORY);
+  const currentKey = currentPane === undefined ? null : rosterEntryKey(currentPane);
+  history.current = visitPane(history.current, currentKey);
+
+  const openEntry = useCallback(
+    (entry: { paneId: string; host?: string; session?: string }) => {
+      const pane = allPanes.find(
+        (candidate) =>
+          candidate.paneId === entry.paneId && (candidate.host ?? "") === (entry.host ?? ""),
+      );
+      navigate(panePath(entry.paneId, paneScope(data.scope, pane, data.servers, data.sessions)));
+      closeHierarchy();
+    },
+    [allPanes, navigate, data.scope, data.servers, data.sessions, closeHierarchy],
+  );
+
+  const available = useCallback(
+    (scope: CommandScope) => {
+      if (scope === "global") return true;
+      if (scope === "navigation") return roster.entries.length > 0 || hierarchyOrder.length > 0;
+      if (scope === "space") return currentPane !== undefined || spaceId !== undefined;
+      return currentPane !== undefined;
+    },
+    [roster.entries.length, hierarchyOrder.length, currentPane, spaceId],
+  );
+
+  const adapters = useMemo<CommandAdapters>(() => {
+    const open = (target: { paneId: string; host?: string } | null) => {
+      if (target !== null) openEntry(target);
+    };
+    const built: CommandAdapters = {
+      "open-fleet-settings": () => navigate(settingsPath(data.scope)),
+      "toggle-fleet-sidebars": () => setRailsCollapsed((collapsed) => !collapsed),
+      "next-pane": () => open(stepPaneEverywhere(hierarchyOrder, currentPane ?? null, 1)),
+      "previous-pane": () => open(stepPaneEverywhere(hierarchyOrder, currentPane ?? null, -1)),
+      "next-agent": () => open(stepRoster(roster.entries, currentKey, 1)),
+      "previous-agent": () => open(stepRoster(roster.entries, currentKey, -1)),
+      "last-pane": () => {
+        const pruned = prunePaneHistory(history.current, (key) =>
+          allPanes.some((pane) => rosterEntryKey(pane) === key),
+        );
+        const swapped = swapPaneHistory(pruned);
+        history.current = swapped;
+        const target = allPanes.find((pane) => rosterEntryKey(pane) === swapped.current);
+        if (target !== undefined) openEntry(target);
+      },
+    };
+    if (currentPane !== undefined) {
+      Object.assign(built, {
+        // RENAME AND CLOSE ARE COLLIE'S OWN SHEETS, opened on the current target. The label input,
+        // the blank-clears rule for a Pane, the read-only refusal and the two-tap confirmation all
+        // already live there; a Fleet-owned copy would be a second place for those rules to drift.
+        "rename-pane": () => setActions({ kind: "pane", paneId: currentPane.paneId }),
+        "close-pane": () => setActions({ kind: "pane", paneId: currentPane.paneId }),
+        "rename-tab": () => setActions({ kind: "tab", tabId: currentPane.tabId }),
+        "close-tab": () => setActions({ kind: "tab", tabId: currentPane.tabId }),
+        "create-tab": async () => {
+          const result = await createTab(currentPane.workspaceId, {}, data.scope);
+          // The returned Pane is opened through the same route every other selection uses; nothing
+          // here assigns a URL of its own.
+          if (result.ok) openEntry({ paneId: result.pane.paneId, host: currentPane.host });
+        },
+        "copy-fleet-pane-link": async () => {
+          // Built from the validated current route and nothing else: no cookie, no token, and
+          // nothing at all when the route is not complete.
+          const path = panePath(
+            currentPane.paneId,
+            paneScope(data.scope, currentPane, data.servers, data.sessions),
+          );
+          await navigator.clipboard.writeText(new URL(path, globalThis.location.origin).toString());
+        },
+        "next-tab": () => {
+          const tab = stepTabInSpace(tabsForCommands, currentPane, 1);
+          if (tab !== null) open(paneForTab(allPanes, tab));
+        },
+        "previous-tab": () => {
+          const tab = stepTabInSpace(tabsForCommands, currentPane, -1);
+          if (tab !== null) open(paneForTab(allPanes, tab));
+        },
+        "next-pane-in-tab": () => open(stepPaneInTab(allPanes, currentPane, 1)),
+        "previous-pane-in-tab": () => open(stepPaneInTab(allPanes, currentPane, -1)),
+      } satisfies CommandAdapters);
+    }
+    for (const ordinal of COMMAND_ORDINALS) {
+      const tabId: CommandId = `select-tab-${ordinal}`;
+      const agentId: CommandId = `select-agent-${ordinal}`;
+      built[tabId] = () => {
+        if (currentPane === undefined) return;
+        const tab = tabOrdinalInSpace(tabsForCommands, currentPane, ordinal);
+        if (tab !== null) open(paneForTab(allPanes, tab, currentPane.paneId));
+      };
+      built[agentId] = () => open(rosterOrdinal(roster.entries, ordinal));
+    }
+    return built;
+  }, [
+    navigate,
+    data.scope,
+    data.servers,
+    data.sessions,
+    tabsForCommands,
+    allPanes,
+    hierarchyOrder,
+    currentPane,
+    roster.entries,
+    currentKey,
+    openEntry,
+  ]);
+
   const hierarchy = (
     <NativeNavigationTree
       tree={tree}
@@ -306,7 +468,13 @@ export function NativeNavigationShell({
   );
 
   return (
-    <NativeNavigationProvider value={navigation}>
+    <FleetCommandsProvider
+      adapters={adapters}
+      available={available}
+      roster={roster}
+      onOpenPane={openEntry}
+    >
+      <NativeNavigationProvider value={navigation}>
       <div
         data-slot="native-navigation-shell"
         className="relative flex min-h-0 flex-1 overflow-hidden"
@@ -314,7 +482,11 @@ export function NativeNavigationShell({
         {/* Renders nothing; keeps the document's webfont state matching the three settings that can
             name a face. Here rather than in a route because it must outlive every navigation. */}
         <FleetWebfonts />
-        <Rail title={t("fleet.navigation.hierarchy")} width={preferences.left.preferredWidth}>
+        <Rail
+          title={t("fleet.navigation.hierarchy")}
+          width={preferences.left.preferredWidth}
+          collapsed={railsCollapsed}
+        >
           {hierarchyOpen ? null : hierarchy}
         </Rail>
         <RailSeparator
@@ -322,6 +494,7 @@ export function NativeNavigationShell({
           width={preferences.left.preferredWidth}
           onWidth={(width) => preferenceStore.setWidth("left", width)}
           label={t("fleet.navigation.resizeHierarchy")}
+          collapsed={railsCollapsed}
         />
 
         <div
@@ -337,8 +510,13 @@ export function NativeNavigationShell({
           width={preferences.right.preferredWidth}
           onWidth={(width) => preferenceStore.setWidth("right", width)}
           label={t("fleet.navigation.resizeAgents")}
+          collapsed={railsCollapsed}
         />
-        <Rail title={t("fleet.navigation.agents")} width={preferences.right.preferredWidth}>
+        <Rail
+          title={t("fleet.navigation.agents")}
+          width={preferences.right.preferredWidth}
+          collapsed={railsCollapsed}
+        >
           {agents}
         </Rail>
 
@@ -383,7 +561,8 @@ export function NativeNavigationShell({
           onClosed={() => revalidator.revalidate()}
         />
       </div>
-    </NativeNavigationProvider>
+      </NativeNavigationProvider>
+    </FleetCommandsProvider>
   );
 }
 
@@ -413,20 +592,30 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
 function Rail({
   title,
   width,
+  collapsed,
   children,
 }: {
   title: string;
   width: number;
+  collapsed: boolean;
   children: ReactNode;
 }) {
   return (
     <aside
       aria-label={title}
-      style={{ width }}
+      // COLLAPSED IS A WIDTH, NOT AN UNMOUNT. The rail keeps its DOM, so its scroll position and its
+      // disclosure state are exactly where the operator left them when it comes back — and the route
+      // column beside it grows into the released space rather than re-laying itself out.
+      aria-hidden={collapsed}
+      inert={collapsed ? true : undefined}
+      style={{ width: collapsed ? 0 : width }}
       // --chrome, the same raised ground the header and the composer dock stand on: the rails are
       // chrome around the route, not more of the page. The rule between rail and route lives on the
       // SEPARATOR, not here — see RailSeparator.
-      className="hidden min-h-0 shrink-0 flex-col bg-chrome xl:flex"
+      className={cn(
+        "hidden min-h-0 shrink-0 flex-col overflow-hidden bg-chrome transition-[width,opacity] duration-200 motion-reduce:transition-none xl:flex",
+        collapsed && "pointer-events-none opacity-0",
+      )}
     >
       <div className="shrink-0 [padding-top:env(safe-area-inset-top)]">
         {/* The title sits DIRECTLY over its list. It carried the header's 60px floor so the three
@@ -448,11 +637,13 @@ function RailSeparator({
   width,
   onWidth,
   label,
+  collapsed,
 }: {
   side: SidebarSide;
   width: number;
   onWidth: (width: number) => void;
   label: string;
+  collapsed: boolean;
 }) {
   const drag = useRef<{ x: number; width: number } | null>(null);
   const bounds = SIDEBAR_BOUNDS[side];
@@ -479,7 +670,9 @@ function RailSeparator({
   return (
     <div
       role="separator"
-      tabIndex={0}
+      tabIndex={collapsed ? -1 : 0}
+      aria-hidden={collapsed}
+      inert={collapsed ? true : undefined}
       aria-label={label}
       aria-orientation="vertical"
       aria-valuemin={bounds.min}
@@ -499,7 +692,8 @@ function RailSeparator({
       // line on it at all. Two visible boundaries where there is one region change. Drawn here, the
       // rule lands exactly where the ground changes, which is what a rule is for (DESIGN.md §4).
       className={cn(
-        "group relative z-10 hidden w-1 shrink-0 cursor-col-resize bg-chrome outline-none xl:block",
+        "group relative z-10 hidden shrink-0 cursor-col-resize bg-chrome outline-none transition-[width,opacity] duration-200 motion-reduce:transition-none xl:block",
+        collapsed ? "w-0 opacity-0" : "w-1",
         side === "left" ? "border-r border-rule" : "border-l border-rule",
       )}
     >

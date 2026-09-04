@@ -248,6 +248,89 @@ controllers when the Pane, session, or bridge ends. Browser requests carry colum
 and rows stay server-owned. tmux, zellij, older bridges, unavailable Panes, and read-only clients do
 not receive a usable action.
 
+## Keyboard commands
+
+Fleet has one command catalog and one recognizer. Every command carries a stable English id, an
+English name, exactly one action, and zero or more bindings; a key, the command bar and a control all
+reach that action through the same dispatcher, and nothing else installs an application-level key
+listener.
+
+### The two binding shapes
+
+A **direct chord** is modifiers and a key pressed together (`Ctrl+Shift+P`). A **prefix binding** is
+the configured prefix — `Ctrl+B` by default — pressed and released, then a second chord (`Prefix+S`,
+written that way in the document and shown as `Ctrl+B S` in the interface).
+
+Matching is on the physical key code and the exact modifier set, so a binding does not change meaning
+when the keyboard layout does, and a chord with a modifier it did not name is a different chord.
+Auto-repeat is ignored. The browser default is prevented only for an accepted prefix or a complete
+binding.
+
+A pending prefix waits two seconds and is cancelled by `Escape`, by the window losing focus, by the
+document being hidden, or by a second chord nothing is bound to — the last of which is passed on
+rather than swallowed.
+
+**While a prefix is pending it takes the next key first**, ahead of the composer and ahead of
+direct-typing mode, so `Escape`, `Tab` and the arrows resolve as second chords. The moment the
+sequence ends, those keys go back to whatever owns them. A direct chord applies in every focus
+context, including while you are typing.
+
+### What ships bound
+
+`Ctrl+Shift+P` opens the command bar, and it is the only direct-chord default. Everything else that
+ships bound is a prefix binding, because a direct chord is best-effort — a browser or an extension
+may take it first — while a prefix sequence's second chord is a plain key nothing else listens for.
+
+Commands that ship unbound stay listed, searchable and bindable: the whole-hierarchy and Agent walks,
+the Agent ordinals, `last-pane`, `copy-fleet-pane-link`, `toggle-type-mode` and the eight fixed key
+sends. No `Alt` chord is a default.
+
+A Space has no rename or close command. The multiplexer exposes creating a Space and nothing else for
+one, and a command that can never land is worse than an absent command.
+
+### The command bar
+
+`Ctrl+Shift+P` opens it with a leading `/`, which searches the catalog by name, id and binding label.
+Remove the `/` and the same panel finds a Pane instead, across every member of the pack. Both modes
+fuzzy-match, mark what they matched, move with the arrows, run on `Enter` and close on `Escape`.
+
+The Pane list is snapshotted when the panel opens. Incoming state updates what a row SHOWS and never
+reorders, adds or removes one, so the list cannot move under a half-typed query.
+
+### The settings document
+
+Bindings live in `settings.json`, beside `fleet.toml` in the plugin configuration directory. It is
+read at request time behind a modification-time check, so editing it on disk is live — no restart —
+and a file that does not parse holds the last good one rather than failing the surface.
+
+```json
+{
+  "schemaVersion": 1,
+  "shortcuts": {
+    "prefix": "Ctrl+B",
+    "bindings": {
+      "next-tab": ["Prefix+N", "Prefix+Right"],
+      "open-fleet-settings": []
+    }
+  }
+}
+```
+
+A command the document names takes exactly the bindings given, **including none at all**; a command
+it does not name keeps its shipped default. An empty list is a real answer and no default comes back
+behind it.
+
+The document is accepted or rejected **whole**. An unknown setting, an unknown command id, a binding
+the grammar refuses, a binding listed twice, one binding on two commands, or a direct binding on the
+prefix itself refuses the entire document and names the entry at fault; the bindings in force do not
+change. A chord no browser hands to a page — `Ctrl+N`, `Ctrl+T`, `Ctrl+W`, their `Shift` variants,
+`Ctrl+Tab`, `Ctrl` with a digit — is refused, because binding it would produce a key that can never
+fire. A chord only SOME browsers keep is accepted and marked browser-dependent instead.
+
+Settings edits the same document in a text area and validates it identically. It sends back the
+version it read, so a save cannot silently overwrite a change made on disk: the mismatch is refused
+and the current document is handed back.
+
 ## Retained Collie deployment alternatives
 
 Collie's Tailscale serve and `Tailscale-User-Login` implementation remains in the repository to keep

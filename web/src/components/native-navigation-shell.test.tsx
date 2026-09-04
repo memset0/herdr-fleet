@@ -4,6 +4,7 @@ import { createMemoryRouter, Link, Outlet, RouterProvider } from "react-router";
 import { useEffect } from "react";
 
 import { NavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
+import { agentFavoriteStore, __resetAgentFavorites } from "../../../fleet/ui/agent-favorites.ts";
 import type { HomeData } from "@/lib/loaders";
 import { NativeHierarchyToggle, useNativePaneSwitcher } from "./native-navigation-context";
 import { NativeNavigationShell } from "./native-navigation-shell";
@@ -65,13 +66,17 @@ function SwitcherProbe() {
   return <div data-testid="switcher-title">{switcher?.title ?? "none"}</div>;
 }
 
-function renderShell(store = new NavigationPreferenceStore(), onMount = vi.fn()) {
+function renderShell(
+  store = new NavigationPreferenceStore(),
+  onMount = vi.fn(),
+  shellData: HomeData = data,
+) {
   function Layout() {
     useEffect(() => {
       onMount();
     }, []);
     return (
-      <NativeNavigationShell data={data} preferenceStore={store}>
+      <NativeNavigationShell data={shellData} preferenceStore={store}>
         {/* The header's leading slot, as the root route wires it. */}
         <NativeHierarchyToggle />
         <SwitcherProbe />
@@ -99,6 +104,11 @@ function renderShell(store = new NavigationPreferenceStore(), onMount = vi.fn())
   render(<RouterProvider router={router} />);
   return { store, onMount };
 }
+
+beforeEach(() => {
+  localStorage.clear();
+  __resetAgentFavorites();
+});
 
 describe("NativeNavigationShell", () => {
   it("keeps one shell mounted while the native outlet navigates", async () => {
@@ -363,3 +373,121 @@ describe("NativeNavigationShell", () => {
     expect(screen.getByText("Project on peer-blip")).toBeInTheDocument();
   });
 });
+
+describe("the shell's command layer", () => {
+  it("opens the command bar on its one direct chord", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    expect(document.querySelector('[data-slot="fleet-command-bar"]')).toBeNull();
+    await user.keyboard("{Control>}{Shift>}P{/Shift}{/Control}");
+    const bar = screen.getByRole("dialog", { name: "Fleet commands" });
+    expect(within(bar).getAllByRole("option").length).toBeGreaterThan(40);
+  });
+
+  it("finds a pane by name once the leading slash is gone", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.keyboard("{Control>}{Shift>}P{/Shift}{/Control}");
+    const bar = screen.getByRole("dialog", { name: "Fleet commands" });
+    const input = within(bar).getByRole("combobox");
+    await user.clear(input);
+    // The pane is unnamed, so the roster calls it what the rail calls it: the agent's own name.
+    await user.type(input, "claude");
+    expect(within(bar).getAllByRole("option")).toHaveLength(1);
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+  });
+
+  it("collapses and restores both rails together, keeping their DOM", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    const rail = screen.getByRole("complementary", { name: "Herds" });
+    const agents = screen.getByRole("complementary", { name: "Agents" });
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("b");
+    // The SAME elements, made inert rather than unmounted — which is what preserves their scroll
+    // position and disclosure state across the round trip. They are out of the accessibility tree,
+    // which is why they are held by reference here rather than looked up again.
+    expect(rail.isConnected).toBe(true);
+    expect(rail).toHaveAttribute("inert");
+    expect(rail).toHaveAttribute("aria-hidden", "true");
+    expect(agents).toHaveAttribute("aria-hidden", "true");
+    expect(rail.style.width).toBe("0px");
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("b");
+    expect(rail).not.toHaveAttribute("aria-hidden", "true");
+    expect(rail.style.width).not.toBe("0px");
+  });
+
+  it("makes no request and recreates no frame when the rails collapse", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    renderShell();
+    fetchSpy.mockClear();
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("b");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(document.querySelector("iframe")).toBeNull();
+    fetchSpy.mockRestore();
+  });
+  it("opens Collie's own actions for the current pane rather than an editor of its own", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.click(screen.getByRole("link", { name: "Open direct" }));
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("{Shift>}P{/Shift}");
+    // The sheet Collie already has, on the pane the route is on — not a second rename dialog.
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Fleet commands" })).toBeNull();
+  });
+
+  it("copies a link built from the route it is on, and nothing else", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderShell();
+    await user.click(screen.getByRole("link", { name: "Open direct" }));
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+
+    await user.keyboard("{Control>}{Shift>}P{/Shift}{/Control}");
+    const bar = screen.getByRole("dialog", { name: "Fleet commands" });
+    await user.type(within(bar).getByRole("combobox"), "copy fleet");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = String(writeText.mock.calls[0]?.[0]);
+    expect(copied).toContain("/pane/p1");
+    expect(copied).not.toContain("cookie");
+  });
+
+  it("walks the agents in the order the rail drew them, favourites and all", async () => {
+    const user = userEvent.setup();
+    const second = { ...pane, paneId: "p2", tabId: "t2", tabLabel: "Second", agent: "codex" };
+    const two: HomeData = { ...data, agents: [pane, second] };
+    // A favourite moves a row inside its section; the command layer must move with it.
+    agentFavoriteStore.toggle(second);
+    renderShell(new NavigationPreferenceStore(), vi.fn(), two);
+
+    const rail = screen.getByRole("complementary", { name: "Agents" });
+    const railOrder = Array.from(
+      rail.querySelectorAll<HTMLElement>('[data-slot="native-agent-card"]'),
+    ).map((row) => row.textContent);
+
+    await user.keyboard("{Control>}{Shift>}P{/Shift}{/Control}");
+    const bar = screen.getByRole("dialog", { name: "Fleet commands" });
+    await user.clear(within(bar).getByRole("combobox"));
+    const barOrder = within(bar)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+    // The two surfaces NAME a row differently — the rail shows the Tab, the bar shows the Agent —
+    // so the assertion is about which row each puts FIRST, which is the thing that has to agree.
+    expect(barOrder.map((text) => (text ?? "").startsWith("codex"))).toEqual([true, false]);
+    expect(railOrder.map((text) => (text ?? "").includes("Second"))).toEqual([true, false]);
+  });
+});
+

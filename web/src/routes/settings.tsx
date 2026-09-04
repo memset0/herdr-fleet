@@ -19,7 +19,7 @@ import { ZenControl } from "@/components/zen-control";
 import { InstallControl } from "@/components/install-control";
 import { LanguageControl } from "@/components/language-control";
 import { FontSettingsControl } from "@/components/font-settings";
-import { FleetCjkFallbackControl } from "@/components/fleet-webfonts";
+import { FleetSettingsSection } from "@/components/fleet-settings-section";
 import { TypefaceControl } from "@/components/typeface-control";
 import { UpdateCheckControl } from "@/components/update-check-control";
 import { Switch } from "@/components/ui/switch";
@@ -117,6 +117,12 @@ export function SettingsRoute() {
             the one way to guarantee it is never seen. */}
         <InstallControl />
 
+        {/* DOWNSTREAM PORT — the fork's own settings, gathered into one group at the head of the
+            page so the boundary between what this fork adds and what Collie ships is visible without
+            reading the code. It is the page's only heading, and deliberately so; every card below
+            keeps the position and the reasoning it already had. */}
+        <FleetSettingsSection />
+
         {/* First of the SETTINGS: it's the one people come here to change, and below the
             notification stack it sat off-screen on a phone, a scroll into a 1240px page. */}
         <ThemeControl />
@@ -138,9 +144,6 @@ export function SettingsRoute() {
             own voice first, the thing it renders second. */}
         <TypefaceControl />
         <FontSettingsControl />
-        {/* DOWNSTREAM PORT — the third answer to "which face", directly under the two it completes:
-            the one that draws what neither of them does. */}
-        <FleetCjkFallbackControl />
 
         {/* Device behaviour sits with appearance — both are "how this phone treats you", as opposed
             to the herd/notification settings below. Renders nothing where vibrate is unsupported. */}

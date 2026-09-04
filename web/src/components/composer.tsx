@@ -7,6 +7,7 @@ import { applyDraftFontSize, fontStack, inputFocusZoomsPage } from "@/hooks/use-
 import type { DisplayPrefs } from "@/hooks/use-display-prefs";
 import type { AgentStatus } from "@/lib/types";
 import { usePendingConfirm } from "@/hooks/use-pending-confirm";
+import { useFleetCommandAdapters } from "@/components/fleet-commands";
 import { useDirectTyping } from "@/hooks/use-direct-typing";
 import { useLocale } from "@/hooks/use-locale";
 import { t as translate, tn as translatePlural } from "@/lib/i18n";
@@ -471,6 +472,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       noticeNoEcho(null); // the notice's whole job was to get you here
     },
     focusInput: focusInputEnd,
+  });
+
+  // DOWNSTREAM PORT — the same transition the visible `Type` control performs, reachable from the
+  // keyboard. One armed state, one cleanup path: the command does not maintain a mode of its own,
+  // and `canActivate` above still decides whether arming is allowed at all.
+  useFleetCommandAdapters({
+    "toggle-type-mode": () => {
+      if (direct.active) direct.deactivate();
+      else direct.activate();
+    },
   });
 
   // ── VOICE (ADR 0029) ──────────────────────────────────────────────────────────────────────────

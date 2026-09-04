@@ -357,6 +357,11 @@ export const handlers = [
     ),
   ),
   http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "" })),
+
+  // DOWNSTREAM PORT — Fleet's own settings surface, answering the way a Collie with no Fleet Gateway
+  // in front of it does. Without it the Settings route's one fetch never settles under MSW and the
+  // playground's render of every card times out, which is exactly how this handler came to be here.
+  http.get("/fleet/api/settings", () => new HttpResponse(null, { status: 404 })),
   http.post<never, { snoozedUntil: number | null }>("/api/notifications/snooze", async ({ request }) => {
     const { snoozedUntil } = await request.json();
     return HttpResponse.json({ snoozedUntil });

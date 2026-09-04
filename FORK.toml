@@ -51,6 +51,13 @@ paths = [
   "web/src/components/fleet-row-actions.test.tsx",
   "web/src/components/fleet-row-actions.tsx",
   "web/src/components/fleet-webfonts.tsx",
+  "web/src/components/fleet-commands.tsx",
+  "web/src/components/fleet-commands.test.tsx",
+  "web/src/components/fleet-command-bar.tsx",
+  "web/src/components/fleet-command-bar.test.tsx",
+  "web/src/components/fleet-settings-section.tsx",
+  "web/src/lib/fleet-settings.ts",
+  "web/src/lib/fleet-roster.ts",
   "web/src/components/native-navigation-tree.test.tsx",
   "web/src/components/native-navigation-tree.tsx",
   "web/src/lib/fleet-webfonts.test.ts",
@@ -97,7 +104,16 @@ verify = [
   "fleet/ui/native-navigation/model.test.ts",
   "fleet/ui/native-navigation/preferences.test.ts",
   "fleet/ui/pointer-menu.test.ts",
-  "fleet/ui/webfonts.test.ts"
+  "fleet/ui/webfonts.test.ts",
+  "fleet/ui/commands/bindings.test.ts",
+  "fleet/ui/commands/catalog.test.ts",
+  "fleet/ui/commands/fuzzy.test.ts",
+  "fleet/ui/commands/recognizer.test.ts",
+  "fleet/ui/commands/targets.test.ts",
+  "fleet/ui/pane-roster.test.ts",
+  "fleet/settings/document.test.ts",
+  "fleet/settings/store.test.ts",
+  "fleet/settings/gateway-settings.test.ts"
 ]
 
 [[invasive]]
@@ -147,6 +163,24 @@ paths = [
 ]
 verify = ["AGENTS.md", ".gitignore"]
 reason = "Repository entrypoints and ignore rules are upstream-owned surfaces that every contributor consumes."
+
+[[invasive]]
+id = "fake-network-fleet-routes"
+intent = "Teach the shared MSW handlers about Fleet's own authenticated route."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = ["web/src/test/handlers.ts#/fleet/api/settings"]
+verify = ["web/src/routes/settings.test.tsx", "web/src/playground/app.test.tsx"]
+reason = "The app now has one endpoint Collie does not, and the shared fake network is where every suite learns what the network answers. The handler returns 404 — exactly what a Collie with no Fleet Gateway in front of it answers — so Collie's own suites keep rendering Settings unchanged and the fork's editor simply does not appear. Without it the route's one fetch never settles under MSW and every render of Settings warns about an unhandled request."
+
+[[invasive]]
+id = "lint-parse-boundary"
+intent = "Register the fork's own JSON parse boundary in the linter's existing boundary override."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [".oxlintrc.json#fleet/settings/document.ts"]
+verify = ["fleet/settings/document.test.ts", "fleet/settings/gateway-settings.test.ts"]
+reason = "ADR 0019 makes a finding fixable in code and never suppressible, and names one override class for files that ARE the I/O boundary the `no-runtime-typeof` rule tells you to parse at. The fork's settings document is that class a fourth time — one reader of an operator-authored JSON file, the Gateway route that replaces it, and that route's answer read back in the browser — so the three files join the existing list rather than carrying a disable comment. No rule is added, removed, or downgraded."
 
 [[invasive]]
 id = "plugin-identity"
@@ -251,7 +285,7 @@ verify = [
   "web/src/lib/mux-capability.test.ts",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. It also carries the one relaxation of the app's Content-Security-Policy: the fetched CJK fallback (native-webfont-port) needs its provider origin in style-src and font-src, and script-src and connect-src are deliberately untouched, so that origin can serve no code and the app can open no channel to it. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry. It carries a third for the same reason: the Pane screen's state badge in the strip row's existing trailing slot, the composer's status-word switch and its named dock, and the control row's one-rank layout (native-pane-chrome-port)."
+reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. It also carries the one relaxation of the app's Content-Security-Policy: the fetched CJK fallback (native-webfont-port) needs its provider origin in style-src and font-src, and script-src and connect-src are deliberately untouched, so that origin can serve no code and the app can open no channel to it. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry. It carries a third for the same reason: the Pane screen's state badge in the strip row's existing trailing slot, the composer's status-word switch and its named dock, and the control row's one-rank layout (native-pane-chrome-port). It carries a FOURTH: the Pane-scoped keyboard commands (drive-the-fleet-from-the-keyboard) register through one hook on each of these two files and add no logic to either — the Pane page hands over the fit function its own Display control already calls plus one fixed-key sender guarded by the same read-only and unreachable-host checks, and the composer hands over the exact activate/deactivate pair behind its visible Type control, so there is one armed state and one cleanup path rather than a second mode."
 
 [[invasive]]
 id = "native-navigation-sidebars-port"
@@ -287,7 +321,7 @@ verify = [
   "web/src/components/agent-list.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list. The rail's emphasis reads the dashboard's own exported set rather than copying it, because which sections mean a person is wanted here is one rule and two versions of it would drift; that export rides the native-agent-favorites-port declaration, since this manifest attributes web/src/components/agent-list.tsx to exactly one entry."
+reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). The Settings route takes one further port from drive-the-fleet-from-the-keyboard: the fork's own settings are gathered into one group at the HEAD of the page, which is the page's only heading and a deliberate exception to the flat-stack rule stated at that line — the boundary between what this fork adds and what Collie ships is the one thing a reader of that page cannot otherwise see, and the CJK card moves into the group while every Collie card keeps its position and its reasoning. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list. The rail's emphasis reads the dashboard's own exported set rather than copying it, because which sections mean a person is wanted here is one rule and two versions of it would drift; that export rides the native-agent-favorites-port declaration, since this manifest attributes web/src/components/agent-list.tsx to exactly one entry."
 [[invasive]]
 id = "native-pane-chrome-port"
 intent = "Let the Pane screen say its state in a row it already spends, rank its controls as one, and decline the shared mark, without moving product logic into Collie-owned files."

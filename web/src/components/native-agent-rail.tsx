@@ -1,14 +1,16 @@
 import { Check, Inbox, WifiOff } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
-import { agentFavoriteStore, favoriteFirst } from "../../../fleet/ui/agent-favorites.ts";
+import { agentFavoriteStore } from "../../../fleet/ui/agent-favorites.ts";
+import { rosterEntryKey } from "../../../fleet/ui/pane-roster.ts";
+import { paneRosterFrom } from "@/lib/fleet-roster";
 import { ATTENTION } from "@/components/agent-list";
 import { NativeAgentCard } from "@/components/native-agent-card";
 import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
 import { clockTime } from "@/lib/format";
 import { paneRowKey } from "@/lib/hosts";
-import { sectionHeaderProps, triage, type TriageKey } from "@/lib/triage";
+import { sectionHeaderProps, triage, type TriageKey, type TriageSection } from "@/lib/triage";
 import type { AgentView, BridgeStatus } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -85,10 +87,25 @@ export function NativeAgentRail({
   }
 
   const all = triage(agents, "newest");
-  for (const section of all) {
-    section.agents = favoriteFirst(section.agents, agentFavoriteStore.isFavorite);
-  }
-  const sections = all.filter((s) => s.agents.length > 0);
+  // THE ORDER COMES FROM THE ROSTER, which is also what the command layer walks — see
+  // fleet/ui/pane-roster.ts. Reading it here rather than re-partitioning locally is the whole point:
+  // `next-agent` and the ninth ordinal address the row this rail drew ninth, by construction rather
+  // than because two places happen to sort the same way today.
+  const roster = paneRosterFrom(all);
+  const ordered = new Map(roster.sections.map((section) => [section.key, section.entries]));
+  const byKey = new Map(agents.map((agent) => [rosterEntryKey(agent), agent]));
+  // Collie's sections keep their own metadata — label, dot, accent — and take only their ORDER from
+  // the roster. A section the roster dropped is one with nothing in it.
+  const sections = all
+    .map((section) => {
+      const entries = ordered.get(section.key);
+      if (entries === undefined) return null;
+      const rows = entries
+        .map((entry) => byKey.get(rosterEntryKey(entry)))
+        .filter((agent): agent is AgentView => agent !== undefined);
+      return { ...section, agents: rows };
+    })
+    .filter((section): section is TriageSection => section !== null);
   const allClear = all.find((s) => s.key === "needs")?.agents.length === 0;
   let ordinal = -1;
 

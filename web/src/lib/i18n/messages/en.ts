@@ -408,6 +408,33 @@ export const en = {
   "fleet.navigation.resizeHierarchy": "Resize Herds sidebar",
   "fleet.navigation.resizeAgents": "Resize Agents sidebar",
   "fleet.navigation.close": "Close navigation",
+  // --- fleet.command (the command bar). Command NAMES are not translated: they are the catalog's
+  // stable English identity, the same posture as the slash-command descriptions (ADR 0030). What is
+  // translated is the chrome around them.
+  "fleet.command.bar.label": "Fleet commands",
+  "fleet.command.bar.dismiss": "Close the command bar",
+  "fleet.command.bar.commandPlaceholder": "Search commands",
+  "fleet.command.bar.panePlaceholder": "Go to a pane",
+  "fleet.command.bar.empty": "Nothing matches.",
+  "fleet.command.bar.noBinding": "No binding",
+  "fleet.command.bar.unavailable": "unavailable here",
+  "fleet.command.bar.hint": "Start with / for commands, anything else finds a pane.",
+  "fleet.command.section.shell": "Shell",
+  "fleet.command.unavailable": "{name} is not available here.",
+  "fleet.command.failed": "{name} did not complete.",
+  "fleet.settings.title": "Fleet",
+  "fleet.settings.description": "What this fork adds. Collie's own settings follow below.",
+  "fleet.settings.scope.browser": "This browser",
+  "fleet.settings.scope.install": "This installation",
+  "fleet.settings.shortcuts.title": "Keyboard commands",
+  "fleet.settings.shortcuts.description": "The binding document, as JSON. A save is validated whole.",
+  "fleet.settings.shortcuts.save": "Save",
+  "fleet.settings.shortcuts.saving": "Saving…",
+  "fleet.settings.shortcuts.saved": "Saved.",
+  "fleet.settings.shortcuts.conflict": "The file changed on disk. What it holds now is shown above.",
+  "fleet.settings.shortcuts.unavailable": "This installation serves no settings document.",
+  "fleet.settings.shortcuts.risky": "Browser-dependent: {bindings}",
+  "fleet.settings.shortcuts.reference": "Command ids and their effective bindings",
 
   // --- status (triage sections, status labels, counts) ---
   "status.section.needsYou": "Needs you",

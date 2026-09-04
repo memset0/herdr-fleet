@@ -21,6 +21,7 @@ import { LOGIN_CSS, loginPage } from "./login-ui.ts";
 import { proxyCollie, type FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
+import type { SettingsStore } from "./settings/store.ts";
 
 const HTML_CSP =
   "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; " +
@@ -50,6 +51,28 @@ const PUBLIC_FILES = new Set([
   "/web-app-manifest-512x512.png",
 ]);
 
+/** Fleet's own API surface. One path, so nothing else can grow under it by accident. */
+export const FLEET_SETTINGS_PATH = "/fleet/api/settings";
+
+/** Both API surfaces answer 401 rather than redirecting: a fetch cannot follow a login page. */
+function isApiPath(pathname: string): boolean {
+  if (pathname === "/api" || pathname.startsWith("/api/")) return true;
+  return pathname === FLEET_SETTINGS_PATH;
+}
+
+/**
+ * The only body shape a settings write may have, read once.
+ *
+ * It answers the two fields rather than narrowing in place, so nothing downstream can reach for a
+ * third: the path this route writes to is resolved at startup and is never the client's to name.
+ */
+function settingsWriteBody(value: JsonValue): { document: string; version: string } | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const { document, version } = value;
+  if (typeof document !== "string" || typeof version !== "string") return null;
+  return { document, version };
+}
+
 export interface GatewayContext {
   readonly peerAddress: string;
 }
@@ -57,6 +80,11 @@ export interface GatewayContext {
 export interface GatewayOptions {
   readonly config: FleetLeadConfig;
   readonly sessions: SessionStore;
+  /**
+   * Fleet's own settings document. Absent leaves the route 404 — the same posture every other
+   * capability this Gateway does not have takes, rather than a half-answered endpoint.
+   */
+  readonly settings?: SettingsStore;
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
   readonly now?: () => number;
@@ -133,7 +161,7 @@ async function currentSession(
 }
 
 export function createGatewayHandler(options: GatewayOptions) {
-  const { config, sessions } = options;
+  const { config, sessions, settings } = options;
   const limiter = options.limiter ?? new LoginRateLimiter(config.auth.rateLimit);
   const fetcher = options.fetcher ?? fetch;
   const now = options.now ?? Date.now;
@@ -219,7 +247,7 @@ export function createGatewayHandler(options: GatewayOptions) {
     if (url.pathname.startsWith("/pack/")) return text("not found\n", 404);
 
     if (session === null) {
-      if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+      if (isApiPath(url.pathname)) {
         return json({ error: "authentication required" }, 401);
       }
       const login = new URL("/auth/login", config.public.origin);
@@ -231,10 +259,50 @@ export function createGatewayHandler(options: GatewayOptions) {
       return text("forbidden\n", 403);
     }
 
+    // FLEET'S OWN SURFACE, above the proxy and below the session gate. It is served here rather than
+    // added to Collie's config endpoint because these settings are not Collie's: nothing under
+    // bridge/ knows this document exists, and this Gateway already owns an authenticated surface.
+    if (url.pathname === FLEET_SETTINGS_PATH) {
+      if (settings === undefined) return json({ error: "not found" }, 404);
+      if (request.method === "GET") {
+        const snapshot = await settings.read();
+        return json(
+          { version: snapshot.version, document: snapshot.text, risky: [...snapshot.settings.risky] },
+          200,
+        );
+      }
+      if (request.method === "PUT") {
+        // The path is this Gateway's own, resolved at startup. A body naming a file would be a
+        // second, client-supplied answer to where settings live, so none is accepted.
+        let body: JsonValue;
+        try {
+          // SAFETY: `Request.json()` answers with exactly a JsonValue by construction; the guard
+          // below is what turns it into the two fields this route accepts.
+          body = (await request.json()) as JsonValue;
+        } catch {
+          return json({ error: "invalid request" }, 400);
+        }
+        const write = settingsWriteBody(body);
+        if (write === null) return json({ error: "invalid request" }, 400);
+        const result = await settings.write(write.document, write.version);
+        if (result.ok) {
+          return json({ version: result.snapshot.version, document: result.snapshot.text, risky: [...result.snapshot.settings.risky] }, 200);
+        }
+        if (result.reason === "conflict") {
+          return json(
+            { error: "conflict", version: result.snapshot.version, document: result.snapshot.text },
+            409,
+          );
+        }
+        return json({ error: "invalid", at: result.rejection.at, message: result.rejection.message }, 422);
+      }
+      return json({ error: "method not allowed" }, 405);
+    }
+
     try {
       return withBaseHeaders(await proxyCollie(request, config, fetcher));
     } catch {
-      return url.pathname === "/api" || url.pathname.startsWith("/api/")
+      return isApiPath(url.pathname)
         ? json({ error: "upstream unavailable" }, 502)
         : text("upstream unavailable\n", 502);
     }

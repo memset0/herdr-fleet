@@ -78,8 +78,9 @@ import type {
 import type { Scope } from "@/lib/scope";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { resizePane } from "@/lib/api";
+import { resizePane, sendKeys } from "@/lib/api";
 import { runManualPaneFit } from "../../../fleet/ui/manual-pane-fit.ts";
+import { useFleetCommandAdapters } from "@/components/fleet-commands";
 
 interface AgentChatProps {
   paneId: string;
@@ -367,6 +368,37 @@ export function AgentChat({
       setManualPaneFitBusy(false);
     }
   }
+
+  /**
+   * DOWNSTREAM PORT — one fixed key sequence, sent through the writer this page already uses.
+   *
+   * It takes a constant chosen by the command's id and never a caller's array, appends nothing, and
+   * retries nothing. The two guards are the same ones the fit above consults, so a command can never
+   * write where a tap could not.
+   */
+  async function sendFixedKeys(keys: string[]): Promise<void> {
+    if (readOnly || hostBlock !== undefined) return;
+    await sendKeys(paneId, keys, scope);
+  }
+
+  // DOWNSTREAM PORT — the Pane-scoped commands, registered for as long as this page is mounted.
+  //
+  // The fit command calls the SAME function the Display dock's own control calls, rather than a
+  // second measurement: one geometry, one busy flag, one result policy. The key commands send a
+  // CONSTANT sequence chosen by the command's id — the id is the whole address, and no caller may
+  // supply a sequence — through the writer this page already uses, so the read-only refusal and the
+  // audit attribution are the ones that were already there.
+  useFleetCommandAdapters({
+    "fit-pane-width": () => fitPaneToMirror(),
+    "send-escape": () => sendFixedKeys(["Escape"]),
+    "send-enter": () => sendFixedKeys(["Enter"]),
+    "send-up-arrow": () => sendFixedKeys(["Up"]),
+    "send-down-arrow": () => sendFixedKeys(["Down"]),
+    "send-left-arrow": () => sendFixedKeys(["Left"]),
+    "send-right-arrow": () => sendFixedKeys(["Right"]),
+    "send-space": () => sendFixedKeys(["Space"]),
+    "send-ctrl-c": () => sendFixedKeys(["ctrl+c"]),
+  });
 
   const gone = !agent;
 
