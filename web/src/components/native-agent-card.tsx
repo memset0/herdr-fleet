@@ -157,11 +157,21 @@ export function NativeAgentCard({
                 bottom: the control first, then the fact. */}
             {/* WHICH MACHINE, in Collie's own chip rather than a second vocabulary for one fact. It
                 hides itself on a solo snapshot (components/host-chip.tsx), so a single-host rail is
-                unchanged; `caption` is its borderless form, which belongs in a line of chrome type
-                rather than a pill dropped into it. */}
+                unchanged.
+                
+                THE PILL, NOT THE BORDERLESS RUN. `caption` is the chip's form for a LINE OF CHROME
+                TYPE — the composer's 14px status band, where a bordered box would read as an object
+                dropped into a sentence. This is a card, and the machine here is the same object
+                Collie's own dashboard row names in the same place: a bordered, filled tag with the
+                host's tint on its glyph. One fact, one look, wherever a card names it.
+                
+                AND THE ROW CENTRES RATHER THAN SHARING A BASELINE. A bordered box's baseline is its
+                own text plus its padding, so on a baseline row the pill sat low and the two runs
+                beside it no longer lined up with it. Both runs here are one size, so centring them
+                changes nothing about their own alignment and puts the tag on their line. */}
             {(doing !== null || stamp !== undefined || agent.host !== undefined) && (
-              <span className="flex min-w-0 items-baseline gap-2 text-[11px] leading-tight text-muted-foreground">
-                <HostChip host={agent.host} variant="caption" className="shrink-0" />
+              <span className="flex min-w-0 items-center gap-2 text-[11px] leading-tight text-muted-foreground">
+                <HostChip host={agent.host} />
                 <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
                 {stamp !== undefined && (
                   <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>
