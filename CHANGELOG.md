@@ -26,6 +26,10 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ## [Unreleased]
 
+- STT releases its admission slot immediately when a recording is cancelled, thanks @en-ver (#163).
+- Labelled terminal rules now fit on a single line across all harnesses, and only the rule glyphs are dimmed, thanks @en-ver (#168).
+- Collie speaks Traditional Chinese, thanks @lekoOwO (#165).
+
 ## [1.5.1] - 2026-09-04
 
 - Docs carry phone screenshots of the update flow. ([23dfb1a](https://github.com/AltanS/collie/commit/23dfb1a))
