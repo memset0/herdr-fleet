@@ -101,14 +101,16 @@ Non-goals:
 
 ## Impact
 
-Collie baseline: upstream `AltanS/collie`, tag `v1.2.0` (tag object
-`0f98f28c9aaadd641c4bc5ac484190ee3ef7008c`, commit `4618c90534d6f818ed6788b8db00e1582c5abfdc`).
+Collie baseline: upstream `AltanS/collie`, tag `v1.5.1` (tag object
+`a326aedc6a44572cea51432545ea5762acc42648`, commit `ba39c05c6350a52bcb0a88f118cd0680ff85a1c5`).
+This change was planned against v1.2.0 and re-verified against v1.5.1 after that release was adopted;
+design.md records what was re-checked and that none of it changed.
 
 Fork-owned, no upstream edit:
 
-- `fleet/` gains the Gateway's terminal route, the session pool and replay buffer, the terminal
-  client that speaks `ttyd`'s framing, the peer terminal service, and the Pane-id resolution that
-  runs beside a real Herdr server.
+- `fleet/` gains the Gateway's terminal route, the bounded grace period and its retained-output
+  window, the terminal client that speaks `ttyd`'s framing, the peer terminal service, and the
+  Pane-id resolution that runs beside a real Herdr server.
 - `web/src/components/` and `web/src/lib/` gain the terminal surface, its instance retention, and the
   global switch's stored preference.
 - `fleet/pack-reachability.ts` and `fleet/config.ts` gain the third projection and its grammar.

@@ -1,6 +1,6 @@
 ## 1. Assertions the design rests on
 
-- [ ] 1.00 Re-verify every statement under design.md's "Re-verify before implementing" against the post-merge tree, and correct design.md where the merge changed one, before starting any other task
+- [x] 1.00 Re-verify every statement under design.md's re-verification list against the post-merge tree, and correct design.md where the merge changed one, before starting any other task
 - [ ] 1.0 Probe the multiplexer's terminal-stream verbs and write the findings into `HERDR_API.md` — frame format, whether cursor state is present, multi-observer semantics, behaviour when the Pane closes, and a version floor — because ADR 0008 records that none of it is verified and names this probe as the precondition for using them
 - [ ] 1.0a Record the ADR 0008 departure in `AGENTS.md` in its short normative form, naming the ADR and stating that the mirror is unchanged and the terminal surface never resizes; do not edit any file under `.adr/`
 - [ ] 1.1 Assert same-origin `wss:` against the app's existing `connect-src 'self'` in a target browser and record the result in design.md; if it is refused, add the one directive to the app's own CSP in `bridge/server.ts`, declare that path in `FORK.toml`, and verify no third-party origin and no `script-src` change was made

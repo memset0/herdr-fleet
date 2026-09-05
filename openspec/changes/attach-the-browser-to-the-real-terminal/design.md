@@ -17,8 +17,11 @@ already provides, for free, the repaint a reconnecting client needs. The single 
 tail worth remembering; the median is not a number that justifies a cache.
 
 **This product has no WebSocket anywhere.** The Gateway proxies with `fetch`, and Collie has no
-WebSocket in `bridge/`, `web/`, or the Pack layer. There is no existing upgrade path, connection
-registry, or backpressure convention to follow.
+WebSocket in `bridge/`, `web/`, or the Pack layer — re-confirmed against Collie 1.5.1, where a
+repository-wide search still returns nothing. There is no existing upgrade path, connection registry,
+or backpressure convention to follow. One detail decides where the route goes: `fleet/proxy.ts` lists
+`upgrade` among the hop-by-hop headers it strips, so the terminal route must be answered *before*
+`proxyCollie` rather than through it.
 
 **A peer's terminal id does not exist on the lead.** `bridge/mux/herdr/adapter.ts` drops
 `WirePane.terminal_id` when it builds `MuxPane`, and Pack forwards the post-adapter model — the field
@@ -258,32 +261,40 @@ output are all live-only.
 Deployment, device enrolment, terminal server acquisition, and the previous generation's retirement
 belong to the consuming repository and are not part of this change.
 
-## Re-verify before implementing: this plan predates an upstream merge
+## Re-verified against Collie 1.5.1
 
-This change is deliberately held at planning while a Collie upstream merge is done first. Every
-statement in Context was read or measured against **fork commit `8e88495`**, corresponding to Collie
-`v1.2.0` (`4618c90534d6f818ed6788b8db00e1582c5abfdc`). A merge can invalidate any of them silently —
-nothing here fails loudly if an upstream file moved — so re-check this list before task 1.0, and
-correct this document where it is now wrong rather than working around it:
+This change was held at planning while the upstream merge was done first. That merge has landed:
+`FORK.toml` and `UPSTREAM.md` now record Collie **v1.5.1** (tag object `a326aedc`, commit
+`ba39c05c`), adopted through the repository's own `fleet-upstream-sync` procedure. Every statement in
+Context was originally read against v1.2.0, three minor releases earlier, so the whole list was run
+again on 2026-09-05 against the merged tree. **All of it held**, and none of the design changed as a
+result:
 
-- **`web/src/router.tsx` is claimed by no `FORK.toml` entry.** The whole port rests on this. If the
-  merge gives that file an entry, or restructures the pane route's `element`/`loader` pairing, the
-  wrapper decision needs re-making rather than re-applying.
-- **`web/src/routes/root.tsx` dates the connection bar through `useRouteLoaderData(PANE_ROUTE_ID)`,
-  and `shownLastSeenAt` branches on `pane.error`.** The stub loader is shaped to that branch.
-- **`bridge/mux/herdr/adapter.ts` drops `WirePane.terminal_id`, and `bridge/pack/` carries it only in
-  `fake-herdr.ts`.** If a merge carries the field through, the peer-side service is no longer forced
-  and `fleet-peer-terminal-service` should be reconsidered before it is built.
-- **`fleet/pack-reachability.ts` publishes exactly two projections, pinned by a test.** The third
-  projection's delta is written against that exact shape.
-- **`bridge/server.ts`'s CSP is `default-src 'self'; connect-src 'self'` with no `frame-src`.**
-- **`web/src/components/agent-chat.tsx` carries five ports under `native-manual-pane-fit-port`**, which
-  is the reason the wrapper was chosen over a branch there. A merge that changes that count does not
-  change the decision, but the design's stated reason should match the tree.
-- **The multiplexer measurements** — `attach` raw vs `observe`/`control` JSON, geometry following
-  `SIGWINCH` and reverting on exit, attach latency and repaint size — are properties of the
-  multiplexer, not of Collie, so a Collie merge does not touch them. A multiplexer upgrade does;
-  task 1.0's probe is where they get re-established either way.
+- **`web/src/router.tsx` is still claimed by no `FORK.toml` entry.** The whole port rests on this.
+  The file did gain an upstream route (`settings/updates`), and the pane route's
+  `{ id, path, loader, element }` shape is unchanged, so the swap lands exactly where it was planned.
+- **`web/src/routes/root.tsx` still dates the connection bar through
+  `useRouteLoaderData(PANE_ROUTE_ID)`, and `shownLastSeenAt` still branches on `pane.error`** — the
+  branch the stub loader is shaped to. The file changed around it (`usePolling` now returns the
+  cadence, and the update banner became `UpdateRibbon`); neither touches this.
+- **`bridge/mux/herdr/adapter.ts` still drops `WirePane.terminal_id`, and `bridge/pack/` still carries
+  it only in the `fake-herdr.ts` stub.** The adapter was not touched by the merge at all. The
+  peer-side service therefore remains forced rather than chosen.
+- **`fleet/pack-reachability.ts` still publishes exactly two projections**, and its specification
+  still says so.
+- **`bridge/server.ts`'s CSP is unchanged**: `default-src 'self'; connect-src 'self'`, no `frame-src`.
+- **`web/src/components/agent-chat.tsx` still carries five ports under `native-manual-pane-fit-port`**,
+  which is why the wrapper was chosen over a branch there.
+- **`web/package.json` has gained no terminal renderer**, so that dependency is still this change's to
+  add.
+
+The multiplexer measurements were never Collie's to invalidate, and are unchanged.
+
+One thing the merge did add that this change must now respect: adopting an upstream release is a
+written procedure of its own (`openspec/specs/fleet-upstream-sync/spec.md`, with a
+`bun scripts/check-fork.ts --target <tag>` preflight that reports every port a release disturbs).
+This change adds one invasive path, so the next adoption will report it; its entry must carry a
+reason good enough to review at that moment, not just at this one.
 
 ## Open Questions
 
