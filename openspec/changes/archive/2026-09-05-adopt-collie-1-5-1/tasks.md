@@ -67,5 +67,5 @@
 - [x] 6.2 Run the suites the adoption can reach — `bun test ./fleet`, `bun test ./cli`, the
   `scripts/` test files, and `cd web && bun run test` — and verify they pass; report any suite that
   cannot complete in this checkout, with whether it did so before the merge
-- [ ] 6.3 Commit the merge with both parents, verify `git log -1 --format=%P` names HEAD's old commit
+- [x] 6.3 Commit the merge with both parents, verify `git log -1 --format=%P` names HEAD's old commit
   and `ba39c05c6350a52bcb0a88f118cd0680ff85a1c5`, then push the branch by name with no tag switches
