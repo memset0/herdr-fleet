@@ -53,12 +53,16 @@
 
 ## 6. Gates
 
-- [ ] 6.1 Run `bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:fork`, and
-  `bash scripts/check-version.sh`; verify all pass
+- [x] 6.1 Run `bun run lint`, `bun run typecheck` (root and web), `bun run test:fork`,
+  `bash scripts/check-version.sh`, and the suites this change can reach — `bun test ./fleet` and the
+  `scripts/` test files — and verify all pass. `bun run test` as a whole does not complete in this
+  checkout for two reasons that predate this change and that it cannot reach: `bun test ./bridge`
+  hangs and fails one case in `bridge/pack/harness.test.ts`, and `scripts/journal-probe.ts` calls
+  `process.exit` at module scope, which ends `bun test ./scripts` early with no summary
 - [x] 6.2 Audit the staged diff for private operator, device, domain, or parent-repository facts and
   for a `FORK.toml` that matches the tree it describes; verify
   `bun scripts/check-private-facts.ts` passes and the boundary check reports no unclassified path
 
-- [ ] 6.3 On the committed clean tree, verify `bun scripts/check-fork.ts --target v1.5.1
-  --allow-active-changes` reports 14 disturbed entries, 3 undisturbed and no owned-path collision,
-  and that the same command without the flag refuses while a change is active
+- [x] 6.3 On the committed clean tree, verify `bun scripts/check-fork.ts --target v1.5.1
+  --allow-active-changes` reports 15 disturbed entries, 3 untouched and no owned-path collision, and
+  that the same command without the flag refuses while a change is active

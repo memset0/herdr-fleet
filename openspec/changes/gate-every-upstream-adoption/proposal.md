@@ -2,7 +2,7 @@
 
 This repository describes its fork boundary but has never written down how a newer Collie release is
 adopted. The tree was reapplied from Collie `v1.2.0` (commit `4618c905`) and has stayed there, and
-the first adoption since is now due — one that touches 14 of the 17 invasive entries.
+the first adoption since is now due — one that touches 15 of the 17 invasive entries.
 
 Three things are missing, and each is a way the adoption can go wrong quietly:
 
