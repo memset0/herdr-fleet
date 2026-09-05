@@ -49,8 +49,8 @@ export type ComposerFocusMode =
   /** Always the end: the draft it was in is not the draft on screen any more. */
   | "end";
 
-function composerInput(): HTMLTextAreaElement | null {
-  return document.querySelector<HTMLTextAreaElement>(COMPOSER);
+function composerInput(doc: Document): HTMLTextAreaElement | null {
+  return doc.querySelector<HTMLTextAreaElement>(COMPOSER);
 }
 
 /**
@@ -60,7 +60,7 @@ function composerInput(): HTMLTextAreaElement | null {
  * purpose: both mean the operator was not writing, and both end at the end of the field.
  */
 export function captureComposerCaret(): ComposerCaret | null {
-  const input = composerInput();
+  const input = composerInput(document);
   if (input === null || document.activeElement !== input) return null;
   return { start: input.selectionStart, end: input.selectionEnd };
 }
@@ -75,6 +75,11 @@ export function returnFocusToComposer(
   caret: ComposerCaret | null,
   mode: ComposerFocusMode,
 ): () => void {
+  // THE DOCUMENT IS CAPTURED, not looked up on each tick. A return is scheduled for the page it was
+  // scheduled on, and a pending tick must not reach for whatever `document` means when it fires —
+  // which, in a test environment torn down between files, is nothing at all. Holding the object is
+  // both the narrower meaning and the one that cannot throw.
+  const doc = document;
   const deadline = Date.now() + SETTLE_MS;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -85,12 +90,12 @@ export function returnFocusToComposer(
 
   const tick = () => {
     timer = null;
-    if (document.querySelector(PANEL) !== null) return;
+    if (doc.querySelector(PANEL) !== null) return;
 
-    const input = composerInput();
+    const input = composerInput(doc);
     // `disabled` is a gone pane, a read-only pane or the idle pause. Focusing it does nothing, so
     // keep waiting instead of spending the one attempt on a field that cannot take the caret.
-    if (input !== null && !input.disabled && document.activeElement !== input) {
+    if (input !== null && !input.disabled && doc.activeElement !== input) {
       input.focus();
       const at =
         mode === "restore" && caret !== null
