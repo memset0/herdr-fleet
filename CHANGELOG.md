@@ -18,6 +18,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- The caret return holds the page it was scheduled on, so a pending return can never reach for a document that has gone.
+
 ## [3.0.2] - 2026-09-05
 
 ### Changed
