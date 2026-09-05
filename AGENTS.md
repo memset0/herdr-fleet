@@ -137,6 +137,33 @@ the number after it. Two agents that both bumped from the same local view produc
 claiming one version, and the second one to push has to be rewritten. The files can also sit behind a
 tag another agent pushed minutes ago.
 
+**Members run tags; the lead runs commits.** Development happens on the lead, where the operator is,
+and it deploys whatever commit is being worked on. Every other member installs a released tag and
+nothing else, so its version is a point on a line both ends can compare. A member is never asked to
+run an untagged commit.
+
+**A patch obliges no member, and a member is never "outdated" for one.** A patch is a change whose
+reach is the browser: the bundle a member does not serve, because a member serves no browser at all.
+So a member on `3.1.0` beside a lead on `3.1.4` is level, not behind, and any surface that compares
+versions compares `major.minor` — a member that levelled its checkout for a patch would report the
+old version anyway, because the version on the wire is read once at process start
+(`bridge/index.ts` composes `packVersion` at module load). Do not spend a member's restart on a
+release that cannot change what it runs.
+
+**A minor is the whole flow, and it starts on the lead.** A change that needs the backend restarted
+is developed on the lead with both halves finished and running there, then cut as a minor, and only
+then do the other members pull and deploy it. That order is the point: the machine the operator can
+watch proves the change before any machine they cannot.
+
+**Where the change's archive sits relative to the release is a judgement call.** Some work is
+finished when the lead's tests pass and can be archived before the release is cut. Some is only
+finished once the members have run it, and its archive waits for that. Decide per change, and say
+which you chose.
+
+**A problem found after the members deploy is answered with another minor.** A released tag is not
+edited, re-cut or quietly replaced; the fix is the next release, and the notes say what the previous
+one got wrong.
+
 **Assess every verified change against that axis in the turn that finished it**, not when someone
 next remembers. A change that has passed its gates either warrants a release now or it does not, and
 that answer is part of finishing it. Unreleased lines piling up behind an assessment nobody made is
