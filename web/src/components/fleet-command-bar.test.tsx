@@ -61,6 +61,8 @@ function namedRoster(): PaneRoster {
 const ROWS = [
   row("open-fleet-settings", ["Prefix+S"], ["Ctrl+B S"]),
   row("next-tab", ["Prefix+N"], ["Ctrl+B N"]),
+  row("fit-pane-width", ["Prefix+R"], ["Ctrl+B R"]),
+  // LAST, and a test below depends on it: the unbound row is the one that must show "No binding".
   row("toggle-type-mode"),
 ];
 
@@ -254,5 +256,21 @@ describe("finding a Pane by any of the four facts that name it", () => {
     const matched = options(view.container)[0];
     expect(matched?.textContent).toContain("zephyr");
     view.unmount();
+  });
+});
+
+
+describe("finding a command by the word an operator uses for it", () => {
+  it("finds the resize command by typing resize", async () => {
+    // It shipped as `Fit Current Pane Width`, which describes the mechanism. The operator searched
+    // for `resize` and found nothing — there is not even an `s` in the old name or in the id, so no
+    // amount of fuzziness could have reached it. The name is what a palette is searched by.
+    const user = userEvent.setup();
+    const view = setup("command");
+    const input = within(view.container).getByRole<HTMLInputElement>("combobox");
+    await user.type(input, "resize");
+    const rows = options(view.container);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("Resize Pane");
   });
 });

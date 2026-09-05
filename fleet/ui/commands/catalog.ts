@@ -125,7 +125,7 @@ const DEFINITIONS: readonly CommandDefinition[] = [
   { id: "previous-pane-in-tab", name: "Previous Pane in Tab", scope: "tab", defaults: ["Prefix+Shift+Tab"] },
   { id: "close-pane", name: "Close Pane", scope: "pane", defaults: ["Prefix+X"] },
   { id: "rename-pane", name: "Rename Pane", scope: "pane", defaults: ["Prefix+Shift+P"] },
-  { id: "fit-pane-width", name: "Fit Current Pane Width", scope: "pane", defaults: ["Prefix+R"] },
+  { id: "fit-pane-width", name: "Resize Pane", scope: "pane", defaults: ["Prefix+R"] },
 
   // The whole-hierarchy walk and the roster walk. Both shipped on `Alt` once; neither ships bound
   // now, because no `Alt` chord is a default any more and moving them behind the prefix would be

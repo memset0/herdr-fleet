@@ -18,6 +18,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- The pane-resize command is called `Resize Pane`, not `Fit Current Pane Width` — the palette is searched by the word you use, and `resize` used to find nothing.
+
 ### Fixed
 
 - The caret return holds the page it was scheduled on, so a pending return can never reach for a document that has gone.

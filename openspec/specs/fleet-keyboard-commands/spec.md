@@ -169,6 +169,10 @@ The catalog SHALL contain exactly the following stable ids, English names and pu
 bindings, where `Prefix` resolves to the configured prefix. A command shown with `[]` SHALL ship
 unbound while remaining listed, searchable and bindable.
 
+A command's English name SHALL name the OUTCOME an operator is after rather than the mechanism that
+produces it. The name is the string command search matches on, so a name that describes the mechanism
+makes the command unfindable by the word the operator would use for it.
+
 | Command id | English name | Public default |
 | --- | --- | --- |
 | `open-command-bar` | Open Command Bar | `Ctrl+Shift+P`, `Prefix+?` |
@@ -183,7 +187,7 @@ unbound while remaining listed, searchable and bindable.
 | `next-pane-in-tab` / `previous-pane-in-tab` | Next Pane in Tab / Previous Pane in Tab | `Prefix+Tab` / `Prefix+Shift+Tab` |
 | `close-pane` | Close Pane | `Prefix+X` |
 | `rename-pane` | Rename Pane | `Prefix+Shift+P` |
-| `fit-pane-width` | Fit Current Pane Width | `Prefix+R` |
+| `fit-pane-width` | Resize Pane | `Prefix+R` |
 | `previous-pane` / `next-pane` | Previous Pane in Fleet / Next Pane in Fleet | `[]` |
 | `last-pane` | Last Pane | `[]` |
 | `previous-agent` / `next-agent` | Previous Agent / Next Agent | `[]` |
@@ -212,6 +216,10 @@ reach the operator through the command bar or through their own configuration.
 #### Scenario: A default-unbound command is reached
 - **WHEN** the operator searches the command bar for a command whose default is `[]`
 - **THEN** it appears with its English name and an explicit "no binding" label, and activating it runs the command
+
+#### Scenario: A command is searched for by its outcome
+- **WHEN** the operator searches command mode for `resize`
+- **THEN** `fit-pane-width` is listed, under the English name `Resize Pane`
 
 ### Requirement: Navigation commands resolve against the current topology
 Space, Tab, Pane and Agent commands SHALL resolve their target from the validated topology at the

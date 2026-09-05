@@ -119,7 +119,7 @@ describe("the keyboard layer", () => {
     setup({ "fit-pane-width": vi.fn() });
     await user.keyboard("{Control>}b{/Control}");
     await user.keyboard("r");
-    expect(setStatus).toHaveBeenCalledWith("Ctrl+B R · Fit Current Pane Width", "success");
+    expect(setStatus).toHaveBeenCalledWith("Ctrl+B R · Resize Pane", "success");
   });
 
   it("says nothing at all for a command whose whole effect is the navigation asked for", async () => {
@@ -137,7 +137,7 @@ describe("the keyboard layer", () => {
     await user.keyboard("{Control>}b{/Control}");
     await user.keyboard("r");
     expect(fit).not.toHaveBeenCalled();
-    expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Fit Current Pane Width"), "warn");
+    expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Resize Pane"), "warn");
   });
 
   it("refuses a command no surface has registered", async () => {
@@ -145,7 +145,7 @@ describe("the keyboard layer", () => {
     setup({});
     await user.keyboard("{Control>}b{/Control}");
     await user.keyboard("r");
-    expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Fit Current Pane Width"), "warn");
+    expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Resize Pane"), "warn");
   });
 
   it("ignores auto-repeat so a held key runs a command once", async () => {
@@ -221,7 +221,7 @@ describe("adapters a mounted surface registers", () => {
     await user.keyboard("{Control>}b{/Control}");
     await user.keyboard("r");
     expect(fit).not.toHaveBeenCalled();
-    expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Fit Current Pane Width"), "warn");
+    expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Resize Pane"), "warn");
   });
 });
 
