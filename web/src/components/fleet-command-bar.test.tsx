@@ -237,24 +237,44 @@ describe("finding a Pane by any of the four facts that name it", () => {
     view.unmount();
   });
 
-  it("shows the fact it matched on, in the one slot the row already had", async () => {
-    const user = userEvent.setup();
-    // Matched on the Tab, which the row does not normally show — so the row shows the Tab instead of
-    // the Space. Same element, same width: the operator can see WHY the row is in the list.
-    const { view, input } = search();
-    await user.type(input, "quicksand");
-    const matched = options(view.container)[0];
-    expect(matched?.textContent).toContain("quicksand");
-    expect(matched?.textContent).not.toContain("zephyr");
+  it("shows the whole address, unfiltered", async () => {
+    // The slot does NOT switch on what matched. It is `tab · space · host`, always, so the operator
+    // reads where every Pane is rather than only where the matched ones are.
+    const { view } = search();
+    expect(options(view.container)[0]?.textContent).toContain("quicksand · zephyr · orinoco");
     view.unmount();
   });
 
-  it("shows the Space when the match was the Pane's own name", async () => {
+  it.each([
+    ["the Tab", "quicksand"],
+    ["the Space", "zephyr"],
+    ["the host", "orinoco"],
+  ])("marks the part of the address that matched — %s", async (_what, typed) => {
+    const user = userEvent.setup();
+    const { view, input } = search();
+    await user.type(input, typed);
+    const listed = options(view.container)[0];
+    expect(listed?.textContent).toContain("quicksand · zephyr · orinoco");
+    // The offsets are the whole point: a match's positions are in ITS field's coordinates and have
+    // to be shifted into the joined string's, or the marks land on the wrong characters.
+    const marks = Array.from(listed?.querySelectorAll("span.font-semibold") ?? [])
+      .map((span) => span.textContent)
+      .join("");
+    expect(marks).toBe(typed);
+    view.unmount();
+  });
+
+  it("leaves the address unmarked when the match was the Pane's own name", async () => {
     const user = userEvent.setup();
     const { view, input } = search();
     await user.type(input, "alpha");
-    const matched = options(view.container)[0];
-    expect(matched?.textContent).toContain("zephyr");
+    const listed = options(view.container)[0];
+    expect(listed?.textContent).toContain("quicksand · zephyr · orinoco");
+    const marks = Array.from(listed?.querySelectorAll("span.font-semibold") ?? [])
+      .map((span) => span.textContent)
+      .join("");
+    // The marks belong to the label, which is where the match was.
+    expect(marks).toBe("alpha");
     view.unmount();
   });
 });

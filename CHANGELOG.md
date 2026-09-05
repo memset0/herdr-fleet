@@ -20,6 +20,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Changed
 
+- A pane row in the switcher shows its whole address — `tab · space`, plus the host where there is one — instead of swapping the slot's meaning depending on what the query matched; the marks land on whichever part matched.
 - The pane-resize command is called `Resize Pane`, not `Fit Current Pane Width` — the palette is searched by the word you use, and `resize` used to find nothing.
 
 ### Fixed

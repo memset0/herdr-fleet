@@ -67,10 +67,15 @@ its Pane — the Pane's own name, the Space it is in, the Tab it sits in, and th
 hit on any one of them SHALL list the row. A fact the Pane does not carry SHALL match nothing rather
 than matching everything.
 
-A row SHALL show one line of context beside its name, and SHALL use that one slot to say which fact
-the query matched: a match on the Tab or on the host SHALL be shown there in place of the Space, with
-the matched characters marked. The slot SHALL NOT appear, disappear or change size as a result, so
-filtering never moves the row's contents.
+A row SHALL show the Pane's ADDRESS beside its name, and SHALL show it whether or not the query
+matched: the Tab, the Space, and the host where there is one, in that order, joined by a separator. A
+part the Pane does not carry SHALL be absent rather than blank. The address SHALL NOT change with the
+query — it is what the row says about where it lives, not an answer to what was typed.
+
+The characters a query matched SHALL be marked wherever they fall. A match in the Tab, the Space or
+the host SHALL be marked in that part of the address; a match in the Pane's own name SHALL be marked
+in the name and SHALL leave the address plain. Marking SHALL NOT appear, disappear or change the
+row's size.
 
 Activating a row SHALL navigate to that exact Pane through Fleet's canonical route. A row whose Pane
 the topology has since removed SHALL remain listed, SHALL be shown as unavailable, and SHALL make no
@@ -94,15 +99,19 @@ route change when activated.
 
 #### Scenario: The operator remembers the machine, not the Pane
 - **WHEN** the operator types the name of the host a Pane is on
-- **THEN** that Pane's row is listed, and it shows the host in its context slot with the match marked
+- **THEN** that Pane's row is listed, and the host part of its address carries the marks
 
 #### Scenario: The operator remembers the Tab
 - **WHEN** the operator types the name of the Tab a Pane sits in
-- **THEN** that Pane's row is listed, and it shows the Tab in its context slot in place of the Space
+- **THEN** that Pane's row is listed, and the Tab part of its address carries the marks
 
 #### Scenario: The match was the Pane's own name
 - **WHEN** the operator types the Pane's own name
-- **THEN** the name carries the marks and the context slot shows the Space, as it does unfiltered
+- **THEN** the name carries the marks and the address is shown plain
+
+#### Scenario: A row is read with no query at all
+- **WHEN** the overlay is opened and nothing has been typed
+- **THEN** every row already shows its full address, unmarked
 
 ### Requirement: The overlay is a top-anchored quick-input panel, not a sheet
 The command bar SHALL present as one raised panel anchored near the top of the viewport and centred
