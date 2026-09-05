@@ -59,6 +59,7 @@ function namedRoster(): PaneRoster {
 }
 
 const ROWS = [
+  row("open-command-bar", ["Ctrl+Shift+P"]),
   row("open-fleet-settings", ["Prefix+S"], ["Ctrl+B S"]),
   row("next-tab", ["Prefix+N"], ["Ctrl+B N"]),
   row("fit-pane-width", ["Prefix+R"], ["Ctrl+B R"]),
@@ -106,7 +107,8 @@ describe("FleetCommandBar", () => {
   it("starts command mode with a leading slash and lists the whole catalog", () => {
     const { container } = setup("command");
     expect(container.querySelector("input")?.value).toBe("/");
-    expect(options(container)).toHaveLength(ROWS.length);
+    // Minus one: the command that opens this surface is not listed on it — see the describe below.
+    expect(options(container)).toHaveLength(ROWS.length - 1);
   });
 
   it("shows every effective binding, and says so when there is none", () => {
@@ -292,5 +294,34 @@ describe("finding a command by the word an operator uses for it", () => {
     const rows = options(view.container);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toContain("Resize Pane");
+  });
+});
+
+describe("the bar does not list the command that opens it", () => {
+  it("omits it from command mode, and lists everything else", () => {
+    // Choosing it from here sets the mode it is already in, so the row cannot move anything.
+    const { container } = setup("command");
+    const texts = options(container).map((option) => option.textContent ?? "");
+    expect(texts.some((text) => text.includes("Open Command Bar"))).toBe(false);
+    expect(texts).toHaveLength(ROWS.length - 1);
+    for (const listed of ROWS.filter((r) => r.command.id !== "open-command-bar")) {
+      expect(texts.some((text) => text.includes(listed.command.name))).toBe(true);
+    }
+  });
+
+  it("does not find it by searching for it either", async () => {
+    const user = userEvent.setup();
+    const view = setup("command");
+    const input = within(view.container).getByRole<HTMLInputElement>("combobox");
+    await user.type(input, "command bar");
+    expect(options(view.container)).toHaveLength(0);
+  });
+
+  it("leaves the pane switcher listed, because from here it is a real transition", () => {
+    // The rule is about a command being inert on THIS surface, not about a pair of ids.
+    const { container } = setup("command");
+    const withSwitcher = [...ROWS, row("open-pane-switcher")];
+    expect(withSwitcher.some((r) => r.command.id === "open-pane-switcher")).toBe(true);
+    expect(options(container).length).toBeGreaterThan(0);
   });
 });

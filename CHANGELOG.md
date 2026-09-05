@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- The command palette no longer lists `Open Command Bar` — choosing it from the palette set the mode it was already in and did nothing. It stays bound and stays in the settings reference.
+
 ## [3.2.0] - 2026-09-05
 
 ### Added
