@@ -1091,13 +1091,19 @@ export function AgentChat({
       {/* `max-w-[100dvw]` is the phone bound and it stays: a mirror line wider than the screen used
           to blow the viewport out sideways and let the whole page pan (85f777b, "viewport blowout").
 
-          DOWNSTREAM PORT — and what is NOT here is the port. Upstream (28255ae) adds
-          `md:max-w-screen-md mx-auto` to centre this box at 768px above the phone breakpoint, because
-          on a 1366px iPad an ~620px mirror left half the screen empty beside a full-width header and
-          composer. That emptiness is upstream's, not ours: this fork spends exactly that space on the
-          two navigation rails, so the cap would apply a SECOND time inside a column the shell has
-          already bounded, and would take width from the mirror rather than from nothing. The rails
-          are the answer to the problem the cap solves. See fleet-native-navigation-sidebars. */}
+          DOWNSTREAM PORT — and what is NOT here is the port. Upstream caps this box and centres it:
+          28255ae at a flat 768px, and 3870c1c as a ladder that grows to 1024, 1280 and 1400px,
+          because on a wide screen an ~620px mirror left the rest of the window empty beside a
+          full-width header and composer. That emptiness is upstream's, not ours: this fork spends
+          exactly that space on the two navigation rails, so any cap applies a SECOND time inside a
+          column the shell has already bounded, and takes width from the mirror rather than from
+          nothing. The ladder makes upstream's own case for that — every pixel a cap withholds is a
+          mirror line the browser has to wrap — and it is the case for having no cap here at all. The
+          rails are the answer to the problem the cap solves. See fleet-native-navigation-sidebars.
+
+          The header agrees by making no `wide` claim, so both run the route column's full width;
+          upstream's warning that the two must carry the identical ladder is satisfied by neither
+          carrying one. */}
       <div className="flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col overflow-x-hidden">
         {/* Header — this route's contribution to the ONE header shell, which is mounted above the
             outlet in RootLayout and is the same element on every screen (so the Collie mark is not

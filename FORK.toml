@@ -2,9 +2,9 @@ schema_version = 2
 
 [upstream]
 url = "https://github.com/AltanS/collie.git"
-tag = "v1.5.1"
-tag_object = "a326aedc6a44572cea51432545ea5762acc42648"
-commit = "ba39c05c6350a52bcb0a88f118cd0680ff85a1c5"
+tag = "v1.5.2"
+tag_object = "38798351a64cae43c03f156c0b80f22f14d50565"
+commit = "cea2035e1f02d560d1bac66c85314828a7e01c20"
 
 [[owned]]
 id = "development-workflow"
@@ -151,7 +151,7 @@ id = "native-row-actions-menu-port"
 intent = "Let a pointer's context gesture answer a row's actions with the fork's own context menu, while a touch keeps Collie's bottom sheet exactly as upstream wrote it."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "web/src/components/pane-strip.tsx#FleetPaneActions",
   "web/src/components/tab-strip.tsx#FleetTabActions"
@@ -172,7 +172,7 @@ id = "unnarrowed-pack-rows-port"
 intent = "Let a navigator that presents the WHOLE pack read the rows the lead merged, without changing the narrowed lists every view of one machine already reads."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "web/src/lib/loaders.ts#allWorkspaces?: WorkspaceView[]"
 ]
@@ -188,7 +188,7 @@ id = "repository-guidance"
 intent = "Make downstream instructions canonical and exclude machine-local Fleet configuration."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   ".gitignore#/fleet.toml",
   "AGENTS.md#Repository-specific OpenSpec and Git Workflow Requirements",
@@ -202,7 +202,7 @@ id = "fake-network-fleet-routes"
 intent = "Teach the shared MSW handlers about Fleet's own authenticated route."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = ["web/src/test/handlers.ts#/fleet/api/settings"]
 verify = ["web/src/routes/settings.test.tsx", "web/src/playground/app.test.tsx"]
 reason = "The app now has one endpoint Collie does not, and the shared fake network is where every suite learns what the network answers. The handler returns 404 — exactly what a Collie with no Fleet Gateway in front of it answers — so Collie's own suites keep rendering Settings unchanged and the fork's editor simply does not appear. Without it the route's one fetch never settles under MSW and every render of Settings warns about an unhandled request."
@@ -212,7 +212,7 @@ id = "lint-parse-boundary"
 intent = "Register the fork's own JSON parse boundary in the linter's existing boundary override."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [".oxlintrc.json#fleet/settings/document.ts"]
 verify = ["fleet/settings/document.test.ts", "fleet/settings/gateway-settings.test.ts"]
 reason = "ADR 0019 makes a finding fixable in code and never suppressible, and names one override class for files that ARE the I/O boundary the `no-runtime-typeof` rule tells you to parse at. The fork's settings document is that class a fourth time — one reader of an operator-authored JSON file, the Gateway route that replaces it, and that route's answer read back in the browser — so the three files join the existing list rather than carrying a disable comment. No rule is added, removed, or downgraded."
@@ -222,7 +222,7 @@ id = "plugin-identity"
 intent = "Expose the downstream identity, Herdr-owned lifecycle, and inherited native operator actions while retaining Collie provenance."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = ["herdr-plugin.toml#memset0.herdr-fleet"]
 verify = ["herdr-plugin.toml", "UPSTREAM.md", "fleet/lifecycle.test.ts"]
 reason = "Herdr reads plugin identity, build steps, and actions only from the upstream manifest path."
@@ -232,7 +232,7 @@ id = "downstream-version-line"
 intent = "Carry this product's own version and its own release history in the files upstream's version gate reads."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "CHANGELOG.md#private Fleet configuration",
   "web/package.json#version"
@@ -245,7 +245,7 @@ id = "fleet-build-port"
 intent = "Include fork-owned Fleet modules in existing root test and typecheck gates."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = ["package.json#./fleet", "tsconfig.json#\"fleet\""]
 verify = ["fleet/config.test.ts", "fleet/collie-env.test.ts"]
 reason = "The upstream root package and TypeScript configuration own the repository-wide verification entrypoints."
@@ -255,7 +255,7 @@ id = "native-agent-favorites-port"
 intent = "Expose fork-owned browser-local favorites through Collie's native Agent list and card."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "web/src/components/agent-list.tsx#agentFavoriteStore",
   "web/src/components/agent-list.test.tsx#browser-local favorites",
@@ -267,7 +267,8 @@ paths = [
   "web/src/lib/i18n/messages/es.ts#home.favorite.add",
   "web/src/lib/i18n/messages/ja.ts#home.favorite.add",
   "web/src/lib/i18n/messages/ko.ts#home.favorite.add",
-  "web/src/lib/i18n/messages/zh.ts#home.favorite.add"
+  "web/src/lib/i18n/messages/zh.ts#home.favorite.add",
+  "web/src/lib/i18n/messages/zh-TW.ts#home.favorite.add"
 ]
 verify = [
   "fleet/ui/agent-favorites.test.ts",
@@ -283,7 +284,7 @@ id = "authenticated-navigation-cache"
 intent = "Require a fresh Gateway decision before every document navigation."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = ["web/src/sw.ts#Authenticated app-shell boundary"]
 verify = ["fleet/sw-boundary.test.ts", "web/src/lib/sw-routes.test.ts"]
 reason = "The upstream service worker owns the app-shell navigation order and is the only place an authenticated document cache can be bypassed."
@@ -293,7 +294,7 @@ id = "native-manual-pane-fit-port"
 intent = "Expose one explicit Herdr-only Pane fit through Collie's native Display Settings and protected Pane lifecycle."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "bridge/index.ts#manualPaneFit",
   "bridge/mux/capabilities.ts#resizePane",
@@ -333,27 +334,27 @@ verify = [
   "web/src/lib/mux-capability.test.ts",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. It also carries the one relaxation of the app's Content-Security-Policy: the fetched CJK fallback (native-webfont-port) needs its provider origin in style-src and font-src, and script-src and connect-src are deliberately untouched, so that origin can serve no code and the app can open no channel to it. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry. It carries a third for the same reason: the Pane screen's state badge in the strip row's existing trailing slot, the composer's status-word switch and its named dock, and the control row's one-rank layout (native-pane-chrome-port). It carries a FOURTH: the Pane-scoped keyboard commands (drive-the-fleet-from-the-keyboard) register through one hook on each of these two files and add no logic to either — the Pane page hands over the fit function its own Display control already calls plus one fixed-key sender guarded by the same read-only and unreachable-host checks, and the composer hands over the exact activate/deactivate pair behind its visible Type control, so there is one armed state and one cleanup path rather than a second mode. It carries a FIFTH, in the composer alone (split-the-composer-record-and-send-buttons): the draft row's record control is lifted out of the trailing slot and stood beside Send, so the microphone no longer depends on the box being empty and a draft can be dictated in turns rather than once. This one REVERSES an upstream decision — abdbf45 collapsed the two into one slot to buy the field a button's width, on the reasoning that nobody dictates a clause into a sentence they typed by hand — and a sync that resolves this hunk toward upstream restores the one-clip-per-message limit rather than a layout preference, so resolve it toward the fork and let composer-voice-rank-port's suite decide. No logic moves into the file: the control reuses the recorder hook, the capability predicate and the labels already there, and the two refusals it adds to Send are the ones the shared slot used to get for free by not existing during a clip or on an empty box. It carries a SIXTH, and this one is a REFUSAL rather than an addition (decline-the-centred-pane-column): upstream 28255ae centres this route at 768px above the phone breakpoint and claims a matching `wide` header, because on a 1366px iPad an ~620px mirror left half the screen empty beside a full-width header and composer. That emptiness is upstream's and not ours — this fork spends exactly that space on its two navigation rails — so the cap would apply a second time inside a column the shell has already bounded and would take width from the mirror rather than from nothing. The wrapper therefore keeps the phone bound alone and the route makes no width claim, which is upstream's own default. The `wide` option stays where upstream put it, unclaimed: declining to use an option is narrower than deleting it. This entry exists so that a later release touching these lines is REPORTED by the adoption preflight rather than inherited, which is exactly how the cap arrived."
+reason = "Collie's capability, Pane state, route, lifecycle, API, and native Display surfaces expose only typed ports; geometry, validation, controller ownership, and result policy remain under fleet/. It also carries the one relaxation of the app's Content-Security-Policy: the fetched CJK fallback (native-webfont-port) needs its provider origin in style-src and font-src, and script-src and connect-src are deliberately untouched, so that origin can serve no code and the app can open no channel to it. This entry also carries the Pane page's second downstream port — the native navigation shell reads the switcher sheet's content through one hook and stands its entry down at the rails' breakpoint (native-navigation-sidebars-port) — because the manifest attributes web/src/components/agent-chat.tsx and its test to exactly one entry. It carries a third for the same reason: the Pane screen's state badge in the strip row's existing trailing slot, the composer's status-word switch and its named dock, and the control row's one-rank layout (native-pane-chrome-port). It carries a FOURTH: the Pane-scoped keyboard commands (drive-the-fleet-from-the-keyboard) register through one hook on each of these two files and add no logic to either — the Pane page hands over the fit function its own Display control already calls plus one fixed-key sender guarded by the same read-only and unreachable-host checks, and the composer hands over the exact activate/deactivate pair behind its visible Type control, so there is one armed state and one cleanup path rather than a second mode. It carries a FIFTH, in the composer alone (split-the-composer-record-and-send-buttons): the draft row's record control is lifted out of the trailing slot and stood beside Send, so the microphone no longer depends on the box being empty and a draft can be dictated in turns rather than once. This one REVERSES an upstream decision — abdbf45 collapsed the two into one slot to buy the field a button's width, on the reasoning that nobody dictates a clause into a sentence they typed by hand — and a sync that resolves this hunk toward upstream restores the one-clip-per-message limit rather than a layout preference, so resolve it toward the fork and let composer-voice-rank-port's suite decide. No logic moves into the file: the control reuses the recorder hook, the capability predicate and the labels already there, and the two refusals it adds to Send are the ones the shared slot used to get for free by not existing during a clip or on an empty box. It carries a SIXTH, and this one is a REFUSAL rather than an addition (decline-the-centred-pane-column): upstream 28255ae centres this route at 768px above the phone breakpoint and claims a matching `wide` header, because on a 1366px iPad an ~620px mirror left half the screen empty beside a full-width header and composer. That emptiness is upstream's and not ours — this fork spends exactly that space on its two navigation rails — so the cap would apply a second time inside a column the shell has already bounded and would take width from the mirror rather than from nothing. The wrapper therefore keeps the phone bound alone and the route makes no width claim, which is upstream's own default. The `wide` option stays where upstream put it, unclaimed: declining to use an option is narrower than deleting it. This entry exists so that a later release touching these lines is REPORTED by the adoption preflight rather than inherited, which is exactly how the cap arrived. v1.5.2 was that release and the preflight did report it: 3870c1c turns the flat 768px into a ladder to 1024, 1280 and 1400px and argues for it the way this entry argues against it \u2014 a mirror has a column count of its own and every pixel a cap withholds is a line the browser must wrap. The refusal is kept anyway, because a ladder is still a cap and the rails have already spent the emptiness it hands back; the header agrees by making no wide claim, so upstream's warning that the two must carry the identical ladder is satisfied by neither carrying one. Dropping both refusals and taking the ladder whole is a decision for the owner and a change of its own."
 
 [[invasive]]
 id = "declined-centred-history-column"
 intent = "Keep the transcript on the same width as the Pane it belongs to, by declining upstream's centred column on both."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = ["web/src/routes/history.tsx#flex min-h-0 flex-1 flex-col"]
 verify = [
   "web/src/components/app-header.test.tsx",
   "web/src/routes/history.tsx"
 ]
-reason = "Upstream 28255ae gives the Pane and history screens a centred 768px column above the phone breakpoint and a matching `wide` header claim. The Pane's half of that refusal rides native-manual-pane-fit-port, which this manifest has already attributed that file to; history needs an entry of its own because nothing claimed it before. The two may not disagree: the transcript is the other half of the Pane screen and one navigation away from it, so a width they do not share makes the page jump sideways on the hop. The argument for declining is at the Pane's wrapper and in fleet-native-navigation-sidebars — the rails are what claims the width upstream's cap exists to fill, so inside them the cap takes width from a mirror rather than from emptiness. Declared here rather than left implicit because the cap reached this tree unopposed once: the adoption preflight reports the ports a release disturbs, and these lines had none."
+reason = "Upstream 28255ae gives the Pane and history screens a centred 768px column above the phone breakpoint and a matching `wide` header claim. The Pane's half of that refusal rides native-manual-pane-fit-port, which this manifest has already attributed that file to; history needs an entry of its own because nothing claimed it before. The two may not disagree: the transcript is the other half of the Pane screen and one navigation away from it, so a width they do not share makes the page jump sideways on the hop. The argument for declining is at the Pane's wrapper and in fleet-native-navigation-sidebars — the rails are what claims the width upstream's cap exists to fill, so inside them the cap takes width from a mirror rather than from emptiness. Declared here rather than left implicit because the cap reached this tree unopposed once: the adoption preflight reports the ports a release disturbs, and these lines had none. It earned that at the next adoption: v1.5.2 (3870c1c) replaced the flat cap with a ladder to 1400px and the preflight named this entry. The refusal is kept and re-argued against the ladder rather than the retired number, and the two halves still agree because the pane keeps its own."
 
 [[invasive]]
 id = "native-navigation-sidebars-port"
 intent = "Wrap Collie's native route outlet and header with permanently expanded local hierarchy and Agent rails while retaining the existing router, data loaders, Agent list, header contract, and Pane surfaces."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "web/src/routes/root.tsx#NativeNavigationShell",
   "web/src/components/app-header.tsx#leading?: ReactNode",
@@ -389,7 +390,7 @@ id = "native-pane-chrome-port"
 intent = "Let the Pane screen say its state in a row it already spends, rank its controls as one, and decline the shared mark, without moving product logic into Collie-owned files."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "web/src/components/collie-home.tsx#paper?: string",
   "web/src/components/strips-summary.tsx#trailing"
@@ -405,7 +406,7 @@ id = "native-webfont-port"
 intent = "Put one fetched fallback face under every font stack, after the operator's own and before the system's, and offer it and its Latin twin in the existing pickers."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "web/src/index.css#--font-cjk",
   "web/src/hooks/use-display-prefs.ts#maple",
@@ -429,11 +430,12 @@ id = "private-fact-guard-port"
 intent = "Add a fourth commit-time guard to the hook that already runs three, without changing any of them."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
-  "scripts/git-hooks/pre-commit#SKIP_PRIVACY_CHECK"
+  "scripts/git-hooks/pre-commit#SKIP_PRIVACY_CHECK",
+  "scripts/pre-commit.test.sh#SKIP_PRIVACY_CHECK=1"
 ]
-verify = ["scripts/check-private-facts.test.ts"]
+verify = ["scripts/check-private-facts.test.ts", "scripts/pre-commit.test.sh"]
 reason = "Upstream is developed against example data; this fork is developed against its operator's own production environment, so a real address or a real path is one paste away from a fixture. The hook is where the other three guards already live and the only place a check runs whether or not anyone remembered, so guard D is appended after them in upstream's own shape: one SKIP_ variable, one else-branch, one message naming the hatch. The one upstream line that had to move is the lint guard's skip branch, which exited the hook outright — harmless while lint was last, and a silent disarm of anything after it; it now empties the file set instead, so each hatch skips exactly its own guard. Nothing upstream checks changes, and removing this block restores the file byte-for-byte."
 
 [[invasive]]
@@ -441,7 +443,7 @@ id = "composer-voice-rank-port"
 intent = "Let the composer's suite and its operator documentation describe a record control that stands beside Send, so voice can be dictated in turns."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   "web/src/components/composer-stt.test.tsx#the record control stands beside Send",
   "docs/voice-and-push.md#Voice input (optional)"
@@ -458,7 +460,7 @@ id = "fork-gate-in-ci"
 intent = "Run the fork boundary gate in the workflow that already decides whether a change passes."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [".github/workflows/ci.yml#bun run test:fork"]
 verify = [
   "scripts/check-fork.test.ts",
@@ -471,7 +473,7 @@ id = "no-automatic-release-publication"
 intent = "Stop a pushed tag from publishing a GitHub Release, without changing what the release recipe builds."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.5.1"
+reviewed = "v1.5.2"
 paths = [
   ".github/workflows/release.yml#workflow_dispatch",
   "scripts/check-tag.sh#MARKED"

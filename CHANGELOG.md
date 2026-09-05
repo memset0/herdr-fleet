@@ -30,6 +30,8 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 - Collie's retained changelog is accumulative rather than byte-identical, so entries upstream truncates away are kept below one seam marker.
 - The fork boundary check runs in CI.
 - Adopted Collie 1.5.1, which brings upstream's pack-update orchestration, its updates page and update band, a QR pairing flow and a long tail of fixes. All eighteen invasive ports were reviewed against it and kept.
+- Adopted Collie 1.5.2: a Traditional Chinese locale, bounded speech-to-text provider lifecycles, a pre-commit hook suite, clipped and muted terminal rules, and a pane column that grows past 768px upstream-side. All nineteen invasive ports were reviewed against it and kept, including the two that decline that column.
+- The Traditional Chinese dictionary carries this fork's own strings, so the new locale is complete rather than partial.
 
 ## [3.1.1] - 2026-09-05
 

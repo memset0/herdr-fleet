@@ -644,6 +644,26 @@ describe("the ONE header — hoisted above the outlet", () => {
     expect(header?.className).not.toContain("max-w-screen-md");
   });
 
+  it("grows the wide claim past md on a desktop, and leaves the sm column flat", async () => {
+    // #166: flat at 768px, a 1920px desktop left 576px of dead margin on each side of a terminal
+    // mirror that had columns to spare. `wide` is a ladder now. The dashboard's `column` is NOT —
+    // a list row has no column count, so widening it only lengthens the line. That asymmetry is the
+    // whole fix, so both halves are asserted here.
+    //
+    // AgentChat's wrapper and history's carry this identical ladder. Nothing can check across the
+    // three files, so the string is pinned in one place: change it here and grep the other two.
+    const LADDER = ["max-w-screen-md", "lg:max-w-screen-lg", "xl:max-w-screen-xl", "2xl:max-w-[1400px]"];
+    const { container, go } = renderHoisted();
+    const header = container.querySelector("header");
+
+    await go("/wide");
+    for (const step of LADDER) expect(header?.className).toContain(step);
+
+    await go("/settings");
+    expect(header?.className).toContain("max-w-screen-sm");
+    for (const step of LADDER.slice(1)) expect(header?.className).not.toContain(step);
+  });
+
   it("renders a downstream leading node before the mark, and never over an override row", async () => {
     // The one port the Fleet shell needs in this file: a slot at the start of the row. It is drawn
     // BEFORE the mark, so the shell's navigation control is where a thumb reaches for it, and it is

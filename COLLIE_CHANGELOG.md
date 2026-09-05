@@ -26,6 +26,13 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-09-05
+
+- STT releases its admission slot immediately when a recording is cancelled, thanks @en-ver (#163). ([43c9cfe](https://github.com/AltanS/collie/commit/43c9cfe))
+- Labelled terminal rules now fit on a single line across all harnesses, and only the rule glyphs are dimmed, thanks @en-ver (#168). ([d980f37](https://github.com/AltanS/collie/commit/d980f37))
+- Collie speaks Traditional Chinese, thanks @lekoOwO (#165). ([1cec9ea](https://github.com/AltanS/collie/commit/1cec9ea))
+- The pane and history screens now widen with the window on a desktop, up to 1400px, so a wide terminal mirror stops wrapping (#166). ([3870c1c](https://github.com/AltanS/collie/commit/3870c1c))
+
 ## [1.5.1] - 2026-09-04
 
 - Docs carry phone screenshots of the update flow. ([23dfb1a](https://github.com/AltanS/collie/commit/23dfb1a))

@@ -4,8 +4,9 @@ Symptoms below, in order — search the page for yours. **`Os { NotFound }` from
 **`update` says "not currently on a branch"** · **`tailscale serve failed`** · **isn't answering
 (service won't start)** · **phone can't open the URL** · **page loads but stays empty (blank page,
 403)** · **a password prompt won't take your reply** · **no push notifications** · **gone after a
-reboot** · **Collie refuses to open a tmux window** · **`tmux list: output did not parse`** ·
-**`herdr plugin list` shows the old version** · **stale UI after a rebuild**.
+reboot** · **a pane is stuck narrow** · **Collie refuses to open a tmux window** ·
+**`tmux list: output did not parse`** · **`herdr plugin list` shows the old version** ·
+**stale UI after a rebuild**.
 
 **`herdr plugin …` fails with `Error: Os { code: 2, kind: NotFound, message: "No such file or
 directory" }`** (plugin install fails, action invoke fails)**.** This is *not* a Collie problem — it
@@ -84,6 +85,22 @@ plain-HTTP origin, which is not a secure context — Settings flags it `insecure
 `loginctl enable-linger $USER` ([Surviving reboots](upgrading.md#surviving-reboots)). On macOS the launchd agent starts at
 **login**, so check you're actually logged in (not sitting at the login window) and that the agent is
 loaded: `launchctl print gui/$(id -u)/herdr.collie`.
+
+**A pane's terminal is stuck narrow, and a full-screen app inside it is squashed** (Copilot CLI,
+`top`, any TUI drawn into a strip while the rest of the mirror stays blank)**.** The pane's terminal
+is that narrow, and Collie mirrors it faithfully. A Herdr pane's width comes from its rectangle
+in the tab's split grid, so a pane sharing a tab gets a share of the columns. Herdr applies
+pane geometry **only while a desktop client is attached**
+([herdr#1709](https://github.com/herdrdev/herdr/issues/1709)): with nothing attached, closing a split
+leaves the survivor stuck at the old narrow width, and `pane.zoom` and `pane.resize` over
+the socket do not move it either. Collie cannot fix this from its side; it does not write
+pane geometry at all ([ADR 0031](../.adr/0031-freshness-is-a-declared-promise.md): the phone moves
+the operator's terminal only on the *Show in terminal* tap). Nothing about it is app-specific:
+`top` in a 54-column pane looks identical. To measure it, run `tput cols` in the pane. That is
+the real width, and it can disagree with what `herdr pane layout` reports. To fix it, attach a Herdr
+client, then zoom or resize the pane there (`herdr pane zoom <pane-id> --on` moves the terminal
+once something is attached), or close the pane and open a new one
+([#167](https://github.com/AltanS/collie/issues/167)).
 
 **Collie refuses to open a tmux window** (the phone's *new tab* comes back declining, naming
 `window-size`)**.** Not a fault in the request: on tmux below 3.7, spawning a window while the

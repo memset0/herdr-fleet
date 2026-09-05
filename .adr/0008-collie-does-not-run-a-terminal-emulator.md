@@ -40,7 +40,7 @@ documented root cause, and they do not point where the proposal points:
 | #53 — pans on nearly every line | Pane spawned at the desktop's column count; wrap-vs-column-faithful is a product choice, settled toward wrap in 0.21.0 | No — and a cell grid reopens it |
 | #54 / #56 — send stalls under a tall statusline | `locateInputBox` — *which rows are the input box* ([ADR 0004](./0004-the-statusline-run-is-bounded.md)) | No — inference over content |
 | #50 / #51 — dialogs fall through to the raw mirror | A wrapped option label; a shape no grammar had a rule for | No — inference over content |
-| #23 — pane stuck narrow | Herdr applies pane geometry only while a desktop client is attached (upstream `herdr#1709`) | No — server-side PTY |
+| pane stuck narrow ([#167](https://github.com/AltanS/collie/issues/167)) | Herdr applies pane geometry only while a desktop client is attached (upstream `herdr#1709`) | No — server-side PTY |
 
 Every one is either geometry Collie does not own or a question about meaning. A TUI paints cells; it
 does not paint structure. *Which rows are the input box* is not more answerable from a
@@ -81,8 +81,25 @@ Two things. Neither requires an emulator to obtain.
 
 `control` accepts `terminal.resize` against the **shared** PTY and arbitrates with
 one-controller-at-a-time semantics plus `--takeover`. Adopting it means Collie fights the person at
-the desk, and "fixes" #23 for the phone by breaking the desktop. Collie already has every write path
+the desk, and "fixes" the narrow pane for the phone by breaking the desktop. Collie already has every write path
 it needs on the socket — `send_text` and `send_keys`, one-shot and stateless.
+
+> **Amended (2026-09-05, [#167](https://github.com/AltanS/collie/issues/167) and the auto-zoom
+> proposal).** The clause above argues from `control`'s takeover semantics, which reads as though a
+> gentler transport would be allowed. It would not. **The same refusal covers the socket's own
+> geometry methods** — `pane.zoom`, `pane.resize`, and any future write that moves a rect — because
+> the reason underneath does not depend on the transport: a pane's geometry is the operator's screen,
+> and Collie does not write it. That is
+> [ADR 0031](./0031-freshness-is-a-declared-promise.md)'s rule, stated there for focus — the phone
+> moves the terminal **only** on the named "Show in terminal" tap, never as a side effect of
+> navigation. A pane Collie widened because the phone opened it is exactly such a side effect.
+>
+> Auto-zoom was proposed for #167 and declined on a second ground as well, which is worth recording
+> because it inverts the usual trade: `herdr#1709` states that `pane.zoom` and `pane.resize` **do not
+> move a detached session's PTY at all**. Probed 2026-09-05 against herdr with a client attached, zoom
+> did resize the PTY (a 54×16 pane redrew `top` at 97+ columns, unzoom restored 54) — so the write is
+> inert in the case that motivates it (nobody at the desk, which is when the phone is the only client)
+> and effective only in the case that forbids it (someone at the desk, whose layout would jump).
 
 And `HERDR_API.md` verifies **nothing** about `observe`/`control`: not the frame format, not whether
 cursor state is even in it, not multi-observer semantics, not a version floor. It is a CLI
@@ -110,7 +127,9 @@ the rows Herdr already rendered, and the client contract stays `StyledLine[]`.**
 ## Consequences
 
 - **The mirror is exactly as faithful as Herdr's own render, and no more.** Where that render is wrong
-  for a phone — #23's frozen geometry — Collie is wrong with it, and the fix is upstream. Accepted.
+  for a phone — the frozen pane geometry of
+  [#167](https://github.com/AltanS/collie/issues/167) — Collie is wrong with it, and the fix is
+  upstream. Accepted.
 - **Dialogs will keep falling through to the raw mirror** when no grammar recognises them. Fall-through
   is the safe direction (real text, nothing wrongly tappable), and the capability ladder is built for
   the gap to be closed by a grammar — usually a contributor's, which is how #51 and #61 arrived.
@@ -133,5 +152,10 @@ the rows Herdr already rendered, and the client contract stays `StyledLine[]`.**
   field** so that no grammar and no fixture changes. Phase 0 is a probe written into `HERDR_API.md`;
   it does not begin before `bridge/server.ts` has the integration coverage it currently lacks, because
   a child-process stream would be the riskiest I/O the bridge has ever owned.
+- **Herdr putting the real PTY size on the pane record**, beside `scroll.viewport_rows`. Today a
+  client cannot tell a pane's true width: `layout`'s rect can report the new full width over a PTY
+  still stuck at the old one (`herdr#1709`), so any narrow-pane hint Collie showed would sometimes be
+  a confident lie. With that field, a one-line read-only hint on a provably narrow pane becomes
+  honest and cheap. It does **not** reopen the emulator question, and it does not license a write.
 - **Latency staying bad after the transport work.** If a live-feeling mirror proves unreachable without
   frame streaming, that is a genuinely new fact and not a re-run of this argument.

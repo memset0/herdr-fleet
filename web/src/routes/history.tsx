@@ -200,9 +200,12 @@ export function HistoryRoute() {
   return (
     // The same column as the pane this transcript belongs to, because it is the other half of that
     // screen and one navigation away from it: it keeps the pane's width and its left edge, or the
-    // page jumps sideways on the hop. DOWNSTREAM PORT — which is why upstream's centred 768px column
-    // (28255ae) is declined here too: the pane declines it, and these two may not disagree about
-    // width without the hop moving the page. See AgentChat's wrapper for the argument.
+    // page jumps sideways on the hop. DOWNSTREAM PORT — which is why upstream's centred column is
+    // declined here too: the pane declines it, and these two may not disagree about width without
+    // the hop moving the page. Upstream has since replaced its single 768px cap with a ladder that
+    // grows to 1400px (3870c1c), for the fork's own reason — a mirror has a column count and a cap
+    // withholds mirror lines — but a ladder is still a cap, and inside the shell the rails have
+    // already taken the emptiness it exists to remove. See AgentChat's wrapper for the argument.
     <div className="flex min-h-0 flex-1 flex-col">
       <RouteHeader
         onHome={() => navigate(panePath(paneId, scope))}
