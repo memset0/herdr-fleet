@@ -167,7 +167,13 @@ the surface MUST NOT present it as scrollback.
 ### Requirement: Terminal text reaches the clipboard, from a selection and from the program
 Selecting text in the terminal SHALL place that text on the operator's clipboard. The write SHALL be
 performed through the browser's asynchronous clipboard interface during the user gesture that
-completed the selection, and the surface SHALL indicate that the copy happened. A refused or
+completed the selection, and the surface SHALL indicate that the copy happened.
+
+Where the attached terminal has mouse reporting enabled — which it does, so this is the ordinary case
+rather than an exception — a plain drag belongs to the program running in the terminal and produces
+no selection at all. The surface SHALL therefore offer a modifier that suppresses mouse reporting for
+the duration of the gesture and selects locally instead, and SHALL make that modifier discoverable
+rather than leaving an operator whose drag did nothing to guess at it. A refused or
 unavailable clipboard SHALL be reported to the operator rather than failing silently, and SHALL leave
 the selection intact so it can be copied another way.
 
@@ -182,6 +188,14 @@ of the application's own document rather than a frame's.
 #### Scenario: The operator selects terminal text
 - **WHEN** the operator completes a selection in the terminal
 - **THEN** the selected text is written to the clipboard through the asynchronous clipboard interface and the surface says the copy happened
+
+#### Scenario: The operator drags while the program is consuming mouse events
+- **WHEN** the operator drags without the modifier over a terminal whose program has mouse reporting enabled
+- **THEN** the drag reaches the program as its own input and no selection is made, and the surface makes the modifier that would select instead discoverable
+
+#### Scenario: The operator holds the modifier
+- **WHEN** the operator drags while holding the selection modifier
+- **THEN** the gesture selects text locally without reaching the program, and completing it copies as above
 
 #### Scenario: The clipboard is unavailable or refused
 - **WHEN** the clipboard write is refused or unavailable

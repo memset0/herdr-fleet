@@ -85,9 +85,14 @@ browser connected directly — in a frame or otherwise — re-runs the attach on
 amount of client-side caching can undo that.
 
 It also means the terminal surface cannot be an iframe of the terminal server's own page, which
-removes the CSP question that approach would have raised. Same-origin `wss:` is expected to be
-admitted by the existing `connect-src 'self'`; that is asserted by a task rather than assumed here,
-and if it is not, the relaxation is one directive in the app's own CSP and no new origin.
+removes the CSP question that approach would have raised.
+
+**Same-origin WebSocket is admitted by the existing `connect-src 'self'` — measured, not assumed, so
+the CSP does not change.** A page served with this app's exact CSP header opened a same-origin
+`ws://` connection with no `securitypolicyviolation` and a completed handshake. The negative control
+that makes that result mean something: the same page, same CSP, attempting a WebSocket to another
+port was refused with `connect-src | blocked=ws://…`. So the directive is doing its job and simply
+does not stand in the way of the terminal's own origin.
 
 ### How far this departs from ADR 0008, and how far it does not
 
@@ -118,11 +123,19 @@ is not the thing that ADR rejected.
   the requirement pairs that with the automatic return, and neither half is optional.
 - *"`HERDR_API.md` verifies nothing about `observe`/`control`: not the frame format, not multi-observer
   semantics, not a version floor."* True when written and still true. That is a gap to close, not a
-  reason to stop: ADR 0008's own "what would justify revisiting" names the probe written into
-  `HERDR_API.md` as Phase 0, and this change does that probe first. Part of it is already done and
-  recorded in Context: `attach` emits a raw byte stream and opens on the alternate screen, while
-  `observe` and `control` emit JSON-wrapped base64 and cannot drive a terminal at all — which decides
-  the verb before any code is written.
+  reason to stop: ADR 0008's own "what would justify revisiting" names a probe as Phase 0, and this
+  change ran it before writing any code. It is recorded in `docs/herdr-fleet.md`, not in
+  `HERDR_API.md` as the ADR suggests, for two reasons that point the same way: that document states
+  what *the bridge* uses and none of these verbs are used by the bridge, and it is upstream-owned, so
+  writing there would spend a second invasive path on knowledge only the fork has. `docs/herdr-fleet.md`
+  is fork-owned, which keeps this change at one invasive path as designed.
+
+  What the probe settled, beyond the framing already stated in Context: cursor state **is** carried by
+  `attach` — the ADR's own open question, answered — along with the terminal's real mode state; a
+  second `attach` is refused by Herdr with exit 1 while the first keeps streaming, so single-writer
+  needs no implementation above this layer; and a closing Pane ends the attachment with a plain
+  sentence *in the byte stream*, so the Gateway must detect the child's exit rather than read that
+  text.
 
 **Why the ADR's strongest argument does not reach here.** Its case is that an emulator in the bridge
 would re-emulate an already-emulated screen — a second renderer disagreeing with the first, whose cost
@@ -149,6 +162,13 @@ the selection, through `navigator.clipboard`, in the application's own document 
 `permissions-policy` names only camera, microphone and geolocation, so nothing restricts it. OSC 52 is
 registered for writes and refused for reads, because a program that can *read* the operator's
 clipboard is a different thing from one that can offer to fill it.
+
+The probe added a fourth obstacle the previous generation never got far enough to hit: the attached
+terminal turns mouse reporting **on** (`?1000h`, `?1002h`, `?1003h`, `?1015h`, `?1006h` are in the
+first frame). While a program is consuming mouse events, a drag is that program's input and not a
+selection at all, so there is nothing for the clipboard to receive. The surface therefore needs the
+convention every terminal emulator already uses — hold a modifier to select locally instead — and it
+has to be discoverable, because an operator whose drag does nothing has no way to guess.
 
 ### One terminal server per terminal, and a bounded number of them
 
@@ -228,9 +248,9 @@ because it is a preference about how this browser draws a Pane, not a fact about
 
 ## Risks / Trade-offs
 
-- **Same-origin `wss:` might not be admitted by `connect-src 'self'` in every target browser.** →
-  Asserted by a task before the surface is built. If it is not, the fix is one directive in the app's
-  own CSP naming no new origin — `script-src` and every third-party origin stay untouched.
+- ~~**Same-origin `wss:` might not be admitted by `connect-src 'self'`.**~~ Retired: measured in a
+  browser against this app's exact CSP, with a cross-origin control proving the probe could fail. The
+  CSP is unchanged by this work.
 - **Held sessions are held processes.** → The maximum is configured and validated
   against declared bounds, eviction is least-recently-used, and each server exits with its session. A
   device's worst case is stated in its configuration rather than discovered in production.

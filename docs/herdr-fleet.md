@@ -356,6 +356,57 @@ Settings edits the same document in a text area and validates it identically. It
 version it read, so a save cannot silently overwrite a change made on disk: the mismatch is refused
 and the current document is handed back.
 
+## Terminal stream verbs, as probed
+
+ADR 0008 declines a terminal emulator for the Pane *mirror*, and records that Herdr's terminal-stream
+verbs were unverified — "not the frame format, not whether cursor state is even in it, not
+multi-observer semantics, not a version floor" — naming a probe as the precondition for using them.
+This is that probe. It is recorded here rather than in `HERDR_API.md` because that document states
+what *the bridge* uses, and none of this is used by the bridge; keeping it here also costs the fork
+no invasive path.
+
+Probed against Herdr `0.8.2`, protocol `20`, API schema `1`, on a live server with real Panes.
+
+**Three verbs, two framings.** `herdr terminal attach <terminal-id>` writes the terminal's own bytes
+to stdout, unwrapped. `herdr terminal session observe <target>` and
+`herdr terminal session control <target> [--takeover] [--cols N] [--rows N]` write JSON lines shaped
+`{"bytes":"<base64>"}` instead, so neither can drive a terminal without a decoder in between. Both
+session verbs take the target *before* their options.
+
+**Cursor state is present**, which is the ADR's open question answered: an `attach` first frame
+carries cursor positioning and show/hide (46 `CUP`, 4 `DECTCEM` show, 2 hide in one sample) along with
+the terminal's real mode state — alternate screen `?1049h`, and mouse reporting `?1000h`, `?1002h`,
+`?1003h`, `?1015h`, `?1006h` after an initial reset of the same modes. `observe` carries none of
+those: it is a repaint of the screen, not a replay of terminal state.
+
+**Mouse reporting being on has a consequence for any browser renderer**: a drag is a mouse event the
+program consumes, not a text selection, so a browser terminal needs a modifier override to select
+text locally.
+
+**Attaching is cheap and arrives painted.** First byte at 38 / 109 / 166 ms (min / median / max, six
+runs) on a bare shell Pane and 93 / 227 / 1891 ms (five runs) on an agent Pane, and the first frame is
+the whole current screen — 7.2 KB and 12.6 KB respectively. A client that reconnects therefore needs
+nothing from the far end to repaint.
+
+**Geometry follows the attaching terminal, and is handed back.** `attach` takes its size from its own
+controlling terminal, follows a later `SIGWINCH` live (40 → 25 → 50 rows, each answered with a
+repaint), and **restores the Pane's previous size when it exits**. `control` behaves differently and
+worse for this purpose: it applies `--cols/--rows` once, ignores a later `SIGWINCH`, and leaves the
+Pane at the size it set. The ADR's objection — that resizing fights the person at the keyboard — is
+therefore true of `control` and bounded for `attach`.
+
+**One attachment at a time, enforced by Herdr.** A second `attach` to a terminal that already has one
+exits `1` after emitting only its own terminal setup and teardown; the established attachment is
+unaffected and keeps streaming. Nothing above this layer has to implement single-writer.
+
+**A closing Pane ends the attachment with a sentence in the stream.** Closing the Pane's tab ends the
+attach and closes the connection, preceded by a plain-text line —
+`server shut down: terminal attach ended: terminal <id> not found` — carried *in the byte stream*, so
+anything rendering that stream will draw it. Detect the child's exit rather than parsing that text.
+
+**Version floor**: all of the above is verified on `0.8.2` / protocol `20` and stated as such. It is
+not a bisected floor, and an older server is unprobed.
+
 ## Retained Collie deployment alternatives
 
 Collie's Tailscale serve and `Tailscale-User-Login` implementation remains in the repository to keep

@@ -1,9 +1,9 @@
 ## 1. Assertions the design rests on
 
 - [x] 1.00 Re-verify every statement under design.md's re-verification list against the post-merge tree, and correct design.md where the merge changed one, before starting any other task
-- [ ] 1.0 Probe the multiplexer's terminal-stream verbs and write the findings into `HERDR_API.md` — frame format, whether cursor state is present, multi-observer semantics, behaviour when the Pane closes, and a version floor — because ADR 0008 records that none of it is verified and names this probe as the precondition for using them
-- [ ] 1.0a Record the ADR 0008 departure in `AGENTS.md` in its short normative form, naming the ADR and stating that the mirror is unchanged and the terminal surface never resizes; do not edit any file under `.adr/`
-- [ ] 1.1 Assert same-origin `wss:` against the app's existing `connect-src 'self'` in a target browser and record the result in design.md; if it is refused, add the one directive to the app's own CSP in `bridge/server.ts`, declare that path in `FORK.toml`, and verify no third-party origin and no `script-src` change was made
+- [x] 1.0 Probe the multiplexer's terminal-stream verbs and write the findings into the fork-owned `docs/herdr-fleet.md` rather than upstream's `HERDR_API.md`, which states what the bridge uses and would cost a second invasive path — frame format, whether cursor state is present, multi-observer semantics, behaviour when the Pane closes, and a version floor — because ADR 0008 records that none of it is verified and names this probe as the precondition for using them
+- [x] 1.0a Record the ADR 0008 departure in `AGENTS.md` in its short normative form, naming the ADR and stating that the mirror is unchanged and that the terminal surface holds the Pane's geometry only while attached and hands it back on leaving; extend the `FORK.toml` entry that already claims `AGENTS.md` to cover it; do not edit any file under `.adr/`
+- [x] 1.1 Assert same-origin `wss:` against the app's existing `connect-src 'self'` in a target browser, with a cross-origin negative control, and record the result in design.md; it is admitted, so no CSP directive was added and `bridge/server.ts` is untouched
 - [ ] 1.2 Add the browser terminal renderer to `web/package.json`, pinned, and verify `cd web && bun install` then `bun run build` succeeds and the added bundle weight is recorded in design.md
 - [ ] 1.3 Extend the `FORK.toml` manifest with the `web/src/router.tsx` entry and its reason, and verify `bun scripts/check-fork.ts` and `bun test scripts/check-fork.test.ts scripts/fork-manifest.test.ts` pass
 
@@ -36,6 +36,7 @@
 - [ ] 4.6 Ignore any surface selection carried in an address or navigation state, and verify a focused test asserts the stored switch decides
 - [ ] 4.7 Report the browser's viewport as the terminal's geometry on attach and on every later change, and make the current dimensions legible on the surface; verify focused tests cover attach, resize, rotation, and a type-size change
 - [ ] 4.8 Copy a completed selection to the clipboard through `navigator.clipboard` on the user gesture, indicate the copy, and report a refused or unavailable clipboard while leaving the selection intact; verify focused tests cover success, refusal, and that no framed document is involved
+- [ ] 4.8a Offer a discoverable modifier that suppresses mouse reporting for the gesture and selects locally, since the attached terminal enables mouse reporting and a plain drag is the program's input; verify focused tests cover a drag with and without it
 - [ ] 4.9 Register the OSC 52 handler for clipboard writes within an explicit length bound and refuse clipboard reads, and verify focused tests cover a write within bounds, one over it, and a read request
 
 ## 5. The lead path, end to end

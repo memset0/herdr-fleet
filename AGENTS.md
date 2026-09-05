@@ -27,6 +27,16 @@ agreement with us either — this file says what holds, and says which ADR it de
 Rules elsewhere in this file stay short and normative and link to the ADR for the argument. Don't
 restate an ADR's reasoning here.
 
+**Departure on record: [ADR 0008](./.adr/0008-collie-does-not-run-a-terminal-emulator.md) refuses
+`terminal session observe`/`control`; the Pane's second surface uses `terminal attach`.** The mirror
+is unchanged — same rendering, same grammars, same fixture corpus, and it is what a Pane draws by
+default. Beside it, behind an off-by-default switch, a Pane may instead be drawn as the real terminal
+it mirrors. That surface holds the Pane's geometry while a browser is attached and hands it back when
+the browser leaves, which is what makes the ADR's objection — that resizing fights the person at the
+keyboard — bounded here rather than true. The ADR's other objection, that these verbs are unverified,
+was answered by probing them first; the findings are in
+[`docs/herdr-fleet.md`](./docs/herdr-fleet.md) and the reasoning in that change's `design.md`.
+
 ## Fork boundary — MANDATORY
 
 [`FORK.toml`](./FORK.toml) is the machine-readable boundary and [`UPSTREAM.md`](./UPSTREAM.md) the

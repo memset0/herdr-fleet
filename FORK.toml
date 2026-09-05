@@ -195,7 +195,7 @@ paths = [
   "CLAUDE.md#AGENTS.md"
 ]
 verify = ["AGENTS.md", ".gitignore"]
-reason = "Repository entrypoints and ignore rules are upstream-owned surfaces that every contributor consumes."
+reason = "Repository entrypoints and ignore rules are upstream-owned surfaces that every contributor consumes. This entry also carries the fork's one recorded ADR departure, because the manifest attributes AGENTS.md to exactly one entry and the working agreement names this file as where a departure is stated: .adr/ is Collie's and is never written to, so an upstream decision our own has overtaken is recorded here in short normative form and argued in the owning change's design.md. The departure is ADR 0008's refusal of the terminal-stream verbs, which the Pane's second surface uses through `terminal attach`; the mirror the ADR is actually about is unchanged."
 
 [[invasive]]
 id = "fake-network-fleet-routes"
