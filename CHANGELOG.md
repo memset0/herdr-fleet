@@ -18,14 +18,16 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-09-05
+
 ### Added
 
-- The lead's pack poll interval and per-peer probe budget can be stated in its own configuration, for a fleet whose members are a WAN away rather than a room away.
+- The lead's pack poll interval and per-peer probe budget can be stated in its own configuration, for a fleet whose members are a WAN away rather than a room away. ([b437be0](https://github.com/memset0/herdr-fleet/commit/b437be0))
 
 ### Fixed
 
-- A member the lead has never heard from is arriving, not refusing: a zero receipt was being read as an age of thirty years, which called a just-enrolled member unreachable on its first sweep.
-- A refusal its receipt does not corroborate now reads as a slow link, and its rows stay open — one cold handshake on a distant member is not an outage.
+- A member the lead has never heard from is arriving, not refusing: a zero receipt was being read as an age of thirty years, which called a just-enrolled member unreachable on its first sweep. ([b437be0](https://github.com/memset0/herdr-fleet/commit/b437be0))
+- A refusal its receipt does not corroborate now reads as a slow link, and its rows stay open — one cold handshake on a distant member is not an outage. ([b437be0](https://github.com/memset0/herdr-fleet/commit/b437be0))
 
 ## [3.1.0] - 2026-09-05
 
