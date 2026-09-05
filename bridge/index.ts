@@ -58,6 +58,7 @@ import { packStatusBody } from "./pack/status-wire.ts";
 import { herdPushGate, PeerNotifier } from "./pack/notify.ts";
 import { packHelloBudget, packTimeoutBudget, packTimeoutClampWarning, PeerClient } from "./pack/peer-client.ts";
 import { PackRegistry } from "./pack/registry.ts";
+import { leadReleaseHeader, PackFollower, UpdateTurns } from "./pack/follow.ts";
 import { createPackRouter, type PackRouterDeps } from "./pack/router.ts";
 import {
   checkpointMarker,
@@ -79,6 +80,8 @@ import {
   silenceOf,
   STANDBY_PREFIX,
   standbyPortOf,
+  standbyUpdateAnswer,
+  withStandbyVersion,
   warrantNamesSelf,
   type StandbyFacts,
 } from "./pack/standby.ts";
@@ -107,7 +110,7 @@ import { enrollmentOf, TrustStore, type TrustStoreData, type Warrant } from "./p
 import { currentWarrant, discardForeignWarrant, refreshWarrant, type WarrantPush } from "./pack/warrant.ts";
 import { Push } from "./push.ts";
 import { pluginRoot } from "./root.ts";
-import { startServer } from "./server.ts";
+import { buildId, startServer } from "./server.ts";
 import {
   deriveConfigRoot,
   herdTagFor,
@@ -121,8 +124,20 @@ import {
   githubTagsFetcher,
   UpdateMonitor,
   UpdateStateStore,
+  updateDigestBody,
 } from "./update.ts";
 import { SWEEP_INTERVAL_MS, sweepUploads } from "./uploads.ts";
+import { readUpdateRun, updateLockHeld } from "./update-run.ts";
+import {
+  FreshPreflightGate,
+  parsePreflightReport,
+  peerPreflightWire,
+  peerRunWire,
+  PreflightCache,
+  preflightCommand,
+  updateCadenceTick,
+  updateStartCommand,
+} from "./update-action.ts";
 import { collieVersionBare } from "./version.ts";
 import { createManualPaneFitAction } from "../fleet/manual-pane-fit/action.ts";
 
@@ -563,24 +578,219 @@ const updateMonitor = new UpdateMonitor({
   now: Date.now,
   // The `updates` notify pref is the off-switch — update pushes bypass snooze, so this is their gate.
   updatesEnabled: () => notifyPrefs.current().updates,
-  notify: (latest) =>
+  // Read from disk on every snapshot, never cached: the file is written by the DETACHED UPDATER, a
+  // different process, and noticing its transitions is the whole job (M15/04). Reading it here is
+  // also what makes a bridge restarted BY an update resume reporting that run at startup instead of
+  // saying nothing happened.
+  runState: () => readUpdateRun(cfg.stateDir),
+  // One push a DAY, naming every release folded into it — the digest decides that; this only renders it.
+  notify: (versions) =>
     void push.send({
       type: "update",
       tag: "collie:update",
       // No command in the body — the tap opens Settings (target below), and the update banner / linked
       // release page carry the location-independent Herdr actions. Keeps this off the cwd-dependent path.
       title: "Collie update available",
-      body: `Version ${latest} is available`,
+      body: updateDigestBody(currentVersion, versions),
       target: "settings",
     }),
 });
 
+// ── The update ACTION's two spawns (M15/05) ──────────────────────────────────
+// The bridge decides nothing about an update: it runs the operator's own verb and reads the
+// operator's own preflight. Both are subprocesses, and a subprocess is index.ts's business — the
+// same arrangement the mux adapters and the front door already have. `bridge/server.ts` sees three
+// functions (`UpdateActionDeps`) and no `Bun.spawn` at all.
+//
+// WHICH BINARY. `bin/collie` in the checkout when there is one — that is what the operator's own
+// `collie update` would run, and on a compiled install it is exactly `process.execPath`. The
+// fallback matters for the source-mode bridge (`bun bridge/index.ts`), where `execPath` is Bun
+// itself: there, with no compiled binary present, there is nothing honest to spawn, and the route
+// answers 503 rather than shelling out to something that is not Collie.
+const collieBinary = join(rootDir, "bin", "collie");
+const canRunUpdate = existsSync(collieBinary);
+// How long `collie update --check --json` may take before the bridge stops waiting. It asks git for
+// the remote's tags over the network, so it is not instant; past this, "no report" is the answer,
+// which REFUSES an update rather than allowing one.
+const PREFLIGHT_TIMEOUT_MS = 30_000;
+// How long a PEER waits for a forced re-run before answering its lead with what it already holds
+// (§19). Under the lead's own `UPDATE_ON_DEMAND_POLL_TIMEOUT_MS`, because the lead answers the phone
+// regardless past that, and well under `PREFLIGHT_TIMEOUT_MS`, because a peer that blocks its
+// lead's sweep is a peer the phone renders as unreachable.
+const FRESH_PREFLIGHT_WAIT_MS = 3_000;
+/**
+ * Run one `collie update --check --local --json` and hand back its stdout.
+ *
+ * Extracted so the cached read below and the peer's own follow (M16/04) take the SAME subprocess
+ * shape, the same timeout and the same log line — a second spawn with its own opinion about any of
+ * the three would be a second answer to "what does a preflight cost here".
+ */
+async function runPreflight(command: readonly string[]): Promise<{ readonly stdout: string }> {
+  // `--local`: this instance only. The card updates the lead alone (ADR 0016), and the member
+  // walk would run over an SSH agent this service does not have — see `preflightCommand`.
+  const child = Bun.spawn([...command], {
+    cwd: rootDir,
+    stdout: "pipe",
+    // Piped, never ignored: when the report cannot be read, git's own words on this stream are
+    // the only thing that says why, and a service log is where the operator looks.
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const timer = setTimeout(() => child.kill(), PREFLIGHT_TIMEOUT_MS);
+  try {
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    // A RED preflight exits non-zero and still prints a perfectly good report, so the exit code is
+    // deliberately not consulted for the ANSWER: the document is the answer, and its absence is
+    // the failure. It is consulted for the LOG, below, and only there.
+    const code = await child.exited;
+    const unreadable = parsePreflightReport(stdout) === null;
+    if (unreadable || (code !== 0 && stderr.trim() !== "")) {
+      const tail = stderr.trim().split("\n").slice(-5).join(" / ");
+      console.warn(
+        `[update] preflight exited ${code}${unreadable ? " with no readable report" : ""}${tail === "" ? "" : `: ${tail}`}`,
+      );
+    }
+    return { stdout };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const preflightCache = new PreflightCache({
+  now: Date.now,
+  run: () => runPreflight(preflightCommand(collieBinary)),
+});
+/**
+ * Start the detached updater. **The one spawner in this process** — the phone's button takes it, and
+ * so does a peer following its lead (M16/04), because two spawners would be two answers to "what
+ * does an update do on this machine".
+ *
+ * `toTag` is what makes the peer's path one exact release rather than "the highest of my major", and
+ * `runId` is what puts the run's id into `<state dir>/update.json`, so a member that rolls back can
+ * key its "not twice in this run" memory on it. Verification is inherited whole: `collie update` on
+ * a binary install checks the release manifest and this platform's `sha256`, and on a checkout
+ * fetches `refs/tags/<tag>` explicitly. Nothing here adds a second mechanism.
+ */
+const startDetachedUpdate = (a: { major: boolean; runId: string; toTag?: string | null }) => {
+  const command = updateStartCommand({
+    platform: process.platform,
+    binary: collieBinary,
+    major: a.major,
+    stamp: String(Date.now()),
+    hasSystemdRun: Bun.which("systemd-run") !== null,
+    hasSetsid: Bun.which("setsid") !== null,
+    runId: a.runId,
+    toTag: a.toTag ?? null,
+  });
+  try {
+    const child = Bun.spawn(command, { cwd: rootDir, stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+    // Never waited on, and never held open: `collie update` stages and then restarts this very
+    // process. The record on disk is how the phone follows it from here (M15/04).
+    child.unref();
+    return { ok: true as const };
+  } catch (err) {
+    return { ok: false as const, reason: err instanceof Error ? err.message : String(err) };
+  }
+};
+
+/**
+ * An opaque run id. Random, never a timestamp: two confirms inside one millisecond would collide,
+ * and an id that reads as a clock claim on the wire is an id somebody will compare.
+ */
+const newRunId = (): string => crypto.randomUUID();
+
+/**
+ * The lead's turn queue (§20, M16/04) — in memory, never persisted, and built on every lead whether
+ * or not it has peers. A restart re-derives it: §18.9's argument for `lastDialledAt` applies
+ * unchanged, because a persisted turn would survive the restart it is meant to describe.
+ */
+const updateTurns = new UpdateTurns();
+
+const updateAction = canRunUpdate
+  ? {
+      preflight: (force?: boolean) => preflightCache.get(force),
+      lockHeld: () => updateLockHeld(cfg.stateDir),
+      newRunId,
+      start: startDetachedUpdate,
+      beginPackRun: (a: { runId: string; to: string }) => {
+        updateTurns.begin(a.runId, a.to);
+        // §20's FIRST immediate sweep: the operator has confirmed, so the first turn goes out on a
+        // sweep of its own rather than waiting out the idle cadence.
+        packLead?.resweep();
+      },
+    }
+  : undefined;
+
+// ── The peer's own preflight, on the monitor's cadence (M16/03) ──────────────
+// A peer answers the pack's update question for ITSELF, over the link its lead already polls
+// (PACK_PROTOCOL.md §19). The answer is this very cache, refreshed on the two timers below and read
+// — never run — by the pack route. So there is no third timer, no second subprocess shape and no
+// SSH: the six hours a background fact deserves, plus the lead's `X-Pack-Preflight: fresh` for the
+// moment an operator is actually looking at the page.
+const freshPreflightGate = new FreshPreflightGate({ now: Date.now });
+const updateTick = () =>
+  updateCadenceTick({
+    isPeer: pack.mode === "peer",
+    checkRelease: () => void updateMonitor.checkRelease(),
+    // A no-op on an install with no compiled binary to run: there is nothing honest to spawn there,
+    // and the field this would refresh is simply omitted (which the lead reads as unknown).
+    refreshPreflight: () => {
+      if (canRunUpdate) void preflightCache.get();
+    },
+  });
+
 // First check delayed (don't probe mid-boot); then every few hours. unref() so neither timer holds
 // the process open; both cleared on shutdown.
-const updateFirstCheck = setTimeout(() => void updateMonitor.checkRelease(), UPDATE_FIRST_DELAY_MS);
+const updateFirstCheck = setTimeout(updateTick, UPDATE_FIRST_DELAY_MS);
 updateFirstCheck.unref();
-const updateTimer = setInterval(() => void updateMonitor.checkRelease(), UPDATE_INTERVAL_MS);
+const updateTimer = setInterval(updateTick, UPDATE_INTERVAL_MS);
 updateTimer.unref();
+
+/**
+ * What this collie publishes beside its snapshot body when its lead polls it (§19).
+ *
+ * `fresh` is the lead's request for a re-read, honoured at most once per `PREFLIGHT_TTL_MS` and
+ * bounded by {@link FRESH_PREFLIGHT_WAIT_MS} — past which this answers with what it already holds
+ * and an `asOf` that says how old that is. **Never a fabricated green**, and never a wait that can
+ * cost the lead its strict poll budget (§10.1).
+ */
+/**
+ * The peer's own follow (§20, M16/04): it levels itself to the release its lead states, once its own
+ * eight guards say so.
+ *
+ * `undefined` unless this collie is a PEER with a binary it could run — a lead follows nobody, and a
+ * checkout with nothing compiled has nothing honest to spawn. It arms no timer: the router hands the
+ * headers over as they arrive on the sweep its lead already makes.
+ */
+const packFollower =
+  pack.mode === "peer" && canRunUpdate
+    ? new PackFollower({
+        self: () => ({ version: packVersion, self: trustStore.current()?.self.memberId ?? "" }),
+        // Re-read on every decision, never captured: it IS the memory, and the record on disk is
+        // what survives this machine's own restart.
+        run: () => readUpdateRun(cfg.stateDir),
+        // ONE subprocess answers guards 6 and 8: `--to-tag` turns the `upstream` check into "does
+        // this exact release resolve here, and may this install take it", resolved through
+        // `listTags()` / `anonymousTagUrl()` over anonymous HTTPS with no credential.
+        preflight: async (tag) => parsePreflightReport((await runPreflight([...preflightCommand(collieBinary), "--to-tag", tag])).stdout),
+        start: ({ tag, runId }) => startDetachedUpdate({ major: false, runId, toTag: tag }),
+      })
+    : undefined;
+
+async function updatePreflightReport(fresh: boolean) {
+  if (!canRunUpdate) return null;
+  if (fresh && freshPreflightGate.admit()) {
+    await Promise.race([
+      preflightCache.get(true),
+      new Promise<void>((resolve) => setTimeout(resolve, FRESH_PREFLIGHT_WAIT_MS)),
+    ]);
+  }
+  const held = preflightCache.peek();
+  return held === null ? null : peerPreflightWire(held.report, held.at);
+}
 
 // The multiplexers this build can drive. Built once — the map is derived from each factory's own
 // name, so a key can never drift from the adapter it resolves to.
@@ -968,7 +1178,16 @@ const packLead = (() => {
   const client = packPeerClient(data);
   return new PackLead({
     registry: packRegistry,
-    snapshot: (link) => client.snapshot(link),
+    snapshot: (link, freshPreflight, follow) => client.snapshot(link, undefined, freshPreflight, follow),
+    // §20's half of the sweep: what this lead may state about itself, and the queue that hands out
+    // one turn at a time. Every member of it is read through, never captured — a lead settles
+    // mid-life, and the roster changes under a running bridge.
+    follow: {
+      leadRelease: () => leadReleaseHeader({ version: packVersion, run: readUpdateRun(cfg.stateDir) }),
+      turns: updateTurns,
+      enrolledAt: (memberId) =>
+        trustStore.current()?.peers.find((m) => m.memberId === memberId)?.enrolledAt ?? 0,
+    },
     // The re-ask a timed-out sweep earns (§10.4). Off the tick, on the patient budget — and the
     // connection it warms is the one the next strict-budget snapshot rides, which is what makes a
     // high-latency member converge on `reachable` instead of never bootstrapping at all.
@@ -1105,7 +1324,32 @@ const packStatus =
 // A DEPOSED collie stops polling (§18.12): its roster is void as a *lead's* roster, and dialling it
 // would be a second lead's traffic on a pack that has already moved on. It keeps the roster's
 // CONTENTS — the self-heal reads the new lead's certificate out of it — but it dials nobody.
-if (packLead) registry.get()?.engine.onTick(() => (deposed === null ? void packLead.sweep() : undefined));
+/**
+ * §20's SECOND immediate sweep: this lead's own health gate has settled.
+ *
+ * It also does the re-derivation a restart needs. An update restarts this very process, so the run
+ * that started the pack levelling belongs to a bridge that no longer exists — the record on disk is
+ * what survives it, and reading it here is what makes a restarted lead pick the turns back up
+ * instead of leaving every member waiting for the next confirm. `UpdateTurns.begin` is idempotent
+ * per run id, so the sweep fires once and the queue is rebuilt from the roster, never from disk.
+ */
+let settledRunId: string | null = null;
+function settleUpdateGate(): void {
+  const run = readUpdateRun(cfg.stateDir);
+  if (run === null || run.state !== "done" || run.runId === undefined || run.to === null) return;
+  if (run.runId === settledRunId) return;
+  settledRunId = run.runId;
+  updateTurns.begin(run.runId, run.to);
+  packLead?.resweep();
+}
+
+if (packLead) {
+  registry.get()?.engine.onTick(() => {
+    if (deposed !== null) return;
+    settleUpdateGate();
+    void packLead.sweep();
+  });
+}
 
 /**
  * The client the TAKEOVER dials with. A deputy is a peer — it has no `peers` in its own store — so its
@@ -1221,6 +1465,10 @@ async function performTakeover(deviceLabel: string): Promise<{ ok: boolean; mess
 
 /** The door proper — peer-only. A lead binds the port above for its health answer and nothing else. */
 const standbyDoor = standbyStore === null ? null : createStandbyDoor({
+  // What this machine is running, for the updater's health gate reading this port (M15/05) — the
+  // same `<semver>+<sha>` `/api/health` answers with, and the same bundle id `/api/config` reports.
+  version: packVersion,
+  build: () => buildId(),
   facts: (): StandbyFacts => {
     const held = trustStore.current();
     const roster = held?.standbyRoster ?? [];
@@ -1275,11 +1523,19 @@ const standbyServer =
           // DEPOSED collie fails the check (§18.12), a LEAD passes it, and a peer holding a warrant
           // runs the door. A path nobody owns gets a bare 404 with no body worth reading — three
           // routes exist on this port and nothing else does.
+          // `/standby/update` FIRST, before every role: an update restarts the front door, so this
+          // is the one door still answering in the window the operator most wants to look (M15/04).
+          // It is the same file `/api/update/check` reports, read through the same staleness rule.
+          const update = standbyUpdateAnswer(req, url, () => readUpdateRun(cfg.stateDir));
+          if (update !== null) return withStandbyVersion(update, packVersion);
           const answered =
             deposed !== null
               ? deposedAnswer(deposed, outcomeNow(deposed, leadContact.facts()), url)
               : (frontDoorHealth(pack.mode, url) ?? (standbyDoor === null ? null : await standbyDoor(req, url)));
-          return answered ?? new Response("not found", { status: 404 });
+          // STAMPED HERE, ONCE, so it covers every answer this port can make — including the 404 for
+          // a path nobody owns and the deposed page, which are exactly the answers a runner probing a
+          // machine mid-update is most likely to meet (M15/05).
+          return withStandbyVersion(answered ?? new Response("not found", { status: 404 }), packVersion);
         },
       });
 
@@ -1303,6 +1559,13 @@ const server = startServer({
   snooze,
   notifyPrefs,
   updateMonitor,
+  // The preflight and the handoff, or undefined on an install with no compiled binary to run —
+  // where the route answers 503 and the phone says so (M15/05).
+  updateAction,
+  // The bare `<semver>+<sha>` this process answers `/api/health` and `/pack/v1/hello` with — one
+  // string, resolved once, so the detached updater's health gate and a peer can never be told two
+  // different things about this machine (M15/04).
+  version: packVersion,
   audit,
   activity,
   pack,
@@ -1334,6 +1597,17 @@ const server = startServer({
             // an update, a systemd unit, a hand on a keyboard — is invisible to `pack-ops.json` and
             // was therefore rendered as `anchor INACTIVE` on a machine that was fully armed.
             warrantActiveGeneration: activatedGeneration,
+            // §19: this machine's own `collie update --check --local` verdict, published beside the
+            // snapshot body so one confirm on the phone can cover the whole pack. A REPORT and never
+            // an order — it names no code, no route and no version anybody should install.
+            updatePreflight: updatePreflightReport,
+            // §20: this machine's own run, beside its preflight. It is what lets a lead's page say
+            // "updating" or "rolled back" about a member instead of only "still behind".
+            updateRun: () => peerRunWire(readUpdateRun(cfg.stateDir)),
+            // §20's two REQUEST headers, handed to this peer's own follow. A build with no follower
+            // — a lead, or a checkout with nothing compiled — passes `undefined` and ignores both,
+            // which is a correct peer.
+            onFollow: packFollower === undefined ? undefined : (a) => packFollower.observe(a),
             onMembershipChange: packStoreChanged,
             // Gap A (§18.9), and its rotation-shaped sibling. Two receipts, one holder, in memory.
             onLeadDialled: (at) => leadContact.record(at),

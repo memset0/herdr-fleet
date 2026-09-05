@@ -54,8 +54,15 @@ code:
   adoption's own line goes under `## [Unreleased]` like any other functional change.
 - `package.json`, `web/package.json`, `herdr-plugin.toml` — upstream's changes to everything except
   the version, which stays this product's `3.1.1`. `scripts/check-version.sh` is the check.
-- `COLLIE_CHANGELOG.md` — `v1.5.1`'s changelog verbatim on top; whatever `v1.2.0` had and `v1.5.1`
-  dropped kept word-for-word below the seam marker. `check-fork.ts` verifies the prefix.
+- `COLLIE_CHANGELOG.md` — `v1.5.1`'s changelog verbatim, and this time nothing below it. The
+  accumulative rule was written on a line count: upstream's file lost 372 lines and gained 188
+  between the two releases, which read as a truncation. It is not one. `v1.5.1` carries 66 release
+  headings to `v1.2.0`'s 61 — a superset — and the removed lines are upstream reformatting its own
+  entries, dropping the `### Added`/`### Changed` sub-headings and rewriting its header prose. No
+  release entry was lost, so there is nothing to retain and no seam to mark. The rule still earns
+  its place, and `check-fork.ts` still verifies the prefix; the premise stated for it in
+  `fleet-upstream-sync` says upstream *has* truncated, which this adoption shows it has not, and
+  that sentence is corrected separately rather than inside this merge.
 
 ### Every entry is reviewed, and the three untouched ones are not exempt
 

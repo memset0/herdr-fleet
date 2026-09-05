@@ -77,6 +77,16 @@ export const ERROR_CODES = {
   /** The create body named no space to create the tab in. */
   "tab.workspace_required": "workspaceId required",
   "workspace.create_failed": "{reason}",
+  /**
+   * The `command` the client named is in no row of the operator's `launchers.toml`. The rows ARE
+   * the allowlist, so this is the whole of what a phone may start — nothing was created.
+   */
+  "launch.not_allowlisted": "command not allowlisted",
+  /**
+   * A launch named a `paneId` to open beside, and that pane is not in this session's current
+   * snapshot — closed, or never existed. Nothing was created.
+   */
+  "launch.pane_unknown": "pane not found",
 
   // ── Worktrees: /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032) ─────────────
   /** The list could not be read — the space is not in a Git work tree, or the mux refused. */
@@ -145,6 +155,24 @@ export const ERROR_CODES = {
    * do about it — a peer is not a front door (ADR 0013), so neither has an overview to show.
    */
   "pack.not_lead": "this collie is not the lead of a pack",
+
+  // ── Starting an update from the phone: POST /api/update (M15/05) ───────────────────
+  /** The body carried no confirm. One tap plus one confirm is the contract; nothing moved. */
+  "update.confirm_required": "an update needs an explicit confirm",
+  /** A run is already going. THE DOUBLE-TAP ANSWER — the second POST names the run, never starts one. */
+  "update.in_progress": "an update is already running ({state}); nothing was started",
+  /** The preflight could not be produced at all. "We could not check" is not "nothing is red". */
+  "update.preflight_unavailable": "the update preflight could not be run here",
+  /** The server re-ran the preflight and it is red. The check's own id and words, not a generic line. */
+  "update.preflight_red": "preflight is red on {check}: {reason}",
+  /** A major crossing needs its own consent (ADR 0020), exactly as `update --major` does on the CLI. */
+  "update.major_confirm_required": "{version} crosses a major — a major crossing needs its own confirm",
+  /** The card consented to a version this collie would no longer install. A stale card, refused. */
+  "update.target_mismatch": "this device asked for {asked}, but this collie would install {would}",
+  /** Nothing newer to take. */
+  "update.none_available": "there is no newer release to take",
+  /** The handoff itself failed — nothing was staged and nothing restarted. */
+  "update.start_failed": "the update could not be started: {reason}",
 } as const;
 
 /** Every code the bridge can send. The client mirror restates this union verbatim. */

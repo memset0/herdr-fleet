@@ -28,6 +28,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 - Collie's retained changelog is accumulative rather than byte-identical, so entries upstream truncates away are kept below one seam marker.
 - The fork boundary check runs in CI.
+- Adopted Collie 1.5.1, which brings upstream's pack-update orchestration, its updates page and update band, a QR pairing flow and a long tail of fixes. All eighteen invasive ports were reviewed against it and kept.
 
 ## [3.1.1] - 2026-09-05
 

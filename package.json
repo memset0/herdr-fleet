@@ -14,7 +14,7 @@
     "web:dev": "cd web && bun run dev",
     "lint": "oxlint --max-warnings 0",
     "lint:fix": "oxlint --fix --max-warnings 0",
-    "test": "bun test ./bridge ./cli ./scripts ./fleet && bash scripts/collie-ctl.test.sh && bash scripts/collie-cli.test.sh && bash scripts/check-tag.test.sh",
+    "test": "bun test ./bridge && bun test ./cli && bun test ./scripts && bun test ./fleet && bash scripts/collie-ctl.test.sh && bash scripts/collie-cli.test.sh && bash scripts/check-tag.test.sh",
     "test:fork": "bun test scripts/fork-manifest.test.ts scripts/check-fork.test.ts && bun scripts/check-fork.ts",
     "test:ctl": "bash scripts/collie-ctl.test.sh",
     "test:pack": "bun test ./bridge/pack/harness.test.ts",

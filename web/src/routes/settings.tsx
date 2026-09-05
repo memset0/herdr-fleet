@@ -5,7 +5,6 @@ import { useLoaderData, useNavigate } from "react-router";
 import { RouteHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import { BuildStamp } from "@/components/build-stamp";
-import { UpdateBanner } from "@/components/update-banner";
 import { ConnectionInfo } from "@/components/connection-info";
 import { Card } from "@/components/ui/card";
 import { NotifyPrefsControl } from "@/components/notify-prefs-control";
@@ -21,7 +20,7 @@ import { LanguageControl } from "@/components/language-control";
 import { FontSettingsControl } from "@/components/font-settings";
 import { FleetSettingsSection } from "@/components/fleet-settings-section";
 import { TypefaceControl } from "@/components/typeface-control";
-import { UpdateCheckControl } from "@/components/update-check-control";
+import { UpdatesSettingsCard } from "@/components/updates-settings-card";
 import { Switch } from "@/components/ui/switch";
 import { fetchConfig } from "@/lib/api";
 import { usePushControl } from "@/hooks/use-push";
@@ -210,8 +209,11 @@ export function SettingsRoute() {
           </>
         )}
 
-        {/* On-demand upstream update check (independent of push) — drives the footer UpdateBanner. */}
-        <UpdateCheckControl />
+        {/* ONE row for the whole subject, where three cards used to stand. Updating is a flow with
+            a lead, N peers, progress and a rollback state, so it lives on `/settings/updates` and
+            this page keeps the row that opens it — a status line and a chevron, in the same idiom
+            as the pack row below. */}
+        <UpdatesSettingsCard />
 
         {/* Access sits with the connection diagnostics — both answer "what is this device allowed
             to do, and why". Pairing is the gate you can change from here; ConnectionInfo below only
@@ -225,9 +227,11 @@ export function SettingsRoute() {
 
         <ConnectionInfo bridge={root?.bridge} device={root?.device} build={serverBuild} />
 
-        {/* Update nudge + build stamp, grouped and pinned to the bottom of the page. */}
+        {/* The build stamp, pinned to the bottom of the page. The update chip that used to sit
+            above it is gone: it was the third surface for a subject that now has a page of its own,
+            and this block is a DIAGNOSTIC, not an update surface. The block keeps its position and
+            its `mt-auto` so nothing below the fold moves. */}
         <div className="mt-auto flex flex-col gap-2 pt-4">
-          <UpdateBanner />
           <BuildStamp />
         </div>
       </main>

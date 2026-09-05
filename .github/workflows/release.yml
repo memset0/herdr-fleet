@@ -33,7 +33,7 @@ jobs:
   #     with SIGILL on older hardware, which is exactly the hardware a self-hosted tool lives on.
   #     Collie is I/O-bound (a Unix socket and static files), so the baseline penalty is not
   #     observable here.
-  # The matrix is written for the full four-target set and SHIPS two; a user on a fast-follow
+  # The matrix is written for the full four-target set and SHIPS three; a user on a fast-follow
   # platform gets `collie update`'s honest "no artifact for your platform, build from source"
   # rather than a wrong binary. Uncomment a row to publish it.
   payload:
@@ -47,9 +47,9 @@ jobs:
           - platform: macos-arm64
             runs-on: macos-14
             bun-target: bun-darwin-arm64
-          # - platform: linux-arm64
-          #   runs-on: ubuntu-24.04-arm
-          #   bun-target: bun-linux-arm64
+          - platform: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            bun-target: bun-linux-arm64
           # - platform: macos-x64
           #   runs-on: macos-13
           #   bun-target: bun-darwin-x64
@@ -225,54 +225,57 @@ jobs:
           done
           ls -l
 
-      - name: Assemble release notes (CHANGELOG section + update commands)
+      - name: Assemble release notes (update commands + changelog link)
         id: notes
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           notes="$RUNNER_TEMP/notes.md"
-          # This version's CHANGELOG block: everything between its `## [x.y.z]` heading and the next.
-          awk -v ver="$version" '
-            $0 ~ ("^## \\[" ver "\\]") { grab = 1; next }
-            grab && /^## \[/ { exit }
-            grab { print }
-          ' CHANGELOG.md > "$RUNNER_TEMP/changelog.md" || true
+          # CHANGELOG.md is the one record of this release's changes; this step no longer copies its
+          # block in here, it links to the version's own heading instead. GitHub turns a Markdown
+          # heading into an anchor by lowercasing it, dropping brackets and dots, and turning each
+          # remaining space into a hyphen, so `## [1.5.0] - 2026-09-04` becomes `#150---2026-09-04`.
+          # Verified against a live rendered page, not assumed:
+          #   curl -sL https://github.com/$GITHUB_REPOSITORY/blob/v1.5.0/CHANGELOG.md \
+          #     | grep -o 'user-content-150---2026-09-04'
+          # Only the date is read out of the heading line; the anchor is built, not scraped, so this
+          # needs no HTML fetch at release time.
+          heading_line="$(grep -E "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md | head -1 || true)"
+          if [ -n "$heading_line" ]; then
+            date="${heading_line##* }"
+            anchor="$(printf '%s' "$version" | tr -d '.')---$date"
+            changelog_link="https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md#$anchor"
+          else
+            # Should never happen — the version gate already required this heading to exist — but a
+            # release must never fail over a link. Fall back to the bare file and say so in the log.
+            echo "::warning::CHANGELOG.md has no '## [$version] - YYYY-MM-DD' heading; linking the file without an anchor"
+            changelog_link="https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md"
+          fi
           {
-            # The 0.x crossing rides on EVERY release, not only 1.0.0's. A 0.x install's update
-            # banner points at the newest release, so a reader who never opens 1.0.0's notes must
-            # still find `--major` here (M14/01 §8).
-            echo "**Coming from 0.x?** Upgrade with one command. Do not use \`collie update\`."
-            echo "From the Herdr plugin: \`herdr plugin action invoke update-major --plugin herdr.collie\`."
-            echo "From a checkout you can reach: \`bin/collie update --major\`."
-            echo "Fresh install: \`curl -fsSL https://colliepwa.dev/install.sh | sh\`."
-            echo "Details and rollback: [docs/upgrading.md → Upgrading from 0.x to 1.0](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/upgrading.md#upgrading-from-0x-to-10)."
-            echo
-            if [ -s "$RUNNER_TEMP/changelog.md" ]; then
-              cat "$RUNNER_TEMP/changelog.md"
-              echo
-            fi
             echo "## Update"
+            echo
+            echo "**Already on 1.x?** One command, then the phone updates itself within a minute."
             echo
             # Two spellings, because there are two kinds of install and neither command works on the
             # other: a Herdr-managed checkout has plugin actions, a downloaded binary install has
-            # `collie` on PATH (M14/01 §8).
-            echo "**A downloaded install** (\`install.sh\`, or a tarball below):"
-            echo
+            # `collie` on PATH (M14/01 §8). These commands are why this step exists at all: the
+            # phone's update banner (web/src/components/update-banner.tsx) links straight to this
+            # release page, so they must be here, not just in CHANGELOG.md.
             echo '```'
-            echo "collie update"
-            echo '```'
-            echo
-            echo "**A Herdr plugin install** — advances the checkout, rebuilds, restarts (runs from any directory):"
-            echo
-            echo '```'
-            echo "herdr plugin action invoke update --plugin herdr.collie"
+            echo "collie update                                              # downloaded install (install.sh or a tarball below)"
+            echo "herdr plugin action invoke update --plugin herdr.collie    # Herdr plugin install"
             echo '```'
             echo
-            echo "Or just restart the bridge to pick up an already-built change:"
+            echo "Check with \`collie version\` or \`herdr plugin action invoke version --plugin herdr.collie\`."
             echo
-            echo '```'
-            echo "herdr plugin action invoke restart --plugin herdr.collie"
-            echo '```'
+            # The 0.x crossing rides on EVERY release, not only 1.0.0's. A 0.x install's update
+            # banner points at the newest release, so a reader who never opens 1.0.0's notes must
+            # still find this line here (M14/01 §8).
+            echo "**Coming from 0.x?** \`collie update\` will not cross a major. Follow [Upgrading from 0.x to 1.0](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/upgrading.md#upgrading-from-0x-to-10)."
+            echo
+            echo "## What changed"
+            echo
+            echo "Every change in this release, with its commit and who made it: [$version in the changelog]($changelog_link)."
             echo
             echo "## Verify a download by hand"
             echo
@@ -282,7 +285,7 @@ jobs:
             echo "sha256sum -c collie-$version-linux-x64.tar.gz.sha256   # macOS: shasum -a 256 -c"
             echo '```'
             echo
-            echo "A sha256 catches a corrupt or truncated download. It does not prove who built the file —"
+            echo "A sha256 catches a corrupt or truncated download. It does not prove who built the file,"
             echo "HTTPS and the pinned github.com host carry that."
           } > "$notes"
           echo "file=$notes" >> "$GITHUB_OUTPUT"
@@ -297,9 +300,16 @@ jobs:
           # that badge from the shipped release line, so mark it explicitly.
           flags=()
           case "$GITHUB_REF_NAME" in *-*) flags=(--prerelease) ;; esac
+          # `--generate-notes` appends GitHub's own summary — merged PRs with their authors, new
+          # contributors, and the "Full Changelog" compare link — after the notes file's content
+          # rather than replacing it (`gh release create --help`: "Additional release notes can be
+          # prepended to automatically generated notes"). That compare link matters here more than
+          # on most repos: most of Collie's history lands as direct commits, not PRs, so it is the
+          # one place every commit in the release is listed.
           gh release create "$GITHUB_REF_NAME" "${flags[@]}" \
             --title "Collie $GITHUB_REF_NAME" \
             --notes-file "${{ steps.notes.outputs.file }}" \
+            --generate-notes \
             "$RUNNER_TEMP"/assets/*
 
   # ── Tell the website ───────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import { DEFAULT_PORT } from "../bridge/config.ts";
 import { commitPackChange, mintInvite } from "../bridge/pack/enrollment.ts";
 import type { OpsRecord } from "../bridge/pack/ops-store.ts";
 import { TrustStore, type TrustedMember, type TrustStoreData } from "../bridge/pack/trust-store.ts";
+import { parseUpdateRun, type UpdateRun } from "../bridge/update-run.ts";
 import { collieVersion, INSTANCE_PATTERN, PLUGIN_ID } from "./context.ts";
 import { EXIT, type Io } from "./io.ts";
 import { ensureStore, parsePackArgs, probeMembers, resolveSelfAddress, type PackDeps } from "./pack.ts";
@@ -173,6 +174,20 @@ export function shq(value: string): string {
 }
 
 /**
+ * A remote PATH expression for `/bin/sh` — {@link shq}, except a leading `~` is expanded against the
+ * REMOTE `$HOME`, never against this machine's. `shq` alone defeats tilde expansion (single quotes
+ * turn off every shell substitution), so an operator's `--path '~/apps/collie-stable'` would reach
+ * the far shell as the seven-byte literal `~/apps/collie-stable` — a directory named `~` that does
+ * not exist — rather than the path they meant. And the two accounts are not guaranteed to share a
+ * `$HOME`, so this side must never resolve the tilde itself and ship the resolved string instead.
+ */
+export function shqPath(path: string): string {
+  if (path === "~") return '"$HOME"';
+  if (path.startsWith("~/")) return `"$HOME"/${shq(path.slice(2))}`;
+  return shq(path);
+}
+
+/**
  * Resolve a tool the way `scripts/collie-ctl.sh` resolves Bun: `PATH` first, then the fixed install
  * locations — because `ssh host '/bin/sh -s'` is byte-for-byte the no-login-shell, no-`PATH`
  * environment that shim was written for. `command -v` reports a shell function as a bare word, so
@@ -288,7 +303,7 @@ export function probeScript(opts: { readonly path: string | null; readonly port:
   const candidates =
     opts.path === null
       ? `"$HOME/.collie" "$HOME/collie" "$HOME"/.config/herdr/plugins/github/*/ "$HOME"/.config/herdr/plugins/local/*/`
-      : shq(opts.path);
+      : shqPath(opts.path);
   return [
     "set -u",
     "umask 077",
@@ -402,7 +417,7 @@ export function installScript(opts: {
     TOOL_LOOKUP,
     'GIT=$(collie_tool git) || { echo "error: no git on this machine" >&2; exit 20; }',
     'BUN=$(collie_tool bun) || { echo "error: no bun on this machine" >&2; exit 21; }',
-    `ROOT=${shq(opts.root)}`,
+    `ROOT=${shqPath(opts.root)}`,
     `COMMIT=${shq(opts.commit)}`,
     `EXPECT=${shq(opts.version)}`,
     'WORK=$(mktemp -d "${TMPDIR:-/tmp}/collie-add.XXXXXX")',
@@ -481,10 +496,61 @@ export async function runInstall(
 export function restartScript(root: string): string {
   return [
     "set -eu",
-    `ROOT=${shq(root)}`,
+    `ROOT=${shqPath(root)}`,
     'exec "$ROOT/bin/collie" restart',
     "",
   ].join("\n");
+}
+
+// ── The far side's own update record ─────────────────────────────────────────
+
+/**
+ * `collie update --status --json` on the far machine — how the health gate of a pack update finds
+ * out WHY a member did not come back (M15/06).
+ *
+ * **No `curl`, and no port dialled from here.** The member's `/api/health` is answered by the member
+ * itself, so the honest way to ask across a machine boundary is the member's own binary, run over
+ * the ssh the operator already authenticated (ADR 0016). A staged install keeps the live binary
+ * under `current/`; a Herdr-managed checkout advances in place and has only `bin/collie`. Both are
+ * tried, in that order, because the first one that exists is the one that is running.
+ *
+ * Exit 66 = no Collie binary at that path, which is the same code {@link remoteCheckScript} uses for
+ * the same fact.
+ */
+export function updateStatusScript(root: string): string {
+  return [
+    "set -u",
+    `ROOT=${shqPath(root)}`,
+    'for _c in "$ROOT/current/bin/collie" "$ROOT/bin/collie"; do',
+    '  if [ -x "$_c" ]; then exec "$_c" update --status --json; fi',
+    "done",
+    "exit 66",
+    "",
+  ].join("\n");
+}
+
+/**
+ * The run record inside whatever the far side printed, or null.
+ *
+ * Null covers three cases that are one answer to the caller: no binary there, a Collie old enough
+ * not to know `--status`, and a machine that has never run an update (`--status --json` prints
+ * `null`). None of them is evidence about the update that just ran, so none of them may be read as
+ * a diagnosis.
+ */
+export function parseRemoteRun(stdout: string): UpdateRun | null {
+  const start = stdout.indexOf("{");
+  const end = stdout.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  return parseUpdateRun(stdout.slice(start, end + 1));
+}
+
+/** {@link updateStatusScript} as a step: run it, and read what came back. */
+export async function runUpdateStatus(
+  runner: RemoteRunner,
+  root: string,
+): Promise<{ readonly result: RemoteResult; readonly run: UpdateRun | null }> {
+  const result = await runner.run(updateStatusScript(root));
+  return { result, run: parseRemoteRun(result.stdout) };
 }
 
 // ── Leg 3 — configure ────────────────────────────────────────────────────────
@@ -536,7 +602,7 @@ export function configureScript(opts: {
 export function membershipScript(root: string): string {
   return [
     "set -eu",
-    `ROOT=${shq(root)}`,
+    `ROOT=${shqPath(root)}`,
     '"$ROOT/bin/collie" pack status --no-probe',
     "",
   ].join("\n");
@@ -589,7 +655,7 @@ export function enrollScript(opts: {
   ];
   return [
     "set -eu",
-    `ROOT=${shq(opts.root)}`,
+    `ROOT=${shqPath(opts.root)}`,
     `exec "$ROOT/bin/collie" ${args.map(shq).join(" ")} <<'${PAYLOAD_EOF}'`,
     STDIN_MARKER,
     PAYLOAD_EOF,

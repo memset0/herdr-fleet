@@ -43,7 +43,13 @@ TMP_ROOT="$(cd "$TMP_ROOT" && pwd -P)"
 # tool of the same name — in particular the fake `bun`, which is what keeps a real build off this host.
 BASE_PATH="$PATH"
 
-cleanup() { rm -rf "$TMP_ROOT"; }
+# `U_HEALTH_PID` is the `/api/health` stand-in the update section starts (M15/04). It is killed HERE
+# rather than under its own trap so that every exit path takes it down: a stand-in still listening
+# after the suite would make the next run's port pick fail.
+cleanup() {
+  [ -n "${U_HEALTH_PID:-}" ] && kill "$U_HEALTH_PID" 2>/dev/null
+  rm -rf "$TMP_ROOT"
+}
 trap cleanup EXIT
 
 fail() {
@@ -398,7 +404,7 @@ firstrun HERDR_SOCKET_PATH="${F_HOME}/absent.sock" "$BIN" start \
   && fail "\`collie start\` came up with no multiplexer to mirror"
 assert_contains "$STDERR" "no COLLIE_MUX is set"
 assert_contains "$STDERR" "no multiplexers are running"
-assert_contains "$STDERR" "printf 'COLLIE_MUX=<herdr|tmux|zellij>\\n' >> ${F_CONFIG}/.env && collie start"
+assert_contains "$STDERR" "COLLIE_MUX=<herdr|tmux|zellij> collie start"
 [ -f "${F_CONFIG}/.env" ] && fail "a refused start still wrote a config"
 
 # Exactly one found, and no terminal to ask at: auto-selected, said out loud, and written down.
@@ -1108,21 +1114,39 @@ advance_origin() {
   git_q -C "$ORIGIN" tag v9.10.0
 }
 
-# The fake Bun for this section records the `_apply-update` handoff — the ONE thing `update` does
-# after advancing the checkout — and otherwise behaves like the build fake.
+# The fake Bun for this section records the `_apply-update` handoff — the ONE thing an in-place
+# update does after advancing the checkout — and otherwise behaves like the build fake.
+#
+# Two things it must produce, because the staged path runs on them: `bun <worktree>/cli/main.ts
+# build` is how a version is built INSIDE its worktree, and what that build leaves behind is a
+# RUNNABLE `bin/collie` — the staged flip then restarts the service through `current/bin/collie`,
+# so a binary that is only a text file would fail the restart and roll the update back.
 cat > "${U_BIN}/bun" <<EOF
 #!/bin/sh
 echo "\${PWD}\\\$ bun \$*" >> "$U_CALLS"
+new_binary() {
+  mkdir -p "\$(dirname "\$1")"
+  printf '#!/bin/sh\n# NEW BINARY\necho "\$0 \$*" >> "%s"\nexit 0\n' "$U_CALLS" > "\$1"
+  chmod +x "\$1"
+}
 case "\$1 \$2" in
   "build --compile")
     for a in "\$@"; do
-      [ "\$prev" = --outfile ] && printf 'NEW BINARY\n' > "\$a" && chmod +x "\$a"
+      [ "\$prev" = --outfile ] && new_binary "\$a"
       prev="\$a"
     done
     exit 0 ;;
   "run build")
     mkdir -p dist-staging
     printf 'NEW BUNDLE\n' > dist-staging/index.html
+    exit 0 ;;
+esac
+# <root>/cli/main.ts build -- the staged path's build, run from inside the worktree.
+case "\$2" in
+  build)
+    new_binary bin/collie
+    mkdir -p web/dist
+    printf 'NEW BUNDLE\n' > web/dist/index.html
     exit 0 ;;
 esac
 exit 0
@@ -1139,6 +1163,24 @@ echo "systemctl \$*" >> "$U_CALLS"
 [ "\$2" = "is-active" ] && echo active
 exit 0
 EOF
+# The detached updater's launch seam (M15/04). The real `systemd-run --user --collect` hands the
+# runner to the user manager so it survives the bridge it is about to restart; this stand-in strips
+# those flags and RUNS it, so one pass proves BOTH the argv the handoff builds and the swap-and-
+# verify half it drives. The child is still spawned detached, so every assertion after a staged
+# update waits on the state file (`wait_for_run`) rather than on the verb's exit.
+cat > "${U_BIN}/systemd-run" <<EOF
+#!/bin/sh
+echo "systemd-run \$*" >> "$U_CALLS"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    --user|--collect) shift ;;
+    --unit) shift 2 ;;
+    *) break ;;
+  esac
+done
+exec "\$@"
+EOF
+chmod +x "${U_BIN}/systemd-run"
 cat > "${U_BIN}/tailscale" <<EOF
 #!/bin/sh
 echo "tailscale \$*" >> "$U_CALLS"
@@ -1152,11 +1194,69 @@ chmod +x "${U_BIN}/herdr" "${U_BIN}/systemctl" "${U_BIN}/tailscale"
 # tags and `checkout --detach --force` onto them, discarding local work (M14/02 amendment). These
 # checkouts' origin is a throwaway path, so the override is what makes them self-consistent; the
 # refusal itself is pinned right below.
+# `/api/health` (M15/04), stood in for. The detached updater polls it after the restart and demands
+# the version it just flipped to — "did it answer" alone is not the question, because a service that
+# came back on the OLD code answers perfectly well. The version served is a file, so a case can say
+# what the machine claims to be running; an empty file is "down".
+U_STATE="${TMP_ROOT}/update-home/.local/state/collie"
+U_HEALTH="${TMP_ROOT}/update-health-version"
+U_PORT="$(pick_port 48791 48891 48991)"
+printf '9.10.0\n' > "$U_HEALTH"
+cat > "${TMP_ROOT}/update-health.ts" <<EOF
+import { readFileSync } from "node:fs";
+Bun.serve({
+  hostname: "127.0.0.1",
+  port: ${U_PORT},
+  fetch(req) {
+    if (new URL(req.url).pathname !== "/api/health") return new Response("no", { status: 404 });
+    const version = readFileSync("${U_HEALTH}", "utf8").trim();
+    if (version === "") return new Response("down", { status: 503 });
+    return Response.json({ ok: true, version, deposed: false, mode: "solo" });
+  },
+});
+EOF
+# `>/dev/null 2>&1` is load-bearing, not tidiness: a background child inheriting this script's
+# stdout holds the pipe open, and a caller reading the suite through `| tail` would then wait for
+# the health stand-in rather than for the suite.
+bun "${TMP_ROOT}/update-health.ts" >/dev/null 2>&1 &
+U_HEALTH_PID=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  curl -fsS "http://127.0.0.1:${U_PORT}/api/health" >/dev/null 2>&1 && break
+  sleep 0.2
+done
+
+# What the health stand-in claims this machine is running.
+health_says() { printf '%s\n' "$1" > "$U_HEALTH"; }
+
+# Wait for the DETACHED runner to reach a terminal state. Every assertion about a flipped `current`
+# comes after one of these: the verb returns as soon as the child is away, which is the whole point.
+wait_for_run() {
+  local want="$1" i=0
+  while [ "$i" -lt 300 ]; do
+    if grep -q "\"state\": \"${want}\"" "${U_STATE}/update.json" 2>/dev/null; then return 0; fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  # Both halves, because a runner that never started and one that started and failed look identical
+  # from the record alone: the record is where it stopped, the log is what it said while stopping.
+  fail "the detached updater never reached '${want}': $(cat "${U_STATE}/update.json" 2>/dev/null)
+  log: $(find "${TMP_ROOT}" -name 'collie*.log' -exec cat {} + 2>/dev/null)"
+}
+
 upd() {
   local root="$1"; shift
-  : > "$U_CALLS"
+  case " $* " in
+    # `--status` READS the record and changes nothing, so it clears nothing either: the call log and
+    # the record it is being asked about both belong to the run before it. Every other verb starts a
+    # fresh run, so both are cleared first — `wait_for_run` must never match the run before this one.
+    *" --status "*) ;;
+    *)
+      : > "$U_CALLS"
+      rm -f "${U_STATE}/update.json" "${U_STATE}/update.lock"
+      ;;
+  esac
   run_stripped HOME="${TMP_ROOT}/update-home" HERDR_PLUGIN_CONFIG_DIR="${TMP_ROOT}/update-config" \
-    PATH="${U_BIN}:${BASE_PATH}" COLLIE_MUX=herdr COLLIE_PORT="$PORT" COLLIE_PLUGIN_ROOT="$root" \
+    PATH="${U_BIN}:${BASE_PATH}" COLLIE_MUX=herdr COLLIE_PORT="$U_PORT" COLLIE_PLUGIN_ROOT="$root" \
     COLLIE_UPDATE_REPO="$ORIGIN" "$@"
 }
 
@@ -1191,17 +1291,44 @@ assert_contains "$(cat "$U_CALLS")" "${MANAGED}\$ bun ${MANAGED}/cli/main.ts _ap
 # Idempotent: a second update with nothing new upstream is a no-op, not an error.
 upd "$MANAGED" "$BIN" update || fail "a second \`collie update\` failed"
 
-# Shape 2 — a dev clone linked with `herdr plugin link`. On a branch, so it fast-forwards, keeps its
-# branch, and keeps its FULL history (no --depth truncation).
+# Shape 2 — a dev clone linked with `herdr plugin link`. Since M15/02 it STAGES rather than
+# advancing itself: the target release TAG is checked out into `versions/vX.Y.Z` — a git worktree
+# sharing the one `.git` — built there, marked complete, and `current` is flipped onto it with one
+# rename. The clone's own branch never moves, which is what makes a failed build a no-op
+# (ADR 0006, amendment of 2026-09-03).
 CLONE="${U_DIR}/clone"
 git_q clone -q "$ORIGIN" "$CLONE"
 git_q -C "$ORIGIN" commit -q --allow-empty -m "third"
+CLONE_BRANCH_AT="$(git -C "$CLONE" rev-parse HEAD)"
+health_says 9.10.0
 upd "$CLONE" "$BIN" update || fail "\`collie update\` failed on a linked clone: ${STDERR}"
-assert_contains "$STDOUT" "git pull --ff-only"
-assert_eq "$(git -C "$CLONE" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-parse HEAD)"
+assert_contains "$STDOUT" "staged checkout"
+# The verb STAGES and hands off (M15/04): the swap, the restart and the health gate all run in a
+# process with its own lifetime, because the restart would otherwise kill the bridge that asked.
+assert_contains "$STDOUT" "handed off to systemd-run --user --collect"
+assert_contains "$STDOUT" "Watch it with: collie update --status"
+wait_for_run done
+assert_contains "$(cat "$U_CALLS")" "systemd-run --user --collect --unit collie-update-"
+# The version is a worktree of the tag, and `current` is a RELATIVE symlink at it.
+assert_eq "$(git -C "${CLONE}/versions/v9.10.0" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-parse "v9.10.0^{commit}")"
+assert_eq "$(readlink "${CLONE}/current")" "versions/v9.10.0"
+assert_eq "$(cat "${CLONE}/versions/v9.10.0/VERSION")" "v2"
+# The completeness marker is the build's LAST act — without it the flip refuses.
+assert_contains "$(cat "${CLONE}/versions/v9.10.0/.collie-build")" '"version": "9.10.0"'
+# The restart goes through the name that was just switched, never through the old process.
+assert_contains "$(cat "$U_CALLS")" "${CLONE}/current/bin/collie restart"
+# The clone itself is untouched: same commit, same branch, full history.
+assert_eq "$(git -C "$CLONE" rev-parse HEAD)" "$CLONE_BRANCH_AT"
 assert_eq "$(git -C "$CLONE" symbolic-ref --short HEAD)" "main"
-assert_eq "$(git -C "$CLONE" rev-list --count HEAD)" "3"
 assert_eq "$(git -C "$CLONE" rev-parse --is-shallow-repository)" "false"
+# The first staged update has no rollback target, and says so rather than implying one.
+assert_contains "$STDOUT" "nothing to roll back to yet"
+# `--status` reads the record the runner left behind — the same file the bridge and the standby door
+# report, so the terminal and the phone can never tell two different stories about one run.
+upd "$CLONE" "$BIN" update --status || fail "\`collie update --status\` failed: ${STDERR}"
+assert_contains "$STDOUT" "✓ updated to v9.10.0"
+if upd "$CLONE" "$BIN" update --rollback; then fail "--rollback found a target on a first staged update"; fi
+assert_contains "$STDERR" "nothing to roll back to"
 
 # Shape 3 — not a git checkout at all (a copied tree). It must name the reinstall command rather than
 # emit a raw git error about a missing origin, and it must not reach the rebuild.
@@ -1249,20 +1376,30 @@ assert_eq "$(cat "${MANAGED}/VERSION")" "v10"
 git -C "$MANAGED" symbolic-ref -q HEAD >/dev/null 2>&1 &&
   fail "crossing a major must leave the managed checkout detached"
 
-# Linked: the target is the branch tip, so the gate is a pre-flight read of the manifest at
-# FETCH_HEAD — and a refusal pulls NOTHING.
+# Linked: the target is a TAG here too now, so the gate is target selection — v10.0.0 is simply not
+# a major-9 install's to take, and nothing is staged for it.
 CLONE_AT="$(git -C "$CLONE" rev-parse HEAD)"
 upd "$CLONE" "$BIN" update || fail "a routine update refusing a major must still succeed: ${STDERR}"
-assert_contains "$STDOUT" "crosses a MAJOR version"
-assert_eq "$(git -C "$CLONE" rev-parse HEAD)" "$CLONE_AT"
+assert_contains "$STDOUT" "NEW MAJOR"
+[ -d "${CLONE}/versions/v10.0.0" ] && fail "a routine update staged the next major"
+health_says 10.0.0
 upd "$CLONE" "$BIN" update --major || fail "\`collie update --major\` failed on a clone: ${STDERR}"
-assert_eq "$(git -C "$CLONE" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-parse HEAD)"
+assert_contains "$STDOUT" "crossing to Collie 10.0.0"
+wait_for_run done
+assert_eq "$(readlink "${CLONE}/current")" "versions/v10.0.0"
+# The crossing is staged too: the clone's own branch is where it was.
+assert_eq "$(git -C "$CLONE" rev-parse HEAD)" "$CLONE_AT"
 assert_eq "$(git -C "$CLONE" symbolic-ref --short HEAD)" "main"   # still a branch, never detached
+# …and NOW there is a previous version, so `--rollback` flips back to it and restarts.
+upd "$CLONE" "$BIN" update --rollback || fail "\`collie update --rollback\` failed on a clone: ${STDERR}"
+assert_contains "$STDOUT" "✓ rolled back to 9.10.0"
+assert_eq "$(readlink "${CLONE}/current")" "versions/v9.10.0"
+# A rollback collects nothing: the version rolled away from is the one most likely to be wanted back.
+[ -d "${CLONE}/versions/v10.0.0" ] || fail "a rollback removed the version it rolled away from"
 
-# A clone kept on a NON-DEFAULT branch is judged by ITS OWN upstream, never by the remote's default
-# tip. `origin/main` is a major ahead here; `origin/maint` is not, and it is the only thing
-# `git pull --ff-only` would ever take — reading the gate off the wrong one would refuse every pull
-# on a maintenance branch (this repo's own deployment host is a clone on `v1`).
+# A clone kept on a NON-DEFAULT branch stays on it. A staged update takes the newest RELEASE of the
+# major the install is on — `origin/main` is a major ahead here and is never consulted — and the
+# branch the operator keeps this clone on is left exactly where it is, unpulled.
 git_q -C "$ORIGIN" branch maint v9.10.0
 MAINT="${U_DIR}/maint"
 git_q clone -q -b maint "$ORIGIN" "$MAINT"
@@ -1271,11 +1408,13 @@ printf 'v9-maint\n' > "${ORIGIN}/VERSION"
 git_q -C "$ORIGIN" add -A
 git_q -C "$ORIGIN" commit -q -m "a 9.x fix"
 git_q -C "$ORIGIN" checkout -q main
-upd "$MAINT" "$BIN" update || fail "update refused a within-major pull on a maintenance branch: ${STDERR}"
-assert_contains "$STDOUT" "git pull --ff-only"
-assert_eq "$(cat "${MAINT}/VERSION")" "v9-maint"
+MAINT_AT="$(git -C "$MAINT" rev-parse HEAD)"
+health_says 9.10.0
+upd "$MAINT" "$BIN" update || fail "update refused a within-major release on a maintenance branch: ${STDERR}"
+wait_for_run done
+assert_eq "$(readlink "${MAINT}/current")" "versions/v9.10.0"
 assert_eq "$(git -C "$MAINT" symbolic-ref --short HEAD)" "maint"
-assert_eq "$(git -C "$MAINT" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-parse maint)"
+assert_eq "$(git -C "$MAINT" rev-parse HEAD)" "$MAINT_AT"
 
 # An UNVERSIONED managed checkout — a manifest we cannot read a major out of. It must never strand
 # the install, and it must never follow `origin HEAD`: a moved default branch is unreleased work
@@ -1294,17 +1433,18 @@ assert_eq "$(git -C "$UNVERSIONED" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-pars
 [ "$(git -C "$UNVERSIONED" rev-parse HEAD)" != "$(git -C "$ORIGIN" rev-parse main)" ] ||
   fail "the unversioned fallback followed origin HEAD instead of the newest release tag"
 
-# A branch with NO upstream: nothing to gate, and nothing to pull either — git's own "no tracking
-# information" is the whole answer, and a pull that cannot happen cannot cross a major.
+# A branch with NO upstream is no obstacle to a staged update: the target is a tag, not the branch's
+# tracking ref, and the branch is never pulled. What the clone is sitting on stays untouched.
 NOUP="${U_DIR}/no-upstream"
 git_q clone -q "$ORIGIN" "$NOUP"
 git_q -C "$NOUP" checkout -q -b local-only
 NOUP_AT="$(git -C "$NOUP" rev-parse HEAD)"
-if upd "$NOUP" "$BIN" update; then fail "a branch with no upstream reported a successful update"; fi
+health_says 10.0.0
+upd "$NOUP" "$BIN" update || fail "a branch with no upstream could not stage a release: ${STDERR}"
+wait_for_run done
+assert_eq "$(readlink "${NOUP}/current")" "versions/v10.0.0"
 assert_eq "$(git -C "$NOUP" rev-parse HEAD)" "$NOUP_AT"
-case "$STDOUT" in
-  *"MAJOR"*) fail "a branch with no upstream was refused by the major gate instead of by git" ;;
-esac
+assert_eq "$(git -C "$NOUP" symbolic-ref --short HEAD)" "local-only"
 
 # The suite must not damage the repository it is run FROM. Git hands every hook a `GIT_DIR`, this
 # suite runs from pre-push, and an exported `GIT_DIR` beats `-C` for every git command in the tree —
@@ -1339,7 +1479,7 @@ assert_contains "$STDOUT" "✓ update complete"
 assert_contains "$(cat "$U_CALLS")" "systemctl --user enable --now collie"
 # The rebuilt artifacts are in place: the binary the restarted unit will execute, and the bundle the
 # bridge serves from disk.
-assert_eq "$(cat "${MANAGED}/bin/collie")" "NEW BINARY"
+assert_contains "$(cat "${MANAGED}/bin/collie")" "NEW BINARY"
 assert_eq "$(cat "${MANAGED}/web/dist/index.html")" "NEW BUNDLE"
 # NEVER re-link a managed checkout: `plugin link` re-registers it as source.kind=local, after which
 # Herdr REFUSES `plugin install` — the operator's only other way to refresh (ADR 0006).

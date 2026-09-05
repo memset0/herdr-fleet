@@ -1668,7 +1668,7 @@ describe("the standby door and the takeover (RFC §6/§7/§9)", () => {
 
     // THE REAL VERB, on the real file — the path the drill ran.
     const revoked = await verb(hq, async (d) =>
-      cmdDevicesRevoke({ ctx: d.ctx, io: d.io, files: d.files }, ["drill"]),
+      cmdDevicesRevoke({ ctx: d.ctx, io: d.io, files: d.files, exec: d.exec }, ["drill"]),
     );
     expect(revoked.code).toBe(EXIT.OK);
     expect(revoked.out).toContain('revoked "drill"');
@@ -1792,7 +1792,10 @@ describe("the standby door and the takeover (RFC §6/§7/§9)", () => {
   test("while the lead is alive the door is COLD: 503 on health, a page with no button", async () => {
     const health = await standby("/standby/health");
     expect(health.status).toBe(503);
-    expect(await health.json()).toEqual({ state: "cold" });
+    // standby answers the version: even cold, and even at 503 — the updater's health gate reads this
+    // port on a peer, whose main port is behind mutual TLS (M15/05). The state word is unchanged.
+    expect(health.headers.get("x-collie-version")).toMatch(/^\d+\.\d+\.\d+/);
+    expect(await health.json()).toMatchObject({ state: "cold" });
 
     const page = await standby("/standby");
     expect(page.status).toBe(200);

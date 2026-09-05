@@ -7,13 +7,13 @@ import {
   useRouteLoaderData,
 } from "react-router";
 
-import { intervalFor, usePolling } from "@/hooks/use-polling";
+import { usePolling } from "@/hooks/use-polling";
 import { usePollBusy } from "@/hooks/use-poll-busy";
 import { useBusyWhile } from "@/lib/busy";
 import { useAgentTransitions } from "@/hooks/use-transitions";
 import { usePushSetup } from "@/hooks/use-push";
 import { useConnectionLost } from "@/hooks/use-connection-lost";
-import { UpdateAvailableBanner } from "@/components/update-available-banner";
+import { UpdateRibbon } from "@/components/update-ribbon";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
 import { PackProvider } from "@/components/pack-provider";
@@ -67,7 +67,7 @@ export function RootLayout() {
 
   // The scope rides along so a "look now" on foreground lands on the machine and session the page is
   // actually showing — a refresh aimed at the lead would leave a peer's herd exactly as stale.
-  usePolling(data, paneId, data.scope);
+  const pollMs = usePolling(data, paneId, data.scope);
   // Surface the busy bar when a navigation or a poll runs slow, each against its own threshold —
   // routine fast polls/navigations stay invisible. Mounted here so the whole app shares one
   // detector inside the router context.
@@ -93,19 +93,17 @@ export function RootLayout() {
     //
     // `ts` and the poll cadence ride along for tier-2 (lead↔peer) health: §10.2 presents a member
     // stale once the lead's last receipt from it is older than `3 × pollMs` (capped at 15s), and
-    // `intervalFor` is the same pure resolver `usePolling` above is running on — read here rather
-    // than re-derived, so the tolerance can never be computed against a cadence we aren't using.
-    <PackProvider
-      servers={data.servers}
-      sessions={data.sessions}
-      ts={data.ts}
-      pollMs={intervalFor(data, paneId)}
-    >
-      <div className="flex h-[100dvh] flex-col">
-        {/* API-observed self-update: mounted unconditionally so its controller runs (and can
-            auto-update) for the app's lifetime; renders the slim "tap to update" row only when a fresh
-            build is confirmed but auto-update is held off (unsent work) or already spent. */}
-        <UpdateAvailableBanner />
+    // the number is the one `usePolling` above RETURNS — the gap it is actually running on, not a
+    // second derivation of it, so the tolerance can never be computed against a cadence we aren't
+    // using. That mattered more once the cadence gained inputs beyond the snapshot (#156).
+    <PackProvider servers={data.servers} sessions={data.sessions} ts={data.ts} pollMs={pollMs}>
+      <div className="flex h-[100dvh] flex-col overflow-hidden">
+        {/* THE update band, and the only one: a release on offer, a confirm just tapped, a run in
+            flight, a new bridge this bundle is behind, and peers following — one fixed-height row
+            that says whichever of those is true. Mounted unconditionally so the bundle self-updater's
+            controller runs (and can auto-update) for the app's lifetime; it returns null when it has
+            nothing to say. */}
+        <UpdateRibbon />
         {/* The app's ONE connection surface: a thin, animated bar that stays hidden while healthy, fades
             in amber "reconnecting…" only after ≥4s of sustained trouble (the flicker fix), escalates to a
             red "not connected" cause + Retry/Reload at ≥15s, and flashes green on recovery. Reads the

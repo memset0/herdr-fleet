@@ -11,6 +11,14 @@ import {
   unauthorizedResponse,
   type RefusedFactor,
 } from "./admission.ts";
+import {
+  PACK_PREFLIGHT_FIELD,
+  PACK_RUN_FIELD,
+  PACK_VERSION_FIELD,
+  type PeerPreflight,
+  type PeerRunReport,
+} from "../update-action.ts";
+import { LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
 import { apiPathFor } from "./forward.ts";
 import { HOST_PARAM } from "./registry.ts";
 import {
@@ -77,6 +85,17 @@ export const PACK_PREFIX = "/pack/v1/";
 export const PACK_ENROLL_PATH = "/pack/v1/enroll";
 export const PACK_HELLO_PATH = "/pack/v1/hello";
 export const PACK_SNAPSHOT_PATH = "/pack/v1/snapshot";
+
+/**
+ * The lead's REQUEST for a fresh preflight on the snapshot it is about to read (§19).
+ *
+ * `fresh` is the only value that means anything, and it is a request rather than an order: a peer
+ * that ignores this header is a **correct peer** — its answer is then simply older, and `asOf` says
+ * so. No new route, no new verb; one header on a dial the lead already makes.
+ */
+export const PREFLIGHT_HEADER = "X-Pack-Preflight";
+/** The one value {@link PREFLIGHT_HEADER} carries. Anything else reads as an absent header. */
+export const PREFLIGHT_FRESH = "fresh";
 
 // ── The membership routes (M4/07) ────────────────────────────────────────────
 // Three routes that exist because three operator verbs are otherwise undeliverable: §8.4's rotation
@@ -339,8 +358,13 @@ export interface PackRouterDeps {
    */
   readonly standby?: StandbySurface;
   /**
-   * This build's own version string, for `hello` (§5, §7.1) — bare, as `collie version` names it
-   * without its parenthetical (`bridge/version.ts`'s `collieVersionBare`).
+   * This build's own version string, for `hello` **and for every `snapshot` answer** (§5, §7.1,
+   * §19) — bare, as `collie version` names it without its parenthetical (`bridge/version.ts`'s
+   * `collieVersionBare`).
+   *
+   * Two routes carry one fact, and that is the 2026-09-04 amendment: the lead's poll dials
+   * `snapshot`, never `hello`, so a version that rides only `hello` is a version the lead learns
+   * only from a verdict probe — which a healthy pack never fires.
    *
    * **Threaded in once, at boot, by whoever constructs the router** (`bridge/index.ts`). It is not
    * read per request: the answer cannot change without a restart, and `hello` is the pack's most
@@ -366,8 +390,43 @@ export interface PackRouterDeps {
    * unchanged (§7.1's absent-means-closed).
    */
   readonly warrantActiveGeneration?: number | null;
+  /**
+   * **This machine's own `collie update --check --local` verdict** (§19), published beside the
+   * snapshot body so one confirm on the phone can cover the whole pack (M16/03).
+   *
+   * `fresh` is the lead's `X-Pack-Preflight: fresh` reaching through: a REQUEST to re-read, which
+   * the wiring honours at most once per `PREFLIGHT_TTL_MS` and bounds on its own clock. Nothing here
+   * decides that — the router passes the request on and serialises whatever comes back.
+   *
+   * Absent ⇒ the field is simply omitted, which the lead reads as **unknown, never green** (§7.1).
+   * Optional so a test constructing a router for some other route need not care.
+   */
+  readonly updatePreflight?: (fresh: boolean) => Promise<PeerPreflight | null>;
+  /**
+   * **This machine's own update run**, published beside the snapshot body (§20, M16/04).
+   *
+   * The lead cannot otherwise tell "moving" from "still behind", nor "rolled back" from "not
+   * started" — the version alone says neither. Absent ⇒ the field is omitted, which the lead reads
+   * as "nothing to report" and never as success.
+   */
+  readonly updateRun?: () => PeerRunReport | null;
+  /**
+   * §20's two REQUEST headers reaching through: the lead's own settled release, and the turn.
+   *
+   * A **notification**, not a route: this collie decides for itself whether any of it means
+   * anything (`bridge/pack/follow.ts` holds all eight guards), and a build that supplies no
+   * `onFollow` simply ignores both headers — which is a correct peer. Nothing here awaits it, so a
+   * follow decision can never cost this snapshot its answer.
+   */
+  readonly onFollow?: (a: { readonly leadRelease: string | null; readonly turn: string | null }) => void;
   readonly now?: () => number;
   readonly random?: RandomSource;
+}
+
+/** A request header, trimmed, or `null` for absent and blank alike — §7.1's absent-means-closed. */
+function headerValue(req: Request, name: string): string | null {
+  const raw = req.headers.get(name)?.trim() ?? "";
+  return raw === "" ? null : raw;
 }
 
 /** Answers a pack request, or `null` when the path is not ours (so the normal router continues). */
@@ -857,7 +916,36 @@ export function createPackRouter(deps: PackRouterDeps): PackHandler {
       // lead sees it while it is true instead of for the one sweep a push happened to land on.
       const clash = deps.standby?.syncedCollision() ?? [];
       const withReport = clash.length === 0 ? withDigest : { ...withDigest, pairingCollision: [...clash] };
-      return new Response(JSON.stringify(withReport), {
+      // §19: this machine's own update preflight, in the same seat, for the same reason. The lead's
+      // `X-Pack-Preflight: fresh` is passed on as a REQUEST — a peer that honours it answers with a
+      // freshly-run report, and one that does not answers with an older one and an `asOf` saying so.
+      // Absent means unknown at the far end, never green, so a member that cannot check itself
+      // blocks the phone's confirm by name instead of passing silently.
+      const askedFresh = req.headers.get(PREFLIGHT_HEADER)?.trim().toLowerCase() === PREFLIGHT_FRESH;
+      const preflight = (await deps.updatePreflight?.(askedFresh)) ?? null;
+      const withPreflight =
+        preflight === null ? withReport : { ...withReport, [PACK_PREFLIGHT_FIELD]: preflight };
+      // §20: this machine's own run, in the same seat and for the same reason. It is what lets the
+      // lead's page say "updating" and "rolled back" about a member instead of "still behind".
+      const ownRun = deps.updateRun?.() ?? null;
+      const withRun = ownRun === null ? withPreflight : { ...withPreflight, [PACK_RUN_FIELD]: ownRun };
+      // §5/§19: this machine's own running version, in that same seat — the 2026-09-04 amendment
+      // §5 itself named as the road ("an additive-optional field on `snapshot`'s response, not a
+      // second dial"). The lead's poll dials `snapshot` and never `hello`, so without this the lead
+      // learns a member's version only from a verdict probe after a sweep has already timed out —
+      // which in steady state is never. Absent ⇒ omitted, which the lead reads as "this answer said
+      // nothing" and keeps what it had; it is never read as "no version".
+      const withVersion =
+        deps.version === undefined ? withRun : { ...withRun, [PACK_VERSION_FIELD]: deps.version };
+      // §20's two REQUEST headers, read LAST and answered with nothing. They are additive-optional
+      // and absent-means-closed: a build with no `onFollow` ignores both, which is a correct peer,
+      // and a peer that reads them still decides for itself. Handed over synchronously and never
+      // awaited — the snapshot this request came for is not the follow's to delay.
+      deps.onFollow?.({
+        leadRelease: headerValue(req, LEAD_RELEASE_HEADER),
+        turn: headerValue(req, UPDATE_TURN_HEADER),
+      });
+      return new Response(JSON.stringify(withVersion), {
         status: 200,
         headers: packResponseHeaders(verdict.self),
       });

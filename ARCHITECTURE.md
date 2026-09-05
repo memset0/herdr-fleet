@@ -81,7 +81,9 @@ exactly, and pays no tax for the feature ([`PACK_PROTOCOL.md` §11](./PACK_PROTO
   is Collie's own domain model: snapshots, pane grids, replies, history, uploads. What never crosses:
   software. `collie pack add` / `pack update` push a git bundle over the **operator's own ssh**
   ([ADR 0016](./.adr/0016-updates-ride-the-operators-ssh.md)), so the link is never a distribution
-  channel.
+  channel. A peer may also level itself to the release its lead is running, taking that public tag
+  from GitHub over anonymous HTTPS on its own decision (ADR 0016's addendum,
+  [`PACK_PROTOCOL.md` §20](./PACK_PROTOCOL.md)); still no code, route or verb on the link.
 - **Two independent factors gate `/pack/v1/*`,** before any handler runs: **pinned mutual TLS** and
   the **pack secret** ([`PACK_PROTOCOL.md` §8](./PACK_PROTOCOL.md#8-trust-enrollment-factors-rotation)).
   Neither browser gate of §6 applies there, and a peer publishes nothing — its listener is a path
@@ -323,8 +325,12 @@ graph TD
   [ADR 0018](./.adr/0018-operator-command-rows-replace-the-catalog.md). Their **Keys-tray presets**
   ride the same request on the same terms, from `keys.toml` (`bridge/operator-keys.ts`), and their
   **Quick-dock groups** from `quick-replies.toml` (`bridge/operator-quick-replies.ts`); the three
-  files share one reader (`bridge/operator-file.ts`) and one scope ladder
-  (`web/src/lib/operator-scope.ts`).
+  share one reader (`bridge/operator-file.ts`) and one scope ladder
+  (`web/src/lib/operator-scope.ts`). Their **launcher rows**, from `launchers.toml`
+  (`bridge/operator-launchers.ts`), share the reader but NOT `/api/config`: a launcher row creates
+  its own pane rather than addressing an existing one, so it carries no scope, and its rows ride
+  their own session-scoped `GET /api/launchers` instead — rows must come from the host that runs
+  them, which a lead-only `/api/config` field cannot say in a pack (PACK_PROTOCOL.md §5).
 
 - **UI strings are translated by a typed dictionary, not a library** (`web/src/lib/i18n/`, six
   locales, English the compile-time source of truth) — `t()`/`tn()` plus the `useLocale()` hook

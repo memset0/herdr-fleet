@@ -1,13 +1,15 @@
 import type { JsonObject, JsonValue } from "../json.ts";
 import { PACK_PROTOCOL_VERSION } from "./enrollment.ts";
 import { DEVICE_HEADER, MEMBER_HEADER, PROTOCOL_HEADER, parseProtocolHeader } from "./admission.ts";
-import { LEAD_CONFLICT, PACK_PREFIX, PAIRING_LABEL_COLLISION } from "./router.ts";
+import { LEAD_CONFLICT, PACK_PREFIX, PAIRING_LABEL_COLLISION, PREFLIGHT_FRESH, PREFLIGHT_HEADER } from "./router.ts";
+import { LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
 import { DIAL_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER, type DialParts } from "./signing.ts";
 import type { PackRequestInit, PackTlsOptions } from "./transport.ts";
 import type { Warrant } from "./trust-store.ts";
 import { parseCollisionReport, parsePairingReport, type PairingSync } from "./standby-devices.ts";
 import type { TakeoverBody } from "./takeover.ts";
 import { parseWarrant, parseWarrantActiveReport, type WarrantPush } from "./warrant.ts";
+import { PACK_VERSION_FIELD } from "../update-action.ts";
 
 // The LEAD side of a pack link: the client that dials a peer's `/pack/v1/*` surface.
 //
@@ -26,6 +28,17 @@ import { parseWarrant, parseWarrantActiveReport, type WarrantPush } from "./warr
 //   • THE TRANSPORT IS INJECTED. `Bun.serve`/`Bun.connect`-dependent code cannot be unit-tested here
 //     (CLAUDE.md), so the fetch is a parameter — the `bridge/dial.ts` precedent, applied one layer up.
 //     peer-client.test.ts therefore exercises the real decision logic against a fake, not a socket.
+
+/**
+ * §20's two request headers, as one value the sweep passes down. `null`/absent for either ⇒ that
+ * header is simply not sent, which is the closed reading on the far end.
+ */
+export interface FollowHeaders {
+  /** The lead's own settled release (`X-Pack-Lead-Release`), or null while it may state nothing. */
+  readonly leadRelease?: string | null;
+  /** `<member-name>;<run-id>` (`X-Pack-Update-Turn`), for the ONE member holding the turn. */
+  readonly turn?: string | null;
+}
 
 /** How long a peer has to answer before the poll gives up on it, by default (§10.1). */
 export const DEFAULT_PACK_TIMEOUT_MS = 1200;
@@ -589,9 +602,40 @@ export class PeerClient {
     );
   }
 
-  /** `GET /pack/v1/snapshot` — the one merged route (§5). Shape is spec M4/04's business. */
-  snapshot(link: PackLink, session?: string): Promise<PeerOutcome<JsonValue>> {
-    return this.json(link, "snapshot", session === undefined || session === "" ? undefined : { session });
+  /**
+   * `GET /pack/v1/snapshot` — the one merged route (§5). Shape is spec M4/04's business.
+   *
+   * `freshPreflight` adds §19's one header and, with it, the PATIENT budget — the only data dial
+   * that ever takes one by name. It is not a widening of the poll: the sweep that carries it is the
+   * one the phone's own on-demand read fires (`GET /api/update/check`), which is bounded at the
+   * route by `UPDATE_ON_DEMAND_POLL_TIMEOUT_MS` and answers with what it has past that. The periodic
+   * sweep never sets it and keeps the strict budget §10.1 requires, unchanged.
+   */
+  snapshot(
+    link: PackLink,
+    session?: string,
+    freshPreflight = false,
+    follow: FollowHeaders = {},
+  ): Promise<PeerOutcome<JsonValue>> {
+    const params = session === undefined || session === "" ? undefined : { session };
+    const headers: Record<string, string> = {};
+    if (freshPreflight) headers[PREFLIGHT_HEADER] = PREFLIGHT_FRESH;
+    // §20's two, both additive-optional and both absent-means-closed. They are set on the sweep the
+    // lead already makes because a running peer never dials its lead — there is no peer-side poll to
+    // hang them on — and they never change the budget: a lead that has something to state must not
+    // become a lead that polls more slowly.
+    if (follow.leadRelease !== undefined && follow.leadRelease !== null) {
+      headers[LEAD_RELEASE_HEADER] = follow.leadRelease;
+    }
+    if (follow.turn !== undefined && follow.turn !== null) headers[UPDATE_TURN_HEADER] = follow.turn;
+    if (Object.keys(headers).length === 0) return this.json(link, "snapshot", params);
+    return this.json(
+      link,
+      "snapshot",
+      params,
+      { headers },
+      freshPreflight ? this.deps.patientTimeoutMs : undefined,
+    );
   }
 
   /** A pack call whose JSON body the lead consumes. */
@@ -976,6 +1020,28 @@ async function readRefusal(res: Response): Promise<{ error: string; code: string
   } catch {
     return null;
   }
+}
+
+/**
+ * Read a member's own running version off the answer its `snapshot` rode on (§5, §19).
+ *
+ * `null` for every shape this build cannot read as a version — absent, blank, not a string — and
+ * `null` means **"this answer said nothing about the version"**, never "this member has none". A
+ * peer older than the 2026-09-04 amendment simply omits the field, and a sweep must not erase what
+ * a `hello` already taught the lead. The caller is what makes that true: it passes a
+ * `PeerObservation` only when this returns non-`null`, and the registry's absent-observation branch
+ * then keeps the previous value (`bridge/pack/lead.ts`, `bridge/pack/registry.ts`).
+ *
+ * Nothing is re-derived here. The string is that machine's own spelling of its own build, passed
+ * through untouched, exactly as `hello`'s is.
+ */
+export function parsePeerVersion(value: JsonValue): string | null {
+  const rec = asRecord(value);
+  if (rec === null) return null;
+  const raw = rec[PACK_VERSION_FIELD];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed === "" ? null : trimmed;
 }
 
 /**

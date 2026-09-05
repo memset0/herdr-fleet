@@ -4,6 +4,7 @@
 import type { ApiErrorDetail, ErrorCode } from "./error-codes.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
 import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
+import type { UpdateRun } from "./update-run.ts";
 
 // Re-exported so the wire surface has ONE import site: a consumer of PaneHistoryResponse gets the
 // entry shape from here too, without reaching into an adapter module.
@@ -407,7 +408,7 @@ export interface PackMemberStatus {
   reason?: string;
   /** The lead's receipt time of the last successful call; `0` = never (§10.2). */
   lastSeenAt: number;
-  /** What this member last reported over `hello` (§7.1), when it has reported one. */
+  /** What this member last reported, over the sweep or over `hello` (§7.1, §19), when it has. */
   version?: string;
   /** This member has not picked up the current pack secret (§8.4). False for the lead. */
   secretBehind: boolean;
@@ -449,6 +450,22 @@ export interface UpdateStatus {
   bridgeStale: boolean;
   /** When the upstream check last completed (epoch ms), or null if it hasn't run yet. */
   checkedAt: number | null;
+  /**
+   * Every release newer than the running one, oldest first — the same list the daily digest names.
+   *
+   * The update card lists them so the operator can see WHAT they are about to fold in, rather than
+   * only the top of the pile. Versions and nothing else: the phone never fetches release notes from
+   * GitHub, so what is not already on this wire is not shown (M15/05).
+   */
+  newerVersions?: string[];
+  /**
+   * The detached updater's run record (`<state dir>/update.json`, M15/04) — read from disk on every
+   * snapshot, so a bridge that has just been restarted BY an update reports the run it is part of
+   * instead of coming up with nothing to say. Absent when this install has never updated through the
+   * runner. The staleness rule is applied before it gets here: a run nobody is driving reads as
+   * `interrupted`, never as still in flight.
+   */
+  run?: UpdateRun;
 }
 
 /** GET /api/pane/:id — recent terminal output for one agent (ANSI/SGR, rendered colored). */
@@ -734,6 +751,37 @@ export interface OperatorFontRow {
   basename: string;
   /** `font-weight` for the `@font-face`, e.g. `400` or `400 700`. Omitted = the browser's default. */
   weight?: string;
+}
+
+/**
+ * One operator-declared launcher row (`launchers.toml`). A phone tap creates a new herdr workspace
+ * (a Space) labelled with the row's label, running in the row's cwd, and types the command into its
+ * fresh shell — the whole security story of `POST /api/launch` is that the bridge matches the client's
+ * `command` string EXACTLY against this list and 400s anything else before herdr is touched.
+ */
+export interface Launcher {
+  /** The shell line typed into the new Space's shell, verbatim. Also the allowlist key /api/launch matches. */
+  command: string;
+  /** Button label. Defaults to the command's first whitespace-separated token. */
+  label: string;
+  /**
+   * Absolute directory the new Space (or tab) opens in. Absent means "here": from the dashboard,
+   * the operator's home dir; from a pane, that pane's own cwd. Present, it is pinned and wins
+   * either way.
+   */
+  cwd?: string;
+}
+
+/**
+ * GET /api/launchers — this HOST's own launcher rows, read live off its `launchers.toml`. Session-
+ * scoped so a `?host=` call forwards to the peer that runs the rows, exactly like `/api/launch`
+ * (PACK_PROTOCOL.md §5): rows must come from the machine that will run them, never from the lead's
+ * own file. `home` is that host's operator home dir, so the client can shorten a pinned `cwd` with a
+ * leading `~` without knowing which machine answered.
+ */
+export interface LaunchersResponse {
+  launchers: Launcher[];
+  home: string;
 }
 
 /** GET /api/config — bridge capabilities and the build id (push setup + stale-cache detection). */

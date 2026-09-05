@@ -15,6 +15,7 @@ import { createOperatorCommands } from "./operator-commands.ts";
 import { createOperatorKeys } from "./operator-keys.ts";
 import { createOperatorQuickReplies } from "./operator-quick-replies.ts";
 import { createOperatorFonts, resolveOperatorFont } from "./operator-fonts.ts";
+import { createOperatorLaunchers } from "./operator-launchers.ts";
 import {
   DEFAULT_PROMPT_TAIL_LINES,
   verifyExpectedPrompt,
@@ -26,6 +27,11 @@ import { herdTagFor, type SessionRegistry, type SessionRuntime, widenedPanes } f
 import type { Snooze } from "./snooze.ts";
 import { imageExtFromBytes, SNIFF_BYTES } from "./uploads.ts";
 import type { UpdateMonitor } from "./update.ts";
+import {
+  parseUpdateStartRequest,
+  updateStartVerdict,
+  type PreflightReport,
+} from "./update-action.ts";
 import type { StateEngine } from "./state-engine.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
@@ -62,6 +68,8 @@ import type {
   OperatorFontRow,
   OperatorQuickReplyRow,
   PackStatusResponse,
+  Launcher,
+  LaunchersResponse,
   PaneHistoryResponse,
   PaneReadResponse,
   PaneWire,
@@ -79,6 +87,11 @@ const MAX_REQUEST_BODY_BYTES = 12 * 1024 * 1024; // 12 MB
 const MAX_READ_LINES = 10_000;
 const MAX_EXPECTED_PROMPT_CHARS = 8192;
 const PROMPT_BINDING_BLANK_LINE_HEADROOM = 6;
+// How long `GET /api/update/check` waits for an on-demand poll before answering with what it has.
+// Only paid once per boot: it fires exactly while `latest` is still null (the monitor's deliberate
+// first-poll delay, so the bridge never probes the network mid-boot) and never again once a check has
+// landed either way.
+const UPDATE_ON_DEMAND_POLL_TIMEOUT_MS = 5_000;
 // Image type is sniffed from magic bytes in uploadPane — never from the client-supplied MIME.
 
 // The built PWA lives in web/dist (Vite output). If it's missing, the bridge still runs the API
@@ -431,6 +444,32 @@ export function bridgeConfigBody(opts: {
   return wire;
 }
 
+/**
+ * What `POST /api/update` needs from the world, as three questions and one act.
+ *
+ * Every member is a SEAM index.ts fills, and the shape is what makes the route testable at all: the
+ * handler lives inside `Bun.serve`, so the only thing `bun test` can hold is this interface and the
+ * pure verdict behind it (`bridge/update-action.ts`).
+ */
+export interface UpdateActionDeps {
+  /** The cached preflight report, or null when one could not be produced. `force` re-runs it now. */
+  preflight: (force?: boolean) => Promise<PreflightReport | null>;
+  /** Whether the updater's lock is held by a process that is still alive (spec 04's lock). */
+  lockHeld: () => boolean;
+  /** Start `collie update`, detached from this process. Never awaits the update itself. */
+  start: (a: { major: boolean; runId: string }) => { ok: true } | { ok: false; reason: string };
+  /**
+   * Mint an opaque run id (M16/04). A seam because the source of randomness is index.ts's, exactly
+   * as the two spawns above are — and because a test must be able to pin the id it asserts on.
+   */
+  newRunId: () => string;
+  /**
+   * Tell the pack a run has begun, so the lead starts granting turns and fires the first of §20's
+   * three immediate sweeps. A no-op on a solo install and on a peer.
+   */
+  beginPackRun?: (a: { runId: string; to: string }) => void;
+}
+
 export function startServer(opts: {
   cfg: Config;
   registry: SessionRegistry;
@@ -438,6 +477,23 @@ export function startServer(opts: {
   snooze: Snooze;
   notifyPrefs: NotifyPrefsStore;
   updateMonitor: UpdateMonitor;
+  /**
+   * The two effects `POST /api/update` needs and this file must not own: the cached preflight
+   * (a `collie update --check --json` subprocess) and the detached `collie update` handoff itself
+   * (M15/05). Both are spawns, and a spawn is index.ts's business — the same arrangement the mux
+   * adapters, the STT provider and the front door already have.
+   *
+   * **Undefined disables the route**, which answers 503. That is the honest state for a bridge whose
+   * own binary it cannot name: the phone learns the update must be run from the terminal instead of
+   * tapping a button that quietly does nothing.
+   */
+  updateAction?: UpdateActionDeps;
+  /**
+   * The BARE version string this process answers with (`bridge/version.ts`'s `collieVersionBare`) —
+   * `<semver>` or `<semver>+<short sha>`. Resolved once in index.ts, never re-read here: it is the
+   * same string `/pack/v1/hello` carries, so one machine can never report two different versions.
+   */
+  version: string;
   audit: AuditLog;
   activity: ActivityLedger;
   /** Resolved once at startup in index.ts, before anything is wired. Solo is `SOLO_RUNTIME`. */
@@ -558,6 +614,8 @@ export function startServer(opts: {
   const operatorQuickReplies = createOperatorQuickReplies(cfg.quickRepliesFile);
   // The fourth on that contract: the operator's own UI typefaces, theme.toml off the hot path.
   const operatorFonts = createOperatorFonts(cfg.themeFile);
+  // Its sibling too, on the same contract: one reader, one mtime cache, launchers.toml off the hot path.
+  const operatorLaunchers = createOperatorLaunchers(cfg.launchersFile);
   const journals = cfg.transcript ? buildJournalRegistry(cfg.journalRoots) : null;
   const transcripts = cfg.transcript ? new TranscriptStore() : null;
   /** Does this agent have a journal at all — the snapshot's History-affordance gate. */
@@ -654,7 +712,7 @@ export function startServer(opts: {
       tabs,
       sessions: registry.list(),
       notifications: { snoozedUntil: snooze.until() },
-      update: updateMonitor.status(),
+      update: updateStatusWithPeers(),
       ts: Date.now(),
     };
     // Only report device state when the feature is on, so an off deployment sends nothing new.
@@ -728,6 +786,28 @@ export function startServer(opts: {
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       return createWorkspace(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name);
+    }
+    // A launch is a `/api/workspace` create the operator pre-declared: the client names a row in
+    // `launchers.toml` and the bridge, never the client, supplies the command line. It sits here
+    // rather than beside it in the browser dispatch so a pack lead reaches the same handler (§5).
+    if (pathname === "/api/launch" && req.method === "POST") {
+      const denied = caller.gate("write");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      return launch(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, operatorLaunchers);
+    }
+    // Rows must come from the host that runs them: today's `/api/config` (a lead-only body) sent
+    // the LEAD's rows down even for a launch addressed at a peer via `?host=`. Session-scoped like
+    // `/api/launch` beside it, so the same `?host=` forward (§5) reaches the peer's own
+    // `launchers.toml` rather than the lead's. `home` rides along so the client can shorten a
+    // pinned `cwd` with a leading `~` without knowing which machine answered.
+    if (pathname === "/api/launchers" && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      return launchersRoute(operatorLaunchers, req.headers.get("accept-encoding"));
     }
 
     // ── Worktrees: list / create / open / remove, all scoped to a space (ADR 0032) ──
@@ -868,6 +948,25 @@ export function startServer(opts: {
   // `ca` is copied out of its readonly array because Bun's `TLSOptions` wants a mutable one.
   const listenerTls = opts.tls === undefined ? undefined : { ...opts.tls, ca: [...opts.tls.ca] };
 
+  /**
+   * The update status, with the peer LEGS of the run this lead is driving folded into its run record
+   * (M16/04).
+   *
+   * One composer for both surfaces the phone reads — the snapshot's `update` and the card's own
+   * `GET /api/update/check` — because the band reads the first and the Updates page reads the
+   * second, and two compositions would be two objects that could disagree about the same run.
+   *
+   * It **dials nobody**: `updatePeers()` is a read of what the sweep banked, exactly as
+   * `updateRows()` is. Absent legs are omitted rather than sent empty, so a solo install and a
+   * bridge with no run in flight send precisely today's object.
+   */
+  function updateStatusWithPeers() {
+    const status = updateMonitor.status();
+    const legs = opts.packLead?.updatePeers() ?? [];
+    if (status.run === undefined || status.run === null || legs.length === 0) return status;
+    return { ...status, run: { ...status.run, peers: legs } };
+  }
+
   const server = Bun.serve({
     hostname: cfg.host,
     port: cfg.port,
@@ -914,6 +1013,27 @@ export function startServer(opts: {
       // deposed collie has none.
       const deposedAnswer = opts.deposed?.(req, url);
       if (deposedAnswer) return secure(deposedAnswer);
+
+      // ── The health check (M15/04) ────────────────────────────────────────
+      // `GET /api/health`: is this collie up, and WHICH BUILD is answering? The detached updater
+      // polls it after a restart, and the version is the whole point — a service that came back on
+      // the OLD code answers fine, and a gate that only asked "did it answer" would call that a
+      // successful update.
+      //
+      // UNGATED, and deliberately the only `/api/*` route that is. The prober is a local process
+      // holding no pairing credential and no device header — it is the updater, running as the same
+      // user, before anybody has a browser open. What it discloses is the version, to a caller that
+      // has already reached a loopback-bound listener behind the operator's own front door; the same
+      // string is on every response as `X-Collie-Build`. It grants nothing, mutates nothing and
+      // reads no session.
+      //
+      // It sits AFTER the deposed answer on purpose: a DEPOSED collie must FAIL this check
+      // (`bridge/pack/deposed.ts`), and it does so by answering its one page here instead. That is
+      // why a deposed peer can never be mistaken for a successful update.
+      if (pathname === "/api/health") {
+        if (req.method !== "GET" && req.method !== "HEAD") return text("method not allowed", 405);
+        return json(healthBody(opts.version, pack.mode), req.headers.get("accept-encoding"));
+      }
 
       // Session-scoped routes accept an optional `?session=<name>`; absent → the primary session
       // (identical to pre-multi-session behaviour). The name is only ever a registry Map lookup — it
@@ -1017,9 +1137,18 @@ export function startServer(opts: {
       // The block itself lives above, shared with the pack surface (§5). What a browser supplies is
       // its own gate (`guard`), its own device attribution, this collie's audit log, and the host
       // gate — which is the one thing a pack caller never has, because a peer has no peers (§4).
+      //
+      // ── ONE GATE EXPRESSION, SHARED BY NAME ──────────────────────────────
+      // `browserGate` is the browser's whole authorisation story: `checkAccess` (host allowlist,
+      // same-origin, Tailscale identity) plus, for a write, the device header AND the pairing
+      // credential. Typing into a pane goes through it, and so does `POST /api/update` below — the
+      // SAME closure, passed to both, never a second call that agrees today. Two authorisation
+      // checks meant to be identical drift the moment one of them is edited, so there is only one
+      // (spec M15/05; `server.test.ts` → "same device auth as pane input").
+      const browserGate = (level: "read" | "write"): Response | null => guard(req, cfg, level, pairing);
       const sessionRouted = await serveSessionRoute(req, url, {
         resolve: target,
-        gate: (level) => guard(req, cfg, level, pairing),
+        gate: browserGate,
         device: () => whois(req).device,
         audit,
       });
@@ -1200,6 +1329,157 @@ export function startServer(opts: {
         if (denied) return denied;
         await updateMonitor.checkRelease();
         return json(updateMonitor.status(), req.headers.get("accept-encoding"));
+      }
+      if (pathname === "/api/update/snooze" && req.method === "POST") {
+        // "Remind me next digest" — dismisses the CURRENT update push without touching the `updates`
+        // pref, which stays the only off switch. Read-level like the notification snooze: managing
+        // your own notifications isn't terminal-driving. The banner keeps showing; only the push waits.
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        await updateMonitor.snoozeDigest();
+        return json(updateMonitor.status(), req.headers.get("accept-encoding"));
+      }
+      if (pathname === "/api/update/check" && req.method === "GET") {
+        // The card's own read: everything `POST /api/update/check` answers, plus the PREFLIGHT that
+        // decides whether the update button is live and what it says when it is not (M15/05).
+        //
+        // A GET because it is a read in the strictest sense — it starts nothing, takes no upstream
+        // look and mutates no state — and read-gated for the same reason the snapshot is. It is safe
+        // to poll: the preflight behind it is cached (bridge/update-action.ts), so a phone sitting on
+        // the settings screen costs one `collie update --check` a minute at most.
+        //
+        // It is deliberately NOT folded into the snapshot. The snapshot is polled by every open
+        // client on a burst cadence, and the preflight shells out to git and to `doctor`; paying that
+        // on every poll for a card nobody has opened is the wrong trade.
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        // Right after a restart `latest` is null until the monitor's own first poll — deliberately
+        // delayed so the bridge never probes the network mid-boot (bridge/index.ts). A card opened in
+        // that window must not print "isn't known yet" over a healthy network just because it read a
+        // second too early, so THIS read triggers the SAME poll the timer would eventually run
+        // (`checkRelease` de-dupes, so a concurrent timer tick or a second tab awaits the one fetch)
+        // and waits a bounded moment for it. Once `latest` is set — success or a settled failure — this
+        // never fires again; a persistently offline network still answers within the bound, unchanged.
+        if (updateMonitor.status().latest === null) {
+          await Promise.race([
+            updateMonitor.checkRelease(),
+            new Promise<void>((resolve) => setTimeout(resolve, UPDATE_ON_DEMAND_POLL_TIMEOUT_MS)),
+          ]);
+        }
+        // ── THE PACK'S HALF (M16/03) ────────────────────────────────────────
+        // The same on-demand shape, one line lower: six hours is the right cadence for a background
+        // fact and the wrong one for a page the operator is looking at, so this read fires ONE
+        // immediate sweep carrying `X-Pack-Preflight: fresh` and waits the same bounded moment for
+        // it. Past the bound the answer is what the lead already has — a stale `asOf`, never a
+        // fabricated green — and a peer that ignores the header is a correct peer.
+        //
+        // The peer's own `PREFLIGHT_TTL_MS` is what keeps this cheap: the header is honoured at most
+        // once a minute per member, so a phone sitting on the page cannot make a peer shell out to
+        // git and `doctor` on every poll.
+        const freshSweep = opts.packLead?.sweep({ freshPreflight: true });
+        if (freshSweep !== undefined) {
+          await Promise.race([
+            freshSweep,
+            new Promise<void>((resolve) => setTimeout(resolve, UPDATE_ON_DEMAND_POLL_TIMEOUT_MS)),
+          ]);
+        }
+        const report = opts.updateAction ? await opts.updateAction.preflight() : null;
+        // `preflight: null` is a fact the card renders ("could not be checked"), not an omission —
+        // the key is always present so the phone can tell "not checked" from "old bridge". `pack`
+        // follows the same rule: `[]` on a solo instance and on a peer, never absent. It is composed
+        // from what the sweep BANKED (`PackLead.updateRows`) and dials nobody — `status-wire.ts`'s
+        // purity argument, one route over.
+        return json(
+          { ...updateStatusWithPeers(), preflight: report, pack: opts.packLead?.updateRows() ?? [] },
+          req.headers.get("accept-encoding"),
+        );
+      }
+      if (pathname === "/api/update" && req.method === "POST") {
+        // ── STARTING AN UPDATE FROM THE PHONE (M15/05) ──────────────────────
+        // A WRITE, through the pane path's own `browserGate` — same host allowlist, same same-origin
+        // rule, same device header, same pairing credential. No new authentication concept, and no
+        // beacon path: an update is an action, and an action is armed by a named choice of the
+        // operator's and by nothing else (ADR 0024).
+        const denied = browserGate("write");
+        if (denied) return denied;
+        const action = opts.updateAction;
+        if (!action) return text("update action unavailable", 503);
+        let body: JsonValue;
+        try {
+          // SAFETY: `Request.json()` output IS a JsonValue by construction, and
+          // `parseUpdateStartRequest` re-checks every field of it before any of it is believed.
+          body = (await req.json()) as JsonValue;
+        } catch {
+          return jsonError(apiError("update.confirm_required"), 400, req.headers.get("accept-encoding"));
+        }
+        const parsed = parseUpdateStartRequest(body);
+        if (parsed === null) {
+          return jsonError(apiError("update.confirm_required"), 400, req.headers.get("accept-encoding"));
+        }
+        // FORCED, never the cached report: the client's disabled button is a courtesy and this is
+        // the actual gate, so it asks the machine now rather than trusting a minute-old answer.
+        const report = await action.preflight(true);
+        const status = updateMonitor.status();
+        const verdict = updateStartVerdict(parsed, {
+          current: status.current,
+          latest: status.latest,
+          majorAvailable: status.majorAvailable,
+          run: status.run ?? null,
+          lockHeld: action.lockHeld(),
+          preflight: report,
+          // One confirm covers the pack (M16/03): the members' banked verdicts gate this start the
+          // same way the lead's own does. Read, never fetched — the sweep is the only thing that
+          // talks to a member.
+          pack: opts.packLead?.updateRows() ?? [],
+          // And the legs of the last run, which is what "Retry pack update" is about (M16/04).
+          peers: opts.packLead?.updatePeers() ?? [],
+        });
+        if (verdict.kind === "refuse") {
+          return jsonError(verdict.body, verdict.status, req.headers.get("accept-encoding"));
+        }
+        // ONE id per confirm, minted here and nowhere else. It is what the peers' turns carry and
+        // what a member that rolled back keys its "not twice" memory on — so a fresh confirm, and
+        // only a fresh confirm, permits one further attempt at the same tag.
+        const runId = action.newRunId();
+        // ── A PEERS-ONLY RUN MOVES NOTHING HERE ────────────────────────────
+        // The lead is already current. It starts no updater, spawns nothing and restarts nothing:
+        // it opens a run whose only legs are the peers, and the first of §20's three immediate
+        // sweeps carries the first turn out.
+        if (verdict.kind === "peers") {
+          action.beginPackRun?.({ runId, to: verdict.to });
+          audit.record({
+            action: "update",
+            device: whois(req).device,
+            detail: { to: verdict.to, major: false, peersOnly: true },
+          });
+          return json({ ok: true, to: verdict.to, major: false, run: status.run ?? null }, req.headers.get("accept-encoding"), 202);
+        }
+        const started = action.start({ major: verdict.major, runId });
+        if (!started.ok) {
+          return jsonError(
+            apiError("update.start_failed", { reason: started.reason }),
+            500,
+            req.headers.get("accept-encoding"),
+          );
+        }
+        // The peers ride the SAME confirm and the same id. Their turns are granted once this lead's
+        // own health gate settles — a lead that announced a version it has not finished taking would
+        // send its whole pack after a release it may itself roll back from (§20).
+        action.beginPackRun?.({ runId, to: verdict.to });
+        audit.record({
+          action: "update",
+          device: whois(req).device,
+          detail: { to: verdict.to, major: verdict.major },
+        });
+        // 202, and the request ENDS HERE. The update stages and then restarts this very process —
+        // holding the request open across that would mean answering with a socket that is about to
+        // be closed by the thing the request asked for. The card watches the run record instead, on
+        // the snapshot it already polls, and on `/standby/update` while this door is shut.
+        return json(
+          { ok: true, to: verdict.to, major: verdict.major, run: status.run ?? null },
+          req.headers.get("accept-encoding"),
+          202,
+        );
       }
 
       // ── Speech-to-text (bridge/stt/) ─────────────────────────────────────
@@ -1584,6 +1864,86 @@ export async function sendReplySteps(
     return { ok: true, textDelivered };
   } catch (err) {
     return failed(errorText(err));
+  }
+}
+
+/** The pane's screen, as much of {@link MuxAdapter} as {@link awaitPaneReady} is allowed to touch. */
+export type GridReader = Pick<MuxAdapter, "readGrid">;
+
+/** How long the wait took, and whether the screen settled inside the ceiling. */
+export interface PaneReadyResult {
+  readonly ready: boolean;
+  readonly ms: number;
+}
+
+/** Injection seams: the clock and the three bounds. Defaults are the production values. */
+export interface PaneReadyOptions {
+  readonly sleep?: SleepFn;
+  readonly now?: () => number;
+  readonly pollMs?: number;
+  readonly floorMs?: number;
+  readonly ceilingMs?: number;
+}
+
+/** One poll of the new pane's screen. Small: a prompt is one short line at the top of a fresh shell. */
+const PANE_READY_LINES = 40;
+/** Gap between two reads. Two identical reads this far apart is what "the screen stopped moving" means. */
+const PANE_READY_POLL_MS = 150;
+/** Never call a pane ready sooner than this, however fast the first two reads agree. */
+const PANE_READY_FLOOR_MS = 300;
+/** Give up waiting here and send anyway — a slow shell must not swallow the operator's launch. */
+const PANE_READY_CEILING_MS = 5000;
+
+/**
+ * Wait until a freshly created pane's shell is drawn, before anything is typed into it.
+ *
+ * `createSpace` returns when the Space is ALLOCATED, not when its shell is interactive — so text
+ * typed straight after it lands before the prompt exists and the shell discards it (the operator
+ * sees their command printed ABOVE the greeting, and an empty prompt below it). This is the missing
+ * wait: poll the pane's own grid until it is non-empty and UNCHANGED across two consecutive reads
+ * ~{@link PANE_READY_POLL_MS} apart, which is the multiplexer's own answer to "has the shell
+ * finished painting".
+ *
+ * Bounds, all three deliberate: never ready before {@link PANE_READY_FLOOR_MS} (a greeting that
+ * paints in two chunks can look still between them), never wait past {@link PANE_READY_CEILING_MS}
+ * (the caller sends anyway — a late command beats a swallowed one), and a read the multiplexer
+ * refuses or throws counts as "not ready yet", never as an error: the pane is a second old, and a
+ * grid it cannot render yet is exactly the state being waited out.
+ *
+ * Pure + exported, with the clock injected, so the bounds are unit-testable on a fake clock.
+ */
+export async function awaitPaneReady(
+  client: GridReader,
+  paneId: string,
+  opts: PaneReadyOptions = {},
+): Promise<PaneReadyResult> {
+  const sleep = opts.sleep ?? defaultSleep;
+  const now = opts.now ?? (() => Date.now());
+  const pollMs = opts.pollMs ?? PANE_READY_POLL_MS;
+  const floorMs = opts.floorMs ?? PANE_READY_FLOOR_MS;
+  const ceilingMs = opts.ceilingMs ?? PANE_READY_CEILING_MS;
+  const started = now();
+  let previous: string | null = null;
+  // Bounded by the ceiling check at the foot of the body, which every path reaches.
+  for (;;) {
+    await sleep(pollMs);
+    let current: string | null = null;
+    try {
+      const read = await client.readGrid(paneId, {
+        scope: "viewport",
+        lines: PANE_READY_LINES,
+        styling: "strip",
+      });
+      if (read.ok) current = read.value.text;
+    } catch {
+      // Swallowed on purpose: an unreadable brand-new pane is "not ready yet", not a failure.
+    }
+    const elapsed = now() - started;
+    if (current !== null && current.trim() !== "" && current === previous && elapsed >= floorMs) {
+      return { ready: true, ms: elapsed };
+    }
+    previous = current;
+    if (elapsed >= ceilingMs) return { ready: false, ms: elapsed };
   }
 }
 
@@ -2380,6 +2740,171 @@ async function openWorktree(
 }
 
 
+
+// GET /api/launchers — this host's own rows, read live off its `launchers.toml`. Exported and
+// pulled out of the inline route so it's directly testable with a fake `getLaunchers`, exactly like
+// `launch` below: the route registration (gate, `?host=` forward) stays pinned by
+// server.test.ts's "every session-scoped route resolves through the gate" source read, and this
+// function is what answers once that has already happened.
+export async function launchersRoute(
+  getLaunchers: () => Promise<Launcher[]>,
+  acceptEncoding: string | null,
+): Promise<Response> {
+  const rows = await getLaunchers();
+  return json({ launchers: rows, home: homedir() } satisfies LaunchersResponse, acceptEncoding);
+}
+
+// Launch one allowlisted command, either in a new throwaway Space (from the dashboard, no pane
+// context) or as a new tab beside a pane the client names (from a pane, the swipe-up switcher). The
+// configured list doubles as the allowlist `POST /api/launch` matches: the client names a row by its
+// `command` string and the bridge checks for exact equality against the current rows before the
+// multiplexer is touched at all — the client never supplies a command line, and it never supplies a
+// path either: `cwd` is always the row's own (if pinned) or resolved from where the launch was
+// addressed (the operator's home from the dashboard, the beside pane's own cwd from a pane). That is
+// the whole security story of the route, and why `command` is an identity and not a free-text
+// argument. `createSpace`/`createTab` allocates the pane (a multiplexer deletes a tab whose last
+// pane closes and a space whose last tab closes, so a self-closing pane leaves nothing behind);
+// `awaitPaneReady` waits for that pane's shell to finish drawing; `sendReplySteps` then types the
+// line and sends Enter into it.
+// `["Enter"]` is literal here, NOT `cfg.submitKeys`: `COLLIE_SUBMIT_KEYS` is the agent-dependent
+// submit sequence for a TUI composer; this is a bare shell prompt where Enter is the only key that
+// means "run it".
+export async function launch(
+  herdr: MuxAdapter,
+  engine: StateEngine,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+  getLaunchers: () => Promise<Launcher[]>,
+  // The clock this route waits on, injected so the tests drive the wait on a fake one. Production
+  // passes nothing and gets the real timers.
+  wait: PaneReadyOptions = {},
+): Promise<Response> {
+  let body: JsonValue;
+  try {
+    // SAFETY: as createWorkspace — checked below, never trusted as declared.
+    body = (await req.json()) as JsonValue;
+  } catch {
+    return text("bad body", 400);
+  }
+  const fields = asJsonRecord(body) ?? {};
+  const command = (typeof fields.command === "string" ? fields.command.trim() : "");
+  if (command === "") return text("bad body", 400);
+  // The client never sends a path — only, optionally, the pane it wants the launch to open BESIDE.
+  // Absent means "from the dashboard": a new Space, cwd resolved against the operator's home.
+  const besidePaneId = typeof fields.paneId === "string" ? fields.paneId.trim() : "";
+  const ae = req.headers.get("accept-encoding");
+  // Live read, behind the same mtime cache the other operator files use — a new row in
+  // `launchers.toml` is live on the bridge without a restart (an already-open tab needs a reload to
+  // re-fetch its rows, the same property `commands.toml` has).
+  const rows = await getLaunchers();
+  const row = rows.find((r) => r.command === command);
+  if (!row) {
+    return json(
+      { ok: false, ...apiError("launch.not_allowlisted") } satisfies CreateResponse,
+      ae,
+      400,
+    );
+  }
+
+  // Resolved here, once, so both the create call and the audit line agree on what actually ran —
+  // and so a tab beside an unknown pane 404s before the multiplexer is touched at all, exactly like
+  // an unlisted command does.
+  let besidePane: AgentView | undefined;
+  if (besidePaneId !== "") {
+    const { agents, shellPanes } = engine.current();
+    besidePane = [...agents, ...shellPanes].find((p) => p.paneId === besidePaneId);
+    if (!besidePane) {
+      return json(
+        { ok: false, ...apiError("launch.pane_unknown") } satisfies CreateResponse,
+        ae,
+        404,
+      );
+    }
+  }
+  const resolvedCwd = besidePane ? (row.cwd ?? besidePane.cwd) : (row.cwd ?? homedir());
+
+  const outcome = besidePane
+    ? await herdr.createTab({ spaceId: besidePane.workspaceId, label: row.label, cwd: resolvedCwd })
+    : await herdr.createSpace({ cwd: resolvedCwd, label: row.label });
+  if (!outcome.ok) {
+    return json(
+      { ok: false, ...apiError("workspace.create_failed", { reason: outcome.detail }) } satisfies CreateResponse,
+      ae,
+    );
+  }
+  const created = outcome.value;
+  // The pane is allocated; its shell may not have drawn a prompt yet. Typing into that gap is
+  // exactly how a launch used to vanish — the command printed above the greeting, the prompt empty.
+  const ready = await awaitPaneReady(herdr, created.paneId, wait);
+  if (!ready.ready) {
+    // Send anyway: a shell that is merely slow still runs what it is handed, and a swallowed launch
+    // is the worse failure. The line names the pane so a repeat is traceable to one launcher.
+    console.warn(
+      `[launch] pane ${created.paneId} did not settle after ${ready.ms}ms — sending "${row.command}" anyway`,
+    );
+  }
+  // COLLIE_SUBMIT_KEYS is the agent-dependent submit sequence for a TUI composer; this is a bare
+  // shell prompt where Enter is the only key that means "run it".
+  const sent = await sendReplySteps(herdr, created.paneId, row.command, true, ["Enter"], wait.sleep);
+  if (!sent.ok) {
+    // Best-effort rollback: a half-born pane whose command did not fully start must not linger as
+    // an empty shell nobody asked for. The rollback's own failure is swallowed because the original
+    // send error is the useful result and there is no safe second recovery action to take here.
+    try {
+      await herdr.closePane(created.paneId);
+    } catch {
+      // Swallowed: the failed send is the result the client needs; a second failure only obscures it.
+    }
+    return json(
+      { ok: false, error: sent.error, code: sent.code, detail: sent.detail } satisfies CreateResponse,
+      ae,
+    );
+  }
+  // `command` is deliberately NOT added to `METADATA_KEYS` in audit.ts. Under
+  // `COLLIE_AUDIT_CONTENT=none` it therefore redacts like every other content-bearing detail, and
+  // the line still answers the question a launch raises: who started something, in which pane and
+  // Space, when. Which shell line ran is recoverable from `launchers.toml` in a way a reply's text
+  // never is.
+  if (besidePane) {
+    audit.record({
+      action: "tab.launch",
+      paneId: created.paneId,
+      session,
+      device,
+      detail: { command: row.command, label: row.label, cwd: resolvedCwd, besidePaneId: besidePane.paneId },
+    });
+  } else {
+    audit.record({
+      action: "workspace.launch",
+      paneId: created.paneId,
+      session,
+      device,
+      detail: { command: row.command, label: row.label, cwd: resolvedCwd },
+    });
+  }
+  await settleTopology(herdr, engine);
+  // The tab path's create call doesn't answer with the space's own label (mirrors createTab above):
+  // the snapshot already knows it, and that lookup is cheaper than a round trip.
+  const workspaceLabel = besidePane
+    ? (engine.current().workspaces.find((w) => w.workspaceId === created.spaceId)?.label ?? created.spaceLabel)
+    : created.spaceLabel;
+  return json(
+    {
+      ok: true,
+      pane: {
+        paneId: created.paneId,
+        workspaceId: created.spaceId,
+        workspaceLabel,
+        tabId: created.tabId,
+        cwd: created.cwd,
+      },
+    } satisfies CreateResponse,
+    ae,
+  );
+}
+
 // Save an uploaded image to a host file and return its absolute path. The client then references
 // that path in a message; Claude Code / Codex read images by path (the terminal can't take a
 // pasted image over the socket). Validated by MIME and size; the filename is server-generated.
@@ -2791,8 +3316,11 @@ function supersededEndpoint(body: JsonValue | undefined): string | undefined {
 // Build id of the bundle currently on disk (written by the Vite build to dist/build-info.json).
 // Surfaced via the X-Collie-Build header and /api/config so a stale, service-worker-cached client
 // can tell it's behind. Cached by file mtime so a frontend rebuild (live, no restart) is picked up.
+// Exported since M15/05 for the STANDBY listener, which reports the same fact on its own port
+// (`bridge/pack/standby.ts`) — one answer to "which bundle is on disk", never a second reader that
+// caches it differently.
 let buildCache: { id: string; mtime: number } | null = null;
-async function buildId(): Promise<string> {
+export async function buildId(): Promise<string> {
   try {
     const f = Bun.file(join(WEB_DIR, "build-info.json"));
     const mtime = f.lastModified;
@@ -2814,6 +3342,30 @@ async function buildId(): Promise<string> {
 // runs (see web/src/lib/self-update.ts). Also set on static responses (serveStatic). A named constant
 // so both sides agree on the spelling.
 export const BUILD_HEADER = "x-collie-build";
+
+/**
+ * What `GET /api/health` answers (M15/04). Pure, and exported so the shape is pinned by a unit test
+ * rather than by a live listener.
+ *
+ * `version` is the load-bearing field: the detached updater compares it against the version it just
+ * flipped to, under `bridge/version.ts`'s tolerant `<semver>+<sha>` rule. `deposed` is always
+ * `false` HERE, and that is honest rather than a stub — a deposed collie never reaches this route,
+ * because `deposed.ts` answers its one page for every path before the front door is consulted. The
+ * field exists so the prober can state the rule it applies instead of inferring it from a parse
+ * failure.
+ */
+export interface HealthBody {
+  readonly ok: true;
+  /** The BARE `<semver>` or `<semver>+<short sha>` this process answers with. */
+  readonly version: string;
+  /** Always false here — see {@link healthBody}. */
+  readonly deposed: false;
+  readonly mode: PackRuntime["mode"];
+}
+
+export function healthBody(version: string, mode: PackRuntime["mode"]): HealthBody {
+  return { ok: true, version, deposed: false, mode };
+}
 
 /**
  * Attach the current bundle's build id to a response so a polling client can observe a server-side

@@ -14,6 +14,7 @@ import type {
   BridgeConfig,
   CreateResponse,
   DevicesResponse,
+  LaunchersResponse,
   NotifyPrefs,
   PaneHistoryResponse,
   PackStatusResponse,
@@ -21,7 +22,10 @@ import type {
   PaneResizeResponse,
   PairFailure,
   SnapshotResponse,
+  UpdateCheckResponse,
   UpdateInfo,
+  UpdateRun,
+  UpdateStartResponse,
   UploadResponse,
   WorktreeListResponse,
   WorktreeOpenResponse,
@@ -588,6 +592,37 @@ export function createWorkspace(
   });
 }
 
+// POST /api/launch — the command string here is an allowlist KEY the bridge must recognise, not an
+// arbitrary line the client gets to run. Anything not in `launchers.toml` is a 400 before the
+// multiplexer is ever touched, and that lookup is the whole security story of the route. Scoped
+// like /api/tab and /api/workspace: the new pane is created where you are looking. The client never
+// sends a path — only, optionally, `besidePaneId`, the pane this launch should open a TAB beside
+// (the switcher). Omitted, the bridge creates a throwaway Space instead (the dashboard).
+/** POST /api/launch's body — a named contract so `launch` below infers against it, not a widened literal. */
+interface LaunchRequestBody {
+  command: string;
+  paneId?: string;
+}
+
+export function launch(command: string, besidePaneId?: string, scope?: Scope): Promise<CreateResponse> {
+  const body: LaunchRequestBody = { command };
+  if (besidePaneId !== undefined) body.paneId = besidePaneId;
+  return req<CreateResponse>(withScope("/api/launch", scope), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * GET /api/launchers — THIS scope's own host's launcher rows, read live off its `launchers.toml`.
+ * Never cached alongside `/api/config`: rows must come from the host that runs them, and the
+ * operator file is read live on the bridge, so this is fetched on mount and again whenever the
+ * scope changes (lib/operator-config.ts's `useLaunchers`).
+ */
+export function fetchLaunchers(scope?: Scope): Promise<LaunchersResponse> {
+  return req<LaunchersResponse>(withScope("/api/launchers", scope));
+}
+
 /** The worktrees of the repo a space sits in. Empty-handed when the space is not in one. */
 export function listWorktrees(workspaceId: string, scope?: Scope): Promise<WorktreeListResponse> {
   return req<WorktreeListResponse>(
@@ -667,6 +702,71 @@ export function setNotifyPrefs(patch: Partial<NotifyPrefs>): Promise<NotifyPrefs
  */
 export function checkForUpdates(): Promise<UpdateInfo> {
   return req<UpdateInfo>("/api/update/check", { method: "POST" });
+}
+
+/**
+ * The update card's read: the same status the snapshot carries, plus the PREFLIGHT that decides
+ * whether the update button is live and what it says when it is not (M15/05).
+ *
+ * A GET, and read-gated: it starts nothing and takes no upstream look, so it is safe to poll. The
+ * preflight behind it is cached on the bridge, so polling it costs one `collie update --check` a
+ * minute at most.
+ */
+export function fetchUpdateState(signal?: AbortSignal): Promise<UpdateCheckResponse> {
+  return req<UpdateCheckResponse>("/api/update/check", signal ? { signal } : undefined);
+}
+
+/**
+ * Start an update — one tap plus one confirm, and this is what the confirm sends.
+ *
+ * `target` is the version the operator READ about on the card. The bridge refuses if that is no
+ * longer what it would install, so a card left open overnight cannot consent to a version nobody
+ * read about. `major` is the second consent, and only a major crossing takes one (ADR 0020).
+ *
+ * WRITE-gated, exactly like typing into a pane. A refusal is a throw carrying the bridge's own code
+ * (`update.in_progress`, `update.preflight_red`, `update.major_confirm_required`, …) — the caller
+ * renders it through `lib/api-error-message.ts` like every other refusal.
+ */
+/** The body `POST /api/update` takes. Named, so `peersOnly` has an owner rather than being widened
+ *  in at the call site — and so a bridge that predates the field is simply never sent it. */
+interface UpdateStartBody {
+  confirm: true;
+  target: string;
+  major: boolean;
+  peersOnly?: true;
+}
+
+export function startUpdate(a: {
+  target: string;
+  major: boolean;
+  /**
+   * "Retry pack update": a new run whose only legs are the peers (M16/04). Sent only when true, so
+   * the ordinary confirm's body is byte-identical to the one that shipped and a bridge that does
+   * not know the field yet is never handed it.
+   */
+  peersOnly?: boolean;
+}): Promise<UpdateStartResponse> {
+  const body: UpdateStartBody = { confirm: true, target: a.target, major: a.major };
+  if (a.peersOnly === true) body.peersOnly = true;
+  return req<UpdateStartResponse>("/api/update", { method: "POST", body: JSON.stringify(body) });
+}
+
+/** "Remind me next digest" — the card's dismiss. Not a mute: the banner keeps showing. */
+export function snoozeUpdate(): Promise<UpdateInfo> {
+  return req<UpdateInfo>("/api/update/snooze", { method: "POST" });
+}
+
+/**
+ * The run record from the STANDBY door (`GET /standby/update`), for the window in which the front
+ * door is not answering because the update is restarting it.
+ *
+ * Same-origin, because that is the deployment this can help in: a failover proxy publishes
+ * `/standby/*` beside the app (PACK_PROTOCOL.md §18.15, and `lib/sw-routes.ts` keeps the service
+ * worker's hands off it). Everywhere else it simply fails, which is exactly what the caller already
+ * handles — the card treats a failed poll during `restarting` as expected either way.
+ */
+export function fetchStandbyRun(signal?: AbortSignal): Promise<UpdateRun> {
+  return req<UpdateRun>("/standby/update", signal ? { signal } : undefined);
 }
 
 // ── Device pairing ───────────────────────────────────────────────────────────────────────────────

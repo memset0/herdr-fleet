@@ -167,3 +167,90 @@ describe("BottomSheet — backdrop dismiss requires press AND release on the bac
     expect(header.className).toContain("bg-card/95");
   });
 });
+
+// The native-feel drag reveal (use-sheet-pull.ts): while `!open && pull > 0` the sheet peeks up
+// under the finger, mounted but not yet a modal, and when `open` follows right after, the
+// entrance continues the transform rather than restarting the slide-in keyframe from 100%.
+describe("BottomSheet: pull-driven peek", () => {
+  it("renders a peeking panel, following the pull, hidden from assistive tech", () => {
+    const { container } = render(
+      <BottomSheet open={false} onClose={vi.fn()} title="Switch pane" pull={80}>
+        body
+      </BottomSheet>,
+    );
+    // Nothing has opened, so there is no dialog in the a11y tree yet.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const root = container.firstElementChild!;
+    expect(root.getAttribute("aria-hidden")).toBe("true");
+    const panel = container.querySelector<HTMLElement>('div[style*="translateY"]')!;
+    expect(panel.style.transform).toBe("translateY(max(0px, calc(100% - 80px)))");
+  });
+
+  it("starts the peek's top edge at the handle's anchor, not the screen's bottom edge", () => {
+    // pullFrom is the handle's own distance from the viewport bottom (useSheetPull's onAnchor);
+    // the transform is pullFrom + pull, so a peek that started 100px above the bottom edge and has
+    // been dragged 40px further reports 140px total.
+    const { container } = render(
+      <BottomSheet open={false} onClose={vi.fn()} title="Switch pane" pull={40} pullFrom={100}>
+        body
+      </BottomSheet>,
+    );
+    const panel = container.querySelector<HTMLElement>('div[style*="translateY"]')!;
+    expect(panel.style.transform).toContain("140px");
+    expect(panel.style.transform).toBe("translateY(max(0px, calc(100% - 140px)))");
+  });
+
+  it("renders nothing when closed and not being pulled", () => {
+    const { container } = render(
+      <BottomSheet open={false} onClose={vi.fn()} title="Switch pane" pull={0}>
+        body
+      </BottomSheet>,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("skips the slide-in entrance when open follows a peek, continuing the transform instead", () => {
+    const { container, rerender } = render(
+      <BottomSheet open={false} onClose={vi.fn()} title="Switch pane" pull={150}>
+        body
+      </BottomSheet>,
+    );
+    rerender(
+      <BottomSheet open onClose={vi.fn()} title="Switch pane" pull={0}>
+        body
+      </BottomSheet>,
+    );
+    const panel = container.querySelector<HTMLElement>('div[style*="translateY"]')!;
+    expect(panel.className).not.toMatch(/animate-in/);
+    expect(panel.className).not.toMatch(/slide-in-from-bottom/);
+    expect(panel.style.transform).toBe("translateY(0)");
+  });
+
+  it("plays the ordinary slide-in entrance on a fresh open with no preceding peek", () => {
+    const { container } = render(
+      <BottomSheet open onClose={vi.fn()} title="Switch pane">
+        body
+      </BottomSheet>,
+    );
+    const panel = container.querySelector<HTMLElement>('div[tabindex="-1"]')!;
+    expect(panel.className).toMatch(/animate-in/);
+    expect(panel.className).toMatch(/slide-in-from-bottom/);
+  });
+
+  it("caps the panel at the content column while the backdrop stays the whole screen", () => {
+    // The sheet is the app's only floating layer and it holds ordinary rows, so it stops at the same
+    // 640px every route body uses; ui/toast-viewport.tsx already caps its layer there. Uncapped, the
+    // panel spanned the whole viewport — 1366px on a landscape 13-inch iPad — for rows that were
+    // drawn for a phone. The dim is the exception and must not be capped with it.
+    const { container } = render(
+      <BottomSheet open onClose={vi.fn()} title="Switch pane">
+        body
+      </BottomSheet>,
+    );
+    const panel = container.querySelector<HTMLElement>('div[tabindex="-1"]')!;
+    expect(panel.className).toMatch(/\bmx-auto\b/);
+    expect(panel.className).toMatch(/\bmax-w-screen-sm\b/);
+    const backdrop = container.querySelector<HTMLElement>('button[aria-hidden="true"]');
+    expect(backdrop?.className).toMatch(/\babsolute inset-0\b/);
+  });
+});

@@ -357,6 +357,9 @@ export const handlers = [
     ),
   ),
   http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "" })),
+  // Default world: no `launchers.toml`. Session-scoped (server.ts), so a test that wants rows
+  // overrides this with its own `/api/launchers` handler rather than adding a field to `/api/config`.
+  http.get("/api/launchers", () => HttpResponse.json({ launchers: [], home: "" })),
 
   // DOWNSTREAM PORT — Fleet's own settings surface, answering the way a Collie with no Fleet Gateway
   // in front of it does. Without it the Settings route's one fetch never settles under MSW and the

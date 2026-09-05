@@ -18,10 +18,10 @@ If the host runs multiple instances, prepend `COLLIE_INSTANCE=<name>` to every v
 | **URL** | `collie url` | Print the tailnet URL |
 | **QR** | `collie qr` | The same URL as a scannable code |
 | **Version** | `collie version` | The running version (`0.x.y+sha`) |
-| **Update** | `collie update` | Advance to the newest release of your major, rebuild and restart (`--major` crosses one) |
-| **Rollback** | `collie update --rollback` | **Binary install only** — put the previous version back |
+| **Update** | `collie update` | Stage the newest release of your major, flip to it, restart and verify (`--check` preflights, `--status` reports, `--major` crosses one) |
+| **Rollback** | `collie update --rollback` | Put the previous version back (not on a Herdr-managed checkout, which has none staged) |
 | **Uninstall** | `collie uninstall` | Remove the service; keep `.env` and the install |
-| **Pair** | `collie pair` | Mint a code so a phone can be [paired](security.md#pair-a-device--the-write-credential) |
+| **Pair** | `collie pair` | Print an 8-character code and a QR code, good for 10 minutes; scan the QR code to open Settings → Paired devices with the code filled in, or enter the code manually to get it [paired](security.md#pair-a-device--the-write-credential) |
 | **Devices** | `collie devices list` · `collie devices revoke <label>` | List / revoke paired devices |
 | **Link** | `collie link` · `collie unlink` | Put `collie` on your PATH ([below](#put-collie-on-your-path)) |
 | **Logs** | `collie logs` | Tail the journal / log file |
@@ -31,9 +31,11 @@ If the host runs multiple instances, prepend `COLLIE_INSTANCE=<name>` to every v
 
 The CLI also includes `build`, `serve`, `unserve`, `doctor`, and `pack …` for less frequent tasks.
 
-Both `start` and `status` output the **Collie is running** banner, documented in detail in
-[First run](install.md#first-run--what-youll-see). The reported version reads from the served bundle
-stamp, reflecting the active build.
+Both `start` and `status` output the **Collie is running** banner: a health mark and the version,
+then a `service`, a `local` and a `tailnet` line.
+[First run](install.md#first-run--what-youll-see) shows it in full, including what a failed health
+check prints instead. The reported version reads from the served bundle stamp, reflecting the active
+build.
 
 **Ink or plain text.** The `start`, `status`, `doctor`, `pack add`, and `pack status` commands
 render an interactive terminal UI when stdout is a TTY. Passing `--plain`, or redirecting output to
@@ -96,7 +98,7 @@ to print output inline. Output from `herdr plugin list --json` reflects the vers
 cache. You can force this with `herdr plugin link "$(pwd)"`. Herdr ≥0.8.0 re-reads the manifest from
 disk on each invocation.
 
-> **`scripts/collie-ctl.sh <verb>` remains supported.** It operates as a bootstrap shim: it locates
+> **Note.** `scripts/collie-ctl.sh <verb>` remains supported. It operates as a bootstrap shim: it locates
 > Bun, compiles `bin/collie` if the checkout lacks it, and passes along argv. A freshly linked clone
 > uses this path to build its initial binary. Herdr actions continue to point to this script because
 > Herdr <0.8.0 freezes the action definitions cached at install time

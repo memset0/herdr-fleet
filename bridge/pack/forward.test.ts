@@ -35,6 +35,7 @@ const REACHABLE: PeerState = {
   reason: null,
   version: "1.0.0-alpha.12",
   conflict: null,
+  preflight: null,
 };
 const DEAD: PeerState = {
   memberId: "laptop",
@@ -43,6 +44,7 @@ const DEAD: PeerState = {
   reason: "connection refused",
   version: null,
   conflict: null,
+  preflight: null,
 };
 const SKEWED: PeerState = {
   memberId: "laptop",
@@ -51,6 +53,7 @@ const SKEWED: PeerState = {
   reason: "peer speaks 2",
   version: null,
   conflict: null,
+  preflight: null,
 };
 
 /** Records every dial, so "was this attempted?" and "was it retried?" are assertable facts. */
@@ -134,6 +137,21 @@ describe("which routes cross a link", () => {
     expect(packRouteFor("/api/tab/w1:t1/rename")).toBe("tab/w1:t1/rename");
     expect(packRouteFor("/api/tab/w1:t1/close")).toBe("tab/w1:t1/close");
     expect(packRouteFor("/api/workspace")).toBe("workspace");
+  });
+
+  test("launch and its rows cross the link too — rows must come from the host that runs them", () => {
+    expect(packRouteFor("/api/launch")).toBe("launch");
+    expect(packRouteFor("/api/launchers")).toBe("launchers");
+    expect(apiPathFor("launch")).toBe("/api/launch");
+    expect(apiPathFor("launchers")).toBe("/api/launchers");
+    // Rows are a READ (a GET that changes nothing), so a stale member is still asked — never
+    // refused before it is attempted, the same tolerance `pane/:id` (a read) already gets.
+    expect(forwardKind("launchers")).toBe("read");
+    expect(forwardKind("launch")).toBe("write");
+    // The lead's own forward line names a generic action; the peer's own audit line (workspace.
+    // launch or tab.launch, decided by the body) is the accurate record.
+    expect(forwardAuditAction("launch")).toBe("launch");
+    expect(forwardAuditAction("launchers")).toBeNull();
   });
 
   test("the routes §5 excludes are excluded — and stay that way by construction", () => {

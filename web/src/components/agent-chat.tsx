@@ -10,22 +10,26 @@ import {
   ScrollText,
   TerminalSquare,
 } from "lucide-react";
-import { useSwipeUp } from "@/hooks/use-swipe";
 import { useKeyboardOpen } from "@/hooks/use-keyboard";
+import { useSheetPull } from "@/hooks/use-sheet-pull";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
+import { useLaunchers } from "@/lib/launchers";
+import { buzz } from "@/lib/haptics";
 import { mirrorFont, useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
 import { isConnecting } from "@/lib/connection";
 import { t } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
+import { setFollowing as publishFollowing, stampSend } from "@/lib/poll-intent";
 import { useZenEnabled } from "@/lib/zen";
 import { setStripsCollapsed, useStripsCollapsed } from "@/lib/strips-collapsed";
 import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/chat/chat-message-list";
 import { BottomSheet } from "@/components/ui/sheet";
 import { Collapse, CollapseSwap } from "@/components/ui/collapse";
 import { RouteHeader } from "@/components/app-header";
+import { HeaderStatus } from "@/components/header-status";
 import { AnsiOutput } from "@/components/ansi-output";
 import { MIRROR_SPACE, MIRROR_INVERT, styleFor } from "@/components/mirror-space";
 import { cn } from "@/lib/utils";
@@ -184,7 +188,8 @@ export function AgentChat({
   // current while we're reconnecting/lost, and restores instantly on recovery. Both marks dim
   // together — dimming only one of them would leave a frozen reading looking half live.
   const connecting = isConnecting({ bridge, error, stalled });
-  const { newTab } = useSpaceActions();
+  const { newTab, launch, launching, creatingTab } = useSpaceActions();
+  const { launchers, home: launchersHome } = useLaunchers(scope);
   // Single display-prefs instance: the View controls (in <Composer>) write it, the mirror reads it.
   const { prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus } = useDisplayPrefs();
   // The chosen terminal font (Settings → Terminal font), applied by re-pointing `--font-mono` on
@@ -285,7 +290,10 @@ export function AgentChat({
   // Drawers/sheets are mutually exclusive — at most one open. A single value makes that invariant
   // unrepresentable to violate.
   const [drawer, setDrawer] = useState<Drawer>(null);
-  const closeDrawer = () => setDrawer(null);
+  const closeDrawer = () => {
+    setDrawer(null);
+    setPull(0);
+  };
 
   // ── ZEN MODE — chrome-free, mirror-only viewing ───────────────────────────────
   // On a phone the chrome IS most of the viewport: measured at 390x844 this route spends 199px above
@@ -402,10 +410,30 @@ export function AgentChat({
 
   const gone = !agent;
 
-  // Swipe up (or just tap) the handle above the composer to bring up the pane switcher. A lowish
-  // threshold + a taller hit area (below) make the gesture easy to land with a thumb; tapping is the
-  // reliable fallback. "Up" naturally reveals a bottom sheet without fighting the mirror's scroll.
-  const swipe = useSwipeUp(() => setDrawer("switcher"), 24);
+  // Drag the handle above the composer up to bring up the pane switcher, tracked finger-by-finger
+  // so the sheet peeks up under the thumb rather than appearing on release. Tapping is still the
+  // reliable fallback (the button's own onClick below). `pull` is the live upward travel in px, fed
+  // straight to the switcher BottomSheet's `pull` prop; a release past the open threshold buzzes and
+  // opens for real, a release short of it snaps back to 0. `pullFrom` is the handle's own distance
+  // from the viewport bottom, measured once per gesture (useSheetPull's `onAnchor`) — the handle
+  // sits above the composer, so without it the peek would rise from the screen's bottom edge with
+  // the composer sandwiched between the panel and the thumb dragging it.
+  const [pull, setPull] = useState(0);
+  const [pullFrom, setPullFrom] = useState(0);
+  const sheetPull = useSheetPull({
+    onPull: setPull,
+    onAnchor: setPullFrom,
+    onOpen: () => {
+      buzz();
+      setDrawer("switcher");
+      setPull(0);
+      setPullFrom(0);
+    },
+    onCancel: () => {
+      setPull(0);
+      setPullFrom(0);
+    },
+  });
   // DOWNSTREAM PORT — what the switcher sheet shows when this page is mounted inside the Fleet
   // navigation shell: the shell's own Agent surface, which on a wide viewport is a rail already on
   // screen and here is the only place it fits. `null` outside that shell — Collie's own tests and
@@ -540,6 +568,17 @@ export function AgentChat({
   // against it would blind the guard to drift that happened before the freeze (live-vs-live always
   // matches). While following, the frozen pair IS the live pair by definition.
   const [following, setFollowing] = useState(true);
+  // The same intent, mirrored out to lib/poll-intent so the POLLER can see it: it is mounted at the
+  // data root, above this subtree, and a mirror the operator has scrolled away from is not one to
+  // keep re-reading quickly (hooks/use-polling.ts). Published from an effect on the value rather
+  // than from each of the eight call sites that set it, so the store can never learn about a change
+  // that the mirror itself did not take.
+  useEffect(() => {
+    publishFollowing(following);
+  }, [following]);
+  // Leaving the pane hands the flag back to its "nothing is open" value. Without this, closing a
+  // pane you had scrolled up in would leave the poller believing nobody is following anything.
+  useEffect(() => () => publishFollowing(true), []);
   const [shown, setShown] = useState({ text, revision });
   useEffect(() => {
     if (!following) return;
@@ -745,6 +784,9 @@ export function AgentChat({
         setStatus(refusal, "error");
         return false;
       }
+      // A prompt button is a send too — the same "watch this land" moment as the composer's Send,
+      // just with the keys chosen for you.
+      stampSend(paneId);
       const base = {
         paneId,
         scope,
@@ -1046,19 +1088,36 @@ export function AgentChat({
     // cannot land outside it and end up 16px taller than its neighbours. That is the fault the old
     // per-strip `hideLabel` prop could not prevent, which is why this is a context and not a prop.
     <CompactStripLabels>
-      <div className="flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col overflow-x-hidden">
+      {/* `max-w-[100dvw]` is the phone bound and it stays: a mirror line wider than the screen used
+          to blow the viewport out sideways and let the whole page pan (85f777b, "viewport blowout").
+          `md:max-w-screen-md` caps the same box at 768px from that breakpoint up, where 768px is by
+          definition no more than 100dvw, so the two bounds never contradict each other; `mx-auto`
+          then centres what is left. `overflow-x-hidden`, `min-w-0` and `w-full` are all still doing
+          the phone's job underneath. */}
+      <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col overflow-x-hidden md:max-w-screen-md">
         {/* Header — this route's contribution to the ONE header shell, which is mounted above the
             outlet in RootLayout and is the same element on every screen (so the Collie mark is not
             only identical, it is literally the same drawing, still turning). The pane's own bits are
             portalled into it: the `space › tab` breadcrumb as the center, the ⋮ as the right-cluster
-            lead, and the find bar as the full-row takeover while searching. No `width`: the pane is
-            the edge-to-edge one, which is this component's default. */}
+            lead, and the find bar as the full-row takeover while searching.
+
+            `width="wide"`: the pane is edge to edge below 768px, and from 768px up it is a centred
+            column — which a phone in landscape reaches too, at 844px, giving it 38px each side, the
+            same look the dashboard already has on a portrait iPad. It stops growing because the
+            mirror can never be wider than the mux pane it mirrors.
+            Measured on a 1366px landscape iPad: an 80-column pane renders a ~620px block of text
+            starting at x≈20 and ending near 640px, while the header, both strips, the bottom toolbar
+            and the composer each ran the whole 1366px. One route with two right edges, which is what
+            DESIGN.md §4 forbids — every top-level block "begins and ends on the same x". 768px and
+            not the 640px every other route uses: a 640px column minus its 16px gutters clips an
+            80-column mirror, so the pane pair get their own claim. */}
         <RouteHeader
           onHome={onBack}
           // DOWNSTREAM PORT — no Collie mark on this route. The row is the breadcrumb's: it is the
           // only thing here the operator reads, and on a phone the mark spends 44px of it naming an
           // app they are already inside. Every other route keeps it.
           mark={false}
+          width="wide"
           // Zen takes the whole row off the screen — the one shell owns the <header> element, so
           // only the shell can stop drawing it, and this is how a route asks. See HeaderClaim.hidden
           // for what survives (the element, its safe-area inset, its reserved rule) and why.
@@ -1117,33 +1176,38 @@ export function AgentChat({
           rightLead={
             agent ? (
               <>
-              {/* DOWNSTREAM PORT — WHICH MACHINE, in the row that already has room for it.
-                  It stood in the composer's 14px status band, and once the state word moved up to
-                  the strips that band was a bordered strip of nothing on a solo install and a whole
-                  row spent on one name on a pack. The app bar is where the pane's identity already
-                  lives, the chip is a pill among the one control here, and it renders nothing at all
-                  on a single-machine install — so this costs no height anywhere. The composer keeps
-                  the fact for every other caller (`showHost`). */}
-              <HostChip host={writeHost} className="shrink-0" />
-              <button
-                type="button"
-                onClick={() => setDrawer("paneMenu")}
-                aria-label={t("chat.paneMenu.aria")}
-                // A real 44px box, stated, for the same reason SettingsGear states one and with no
-                // negative margin for the same reason: the two icons this replaces were size-8 with
-                // `-mr-1`, i.e. 32px drawn and 28px of unshared hit area at the very edge of the row.
-                // One control can afford the floor.
-                className="grid size-11 place-items-center rounded-lg text-muted-foreground transition-colors active:bg-muted/60"
-              >
-                <EllipsisVertical className="size-5" />
-              </button>
+                {/* DOWNSTREAM PORT — WHICH MACHINE, in the row that already has room for it.
+                    It stood in the composer's 14px status band, and once the state word moved up to
+                    the strips that band was a bordered strip of nothing on a solo install and a whole
+                    row spent on one name on a pack. The app bar is where the pane's identity already
+                    lives, the chip is a pill among the one control here, and it renders nothing at all
+                    on a single-machine install — so this costs no height anywhere. The composer keeps
+                    the fact for every other caller (`showHost`). */}
+                <HostChip host={writeHost} className="shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => setDrawer("paneMenu")}
+                  aria-label={t("chat.paneMenu.aria")}
+                  // A real 44px box, stated, for the same reason SettingsGear states one and with no
+                  // negative margin for the same reason: the two icons this replaces were size-8 with
+                  // `-mr-1`, i.e. 32px drawn and 28px of unshared hit area at the very edge of the row.
+                  // One control can afford the floor.
+                  className="grid size-11 place-items-center rounded-lg text-muted-foreground transition-colors active:bg-muted/60"
+                >
+                  <EllipsisVertical className="size-5" />
+                </button>
               </>
             ) : undefined
           }
         >
           {/* Title block: the agent's brand logo and the space › tab share line 1 (the agent name
               would just repeat the icon, so it's dropped), and the working directory has line 2 to
-              itself. Tapping it leaves the pane for the space overview (all its tabs + panes). */}
+              itself. Tapping it leaves the pane for the space overview (all its tabs + panes).
+
+              Wrapped in HeaderStatus: while a status is live (lib/status.ts) it takes this whole
+              slot over, in the same box, rather than floating a toast over the tab strip's own "+"
+              — see that component's header for the reasoning and what replaced. */}
+          <HeaderStatus>
           {agent ? (
             <button
               type="button"
@@ -1308,13 +1372,15 @@ export function AgentChat({
               <span className="truncate font-semibold">{t("chat.header.agentGone")}</span>
             </div>
           )}
+          </HeaderStatus>
         </RouteHeader>
 
-        {/* Content region below the header — the mirror inside is the scroller. `relative` is load-
-            bearing and stays: <ToastViewport dock="top"> below is `absolute`, so THIS element is the
-            positioned ancestor it resolves against. That is also how the toast lands below the sticky
-            header — by geometry, because it sits in the region the header ends at, rather than by
-            anyone measuring the header's height and keeping the number in sync. */}
+        {/* Content region below the header — the mirror inside is the scroller. `relative` is for the
+            zen exit button below (`absolute right-3 top-3`), the one thing in this region still
+            positioned against it — the status toast that used to need it too is gone from this
+            screen's non-zen path: it now rides in the header's own title slot (HeaderStatus, wrapped
+            around RouteHeader's children above) rather than floating over this region. See that
+            component's header for why. */}
         <div
           className={cn(
             "relative flex min-h-0 min-w-0 flex-1 flex-col",
@@ -1358,33 +1424,26 @@ export function AgentChat({
           )}
 
           {/* The status line — "Sent", "wrap changed", a send error. An EVENT in DESIGN.md §11's
-              sense: it passes on its own, so it FLOATS and never holds space. It was an ordinary row
-              in this column once, and that is the whole argument — every "Sent" pushed the tab strip,
-              the pane strip and the mirror down ~30px and pulled them back up 2.5s later, so the page
-              jumped twice to say one word.
+              sense: it passes on its own, so on every OTHER screen it FLOATS and never holds space.
+              On THIS screen it no longer floats over content at all: it rides in the header's own
+              title slot (HeaderStatus, wrapped around RouteHeader's children above), because a toast
+              docked at the top of this region sat exactly where the tab strip's "+" (new tab) lives
+              — the first status a fresh tab ever earns ("Tab ready") landed on the control the
+              operator had just tapped to make it. The strip was never free real estate; it is where
+              the control you just pressed lives. Floating the toast over the TERMINAL TAIL instead
+              (the newest output, the reason the screen is open) was tried on this very screen even
+              earlier and reverted too — see ToastViewport's own doc for that experiment.
 
-              `dock="top"`, and this is the screen that makes the choice. The other two routes float
-              their toasts at the bottom; here the bottom is the composer, and covering the control
-              you just pressed to make the toast appear is the worst square on the page. The top of
-              this region is the tab strip and the pane strip — chrome nobody reads while waiting on a
-              send, and the cheapest real estate here. Floating it over the TERMINAL TAIL instead (the
-              newest output, the reason the screen is open) was tried on this very screen and
-              reverted; that is the experiment ToastViewport's own doc cites, and everything else —
-              the z-40 rung, the pointer-events split StatusArea completes, why absolute and not fixed
-              — is stated there once and deliberately not repeated here.
-
-              No wrapper of ours and no className: ToastViewport states the gutter and the top inset
-              itself, and a second set here would add to them rather than replace them. */}
-          {/* `dock={zen ? "bottom" : "top"}`, and the switch is this route's own argument read back.
-              Top is chosen HERE because the bottom of this screen is the composer and covering the
-              control you just pressed is the worst square on the page. In zen there is no composer,
-              and the top-right corner is where the one way out stands — so the reason for top is
-              gone and the reason against it has arrived. StatusArea stays MOUNTED either way: it
-              renders nothing when idle, and it is the only surface a prompt-tap failure ("menu
-              changed", a read-only refusal) has. Hiding it would silently eat errors. */}
-          <ToastViewport dock={zen ? "bottom" : "top"}>
-            <StatusArea />
-          </ToastViewport>
+              Zen has no header row to ride in, so it keeps the old bottom-docked toast: there is no
+              composer to collide with in zen either, so `dock="bottom"` costs it nothing.
+              `StatusArea` stays MOUNTED here either way — it renders nothing when idle, and it is
+              zen's only surface for a prompt-tap failure ("menu changed", a read-only refusal).
+              Hiding it would silently eat errors. */}
+          {zen && (
+            <ToastViewport>
+              <StatusArea />
+            </ToastViewport>
+          )}
 
           {/* THE CHROME ABOVE THE MIRROR, AS ONE ROW THAT LEAVES. In zen these four surfaces go
               together — they are Collie talking about the pane, not the pane's own output — and they
@@ -1467,6 +1526,7 @@ export function AgentChat({
                     selected={agent.tabId}
                     onSelect={(id) => id && goToTab(id)}
                     onNewTab={newTab}
+                    creatingTab={creatingTab.has(agent.workspaceId)}
                     allowAll={false}
                     scope={scope}
                     readOnly={readOnly}
@@ -1751,7 +1811,7 @@ export function AgentChat({
                 {statusLines.length > 0 && (
                 <div
                   className={cn(
-                    "max-h-[18dvh] overflow-y-auto border-t border-border/40 px-3 py-1 font-mono text-[11px] leading-tight",
+                    "max-h-[18dvh] overflow-y-auto overscroll-contain border-t border-border/40 px-3 py-1 font-mono text-[11px] leading-tight",
                     // The strip carries the agent's OWN terminal colour, so it renders in the mirror's
                     // dark space and inverts in light with it (ADR 0002) — a bright statusline colour is
                     // chosen against a near-black background and is illegible re-themed onto app chrome.
@@ -1823,13 +1883,16 @@ export function AgentChat({
                   1.04:1 against the inverted mirror. index.css states the whole argument. */}
               <div data-slot="chrome-block" className="border-t border-rule bg-chrome">
                 {/* …and stands down while the keyboard is up, for 30px (`py-3` around the 6px
-                    grip — it was py-3.5/34px until the 2026-08-31 shave; the swipe threshold is
-                    24px and the strip is full-width, so the gesture still lands). Switching panes
-                    is a
+                    grip, it was py-3.5/34px until the 2026-08-31 shave; the drag is tracked from
+                    the first pixel past useSheetPull's own slop, and the strip is full-width, so the
+                    gesture still lands). Switching panes is a
                     BEFORE-typing act, so the row costs its height at the one moment it cannot be
                     wanted. Nothing is stranded: the tab strip above still switches, the sheet is still
                     reachable the instant the keyboard closes, and `Collapse` unmounts the button at
-                    the end of the exit so it leaves the tab order with the pixels. */}
+                    the end of the exit so it leaves the tab order with the pixels.
+
+                    Also shown whenever launchers are declared, even with a single pane and no
+                    shells: a lone pane with launchers still needs a way to reach them. */}
                 {/* DOWNSTREAM PORT — `xl:hidden`, and ON THE COLLAPSE rather than on a wrapper
                     around it. At the width where the Fleet shell's rails stand, the hierarchy rail
                     lists every pane on screen and a handle that opens a list of them is a row of
@@ -1838,13 +1901,16 @@ export function AgentChat({
                     class rides the row itself, so the DOM shape, the gesture, the sheet and the
                     keyboard stand-down are all exactly as written. */}
                 <Collapse
-                  open={!composing && agents.length + shellPanes.length > 0}
+                  open={
+                    !composing &&
+                    (agents.length + shellPanes.length > 0 || launchers.length > 0)
+                  }
                   className="xl:hidden"
                 >
                   <button
                     type="button"
                     aria-label={t("chat.switcher.aria")}
-                    {...swipe}
+                    ref={sheetPull.ref}
                     onClick={() => setDrawer("switcher")}
                     className="flex w-full touch-none items-center justify-center py-3 transition-colors active:bg-muted/50"
                   >
@@ -1933,11 +1999,16 @@ export function AgentChat({
         </div>
 
         {/* Swipe-up quick switcher — just the panes (agents + shells), reached by the thumb gesture.
-            Switch-only: pane closing lives in the pane pill's long-press sheet, not here. */}
+            Switch-only for panes: pane closing lives in the pane pill's long-press sheet, not here.
+            A trailing Launch section rides along (see ThreadSidebar): this is the launcher's other
+            home now that the pane header's rocket is gone, and the one reachable from inside a pane
+            without going home first. `pull` is the only BottomSheet this drag reveal drives. */}
         <BottomSheet
           open={drawer === "switcher"}
           onClose={closeDrawer}
           title={nativeSwitcher?.title ?? t("chat.switcher.title")}
+          pull={pull}
+          pullFrom={pullFrom}
         >
           {nativeSwitcher ? (
             nativeSwitcher.content
@@ -1953,6 +2024,30 @@ export function AgentChat({
             // they'd otherwise bury the agents you opened this sheet to reach.
             shellsOpen={openForCount(dash.prefs.shellsOpen, shellPanes.length)}
             onShellsOpenChange={dash.setShellsOpen}
+            launchers={launchers}
+            launchersHome={launchersHome}
+            // Withheld on a read-only device: the same gate the dashboard's own LaunchStrip needs
+            // is enforced in useSpaceActions().launch itself, but leaving onLaunch undefined here is
+            // what hides the section rather than offering a write the bridge would refuse anyway.
+            // A host-level refusal (this pane's own machine, not the device) keeps the section but
+            // disables each row instead — see `launchRefusal` below.
+            onLaunch={
+              readOnly
+                ? undefined
+                : (command: string) => {
+                    // Close first: the launch navigates into the new pane, and a sheet still up
+                    // while the route changes under it would have to be dismissed on the screen
+                    // you just arrived at (same order the deleted LaunchSheet used).
+                    closeDrawer();
+                    // Beside THIS pane — the switcher's launch always opens a tab in this pane's
+                    // Space, on this pane's own host (server.ts resolves `paneId` there).
+                    void launch(command, paneId);
+                  }
+            }
+            launching={launching}
+            launchRefusal={hostBlock}
+            launchOpen={openForCount(dash.prefs.launchOpen, launchers.length)}
+            onLaunchOpenChange={dash.setLaunchOpen}
             className="px-0 py-1"
           />
           )}

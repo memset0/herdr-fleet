@@ -19,6 +19,7 @@ import {
   packTimeoutBudget,
   packTimeoutClampWarning,
   packUrl,
+  parsePeerVersion,
   sweepPeers,
   takeDataBudget,
   type PackFetch,
@@ -255,6 +256,53 @@ describe("PeerClient — the request the lead sends (§6)", () => {
     expect(calls).toEqual([]);
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.state).toBe("unreachable");
+  });
+
+  // ── §20's TWO REQUEST HEADERS (M16/04) ─────────────────────────────────────
+  // Both additive-optional, both on the sweep the lead already makes, and both absent by default —
+  // which is every sweep of every pack until an operator confirms an update.
+
+  test("X-Pack-Lead-Release rides the sweep, and is absent unless the lead states something", async () => {
+    const { fetch, calls } = replying({});
+    const c = client(fetch);
+    await c.snapshot(laptop);
+    expect(new Headers(calls[0]!.init.headers).get("X-Pack-Lead-Release")).toBeNull();
+    await c.snapshot(laptop, undefined, false, { leadRelease: "1.5.0" });
+    expect(new Headers(calls[1]!.init.headers).get("X-Pack-Lead-Release")).toBe("1.5.0");
+    // The protocol integer does not move for an additive-optional field (§7.1).
+    expect(new Headers(calls[1]!.init.headers).get(PROTOCOL_HEADER)).toBe("1");
+  });
+
+  test("a lead mid-run states nothing: a null release sends no header at all", async () => {
+    const { fetch, calls } = replying({});
+    await client(fetch).snapshot(laptop, undefined, false, { leadRelease: null, turn: null });
+    const headers = new Headers(calls[0]!.init.headers);
+    expect(headers.get("X-Pack-Lead-Release")).toBeNull();
+    expect(headers.get("X-Pack-Update-Turn")).toBeNull();
+  });
+
+  test("the turn names no code — a member and a run id, and it goes to one member at a time", async () => {
+    const { fetch, calls } = replying({});
+    const c = client(fetch);
+    await c.snapshot(laptop, undefined, false, { leadRelease: "1.5.0", turn: "laptop;r-7" });
+    await c.snapshot(laptop, undefined, false, { leadRelease: "1.5.0" });
+    const first = new Headers(calls[0]!.init.headers).get("X-Pack-Update-Turn");
+    expect(first).toBe("laptop;r-7");
+    // No version, no ref, no URL, no command.
+    expect(first).not.toContain("1.5.0");
+    expect(first).not.toContain("http");
+    expect(first).not.toContain("refs/");
+    // The second member of the same sweep gets the release and no turn.
+    expect(new Headers(calls[1]!.init.headers).get("X-Pack-Update-Turn")).toBeNull();
+  });
+
+  test("the follow headers do not buy the patient budget — only §19's fresh does", async () => {
+    const { fetch, calls } = replying({});
+    const c = client(fetch);
+    await c.snapshot(laptop, undefined, false, { leadRelease: "1.5.0", turn: "laptop;r-7" });
+    // A lead with something to state must not become a lead that polls more slowly (§10.1).
+    expect(calls[0]!.init.headers).toBeDefined();
+    expect(new Headers(calls[0]!.init.headers).get("X-Pack-Preflight")).toBeNull();
   });
 
   test("`snapshot` names the session only when there is one — absent means the peer's primary", async () => {
@@ -967,5 +1015,37 @@ describe("PeerClient — every dial is attested (§8.6)", () => {
     const { fetch, calls } = replying({ protocol: 1, member: "laptop" });
     await client(fetch).hello(laptop);
     expect(new Headers(calls[0]!.init.headers).get(DIAL_HEADER)).toBeNull();
+  });
+});
+
+describe("parsePeerVersion — the sweep's version sibling (§5, §19)", () => {
+  test("a carried version is read verbatim, and nothing about it is re-derived", () => {
+    expect(parsePeerVersion({ bridge: {}, version: "1.4.1" })).toBe("1.4.1");
+    // A build stamp and a prerelease tail are that machine's own spelling. They cross untouched.
+    expect(parsePeerVersion({ version: "1.5.0-beta.2+ab12cd3" })).toBe("1.5.0-beta.2+ab12cd3");
+    expect(parsePeerVersion({ version: "  1.4.1  " })).toBe("1.4.1");
+  });
+
+  test("absent means the answer SAID NOTHING — null, so the caller keeps what it had", () => {
+    // A peer older than the 2026-09-04 amendment omits the field on every sweep. Each of these
+    // reads the same way, and `bridge/pack/lead.ts` turns exactly this `null` into "pass no
+    // observation", which is what stops a sweep erasing a version a `hello` already taught.
+    expect(parsePeerVersion({ bridge: {}, agents: [] })).toBeNull();
+    expect(parsePeerVersion({ version: "" })).toBeNull();
+    expect(parsePeerVersion({ version: "   " })).toBeNull();
+    expect(parsePeerVersion({ version: 141 })).toBeNull();
+    expect(parsePeerVersion({ version: null })).toBeNull();
+    expect(parsePeerVersion(["1.4.1"])).toBeNull();
+    expect(parsePeerVersion("1.4.1")).toBeNull();
+    expect(parsePeerVersion(null)).toBeNull();
+  });
+
+  test("it sits BESIDE the other siblings and never reaches for one of them", () => {
+    const answer: JsonValue = {
+      version: "1.4.1",
+      updatePreflight: { verdict: "green", asOf: 1, checks: [] },
+      updateRun: { state: "done", to: "1.4.1", runId: "r-1", reason: null, updatedAt: 2 },
+    };
+    expect(parsePeerVersion(answer)).toBe("1.4.1");
   });
 });

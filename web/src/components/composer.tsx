@@ -14,6 +14,7 @@ import { decideMicCommand, type MicCommand, type MicRefusal } from "../../../fle
 import { useLocale } from "@/hooks/use-locale";
 import { t as translate, tn as translatePlural } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
+import { stampSend } from "@/lib/poll-intent";
 import { useBusyWhile } from "@/lib/busy";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -200,8 +201,10 @@ const CONTROL_BUTTON =
 // own width.
 const CONTROL_LABEL = "max-w-full truncate";
 
-// Pause after clearing a stranded terminal draft so the TUI settles before pane.send_text.
-const TUI_SETTLE_MS = 350;
+// Pause after clearing a stranded terminal draft so the TUI settles before pane.send_text. Exported
+// so the test can pin the WAIT ITSELF (the reply never overtakes the sweep) against the constant
+// rather than against a copy of its value — the number is a measured judgement call (issue #156).
+export const TUI_SETTLE_MS = 350;
 
 // Grace window after a send during which a terminal draft matching what we just sent is treated as
 // our own in-flight reply (still on the "❯" line before the bridge's pending Enter lands), NOT a
@@ -779,6 +782,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       return false;
     }
     setSending(true);
+    // The operator has just acted on this pane, so the poller should watch it land. Stamped HERE —
+    // after the refusals above, before the round trip — because the burst is about the operator's
+    // attention, not about the send's verdict: a send that stalls or is blocked is exactly a moment
+    // they are staring at the mirror.
+    stampSend(paneId);
     try {
       // Guarded: types the text, verifies it reached the input box, and only THEN sends the submit
       // key. A "stalled" outcome means nothing was submitted and the draft must survive (#34).
@@ -985,6 +993,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // the status channel; the echo just falls back to idle.
   async function pressKeys(k: string[]): Promise<boolean> {
     if (locked) return false;
+    // Every raw key reaches the pane through here — the Keys dock (NavTray's `onSend`), the direct
+    // typing mode (useDirectTyping's `sendKeys`) and the prompt buttons that hand keys to the tray —
+    // so one stamp covers the lot.
+    stampSend(paneId);
     try {
       const res = await api.sendKeys(paneId, k, scope);
       if (!res.ok) {

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { updateStartVerdict, type PackUpdateRow } from "./update-action.ts";
+
 import {
   bridgeConfigBody,
   muxConfigBody,
@@ -7,6 +9,7 @@ import {
   BUILD_HEADER,
   cacheControlFor,
   checkAccess,
+  launch,
   marksPaneSeen,
   SEEN_HEADER,
   deviceAuth,
@@ -16,6 +19,7 @@ import {
   isLoopbackPeer,
   isReservedAuthPath,
   keysPane,
+  launchersRoute,
   normalizeTabLabel,
   paneReadResponse,
   parsePairRequest,
@@ -25,10 +29,12 @@ import {
   resolveStaticPath,
   sendReplySteps,
   startupWarnings,
+  healthBody,
   withBuildHeader,
   type ReplySender,
 } from "./server.ts";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { AuditLog, type AuditEntry } from "./audit.ts";
@@ -40,12 +46,30 @@ import { withAgentHints } from "./beacon/hint.ts";
 import { HerdrMux, herdrMuxFactory } from "./mux/herdr/adapter.ts";
 import { tmuxMuxFactory } from "./mux/tmux/adapter.ts";
 import type { HerdrClient, PaneRead } from "./mux/herdr/client.ts";
-import { muxAck, type MuxAck, type MuxAdapter, type MuxGrid } from "./mux/types.ts";
+import {
+  muxAck,
+  muxOk,
+  muxRefused,
+  type MuxAck,
+  type MuxAdapter,
+  type MuxCreatedPane,
+  type MuxGrid,
+  type MuxOutcome,
+  type MuxSpaceRequest,
+  type MuxTabRequest,
+} from "./mux/types.ts";
 import { neverProxy } from "./pack/fixtures.ts";
 import { PackLead } from "./pack/lead.ts";
 import { PackRegistry } from "./pack/registry.ts";
 import { computeEtag } from "./http-cache.ts";
-import { MUX_LOGO_PATH, type SnapshotResponse } from "./types.ts";
+import {
+  MUX_LOGO_PATH,
+  type AgentView,
+  type Launcher,
+  type LaunchersResponse,
+  type SnapshotResponse,
+} from "./types.ts";
+import type { StateEngine } from "./state-engine.ts";
 
 // checkAccess is the API security gate (same-origin/CSRF + optional Tailscale identity). A
 // regression here silently opens remote shell access, so it gets the most direct coverage.
@@ -84,6 +108,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     quickRepliesFile: "/nope/quick-replies.toml",
     themeFile: "/nope/theme.toml",
     fontsDir: "/nope/fonts",
+    launchersFile: "/nope/launchers.toml",
     trustedUser: "",
     trustedUserOptional: false,
     auditContent: "preview",
@@ -1219,6 +1244,22 @@ describe("normalizeTabLabel", () => {
 // The X-Collie-Build response header is what a no-service-worker client polls to notice a live
 // rebuild (web/src/lib/server-build.ts). withBuildHeader is the pure attach helper; the handlers
 // that call it (snapshot/pane) stay untested by convention (they need Bun.serve + the socket).
+describe("GET /api/health", () => {
+  test("the health answer reports the running build — the health version IS the gate", () => {
+    // The detached updater (M15/04) compares this string against the version it just flipped to. A
+    // service that came back on the OLD code answers fine, so "did it answer" is not the question.
+    expect(healthBody("1.2.3+ab12cd3", "solo")).toEqual({
+      ok: true,
+      version: "1.2.3+ab12cd3",
+      deposed: false,
+      mode: "solo",
+    });
+    // `deposed` is always false here because a deposed collie never reaches this route — its one
+    // page answers every path first. The field states the rule the prober applies.
+    expect(healthBody("1.2.3", "lead").deposed).toBe(false);
+  });
+});
+
 describe("withBuildHeader", () => {
   test("sets the build header to the given id and returns the same response", () => {
     const res = new Response("body");
@@ -1622,10 +1663,10 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All SEVEN session-scoped routes (tab create, workspace create, tab action, the pane family,
-    // "look now", the worktree listing and the worktree actions) reach their runtime through the
-    // caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(7);
+    // All NINE session-scoped routes (tab create, workspace create, launch, this host's launcher
+    // rows, tab action, the pane family, "look now", the worktree listing and the worktree actions)
+    // reach their runtime through the caller's resolver and nothing else.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(9);
     // Exactly five `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
@@ -1672,5 +1713,764 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // And it is still keyed by (session, paneId) alone: the ledger's host dimension exists for the
     // LEAD's own bookkeeping, not for a peer marking its own panes (bridge/activity.ts).
     expect(src).toContain("activity.noteSeen(session, paneId)");
+  });
+});
+
+// ── POST /api/update: the update write gate (M15/05) ────────────────────────────────────────────
+//
+// The route starts a real update, so its gate is the one thing about it that must not be its own.
+// It is the pane path's gate — literally, the same `browserGate` closure, passed to both call sites
+// — and that is asserted two ways here: behaviourally, over a matrix that must produce the identical
+// verdict for a send and for an update; and structurally, on the source, because behaviour agreeing
+// today is exactly what two copies do right up until one of them is edited.
+describe("the update write gate — POST api/update rides the pane path's own gate", () => {
+  const HDR = "x-device-id";
+  const gateOf = (tokens: Record<string, string>) => ({
+    enforced: () => Object.keys(tokens).length > 0,
+    resolve: (token: string | null) =>
+      token !== null && tokens[token] !== undefined ? { label: tokens[token]! } : null,
+  });
+
+  /** Every posture the two routes must answer identically. */
+  const CASES: { name: string; cfg: Config; pairing?: ReturnType<typeof gateOf>; headers: Record<string, string> }[] = [
+    {
+      name: "a plain same-origin write on an ungated bridge",
+      cfg: cfg(),
+      headers: { host: "collie.ts.net", origin: "https://collie.ts.net" },
+    },
+    {
+      name: "a cross-origin write",
+      cfg: cfg(),
+      headers: { host: "collie.ts.net", origin: "https://evil.example" },
+    },
+    {
+      name: "a write with no Origin from a non-loopback host",
+      cfg: cfg(),
+      headers: { host: "collie.ts.net" },
+    },
+    {
+      name: "a host the allowlist does not know",
+      cfg: cfg({ allowAnyHost: false, publicHosts: ["collie.ts.net"] }),
+      headers: { host: "rebound.example", origin: "https://rebound.example" },
+    },
+    {
+      name: "the device header is configured and absent",
+      cfg: cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] }),
+      headers: { host: "collie.ts.net", origin: "https://collie.ts.net" },
+    },
+    {
+      name: "the device header carries an unlisted device",
+      cfg: cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] }),
+      headers: { host: "collie.ts.net", origin: "https://collie.ts.net", [HDR]: "intruder" },
+    },
+    {
+      name: "the device header carries an allowlisted device",
+      cfg: cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] }),
+      headers: { host: "collie.ts.net", origin: "https://collie.ts.net", [HDR]: "phone" },
+    },
+    {
+      name: "pairing is enforced and this device holds no token",
+      cfg: cfg(),
+      pairing: gateOf({ "tok-phone": "phone" }),
+      headers: { host: "collie.ts.net", origin: "https://collie.ts.net" },
+    },
+    {
+      name: "pairing is enforced and this device holds one",
+      cfg: cfg(),
+      pairing: gateOf({ "tok-phone": "phone" }),
+      headers: { host: "collie.ts.net", origin: "https://collie.ts.net", authorization: "Bearer tok-phone" },
+    },
+    {
+      name: "the identity header is required and missing",
+      cfg: cfg({ trustedUser: "operator@example.com" }),
+      headers: { host: "collie.ts.net", origin: "https://collie.ts.net" },
+    },
+  ];
+
+  for (const c of CASES) {
+    test(`same device auth as pane input: ${c.name}`, () => {
+      // The pane's reply route asks exactly this, through `RouteCaller.gate`. The update route asks
+      // the same closure with the same level, so the two verdicts are the same value by
+      // construction — this pins that they are also the same ANSWER, case by case.
+      const paneVerdict = guard(req(c.headers), c.cfg, "write", c.pairing);
+      const updateVerdict = guard(req(c.headers), c.cfg, "write", c.pairing);
+      expect(updateVerdict === null).toBe(paneVerdict === null);
+      expect(updateVerdict?.status).toBe(paneVerdict?.status);
+    });
+  }
+
+  test("same device auth as pane input: one gate expression, two call sites, no second guard() call", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // Defined once…
+    expect([...src.matchAll(/const browserGate = \(level: "read" \| "write"\)/g)]).toHaveLength(1);
+    // …handed to the pane family…
+    expect(src).toContain("gate: browserGate,");
+    // …and used by the update route. If someone re-spells either as its own `guard(req, cfg, …)`
+    // call, this fails — which is the whole point: two checks meant to be identical drift the moment
+    // one of them is edited.
+    expect(src).toContain('const denied = browserGate("write");');
+    const updateAt = src.indexOf('if (pathname === "/api/update" && req.method === "POST")');
+    expect(updateAt).toBeGreaterThan(0);
+    const handler = src.slice(updateAt, updateAt + 2000);
+    expect(handler).not.toContain("checkAccess(");
+    expect(handler).not.toContain("deviceAuth(");
+    expect(handler).not.toContain("guard(req");
+  });
+
+  test("api/update is a POST and nothing else — no GET trigger, no beacon path (ADR 0024)", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const routes = [...src.matchAll(/pathname === "\/api\/update"[^)]*\)/g)].map((m) => m[0]);
+    expect(routes).toHaveLength(1);
+    expect(routes[0]).toContain('req.method === "POST"');
+    // And the read beside it is a read: the card's poll target takes no action and starts nothing.
+    expect(src).toContain('if (pathname === "/api/update/check" && req.method === "GET")');
+    const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
+    const checkHandler = src.slice(checkAt, checkAt + 1200);
+    expect(checkHandler).toContain('guard(req, cfg, "read", pairing)');
+    expect(checkHandler).not.toContain("updateAction.start");
+  });
+
+  test("update hands off: the route answers 202 and never awaits the update itself", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const updateAt = src.indexOf('if (pathname === "/api/update" && req.method === "POST")');
+    const handler = src.slice(updateAt, src.indexOf("\n      }\n", updateAt));
+    // The handoff is a plain call — nothing here awaits the child, and the answer carries the 202
+    // that says "started", not the 200 that would say "finished".
+    expect(handler).toContain("const started = action.start({ major: verdict.major, runId });");
+    expect(handler).not.toContain("await action.start");
+    expect(handler).toContain("202,");
+  });
+
+  test("update check GET: an unknown latest triggers a bounded on-demand poll before answering", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
+    const checkHandler = src.slice(checkAt, checkAt + 2000);
+    // Right after a restart `latest` is null until the monitor's own delayed first poll — this read
+    // must not answer "isn't known yet" over a healthy network just because it landed a second early,
+    // so it triggers the SAME `checkRelease()` the timer would eventually run (de-duped there, not
+    // reimplemented here) and waits a bounded moment for it.
+    expect(checkHandler).toContain("if (updateMonitor.status().latest === null)");
+    expect(checkHandler).toContain("updateMonitor.checkRelease()");
+    expect(checkHandler).toContain("Promise.race([");
+    expect(checkHandler).toContain("UPDATE_ON_DEMAND_POLL_TIMEOUT_MS");
+  });
+
+  // ── THE PACK'S HALF (M16/03) ───────────────────────────────────────────────
+  // The card's read answers for every member, from what the sweep banked. The route itself lives
+  // inside `Bun.serve` and cannot be stood up here (CLAUDE.md), so what is pinned is its SHAPE —
+  // the same way every other assertion in this block is — and the decisions it delegates to are
+  // exercised for real in `update-action.test.ts` and `lead.test.ts`.
+  test("update check pack array: the key is always present, [] on a solo instance and on a peer", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
+    const checkHandler = src.slice(checkAt, checkAt + 4500);
+    // `?? []` is the whole of it: a solo instance and a peer build no `packLead`, so the key is an
+    // empty array rather than an absent one — `preflight: null`'s stated reason, one field over.
+    expect(checkHandler).toContain("pack: opts.packLead?.updateRows() ?? []");
+    // Composed from the bank, not from a dial: the rows come off `PackLead`, which reads `PeerState`.
+    expect(checkHandler).not.toContain("packLead.forward");
+  });
+
+  test("update check dials nobody: the rows are read from the sweep's bank, never fetched", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
+    const checkHandler = src.slice(checkAt, checkAt + 4500);
+    // The shape `status-wire.test.ts` uses: the surface the phone polls must not be able to make the
+    // lead dial a member. The ONE thing here that reaches a peer is the sweep — the same sweep the
+    // poll tick already runs, asked for one immediate pass and bounded — and nothing else.
+    for (const forbidden of ["client.snapshot", "peerClient", "proxy(", "fetch("]) {
+      expect(checkHandler).not.toContain(forbidden);
+    }
+    expect(checkHandler).toContain("opts.packLead?.updateRows()");
+  });
+
+  test("update check preflight fresh: the on-demand read fires ONE sweep asking for a fresh check", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
+    const checkHandler = src.slice(checkAt, checkAt + 4500);
+    expect(checkHandler).toContain("opts.packLead?.sweep({ freshPreflight: true })");
+    expect([...checkHandler.matchAll(/sweep\(/g)]).toHaveLength(1);
+  });
+
+  test("update check answers a stale asOf, never a fabricated green: the wait is the existing bound", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
+    const checkHandler = src.slice(checkAt, checkAt + 4500);
+    // The same race and the same constant the release check already uses. Past it the route answers
+    // with what the lead has — whose `asOf` is the peer's own stamp and says how old it is.
+    const races = [...checkHandler.matchAll(/Promise\.race\(\[/g)];
+    expect(races).toHaveLength(2);
+    expect([...checkHandler.matchAll(/UPDATE_ON_DEMAND_POLL_TIMEOUT_MS/g)]).toHaveLength(2);
+    // Nothing invents a verdict when the wait runs out: there is no green written into this handler.
+    expect(checkHandler).not.toContain('"green"');
+  });
+
+  test("the pack gates the confirm too: POST api/update reads the same banked rows", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const updateAt = src.indexOf('if (pathname === "/api/update" && req.method === "POST")');
+    const handler = src.slice(updateAt, src.indexOf("\n      }\n", updateAt));
+    // One confirm covers the pack, so one verdict covers the pack — and it is the SAME rows the
+    // card showed, from the same bank, decided by the one merge function in `update-action.ts`.
+    expect(handler).toContain("pack: opts.packLead?.updateRows() ?? []");
+  });
+
+  test("update status: the run record reaches the phone through the status the card already polls", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // One status object, three surfaces: the snapshot's `update`, the forced check, and the card's
+    // read. The run record rides all three rather than acquiring a fourth endpoint with its own
+    // shape — the nine states are `bridge/update-run.ts`'s, and nothing re-spells them here.
+    expect(src).toContain("update: updateStatusWithPeers(),");
+    expect(src).toContain("...updateStatusWithPeers(), preflight: report");
+    expect(src).not.toContain('"/api/update/status"');
+  });
+});
+
+// POST /api/launch — the launcher rows' one-tap: a Space whose cwd and label come from the row,
+// then the command plus a bare Enter typed into its fresh shell. The configured rows ARE the
+// allowlist, so the first thing asserted is that an unlisted command touches the multiplexer at all.
+describe("launch — an allowlisted space create, then the command and Enter", () => {
+  /** What a phone posts here: a row's `command`, and optionally the pane to open a tab beside. */
+  interface LaunchBody {
+    command?: string;
+    paneId?: string;
+  }
+
+  function request(body: LaunchBody): Request {
+    return new Request("http://localhost/api/launch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** One audit line as `JSON.parse` returns it: the entry as written, plus formatAuditLine's stamp. */
+  type LaunchAuditLine = AuditEntry & { ts: string };
+
+  function launchAudit() {
+    const entries: LaunchAuditLine[] = [];
+    return {
+      audit: new AuditLog((line) => {
+        // SAFETY: the appender is handed formatAuditLine's own output — this test never feeds it
+        // anything else — so the parse round-trips the AuditEntry it just serialised.
+        entries.push(JSON.parse(line) as LaunchAuditLine);
+      }),
+      entries,
+    };
+  }
+
+  // A clock the test owns: `sleep` moves `now` and returns immediately, so a wait bounded in
+  // milliseconds is asserted in milliseconds without any of them passing.
+  function fakeClock() {
+    let ms = 0;
+    return {
+      now: () => ms,
+      sleep: (by: number): Promise<void> => {
+        ms += by;
+        return Promise.resolve();
+      },
+    };
+  }
+
+  // Only what `launch` reaches: create the space, read its grid, type, submit, and close on
+  // rollback. `refresh` is there because every structural create settles the topology afterwards.
+  class FakeLaunchMux {
+    createArgs: MuxSpaceRequest | null = null;
+    createTabArgs: MuxTabRequest | null = null;
+    readonly texts: Array<[string, string]> = [];
+    readonly keys: Array<[string, readonly string[]]> = [];
+    readonly closes: string[] = [];
+    failOn: "create" | "text" | "keys" | null = null;
+    closeThrows = false;
+    /** Successive screens the new pane shows; the last one repeats for every further read. */
+    screens: string[] = ["$ "];
+    grids = 0;
+    /** The fake clock's reading when the command was typed — what the wait is asserted against. */
+    typedAtMs: number | null = null;
+    constructor(private readonly now: () => number = () => 0) {}
+
+    createSpace(request_: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>> {
+      this.createArgs = request_;
+      if (this.failOn === "create") return Promise.resolve(muxRefused("create failed"));
+      return Promise.resolve(
+        muxOk({ paneId: "w1:p1", spaceId: "w1", spaceLabel: "MySpace", tabId: "w1:t1", cwd: "/home/op" }),
+      );
+    }
+    createTab(request_: MuxTabRequest): Promise<MuxOutcome<MuxCreatedPane>> {
+      this.createTabArgs = request_;
+      if (this.failOn === "create") return Promise.resolve(muxRefused("create failed"));
+      return Promise.resolve(
+        muxOk({ paneId: "w2:p9", spaceId: request_.spaceId, spaceLabel: "MySpace", tabId: "w2:t9", cwd: request_.cwd ?? "/home/op" }),
+      );
+    }
+    readGrid(paneId: string): Promise<MuxOutcome<MuxGrid>> {
+      // SAFETY: `screens` is never empty in this suite and the index is clamped to its last entry.
+      const text = this.screens[Math.min(this.grids, this.screens.length - 1)] as string;
+      this.grids += 1;
+      return Promise.resolve(muxOk({ paneId, text, truncated: false, revision: this.grids }));
+    }
+    typeText(paneId: string, text: string): Promise<MuxAck> {
+      this.typedAtMs ??= this.now();
+      this.texts.push([paneId, text]);
+      return this.failOn === "text" ? Promise.resolve(muxRefused("text failed")) : Promise.resolve(muxAck());
+    }
+    sendKeys(paneId: string, keys: readonly string[]): Promise<MuxAck> {
+      this.keys.push([paneId, keys]);
+      return this.failOn === "keys" ? Promise.resolve(muxRefused("keys failed")) : Promise.resolve(muxAck());
+    }
+    closePane(paneId: string): Promise<MuxAck> {
+      this.closes.push(paneId);
+      if (this.closeThrows) return Promise.reject(new Error("close failed"));
+      return Promise.resolve(muxAck());
+    }
+    refresh(): Promise<void> {
+      return Promise.resolve();
+    }
+  }
+
+  // `Partial<T>` on both stubs keeps the compiler checking every member they DO supply against the
+  // real contract, exactly as `asMux` above does for a HerdrClient fake.
+  const engineStub: Partial<StateEngine> = { pokeNow: () => {} };
+  // SAFETY: after a create, `launch` asks the engine for exactly one thing — `pokeNow()` — and the
+  // adapter for exactly the five calls FakeLaunchMux implements. No other member of either is
+  // reachable from this code path, which is the only step these two casts assert.
+  const engine = engineStub as StateEngine;
+  function asLaunchMux(fake: Partial<MuxAdapter>): MuxAdapter {
+    // SAFETY: as above — only the five calls the fake implements are reachable from `launch`.
+    return fake as MuxAdapter;
+  }
+  const rowsOf = (rows: Launcher[]) => () => Promise.resolve(rows);
+  const PEEK: Launcher = { command: "rumen-peek", label: "Runs & quota", cwd: "/home/op/project" };
+
+  /** A minimal pane the "beside a pane" launch path can look up by id. */
+  function fakePane(overrides: Partial<AgentView> = {}): AgentView {
+    return {
+      paneId: "w3:p1",
+      workspaceId: "w3",
+      workspaceLabel: "Beside",
+      workspaceNumber: 1,
+      tabId: "w3:t1",
+      agent: "shell",
+      status: "unknown",
+      cwd: "/home/op/beside",
+      focused: false,
+      ...overrides,
+    };
+  }
+
+  /** An engine whose snapshot lists exactly these panes — what `launch`'s `paneId` lookup reads. */
+  function engineWithPanes(agents: AgentView[]): StateEngine {
+    const stub: Partial<StateEngine> = {
+      pokeNow: () => {},
+      current: () => ({ agents, shellPanes: [], workspaces: [], tabs: [], bridge: "connected" }),
+    };
+    // SAFETY: `launch`'s beside-pane path reaches only `current()` (for the pane lookup and the
+    // tab-path's workspace-label fallback) and `pokeNow()` — the same two members every other
+    // engine stub in this suite supplies.
+    return stub as StateEngine;
+  }
+
+  test("an unlisted command is refused before anything is created", async () => {
+    const clock = fakeClock();
+    const mux = new FakeLaunchMux(clock.now);
+    const { audit, entries } = launchAudit();
+    const res = await launch(
+      asLaunchMux(mux),
+      engine,
+      request({ command: "intruder" }),
+      audit,
+      null,
+      "default",
+      rowsOf([PEEK]),
+      clock,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ ok: false, code: "launch.not_allowlisted" });
+    expect(mux.createArgs).toBeNull();
+    expect(mux.texts).toEqual([]);
+    expect(mux.keys).toEqual([]);
+    expect(entries).toHaveLength(0);
+  });
+
+  test("a listed row creates a space with that row's label AND cwd, then types the command + Enter", async () => {
+    const clock = fakeClock();
+    const mux = new FakeLaunchMux(clock.now);
+    const { audit, entries } = launchAudit();
+    const res = await launch(
+      asLaunchMux(mux),
+      engine,
+      request({ command: "rumen-peek" }),
+      audit,
+      null,
+      "default",
+      rowsOf([PEEK]),
+      clock,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
+    // The row's own cwd and label, never the client's — the request carried neither.
+    expect(mux.createArgs).toEqual({ cwd: "/home/op/project", label: "Runs & quota" });
+    expect(mux.texts).toEqual([["w1:p1", "rumen-peek"]]);
+    // A bare Enter, NOT cfg.submitKeys: this is a shell prompt, not an agent's composer.
+    expect(mux.keys).toEqual([["w1:p1", ["Enter"]]]);
+    expect(entries[0]?.action).toBe("workspace.launch");
+    expect(entries[0]?.detail).toEqual({
+      command: "rumen-peek",
+      label: "Runs & quota",
+      cwd: "/home/op/project",
+    });
+  });
+
+  test("a send failure closes the created pane rather than leaving an empty shell", async () => {
+    const clock = fakeClock();
+    const mux = new FakeLaunchMux(clock.now);
+    mux.failOn = "keys";
+    const { audit } = launchAudit();
+    const res = await launch(
+      asLaunchMux(mux),
+      engine,
+      request({ command: "rumen-peek" }),
+      audit,
+      null,
+      "default",
+      rowsOf([PEEK]),
+      clock,
+    );
+    expect(mux.closes).toEqual(["w1:p1"]);
+    expect(res.status).toBe(200);
+    // The text landed and the Enter did not, which `sendReplySteps` names precisely — the code and
+    // its sentence ride out unchanged, because a launch is a reply into a shell by another name.
+    expect(await res.json()).toMatchObject({ ok: false, code: "reply.not_submitted" });
+  });
+
+  test("a rollback that itself fails is swallowed — the send error is still the answer", async () => {
+    const clock = fakeClock();
+    const mux = new FakeLaunchMux(clock.now);
+    mux.failOn = "text";
+    mux.closeThrows = true;
+    const { audit } = launchAudit();
+    const res = await launch(
+      asLaunchMux(mux),
+      engine,
+      request({ command: "rumen-peek" }),
+      audit,
+      null,
+      "default",
+      rowsOf([PEEK]),
+      clock,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: false });
+  });
+
+  test("a space the multiplexer refuses is reported, and nothing is typed", async () => {
+    const clock = fakeClock();
+    const mux = new FakeLaunchMux(clock.now);
+    mux.failOn = "create";
+    const { audit, entries } = launchAudit();
+    const res = await launch(
+      asLaunchMux(mux),
+      engine,
+      request({ command: "rumen-peek" }),
+      audit,
+      null,
+      "default",
+      rowsOf([PEEK]),
+      clock,
+    );
+    expect(await res.json()).toMatchObject({ ok: false, code: "workspace.create_failed" });
+    expect(mux.texts).toEqual([]);
+    expect(entries).toHaveLength(0);
+  });
+
+  // The bug this route was shipped with: `createSpace` returns when the Space is ALLOCATED, so the
+  // command used to be typed into a shell that had not drawn its prompt yet and was discarded.
+  test("the command is typed only once the new pane's screen has stopped moving", async () => {
+    const clock = fakeClock();
+    const mux = new FakeLaunchMux(clock.now);
+    // Two empty reads (no shell yet), then a greeting that is still growing, then it settles.
+    mux.screens = ["", "", "Welcome", "Welcome\n$ ", "Welcome\n$ "];
+    const { audit } = launchAudit();
+    const res = await launch(
+      asLaunchMux(mux),
+      engine,
+      request({ command: "rumen-peek" }),
+      audit,
+      null,
+      "default",
+      rowsOf([PEEK]),
+      clock,
+    );
+    expect(res.status).toBe(200);
+    // Five polls at 150ms: the fifth is the first that repeats a non-empty screen.
+    expect(mux.grids).toBe(5);
+    expect(mux.typedAtMs).toBe(750);
+    expect(mux.texts).toEqual([["w1:p1", "rumen-peek"]]);
+  });
+
+  test("a screen that never settles is still launched into, once past the ceiling", async () => {
+    const clock = fakeClock();
+    const mux = new FakeLaunchMux(clock.now);
+    // A screen that changes on every read — a `top`-like banner, or a shell that never stops.
+    mux.screens = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+    const { audit } = launchAudit();
+    const res = await launch(
+      asLaunchMux(mux),
+      engine,
+      request({ command: "rumen-peek" }),
+      audit,
+      null,
+      "default",
+      rowsOf([PEEK]),
+      clock,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
+    // The wait gives up at the 5000ms ceiling (the poll that crosses it is at 5100) and sends
+    // anyway: a slow shell still runs what it is handed, and a swallowed launch is worse.
+    expect(mux.typedAtMs).toBe(5100);
+    expect(mux.texts).toEqual([["w1:p1", "rumen-peek"]]);
+  });
+
+  describe("beside a pane — a tab in that pane's Space, never a new Space", () => {
+    const HERE: Launcher = { command: "htop", label: "Top" };
+
+    test("a pinned row's cwd wins over the pane's own", async () => {
+      const clock = fakeClock();
+      const mux = new FakeLaunchMux(clock.now);
+      const { audit, entries } = launchAudit();
+      const pane = fakePane({ paneId: "w3:p1", workspaceId: "w3", cwd: "/home/op/pane-cwd" });
+      const res = await launch(
+        asLaunchMux(mux),
+        engineWithPanes([pane]),
+        request({ command: "rumen-peek", paneId: "w3:p1" }),
+        audit,
+        null,
+        "default",
+        rowsOf([PEEK]),
+        clock,
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ ok: true, pane: { workspaceId: "w3" } });
+      expect(mux.createArgs).toBeNull(); // never createSpace
+      expect(mux.createTabArgs).toEqual({ spaceId: "w3", label: "Runs & quota", cwd: "/home/op/project" });
+      expect(mux.texts).toEqual([["w2:p9", "rumen-peek"]]);
+      expect(entries[0]?.action).toBe("tab.launch");
+      expect(entries[0]?.detail).toEqual({
+        command: "rumen-peek",
+        label: "Runs & quota",
+        cwd: "/home/op/project",
+        besidePaneId: "w3:p1",
+      });
+    });
+
+    test("an absent cwd resolves to the pane's own cwd, not the operator's home", async () => {
+      const clock = fakeClock();
+      const mux = new FakeLaunchMux(clock.now);
+      const { audit, entries } = launchAudit();
+      const pane = fakePane({ paneId: "w3:p1", workspaceId: "w3", cwd: "/home/op/pane-cwd" });
+      const res = await launch(
+        asLaunchMux(mux),
+        engineWithPanes([pane]),
+        request({ command: "htop", paneId: "w3:p1" }),
+        audit,
+        null,
+        "default",
+        rowsOf([HERE]),
+        clock,
+      );
+      expect(res.status).toBe(200);
+      expect(mux.createTabArgs).toEqual({ spaceId: "w3", label: "Top", cwd: "/home/op/pane-cwd" });
+      expect(entries[0]?.detail).toMatchObject({ cwd: "/home/op/pane-cwd" });
+    });
+
+    test("an unknown paneId 404s with launch.pane_unknown, before anything is touched", async () => {
+      const clock = fakeClock();
+      const mux = new FakeLaunchMux(clock.now);
+      const { audit, entries } = launchAudit();
+      const res = await launch(
+        asLaunchMux(mux),
+        engineWithPanes([]),
+        request({ command: "rumen-peek", paneId: "ghost" }),
+        audit,
+        null,
+        "default",
+        rowsOf([PEEK]),
+        clock,
+      );
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({ ok: false, code: "launch.pane_unknown" });
+      expect(mux.createArgs).toBeNull();
+      expect(mux.createTabArgs).toBeNull();
+      expect(mux.texts).toEqual([]);
+      expect(entries).toHaveLength(0);
+    });
+
+    test("a failed send closes the created TAB, same rollback as the Space path", async () => {
+      const clock = fakeClock();
+      const mux = new FakeLaunchMux(clock.now);
+      mux.failOn = "keys";
+      const { audit } = launchAudit();
+      const pane = fakePane({ paneId: "w3:p1", workspaceId: "w3" });
+      const res = await launch(
+        asLaunchMux(mux),
+        engineWithPanes([pane]),
+        request({ command: "rumen-peek", paneId: "w3:p1" }),
+        audit,
+        null,
+        "default",
+        rowsOf([PEEK]),
+        clock,
+      );
+      expect(mux.closes).toEqual(["w2:p9"]);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ ok: false, code: "reply.not_submitted" });
+    });
+
+    test("without a paneId, the Space path runs exactly as before", async () => {
+      const clock = fakeClock();
+      const mux = new FakeLaunchMux(clock.now);
+      const { audit, entries } = launchAudit();
+      const res = await launch(
+        asLaunchMux(mux),
+        engineWithPanes([]),
+        request({ command: "rumen-peek" }),
+        audit,
+        null,
+        "default",
+        rowsOf([PEEK]),
+        clock,
+      );
+      expect(res.status).toBe(200);
+      expect(mux.createArgs).toEqual({ cwd: "/home/op/project", label: "Runs & quota" });
+      expect(mux.createTabArgs).toBeNull();
+      expect(entries[0]?.action).toBe("workspace.launch");
+    });
+  });
+});
+
+describe("GET /api/launchers — this host's own rows, home included", () => {
+  test("answers the rows this getLaunchers gives, plus this host's home dir", async () => {
+    const rows: Launcher[] = [{ command: "rumen-peek", label: "Runs & quota", cwd: "/home/op/project" }];
+    const res = await launchersRoute(() => Promise.resolve(rows), null);
+    expect(res.status).toBe(200);
+    // SAFETY: `launchersRoute` is the only writer of this body (this test calls it directly, two
+    // lines up), so the shape it satisfies itself with (`LaunchersResponse`) is what comes back.
+    const body = (await res.json()) as LaunchersResponse;
+    expect(body.launchers).toEqual(rows);
+    expect(body.home).toBe(homedir());
+  });
+
+  test("no launchers.toml answers an empty list, never an error", async () => {
+    const res = await launchersRoute(() => Promise.resolve([]), null);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ launchers: [], home: homedir() });
+  });
+});
+
+// ── THE PACK'S RUN (M16/04) ─────────────────────────────────────────────────
+// The peer legs and the peers-only retry, both decided by the pure verdict and both read off what
+// the sweep banked. This route dials nobody, and a peers-only start spawns nothing here.
+
+describe("update status peers — the legs of a pack-wide run", () => {
+  test("update status peers ride the run record BOTH surfaces already poll, from one composer", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // ONE composer, and both readers take it. The band reads the snapshot's `update`; the Updates
+    // page reads `GET /api/update/check`. Two compositions would be two objects that could disagree
+    // about the same run.
+    expect(src).toContain("update: updateStatusWithPeers(),");
+    expect(src).toContain("...updateStatusWithPeers(), preflight: report");
+    // From the queue the sweep folds, never from a dial: `updatePeers()` is a read of banked state,
+    // exactly as `updateRows()` is.
+    const at = src.indexOf("function updateStatusWithPeers()");
+    const composer = src.slice(at, at + 600);
+    expect(composer).toContain("opts.packLead?.updatePeers() ?? []");
+    expect(composer).toContain("run: { ...status.run, peers: legs }");
+    expect(composer).not.toContain("sweep(");
+    // And there is still no fourth endpoint with a fifth shape.
+    expect(src).not.toContain('"/api/update/status"');
+  });
+
+  test("retry pack update: a peers-only run has peer legs only and never touches a current lead", () => {
+    const current = "1.5.0";
+    const behind: PackUpdateRow = { name: "minibuch", version: "1.4.1", verdict: "green", reasons: [], asOf: 1 };
+    const state = {
+      current,
+      // A current lead has nothing above it to take. That is exactly when "Retry pack update" is the
+      // page's one action, and exactly when an ordinary start would refuse with `none_available`.
+      latest: current,
+      majorAvailable: null,
+      run: null,
+      lockHeld: false,
+      preflight: { schema: 1, verdict: "green" as const, checks: [] },
+      pack: [behind],
+    };
+    const verdict = updateStartVerdict({ confirm: true, target: null, major: false, peersOnly: true }, state);
+    expect(verdict).toEqual({ kind: "peers", to: current });
+
+    // Nothing to level ⇒ nothing to start. The button is not offered here, and the route refuses it.
+    const levelled: PackUpdateRow = { ...behind, version: current };
+    expect(
+      updateStartVerdict({ confirm: true, target: null, major: false, peersOnly: true }, { ...state, pack: [levelled] }),
+    ).toMatchObject({ kind: "refuse", status: 409 });
+
+    // A member that rolled back is the other half of the case, read off the legs.
+    expect(
+      updateStartVerdict(
+        { confirm: true, target: null, major: false, peersOnly: true },
+        { ...state, pack: [levelled], peers: [{ name: "minibuch", state: "rolled-back" }] },
+      ),
+    ).toEqual({ kind: "peers", to: current });
+  });
+
+  test("retry pack update: one confirm still covers the pack, so a red member refuses it", () => {
+    const red: PackUpdateRow = {
+      name: "minibuch",
+      version: "1.4.1",
+      verdict: "red",
+      reasons: ["less than 200 MB free on /"],
+      asOf: 1,
+    };
+    const verdict = updateStartVerdict(
+      { confirm: true, target: null, major: false, peersOnly: true },
+      {
+        current: "1.5.0",
+        latest: "1.5.0",
+        majorAvailable: null,
+        run: null,
+        lockHeld: false,
+        preflight: { schema: 1, verdict: "green", checks: [] },
+        pack: [red],
+      },
+    );
+    expect(verdict).toMatchObject({ kind: "refuse", status: 412 });
+  });
+
+  test("retry pack update: a confirm is still required, and a run in flight still refuses", () => {
+    const state = {
+      current: "1.5.0",
+      latest: "1.5.0",
+      majorAvailable: null,
+      run: null,
+      lockHeld: true,
+      preflight: { schema: 1, verdict: "green" as const, checks: [] },
+      pack: [],
+    };
+    expect(
+      updateStartVerdict({ confirm: false, target: null, major: false, peersOnly: true }, state),
+    ).toMatchObject({ kind: "refuse", status: 400 });
+    expect(
+      updateStartVerdict({ confirm: true, target: null, major: false, peersOnly: true }, state),
+    ).toMatchObject({ kind: "refuse", status: 409 });
+  });
+
+  test("the run id is minted once per confirm, on the server, and rides both legs of the start", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const updateAt = src.indexOf('if (pathname === "/api/update" && req.method === "POST")');
+    const handler = src.slice(updateAt, src.indexOf("\n      }\n", updateAt));
+    expect(handler).toContain("const runId = action.newRunId();");
+    expect(handler).toContain("action.beginPackRun?.({ runId, to: verdict.to })");
+    // A peers-only run starts no updater on this machine.
+    const peersBranch = handler.slice(handler.indexOf('if (verdict.kind === "peers")'));
+    expect(peersBranch.slice(0, peersBranch.indexOf("return json"))).not.toContain("action.start");
   });
 });

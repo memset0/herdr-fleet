@@ -13,7 +13,7 @@ import { AgentChat } from "@/components/agent-chat";
 import { AppHeaderHost } from "@/components/app-header";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { PackProvider } from "@/components/pack-provider";
-import { UpdateAvailableBanner } from "@/components/update-available-banner";
+import { UpdateRibbon } from "@/components/update-ribbon";
 import { CONNECTION_LOST_MS, TROUBLE_MS } from "@/hooks/use-connection-lost";
 import { __resetConnectionHealth, markLive } from "@/lib/connection-health";
 import { saveDraft } from "@/lib/drafts";
@@ -22,6 +22,7 @@ import type { DeviceAuth } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PackRoute } from "@/routes/pack";
 import { SettingsRoute } from "@/routes/settings";
+import { UpdatesRoute } from "@/routes/updates";
 import type { PaneFixture } from "./fixtures";
 
 // ── The shared connection clock ──────────────────────────────────────────────
@@ -163,7 +164,17 @@ export function PackRouter({ home, pack }: { home: HomeData; pack: PackData }) {
  * subscription. Both fail soft — the page renders whole either way, and against a dev proxy pointed
  * at a live bridge they answer for real.
  */
-export function SettingsRouter({ home, devices }: { home: HomeData; devices: DevicesData }) {
+export function SettingsRouter({
+  home,
+  devices,
+  start = "/settings",
+}: {
+  home: HomeData;
+  devices: DevicesData;
+  /** Which of the two routes to open on. `/settings/updates` is the Updates page, a child of
+   *  Settings, so the same router serves both and "back" works between them. */
+  start?: "/settings" | "/settings/updates";
+}) {
   const [router] = useState(() =>
     createMemoryRouter(
       [
@@ -186,10 +197,11 @@ export function SettingsRouter({ home, devices }: { home: HomeData; devices: Dev
           children: [
             { index: true, element: <div className="p-4 text-sm text-muted-foreground">home</div> },
             { path: "settings", loader: () => devices, element: <SettingsRoute /> },
+            { path: "settings/updates", element: <UpdatesRoute /> },
           ],
         },
       ],
-      { initialEntries: ["/settings"] },
+      { initialEntries: [start] },
     ),
   );
   return <RouterProvider router={router} />;
@@ -291,7 +303,7 @@ const StackDeviceContext = createContext<DeviceAuth | null>(null);
 
 /**
  * {@link PaneRouter}'s pane, PLUS the two tier-1 banners RootLayout mounts as its in-flow siblings —
- * `<UpdateAvailableBanner/>` and `<ConnectionBanner/>` — so the worst-case stack (gap 4) can be judged
+ * `<UpdateRibbon/>` and `<ConnectionBanner/>` — so the worst-case stack (gap 4) can be judged
  * as one screen instead of summed from cards measured apart. Same real components, same nesting order
  * as `routes/root.tsx`: banners first, pane second.
  *
@@ -332,7 +344,7 @@ export function PaneStackRouter({
               pollMs={3_000}
             >
               <div className="flex h-full flex-col">
-                <UpdateAvailableBanner />
+                <UpdateRibbon />
                 <ConnectionBanner bridge={undefined} error authError />
                 <AppHeaderHost bridge={data.bridge} error={false}>
                   <StackPane data={data} fixture={fixture} />

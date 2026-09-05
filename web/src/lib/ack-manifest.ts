@@ -124,6 +124,10 @@ export const ACK_MANIFEST = {
     channel: "status",
     why: "Same navigation, same reason — the created thing is a whole screen away from the button that asked for it.",
   },
+  launch: {
+    channel: "status",
+    why: "A launcher creates a Space (dashboard) or a tab beside the pane you launched it from (switcher), and the app navigates straight into its pane either way, so the button that asked is already off screen; hooks/use-spaces.ts names what was created on arrival, exactly as createWorkspace does. A refusal (an unlisted row, an unknown pane, a failed send) has no control left to sit in either.",
+  },
   createWorktree: {
     channel: "status",
     why: "A worktree arrives as a whole new space and the app navigates into its pane, so the eye has already left the button that asked for it; hooks/use-spaces.ts names what was created on arrival, exactly as createWorkspace does.",
@@ -143,6 +147,14 @@ export const ACK_MANIFEST = {
   checkForUpdates: {
     channel: "inline",
     why: "The answer — up to date, an offer, or 'the check itself failed' — is a standing fact about this install that belongs in the card that states it, and it must not fade out from under the operator (components/update-check-control.tsx).",
+  },
+  startUpdate: {
+    channel: "inline",
+    why: "The answer is the run itself — a progress state that persists in the card for the length of a restart, or a refusal (a red preflight, a run already going) the operator has to read and act on. Neither survives a floating toast, and both belong beside the button that asked for them (components/update-card.tsx).",
+  },
+  snoozeUpdate: {
+    channel: "silent",
+    why: "\"Remind me next digest\" is answered by the card's own line changing to say so, in the same tap. A second acknowledgement of a dismissal is noise about noise.",
   },
   pairDevice: {
     channel: "inline",

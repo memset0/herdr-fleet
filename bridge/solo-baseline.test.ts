@@ -316,6 +316,11 @@ const UPDATE_STATUS_KEYS = {
   installKind: true,
   bridgeStale: true,
   checkedAt: true,
+  // The detached updater's run record (M15/04). Optional on the wire: an install that has never
+  // updated through the runner sends no `run` key at all.
+  run: true,
+  // Every release newer than the running one (M15/05) — the card lists what one update folds in.
+  newerVersions: true,
 } satisfies Record<keyof UpdateStatus, true>;
 
 const WORKSPACE_KEYS = {
@@ -418,7 +423,11 @@ describe("solo zero-tax — wire shapes carry no pack dimension", () => {
       "latestUrl",
       "majorAvailable",
       "majorUrl",
+      "newerVersions",
       "releaseAvailable",
+      // The detached updater's run record (M15/04) — optional, so an install that has never run one
+      // sends no such key at all.
+      "run",
     ]);
     expect(Object.keys(WORKSPACE_KEYS).toSorted()).toEqual([
       "activeTabId",
@@ -542,6 +551,21 @@ describe("solo zero-tax — routes", () => {
       // It is named here, not exempted: the guard's job is that a route arrives on purpose.
       "/api/devices",
       "/api/devices/revoke",
+      // The detached updater's probe (M15/04) — a solo feature that legitimately extends this list,
+      // named here rather than exempted. It is the one ungated `/api/*` route: the prober is a local
+      // updater holding no credential, and what it answers is `{ ok, version, deposed, mode }`.
+      "/api/health",
+      // The operator's own launcher rows (`launchers.toml`) — a SOLO route that legitimately
+      // extends this list, named here rather than exempted. It is session-scoped and write-gated
+      // through the same closure `/api/workspace` rides, and the configured rows are its allowlist:
+      // the client names a row, never a command line. An operator who declares none can call it,
+      // and every call is refused.
+      "/api/launch",
+      // This host's own launcher rows, read live off its `launchers.toml` — a SOLO route that
+      // legitimately extends this list, named here rather than exempted. Session-scoped and
+      // read-gated through the same closure `/api/launch` rides, so a `?host=` call forwards to
+      // the peer that runs the rows rather than reading the lead's own file.
+      "/api/launchers",
       "/api/notifications/prefs",
       "/api/notifications/snooze",
       // The Pack overview (bridge/pack/status-wire.ts) — a FRONT-DOOR route, and it legitimately
@@ -562,7 +586,15 @@ describe("solo zero-tax — routes", () => {
       "/api/stt",
       "/api/subscribe",
       "/api/tab",
+      // Starting an update from the phone (M15/05) — a SOLO route that legitimately extends this
+      // list, named here rather than exempted. Write-gated through the same closure a send rides,
+      // and it registers no pack sibling: a peer is levelled from the lead's terminal
+      // (`collie pack update`), never over the link (ADR 0016).
+      "/api/update",
       "/api/update/check",
+      // The digest's "remind me next digest" dismiss — solo, no pack sibling: it writes the lead's
+      // own notify record, and a peer never pushes an update notification of its own.
+      "/api/update/snooze",
       "/api/workspace",
       "/auth",
       "/auth/*",
@@ -595,6 +627,7 @@ const CONFIG_KEYS = {
   quickRepliesFile: true,
   themeFile: true,
   fontsDir: true,
+  launchersFile: true,
   port: true,
   host: true,
   pollMs: true,
@@ -637,6 +670,7 @@ describe("solo zero-tax — config", () => {
       "host",
       "journalRoots",
       "keysFile",
+      "launchersFile",
       "multiSession",
       "mux",
       "muxEndpoint",
@@ -747,6 +781,11 @@ const STATE_DIR_ENTRIES = [
   // the bridge — `bridge/stt/config.ts` names this path and never writes it.
   "stt.json",
   "update-state.json",
+  // The detached updater's run record and its lock (M15/04). WRITTEN BY THE CLI, never by the
+  // bridge — `bridge/update-run.ts` only reads them, so the scan below sees the names here and no
+  // writer anywhere under `bridge/`. Absent until the first `collie update`.
+  "update.json",
+  "update.lock",
   "uploads",
 ];
 
