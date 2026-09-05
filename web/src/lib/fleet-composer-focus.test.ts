@@ -1,6 +1,12 @@
 import {
+  __resetCaretPark,
   captureComposerCaret,
+  isParkedElement,
+  noteComposition,
+  parkCaretForPrefix,
+  parkedCaretForPrefix,
   returnFocusToComposer,
+  unparkCaretForPrefix,
 } from "./fleet-composer-focus";
 
 /**
@@ -32,6 +38,7 @@ async function settle(ms = 900) {
 beforeEach(() => {
   vi.useFakeTimers();
   document.body.innerHTML = "";
+  __resetCaretPark();
 });
 
 afterEach(() => {
@@ -150,5 +157,132 @@ describe("returning the caret", () => {
     stop();
     await settle();
     expect(document.activeElement).not.toBe(input);
+  });
+});
+
+describe("parking the caret while a prefix is armed", () => {
+  it("takes the caret off the composer and remembers where it was", () => {
+    // The whole point: an input method composes into the focused EDITABLE element, so while a prefix
+    // is pending there must not be one.
+    const input = mountComposer("hello world");
+    input.focus();
+    input.setSelectionRange(4, 4);
+
+    expect(parkCaretForPrefix()).toBe(true);
+    expect(document.activeElement).not.toBe(input);
+    expect(isParkedElement(document.activeElement)).toBe(true);
+    expect(parkedCaretForPrefix()).toEqual({ start: 4, end: 4 });
+  });
+
+  it("gives it back at the offset it took", async () => {
+    const input = mountComposer("hello world");
+    input.focus();
+    input.setSelectionRange(4, 4);
+    parkCaretForPrefix();
+
+    unparkCaretForPrefix("restore");
+    await settle();
+
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(4);
+    expect(parkedCaretForPrefix()).toBeNull();
+  });
+
+  it("gives it back at the END when the command moved the operator", async () => {
+    const input = mountComposer("hello world");
+    input.focus();
+    input.setSelectionRange(2, 2);
+    parkCaretForPrefix();
+
+    unparkCaretForPrefix("end");
+    await settle();
+
+    expect(input.selectionStart).toBe("hello world".length);
+  });
+
+  it("is idempotent, so pressing the prefix twice keeps the first offset", () => {
+    // A hand presses it twice when it is not sure the first one landed. The second call must not
+    // overwrite the remembered caret with the parked element's non-caret.
+    const input = mountComposer("hello world");
+    input.focus();
+    input.setSelectionRange(3, 3);
+    parkCaretForPrefix();
+    expect(parkCaretForPrefix()).toBe(true);
+    expect(parkedCaretForPrefix()).toEqual({ start: 3, end: 3 });
+  });
+
+  it("refuses while a composition is in flight", () => {
+    // Moving focus mid-word commits or discards it, which is worse than missing a shortcut.
+    const input = mountComposer("你好");
+    input.focus();
+    input.setSelectionRange(2, 2);
+    noteComposition(true);
+
+    expect(parkCaretForPrefix()).toBe(false);
+    expect(document.activeElement).toBe(input);
+    expect(parkedCaretForPrefix()).toBeNull();
+  });
+
+  it("parks again once the composition has finished", () => {
+    const input = mountComposer("你好");
+    input.focus();
+    noteComposition(true);
+    expect(parkCaretForPrefix()).toBe(false);
+    noteComposition(false);
+    expect(parkCaretForPrefix()).toBe(true);
+  });
+
+  it("does nothing when the composer never had the caret", () => {
+    mountComposer("hello");
+    expect(parkCaretForPrefix()).toBe(false);
+    expect(parkedCaretForPrefix()).toBeNull();
+  });
+
+  it("unparking with nothing parked moves no caret", async () => {
+    const input = mountComposer("hello");
+    unparkCaretForPrefix("restore");
+    await settle();
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  it("lands in the composer of a pane that arrives after the sequence ended", async () => {
+    const first = mountComposer("old draft");
+    first.focus();
+    first.setSelectionRange(3, 3);
+    parkCaretForPrefix();
+    // The command switched pane; the composer it took the caret from is gone.
+    first.remove();
+    unparkCaretForPrefix("end");
+    const second = mountComposer("");
+    await settle();
+    expect(document.activeElement).toBe(second);
+  });
+
+  it("a settle window still open from an earlier command does not un-park it", async () => {
+    // THE RACE THIS FIXES, and it is the reported bug wearing a different hat. A command that moved
+    // the operator leaves a return watching for up to SETTLE_MS; parking inside that window used to
+    // be undone a tick later, and the second chord went straight back to the input method — but only
+    // sometimes, depending on which command was run just before.
+    const input = mountComposer("hello world");
+    returnFocusToComposer(null, "end");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(document.activeElement).toBe(input);
+
+    input.setSelectionRange(4, 4);
+    expect(parkCaretForPrefix()).toBe(true);
+    // Let the earlier window run out. The caret must still be parked at the end of it.
+    await settle();
+    expect(isParkedElement(document.activeElement)).toBe(true);
+    expect(parkedCaretForPrefix()).toEqual({ start: 4, end: 4 });
+  });
+
+  it("the parked element is not editable and is hidden from assistive technology", () => {
+    const input = mountComposer("hello");
+    input.focus();
+    parkCaretForPrefix();
+    const parked = document.activeElement;
+    expect(parked?.tagName).toBe("DIV");
+    expect(parked?.getAttribute("aria-hidden")).toBe("true");
+    expect(parked?.hasAttribute("contenteditable")).toBe(false);
   });
 });

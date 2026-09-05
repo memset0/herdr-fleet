@@ -19,6 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- A prefix sequence completes with a Chinese input method on: while a prefix is armed the caret is parked off the composer, so the IME has nothing to compose into and the second chord arrives as an ordinary key. It returns to the offset it left. An unregistered second chord now costs one character, deliberately.
+- A pending prefix outranks a focus-return still settling from an earlier command, which used to un-park the caret a tick later and hand the second chord back to the input method.
+
 ### Changed
 
 - The command palette no longer lists `Open Command Bar` — choosing it from the palette set the mode it was already in and did nothing. It stays bound and stays in the settings reference.

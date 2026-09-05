@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { useLocale } from "@/hooks/use-locale";
-import { returnFocusToComposer } from "@/lib/fleet-composer-focus";
+import { isParkedElement, returnFocusToComposer } from "@/lib/fleet-composer-focus";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -39,9 +39,13 @@ export function FleetPanel({ open, onClose, label, className, children }: FleetP
     if (!open) return;
     const active = document.activeElement;
     // `body` is not somewhere to give the caret back to — it is what "nowhere" looks like, and it is
-    // exactly what a shortcut leaves behind after the capture listener has eaten the key.
+    // exactly what a shortcut leaves behind after the capture listener has eaten the key. The element
+    // a pending prefix parked the caret on is the same kind of nowhere, and it is what holds focus
+    // whenever this panel was opened BY a prefix command.
     restoreTo.current =
-      active instanceof HTMLElement && active !== document.body ? active : null;
+      active instanceof HTMLElement && active !== document.body && !isParkedElement(active)
+        ? active
+        : null;
     return () => {
       const previous = restoreTo.current;
       // Still on screen: it is the field the operator was in, and the browser kept its caret.

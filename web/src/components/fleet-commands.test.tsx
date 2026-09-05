@@ -1,10 +1,11 @@
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { parseBinding, type Binding } from "../../../fleet/ui/commands/bindings.ts";
 import type { CommandId } from "../../../fleet/ui/commands/catalog.ts";
 import { refuseCommand } from "../../../fleet/ui/commands/refusal.ts";
 import { derivePaneRoster } from "../../../fleet/ui/pane-roster.ts";
+import { __resetCaretPark } from "@/lib/fleet-composer-focus";
 import {
   FleetCommandsProvider,
   useFleetCommandAdapters,
@@ -31,6 +32,8 @@ function FakeComposer({ onKey }: { onKey: (key: string) => void }) {
   return (
     <textarea
       aria-label="draft"
+      // The slot the focus machinery finds the composer by. Without it nothing below is exercised.
+      data-slot="chat-input"
       onKeyDown={(event) => {
         // A modifier's own keydown is not a key this component would act on, and the recognizer
         // never consumes one, so it is not what these assertions are about.
@@ -112,7 +115,11 @@ describe("the keyboard layer", () => {
     const { composerKeys } = setup({});
     await user.keyboard("{Control>}b{/Control}");
     await user.keyboard("q");
-    expect(composerKeys).toEqual(["q"]);
+    // NOT CONSUMED — the recognizer still refuses to swallow a key it has no meaning for, which is
+    // what this case is about. It no longer REACHES the draft, because an armed prefix parks the
+    // caret so an input method cannot claim the second chord, and that costs this one character.
+    // Decided deliberately; see the requirement.
+    expect(composerKeys).toEqual([]);
   });
 
   it("names the binding actually pressed when the outcome is not visible", async () => {
@@ -432,5 +439,77 @@ describe("a command that refuses", () => {
     // complete — never the exception's own text, which is for a log and not for a person.
     expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Resize Pane"), "error");
     expect(setStatus).not.toHaveBeenCalledWith("boom", "error");
+  });
+});
+
+describe("the caret while a prefix is armed", () => {
+  const parked = () => document.querySelector('[data-slot="fleet-key-park"]');
+  // The park is module state, so one case's park would otherwise still be standing in the next.
+  beforeEach(() => __resetCaretPark());
+
+  it("leaves no editable element focused, so an input method has nowhere to compose", async () => {
+    const user = userEvent.setup();
+    const { draft } = setup({ "fit-pane-width": vi.fn() });
+    expect(document.activeElement).toBe(draft);
+
+    await user.keyboard("{Control>}b{/Control}");
+    expect(document.activeElement).not.toBe(draft);
+    expect(document.activeElement).toBe(parked());
+  });
+
+  it("gives the caret back when the sequence completes", async () => {
+    const user = userEvent.setup();
+    const fit = vi.fn();
+    const { draft } = setup({ "fit-pane-width": fit });
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("r");
+
+    expect(fit).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(document.activeElement).toBe(draft));
+  });
+
+  it("gives it back on Escape", async () => {
+    const user = userEvent.setup();
+    const { draft } = setup({ "fit-pane-width": vi.fn() });
+    await user.keyboard("{Control>}b{/Control}");
+    expect(document.activeElement).toBe(parked());
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(document.activeElement).toBe(draft));
+  });
+
+  it("gives it back on an unregistered chord, and that character is lost", async () => {
+    // ACCEPTED COST, decided by the owner. Unparked, this key would have reached the draft; the
+    // preemption that keeps an input method off the second chord keeps this one off too.
+    const user = userEvent.setup();
+    const { draft, composerKeys } = setup({ "fit-pane-width": vi.fn() });
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("z");
+
+    expect(composerKeys).not.toContain("z");
+    await waitFor(() => expect(document.activeElement).toBe(draft));
+  });
+
+  it("gives it back when the sequence is simply abandoned", async () => {
+    // The recognizer notices its own expiry on the NEXT key, and there is no next key here. Parking
+    // carries its own timer for exactly this.
+    const user = userEvent.setup();
+    const { draft } = setup({ "fit-pane-width": vi.fn() });
+    await user.keyboard("{Control>}b{/Control}");
+    expect(document.activeElement).toBe(parked());
+
+    await waitFor(() => expect(document.activeElement).toBe(draft), { timeout: 5000 });
+  }, 10000);
+
+  it("does not move the caret while a composition is in flight", async () => {
+    const user = userEvent.setup();
+    const { draft } = setup({ "fit-pane-width": vi.fn() });
+    act(() => {
+      draft.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    });
+
+    await user.keyboard("{Control>}b{/Control}");
+    // Half a word is worth more than a shortcut.
+    expect(document.activeElement).toBe(draft);
   });
 });

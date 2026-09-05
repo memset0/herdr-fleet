@@ -91,6 +91,14 @@ export function returnFocusToComposer(
   const tick = () => {
     timer = null;
     if (doc.querySelector(PANEL) !== null) return;
+    // A PENDING PREFIX OUTRANKS THIS, and the two are in direct contradiction: parking exists to keep
+    // the caret OFF the composer, and this loop exists to put it back. A settle window opened by an
+    // earlier command outlives that command by up to `SETTLE_MS`, so without this a prefix armed
+    // inside that window is un-parked a frame later — and the second chord goes straight back to the
+    // input method, intermittently, depending on which command was run just before.
+    //
+    // It stops rather than waits: unparking does its own restore, through this same function.
+    if (parkedCaret !== null) return;
 
     const input = composerInput(doc);
     // `disabled` is a gone pane, a read-only pane or the idle pause. Focusing it does nothing, so
@@ -118,4 +126,131 @@ export function returnFocusToComposer(
   // One turn of the loop before the first look, so React has committed whatever the adapter did.
   timer = setTimeout(tick, 0);
   return stop;
+}
+
+/**
+ * PARKING: getting the caret out of the way while a prefix is pending.
+ *
+ * An input method composes into the FOCUSED EDITABLE ELEMENT. A key it has claimed for a composition
+ * reaches the page either not at all or without the physical code a binding is matched on — so the
+ * capture-phase listener, which preempts every other surface, does not preempt an IME. Nothing about
+ * the listener can: by the time the event would arrive, the key is already spent.
+ *
+ * So the condition is removed rather than arbitrated. With no editable element focused there is no
+ * composition for the key to disappear into, and the second chord arrives as an ordinary keydown.
+ *
+ * NOT WHILE A COMPOSITION IS IN FLIGHT. Moving focus then commits or discards a partly-typed word,
+ * which is a far worse thing to do to somebody than failing to recognise their shortcut.
+ *
+ * The caret taken here is remembered rather than returned, because the two callers that need it —
+ * the dispatcher and the panel — both run after the composer has already lost it and would otherwise
+ * read `null` and land at the end of the field.
+ */
+
+const PARKED_SLOT = "fleet-key-park";
+
+/** The caret taken when the prefix armed, or `null` when nothing is parked. */
+let parkedCaret: ComposerCaret | null = null;
+let parkedElement: HTMLElement | null = null;
+
+/**
+ * True while an input method is composing anywhere on the page.
+ *
+ * Maintained from the provider's own capture-phase composition listeners rather than read off the
+ * composer, because the composer is Collie's file and this needs no port into it: `compositionstart`
+ * and `compositionend` bubble, and the layer that already owns a document-level key listener can own
+ * two more without anything upstream knowing.
+ */
+let composing = false;
+
+/** Told by the provider. The only writer. */
+export function noteComposition(active: boolean): void {
+  composing = active;
+}
+
+/**
+ * Take the caret out of the composer. Answers whether anything was parked.
+ *
+ * Idempotent: arming a prefix twice — which a hand does when it is not sure the first press landed —
+ * must not overwrite the remembered caret with the parked element's non-caret.
+ */
+export function parkCaretForPrefix(): boolean {
+  // ALREADY PARKED: keep the offset the first press took — a hand presses the prefix twice when it
+  // is not sure the first one landed — and make sure focus is still off the composer, because a
+  // re-render between the two presses can put it back.
+  if (parkedCaret !== null) {
+    const slot = ensureParkSlot();
+    parkedElement = slot;
+    if (document.activeElement !== slot) slot.focus();
+    return true;
+  }
+
+  const input = composerInput(document);
+  if (input === null || document.activeElement !== input) return false;
+  // A composition in flight outranks the whole idea: moving focus now commits or discards a
+  // partly-typed word, which is a far worse thing to do to somebody than missing their shortcut.
+  if (composing) return false;
+
+  const caret = { start: input.selectionStart, end: input.selectionEnd };
+  const slot = ensureParkSlot();
+  parkedCaret = caret;
+  parkedElement = slot;
+  slot.focus();
+  return true;
+}
+
+/**
+ * The element the caret is parked on, created once and re-attached if it has been detached.
+ *
+ * The re-attachment is not defensive tidiness: a slot that has left the document can still be
+ * focused by name and silently does nothing, which would make every park after the first a no-op and
+ * hand the second chord straight back to the input method.
+ */
+function ensureParkSlot(): HTMLElement {
+  const existing = document.querySelector<HTMLElement>(`[data-slot="${PARKED_SLOT}"]`);
+  if (existing !== null && existing.isConnected) return existing;
+  const slot = existing ?? document.createElement("div");
+  slot.setAttribute("data-slot", PARKED_SLOT);
+  // Focusable but not editable, and out of the reading order: an input method has nothing to compose
+  // into, and a screen reader has nothing new to announce.
+  slot.tabIndex = -1;
+  slot.setAttribute("aria-hidden", "true");
+  slot.style.position = "fixed";
+  slot.style.width = "1px";
+  slot.style.height = "1px";
+  slot.style.opacity = "0";
+  slot.style.pointerEvents = "none";
+  document.body.append(slot);
+  return slot;
+}
+
+/** Whether this element is the one the caret was parked on. */
+export function isParkedElement(element: Element | null): boolean {
+  return element !== null && element === parkedElement;
+}
+
+/** The caret the prefix took, for a caller that would otherwise read a parked composer. */
+export function parkedCaretForPrefix(): ComposerCaret | null {
+  return parkedCaret;
+}
+
+/**
+ * Give the caret back, at the offset the prefix took it from.
+ *
+ * `mode` is the caller's, because a command that moved the operator to another Pane wants the end of
+ * the field it landed on rather than an offset that described a draft now off screen.
+ */
+export function unparkCaretForPrefix(mode: ComposerFocusMode = "restore"): void {
+  if (parkedCaret === null) return;
+  const caret = parkedCaret;
+  parkedElement = null;
+  parkedCaret = null;
+  returnFocusToComposer(mode === "end" ? null : caret, mode);
+}
+
+/** Drop the parked state without moving anything. For a test, and for a torn-down document. */
+export function __resetCaretPark(): void {
+  parkedElement = null;
+  parkedCaret = null;
+  composing = false;
 }

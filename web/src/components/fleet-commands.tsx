@@ -24,12 +24,20 @@ import { refusalReason } from "../../../fleet/ui/commands/refusal.ts";
 import {
   createRecognizer,
   shouldPrevent,
+  PREFIX_TIMEOUT_MS,
   type Recognizer,
 } from "../../../fleet/ui/commands/recognizer.ts";
 import type { PaneRoster, RosterEntry } from "../../../fleet/ui/pane-roster.ts";
 import { FleetCommandBar, type CommandBarMode } from "@/components/fleet-command-bar";
 import { FleetPrefixHints } from "@/components/fleet-prefix-hints";
-import { captureComposerCaret, returnFocusToComposer } from "@/lib/fleet-composer-focus";
+import {
+  captureComposerCaret,
+  noteComposition,
+  parkCaretForPrefix,
+  parkedCaretForPrefix,
+  returnFocusToComposer,
+  unparkCaretForPrefix,
+} from "@/lib/fleet-composer-focus";
 import { t } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
 
@@ -221,7 +229,12 @@ export function FleetCommandsProvider({
       // READ FIRST, before anything runs. The keydown that brought us here is still the event being
       // dispatched, so the composer is still holding the caret the operator pressed the key with;
       // one `await` later it is on `body` and the offset is gone.
-      const caret = captureComposerCaret();
+      //
+      // A PREFIX SEQUENCE ALREADY TOOK IT. While a prefix is armed the caret is parked off the
+      // composer, so the live read here would answer `null` and every prefix command would land at
+      // the end of the field instead of where the operator was. The arm's own capture is preferred
+      // wherever there is one; a direct chord parked nothing and the live read is the accurate one.
+      const caret = parkedCaretForPrefix() ?? captureComposerCaret();
 
       if (id === "open-command-bar" || id === "open-pane-switcher") {
         setBar(id === "open-command-bar" ? "command" : "pane");
@@ -254,7 +267,13 @@ export function FleetCommandsProvider({
         }
         // Both ways. A command that threw moved nothing, and the caret it took is owed back just as
         // much as one that worked.
-        returnFocusToComposer(caret, movesPane(id) ? "end" : "restore");
+        //
+        // `unpark` first and unconditionally: it clears the parked state whether or not a prefix was
+        // involved, and hands the same offset to the same restore path, so there is one return and
+        // not two racing each other.
+        const mode = movesPane(id) ? "end" : "restore";
+        unparkCaretForPrefix(mode);
+        returnFocusToComposer(caret, mode);
         if (refused !== null) {
           // The command's own words, on the error channel, and nothing else happened.
           setStatus(refused, "error");
@@ -293,10 +312,20 @@ export function FleetCommandsProvider({
     recognizer.current = machine;
 
     let hintTimer: ReturnType<typeof setTimeout> | null = null;
+    // Parking's OWN timer, and it has to be its own: the recognizer's two-second expiry is noticed on
+    // the next key, which is right for a pure machine over an injected clock and useless here — an
+    // operator who arms the prefix and then walks away produces no next key, and the caret would stay
+    // parked for as long as the page is open.
+    let parkTimer: ReturnType<typeof setTimeout> | null = null;
     const forgetHints = () => {
       if (hintTimer !== null) clearTimeout(hintTimer);
       hintTimer = null;
       setPending(null);
+    };
+    const endPark = (mode: "restore" | "end") => {
+      if (parkTimer !== null) clearTimeout(parkTimer);
+      parkTimer = null;
+      unparkCaretForPrefix(mode);
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -305,10 +334,21 @@ export function FleetCommandsProvider({
       // the operator presses the prefix twice, which restarts the recognizer's clock too.
       forgetHints();
       if (outcome.kind === "prefix-armed") {
+        // The caret goes somewhere an input method cannot compose into, for as long as the sequence
+        // is pending. `parkCaretForPrefix` is idempotent, so a second press does not overwrite the
+        // offset it took on the first.
+        parkCaretForPrefix();
+        if (parkTimer !== null) clearTimeout(parkTimer);
+        parkTimer = setTimeout(() => endPark("restore"), PREFIX_TIMEOUT_MS);
         hintTimer = setTimeout(
           () => setPending(prefixHints(latest.current.bindings)),
           PREFIX_HINT_DELAY_MS,
         );
+      } else if (outcome.kind !== "command") {
+        // Escape, an unregistered second chord, or a key that was never part of a sequence. The
+        // caret goes back where it was; an unregistered chord's own character is lost, which is the
+        // accepted cost of having preempted the input method (see the requirement).
+        endPark("restore");
       }
       // Synchronously, in the event. Anything deferred here lets the browser print, reload, or type
       // the character before we have decided we wanted it.
@@ -316,27 +356,49 @@ export function FleetCommandsProvider({
         event.preventDefault();
         event.stopPropagation();
       }
-      if (outcome.kind === "command") invoke(outcome.id, "shortcut", outcome.label);
+      if (outcome.kind === "command") {
+        // The dispatcher reads the parked caret and then returns it, so the park is released without
+        // moving anything here — `invoke` owns the restore, including the end-of-field rule for a
+        // command that moved the operator.
+        if (parkTimer !== null) clearTimeout(parkTimer);
+        parkTimer = null;
+        invoke(outcome.id, "shortcut", outcome.label);
+      }
     };
     const drop = () => {
       machine.cancel();
       forgetHints();
+      // The page stopped receiving keys, so the sequence is over whether or not a key says so.
+      endPark("restore");
     };
 
     // Keyup decides nothing. It is only how the machine lets go of a modifier it recorded, which is
     // what keeps a sided chord from matching long after that side was released.
     const onKeyUp = (event: KeyboardEvent) => machine.release(event);
+    // The two events that say an input method is mid-word. Owned here rather than ported into the
+    // composer: they bubble, and the layer that already holds a document-level key listener can hold
+    // these without anything upstream changing.
+    const onCompositionStart = () => noteComposition(true);
+    const onCompositionEnd = () => noteComposition(false);
 
     document.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("keyup", onKeyUp, true);
+    document.addEventListener("compositionstart", onCompositionStart, true);
+    document.addEventListener("compositionend", onCompositionEnd, true);
     window.addEventListener("blur", drop);
     document.addEventListener("visibilitychange", drop);
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("keyup", onKeyUp, true);
+      document.removeEventListener("compositionstart", onCompositionStart, true);
+      document.removeEventListener("compositionend", onCompositionEnd, true);
       window.removeEventListener("blur", drop);
       document.removeEventListener("visibilitychange", drop);
       forgetHints();
+      // UNPARK, not just cancel the timer. A provider torn down while a prefix was pending would
+      // otherwise leave the caret standing on an element nothing can type into, with no listener
+      // left alive to ever give it back.
+      endPark("restore");
       recognizer.current = null;
     };
   }, [prefixChord, invoke]);
