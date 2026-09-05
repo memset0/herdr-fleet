@@ -19,9 +19,12 @@ shell, and the application header SHALL span only the route column between them.
 keep its existing single-instance identity, safe-area handling, prerelease strip, route claims,
 portalled route content, and hidden-row behavior.
 
-Route content SHALL fill the route column. A route that is not a Pane MUST NOT constrain itself to a
-narrower centred reading column, and its header MUST span the same width as its content. The Pane
-and history routes keep their existing full-width presentation.
+Route content SHALL fill the route column, and its header SHALL span the same width as its content.
+No route MAY constrain itself to a narrower centred reading column — the Pane and history routes
+included, which is stated because upstream centres them above the phone breakpoint and this fork
+declines that. The rails are what claims the width a centred column would otherwise leave empty, so a
+cap inside them takes width from a terminal mirror rather than from emptiness, and the refusal is
+declared in the fork manifest so an upstream release cannot reinstate it unreported.
 
 The shell MUST NOT use an iframe, `postMessage`, frame cache, duplicate router, alternate Gateway
 model, or additional snapshot request. It MUST NOT repurpose the Pane page's existing thread
@@ -42,6 +45,14 @@ switcher as the wide-layout Agent rail.
 #### Scenario: A route that is not a Pane is displayed
 - **WHEN** the dashboard, a Space, Settings, or Pack is the current route
 - **THEN** its content fills the route column at every viewport width instead of being centred in a narrower reading column, and its header spans the same width as its content
+
+#### Scenario: A Pane or history route is displayed above the phone breakpoint
+- **WHEN** the operator opens a Pane or its history on a viewport wide enough for upstream's centred column
+- **THEN** its content fills the route column between the rails rather than being centred in a narrower one, and its header spans that same width
+
+#### Scenario: An upstream release centres these routes again
+- **WHEN** an upstream adoption's preflight is run against a release that changes the Pane or history routes' width
+- **THEN** it reports those lines as a declared fork boundary, so the release's cap is decided against rather than inherited
 
 #### Scenario: Pane route remains native
 - **WHEN** the operator opens a Pane
