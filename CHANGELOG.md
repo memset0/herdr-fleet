@@ -18,6 +18,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- Resizing a pane on another pack member now works: the route was never federated, so the lead answered 501 and the operator saw a plain "could not be resized". Every member must be redeployed before it works across the link.
+- The lead's audit line for a forwarded focus or resize now matches what the peer writes (`pane.focus` / `pane.resize`), so the two logs read against each other.
+
 ## [3.0.3] - 2026-09-05
 
 ### Added

@@ -190,6 +190,7 @@ the same handlers. There is no second handler set, no second semantic, and no He
 | `POST` | `/pack/v1/pane/:id/close` | `POST …/close` (`:282`) | forwarded |
 | `POST` | `/pack/v1/pane/:id/rename` | `POST …/rename` (`:283`) | forwarded |
 | `POST` | `/pack/v1/pane/:id/focus` | `POST …/focus` | forwarded — additive-optional (§7.1). Shows the pane on **the peer machine's** terminal; a lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
+| `POST` | `/pack/v1/pane/:id/resize` | `POST …/resize` (`PANE_RESIZE_ROUTE`) | forwarded — additive-optional (§7.1). Fits the pane to the **viewer's** mirror width on the machine the pane lives on; rows stay server-owned. Declared in a route literal of its own, which is how it came to be locally serveable and absent from this table for as long as it existed — the correspondence test now reads every pane-route declaration rather than `PANE_ROUTE` by name |
 | `POST` | `/pack/v1/tab` | `POST /api/tab` (`:218`) | forwarded |
 | `POST` | `/pack/v1/tab/:id/rename\|close` | `TAB_ACTION_ROUTE` (`:102`, matched `:234`) | forwarded |
 | `POST` | `/pack/v1/workspace` | `POST /api/workspace` (`:225`) | forwarded |

@@ -102,6 +102,28 @@ async function failureBody(res: Response): Promise<ForwardFailure> {
   return (await res.json()) as ForwardFailure;
 }
 
+/**
+ * Every action segment the pane routes declared in `server.ts` accept, from EVERY declaration.
+ *
+ * Two shapes are in use and both are read: an alternation of actions inside one optional group, and
+ * a plain trailing segment in a literal of its own. Reading only the first is how `resize` came to
+ * be serveable locally and absent from the link.
+ */
+function paneActionsDeclaredIn(server: string): string[] {
+  const actions = new Set<string>();
+  for (const line of server.split("\n")) {
+    if (!line.startsWith("const ") || !line.includes("= /^\\/api\\/pane\\/")) continue;
+    const alternation = line.match(/\(([a-z]+(?:\|[a-z]+)+)\)/);
+    if (alternation !== null) {
+      for (const action of alternation[1]!.split("|")) actions.add(action);
+      continue;
+    }
+    const trailing = line.match(/\\\/([a-z]+)\$\//);
+    if (trailing !== null) actions.add(trailing[1]!);
+  }
+  return [...actions].toSorted();
+}
+
 describe("which routes cross a link", () => {
   test("the pane family, tabs and workspace map 1:1 onto the pack prefix", () => {
     expect(packRouteFor("/api/pane/w1:p1")).toBe("pane/w1:p1");
@@ -144,22 +166,47 @@ describe("which routes cross a link", () => {
   test("the grammar matches server.ts's own route literals, character for character", () => {
     // Two grammars that merely *agree* would be two grammars that drift, and a drift here is a route
     // the phone can call locally but not across a link (or, worse, the reverse).
+    //
+    // EVERY DECLARATION, NOT ONE BY NAME. This read `PANE_ROUTE` alone, and `resize` was declared
+    // beside it in a literal of its own — so the route was locally serveable and silently
+    // unfederated for as long as it existed, which is exactly the failure this test exists to
+    // prevent. A guard that inspects one of two declarations is one the next declaration walks
+    // around.
     const server = readFileSync(join(import.meta.dir, "..", "server.ts"), "utf8");
-    const pane = server.match(/^const PANE_ROUTE = (.+);$/m)![1]!;
-    const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
-    const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
-    const paneActions = pane.match(alternation)![1]!.split("|").toSorted();
-    expect(paneActions).toEqual(["close", "focus", "history", "keys", "rename", "reply", "upload"]);
+    const paneActions = paneActionsDeclaredIn(server);
+    // Written down as well as derived, so ADDING a pane route fails here until somebody decides
+    // whether it should cross a link. A decision, not a bump — the same posture as the wire guard.
+    expect(paneActions).toEqual([
+      "close",
+      "focus",
+      "history",
+      "keys",
+      "rename",
+      "reply",
+      "resize",
+      "upload",
+    ]);
     for (const action of paneActions) expect(packRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
-    const tabActions = tab.match(alternation)![1]!.split("|").toSorted();
+    const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
+    const tabActions = tab.match(/\(([a-z]+(?:\|[a-z]+)+)\)/)![1]!.split("|").toSorted();
     expect(tabActions).toEqual(["close", "rename"]);
     for (const action of tabActions) expect(packRouteFor(`/api/tab/x/${action}`)).toBe(`tab/x/${action}`);
+  });
+
+  test("the declaration reader sees a route hidden in a literal of its own", () => {
+    // The bug in one line: with only the alternation read, `resize` is invisible. Both shapes are in
+    // use in server.ts today, so both are read.
+    const source = [
+      "const PANE_ROUTE = /^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys))?$/;",
+      "const PANE_RESIZE_ROUTE = /^\\/api\\/pane\\/([^/]+)\\/resize$/;",
+    ].join("\n");
+    expect(paneActionsDeclaredIn(source)).toEqual(["keys", "reply", "resize"]);
   });
 
   test("read vs write is decided exactly as server.ts decides it — history is a READ", () => {
     expect(forwardKind("pane/w1:p1")).toBe("read");
     expect(forwardKind("pane/w1:p1/history")).toBe("read");
-    for (const action of ["reply", "keys", "upload", "close", "rename"]) {
+    for (const action of ["reply", "keys", "upload", "close", "rename", "focus", "resize"]) {
       expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
     }
     expect(forwardKind("tab")).toBe("write");
@@ -172,6 +219,10 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("pane/w1:p1/upload")).toBe("upload");
     expect(forwardAuditAction("pane/w1:p1/close")).toBe("pane.close");
     expect(forwardAuditAction("pane/w1:p1/rename")).toBe("pane.rename");
+    // Read off the peer's own handlers: both of these namespace themselves, and the lead recording a
+    // bare word made the two logs disagree about what happened.
+    expect(forwardAuditAction("pane/w1:p1/focus")).toBe("pane.focus");
+    expect(forwardAuditAction("pane/w1:p1/resize")).toBe("pane.resize");
     expect(forwardAuditAction("tab")).toBe("tab.create");
     expect(forwardAuditAction("tab/w1:t1/rename")).toBe("tab.rename");
     expect(forwardAuditAction("tab/w1:t1/close")).toBe("tab.close");
