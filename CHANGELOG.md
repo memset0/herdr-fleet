@@ -29,6 +29,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - STT releases its admission slot immediately when a recording is cancelled, thanks @en-ver (#163).
 - Labelled terminal rules now fit on a single line across all harnesses, and only the rule glyphs are dimmed, thanks @en-ver (#168).
 - Collie speaks Traditional Chinese, thanks @lekoOwO (#165).
+- The pane and history screens now widen with the window on a desktop, up to 1400px, so a wide terminal mirror stops wrapping (#166).
 
 ## [1.5.1] - 2026-09-04
 

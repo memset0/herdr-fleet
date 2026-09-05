@@ -200,10 +200,12 @@ export function HistoryRoute() {
   return (
     // The same column as the pane this transcript belongs to, because it is the other half of that
     // screen and one navigation away from it: it keeps the pane's width and its left edge, or the
-    // page jumps sideways on the hop. See AgentChat's wrapper for why the pane stops at 768px.
-    // `max-w-[100dvw]` is the phone bound; `md:max-w-screen-md` only bites from 768px up, where it
-    // is never the wider of the two.
-    <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col md:max-w-screen-md">
+    // page jumps sideways on the hop. So this ladder is COPIED from AgentChat's wrapper and has to
+    // stay identical to it — that comment carries the reasoning, including why the pane column
+    // grows past 768px on a desktop and the dashboard's does not (#166).
+    // `max-w-[100dvw]` is the phone bound; each step above it only bites from its own breakpoint up,
+    // where it is never the wider of the two.
+    <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col md:max-w-screen-md lg:max-w-screen-lg xl:max-w-screen-xl 2xl:max-w-[1400px]">
       <RouteHeader
         onHome={() => navigate(panePath(paneId, scope))}
         width="wide"

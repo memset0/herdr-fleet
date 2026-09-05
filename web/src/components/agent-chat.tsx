@@ -1019,11 +1019,24 @@ export function AgentChat({
     <CompactStripLabels>
       {/* `max-w-[100dvw]` is the phone bound and it stays: a mirror line wider than the screen used
           to blow the viewport out sideways and let the whole page pan (85f777b, "viewport blowout").
-          `md:max-w-screen-md` caps the same box at 768px from that breakpoint up, where 768px is by
-          definition no more than 100dvw, so the two bounds never contradict each other; `mx-auto`
-          then centres what is left. `overflow-x-hidden`, `min-w-0` and `w-full` are all still doing
-          the phone's job underneath. */}
-      <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col overflow-x-hidden md:max-w-screen-md">
+          Each cap above it is by definition no more than 100dvw at the breakpoint that turns it on,
+          so the bounds never contradict each other; `mx-auto` then centres what is left.
+          `overflow-x-hidden`, `min-w-0` and `w-full` are all still doing the phone's job underneath.
+
+          The column GROWS in four steps rather than stopping at 768px, and this route is the reason
+          the dashboard's does not (#166). What sits under it is a terminal mirror with a column
+          count of its own. Every pixel the cap withholds is a mirror line the browser has to wrap,
+          clip or pan, which is the work blocks.ts and ansi-output.tsx keep doing on the phone and
+          should not have to do on a desktop: an 80-column mirror wants ~640px of text, a 120-column
+          one ~960px, and neither fits in 768. A list row on the dashboard has no such number, so
+          widening THAT column buys nothing and costs line length. 1400px at 2xl is the last step,
+          because past it a mirror runs out of columns and the row grows margins instead.
+          The phone is untouched, in portrait and in landscape: 390px and 844px both still land on
+          the 768px step, the width the pane was given on 2026-09-04. A portrait iPad at 1024px now
+          reaches its own cap exactly, so it runs edge to edge, which is a wider mirror and still one
+          right edge. app-header.tsx's `wide` claim carries the identical ladder, or the header and
+          the mirror stop sharing that edge. */}
+      <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col overflow-x-hidden md:max-w-screen-md lg:max-w-screen-lg xl:max-w-screen-xl 2xl:max-w-[1400px]">
         {/* Header — this route's contribution to the ONE header shell, which is mounted above the
             outlet in RootLayout and is the same element on every screen (so the Collie mark is not
             only identical, it is literally the same drawing, still turning). The pane's own bits are
