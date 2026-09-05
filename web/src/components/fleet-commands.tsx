@@ -20,6 +20,7 @@ import {
 } from "../../../fleet/ui/commands/catalog.ts";
 import { commandRows, resolveBindings, type CommandRow } from "../../../fleet/ui/commands/effective.ts";
 import { prefixHints, type PrefixHints } from "../../../fleet/ui/commands/prefix-hints.ts";
+import { refusalReason } from "../../../fleet/ui/commands/refusal.ts";
 import {
   createRecognizer,
   shouldPrevent,
@@ -240,15 +241,25 @@ export function FleetCommandsProvider({
       }
 
       void (async () => {
+        let refused: string | null = null;
         let failed = false;
         try {
           await adapter();
-        } catch {
-          failed = true;
+        } catch (thrown) {
+          // A REFUSAL IS NOT A FAILURE. The command decided it could not run and said why in a
+          // sentence meant for a person; anything else is the app breaking, and all we can honestly
+          // report for that is that the command did not complete.
+          refused = refusalReason(thrown instanceof Error ? thrown : null);
+          failed = refused === null;
         }
         // Both ways. A command that threw moved nothing, and the caret it took is owed back just as
         // much as one that worked.
         returnFocusToComposer(caret, movesPane(id) ? "end" : "restore");
+        if (refused !== null) {
+          // The command's own words, on the error channel, and nothing else happened.
+          setStatus(refused, "error");
+          return;
+        }
         if (failed) {
           // The action's own surface reports what went wrong where it can; this is the floor, so a
           // thrown adapter still tells the operator their key did not do the thing.
@@ -312,11 +323,17 @@ export function FleetCommandsProvider({
       forgetHints();
     };
 
+    // Keyup decides nothing. It is only how the machine lets go of a modifier it recorded, which is
+    // what keeps a sided chord from matching long after that side was released.
+    const onKeyUp = (event: KeyboardEvent) => machine.release(event);
+
     document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", drop);
     document.addEventListener("visibilitychange", drop);
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", drop);
       document.removeEventListener("visibilitychange", drop);
       forgetHints();

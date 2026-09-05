@@ -194,3 +194,71 @@ describe("prefix sequences", () => {
     expect(recognizer.handle(key("KeyC", { ctrlKey: true })).kind).toBe("prefix-cancelled");
   });
 });
+
+describe("a modifier bound as a key", () => {
+  test("the right Alt fires on its own keydown, and the left one does not", () => {
+    const { recognizer } = harness([["toggle-mic-recording", ["RAlt"]]]);
+    // `altKey` is already true on the modifier's OWN keydown — the key being pressed IS Alt — which
+    // is exactly why the chord does not ask for Alt a second time.
+    const fired = recognizer.handle(key("AltRight", { altKey: true }));
+    expect(fired.kind === "command" && fired.id).toBe("toggle-mic-recording");
+    expect(shouldPrevent(fired)).toBe(true);
+    expect(recognizer.handle(key("AltLeft", { altKey: true })).kind).toBe("ignored");
+  });
+
+  test("holding it does not fire again", () => {
+    const { recognizer } = harness([["toggle-mic-recording", ["RAlt"]]]);
+    recognizer.handle(key("AltRight", { altKey: true }));
+    expect(recognizer.handle(key("AltRight", { altKey: true, repeat: true })).kind).toBe("ignored");
+  });
+
+  test("a modifier nobody bound is still ignored", () => {
+    const { recognizer } = harness(DEFAULTS);
+    expect(recognizer.handle(key("ControlLeft", { ctrlKey: true })).kind).toBe("ignored");
+    expect(recognizer.handle(key("AltRight", { altKey: true })).kind).toBe("ignored");
+  });
+
+  test("a modifier pressed mid-sequence neither completes nor cancels a pending prefix", () => {
+    const { recognizer } = harness(DEFAULTS);
+    recognizer.handle(key("KeyB", { ctrlKey: true }));
+    expect(recognizer.armed()).toBe(true);
+    // Reaching for the Shift of `Prefix+Shift+P` must not end the sequence.
+    expect(recognizer.handle(key("ShiftLeft", { shiftKey: true })).kind).toBe("ignored");
+    expect(recognizer.armed()).toBe(true);
+    const done = recognizer.handle(key("KeyP", { shiftKey: true }));
+    expect(done.kind === "command" && done.id).toBe("rename-pane");
+  });
+});
+
+describe("which side a modifier was on", () => {
+  test("a sided qualifier matches only while that side is the one held", () => {
+    const { recognizer } = harness([["fit-pane-width", ["RAlt+Q"]]]);
+    // The machine learns the side from the modifier's own keydown, because the event for `Q` will
+    // say `altKey` and never which Alt.
+    recognizer.handle(key("AltRight", { altKey: true }));
+    const fired = recognizer.handle(key("KeyQ", { altKey: true }));
+    expect(fired.kind === "command" && fired.id).toBe("fit-pane-width");
+
+    recognizer.release({ code: "AltRight" });
+    recognizer.handle(key("AltLeft", { altKey: true }));
+    expect(recognizer.handle(key("KeyQ", { altKey: true })).kind).toBe("ignored");
+  });
+
+  test("releasing the modifier stops it matching", () => {
+    const { recognizer } = harness([["fit-pane-width", ["RAlt+Q"]]]);
+    recognizer.handle(key("AltRight", { altKey: true }));
+    recognizer.release({ code: "AltRight" });
+    // The flag can still be true — another Alt may be down — but this machine no longer believes the
+    // right one is, and a sided chord that cannot prove its side must not fire.
+    expect(recognizer.handle(key("KeyQ", { altKey: true })).kind).toBe("ignored");
+  });
+
+  test("cancelling forgets every side, because the keyups will never arrive", () => {
+    const { recognizer } = harness([["fit-pane-width", ["RAlt+Q"]]]);
+    recognizer.handle(key("AltRight", { altKey: true }));
+    // The page lost focus. Every keyup between now and the next focus happens somewhere else, so a
+    // remembered side is a guess — and a stale side fires the wrong binding on the next press.
+    recognizer.cancel();
+    expect(recognizer.handle(key("KeyQ", { altKey: true })).kind).toBe("ignored");
+  });
+});

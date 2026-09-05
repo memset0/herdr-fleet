@@ -26,27 +26,27 @@ describe("binding grammar", () => {
   test("a direct chord names its physical code and its exact modifiers", () => {
     expect(parsed("Ctrl+Shift+P")).toEqual({
       kind: "direct",
-      chord: { code: "KeyP", ctrl: true, alt: false, shift: true, meta: false },
+      chord: { code: "KeyP", ctrl: "either", alt: "absent", shift: "either", meta: "absent" },
     });
   });
 
   test("a prefix binding is a second chord, not a modifier", () => {
     expect(parsed("Prefix+S")).toEqual({
       kind: "prefix",
-      chord: { code: "KeyS", ctrl: false, alt: false, shift: false, meta: false },
+      chord: { code: "KeyS", ctrl: "absent", alt: "absent", shift: "absent", meta: "absent" },
     });
   });
 
   test("the second chord may carry its own modifiers", () => {
     expect(parsed("Prefix+Ctrl+R")).toEqual({
       kind: "prefix",
-      chord: { code: "KeyR", ctrl: true, alt: false, shift: false, meta: false },
+      chord: { code: "KeyR", ctrl: "either", alt: "absent", shift: "absent", meta: "absent" },
     });
   });
 
   test("`?` is the Slash key with its own Shift, and formats back as `?`", () => {
     const binding = parsed("Prefix+?");
-    expect(binding.chord).toEqual({ code: "Slash", ctrl: false, alt: false, shift: true, meta: false });
+    expect(binding.chord).toEqual({ code: "Slash", ctrl: "absent", alt: "absent", shift: "either", meta: "absent" });
     expect(formatBinding(binding)).toBe("Prefix+?");
   });
 
@@ -68,7 +68,9 @@ describe("binding grammar", () => {
 
   test("every rejected shape says which shape it was", () => {
     expect(failure("")).toBe("empty");
-    expect(failure("Ctrl")).toBe("no-key");
+    // `Ctrl` alone is a BINDING now — the Ctrl key itself — so the shape with no key left in it is
+    // a `Prefix` that never says what follows it.
+    expect(failure("Prefix")).toBe("no-key");
     expect(failure("Ctrl+P+Q")).toBe("extra-key");
     expect(failure("Ctrl+Ctrl+P")).toBe("repeated-modifier");
     expect(failure("Ctrl+Prefix+P")).toBe("prefix-not-first");
@@ -143,5 +145,109 @@ describe("matching a key event", () => {
     expect(isModifierCode("ShiftLeft")).toBe(true);
     expect(isModifierCode("ControlRight")).toBe(true);
     expect(isModifierCode("KeyP")).toBe(false);
+  });
+});
+
+describe("a modifier as the key, and modifiers with a side", () => {
+  test("a lone modifier is the key, and its own family is not asked for again", () => {
+    // `RAlt` is the right Alt KEY. Asking for Alt as well would make it unmatchable: the event that
+    // delivers it already reports `altKey: true`, because the key being pressed IS Alt.
+    expect(parsed("RAlt").chord).toEqual({
+      code: "AltRight",
+      ctrl: "absent",
+      alt: "absent",
+      shift: "absent",
+      meta: "absent",
+    });
+    expect(parsed("Alt").chord.code).toBe("Alt");
+    expect(parsed("LShift").chord.code).toBe("ShiftLeft");
+  });
+
+  test("a side is an L or R on any spelling the family already accepts", () => {
+    expect(parsed("Roption").chord.code).toBe("AltRight");
+    expect(parsed("Lcontrol").chord.code).toBe("ControlLeft");
+    expect(parsed("Rcmd").chord.code).toBe("MetaRight");
+  });
+
+  test("`left` and `right` are still the arrow keys", () => {
+    // The exact name is tried before the sided form, which is the whole reason these do not read as
+    // an `L` followed by nonsense.
+    expect(parsed("Alt+Left").chord.code).toBe("ArrowLeft");
+    expect(parsed("Alt+Right").chord.code).toBe("ArrowRight");
+  });
+
+  test("a side on a modifier that qualifies another key", () => {
+    expect(parsed("RAlt+Q").chord).toEqual({
+      code: "KeyQ",
+      ctrl: "absent",
+      alt: "right",
+      shift: "absent",
+      meta: "absent",
+    });
+  });
+
+  test("the last modifier written is the key when no key follows", () => {
+    expect(parsed("Ctrl+RAlt").chord).toEqual({
+      code: "AltRight",
+      ctrl: "either",
+      alt: "absent",
+      shift: "absent",
+      meta: "absent",
+    });
+  });
+
+  test("every one of these formats back to what was written", () => {
+    for (const text of ["RAlt", "Alt", "LShift", "RAlt+Q", "Ctrl+RAlt", "LCtrl+Shift+P"]) {
+      expect(formatBinding(parsed(text))).toBe(text);
+    }
+  });
+
+  test("a modifier bound as a key is marked risky rather than refused", () => {
+    // On the layouts where right Alt is AltGr the browser reports Control alongside it, so the chord
+    // silently never matches; in Firefox a bare Alt reaches the menu bar. It works on the machines
+    // where it works, and the operator is owed the warning on the others.
+    const result = parseBinding("RAlt");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.hazard).toBe("risky");
+  });
+});
+
+describe("matching a chord that asks for a side", () => {
+  const event = (code: string, mods: Partial<Record<"ctrlKey" | "altKey" | "shiftKey" | "metaKey", boolean>> = {}) => ({
+    code,
+    ctrlKey: mods.ctrlKey ?? false,
+    altKey: mods.altKey ?? false,
+    shiftKey: mods.shiftKey ?? false,
+    metaKey: mods.metaKey ?? false,
+  });
+
+  test("a bare modifier matches only its own side, and the family form matches either", () => {
+    expect(chordMatchesEvent(parsed("RAlt").chord, event("AltRight", { altKey: true }))).toBe(true);
+    expect(chordMatchesEvent(parsed("RAlt").chord, event("AltLeft", { altKey: true }))).toBe(false);
+    expect(chordMatchesEvent(parsed("Alt").chord, event("AltLeft", { altKey: true }))).toBe(true);
+    expect(chordMatchesEvent(parsed("Alt").chord, event("AltRight", { altKey: true }))).toBe(true);
+  });
+
+  test("a bare modifier still refuses the modifiers it did not ask for", () => {
+    // The AltGr shape: the browser reports Control alongside the right Alt, and this chord asked for
+    // no Control. It fails to match, which is the correct way to be wrong on those layouts.
+    expect(
+      chordMatchesEvent(parsed("RAlt").chord, event("AltRight", { altKey: true, ctrlKey: true })),
+    ).toBe(false);
+  });
+
+  test("a sided qualifier needs the held set, and matches nothing without it", () => {
+    const chord = parsed("RAlt+Q").chord;
+    const pressed = event("KeyQ", { altKey: true });
+    // Nothing tracked: the browser said `altKey` and never which one, so the honest answer is no.
+    expect(chordMatchesEvent(chord, pressed)).toBe(false);
+    expect(chordMatchesEvent(chord, pressed, new Set(["AltRight"]))).toBe(true);
+    expect(chordMatchesEvent(chord, pressed, new Set(["AltLeft"]))).toBe(false);
+  });
+
+  test("an unsided qualifier does not care what is in the held set", () => {
+    const chord = parsed("Alt+Q").chord;
+    expect(chordMatchesEvent(chord, event("KeyQ", { altKey: true }))).toBe(true);
+    expect(chordMatchesEvent(chord, event("KeyQ", { altKey: true }), new Set(["AltLeft"]))).toBe(true);
   });
 });

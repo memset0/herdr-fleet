@@ -162,3 +162,7 @@ mechanism and not this requirement.
 #### Scenario: The operator saves one
 - **WHEN** the operator saves a valid document in Settings
 - **THEN** the new bindings are in force without reloading the page
+
+#### Scenario: A modifier is claimed as a key and also held
+- **WHEN** a saved document binds a modifier as a command's key and any other binding, the prefix included, holds that same modifier
+- **THEN** the save is refused as a whole, the message names both bindings, and the keyboard the operator had keeps working

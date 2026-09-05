@@ -74,7 +74,7 @@ describe("the command catalog", () => {
 
   test("no default binds an Alt chord", () => {
     for (const [, bindings] of defaultBindings()) {
-      for (const binding of bindings) expect(binding.chord.alt).toBe(false);
+      for (const binding of bindings) expect(binding.chord.alt).toBe("absent");
     }
   });
 

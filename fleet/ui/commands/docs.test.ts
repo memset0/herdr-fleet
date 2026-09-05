@@ -48,7 +48,7 @@ describe("the documented command system", () => {
   test("the claim that no Alt chord is a default is true", () => {
     expect(SECTION).toContain("No `Alt` chord is a default");
     for (const bindings of defaultBindings().values()) {
-      for (const binding of bindings) expect(binding.chord.alt).toBe(false);
+      for (const binding of bindings) expect(binding.chord.alt).toBe("absent");
     }
   });
 

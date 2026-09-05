@@ -16,13 +16,35 @@
 // Everything here is pure and total: it never throws, never touches the DOM, and answers about text
 // and about plain chord records. The recognizer owns the state machine; this module owns the grammar.
 
-/** A chord: one physical key plus the exact modifier set that must be held with it. */
+/** Which side of the keyboard a modifier is on. */
+export type ModifierSide = "left" | "right";
+
+/**
+ * What a chord asks of one modifier family.
+ *
+ * `either` is what a plain `Alt` means and is deliberately the DEFAULT reading: an operator who does
+ * not care which Alt should not have to say so twice. A side is only ever asked for explicitly.
+ */
+export type ModifierRequirement = "absent" | "either" | ModifierSide;
+
+export type ModifierName = "ctrl" | "alt" | "shift" | "meta";
+
+export const MODIFIER_NAMES: readonly ModifierName[] = ["ctrl", "alt", "shift", "meta"];
+
+/** A chord: one key plus what it asks of every modifier family. */
 export interface Chord {
+  /**
+   * The key. Ordinarily a `KeyboardEvent.code`.
+   *
+   * A MODIFIER CAN BE THE KEY, and then this is either that modifier's own code (`AltRight`) or its
+   * family name (`Alt`) when the operator did not name a side. The family it belongs to is then
+   * `absent` below and is not checked — it is held by definition, being the key that was pressed.
+   */
   readonly code: string;
-  readonly ctrl: boolean;
-  readonly alt: boolean;
-  readonly shift: boolean;
-  readonly meta: boolean;
+  readonly ctrl: ModifierRequirement;
+  readonly alt: ModifierRequirement;
+  readonly shift: ModifierRequirement;
+  readonly meta: ModifierRequirement;
 }
 
 /**
@@ -57,7 +79,7 @@ export type BindingParseResult =
   | { readonly ok: true; readonly binding: Binding; readonly hazard: ChordHazard }
   | { readonly ok: false; readonly failure: BindingParseFailure };
 
-const MODIFIERS = new Map<string, "ctrl" | "alt" | "shift" | "meta">([
+const MODIFIERS = new Map<string, ModifierName>([
   ["ctrl", "ctrl"],
   ["control", "ctrl"],
   ["alt", "alt"],
@@ -68,6 +90,53 @@ const MODIFIERS = new Map<string, "ctrl" | "alt" | "shift" | "meta">([
   ["command", "meta"],
   ["super", "meta"],
 ]);
+
+/** Each modifier family's two physical codes, left first. */
+const MODIFIER_KEY_CODES = {
+  ctrl: ["ControlLeft", "ControlRight"],
+  alt: ["AltLeft", "AltRight"],
+  shift: ["ShiftLeft", "ShiftRight"],
+  meta: ["MetaLeft", "MetaRight"],
+} as const satisfies Record<ModifierName, readonly [string, string]>;
+
+/** How a family is written when a chord names it as its key without naming a side. */
+const MODIFIER_FAMILY_CODES = {
+  ctrl: "Control",
+  alt: "Alt",
+  shift: "Shift",
+  meta: "Meta",
+} as const satisfies Record<ModifierName, string>;
+
+/** How a family is written in a formatted binding. */
+const MODIFIER_LABELS = {
+  ctrl: "Ctrl",
+  alt: "Alt",
+  shift: "Shift",
+  meta: "Meta",
+} as const satisfies Record<ModifierName, string>;
+
+function sideCode(family: ModifierName, side: ModifierSide): string {
+  const codes = MODIFIER_KEY_CODES[family];
+  return side === "left" ? codes[0] : codes[1];
+}
+
+/**
+ * Read a chord's key as a modifier, or `null` when it is an ordinary key.
+ *
+ * This is the predicate the whole "a modifier can be a binding" idea rests on, so it is one function
+ * and every caller asks it rather than testing a code prefix of their own.
+ */
+export function modifierKeyOf(
+  code: string,
+): { readonly family: ModifierName; readonly side: ModifierSide | null } | null {
+  for (const family of MODIFIER_NAMES) {
+    if (code === MODIFIER_FAMILY_CODES[family]) return { family, side: null };
+    const codes = MODIFIER_KEY_CODES[family];
+    if (code === codes[0]) return { family, side: "left" };
+    if (code === codes[1]) return { family, side: "right" };
+  }
+  return null;
+}
 
 /**
  * The named keys, spelled the way an operator would write them, mapped to their physical code.
@@ -136,13 +205,16 @@ const KEY_LABELS = new Map<string, string>([
  * would take a working key away from the operators whose browser leaves it alone.
  */
 function isReserved(chord: Chord): boolean {
-  if (chord.ctrl && !chord.alt && (chord.code === "KeyN" || chord.code === "KeyT" || chord.code === "KeyW")) {
+  const ctrl = chord.ctrl !== "absent";
+  const alt = chord.alt !== "absent";
+  const shift = chord.shift !== "absent";
+  if (ctrl && !alt && (chord.code === "KeyN" || chord.code === "KeyT" || chord.code === "KeyW")) {
     return true;
   }
   // Tab-to-tab traversal, both directions.
-  if (chord.ctrl && chord.code === "Tab") return true;
+  if (ctrl && chord.code === "Tab") return true;
   // Ctrl with a digit selects a browser tab. Shift+Ctrl+digit does not, so the test is exact.
-  if (chord.ctrl && !chord.alt && !chord.shift && DIGIT_CODE.test(chord.code)) return true;
+  if (ctrl && !alt && !shift && DIGIT_CODE.test(chord.code)) return true;
   return false;
 }
 
@@ -156,8 +228,13 @@ function isReserved(chord: Chord): boolean {
  * lose your session on another, and that is exactly the distinction this tier exists to carry.
  */
 function isRisky(chord: Chord): boolean {
-  if (chord.meta) return true;
-  if (chord.ctrl && !chord.alt && !chord.shift) {
+  // A modifier bound as a KEY is browser- and layout-dependent in a way nothing else here is. On the
+  // layouts where right Alt is AltGr the browser also reports Control, so the chord silently never
+  // matches; in Firefox a bare Alt release reaches the menu bar. It works, and where it does not the
+  // operator is owed the warning rather than a key that does nothing.
+  if (modifierKeyOf(chord.code) !== null) return true;
+  if (chord.meta !== "absent") return true;
+  if (chord.ctrl !== "absent" && chord.alt === "absent" && chord.shift === "absent") {
     // The browser's own single-letter accelerators. All are preventable, but an extension or a
     // native dialog can still take one first, and the failure is visible (a print sheet, a reload).
     if (["KeyP", "KeyS", "KeyF", "KeyD", "KeyO", "KeyR", "KeyQ", "KeyL", "KeyJ"].includes(chord.code)) {
@@ -165,7 +242,7 @@ function isRisky(chord: Chord): boolean {
     }
   }
   // Firefox on Linux and Windows also selects tabs with Alt and a digit; Chrome does not.
-  if (chord.alt && !chord.ctrl && DIGIT_CODE.test(chord.code)) return true;
+  if (chord.alt !== "absent" && chord.ctrl === "absent" && DIGIT_CODE.test(chord.code)) return true;
   return false;
 }
 
@@ -190,11 +267,11 @@ export function parseBinding(text: string): BindingParseResult {
 
   const tokens = raw.split("+").map((token) => token.trim());
   let kind: Binding["kind"] = "direct";
-  let ctrl = false;
-  let alt = false;
-  let shift = false;
-  let meta = false;
+  const asked = new Map<ModifierName, ModifierRequirement>();
+  // In the order written, so the LAST one can become the key when no key follows it.
+  const namedModifiers: { name: ModifierName; side: ModifierSide | null }[] = [];
   let code: string | null = null;
+  let impliedShift = false;
 
   for (const [index, token] of tokens.entries()) {
     if (token === "") return { ok: false, failure: { reason: "unknown-token", token } };
@@ -208,24 +285,14 @@ export function parseBinding(text: string): BindingParseResult {
       continue;
     }
 
-    const modifier = MODIFIERS.get(lower);
-    if (modifier !== undefined) {
+    const modifier = readModifier(lower);
+    if (modifier !== null) {
       // A key already claimed means the modifier is trailing it, which is the same mistake as an
       // extra key: the operator wrote something whose order does not say what they meant.
       if (code !== null) return { ok: false, failure: { reason: "extra-key", token } };
-      if (modifier === "ctrl") {
-        if (ctrl) return { ok: false, failure: { reason: "repeated-modifier", token } };
-        ctrl = true;
-      } else if (modifier === "alt") {
-        if (alt) return { ok: false, failure: { reason: "repeated-modifier", token } };
-        alt = true;
-      } else if (modifier === "shift") {
-        if (shift) return { ok: false, failure: { reason: "repeated-modifier", token } };
-        shift = true;
-      } else {
-        if (meta) return { ok: false, failure: { reason: "repeated-modifier", token } };
-        meta = true;
-      }
+      if (asked.has(modifier.name)) return { ok: false, failure: { reason: "repeated-modifier", token } };
+      asked.set(modifier.name, modifier.side ?? "either");
+      namedModifiers.push(modifier);
       continue;
     }
 
@@ -234,7 +301,7 @@ export function parseBinding(text: string): BindingParseResult {
     const named = NAMED_KEYS.get(lower);
     if (named !== undefined) {
       code = named.code;
-      if (named.shift === true) shift = true;
+      if (named.shift === true) impliedShift = true;
       continue;
     }
     if (/^[a-z]$/.test(lower)) {
@@ -248,12 +315,46 @@ export function parseBinding(text: string): BindingParseResult {
     return { ok: false, failure: { reason: "unknown-token", token } };
   }
 
-  if (code === null) return { ok: false, failure: { reason: "no-key" } };
+  if (code === null) {
+    // NO KEY FOLLOWED, so the last modifier written IS the key: `RAlt` is the right Alt key, not a
+    // right Alt held over nothing. `Ctrl+RAlt` reads the same way — Ctrl held, right Alt pressed.
+    // A binding with no tokens at all is still the parse failure it always was.
+    const key = namedModifiers.at(-1);
+    if (key === undefined) return { ok: false, failure: { reason: "no-key" } };
+    asked.delete(key.name);
+    code = key.side === null ? MODIFIER_FAMILY_CODES[key.name] : sideCode(key.name, key.side);
+  }
 
-  const chord: Chord = { code, ctrl, alt, shift, meta };
+  if (impliedShift && !asked.has("shift")) asked.set("shift", "either");
+
+  const chord: Chord = {
+    code,
+    ctrl: asked.get("ctrl") ?? "absent",
+    alt: asked.get("alt") ?? "absent",
+    shift: asked.get("shift") ?? "absent",
+    meta: asked.get("meta") ?? "absent",
+  };
   const hazard = chordHazard(chord);
   if (hazard === "reserved") return { ok: false, failure: { reason: "reserved-chord" } };
   return { ok: true, binding: { kind, chord }, hazard };
+}
+
+/**
+ * Read one token as a modifier, sided or not.
+ *
+ * A side is an `L`/`R` prefix on any spelling the family already accepts, so `RAlt`, `Roption` and
+ * `RControl` all work without a second table to keep in step. The exact name is tried FIRST, which
+ * is what keeps `left` and `right` reading as the arrow keys they are rather than as a stray `L`
+ * followed by nonsense.
+ */
+function readModifier(lower: string): { name: ModifierName; side: ModifierSide | null } | null {
+  const exact = MODIFIERS.get(lower);
+  if (exact !== undefined) return { name: exact, side: null };
+  const first = lower.slice(0, 1);
+  if (first !== "l" && first !== "r") return null;
+  const family = MODIFIERS.get(lower.slice(1));
+  if (family === undefined) return null;
+  return { name: family, side: first === "l" ? "left" : "right" };
 }
 
 /**
@@ -267,22 +368,33 @@ export function formatBinding(binding: Binding): string {
   const { chord } = binding;
   const parts: string[] = [];
   if (binding.kind === "prefix") parts.push("Prefix");
-  if (chord.ctrl) parts.push("Ctrl");
-  if (chord.alt) parts.push("Alt");
 
   // `?` carries its own Shift, so naming Shift again would spell a chord the operator never wrote.
-  const shiftIsTheKey = chord.code === "Slash" && chord.shift;
-  if (chord.shift && !shiftIsTheKey) parts.push("Shift");
-  if (chord.meta) parts.push("Meta");
+  const shiftIsTheKey = chord.code === "Slash" && chord.shift !== "absent";
+  for (const family of MODIFIER_NAMES) {
+    const asked = chord[family];
+    if (asked === "absent") continue;
+    if (family === "shift" && shiftIsTheKey) continue;
+    parts.push(`${sidePrefix(asked)}${MODIFIER_LABELS[family]}`);
+  }
 
+  const key = modifierKeyOf(chord.code);
   const named = KEY_LABELS.get(chord.code);
   if (shiftIsTheKey) parts.push("?");
+  else if (key !== null) parts.push(`${key.side === null ? "" : key.side === "left" ? "L" : "R"}${MODIFIER_LABELS[key.family]}`);
   else if (named !== undefined) parts.push(named);
   else if (chord.code.startsWith("Key")) parts.push(chord.code.slice(3));
   else if (chord.code.startsWith("Digit")) parts.push(chord.code.slice(5));
   else parts.push(chord.code);
 
   return parts.join("+");
+}
+
+/** `L`/`R` where a side was asked for, and nothing where either will do. */
+function sidePrefix(asked: ModifierRequirement): string {
+  if (asked === "left") return "L";
+  if (asked === "right") return "R";
+  return "";
 }
 
 /** Identity for duplicate detection: two bindings collide when they are the same shape and chord. */
@@ -296,24 +408,69 @@ export function chordsEqual(a: Chord, b: Chord): boolean {
   );
 }
 
+/** The fields of a key event a chord is matched against. */
+export interface ChordEvent {
+  readonly code: string;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+  readonly shiftKey: boolean;
+  readonly metaKey: boolean;
+}
+
+function modifierIsDown(family: ModifierName, event: ChordEvent): boolean {
+  if (family === "ctrl") return event.ctrlKey;
+  if (family === "alt") return event.altKey;
+  if (family === "shift") return event.shiftKey;
+  return event.metaKey;
+}
+
+/** Nothing held, for the callers that do not track sides. */
+const NOTHING_HELD: ReadonlySet<string> = new Set();
+
 /**
  * Whether a key event is exactly this chord.
  *
  * Exact, in both directions: every modifier the chord names must be held, and every modifier it does
  * not name must NOT be held. A chord that matched a superset would make `Ctrl+Shift+P` fire on
  * `Ctrl+Alt+Shift+P`, which is a different key the operator may have bound to something else.
+ *
+ * WHY `held` EXISTS. A browser reports THAT a modifier is down and never WHICH ONE: the event for
+ * `Q` pressed with the right Alt says `altKey: true` and nothing more. The only place a side is
+ * observable is the modifier key's own event, so a caller that wants sided chords to work has to
+ * remember which modifier codes are currently down and pass that set in. Without it a sided
+ * requirement simply never matches, which is the right way to be wrong: a binding that does nothing
+ * beats one that fires on the wrong key.
  */
 export function chordMatchesEvent(
   chord: Chord,
-  event: { code: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean },
+  event: ChordEvent,
+  held: ReadonlySet<string> = NOTHING_HELD,
 ): boolean {
-  return (
-    chord.code === event.code &&
-    chord.ctrl === event.ctrlKey &&
-    chord.alt === event.altKey &&
-    chord.shift === event.shiftKey &&
-    chord.meta === event.metaKey
-  );
+  const key = modifierKeyOf(chord.code);
+  if (key === null) {
+    if (chord.code !== event.code) return false;
+  } else if (key.side === null) {
+    const codes = MODIFIER_KEY_CODES[key.family];
+    if (event.code !== codes[0] && event.code !== codes[1]) return false;
+  } else if (event.code !== sideCode(key.family, key.side)) {
+    return false;
+  }
+
+  for (const family of MODIFIER_NAMES) {
+    // The key's own family is held by definition — it IS the key that was pressed — so asking again
+    // would make every bare-modifier chord unmatchable.
+    if (key !== null && key.family === family) continue;
+    const asked = chord[family];
+    const down = modifierIsDown(family, event);
+    if (asked === "absent") {
+      if (down) return false;
+      continue;
+    }
+    if (!down) return false;
+    if (asked === "either") continue;
+    if (!held.has(sideCode(family, asked))) return false;
+  }
+  return true;
 }
 
 /** The modifier keys themselves, which are never a binding's key and never start a match. */

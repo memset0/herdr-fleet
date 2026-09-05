@@ -52,6 +52,9 @@ export type CommandId =
   | "close-pane"
   | "rename-pane"
   | "fit-pane-width"
+  | "start-mic-recording"
+  | "stop-mic-recording"
+  | "toggle-mic-recording"
   | "previous-pane"
   | "next-pane"
   | "last-pane"
@@ -126,6 +129,14 @@ const DEFINITIONS: readonly CommandDefinition[] = [
   { id: "close-pane", name: "Close Pane", scope: "pane", defaults: ["Prefix+X"] },
   { id: "rename-pane", name: "Rename Pane", scope: "pane", defaults: ["Prefix+Shift+P"] },
   { id: "fit-pane-width", name: "Resize Pane", scope: "pane", defaults: ["Prefix+R"] },
+
+  // The microphone, as three commands rather than one. A toggle alone cannot be bound to a foot
+  // pedal or to two different keys on purpose, and "start" and "stop" are what an operator writes
+  // when they want a key that only ever does one of them. All three ship unbound: a key that opens a
+  // microphone is one the operator chooses.
+  { id: "start-mic-recording", name: "Start Mic Recording", scope: "pane", defaults: [] },
+  { id: "stop-mic-recording", name: "Stop Mic Recording", scope: "pane", defaults: [] },
+  { id: "toggle-mic-recording", name: "Toggle Mic Recording", scope: "pane", defaults: [] },
 
   // The whole-hierarchy walk and the roster walk. Both shipped on `Alt` once; neither ships bound
   // now, because no `Alt` chord is a default any more and moving them behind the prefix would be

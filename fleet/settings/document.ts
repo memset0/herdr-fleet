@@ -12,7 +12,12 @@
 import type { JsonObject, JsonValue } from "../../bridge/json.ts";
 import { bindingKey, chordsEqual, formatBinding, parseBinding, type Binding } from "../ui/commands/bindings.ts";
 import { DEFAULT_COMMAND_PREFIX, isCommandId, type CommandId } from "../ui/commands/catalog.ts";
-import { findDuplicateBinding, resolveBindings } from "../ui/commands/effective.ts";
+import {
+  describeConflictOwner,
+  findDuplicateBinding,
+  findModifierConflict,
+  resolveBindings,
+} from "../ui/commands/effective.ts";
 
 export const FLEET_SETTINGS_FILENAME = "settings.json";
 export const FLEET_SETTINGS_SCHEMA_VERSION = 1;
@@ -130,11 +135,27 @@ export function parseFleetSettings(value: JsonValue | undefined): SettingsParseR
 
   // Checked over the EFFECTIVE set, so a document that moves one command onto another's untouched
   // default is caught as well as one that names the same chord twice.
-  const clash = findDuplicateBinding(resolveBindings(bindings));
+  const effective = resolveBindings(bindings);
+  const clash = findDuplicateBinding(effective);
   if (clash !== null) {
     return reject(
       `shortcuts.bindings.${clash.commands[1]}`,
       `${clash.label} is already bound to ${clash.commands[0]}`,
+    );
+  }
+
+  // A modifier bound as a key cannot also be held. See `findModifierConflict` for why there is no
+  // ordering that rescues the pair, and why the document is where it has to be decided.
+  const conflict = findModifierConflict(effective, prefixChord.ok ? prefixChord.binding.chord : null);
+  if (conflict !== null) {
+    const at =
+      conflict.qualifierOf.kind === "command"
+        ? `shortcuts.bindings.${conflict.qualifierOf.id}`
+        : "shortcuts.prefix";
+    return reject(
+      at,
+      `${conflict.qualifier} (${describeConflictOwner(conflict.qualifierOf)}) holds a modifier that ` +
+        `${conflict.claim} (${describeConflictOwner(conflict.claimedBy)}) has taken as its own key`,
     );
   }
 

@@ -11,6 +11,12 @@
 // It never registers a listener. The component that mounts it feeds it every keydown from ONE
 // capture-phase listener, which is what lets an armed prefix take `Escape`, `Tab` and the arrows
 // ahead of the composer without the composer knowing anything about it.
+//
+// A MODIFIER'S OWN KEYDOWN IS DISPATCHED, which it did not used to be. It is how a chord that IS a
+// modifier — `RAlt` — can fire at all, and it is only safe because the settings document refuses to
+// accept such a binding alongside any other binding that uses that modifier as a qualifier. That
+// check lives in `effective.ts`; without it, pressing the right Alt to reach `RAlt+Q` would fire the
+// bare binding before the `Q` ever arrived.
 
 import {
   chordMatchesEvent,
@@ -71,9 +77,18 @@ export interface RecognizerOptions {
 export interface Recognizer {
   /** Feed one keydown. The caller prevents the default exactly when this says to. */
   handle: (event: RecognizerKeyEvent) => RecognizerOutcome;
+  /**
+   * Feed one keyup. It decides nothing; it only lets go of a modifier this machine had recorded.
+   *
+   * The recording is what makes a SIDED chord possible at all: a browser reports that Alt is down
+   * and never which Alt, so the only place a side is observable is the modifier key's own event.
+   * Without this the set would fill up and never empty, and `RAlt+Q` would keep matching long after
+   * the right Alt was released.
+   */
+  release: (event: { readonly code: string }) => void;
   /** True while a prefix is pending — the caller uses this to arm its capture listener. */
   armed: () => boolean;
-  /** Drop a pending prefix. Blur, document hiding and route changes call this. */
+  /** Drop a pending prefix and forget which modifiers are down. Blur and hiding call this. */
   cancel: () => void;
 }
 
@@ -87,6 +102,8 @@ export function shouldPrevent(outcome: RecognizerOutcome): boolean {
 export function createRecognizer(options: RecognizerOptions): Recognizer {
   const timeout = options.timeoutMs ?? PREFIX_TIMEOUT_MS;
   let armedAt: number | null = null;
+  // Which modifier keys are physically down. See `release` above for why this has to exist.
+  const held = new Set<string>();
 
   function expired(at: number): boolean {
     return armedAt !== null && at - armedAt > timeout;
@@ -99,7 +116,7 @@ export function createRecognizer(options: RecognizerOptions): Recognizer {
     for (const [id, bindings] of options.bindings()) {
       for (const binding of bindings) {
         if (binding.kind !== kind) continue;
-        if (chordMatchesEvent(binding.chord, event)) return { id, binding };
+        if (chordMatchesEvent(binding.chord, event, held)) return { id, binding };
       }
     }
     return null;
@@ -116,17 +133,26 @@ export function createRecognizer(options: RecognizerOptions): Recognizer {
   return {
     armed: () => armedAt !== null,
 
+    release: (event) => {
+      if (isModifierCode(event.code)) held.delete(event.code);
+    },
+
     cancel: () => {
       armedAt = null;
+      // The page stopped receiving events, so every keyup between now and the next focus is one this
+      // machine will never see. Anything still recorded is a guess, and a stale side is worse than
+      // no side: it would fire the wrong binding on the next press.
+      held.clear();
     },
 
     handle: (event) => {
+      // Recorded before anything else, and on the repeat too: a modifier that is down is down
+      // whether or not this particular event goes on to mean something.
+      if (isModifierCode(event.code)) held.add(event.code);
       // Auto-repeat is the key still being held, not a second press. It must not fire a command and
       // must not cancel a pending prefix — holding a key down would otherwise cancel the sequence
       // the operator is in the middle of.
       if (event.repeat) return { kind: "ignored" };
-      // A modifier's own keydown is part of every chord and the start of none.
-      if (isModifierCode(event.code)) return { kind: "ignored" };
 
       const at = options.now();
       if (expired(at)) armedAt = null;
@@ -155,6 +181,9 @@ export function createRecognizer(options: RecognizerOptions): Recognizer {
           armedAt = null;
           return { kind: "command", id: match.id, binding: match.binding, label: label(match.binding) };
         }
+        // A modifier pressed mid-sequence is the operator reaching for the second chord, not the
+        // second chord itself. It neither completes the sequence nor ends it.
+        if (isModifierCode(event.code)) return { kind: "ignored" };
         // An unregistered second chord ends the sequence and is NOT consumed: the operator typed
         // something we have no meaning for, and swallowing it would lose a keystroke they meant for
         // the surface underneath.

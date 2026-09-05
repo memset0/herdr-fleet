@@ -16,6 +16,8 @@ import {
   installFakeMediaRecorder,
   uninstallFakeMediaRecorder,
 } from "@/test/media-recorder";
+import { FleetCommandsProvider, useFleetCommands } from "./fleet-commands";
+import { derivePaneRoster } from "../../../fleet/ui/pane-roster.ts";
 import { Composer } from "./composer";
 
 // The composer's microphone (ADR 0029). Two gates decide whether it is drawn at all — the bridge
@@ -430,5 +432,88 @@ describe("Composer — a refused transcription", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /discard recording/i })).toBeNull(),
     );
+  });
+});
+
+describe("Composer — the microphone from the keyboard", () => {
+  /**
+   * The composer inside the command layer, plus a button that invokes one command through the one
+   * dispatcher. The wiring is what this exercises: the decision itself is proved in
+   * `fleet/ui/mic-commands.test.ts` without a browser, and this asserts that the recorder the
+   * composer owns is actually reached and that a refusal reaches the status channel.
+   */
+  function renderWithCommands(command: "start-mic-recording" | "stop-mic-recording" | "toggle-mic-recording") {
+    function Invoke() {
+      const commands = useFleetCommands();
+      return (
+        <button type="button" onClick={() => commands?.invoke(command, "ui")}>
+          run it
+        </button>
+      );
+    }
+    const props = baseProps({});
+    const router = createMemoryRouter([
+      {
+        path: "/",
+        element: (
+          <FleetCommandsProvider
+            adapters={{}}
+            available={() => true}
+            roster={derivePaneRoster({ triaged: [], shellPanes: [] })}
+            onOpenPane={() => {}}
+          >
+            <StatusSentinel />
+            <Invoke />
+            <Composer {...props} />
+          </FleetCommandsProvider>
+        ),
+      },
+    ]);
+    render(<RouterProvider router={router} />);
+  }
+
+  const run = async (user: ReturnType<typeof userEvent.setup>) =>
+    user.click(screen.getByRole("button", { name: "run it" }));
+
+  it("toggles the real recorder the composer owns", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT), sttHandler("from the keyboard"), replyHandler(() => {}));
+    renderWithCommands("toggle-mic-recording");
+    await screen.findByRole("button", { name: /record a voice message/i });
+
+    await run(user);
+    await waitFor(() => expect(FakeMediaRecorder.instances).toHaveLength(1));
+    // Toggling again stops it, which is the same call the button's second tap makes.
+    await run(user);
+    await waitFor(() => expect(FakeMediaRecorder.instances[0]!.state).toBe("inactive"));
+  });
+
+  it("refuses to stop a microphone that is not recording, and changes nothing", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderWithCommands("stop-mic-recording");
+    await screen.findByRole("button", { name: /record a voice message/i });
+
+    await run(user);
+    expect(await screen.findByText(/not recording/i)).toBeTruthy();
+    // No recorder was created: a refusal is a statement about the world, not a half-attempt.
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+  });
+
+  it("wears the bridge's own reason when the provider is the thing that is missing", async () => {
+    const user = userEvent.setup();
+    // The operator's next move is on the host, so the host's sentence is the one shown — our generic
+    // one would hide the only fact that tells them so.
+    server.use(
+      configHandler({
+        push: false,
+        vapidPublicKey: "",
+        stt: { provider: "openai-compatible", available: false, reason: "no API key on the host" },
+      }),
+    );
+    renderWithCommands("toggle-mic-recording");
+    await run(user);
+    expect(await screen.findByText(/no API key on the host/i)).toBeTruthy();
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
   });
 });

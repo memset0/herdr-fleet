@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 
 import { parseBinding, type Binding } from "../../../fleet/ui/commands/bindings.ts";
 import type { CommandId } from "../../../fleet/ui/commands/catalog.ts";
+import { refuseCommand } from "../../../fleet/ui/commands/refusal.ts";
 import { derivePaneRoster } from "../../../fleet/ui/pane-roster.ts";
 import {
   FleetCommandsProvider,
@@ -398,5 +399,38 @@ describe("binding the command bar itself", () => {
     expect(document.querySelector('[data-slot="fleet-command-bar"]')).toBeNull();
     await user.keyboard("{Alt>}q{/Alt}");
     expect(document.querySelector('[data-slot="fleet-command-bar"]')).not.toBeNull();
+  });
+});
+
+describe("a command that refuses", () => {
+  it("publishes its own sentence on the error channel and nothing else", async () => {
+    const user = userEvent.setup();
+    const { composerKeys } = setup({
+      "fit-pane-width": () => {
+        refuseCommand("The microphone is already recording.");
+      },
+    });
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("r");
+    // The command's words, verbatim — not the generic "did not complete", which would send the
+    // operator looking for a bug instead of telling them what is true.
+    expect(setStatus).toHaveBeenCalledWith("The microphone is already recording.", "error");
+    expect(setStatus).not.toHaveBeenCalledWith(expect.stringContaining("did not complete"), "error");
+    expect(composerKeys).toBeDefined();
+  });
+
+  it("is not confused with an adapter that actually threw", async () => {
+    const user = userEvent.setup();
+    setup({
+      "fit-pane-width": () => {
+        throw new Error("boom");
+      },
+    });
+    await user.keyboard("{Control>}b{/Control}");
+    await user.keyboard("r");
+    // An ordinary throw is the app breaking, and the honest report is that the command did not
+    // complete — never the exception's own text, which is for a log and not for a person.
+    expect(setStatus).toHaveBeenCalledWith(expect.stringContaining("Resize Pane"), "error");
+    expect(setStatus).not.toHaveBeenCalledWith("boom", "error");
   });
 });

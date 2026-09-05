@@ -18,6 +18,12 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- The microphone is three commands — start, stop and toggle — in the command palette, acting on the composer's own recorder.
+- A command can refuse instead of failing: a start while already recording, or anything while a clip is still transcribing, says so in one red message and changes nothing.
+- A binding can name a modifier as its key (`RAlt`) and can name a side wherever a modifier appears (`RAlt+Q`); an unsided `Alt` still means either.
+
 ### Changed
 
 - A pane row in the switcher shows its whole address — `tab · space`, plus the host where there is one — instead of swapping the slot's meaning depending on what the query matched; the marks land on whichever part matched.

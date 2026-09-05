@@ -9,6 +9,8 @@ import type { AgentStatus } from "@/lib/types";
 import { usePendingConfirm } from "@/hooks/use-pending-confirm";
 import { useFleetCommandAdapters } from "@/components/fleet-commands";
 import { useDirectTyping } from "@/hooks/use-direct-typing";
+import { refuseCommand } from "../../../fleet/ui/commands/refusal.ts";
+import { decideMicCommand, type MicCommand, type MicRefusal } from "../../../fleet/ui/mic-commands.ts";
 import { useLocale } from "@/hooks/use-locale";
 import { t as translate, tn as translatePlural } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
@@ -250,6 +252,17 @@ function ComposerDock({
     </div>
   );
 }
+
+/** One sentence per refusal, so the table is exhaustive by type rather than by inspection. */
+const MIC_REFUSAL_MESSAGES = {
+  absent: "fleet.command.mic.absent",
+  locked: "fleet.command.mic.locked",
+  direct: "fleet.command.mic.direct",
+  sending: "fleet.command.mic.sending",
+  transcribing: "fleet.command.mic.transcribing",
+  "already-recording": "fleet.command.mic.alreadyRecording",
+  "not-recording": "fleet.command.mic.notRecording",
+} as const satisfies Record<MicRefusal, string>;
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   { paneId, scope, agent, isShell, status, stale, showStatusWord = true, showHost = true, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, displayPrefsAfterTextSize, onSent },
@@ -517,6 +530,44 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useBusyWhile(sending);
   useBusyWhile(uploading);
   useBusyWhile(recorder.phase === "transcribing");
+
+  // ── THE MICROPHONE, FROM THE KEYBOARD ─────────────────────────────────────────────────────────
+  //
+  // Registered HERE, and it has to be: the recorder is this component's own state, and lifting it so
+  // the shell could own the commands would move the microphone's whole lifecycle away from the draft
+  // it writes into. What crosses the boundary is three closures over one pure decision — the
+  // narrowest thing this can be, which is what the registration seam is for.
+  //
+  // THE DECISION IS NOT HERE. `decideMicCommand` answers what should happen, including which of the
+  // conditions that grey the button out this command hit; the only thing this file adds is calling
+  // the recorder and turning a refusal into the operator's own language. A key press has no disabled
+  // state to look at, so a refusal is a sentence, and nothing else happens.
+  const runMicCommand = (command: MicCommand) => {
+    const decision = decideMicCommand(command, {
+      available: stt !== null && stt.available,
+      locked,
+      directTyping: direct.active,
+      sending,
+      phase: recorder.phase,
+    });
+    if (decision.kind === "start") {
+      recorder.start();
+      return;
+    }
+    if (decision.kind === "stop") {
+      recorder.stopAndSend();
+      return;
+    }
+    // The bridge's own words where it gave any — the operator's next move is on the host, and our
+    // generic sentence would hide the one fact that tells them so.
+    if (decision.refusal === "absent" && stt?.reason !== undefined) refuseCommand(stt.reason);
+    refuseCommand(translate(MIC_REFUSAL_MESSAGES[decision.refusal]));
+  };
+  useFleetCommandAdapters({
+    "start-mic-recording": () => runMicCommand("start"),
+    "stop-mic-recording": () => runMicCommand("stop"),
+    "toggle-mic-recording": () => runMicCommand("toggle"),
+  });
 
   /**
    * What happens to a finished transcript.
