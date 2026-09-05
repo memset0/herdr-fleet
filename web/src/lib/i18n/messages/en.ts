@@ -574,6 +574,7 @@ export const en = {
   "connection.host.lastSeen": "last seen {time}",
   "connection.host.neverSeen": "never seen",
   "connection.host.unreachablePlain": "unreachable",
+  "connection.host.slowLink": "slow link",
   "connection.host.unreachableSuffix": "unreachable · {label}",
   "connection.host.incompatible": "incompatible",
   "connection.host.lead": "lead",

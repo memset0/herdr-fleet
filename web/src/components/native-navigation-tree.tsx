@@ -286,6 +286,8 @@ function Row({
 function faultWord(fault: NavigationHostFault | undefined): string | null {
   if (fault === "incompatible") return t("connection.host.incompatible");
   if (fault === "refused") return t("connection.host.unreachablePlain");
+  if (fault === "unknown") return t("connection.host.neverSeen");
+  if (fault === "slow") return t("connection.host.slowLink");
   return null;
 }
 

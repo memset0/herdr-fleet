@@ -551,6 +551,7 @@ export const ja: Dictionary = {
   "connection.host.lastSeen": "最終確認 {time}",
   "connection.host.neverSeen": "未確認",
   "connection.host.unreachablePlain": "到達不能",
+  "connection.host.slowLink": "低速リンク",
   "connection.host.unreachableSuffix": "到達不能 · {label}",
   "connection.host.incompatible": "非互換",
   "connection.host.lead": "lead",

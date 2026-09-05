@@ -376,6 +376,123 @@ describe("NativeNavigationShell", () => {
     expect(rows.some((row) => /unreachable|不可达/i.test(row))).toBe(false);
     expect(screen.getByText("Project on peer-blip")).toBeInTheDocument();
   });
+
+  test("a member the lead has never heard from is arriving, not refusing", async () => {
+    // A zero receipt is not an old one. Subtracting it gives an age of thirty years, which cleared
+    // the corroboration threshold instantly and called a member enrolled a moment ago a refusal.
+    const rowsOn = (host: string) => ({
+      workspace: {
+        workspaceId: "w1",
+        number: 1,
+        label: `Project on ${host}`,
+        focused: false,
+        activeTabId: "t1",
+        tabCount: 1,
+        paneCount: 1,
+        host,
+      },
+      tab: { tabId: "t1", workspaceId: "w1", number: 1, label: "Main", focused: false, paneCount: 1, host },
+      pane: { ...pane, paneId: `p-${host}`, host },
+    });
+    const lead = rowsOn("lead");
+    const peer = rowsOn("peer-new");
+    const packData: HomeData = {
+      ...data,
+      ts: 60_000,
+      servers: [
+        { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 60_000 },
+        { id: "peer-new", name: "attic", isLead: false, reachable: false, protocol: "ok", lastSeenAt: 0 },
+      ],
+      scope: { host: "lead" },
+      workspaces: [lead.workspace],
+      tabs: [lead.tab],
+      allWorkspaces: [lead.workspace, peer.workspace],
+      allTabs: [lead.tab, peer.tab],
+      agents: [lead.pane, peer.pane],
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <NativeNavigationShell data={packData} preferenceStore={new NavigationPreferenceStore()}>
+              <Outlet />
+            </NativeNavigationShell>
+          ),
+          children: [{ index: true, element: <div /> }],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    await screen.findByText("north");
+    const rows = screen
+      .getAllByRole("button")
+      .filter((row) => row.getAttribute("aria-expanded") !== null)
+      .map((row) => row.textContent ?? "");
+    const attic = rows.find((row) => row.includes("attic")) ?? "";
+    expect(attic).not.toMatch(/unreachable|不可达/i);
+    expect(attic).toMatch(/never seen|从未在线/i);
+  });
+
+  test("a refusal the receipt does not corroborate reads as a slow link", async () => {
+    const rowsOn = (host: string) => ({
+      workspace: {
+        workspaceId: "w1",
+        number: 1,
+        label: `Project on ${host}`,
+        focused: false,
+        activeTabId: "t1",
+        tabCount: 1,
+        paneCount: 1,
+        host,
+      },
+      tab: { tabId: "t1", workspaceId: "w1", number: 1, label: "Main", focused: false, paneCount: 1, host },
+      pane: { ...pane, paneId: `p-${host}`, host },
+    });
+    const lead = rowsOn("lead");
+    const peer = rowsOn("peer-slow");
+    const packData: HomeData = {
+      ...data,
+      ts: 60_000,
+      servers: [
+        { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 60_000 },
+        // Refused on this sweep, but heard from two seconds ago: a cold handshake, not an outage.
+        { id: "peer-slow", name: "attic", isLead: false, reachable: false, protocol: "ok", lastSeenAt: 58_000 },
+      ],
+      scope: { host: "lead" },
+      workspaces: [lead.workspace],
+      tabs: [lead.tab],
+      allWorkspaces: [lead.workspace, peer.workspace],
+      allTabs: [lead.tab, peer.tab],
+      agents: [lead.pane, peer.pane],
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <NativeNavigationShell data={packData} preferenceStore={new NavigationPreferenceStore()}>
+              <Outlet />
+            </NativeNavigationShell>
+          ),
+          children: [{ index: true, element: <div /> }],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    await screen.findByText("north");
+    const rows = screen
+      .getAllByRole("button")
+      .filter((row) => row.getAttribute("aria-expanded") !== null)
+      .map((row) => row.textContent ?? "");
+    const attic = rows.find((row) => row.includes("attic")) ?? "";
+    expect(attic).not.toMatch(/unreachable|不可达/i);
+    expect(attic).toMatch(/slow link|链路慢/i);
+  });
 });
 
 describe("the shell's command layer", () => {

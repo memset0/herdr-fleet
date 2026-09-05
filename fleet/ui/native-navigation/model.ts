@@ -55,7 +55,19 @@ export interface NavigationPaneInput {
  * row here, present or not, and "which of these is down" is the question this list is scanned for.
  */
 /** Why a member is not answering. Absent everywhere else, including on a machine merely swept late. */
-export type NavigationHostFault = "refused" | "incompatible";
+/**
+ * Why a member is not contributing, as the rail says it.
+ *
+ * Four, not two, because the lead already distinguishes them and collapsing them was a lie in both
+ * directions: `unknown` is a member the lead has NEVER heard from (a zero receipt is not an old one),
+ * and `slow` is one that answers while missing the probe budget — neither is a refusal.
+ */
+export type NavigationHostFault = "refused" | "incompatible" | "unknown" | "slow";
+
+/** The faults that mean a member has nothing current to show, so its rows sink and stay closed. */
+export function hostFaultSinks(fault: NavigationHostFault | undefined): boolean {
+  return fault === "refused" || fault === "incompatible" || fault === "unknown";
+}
 
 export type NavigationIcon = "group" | "agent" | "shell" | "host" | "none";
 
@@ -390,7 +402,10 @@ function hostRow(
   };
   if (input.fault !== undefined) host.fault = input.fault;
   if (spaces.length > 0) {
-    if (input.fault !== undefined) {
+    // Only a fault that means the member has NOTHING CURRENT closes it. A slow link is answering —
+    // its rows are seconds old, not an outage's last-good screen — and folding them away for one
+    // cold handshake is the same flap one layer up, spent on a member that never went anywhere.
+    if (hostFaultSinks(input.fault)) {
       // Closed by default, and openable: the identity means OPENED here.
       host.disclosureId = hostOpenId(hostId);
     } else {

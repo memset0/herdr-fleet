@@ -538,6 +538,7 @@ export const zh: Dictionary = {
   "connection.host.lastSeen": "最后在线：{time}",
   "connection.host.neverSeen": "从未在线",
   "connection.host.unreachablePlain": "不可达",
+  "connection.host.slowLink": "链路慢",
   "connection.host.unreachableSuffix": "不可达 · {label}",
   "connection.host.incompatible": "不兼容",
   "connection.host.lead": "主节点",

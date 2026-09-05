@@ -9,6 +9,7 @@ import {
   loadFleetConfig,
   parseFleetToml,
   resolveFleetConfigPath,
+  type FleetSchema2LeadConfig,
   type FleetTransportConfig,
 } from "./config.ts";
 
@@ -354,5 +355,34 @@ port = 18902
     await chmod(path, 0o600);
     await writeFile(path, source().replace(secret, "secret-that-must-not-appear"), { mode: 0o600 });
     await expect(loadFleetConfig(path)).rejects.not.toThrow("secret-that-must-not-appear");
+  });
+
+  test("the lead may state its own pack timing, within the bounds Collie enforces", () => {
+    // SAFETY: as above — the source states a schema-2 lead, so the parse either yields this shape or
+    // throws before the assertion is reached.
+    const withPack = (body: string) =>
+      parseFleetToml(packLeadSource(`[pack]\n${body}\n`)) as FleetSchema2LeadConfig;
+    expect(withPack("poll_ms = 3000\ntimeout_ms = 2400").pack).toEqual({ pollMs: 3000, timeoutMs: 2400 });
+    // Either alone is a complete statement; the other keeps Collie's default.
+    expect(withPack("poll_ms = 3000").pack).toEqual({ pollMs: 3000 });
+    expect(withPack("timeout_ms = 2400").pack).toEqual({ timeoutMs: 2400 });
+    // A budget the clamp will bite is the operator's own choice, recorded rather than second-guessed:
+    // Collie owns that arithmetic and says so in its log when it bites.
+    expect(withPack("poll_ms = 1500\ntimeout_ms = 9000").pack).toEqual({ pollMs: 1500, timeoutMs: 9000 });
+  });
+
+  test("an omitted section is not a stated one", () => {
+    // SAFETY: packLeadSource() states role "lead" at schema 2, which parseFleetToml narrows to this
+    // shape or throws; the assertion reads a field the peer shape does not have.
+    const parsed = parseFleetToml(packLeadSource()) as FleetSchema2LeadConfig;
+    expect(parsed.pack).toBeUndefined();
+  });
+
+  test("a pack section that states nothing, or states nonsense, is refused", () => {
+    const bad = (body: string) => () => parseFleetToml(packLeadSource(`[pack]\n${body}\n`));
+    expect(bad("")).toThrow(/neither poll_ms nor timeout_ms/);
+    expect(bad("poll_ms = 100")).toThrow(/pack.poll_ms/);
+    expect(bad("timeout_ms = 0")).toThrow(/pack.timeout_ms/);
+    expect(bad("poll_ms = 3000\nspin = true")).toThrow(/pack/);
   });
 });

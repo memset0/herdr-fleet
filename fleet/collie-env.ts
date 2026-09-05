@@ -7,6 +7,8 @@ const RESET_KEYS = [
   "COLLIE_DEVICE_ALLOWLIST",
   "COLLIE_DEVICE_HEADER",
   "COLLIE_HOST",
+  "COLLIE_PACK_TIMEOUT_MS",
+  "COLLIE_POLL_MS",
   "COLLIE_PORT",
   "COLLIE_PUBLIC_HOSTS",
   "COLLIE_PUBLIC_URL",
@@ -33,6 +35,12 @@ export function collieChildEnv(
     env.COLLIE_PUBLIC_HOSTS = config.public.host;
     env.COLLIE_ALLOWED_ORIGINS = config.public.origin;
     env.COLLIE_PUBLIC_URL = config.public.origin;
+    // The lead's own pack timing, when it states any. Both keys are reset above, so a stray value in
+    // the inherited environment cannot decide how long a member has to answer — the configuration
+    // does, or nothing does and Collie keeps its own defaults.
+    const pack = config.pack;
+    if (pack?.pollMs !== undefined) env.COLLIE_POLL_MS = String(pack.pollMs);
+    if (pack?.timeoutMs !== undefined) env.COLLIE_PACK_TIMEOUT_MS = String(pack.timeoutMs);
   }
   return env;
 }

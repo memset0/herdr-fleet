@@ -31,11 +31,25 @@ export interface FleetAuthConfig {
   readonly rateLimit: FleetRateLimitConfig;
 }
 
+/**
+ * The lead's own pack timing, handed to Collie as the two variables it already reads.
+ *
+ * Not invented here: `COLLIE_POLL_MS` and `COLLIE_PACK_TIMEOUT_MS` are upstream's, and upstream
+ * clamps the budget to a fraction of the poll interval. This is the place to STATE them, because a
+ * plugin the Herdr runtime launches has no per-plugin environment and there was nowhere else.
+ */
+export interface FleetPackTimingConfig {
+  readonly pollMs?: number;
+  readonly timeoutMs?: number;
+}
+
 export interface FleetGatewayConfig {
   readonly listen: { readonly host: "127.0.0.1" | "::1"; readonly port: number };
   readonly public: FleetPublicConfig;
   readonly auth: FleetAuthConfig;
   readonly proxy: { readonly clientIpHeader: string };
+  /** Absent unless the configuration states it; an omitted section leaves Collie's defaults alone. */
+  readonly pack?: FleetPackTimingConfig;
 }
 
 export interface FleetSchema1LeadConfig extends FleetGatewayConfig {
@@ -223,6 +237,29 @@ function rateLimit(value: JsonValue | undefined): FleetRateLimitConfig {
   };
 }
 
+/**
+ * The optional `[pack]` section.
+ *
+ * Both bounds are the ones upstream itself enforces, restated here so a typo fails at load rather
+ * than at the first sweep. A budget larger than the poll interval allows is NOT rejected: upstream's
+ * own clamp decides what is granted and says so in its log, and refusing it here would hide the
+ * operator's intent behind a second opinion about the same arithmetic.
+ */
+function packTimingConfig(value: JsonValue | undefined): FleetPackTimingConfig | undefined {
+  if (value === undefined) return undefined;
+  const raw = table(value, "pack");
+  exactKeys(raw, ["poll_ms", "timeout_ms"], "pack");
+  const pollMs = raw.poll_ms === undefined ? undefined : integer(raw.poll_ms, "pack.poll_ms", 250, 600_000);
+  const timeoutMs =
+    raw.timeout_ms === undefined ? undefined : integer(raw.timeout_ms, "pack.timeout_ms", 1, 600_000);
+  if (pollMs === undefined && timeoutMs === undefined) throw new Error("pack states neither poll_ms nor timeout_ms");
+  const timing: FleetPackTimingConfig = {
+    ...(pollMs === undefined ? undefined : { pollMs }),
+    ...(timeoutMs === undefined ? undefined : { timeoutMs }),
+  };
+  return timing;
+}
+
 function proxyConfig(value: JsonValue | undefined): FleetGatewayConfig["proxy"] {
   const raw = value === undefined ? {} : table(value, "proxy");
   exactKeys(raw, ["client_ip_header"], "proxy");
@@ -376,7 +413,9 @@ function gatewayConfig(root: JsonObject): FleetGatewayConfig {
   if (!/^[A-Za-z0-9_.-]{3,64}$/.test(normalized.auth.username)) {
     throw new Error("auth.username must be 3 to 64 safe characters");
   }
-  return normalized;
+  const pack = packTimingConfig(root.pack);
+  if (pack === undefined) return normalized;
+  return { ...normalized, pack };
 }
 
 function assertDistinctEndpoints(config: FleetLeadConfig): void {
@@ -386,7 +425,7 @@ function assertDistinctEndpoints(config: FleetLeadConfig): void {
 }
 
 function parseSchema1(root: JsonObject): FleetSchema1LeadConfig {
-  exactKeys(root, ["schema_version", "role", "listen", "public", "collie", "auth", "proxy"], "fleet.toml");
+  exactKeys(root, ["schema_version", "role", "listen", "public", "collie", "auth", "proxy", "pack"], "fleet.toml");
   if (root.role !== "lead") {
     throw new Error(root.role === "peer" ? "role peer is not supported in schema version 1" : "role must be lead");
   }
@@ -433,6 +472,7 @@ function parseSchema2(root: JsonObject): FleetNativePackConfig {
       "auth",
       "proxy",
       "reachability",
+      "pack",
     ],
     "fleet.toml",
   );

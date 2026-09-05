@@ -549,6 +549,7 @@ export const ko: Dictionary = {
   "connection.host.lastSeen": "마지막 확인 {time}",
   "connection.host.neverSeen": "연결 이력 없음",
   "connection.host.unreachablePlain": "접근 불가",
+  "connection.host.slowLink": "느린 링크",
   "connection.host.unreachableSuffix": "접근 불가 · {label}",
   "connection.host.incompatible": "호환 불가",
   "connection.host.lead": "lead",

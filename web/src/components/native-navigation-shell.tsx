@@ -15,6 +15,7 @@ import { useLocation, useNavigate, useParams, useRevalidator } from "react-route
 
 import {
   deriveNavigationTree,
+  hostFaultSinks,
   type NavigationHostFault,
   type NavigationPaneInput,
   type NavigationSubject,
@@ -145,9 +146,24 @@ export function NativeNavigationShell({
       if (server.isLead) continue;
       if (server.protocol === "incompatible") {
         faults.set(server.id, "incompatible");
-      } else if (!server.reachable && data.ts > 0 && data.ts - server.lastSeenAt > MISSED_SWEEP_MS) {
-        faults.set(server.id, "refused");
+        continue;
       }
+      if (server.reachable) continue;
+      // A ZERO RECEIPT IS NOT AN OLD ONE. `lastSeenAt` of 0 means the lead has never heard from this
+      // member at all, and subtracting it yields an age of thirty years, which cleared the threshold
+      // below instantly — so a member enrolled a moment ago, or one whose lead had just restarted,
+      // was called a refusal on its first sweep with none of the corroboration this rule exists to
+      // require. It is still arriving, and the rail says that instead. `lib/host-health.ts` states
+      // the same three-state distinction for every other surface; this one had rolled its own.
+      if (server.lastSeenAt <= 0) {
+        faults.set(server.id, "unknown");
+        continue;
+      }
+      // A refusal the receipt does not corroborate is one missed sweep, which on a link a WAN away is
+      // an ordinary cold handshake, not an outage. The lead itself says so — it holds a slow-link
+      // note beside a member it still considers reachable — and calling that "unreachable" is the
+      // flap this threshold exists to stop.
+      faults.set(server.id, data.ts > 0 && data.ts - server.lastSeenAt > MISSED_SWEEP_MS ? "refused" : "slow");
     }
     return faults;
   }, [data.servers, data.ts]);
@@ -157,7 +173,7 @@ export function NativeNavigationShell({
   // present only in the rows sorts after the roster's, by id, rather than vanishing.
   const hostIds = useMemo(() => {
     const rank = (server: { id: string; isLead: boolean }): number =>
-      hostFaults.has(server.id) ? 2 : server.isLead ? 0 : 1;
+      hostFaultSinks(hostFaults.get(server.id)) ? 2 : server.isLead ? 0 : 1;
     const ordered = (data.servers ?? [])
       .toSorted((a, b) => rank(a) - rank(b))
       .map((server) => server.id);

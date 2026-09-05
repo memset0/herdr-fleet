@@ -557,6 +557,7 @@ export const de: Dictionary = {
   "connection.host.lastSeen": "zuletzt gesehen {time}",
   "connection.host.neverSeen": "nie gesehen",
   "connection.host.unreachablePlain": "nicht erreichbar",
+  "connection.host.slowLink": "langsame Verbindung",
   "connection.host.unreachableSuffix": "nicht erreichbar · {label}",
   "connection.host.incompatible": "inkompatibel",
   "connection.host.lead": "lead",
