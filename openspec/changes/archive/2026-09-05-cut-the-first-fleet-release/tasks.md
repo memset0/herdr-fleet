@@ -15,10 +15,17 @@
 
 ## 3. Move the branches
 
-- [ ] 3.1 Rename the previous generation's branch to the archival name that states its own release and the Collie release it carried, and verify its commits and tags are untouched.
-- [ ] 3.2 Rename the development branch to the default name, verify the remote's default branch moved with it, and verify no commit was rewritten and no branch force-updated.
-- [ ] 3.3 Update every consumer that resolves the development branch by name, and verify a fresh clone arrives on the development line.
+> **Done by the owner on 2026-09-05, with one deviation recorded rather than corrected.** The
+> archival branch is `v0.20.1-collie-0.36.1`; that generation's own last release was `2.10.1`
+> (`herdr-plugin.toml` and its newest changelog heading both say so), so the name transposes the
+> digits. The owner was told and chose to leave it: the name is not read by anything, and renaming a
+> branch again to fix a label costs more than the label is worth. Every commit and tag on it is
+> untouched, which is what the requirement is actually about.
+
+- [x] 3.1 Rename the previous generation's branch to the archival name that states its own release and the Collie release it carried, and verify its commits and tags are untouched.
+- [x] 3.2 Rename the development branch to the default name, verify the remote's default branch moved with it, and verify no commit was rewritten and no branch force-updated.
+- [x] 3.3 Update every consumer that resolves the development branch by name, and verify a fresh clone arrives on the development line.
 
 ## 4. Verify and archive
 
-- [ ] 4.1 Deploy the exact tagged commit to existing staging, verify readiness and that the pack is unchanged, then sync, archive, push the archive separately and redeploy the archive HEAD.
+- [x] 4.1 Deploy the exact tagged commit to existing staging, verify readiness and that the pack is unchanged, then sync, archive, push the archive separately and redeploy the archive HEAD.

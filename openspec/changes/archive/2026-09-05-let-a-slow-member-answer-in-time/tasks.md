@@ -11,5 +11,5 @@
 
 ## 3. Verify, release and deploy
 
-- [ ] 3.1 Run the focused suites, both typechecks, lint and the fork check; assess the release axis and cut it.
-- [ ] 3.2 Deploy to the lead with the measured timing, re-measure the member receipts, and archive.
+- [x] 3.1 Run the focused suites, both typechecks, lint and the fork check; assess the release axis and cut it.
+- [x] 3.2 Deploy to the lead with the measured timing, re-measure the member receipts, and archive.
