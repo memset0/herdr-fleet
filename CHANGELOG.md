@@ -19,19 +19,21 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-09-05
+
 ### Added
 
-- Adopting a newer Collie release now follows a written procedure with a preflight: `check-fork.ts --target <tag>` verifies the release identity and merge base, refuses a dirty tree, and reports every port the release disturbs and every owned path it now ships.
-- `FORK.toml` records which upstream release each invasive port was last reviewed against, and the boundary check fails while any port lags the adopted release.
+- Adopting a newer Collie release now follows a written procedure with a preflight: `check-fork.ts --target <tag>` verifies the release identity and merge base, refuses a dirty tree, and reports every port the release disturbs and every owned path it now ships. ([252ee14](https://github.com/memset0/herdr-fleet/commit/252ee14))
+- `FORK.toml` records which upstream release each invasive port was last reviewed against, and the boundary check fails while any port lags the adopted release. ([252ee14](https://github.com/memset0/herdr-fleet/commit/252ee14))
 
 ### Changed
 
-- The Pane and history screens fill the route column between the rails again, declining the centred 768px column Collie 1.5.1 introduced: the rails already claim the width that cap exists to fill, so inside them it took width from the mirror. Both lines are now declared in `FORK.toml`, so a later release is reported rather than inherited.
-- Collie's retained changelog is accumulative rather than byte-identical, so entries upstream truncates away are kept below one seam marker.
-- The fork boundary check runs in CI.
-- Adopted Collie 1.5.1, which brings upstream's pack-update orchestration, its updates page and update band, a QR pairing flow and a long tail of fixes. All eighteen invasive ports were reviewed against it and kept.
-- Adopted Collie 1.5.2: a Traditional Chinese locale, bounded speech-to-text provider lifecycles, a pre-commit hook suite, clipped and muted terminal rules, and a pane column that grows past 768px upstream-side. All nineteen invasive ports were reviewed against it and kept, including the two that decline that column.
-- The Traditional Chinese dictionary carries this fork's own strings, so the new locale is complete rather than partial.
+- The Pane and history screens fill the route column between the rails again, declining the centred 768px column Collie 1.5.1 introduced: the rails already claim the width that cap exists to fill, so inside them it took width from the mirror. Both lines are now declared in `FORK.toml`, so a later release is reported rather than inherited. ([81ecde9](https://github.com/memset0/herdr-fleet/commit/81ecde9))
+- Collie's retained changelog is accumulative rather than byte-identical, so entries upstream truncates away are kept below one seam marker. ([252ee14](https://github.com/memset0/herdr-fleet/commit/252ee14))
+- The fork boundary check runs in CI. ([252ee14](https://github.com/memset0/herdr-fleet/commit/252ee14))
+- Adopted Collie 1.5.1, which brings upstream's pack-update orchestration, its updates page and update band, a QR pairing flow and a long tail of fixes. All eighteen invasive ports were reviewed against it and kept. ([857660b](https://github.com/memset0/herdr-fleet/commit/857660b))
+- Adopted Collie 1.5.2: a Traditional Chinese locale, bounded speech-to-text provider lifecycles, a pre-commit hook suite, clipped and muted terminal rules, and a pane column that grows past 768px upstream-side. All nineteen invasive ports were reviewed against it and kept, including the two that decline that column. ([36aa7f2](https://github.com/memset0/herdr-fleet/commit/36aa7f2))
+- The Traditional Chinese dictionary carries this fork's own strings, so the new locale is complete rather than partial. ([36aa7f2](https://github.com/memset0/herdr-fleet/commit/36aa7f2))
 
 ## [3.1.1] - 2026-09-05
 
