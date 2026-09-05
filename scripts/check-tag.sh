@@ -2,9 +2,9 @@
 # Release-tag gate for Collie.
 #
 # A version is CUT when the three version files and the newest `## [x.y.z]` heading in CHANGELOG.md
-# agree on it (scripts/check-version.sh proves that). A version is PUBLISHED when a `v<x.y.z>` tag
-# reaches the remote, because .github/workflows/release.yml triggers on `push: tags: ["v*.*.*"]` and
-# nothing else creates the GitHub Release the in-app update banner links to.
+# agree on it (scripts/check-version.sh proves that). A version is MARKED when a `v<x.y.z>` tag
+# reaches the remote — that is the only record of which commit the version was cut at, and this fork
+# publishes no GitHub Release for it (AGENTS.md -> "Versioning and releases").
 #
 # Those two steps were never joined. Betas 33 to 41 were cut and never tagged — not even locally —
 # so nine consecutive releases exist only as CHANGELOG headings and no tester could install any of
@@ -91,8 +91,10 @@ fi
     echo "    git tag -a v${version} ${sha} -m \"Collie ${version}\""
   done <<<"$missing"
   echo
-  echo "  Then push the tag with the release: git push --follow-tags"
-  echo "  The tag is what .github/workflows/release.yml waits for; without it the version exists"
-  echo "  only in CHANGELOG.md and no operator can install it."
+  echo "  Then push it by name with the release: git push origin <branch> v<x.y.z>"
+  echo "  Never --follow-tags or --tags here: this checkout carries upstream's own tags and those"
+  echo "  options push every one the remote is missing."
+  echo "  Without the tag the version exists only in CHANGELOG.md, with no record of the commit it"
+  echo "  was cut at."
 } >&2
 exit 1

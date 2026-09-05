@@ -134,15 +134,24 @@ Doc-only changes (`*.md`) need neither a bump nor a CHANGELOG line. This is enfo
   `## [Unreleased]` section still has lines in it. Escape hatch for a single commit:
   `SKIP_VERSION_CHECK=1 git commit …` (every `SKIP_*` hatch is listed under *Linting* below).
 
-**Publish every release you cut — tag it when you push it.** Cutting a release means the three
-version files + the newest numbered `CHANGELOG.md` heading agree on `x.y.z`, and `## [Unreleased]`
-is empty again (the release recipe above). A cut version that never gets a tag is not a release at
-all: `.github/workflows/release.yml` triggers on
-`push: tags: ["v*.*.*"]` and nothing else creates the GitHub Release the in-app update banner links
-to, so an untagged version exists only as a CHANGELOG heading and nobody can install it. So when
-that release lands and you push, **always push a matching annotated git tag with it** —
+**Tag every release you cut — and publish nothing.** Cutting a release means the three version files
++ the newest numbered `CHANGELOG.md` heading agree on `x.y.z`, and `## [Unreleased]` is empty again
+(the release recipe above). So when that release lands and you push, **always push a matching
+annotated git tag with it** —
 `git tag -a vX.Y.Z -m "Herdr Fleet X.Y.Z" && git push origin <branch> vX.Y.Z`. One `v<x.y.z>` tag per
-shipped version on the remote.
+shipped version on the remote. The tag says this version exists in this history at a known commit;
+`scripts/check-tag.sh` and the pre-push warning exist to make sure one is cut.
+
+**This product does not publish GitHub Releases, and an agent never creates one.** Upstream runs
+`.github/workflows/release.yml` on `push: tags: ["v*.*.*"]`, so there a tag publishes without anyone
+deciding to; here that trigger is replaced by `workflow_dispatch`, and the change is deliberate — do
+not restore it during a sync. Upstream's reasoning does not carry: a Release exists so a user can
+install the version, and both readers of these assets — the in-app update banner and `collie
+update`'s binary path — read `AltanS/collie`, because `bridge/index.ts` defaults the update repo
+there and nothing in this fork sets `COLLIE_UPDATE_REPO`. This deployment installs and updates as a
+Herdr plugin. A version with a tag and no Release is therefore a shipped release here, not a broken
+one. If a future change would make this product read its own Releases, it must restore a way to
+publish them or not be made.
 
 **Name the tag on the push line. Never `git push --follow-tags` here**, and never `--tags`. This
 checkout carries Collie's own release tags — it is a reapplication of Collie, so its history is
@@ -167,8 +176,9 @@ exists to stop repeating. Their commits are superseded by the betas that followe
 today would claim a release nobody ever tested.
 
 **Update notice (user-facing).** The app's in-app update banner links to the newest release's GitHub
-page and shows the command to run. Pushing a `v*` tag auto-creates that GitHub Release (with the
-commands) via `.github/workflows/release.yml`. **On a Herdr-managed install, always express
+page and shows the command to run — on `AltanS/collie`, which is where its check reads and which
+publishes its own Releases. Nothing here does; see the paragraph above. **On a Herdr-managed install,
+always express
 user-facing update/restart instructions as Herdr plugin actions** — `herdr plugin action invoke
 update --plugin herdr.collie` (or `restart`) — never `bin/collie …` / `systemctl … collie`, which
 depend on the caller's cwd and the unit name; the Herdr action runs from anywhere. A **binary

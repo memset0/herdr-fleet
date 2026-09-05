@@ -6,9 +6,20 @@ name: Release
 # verify a download by hand with `sha256sum -c`. The in-app update banner links here, and
 # `scripts/install.sh` and `collie update`'s binary path both read these assets — over constructed
 # URLs only, so nothing here may ever emit a download URL into a document (M14/01 §2.1).
+# NO PUSH TRIGGER, AND THAT IS THE POINT. Upstream runs this on `push: tags: ["v*.*.*"]`, so a tag
+# publishes without anyone deciding to. This fork does not publish GitHub Releases at all: it is
+# installed as a Herdr plugin, and both consumers of these assets — the in-app update banner and the
+# binary updater — read `AltanS/collie` rather than this repository (bridge/index.ts defaults the
+# update repo there and nothing here sets COLLIE_UPDATE_REPO). So the automation had a cost and no
+# reader. The cost was collected once: the 3.0.1 push swept five of upstream's own tags to this
+# remote, and on a push trigger each would have built a Release for a Collie version this product
+# never shipped, under this product's name.
+#
+# The recipe below is upstream's and is kept verbatim — this changes WHEN it runs, never what it
+# builds. `workflow_dispatch` leaves it available to a person at the Actions tab; an agent must not
+# invoke it. Do not restore the push trigger during an upstream sync.
 on:
-  push:
-    tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   contents: write # create the release

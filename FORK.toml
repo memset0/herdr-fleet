@@ -415,3 +415,17 @@ verify = [
   "web/src/components/composer.test.tsx"
 ]
 reason = "The component this capability changes is attributed to native-manual-pane-fit-port, because this manifest allows one entry per path; these are the two remaining upstream paths it touches, and they are here rather than there because what they hold is this capability's contract rather than that entry's. The suite is the boundary that matters at a sync: upstream's own cases assert the shared slot — the microphone as the only round button, and the swap on the first and last character typed — and those cases are the specification of the limit this fork removes, so they are rewritten rather than kept beside their replacements. Every case for behaviour that did not change is untouched: the absent provider, the unavailable provider wearing the bridge's reason, the caret splice, the mid-recording discard on a pane change, the hands-free send and its fallback. The document is corrected for the same reason and no other — it states in words that the microphone is the trailing control for as long as the box is empty, which is the sentence this change makes false."
+
+[[invasive]]
+id = "no-automatic-release-publication"
+intent = "Stop a pushed tag from publishing a GitHub Release, without changing what the release recipe builds."
+strategy = "adapt"
+review = "every-upstream-sync"
+paths = [
+  ".github/workflows/release.yml#workflow_dispatch",
+  "scripts/check-tag.sh#MARKED"
+]
+verify = [
+  "scripts/check-tag.test.sh"
+]
+reason = "The trigger's ABSENCE is the change, which is the one kind of edit a sync restores without noticing: upstream's file runs on `push: tags: [\"v*.*.*\"]`, and taking that back reinstates automatic publication in a product that publishes nothing. Every job below the trigger is upstream's, verbatim — this decides when the workflow runs and never what it builds, and `workflow_dispatch` keeps it available to a person. Upstream's reasoning for publishing does not carry here: a Release exists so a user can install the version, and both readers of these assets — the in-app update banner and the binary updater — read AltanS/collie, because bridge/index.ts defaults the update repo there and nothing in this fork sets COLLIE_UPDATE_REPO. This deployment installs and updates as a Herdr plugin. The cost of the automation was collected once, on the 3.0.1 push, which swept five of upstream's own tags to this remote where a push trigger would have built a Release for a Collie version this product never shipped, under this product's name. The tag checker is here too and not in an entry of its own, because it says the same thing from the other side: it called a pushed tag PUBLISHED, and it printed `git push --follow-tags` as the remedy — the exact option that swept those five tags. It now calls a pushed tag MARKED, names the branch and tag on the push line, and says why the sweeping options are refused. Its own suite pins its behaviour and is unchanged."

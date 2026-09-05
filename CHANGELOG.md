@@ -23,6 +23,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 - Renaming is one surface with one save, whether it is reached from a key or from the row-actions menu.
 - Every question the keyboard asks is one shared panel, and a confirmation's `y/N` sits in its heading rather than beside the field.
 - Closing a tab or a pane from the keyboard now asks on the command bar's panel — `y/N`, already holding `y`, so Enter confirms and anything else declines.
+- This product no longer publishes GitHub Releases: a pushed tag marks the version and triggers nothing, and the tag check says so.
 
 ## [3.0.1] - 2026-09-04
 
