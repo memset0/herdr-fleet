@@ -241,9 +241,9 @@ describe("finding a Pane by any of the four facts that name it", () => {
     // the Space. Same element, same width: the operator can see WHY the row is in the list.
     const { view, input } = search();
     await user.type(input, "quicksand");
-    const row = options(view.container)[0];
-    expect(row?.textContent).toContain("quicksand");
-    expect(row?.textContent).not.toContain("zephyr");
+    const matched = options(view.container)[0];
+    expect(matched?.textContent).toContain("quicksand");
+    expect(matched?.textContent).not.toContain("zephyr");
     view.unmount();
   });
 
@@ -251,8 +251,8 @@ describe("finding a Pane by any of the four facts that name it", () => {
     const user = userEvent.setup();
     const { view, input } = search();
     await user.type(input, "alpha");
-    const row = options(view.container)[0];
-    expect(row?.textContent).toContain("zephyr");
+    const matched = options(view.container)[0];
+    expect(matched?.textContent).toContain("zephyr");
     view.unmount();
   });
 });
