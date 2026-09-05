@@ -18,14 +18,16 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-09-05
+
 ### Changed
 
-- A shortcut hands the caret back to the composer — same offset where it took one, end of the field otherwise, and end of the field after a command that moved you to another pane.
-- The pane switcher matches a pane on its host, its space, its tab and its own name, and the row shows which of them it matched.
-- Renaming is one surface with one save, whether it is reached from a key or from the row-actions menu.
-- Every question the keyboard asks is one shared panel, and a confirmation's `y/N` sits in its heading rather than beside the field.
-- Closing a tab or a pane from the keyboard now asks on the command bar's panel — `y/N`, already holding `y`, so Enter confirms and anything else declines.
-- This product no longer publishes GitHub Releases: a pushed tag marks the version and triggers nothing, and the tag check says so.
+- A shortcut hands the caret back to the composer — same offset where it took one, end of the field otherwise, and end of the field after a command that moved you to another pane. ([09e8efe](https://github.com/memset0/herdr-fleet/commit/09e8efe))
+- The pane switcher matches a pane on its host, its space, its tab and its own name, and the row shows which of them it matched. ([09e8efe](https://github.com/memset0/herdr-fleet/commit/09e8efe))
+- Renaming is one surface with one save, whether it is reached from a key or from the row-actions menu. ([26d60b5](https://github.com/memset0/herdr-fleet/commit/26d60b5))
+- Every question the keyboard asks is one shared panel, and a confirmation's `y/N` sits in its heading rather than beside the field. ([f41ee02](https://github.com/memset0/herdr-fleet/commit/f41ee02))
+- Closing a tab or a pane from the keyboard now asks on the command bar's panel — `y/N`, already holding `y`, so Enter confirms and anything else declines. ([78166b0](https://github.com/memset0/herdr-fleet/commit/78166b0))
+- This product no longer publishes GitHub Releases: a pushed tag marks the version and triggers nothing, and the tag check says so. ([fac087e](https://github.com/memset0/herdr-fleet/commit/fac087e))
 
 ## [3.0.1] - 2026-09-04
 
