@@ -105,6 +105,20 @@ notes rather than withholding the release. **A MAJOR is the owner's, always, and
 agent that believes the sum sits on the MAJOR axis stops and says so; it never cuts one, and it never
 softens one into a MINOR to avoid stopping.
 
+**Several agents commit here at once, and a release sweeps up whatever has landed.** The version
+moves on the *sum* of the Unreleased entries, so the agent cutting it will almost always be
+publishing other agents' commits alongside its own — including work whose author is still mid-change.
+**That is expected and allowed.** Do not wait for a quiet tree, do not ask each author, and do not
+try to release only your own lines: a release is a line drawn across the branch, not a claim of
+authorship. What the release commit owes them is accuracy — every landed entry present, each with the
+hash of the commit that made it — not exclusion.
+
+The one thing that IS yours to check first: **where the version line has actually got to.** Read the
+newest tag on the remote (`git ls-remote --tags origin`), not just the three version files, and cut
+the number after it. Two agents that both bumped from the same local view produce two commits
+claiming one version, and the second one to push has to be rewritten. The files can also sit behind a
+tag another agent pushed minutes ago.
+
 **Assess every verified change against that axis in the turn that finished it**, not when someone
 next remembers. A change that has passed its gates either warrants a release now or it does not, and
 that answer is part of finishing it. Unreleased lines piling up behind an assessment nobody made is
