@@ -40,7 +40,10 @@
 - [x] 5.1 Run lint, both typechecks, `bun run test:fork`, `check-version.sh` and the private-fact
   guard; verify all pass
 - [x] 5.2 Run the suites the adoption can reach and verify they pass; report any that cannot complete
-- [ ] 5.3 Verify whether `b88ebb4` fixes the `collie-cli.test.sh` failure inherited from `v1.5.1`
+- [x] 5.3 Verify whether `b88ebb4` fixes the `collie-cli.test.sh` failure inherited from `v1.5.1`.
+  It does — the tailnet-probe assertion passes. What remains on this machine is not a defect: the
+  LaunchAgent plist case asserts mode 644 and this host's `umask 077` writes 600, so the suite
+  passes clean under `umask 022`
 
 ## 6. Release and rollout
 
