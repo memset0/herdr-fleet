@@ -20,6 +20,8 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Changed
 
+- A shortcut hands the caret back to the composer — same offset where it took one, end of the field otherwise, and end of the field after a command that moved you to another pane.
+- The pane switcher matches a pane on its host, its space, its tab and its own name, and the row shows which of them it matched.
 - Renaming is one surface with one save, whether it is reached from a key or from the row-actions menu.
 - Every question the keyboard asks is one shared panel, and a confirmation's `y/N` sits in its heading rather than beside the field.
 - Closing a tab or a pane from the keyboard now asks on the command bar's panel — `y/N`, already holding `y`, so Enter confirms and anything else declines.

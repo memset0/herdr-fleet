@@ -23,6 +23,7 @@ interface RosterEntryDraft {
   agent?: string;
   label: string;
   context?: string;
+  tabLabel?: string;
   lastSeenAt?: number;
   favorite: boolean;
 }
@@ -42,6 +43,9 @@ export function toRosterEntry(pane: AgentView): RosterEntry {
     context: pane.workspaceLabel,
     favorite: agentFavoriteStore.isFavorite(pane),
   };
+  // Denormalised bridge-side, and absent when the Tab's name says nothing (Herdr numbers an
+  // unlabelled tab). Absent means it is not a fact to search on, not that it is the empty string.
+  if (pane.tabLabel !== undefined) entry.tabLabel = pane.tabLabel;
   if (pane.host !== undefined) entry.host = pane.host;
   if (pane.session !== undefined) entry.session = pane.session;
   if (pane.kind !== "shell") entry.agent = pane.agent;

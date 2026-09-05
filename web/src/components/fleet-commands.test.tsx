@@ -379,3 +379,24 @@ describe("what a pending prefix shows", () => {
   });
 });
 
+describe("binding the command bar itself", () => {
+  // `open-command-bar` is dispatched ahead of every adapter, so a document binding IT travels a
+  // different path from one binding a command with an action. That path needed its own test.
+  it("opens on a chord the operator bound to it", async () => {
+    const user = userEvent.setup();
+    render(
+      <FleetCommandsProvider
+        adapters={{}}
+        available={() => true}
+        roster={derivePaneRoster({ triaged: [], shellPanes: [] })}
+        onOpenPane={vi.fn()}
+        overrides={new Map<CommandId, readonly Binding[]>([["open-command-bar", parsed("Alt+Q")]])}
+      >
+        <div>page</div>
+      </FleetCommandsProvider>,
+    );
+    expect(document.querySelector('[data-slot="fleet-command-bar"]')).toBeNull();
+    await user.keyboard("{Alt>}q{/Alt}");
+    expect(document.querySelector('[data-slot="fleet-command-bar"]')).not.toBeNull();
+  });
+});

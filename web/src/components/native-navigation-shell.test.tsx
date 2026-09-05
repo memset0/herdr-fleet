@@ -561,34 +561,53 @@ describe("the shell's command layer", () => {
 // them — which is exactly what happened: a document written to disk, served, read and validated, and
 // never applied. These serve a document over the fake network and then press a key.
 describe("the operator's own settings document", () => {
-  function serve(document: JsonValue) {
+  /**
+   * Serve a document, and answer a promise that settles once the application has actually asked for
+   * it. Awaiting that is what makes these deterministic. The alternative — pressing the key inside a
+   * `waitFor` until it works — passes alone and times out in a full-file run, because the default
+   * budget is one second and this fetch, parse and re-render take longer on a loaded machine.
+   */
+  function serve(document: JsonValue): Promise<void> {
+    let asked: () => void = () => undefined;
+    const requested = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
     server.use(
-      http.get("/fleet/api/settings", () =>
-        HttpResponse.json({ version: "v1", document: JSON.stringify(document), risky: [] }),
-      ),
+      http.get("/fleet/api/settings", () => {
+        asked();
+        return HttpResponse.json({ version: "v1", document: JSON.stringify(document), risky: [] });
+      }),
     );
+    return requested;
   }
 
   it("makes a binding it adds actually fire", async () => {
     const user = userEvent.setup();
     // `open-fleet-settings` ships on `Prefix+S` and on no direct chord at all.
-    serve({ schemaVersion: 1, shortcuts: { bindings: { "open-fleet-settings": ["Alt+Q"] } } });
-    const shell = renderShell();
-    await waitFor(() => expect(document.querySelector('[data-slot="native-navigation-shell"]')).not.toBeNull());
-
-    await waitFor(async () => {
-      await user.keyboard("{Alt>}q{/Alt}");
-      expect(shell.router.state.location.pathname).toBe("/settings");
+    const requested = serve({
+      schemaVersion: 1,
+      shortcuts: { bindings: { "open-fleet-settings": ["Alt+Q"] } },
     });
+    const shell = renderShell();
+    await requested;
+
+    await waitFor(
+      async () => {
+        await user.keyboard("{Alt>}q{/Alt}");
+        expect(shell.router.state.location.pathname).toBe("/settings");
+      },
+      { timeout: 8000 },
+    );
   });
 
   it("makes a default it removes stop firing", async () => {
     const user = userEvent.setup();
-    serve({ schemaVersion: 1, shortcuts: { bindings: { "open-fleet-settings": [] } } });
+    const requested = serve({ schemaVersion: 1, shortcuts: { bindings: { "open-fleet-settings": [] } } });
     const shell = renderShell();
-    // Give the document time to land before pressing the key it is meant to have unbound.
+    // The document has to have LANDED before the key it is meant to have unbound is pressed —
+    // otherwise this passes against the shipped defaults not yet replaced.
+    await requested;
     await waitFor(() => expect(document.querySelector('[data-slot="native-navigation-shell"]')).not.toBeNull());
-    await new Promise((resolve) => setTimeout(resolve, 50));
 
     await user.keyboard("{Control>}b{/Control}");
     await user.keyboard("s");
@@ -597,15 +616,41 @@ describe("the operator's own settings document", () => {
 
   it("makes a prefix it names the one that arms", async () => {
     const user = userEvent.setup();
-    serve({ schemaVersion: 1, shortcuts: { prefix: "Ctrl+A" } });
+    const requested = serve({ schemaVersion: 1, shortcuts: { prefix: "Ctrl+A" } });
     const shell = renderShell();
-    await waitFor(() => expect(document.querySelector('[data-slot="native-navigation-shell"]')).not.toBeNull());
+    await requested;
 
-    await waitFor(async () => {
-      await user.keyboard("{Control>}a{/Control}");
-      await user.keyboard("s");
-      expect(shell.router.state.location.pathname).toBe("/settings");
+    await waitFor(
+      async () => {
+        await user.keyboard("{Control>}a{/Control}");
+        await user.keyboard("s");
+        expect(shell.router.state.location.pathname).toBe("/settings");
+      },
+      { timeout: 8000 },
+    );
+  });
+
+  it("opens the command bar on a chord the operator's own document adds", async () => {
+    // The exact case that was reported: `open-command-bar` is special-cased in the dispatcher, so a
+    // document binding it is a different path from one binding a navigating command.
+    const user = userEvent.setup();
+    const requested = serve({
+      schemaVersion: 1,
+      shortcuts: {
+        prefix: "Ctrl+B",
+        bindings: { "open-command-bar": ["Ctrl+Shift+P", "Prefix+?", "Ctrl+Q", "Alt+Q"] },
+      },
     });
+    renderShell();
+    await requested;
+
+    await waitFor(
+      async () => {
+        await user.keyboard("{Alt>}q{/Alt}");
+        expect(screen.queryByRole("dialog", { name: "Fleet commands" })).not.toBeNull();
+      },
+      { timeout: 8000 },
+    );
   });
 
   it("keeps every shipped default when no document is served", async () => {

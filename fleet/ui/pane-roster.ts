@@ -39,11 +39,39 @@ export interface RosterEntry {
   readonly agent?: string;
   /** What the row is called — the operator's own name where they gave one. */
   readonly label: string;
-  /** Where the work is, shown beside the label. */
+  /** Where the work is, shown beside the label. The Space's own name. */
   readonly context?: string;
+  /** The Tab this Pane sits in, where the Tab says anything. Searchable, and shown when matched. */
+  readonly tabLabel?: string;
   /** When this Pane was last seen, used to order the shell section. */
   readonly lastSeenAt?: number;
   readonly favorite: boolean;
+}
+
+/**
+ * What a Pane search matches, in a fixed order.
+ *
+ * FOUR FACTS NAME A PANE and an operator remembers whichever one they were last looking at — the
+ * machine it is on, the Space, the Tab, or what the Pane itself is called. Matching only the last of
+ * those made the switcher useless for the two questions it is most often opened with ("the one on
+ * the other box", "the one in the deploy tab"), so all four are hit conditions.
+ *
+ * THE ORDER IS PART OF THE CONTRACT. `fuzzyMatchAny` answers which field it scored, and the row uses
+ * that index to show the operator WHY it is in the list — so a caller reads the index through
+ * {@link rosterSearchField} rather than counting positions in this array.
+ */
+export const ROSTER_SEARCH_FIELD_ORDER = ["label", "context", "tabLabel", "host"] as const;
+
+export type RosterSearchField = (typeof ROSTER_SEARCH_FIELD_ORDER)[number];
+
+/** The four strings, in {@link ROSTER_SEARCH_FIELD_ORDER}. An absent fact searches as empty. */
+export function rosterSearchFields(entry: RosterEntry): readonly string[] {
+  return [entry.label, entry.context ?? "", entry.tabLabel ?? "", entry.host ?? ""];
+}
+
+/** Which field an index from `fuzzyMatchAny` names, or `null` for an index from somewhere else. */
+export function rosterSearchField(index: number): RosterSearchField | null {
+  return ROSTER_SEARCH_FIELD_ORDER[index] ?? null;
 }
 
 export interface RosterSection {

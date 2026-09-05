@@ -38,6 +38,26 @@ function roster(): PaneRoster {
   });
 }
 
+/**
+ * The same three Panes, each carrying a different one of the four searchable facts, and none of
+ * them mentioning the others in its own name. A query that finds one here found it by the fact the
+ * test named and by nothing else.
+ */
+function namedRoster(): PaneRoster {
+  return derivePaneRoster({
+    triaged: [
+      {
+        key: "needs",
+        entries: [
+          entry("p1", "alpha", { host: "orinoco", context: "zephyr", tabLabel: "quicksand" }),
+          entry("p2", "bravo", { host: "danube", context: "mistral", tabLabel: "granite" }),
+        ],
+      },
+    ],
+    shellPanes: [],
+  });
+}
+
 const ROWS = [
   row("open-fleet-settings", ["Prefix+S"], ["Ctrl+B S"]),
   row("next-tab", ["Prefix+N"], ["Ctrl+B N"]),
@@ -178,5 +198,61 @@ describe("FleetCommandBar", () => {
   it("renders nothing at all when closed", () => {
     const { container } = setup("command", { mode: null });
     expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+describe("finding a Pane by any of the four facts that name it", () => {
+  function search() {
+    const view = render(
+      <FleetCommandBar
+        mode="pane"
+        onClose={vi.fn()}
+        rows={ROWS}
+        isAvailable={() => true}
+        roster={namedRoster()}
+        onRun={vi.fn()}
+        onOpenPane={vi.fn()}
+      />,
+    );
+    const input = within(view.container).getByRole<HTMLInputElement>("combobox");
+    return { view, input };
+  }
+
+  it.each([
+    ["the Pane's own name", "alpha"],
+    ["the host it is on", "orinoco"],
+    ["the Space it is in", "zephyr"],
+    ["the Tab it sits in", "quicksand"],
+  ])("matches on %s", async (_what, typed) => {
+    const user = userEvent.setup();
+    const { view, input } = search();
+    await user.type(input, typed);
+    const rows = options(view.container);
+    // Exactly the one Pane carrying that fact — the other row carries the other three facts, so a
+    // second hit would mean the query matched something this test did not name.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("alpha");
+    view.unmount();
+  });
+
+  it("shows the fact it matched on, in the one slot the row already had", async () => {
+    const user = userEvent.setup();
+    // Matched on the Tab, which the row does not normally show — so the row shows the Tab instead of
+    // the Space. Same element, same width: the operator can see WHY the row is in the list.
+    const { view, input } = search();
+    await user.type(input, "quicksand");
+    const row = options(view.container)[0];
+    expect(row?.textContent).toContain("quicksand");
+    expect(row?.textContent).not.toContain("zephyr");
+    view.unmount();
+  });
+
+  it("shows the Space when the match was the Pane's own name", async () => {
+    const user = userEvent.setup();
+    const { view, input } = search();
+    await user.type(input, "alpha");
+    const row = options(view.container)[0];
+    expect(row?.textContent).toContain("zephyr");
+    view.unmount();
   });
 });

@@ -28,6 +28,7 @@ import {
 import type { PaneRoster, RosterEntry } from "../../../fleet/ui/pane-roster.ts";
 import { FleetCommandBar, type CommandBarMode } from "@/components/fleet-command-bar";
 import { FleetPrefixHints } from "@/components/fleet-prefix-hints";
+import { captureComposerCaret, returnFocusToComposer } from "@/lib/fleet-composer-focus";
 import { t } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
 
@@ -104,6 +105,32 @@ function isSelfEvident(id: CommandId): boolean {
     // would be a second copy of what the operator is already looking at.
     id === "close-tab" ||
     id === "close-pane"
+  );
+}
+
+/**
+ * The commands that leave the operator looking at a DIFFERENT draft.
+ *
+ * The distinction only decides where the caret lands afterwards: an offset captured in the composer
+ * of the pane you were on means nothing in the composer of the pane you are on now, so these end at
+ * the end of the field and everything else goes back where it was. A close counts — the pane it
+ * closed is not the pane the app falls back to.
+ */
+function movesPane(id: CommandId): boolean {
+  if (id.startsWith("select-tab-") || id.startsWith("select-agent-")) return true;
+  return (
+    id === "create-tab" ||
+    id === "next-tab" ||
+    id === "previous-tab" ||
+    id === "close-tab" ||
+    id === "next-pane-in-tab" ||
+    id === "previous-pane-in-tab" ||
+    id === "close-pane" ||
+    id === "next-pane" ||
+    id === "previous-pane" ||
+    id === "last-pane" ||
+    id === "next-agent" ||
+    id === "previous-agent"
   );
 }
 
@@ -190,6 +217,10 @@ export function FleetCommandsProvider({
     (id: CommandId, source: CommandSource, bindingLabel?: string) => {
       const command = commandById(id);
       const current = latest.current;
+      // READ FIRST, before anything runs. The keydown that brought us here is still the event being
+      // dispatched, so the composer is still holding the caret the operator pressed the key with;
+      // one `await` later it is on `body` and the offset is gone.
+      const caret = captureComposerCaret();
 
       if (id === "open-command-bar" || id === "open-pane-switcher") {
         setBar(id === "open-command-bar" ? "command" : "pane");
@@ -209,9 +240,16 @@ export function FleetCommandsProvider({
       }
 
       void (async () => {
+        let failed = false;
         try {
           await adapter();
         } catch {
+          failed = true;
+        }
+        // Both ways. A command that threw moved nothing, and the caret it took is owed back just as
+        // much as one that worked.
+        returnFocusToComposer(caret, movesPane(id) ? "end" : "restore");
+        if (failed) {
           // The action's own surface reports what went wrong where it can; this is the floor, so a
           // thrown adapter still tells the operator their key did not do the thing.
           setStatus(t("fleet.command.failed", { name: command.name }), "error");
@@ -306,7 +344,11 @@ export function FleetCommandsProvider({
         isAvailable={isAvailable}
         roster={roster}
         onRun={(id) => invoke(id, "ui")}
-        onOpenPane={onOpenPane}
+        onOpenPane={(entry) => {
+          onOpenPane(entry);
+          // The switcher's own field had the caret; the pane it just chose gets it, at the end.
+          returnFocusToComposer(null, "end");
+        }}
       />
     </FleetCommandsContext.Provider>
   );

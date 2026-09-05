@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { useLocale } from "@/hooks/use-locale";
+import { returnFocusToComposer } from "@/lib/fleet-composer-focus";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -36,9 +37,22 @@ export function FleetPanel({ open, onClose, label, className, children }: FleetP
 
   useEffect(() => {
     if (!open) return;
-    restoreTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const active = document.activeElement;
+    // `body` is not somewhere to give the caret back to — it is what "nowhere" looks like, and it is
+    // exactly what a shortcut leaves behind after the capture listener has eaten the key.
+    restoreTo.current =
+      active instanceof HTMLElement && active !== document.body ? active : null;
     return () => {
-      restoreTo.current?.focus();
+      const previous = restoreTo.current;
+      // Still on screen: it is the field the operator was in, and the browser kept its caret.
+      if (previous !== null && previous.isConnected) {
+        previous.focus();
+        return;
+      }
+      // Otherwise the caret has nowhere to go — nothing held it when this opened, or the pane that
+      // did has since been replaced. Land in the composer rather than on `body`, where the next
+      // character the operator types would simply be lost.
+      returnFocusToComposer(null, "end");
     };
   }, [open]);
 
