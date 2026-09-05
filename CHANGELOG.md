@@ -26,6 +26,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Changed
 
+- The Pane and history screens fill the route column between the rails again, declining the centred 768px column Collie 1.5.1 introduced: the rails already claim the width that cap exists to fill, so inside them it took width from the mirror. Both lines are now declared in `FORK.toml`, so a later release is reported rather than inherited.
 - Collie's retained changelog is accumulative rather than byte-identical, so entries upstream truncates away are kept below one seam marker.
 - The fork boundary check runs in CI.
 - Adopted Collie 1.5.1, which brings upstream's pack-update orchestration, its updates page and update band, a QR pairing flow and a long tail of fixes. All eighteen invasive ports were reviewed against it and kept.

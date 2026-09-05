@@ -1090,34 +1090,32 @@ export function AgentChat({
     <CompactStripLabels>
       {/* `max-w-[100dvw]` is the phone bound and it stays: a mirror line wider than the screen used
           to blow the viewport out sideways and let the whole page pan (85f777b, "viewport blowout").
-          `md:max-w-screen-md` caps the same box at 768px from that breakpoint up, where 768px is by
-          definition no more than 100dvw, so the two bounds never contradict each other; `mx-auto`
-          then centres what is left. `overflow-x-hidden`, `min-w-0` and `w-full` are all still doing
-          the phone's job underneath. */}
-      <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col overflow-x-hidden md:max-w-screen-md">
+
+          DOWNSTREAM PORT — and what is NOT here is the port. Upstream (28255ae) adds
+          `md:max-w-screen-md mx-auto` to centre this box at 768px above the phone breakpoint, because
+          on a 1366px iPad an ~620px mirror left half the screen empty beside a full-width header and
+          composer. That emptiness is upstream's, not ours: this fork spends exactly that space on the
+          two navigation rails, so the cap would apply a SECOND time inside a column the shell has
+          already bounded, and would take width from the mirror rather than from nothing. The rails
+          are the answer to the problem the cap solves. See fleet-native-navigation-sidebars. */}
+      <div className="flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col overflow-x-hidden">
         {/* Header — this route's contribution to the ONE header shell, which is mounted above the
             outlet in RootLayout and is the same element on every screen (so the Collie mark is not
             only identical, it is literally the same drawing, still turning). The pane's own bits are
             portalled into it: the `space › tab` breadcrumb as the center, the ⋮ as the right-cluster
             lead, and the find bar as the full-row takeover while searching.
 
-            `width="wide"`: the pane is edge to edge below 768px, and from 768px up it is a centred
-            column — which a phone in landscape reaches too, at 844px, giving it 38px each side, the
-            same look the dashboard already has on a portrait iPad. It stops growing because the
-            mirror can never be wider than the mux pane it mirrors.
-            Measured on a 1366px landscape iPad: an 80-column pane renders a ~620px block of text
-            starting at x≈20 and ending near 640px, while the header, both strips, the bottom toolbar
-            and the composer each ran the whole 1366px. One route with two right edges, which is what
-            DESIGN.md §4 forbids — every top-level block "begins and ends on the same x". 768px and
-            not the 640px every other route uses: a 640px column minus its 16px gutters clips an
-            80-column mirror, so the pane pair get their own claim. */}
+            No `width` claim, so the header takes its default and spans the column — the same
+            refusal as the wrapper above, and for the same reason. Upstream's `wide` claim exists and
+            this route simply does not make it; DESIGN.md §4's "begins and ends on the same x" is
+            satisfied here by the header and the content sharing the route column, not by both
+            shrinking to 768px inside it. */}
         <RouteHeader
           onHome={onBack}
           // DOWNSTREAM PORT — no Collie mark on this route. The row is the breadcrumb's: it is the
           // only thing here the operator reads, and on a phone the mark spends 44px of it naming an
           // app they are already inside. Every other route keeps it.
           mark={false}
-          width="wide"
           // Zen takes the whole row off the screen — the one shell owns the <header> element, so
           // only the shell can stop drawing it, and this is how a route asks. See HeaderClaim.hidden
           // for what survives (the element, its safe-area inset, its reserved rule) and why.
