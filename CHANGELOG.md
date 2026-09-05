@@ -18,20 +18,22 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-09-05
+
 ### Added
 
-- The microphone is three commands — start, stop and toggle — in the command palette, acting on the composer's own recorder.
-- A command can refuse instead of failing: a start while already recording, or anything while a clip is still transcribing, says so in one red message and changes nothing.
-- A binding can name a modifier as its key (`RAlt`) and can name a side wherever a modifier appears (`RAlt+Q`); an unsided `Alt` still means either.
+- The microphone is three commands — start, stop and toggle — in the command palette, acting on the composer's own recorder. ([bb73598](https://github.com/memset0/herdr-fleet/commit/bb73598))
+- A command can refuse instead of failing: a start while already recording, or anything while a clip is still transcribing, says so in one red message and changes nothing. ([bb73598](https://github.com/memset0/herdr-fleet/commit/bb73598))
+- A binding can name a modifier as its key (`RAlt`) and can name a side wherever a modifier appears (`RAlt+Q`); an unsided `Alt` still means either. ([bb73598](https://github.com/memset0/herdr-fleet/commit/bb73598))
 
 ### Changed
 
-- A pane row in the switcher shows its whole address — `tab · space`, plus the host where there is one — instead of swapping the slot's meaning depending on what the query matched; the marks land on whichever part matched.
-- The pane-resize command is called `Resize Pane`, not `Fit Current Pane Width` — the palette is searched by the word you use, and `resize` used to find nothing.
+- A pane row in the switcher shows its whole address — `tab · space`, plus the host where there is one — instead of swapping the slot's meaning depending on what the query matched; the marks land on whichever part matched. ([8e88495](https://github.com/memset0/herdr-fleet/commit/8e88495))
+- The pane-resize command is called `Resize Pane`, not `Fit Current Pane Width` — the palette is searched by the word you use, and `resize` used to find nothing. ([2f9a108](https://github.com/memset0/herdr-fleet/commit/2f9a108))
 
 ### Fixed
 
-- The caret return holds the page it was scheduled on, so a pending return can never reach for a document that has gone.
+- The caret return holds the page it was scheduled on, so a pending return can never reach for a document that has gone. ([c20c885](https://github.com/memset0/herdr-fleet/commit/c20c885))
 
 ## [3.0.2] - 2026-09-05
 

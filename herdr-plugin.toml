@@ -1,6 +1,6 @@
 id = "memset0.herdr-fleet"
 name = "Herdr Fleet"
-version = "3.0.2"
+version = "3.0.3"
 min_herdr_version = "0.7.0"
 description = "Authenticated mobile web UI for the AI agents in your Herdr fleet"
 platforms = ["linux", "macos"]
