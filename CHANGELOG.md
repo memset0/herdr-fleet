@@ -1,8 +1,9 @@
 # Changelog
 
-Herdr Fleet's own changes are recorded here. Collie's are not: its changelog is retained exactly as
-upstream wrote it in [`COLLIE_CHANGELOG.md`](./COLLIE_CHANGELOG.md), and unchanged Collie behaviour
-is upstream behaviour rather than a release of ours. **Write in this file, not that one.**
+Herdr Fleet's own changes are recorded here. Collie's are not: its history is retained in
+[`COLLIE_CHANGELOG.md`](./COLLIE_CHANGELOG.md) — the adopted release verbatim, and anything upstream
+has since dropped kept below it — and unchanged Collie behaviour is upstream behaviour rather than a
+release of ours. **Write in this file, not that one.**
 
 **The version line is this product's own**, beginning at `3.0.0`. It is not Collie's, and adopting a
 newer Collie changes only the provenance recorded in [`UPSTREAM.md`](./UPSTREAM.md) — never this
@@ -17,6 +18,16 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 (enforced by `scripts/check-version.sh`).
 
 ## [Unreleased]
+
+### Added
+
+- Adopting a newer Collie release now follows a written procedure with a preflight: `check-fork.ts --target <tag>` verifies the release identity and merge base, refuses a dirty tree, and reports every port the release disturbs and every owned path it now ships.
+- `FORK.toml` records which upstream release each invasive port was last reviewed against, and the boundary check fails while any port lags the adopted release.
+
+### Changed
+
+- Collie's retained changelog is accumulative rather than byte-identical, so entries upstream truncates away are kept below one seam marker.
+- The fork boundary check runs in CI.
 
 ## [3.1.1] - 2026-09-05
 

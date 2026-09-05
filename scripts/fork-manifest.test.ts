@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { parseForkManifest, splitInvasivePath } from "./fork-manifest.ts";
 
-const valid = `schema_version = 1
+const valid = `schema_version = 2
 [upstream]
 url = "https://github.com/example/collie.git"
 tag = "v1.2.0"
@@ -19,6 +19,7 @@ id = "host-port"
 intent = "Synthetic host port."
 strategy = "adapt"
 review = "every-upstream-sync"
+reviewed = "v1.2.0"
 paths = ["package.json#fleet"]
 verify = ["fleet/config.test.ts"]
 reason = "The root package owns the test entrypoint."
@@ -36,6 +37,12 @@ describe("FORK.toml", () => {
     expect(() => parseForkManifest(valid.replace("tag =", "branch = \"main\"\ntag ="))).toThrow("unknown field");
     expect(() => parseForkManifest(valid.replace("fleet/**", "**"))).toThrow("overbroad");
     expect(() => parseForkManifest(valid.replace("package.json#fleet", "package*.json#fleet"))).toThrow("not exact");
+  });
+
+  test("rejects a manifest that does not state which release each port was reviewed against", () => {
+    expect(() => parseForkManifest(valid.replace('reviewed = "v1.2.0"\n', ""))).toThrow("reviewed must be a non-empty string");
+    expect(() => parseForkManifest(valid.replace('reviewed = "v1.2.0"', 'reviewed = "1.2"'))).toThrow("reviewed is malformed");
+    expect(() => parseForkManifest(valid.replace("schema_version = 2", "schema_version = 1"))).toThrow("schema_version must be 2");
   });
 
   test("rejects duplicate ids and unsupported strategies", () => {

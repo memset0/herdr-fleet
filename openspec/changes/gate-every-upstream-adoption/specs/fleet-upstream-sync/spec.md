@@ -184,3 +184,31 @@ a push.
 #### Scenario: A checkout has no hooks installed
 - **WHEN** work begins in a checkout whose hooks were never installed
 - **THEN** they are installed before the work, because the guards they carry are otherwise inert
+
+### Requirement: An adoption does not import upstream behavior into this repository's specifications
+
+This repository's specifications describe what this fork adds, changes, or owns. Collie's own
+behavior is upstream behavior, and an adoption SHALL NOT add a specification for a capability
+upstream implements merely because the release brought it in. A fork that specifies its upstream
+starts claiming, and then maintaining, behavior it does not own.
+
+An adoption is nevertheless the repository's own work and SHALL be carried out as a change here,
+with its proposal, design, and tasks — the merge, the entry reviews, and the boundary bookkeeping are
+this repository's decisions and belong to its history.
+
+When an adoption changes the behavior of a capability this repository does specify — because a port
+had to be adapted, or upstream now does something the fork was doing — the adoption SHALL update that
+capability's specification in the same change. When it changes none of them, the adoption SHALL carry
+no delta rather than invent one.
+
+#### Scenario: The release brings a new upstream feature
+- **WHEN** the adopted release adds behavior this fork neither owns nor patches
+- **THEN** no specification is written for it, and it remains upstream behavior
+
+#### Scenario: The release changes behavior this repository specifies
+- **WHEN** adapting a port, or accepting what upstream now does, changes a specified downstream capability
+- **THEN** that capability's specification is updated in the adoption's own change
+
+#### Scenario: The adoption changes nothing this repository specifies
+- **WHEN** every downstream capability behaves exactly as its specification already says
+- **THEN** the adoption carries no delta spec, and says so rather than inventing a requirement

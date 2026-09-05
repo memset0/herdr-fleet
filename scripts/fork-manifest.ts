@@ -23,17 +23,22 @@ export interface ForkInvasiveEntry {
   readonly intent: string;
   readonly strategy: ForkStrategy;
   readonly review: "every-upstream-sync";
+  readonly reviewed: string;
   readonly paths: readonly string[];
   readonly verify: readonly string[];
   readonly reason: string;
 }
 
 export interface ForkManifest {
-  readonly schema_version: 1;
+  readonly schema_version: 2;
   readonly upstream: ForkUpstream;
   readonly owned: readonly ForkOwnedEntry[];
   readonly invasive: readonly ForkInvasiveEntry[];
 }
+
+// The upstream release identifier, shared by the adopted tag and by the release each invasive entry
+// was last reviewed against — they are compared to each other, so they must be the same shape.
+const TAG_PATTERN = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 function table(value: JsonValue | undefined, label: string): JsonObject {
   const found = jsonRecord(value);
@@ -141,7 +146,7 @@ export function parseForkManifest(source: string): ForkManifest {
   }
   const root = table(parsed, "FORK.toml");
   exactKeys(root, ["schema_version", "upstream", "owned", "invasive"], "FORK.toml");
-  if (root.schema_version !== 1) throw new Error("FORK.toml schema_version must be 1");
+  if (root.schema_version !== 2) throw new Error("FORK.toml schema_version must be 2");
 
   const upstream = table(root.upstream, "upstream");
   exactKeys(upstream, ["url", "tag", "tag_object", "commit"], "upstream");
@@ -154,7 +159,7 @@ export function parseForkManifest(source: string): ForkManifest {
   if (!/^https:\/\/[A-Za-z0-9./_-]+\.git$/.test(normalizedUpstream.url)) {
     throw new Error("upstream.url must be an HTTPS Git URL");
   }
-  if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(normalizedUpstream.tag)) {
+  if (!TAG_PATTERN.test(normalizedUpstream.tag)) {
     throw new Error("upstream.tag is malformed");
   }
   for (const key of ["tag_object", "commit"] as const) {
@@ -191,7 +196,7 @@ export function parseForkManifest(source: string): ForkManifest {
   const invasive = root.invasive.map((raw, index): ForkInvasiveEntry => {
     const label = `invasive[${index}]`;
     const value = table(raw, label);
-    exactKeys(value, ["id", "intent", "strategy", "review", "paths", "verify", "reason"], label);
+    exactKeys(value, ["id", "intent", "strategy", "review", "reviewed", "paths", "verify", "reason"], label);
     const strategyValue = text(value.strategy, `${label}.strategy`);
     if (strategyValue !== "keep" && strategyValue !== "adapt" && strategyValue !== "drop") {
       throw new Error(`${label}.strategy is invalid`);
@@ -199,11 +204,14 @@ export function parseForkManifest(source: string): ForkManifest {
     if (text(value.review, `${label}.review`) !== "every-upstream-sync") {
       throw new Error(`${label}.review must be every-upstream-sync`);
     }
+    const reviewed = text(value.reviewed, `${label}.reviewed`);
+    if (!TAG_PATTERN.test(reviewed)) throw new Error(`${label}.reviewed is malformed`);
     const entry: ForkInvasiveEntry = {
       id: text(value.id, `${label}.id`),
       intent: text(value.intent, `${label}.intent`),
       strategy: strategyValue,
       review: "every-upstream-sync",
+      reviewed,
       paths: textList(value.paths, `${label}.paths`),
       verify: verificationPaths(value.verify, `${label}.verify`),
       reason: text(value.reason, `${label}.reason`),
@@ -221,7 +229,7 @@ export function parseForkManifest(source: string): ForkManifest {
   if (owned.length === 0 || invasive.length === 0) {
     throw new Error("FORK.toml requires owned and invasive entries");
   }
-  return { schema_version: 1, upstream: normalizedUpstream, owned, invasive };
+  return { schema_version: 2, upstream: normalizedUpstream, owned, invasive };
 }
 
 export async function loadForkManifest(path: string | URL = new URL("../FORK.toml", import.meta.url)) {

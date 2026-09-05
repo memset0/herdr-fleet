@@ -15,12 +15,21 @@ jobs:
     name: typecheck + tests
     runs-on: ubuntu-latest
     steps:
+      # Full history, not the default shallow fetch: the fork boundary check below diffs this tree
+      # against the Collie commit FORK.toml records, and a depth-1 checkout does not contain it.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
 
       # The MANDATORY invariant: the three version files + the newest CHANGELOG heading must agree.
       - name: Version consistency
         run: bash scripts/check-version.sh
+
+      # Every changed path is classified owned or invasive, every port names the release it was last
+      # reviewed against, and Collie's retained history still begins with the adopted release.
+      - name: Fork boundary
+        run: bun run test:fork
 
       - name: Install (root)
         run: bun install --frozen-lockfile

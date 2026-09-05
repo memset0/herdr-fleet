@@ -36,6 +36,9 @@ Three things are missing, and each is a way the adoption can go wrong quietly:
   changelog sits on top verbatim, entries upstream has since dropped are retained word-for-word
   below it, and one marker line at the seam says where upstream truncated. The adopted release's
   file must remain a byte-exact prefix, so the retention stays machine-checkable.
+- State what an adoption does to this repository's specifications: an adoption is itself a change
+  here, it updates a downstream capability's specification when the adoption changes that
+  capability's behavior, and it never writes a specification for behavior upstream owns.
 - `bun run test:fork` joins CI, which today runs only the version check.
 - `AGENTS.md` stops naming a branch this repository no longer uses, and its prohibition on merging
   an upstream release becomes a pointer to this procedure rather than a dead end.

@@ -87,8 +87,8 @@ upstream" and "drop" have the same end state — the entry is gone and its paths
 ### The changelog retention check lives with the boundary check
 
 `check-fork.ts` requires `git show <manifest.upstream.commit>:CHANGELOG.md` to be a byte-exact prefix
-of `COLLIE_CHANGELOG.md`, and — when the retained file is longer — the first line after the prefix to
-be the seam marker:
+of `COLLIE_CHANGELOG.md`, and — when the retained file is longer — the first non-empty line after
+the prefix to be the seam marker:
 
 ```
 <!-- Retained from an earlier adoption: upstream truncated its own changelog above this line. -->

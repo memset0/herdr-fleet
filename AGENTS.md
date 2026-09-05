@@ -47,6 +47,13 @@ bookkeeping, and the judgement is yours.
   disagree, this agreement holds — and the disagreement is recorded *here*, at the rule, rather than
   settled silently at the call site by whoever hit it first.
 
+**Adopting a newer Collie release follows a written procedure, not judgement at the time** —
+`openspec/specs/fleet-upstream-sync/spec.md`. Its preflight is
+`bun scripts/check-fork.ts --target <tag>`, which resolves the release, requires our recorded
+baseline to be its merge base, refuses a dirty tree, and reports every port the release disturbs and
+every owned path it has begun to occupy. Every invasive entry is then reviewed against that release
+and records it; the boundary check fails while one lags.
+
 ## Versioning and releases — MANDATORY
 
 **This product's version line is its own, beginning at `3.0.0`.** It is not Collie's.
@@ -55,8 +62,9 @@ adopting a newer one moves that record and not this number. The version is **Sem
 **enforced**, so it never silently drifts. Development happens on the default branch; there is no
 separate integration branch to open a change against.
 
-**Write in `CHANGELOG.md`, never in `COLLIE_CHANGELOG.md`.** The second is Collie's own history,
-retained byte-identical, and a line of ours added to it would claim upstream wrote it.
+**Write in `CHANGELOG.md`, never in `COLLIE_CHANGELOG.md`.** The second is Collie's own history —
+retained accumulatively, since upstream truncates its own file — and a line of ours added to it would
+claim upstream wrote it.
 
 **The version lives in three files that must always agree, plus a matching CHANGELOG entry:**
 `herdr-plugin.toml` (canonical — Herdr reads it) · `package.json` · `web/package.json` ·
@@ -568,9 +576,11 @@ clock at both ends. A refusal is not a verdict until the lead has missed more th
 - The generated integrations are pinned to OpenSpec CLI 1.11.0 with the custom `both` profile and
   exactly these workflows: propose, explore, new, apply, update, ff, sync, archive, bulk-archive,
   and onboard. Do not update the CLI contract or add generated workflows without explicit approval.
-- `v3-dev` is the integration branch and tracks `origin/v3-dev`. Commit and push reviewed stages
-  there with normal, non-force Git operations; do not move the branch to a different upstream base
-  or merge an upstream release without an explicit migration decision.
+- `main` is the branch this repository develops on, and it tracks `origin/main`. Commit and push
+  reviewed stages there with normal, non-force Git operations, and do not move the branch to a
+  different upstream base. Adopting an upstream release is not an ordinary commit: it follows
+  `openspec/specs/fleet-upstream-sync/spec.md` — one exact release, a preflight before the merge,
+  every invasive entry reviewed, and real ancestry rather than a squash.
 - Maintain `FORK.toml` as the exact, reviewable inventory of the downstream boundary. Every change
   to an upstream-owned path MUST have a specific reason and the narrow port it exposes; update the
   manifest in the same change that alters the boundary.
