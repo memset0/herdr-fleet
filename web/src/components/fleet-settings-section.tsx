@@ -1,5 +1,5 @@
-import { Keyboard } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Keyboard, SquareTerminal } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { DEFAULT_COMMAND_PREFIX } from "../../../fleet/ui/commands/catalog.ts";
 import { commandRows, resolveBindings } from "../../../fleet/ui/commands/effective.ts";
@@ -15,6 +15,10 @@ import {
   type FleetSettingsDocument,
 } from "@/lib/fleet-settings";
 import { cn } from "@/lib/utils";
+import {
+  DEFAULT_PANE_SURFACE,
+  paneSurfaceStore,
+} from "../../../fleet/ui/terminal/switch.ts";
 
 /**
  * Everything this fork adds to Settings, in one group, at the head of the page.
@@ -43,8 +47,56 @@ export function FleetSettingsSection() {
         <p className="text-xs text-muted-foreground">{t("fleet.settings.description")}</p>
       </div>
       <FleetCjkFallbackControl />
+      <FleetPaneSurfaceControl />
       <FleetShortcutsControl />
     </section>
+  );
+}
+
+/**
+ * The one switch that chooses what a Pane is drawn as.
+ *
+ * ONE switch, global, and here rather than on the Pane: a per-Pane control would be a per-Pane
+ * memory to maintain, and a control ON the terminal would be a control the terminal's own program
+ * can be drawn over. It reaches every Pane in this browser and no other browser at all, which is
+ * what the scope label says.
+ */
+export function FleetPaneSurfaceControl() {
+  useLocale();
+  const surface = useSyncExternalStore(
+    paneSurfaceStore.subscribe,
+    paneSurfaceStore.snapshot,
+    () => DEFAULT_PANE_SURFACE,
+  );
+  return (
+    <Card className="gap-0 py-0">
+      <div className="flex items-center justify-between gap-4 p-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <SquareTerminal className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <div className="font-medium">{t("fleet.settings.surface.title")}</div>
+            <p className="text-sm text-muted-foreground">{t("fleet.settings.surface.description")}</p>
+          </div>
+        </div>
+        <FleetSettingScope scope="browser" />
+      </div>
+      <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-3">
+        <label htmlFor="pref-pane-surface" className="text-sm font-medium">
+          {t("fleet.settings.surface.label")}
+        </label>
+        <select
+          id="pref-pane-surface"
+          value={surface}
+          // A DOM value is a plain string whatever the options say, so it is checked against the two
+          // this switch has rather than asserted into one.
+          onChange={(event) => paneSurfaceStore.set(event.target.value === "terminal" ? "terminal" : "mirror")}
+          className="min-h-11 shrink-0 appearance-none rounded-md border border-border/60 bg-background py-2 pl-3 pr-9 text-sm font-medium text-foreground"
+        >
+          <option value="mirror">{t("fleet.settings.surface.mirror")}</option>
+          <option value="terminal">{t("fleet.settings.surface.terminal")}</option>
+        </select>
+      </div>
+    </Card>
   );
 }
 

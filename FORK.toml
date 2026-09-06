@@ -82,6 +82,10 @@ paths = [
   "web/src/components/fleet-prompt-panel.tsx",
   "web/src/components/fleet-confirm-dialog.test.tsx",
   "web/src/components/fleet-settings-section.tsx",
+  "web/src/components/fleet-pane-route.tsx",
+  "web/src/components/fleet-pane-route.test.tsx",
+  "web/src/components/fleet-terminal.tsx",
+  "web/src/components/fleet-terminal.test.tsx",
   "web/src/lib/fleet-settings.ts",
   "web/src/lib/fleet-roster.ts",
   "web/src/lib/fleet-roster.test.ts",
@@ -280,6 +284,23 @@ verify = [
   "web/src/lib/i18n/i18n.test.ts"
 ]
 reason = "Collie's native rows own rendering and navigation, so they expose only favorite state and toggle ports while all identity, storage, and ordering behavior remains under fleet/ui. This entry also carries the dashboard route test's coverage of the content width the native navigation shell removes so the route fills its column (native-navigation-sidebars-port), and the six typed dictionaries every downstream label lands in, including the CJK fallback card's (native-webfont-port), because the manifest attributes each of those paths to exactly one entry. It also carries one more named export out of the same file for the same one-rule reason: the dashboard's ATTENTION set, which decides where a card means 'a person is wanted here', is read by the Fleet Agent rail (native-navigation-sidebars-port) rather than copied into it."
+
+[[invasive]]
+id = "pane-surface-route-port"
+intent = "Let a Pane be drawn as its mirror or as the terminal it mirrors, by pointing one route's element and loader at fork-owned drop-ins."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.5.2"
+paths = ["web/src/router.tsx#FleetPaneRoute"]
+verify = [
+  "fleet/ui/terminal/switch.test.ts",
+  "fleet/ui/terminal/link.test.ts",
+  "fleet/ui/terminal/pool.test.ts",
+  "fleet/ui/terminal/clipboard.test.ts",
+  "web/src/components/fleet-pane-route.test.tsx",
+  "web/src/components/fleet-terminal.test.tsx"
+]
+reason = "The alternative was a branch inside Collie's pane page, and it is worse in both halves. The element would have had to wrap everything that page does in a condition, and the loader would have had to fetch a mirror nobody was going to draw — a read of every visited Pane, on the poll loop, for a screen the operator has switched away from. Here the route names two fork-owned values instead of two upstream ones, and each is a drop-in: with the switch at its default they ARE `DetailRoute` and `paneLoader`, called with the same arguments, returning the same data, on the same route id — so the mirror path is not merely equivalent, it is the same code. One import and one line, and no other upstream file is touched: the switch, the retained instances, the geometry and the clipboard rules all live under fleet/. The route id stays `PANE_ROUTE_ID` because the root layout reads THIS route's data to date the connection banner, and the terminal branch returns the shape that dating already handles."
 
 [[invasive]]
 id = "authenticated-navigation-cache"

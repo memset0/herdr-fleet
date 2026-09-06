@@ -1,9 +1,13 @@
 import { createBrowserRouter } from "react-router";
 
 import { BootSplash, RootError, RootLayout } from "@/routes/root";
+// DOWNSTREAM PORT. The pane route's element and loader are the fork's, and each is a drop-in: with
+// the pane-surface switch off they are Collie's own `DetailRoute` and `paneLoader`, called with the
+// same arguments and returning the same data. See fleet-pane-route.tsx for why the choice is made
+// here rather than branched inside the pane page.
+import { FleetPaneRoute, fleetPaneLoader } from "@/components/fleet-pane-route";
 import { HomeRoute } from "@/routes/home";
 import { SpaceRoute } from "@/routes/space";
-import { DetailRoute } from "@/routes/detail";
 import { HistoryRoute } from "@/routes/history";
 import { SettingsRoute } from "@/routes/settings";
 import { PackRoute } from "@/routes/pack";
@@ -13,7 +17,6 @@ import {
   historyLoader,
   packLoader,
   rootLoader,
-  paneLoader,
   PANE_ROUTE_ID,
   ROOT_ROUTE_ID,
 } from "@/lib/loaders";
@@ -60,7 +63,7 @@ export const router = createBrowserRouter([
       { path: "pack", loader: packLoader, element: <PackRoute /> },
       // Named, so RootLayout can ask for THIS route's data by id (react-router hands back undefined
       // whenever it isn't the active route) — see the "last seen" note there.
-      { id: PANE_ROUTE_ID, path: "pane/:paneId", loader: paneLoader, element: <DetailRoute /> },
+      { id: PANE_ROUTE_ID, path: "pane/:paneId", loader: fleetPaneLoader, element: <FleetPaneRoute /> },
       {
         path: "pane/:paneId/history",
         loader: historyLoader,

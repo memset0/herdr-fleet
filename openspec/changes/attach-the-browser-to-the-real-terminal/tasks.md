@@ -5,7 +5,7 @@
 - [x] 1.0a Record the ADR 0008 departure in `AGENTS.md` in its short normative form, naming the ADR and stating that the mirror is unchanged and that the terminal surface holds the Pane's geometry only while attached and hands it back on leaving; extend the `FORK.toml` entry that already claims `AGENTS.md` to cover it; do not edit any file under `.adr/`
 - [x] 1.1 Assert same-origin `wss:` against the app's existing `connect-src 'self'` in a target browser, with a cross-origin negative control, and record the result in design.md; it is admitted, so no CSP directive was added and `bridge/server.ts` is untouched
 - [x] 1.2 Add the browser terminal renderer to `web/package.json`, pinned, and verify `cd web && bun install` then `bun run build` succeeds and the added bundle weight is recorded in design.md — `@xterm/xterm@6.0.0` and `@xterm/addon-fit@0.11.0`, exact; build succeeds; weight is nil until something imports them, and `web/bun.lock` needed classifying as the fork's first lockfile move
-- [ ] 1.3 Extend the `FORK.toml` manifest with the `web/src/router.tsx` entry and its reason, and verify `bun scripts/check-fork.ts` and `bun test scripts/check-fork.test.ts scripts/fork-manifest.test.ts` pass
+- [x] 1.3 Extend the `FORK.toml` manifest with the `web/src/router.tsx` entry and its reason, and verify `bun scripts/check-fork.ts` and `bun test scripts/check-fork.test.ts scripts/fork-manifest.test.ts` pass
 
 ## 2. The Gateway's terminal boundary
 
@@ -28,16 +28,16 @@
 
 ## 4. The browser surface
 
-- [ ] 4.1 Add the global switch with its browser-local store, default off, and safe recovery from an absent or unreadable value, and verify focused tests cover default, round-trip, and unreadable storage
-- [ ] 4.2 Add the fork-owned pane route element and loader wrappers and point `web/src/router.tsx` at them, and verify a focused test asserts that with the switch off the route renders Collie's own element and its loader is called unchanged
-- [ ] 4.3 Verify the stub loader keeps `root.tsx`'s connection-bar dating on its snapshot branch, with a focused test that asserts `shownLastSeenAt` is unchanged while the switch is on and that `root.tsx` was not edited
-- [ ] 4.4 Build the terminal surface: the renderer mounted inside the existing shell, the Pane's address unchanged, no mirror text requested, and a read-only establishment that says so where the device may not write; verify focused tests cover each
-- [ ] 4.5 Retain terminal instances across Pane switches within a bound and verify a focused test asserts a return within the bound reuses the instance and beyond it disposes the oldest
-- [ ] 4.6 Ignore any surface selection carried in an address or navigation state, and verify a focused test asserts the stored switch decides
-- [ ] 4.7 Report the browser's viewport as the terminal's geometry on attach and on every later change, and make the current dimensions legible on the surface; verify focused tests cover attach, resize, rotation, and a type-size change
-- [ ] 4.8 Copy a completed selection to the clipboard through `navigator.clipboard` on the user gesture, indicate the copy, and report a refused or unavailable clipboard while leaving the selection intact; verify focused tests cover success, refusal, and that no framed document is involved
-- [ ] 4.8a Offer a discoverable modifier that suppresses mouse reporting for the gesture and selects locally, since the attached terminal enables mouse reporting and a plain drag is the program's input; verify focused tests cover a drag with and without it
-- [ ] 4.9 Register the OSC 52 handler for clipboard writes within an explicit length bound and refuse clipboard reads, and verify focused tests cover a write within bounds, one over it, and a read request
+- [x] 4.1 Add the global switch with its browser-local store, default off, and safe recovery from an absent or unreadable value, and verify focused tests cover default, round-trip, and unreadable storage
+- [x] 4.2 Add the fork-owned pane route element and loader wrappers and point `web/src/router.tsx` at them, and verify a focused test asserts that with the switch off the route renders Collie's own element and its loader is called unchanged
+- [x] 4.3 Verify the stub loader keeps `root.tsx`'s connection-bar dating on its snapshot branch, with a focused test that asserts `shownLastSeenAt` is unchanged while the switch is on and that `root.tsx` was not edited
+- [x] 4.4 Build the terminal surface: the renderer mounted inside the existing shell, the Pane's address unchanged, no mirror text requested, and a read-only establishment that says so where the device may not write; verify focused tests cover each
+- [x] 4.5 Retain terminal instances across Pane switches within a bound and verify a focused test asserts a return within the bound reuses the instance and beyond it disposes the oldest
+- [x] 4.6 Ignore any surface selection carried in an address or navigation state, and verify a focused test asserts the stored switch decides
+- [x] 4.7 Report the browser's viewport as the terminal's geometry on attach and on every later change, and make the current dimensions legible on the surface; verify focused tests cover attach, resize, rotation, and a type-size change
+- [x] 4.8 Copy a completed selection to the clipboard through `navigator.clipboard` on the user gesture, indicate the copy, and report a refused or unavailable clipboard while leaving the selection intact; verify focused tests cover success, refusal, and that no framed document is involved
+- [x] 4.8a Offer a discoverable modifier that suppresses mouse reporting for the gesture and selects locally, since the attached terminal enables mouse reporting and a plain drag is the program's input; verify focused tests cover a drag with and without it
+- [x] 4.9 Register the OSC 52 handler for clipboard writes within an explicit length bound and refuse clipboard reads, and verify focused tests cover a write within bounds, one over it, and a read request
 
 ## 5. The lead path, end to end
 

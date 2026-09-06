@@ -34,6 +34,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 - The Gateway has a terminal boundary: an authenticated upgrade that names a Pane and can name nothing else, a resolver that turns that Pane into its terminal on the machine that owns it, and a bounded set of held sessions so leaving a Pane and returning does not re-attach. No surface renders it yet.
 - A Pane's terminal can be attached to over a WebSocket: the connection carries terminal input and the browser's viewport and nothing else, the terminal takes the browser's geometry while it is attached, and a session that is revoked or expires closes the terminals opened with it.
 - A Peer may declare an optional `[terminal]` table, and a Lead an optional terminal endpoint per member, for the terminal service a later change starts. A configuration that omits them is unchanged.
+- A Pane can be drawn as the terminal it mirrors. One switch in Settings chooses the surface for every Pane in this browser; it defaults to the mirror, and with it there the Pane route is the route it was. The terminal takes the browser's viewport while it is attached and shows the size it is at, a selection copies, and a program's own copy request is honoured within a bound while its request to READ the clipboard is refused.
 
 ### Fixed
 
