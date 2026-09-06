@@ -25,7 +25,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { authFrame, decodeServerFrame, type Geometry } from "./protocol.ts";
+import type { Placement } from "./placement.ts";
+import { authFrame, decodeServerFrame } from "./protocol.ts";
 import type { ConnectUpstream, StartServer, TerminalServer, Upstream } from "./session.ts";
 
 /** The terminal server, and the multiplexer command it runs. Both resolved once, at startup. */
@@ -145,7 +146,11 @@ export function makeStartServer(deps: SpawnDeps): StartServer {
       }));
   const awaitSocket = deps.awaitSocket ?? defaultAwaitSocket;
 
-  return async (terminalId: string, _geometry: Geometry): Promise<TerminalServer> => {
+  return async (placement: Placement): Promise<TerminalServer> => {
+    // A member's Pane is that member's to resolve and to serve. Reaching a spawn here would mean the
+    // lead had produced a terminal id for a machine it does not own.
+    if (placement.kind !== "local") throw new Error("this starter serves local terminals only");
+    const terminalId = placement.terminalId;
     sequence += 1;
     const socketPath = join(deps.socketDir, socketNameFor(sequence));
     const child = spawn(terminalServerArguments(deps.tools, socketPath, terminalId));
@@ -168,8 +173,9 @@ export function makeStartServer(deps: SpawnDeps): StartServer {
       stop();
       throw error;
     }
-    deps.log?.("terminal.server-started", { terminal: terminalId });
-    return { endpoint: socketPath, stop };
+    // The Pane, not the terminal it resolved to: see the diagnostics boundary.
+    deps.log?.("terminal.server-started", { pane: placement.paneId });
+    return { endpoint: serverUrl(socketPath), stop };
   };
 }
 
@@ -202,7 +208,9 @@ export function makeConnectUpstream(
   open: (url: string, protocol: string) => WebSocket = (url, protocol) => new WebSocket(url, protocol),
 ): ConnectUpstream {
   return async (server, geometry, handlers): Promise<Upstream> => {
-    const socket = open(serverUrl(server.endpoint), SERVER_WS_PROTOCOL);
+    // One code path for both placements: a member's service speaks the terminal server's own wire,
+    // so the only thing that differs between a local terminal and one across a link is the URL.
+    const socket = open(server.endpoint, SERVER_WS_PROTOCOL);
     socket.binaryType = "arraybuffer";
     await new Promise<void>((resolve, reject) => {
       socket.addEventListener("open", () => resolve(), { once: true });

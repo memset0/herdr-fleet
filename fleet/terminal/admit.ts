@@ -73,6 +73,16 @@ export interface AdmissionConfig {
  * never be the first thing to discover that.
  */
 const PANE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}:[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * The one shape a Pane id may have, shared with the member-side service.
+ *
+ * Shared rather than restated: both ends refuse the same strings, and two regular expressions that
+ * were meant to agree are two regular expressions that will eventually not.
+ */
+export function isPaneId(value: string): boolean {
+  return PANE_ID.test(value);
+}
 /** A scope value is an opaque identifier the app already round-trips; bound it the same way. */
 const SCOPE_VALUE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 

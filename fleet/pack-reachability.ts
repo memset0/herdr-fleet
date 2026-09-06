@@ -85,6 +85,12 @@ export function sshLinkCommand(config: FleetSchema2PeerConfig): readonly string[
     // This Peer reaches the Lead's Collie through the same connection.
     "-L",
     `${forwardEndpoint(transport.peerBind)}:${forwardEndpoint(transport.leadCollie)}`,
+    // The third projection exists only when this Peer declares a terminal service, and it aims at
+    // that service alone. A Peer that declares none publishes the two projections it always did and
+    // an argument list that is byte-for-byte what it was.
+    ...(config.terminal === undefined
+      ? []
+      : ["-R", `${forwardEndpoint(config.terminal.leadBind)}:${forwardEndpoint(config.terminal.bind)}`]),
     `${transport.sshUser}@${transport.sshHost}`,
   ];
 }

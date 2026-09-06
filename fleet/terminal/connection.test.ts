@@ -60,7 +60,8 @@ function harness(
       // reaching this function is one of those ids and nothing else can produce one.
       timers.delete(handle as number);
     },
-    startServer: async (terminalId): Promise<TerminalServer> => {
+    startServer: async (placement): Promise<TerminalServer> => {
+      const terminalId = placement.kind === "local" ? placement.terminalId : placement.paneId;
       started.push(terminalId);
       return {
         endpoint: `unix:${terminalId}`,
@@ -85,7 +86,7 @@ function harness(
     resolve: async (target: TerminalTarget): Promise<Resolution> => {
       resolved.push(target);
       if (options.resolveThrows === true) throw new Error("the snapshot is unavailable");
-      return options.resolution ?? { ok: true, terminalId: "term_abc" };
+      return options.resolution ?? { ok: true, placement: { kind: "local", terminalId: "term_abc", paneId: "w1:p1" } };
     },
     maxPendingInputBytes: options.maxPendingInputBytes,
   };
@@ -308,7 +309,7 @@ describe("the browser leaving", () => {
     expect(connection.status()).toBe("closed");
     // Held: the server is still running, and the grace timer is what will end it.
     expect(h.stopped).toEqual([]);
-    expect(h.sessions.held("term_abc")).toBe(true);
+    expect(h.sessions.held("local term_abc")).toBe(true);
     expect(h.pendingTimers()).toBe(1);
   });
 
@@ -319,7 +320,7 @@ describe("the browser leaving", () => {
     expect(h.stopped).toEqual([]);
     h.advance(2);
     expect(h.stopped).toEqual(["term_abc"]);
-    expect(h.sessions.held("term_abc")).toBe(false);
+    expect(h.sessions.held("local term_abc")).toBe(false);
   });
 
   test("the terminal going away first tells the browser and closes the socket", async () => {

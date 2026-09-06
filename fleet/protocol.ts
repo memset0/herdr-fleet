@@ -16,6 +16,14 @@ export interface ChildStatus {
   readonly running: boolean;
   readonly restarts: number;
   readonly nextRestartAt: number | null;
+  /**
+   * True for a child that ended by design rather than by failing.
+   *
+   * One child does that: a member's terminal service stands itself down when nobody has asked it for
+   * anything, which is the capability working rather than breaking. Reported separately so a status
+   * reader is not left deciding whether a device with no terminals is a device with a problem.
+   */
+  readonly idle?: boolean;
 }
 
 export interface ControlResponse {

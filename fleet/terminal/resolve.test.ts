@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { resolveInSnapshot, resolveTerminal, type TerminalSnapshot } from "./resolve.ts";
+import {
+  leadResolver,
+  resolveInSnapshot,
+  resolveMember,
+  resolveTerminal,
+  type MemberTerminalEndpoint,
+  type TerminalSnapshot,
+} from "./resolve.ts";
 
 const snapshot: TerminalSnapshot = {
   panes: [
@@ -14,7 +21,7 @@ const snapshot: TerminalSnapshot = {
 describe("resolving a Pane on the machine that owns it", () => {
   test("one live match yields that Pane's terminal", () => {
     expect(resolveInSnapshot({ paneId: "w1:p1" }, snapshot))
-      .toEqual({ ok: true, terminalId: "term_65aad773f6c692a" });
+      .toEqual({ ok: true, placement: { kind: "local", terminalId: "term_65aad773f6c692a", paneId: "w1:p1" } });
   });
 
   test("a Pane that is not in the snapshot is refused", () => {
@@ -57,10 +64,79 @@ describe("a Pane on another machine", () => {
   });
 });
 
+describe("a member's Pane", () => {
+  const members: readonly MemberTerminalEndpoint[] = [
+    { memberId: "laptop", terminal: { host: "127.0.0.1", port: 18_911 } },
+    { memberId: "desktop" },
+  ];
+
+  test("resolves to the member's endpoint and the Pane id, and to no terminal at all", () => {
+    expect(resolveMember({ paneId: "w1:p1", host: "laptop" }, members)).toEqual({
+      ok: true,
+      placement: {
+        kind: "peer",
+        host: "laptop",
+        paneId: "w1:p1",
+        endpoint: { host: "127.0.0.1", port: 18_911 },
+      },
+    });
+  });
+
+  test("a member that runs no terminal service is refused, never given a default endpoint", () => {
+    expect(resolveMember({ paneId: "w1:p1", host: "desktop" }, members)).toEqual({
+      ok: false,
+      reason: "no-terminal-endpoint",
+    });
+    expect(resolveMember({ paneId: "w1:p1", host: "nobody" }, members)).toEqual({
+      ok: false,
+      reason: "no-terminal-endpoint",
+    });
+  });
+
+  test("a local target is not a member's, and gets no member endpoint", () => {
+    expect(resolveMember({ paneId: "w1:p1" }, members)).toEqual({ ok: false, reason: "not-local" });
+  });
+});
+
+describe("the lead's whole answer", () => {
+  const members: readonly MemberTerminalEndpoint[] = [
+    { memberId: "laptop", terminal: { host: "127.0.0.1", port: 18_911 } },
+  ];
+
+  test("reads its own server for its own Panes, and the list for a member's", async () => {
+    let asked = 0;
+    const resolve = leadResolver(
+      async () => {
+        asked += 1;
+        return snapshot;
+      },
+      () => members,
+    );
+    expect(await resolve({ paneId: "w1:p1" })).toEqual({
+      ok: true,
+      placement: { kind: "local", terminalId: "term_65aad773f6c692a", paneId: "w1:p1" },
+    });
+    expect(asked).toBe(1);
+
+    // A member's Pane never reaches the local snapshot, so an id that exists on both machines
+    // cannot resolve to the wrong one.
+    expect(await resolve({ paneId: "w1:p1", host: "laptop" })).toEqual({
+      ok: true,
+      placement: {
+        kind: "peer",
+        host: "laptop",
+        paneId: "w1:p1",
+        endpoint: { host: "127.0.0.1", port: 18_911 },
+      },
+    });
+    expect(asked).toBe(1);
+  });
+});
+
 describe("resolving against a live source", () => {
   test("passes a healthy snapshot through", async () => {
     expect(await resolveTerminal({ paneId: "w1:p2" }, async () => snapshot))
-      .toEqual({ ok: true, terminalId: "term_65a886c8324e43" });
+      .toEqual({ ok: true, placement: { kind: "local", terminalId: "term_65a886c8324e43", paneId: "w1:p2" } });
   });
 
   test("an unavailable server is a refusal, not an exception", async () => {

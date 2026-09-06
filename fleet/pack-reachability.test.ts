@@ -29,6 +29,30 @@ describe("Fleet Pack reachability", () => {
     expect(command.filter((argument) => argument === "-R" || argument === "-L")).toHaveLength(2);
   });
 
+  test("carries a third projection only when the peer declares a terminal service", () => {
+    const withTerminal = sshLinkCommand(
+      fleetTestPackPeerConfig(`[terminal]
+bind_host = "127.0.0.1"
+bind_port = 18903
+lead_bind_host = "127.0.0.1"
+lead_bind_port = 18911
+server_path = "/synthetic/fleet/bin/terminal-server"
+server_digest = "${"0".repeat(64)}"
+`),
+    );
+    const forwards = withTerminal.filter((argument) => argument === "-R" || argument === "-L");
+    expect(forwards).toHaveLength(3);
+    // Aimed at the terminal service alone, and at a Lead-side endpoint distinct from the Pack one.
+    expect(withTerminal).toContain("127.0.0.1:18911:127.0.0.1:18903");
+    expect(withTerminal.at(-1)).toBe("fleet-tunnel@lead.example.com");
+
+    // And the two-projection form is unchanged, argument for argument: take the third projection
+    // back out and what is left is byte-for-byte the command a peer without one publishes.
+    const trimmed = [...withTerminal];
+    trimmed.splice(trimmed.indexOf("127.0.0.1:18911:127.0.0.1:18903") - 1, 2);
+    expect(trimmed).toEqual([...sshLinkCommand(fleetTestPackPeerConfig())]);
+  });
+
   test("removes every capability beyond the two projections", () => {
     const command = sshLinkCommand(fleetTestPackPeerConfig());
     for (const option of [

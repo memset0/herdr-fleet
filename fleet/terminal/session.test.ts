@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { placementKey, type Placement } from "./placement.ts";
 import type { Geometry } from "./protocol.ts";
 import {
   TerminalSessions,
@@ -11,6 +12,10 @@ import {
 } from "./session.ts";
 
 const GEOMETRY: Geometry = { columns: 100, rows: 30 };
+
+/** Every session in this file is a local terminal; the key is what the set actually holds it by. */
+const at = (terminalId: string): Placement => ({ kind: "local", terminalId, paneId: "w1:p1" });
+const key = (terminalId: string): string => placementKey(at(terminalId));
 
 /** A clock and timer set the test drives by hand, so a grace period is exact rather than awaited. */
 function harness(over: Partial<SessionDeps["limits"]> = {}) {
@@ -37,8 +42,9 @@ function harness(over: Partial<SessionDeps["limits"]> = {}) {
       // reaching this function is one of those ids and nothing else can produce one.
       timers.delete(handle as number);
     },
-    startServer: async (terminalId): Promise<TerminalServer> => {
+    startServer: async (placement): Promise<TerminalServer> => {
       if (failNextStart) throw new Error("no terminal server today");
+      const terminalId = placement.kind === "local" ? placement.terminalId : placement.paneId;
       started.push(terminalId);
       return {
         endpoint: `unix:${terminalId}`,
@@ -103,13 +109,13 @@ function client() {
 describe("holding a session past its browser", () => {
   test("returning within the grace period reuses it — nothing is re-established", async () => {
     const h = harness();
-    const first = await h.sessions.acquire("term_a", GEOMETRY);
+    const first = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     first.attach(a.handle);
     first.detach(a.handle);
 
     h.advance(1_000);
-    const again = await h.sessions.acquire("term_a", GEOMETRY);
+    const again = await h.sessions.acquire(at("term_a"), GEOMETRY);
     expect(again).toBe(first);
     expect(h.started).toEqual(["term_a"]);
     expect(h.stopped).toEqual([]);
@@ -117,33 +123,33 @@ describe("holding a session past its browser", () => {
 
   test("the grace period expiring closes the session, its server and its attachment", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     session.attach(a.handle);
     session.detach(a.handle);
 
     h.advance(5_000);
     expect(h.stopped).toEqual(["term_a"]);
-    expect(h.sessions.held("term_a")).toBe(false);
+    expect(h.sessions.held(key("term_a"))).toBe(false);
     expect(h.pendingTimers()).toBe(0);
   });
 
   test("returning after it expired establishes a new one, transparently", async () => {
     const h = harness();
-    const first = await h.sessions.acquire("term_a", GEOMETRY);
+    const first = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     first.attach(a.handle);
     first.detach(a.handle);
     h.advance(5_000);
 
-    const second = await h.sessions.acquire("term_a", GEOMETRY);
+    const second = await h.sessions.acquire(at("term_a"), GEOMETRY);
     expect(second).not.toBe(first);
     expect(h.started).toEqual(["term_a", "term_a"]);
   });
 
   test("reattaching cancels the grace timer rather than leaving it to fire", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     session.attach(a.handle);
     session.detach(a.handle);
@@ -154,35 +160,35 @@ describe("holding a session past its browser", () => {
     expect(h.pendingTimers()).toBe(0);
     h.advance(60_000);
     expect(h.stopped).toEqual([]);
-    expect(h.sessions.held("term_a")).toBe(true);
+    expect(h.sessions.held(key("term_a"))).toBe(true);
   });
 });
 
 describe("the bound on how many a device holds", () => {
   test("a new session at the maximum closes the least recently used one", async () => {
     const h = harness({ maxSessions: 2 });
-    const a = await h.sessions.acquire("term_a", GEOMETRY);
+    const a = await h.sessions.acquire(at("term_a"), GEOMETRY);
     h.advance(10);
-    await h.sessions.acquire("term_b", GEOMETRY);
+    await h.sessions.acquire(at("term_b"), GEOMETRY);
     h.advance(10);
     // Touching A makes B the oldest.
-    await h.sessions.acquire("term_a", GEOMETRY);
+    await h.sessions.acquire(at("term_a"), GEOMETRY);
     h.advance(10);
 
-    await h.sessions.acquire("term_c", GEOMETRY);
+    await h.sessions.acquire(at("term_c"), GEOMETRY);
     expect(h.stopped).toEqual(["term_b"]);
-    expect(h.sessions.held("term_a")).toBe(true);
-    expect(h.sessions.held("term_c")).toBe(true);
-    expect(a).toBe(await h.sessions.acquire("term_a", GEOMETRY));
+    expect(h.sessions.held(key("term_a"))).toBe(true);
+    expect(h.sessions.held(key("term_c"))).toBe(true);
+    expect(a).toBe(await h.sessions.acquire(at("term_a"), GEOMETRY));
   });
 
   test("eviction closes the evicted server, and never another session's", async () => {
     const h = harness({ maxSessions: 1 });
-    await h.sessions.acquire("term_a", GEOMETRY);
-    await h.sessions.acquire("term_b", GEOMETRY);
+    await h.sessions.acquire(at("term_a"), GEOMETRY);
+    await h.sessions.acquire(at("term_b"), GEOMETRY);
     expect(h.stopped).toEqual(["term_a"]);
     expect(h.sessions.size()).toBe(1);
-    expect(h.sessions.held("term_b")).toBe(true);
+    expect(h.sessions.held(key("term_b"))).toBe(true);
   });
 
   test("a device must be allowed at least one", () => {
@@ -195,7 +201,7 @@ describe("the bound on how many a device holds", () => {
 describe("one writable client", () => {
   test("a second attach is refused without displacing or exposing the first", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     const b = client();
     expect(session.attach(a.handle)).toEqual({ ok: true });
@@ -209,7 +215,7 @@ describe("one writable client", () => {
 
   test("the terminal is available again once the first client leaves", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     const b = client();
     session.attach(a.handle);
@@ -219,7 +225,7 @@ describe("one writable client", () => {
 
   test("a detach from a client that is not attached changes nothing", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     const b = client();
     session.attach(a.handle);
@@ -232,7 +238,7 @@ describe("one writable client", () => {
 describe("what a returning browser is given", () => {
   test("a first attach replays nothing — the multiplexer's own repaint is coming", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     session.attach(a.handle);
     expect(a.written).toHaveLength(0);
@@ -240,7 +246,7 @@ describe("what a returning browser is given", () => {
 
   test("a reattach to a held session replays the retained window first", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     session.attach(a.handle);
     h.emit("term_a", new TextEncoder().encode("hello "));
@@ -254,7 +260,7 @@ describe("what a returning browser is given", () => {
 
   test("retained output stays within its bound, oldest discarded", async () => {
     const h = harness({ retainBytes: 8 });
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     session.attach(a.handle);
     h.emit("term_a", new TextEncoder().encode("0123456789"));
@@ -267,7 +273,7 @@ describe("what a returning browser is given", () => {
 
   test("output arriving with nobody attached is still retained", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     session.attach(a.handle);
     session.detach(a.handle);
@@ -280,14 +286,14 @@ describe("what a returning browser is given", () => {
 
   test("a closed session's screen cannot be inherited by its successor", async () => {
     const h = harness();
-    const first = await h.sessions.acquire("term_a", GEOMETRY);
+    const first = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     first.attach(a.handle);
     h.emit("term_a", new TextEncoder().encode("previous"));
     first.detach(a.handle);
     h.advance(5_000);
 
-    const second = await h.sessions.acquire("term_a", GEOMETRY);
+    const second = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const b = client();
     second.attach(b.handle);
     expect(b.written).toHaveLength(0);
@@ -297,25 +303,25 @@ describe("what a returning browser is given", () => {
 describe("the far end going away", () => {
   test("closes the session and the attached client with it", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     const a = client();
     session.attach(a.handle);
     h.upstreamClosed("term_a");
     expect(a.closed()).toBe(true);
     expect(h.stopped).toEqual(["term_a"]);
-    expect(h.sessions.held("term_a")).toBe(false);
+    expect(h.sessions.held(key("term_a"))).toBe(false);
   });
 
   test("a server that will not start leaves nothing held", async () => {
     const h = harness();
     h.failStart();
-    await expect(h.sessions.acquire("term_a", GEOMETRY)).rejects.toThrow();
+    await expect(h.sessions.acquire(at("term_a"), GEOMETRY)).rejects.toThrow();
     expect(h.sessions.size()).toBe(0);
   });
 
   test("closing twice is harmless", async () => {
     const h = harness();
-    const session = await h.sessions.acquire("term_a", GEOMETRY);
+    const session = await h.sessions.acquire(at("term_a"), GEOMETRY);
     session.close();
     session.close();
     expect(h.stopped).toEqual(["term_a"]);
@@ -323,8 +329,8 @@ describe("the far end going away", () => {
 
   test("closing all leaves nothing running", async () => {
     const h = harness({ maxSessions: 4 });
-    await h.sessions.acquire("term_a", GEOMETRY);
-    await h.sessions.acquire("term_b", GEOMETRY);
+    await h.sessions.acquire(at("term_a"), GEOMETRY);
+    await h.sessions.acquire(at("term_b"), GEOMETRY);
     h.sessions.closeAll();
     expect(h.stopped.toSorted()).toEqual(["term_a", "term_b"]);
     expect(h.sessions.size()).toBe(0);

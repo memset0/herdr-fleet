@@ -14,6 +14,14 @@ export interface ManagedChildOptions {
   readonly logPath: string;
   readonly minBackoffMs?: number;
   readonly maxBackoffMs?: number;
+  /**
+   * Exit codes that mean "this child finished on purpose".
+   *
+   * A member's terminal service stands itself down when nothing has asked it for anything, and that
+   * is the capability working. Such an exit is not counted as a restart and does not escalate the
+   * backoff — the child comes straight back, empty, so the endpoint is there for the next request.
+   */
+  readonly idleExitCodes?: readonly number[];
 }
 
 export function childBackoffMs(restarts: number, minimum = 1_000, maximum = 30_000): number {
@@ -27,6 +35,7 @@ export class ManagedChild {
   private restartCount = 0;
   private nextRestart = 0;
   private lastStartedAt = 0;
+  private idle = false;
 
   constructor(private readonly options: ManagedChildOptions) {}
 
@@ -56,21 +65,23 @@ export class ManagedChild {
     }
     this.lastStartedAt = Date.now();
     this.nextRestart = 0;
+    this.idle = false;
     this.child.once("error", () => undefined);
-    this.child.once("close", () => {
+    this.child.once("close", (code: number | null) => {
       this.child = null;
+      this.idle = code !== null && (this.options.idleExitCodes ?? []).includes(code);
       if (!this.stopping) this.scheduleRestart();
     });
   }
 
   private scheduleRestart(): void {
     if (Date.now() - this.lastStartedAt > 60_000) this.restartCount = 0;
-    const delay = childBackoffMs(
-      this.restartCount,
-      this.options.minBackoffMs,
-      this.options.maxBackoffMs,
-    );
-    this.restartCount += 1;
+    // An idle stand-down is not a restart: counting it would let a device nobody uses climb its own
+    // backoff until the next request waited half a minute for a service that never failed.
+    const delay = this.idle
+      ? (this.options.minBackoffMs ?? 1_000)
+      : childBackoffMs(this.restartCount, this.options.minBackoffMs, this.options.maxBackoffMs);
+    if (!this.idle) this.restartCount += 1;
     this.nextRestart = Date.now() + delay;
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
@@ -111,12 +122,13 @@ export class ManagedChild {
   }
 
   status(): ChildStatus {
-    return {
+    const base: ChildStatus = {
       name: this.options.name,
       pid: this.child?.pid ?? null,
       running: this.child !== null && this.child.exitCode === null,
       restarts: this.restartCount,
       nextRestartAt: this.nextRestart === 0 ? null : this.nextRestart,
     };
+    return this.idle ? { ...base, idle: true } : base;
   }
 }

@@ -338,8 +338,47 @@ written procedure of its own (`openspec/specs/fleet-upstream-sync/spec.md`, with
 This change adds one invasive path, so the next adoption will report it; its entry must carry a
 reason good enough to review at that moment, not just at this one.
 
+### The numbers, and where they are stated
+
+The lead's three bounds are stated once, in `fleet/terminal/service.ts`, with the reasoning at them
+and a declared range each is validated against. They are not in `fleet.toml`: the configuration's
+`[terminal]` table is a Peer's, a Lead rejects it, and inventing a second Lead-side table for three
+numbers nobody has yet wanted to change would be a configuration surface built ahead of its need.
+The values are the grace period at **20 seconds**, the session maximum at **4**, and the retained
+window at **256 KiB**.
+
+The grace period is the interesting one, and it is short on purpose. It is not a cache — attaching
+was measured at a tenth to a quarter of a second — so its length is not chosen to save that. What it
+costs is the Pane's geometry, which is held for its whole duration, and the Pane belongs to whoever
+is at that machine's keyboard. Twenty seconds covers switching Panes and coming back; a minute would
+leave somebody else's terminal at a phone's size while they worked in it.
+
+### One endpoint per member, carrying the stream as well as the control
+
+The member's service answers three operations on one loopback endpoint, and the requested terminal is
+served over that same endpoint as a byte-for-byte forward of the terminal server's own wire. The
+alternative — a control channel that hands back a second address for the stream — would need a second
+projection per terminal, or a second endpoint the lead would have to be told about, and either is a
+thing the lead could then name. This way the lead names a Pane, once, and what comes back is a
+stream; the lead's client is the same client it uses for a local terminal, because the wire is.
+
+### The terminal child is given a table, not a configuration path
+
+The runtime delta says the terminal-service child must not receive the Fleet configuration path. It
+therefore receives the *validated terminal table*, as one environment value, and validates it again
+on arrival against the same bounds. Twice, deliberately: a child that trusts its parent blindly is a
+child that cannot say what went wrong when the parent is what is wrong. Nothing else of Fleet reaches
+it — no session state, no state directory, no Pack material, and nothing a browser ever touched.
+
+### Standing down is an exit, and the supervisor knows the difference
+
+A member's terminal service ends its own process when it has held no terminal server and been asked
+for nothing for its idle interval. The supervisor reads a clean exit from that child as *idle*: it is
+not counted as a restart, it does not escalate the backoff, and status says so — so a device nobody
+has used since yesterday is not a device with a problem. It is then started again, empty, so the
+endpoint is there for the next request and nothing is carried over from the last one.
+
 ## Open Questions
 
-- The session maximum, the grace period, and the retained-output bound have shapes fixed by the
-  specs and values that are configuration. Their first values can be chosen during implementation and
-  tuned afterwards without changing the specs, the approach, or the task breakdown.
+- None outstanding. The session maximum, the grace period and the retained-output bound were open at
+  proposal time and are settled above.

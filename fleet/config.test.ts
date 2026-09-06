@@ -7,9 +7,11 @@ import { describe, expect, test } from "bun:test";
 
 import {
   loadFleetConfig,
+  parseFleetTerminalEnvelope,
   parseFleetToml,
   resolveFleetConfigPath,
   type FleetSchema2LeadConfig,
+  type FleetTerminalConfig,
   type FleetTransportConfig,
 } from "./config.ts";
 
@@ -351,6 +353,36 @@ port = 18902
           `terminal_host = "127.0.0.1"\nterminal_port = 18901\n`,
       ),
     ).toThrow("reachability[1].terminal reuses an endpoint already mapped to another member");
+  });
+
+  test("the terminal envelope a child receives is validated again on arrival", () => {
+    const table: FleetTerminalConfig = {
+      bind: { host: "127.0.0.1", port: 18_903 },
+      leadBind: { host: "::1", port: 18_911 },
+      serverPath: "/synthetic/fleet/bin/terminal-server",
+      serverDigest: "0".repeat(64),
+      idleSeconds: 3_600,
+      maxServers: 8,
+    };
+    expect(parseFleetTerminalEnvelope(JSON.stringify(table))).toEqual(table);
+
+    // A parent that hands over nonsense is named, not trusted.
+    expect(() => parseFleetTerminalEnvelope("not json")).toThrow("not valid JSON");
+    expect(() => parseFleetTerminalEnvelope(JSON.stringify({ ...table, cookie: "x" }))).toThrow(
+      "terminal contains unknown field cookie",
+    );
+    expect(() =>
+      parseFleetTerminalEnvelope(JSON.stringify({ ...table, bind: { host: "0.0.0.0", port: 18_903 } })),
+    ).toThrow("terminal.bind.host must be a loopback address");
+    expect(() => parseFleetTerminalEnvelope(JSON.stringify({ ...table, idleSeconds: 59 }))).toThrow(
+      "terminal.idle_seconds must be an integer between 60 and 86400",
+    );
+    expect(() => parseFleetTerminalEnvelope(JSON.stringify({ ...table, maxServers: 33 }))).toThrow(
+      "terminal.max_servers must be an integer between 1 and 32",
+    );
+    expect(() => parseFleetTerminalEnvelope(JSON.stringify({ ...table, serverDigest: "nope" }))).toThrow(
+      "terminal.server_digest",
+    );
   });
 
   test("the documented synthetic examples parse and carry no live value", () => {

@@ -12,7 +12,9 @@
 import { TerminalConnection, TerminalConnections, type BrowserSocket, type ConnectionSession } from "./connection.ts";
 import type { TerminalTarget } from "./admit.ts";
 import type { Resolution } from "./resolve.ts";
-import { TerminalSessions, type SessionLimits } from "./session.ts";
+import { makePeerStartServer } from "./peer-start.ts";
+import type { Placement } from "./placement.ts";
+import { TerminalSessions, type SessionLimits, type StartServer } from "./session.ts";
 import { findTerminalTools, makeConnectUpstream, makeSocketDirectory, makeStartServer, type TerminalTools } from "./spawn.ts";
 
 /**
@@ -85,9 +87,15 @@ export class TerminalService {
 
   constructor(private readonly deps: TerminalServiceDeps) {
     const limits = validateLimits(deps.limits ?? FLEET_TERMINAL_LIMITS);
+    // Two starters, one for each kind of placement, chosen by the placement and never by a flag: a
+    // local Pane is a process this machine runs, and a member's Pane is an address on a link.
+    const local = makeStartServer({ tools: deps.tools, socketDir: deps.socketDir.path, log: deps.log });
+    const remote = makePeerStartServer({ log: deps.log });
+    const startServer: StartServer = (placement: Placement, geometry) =>
+      placement.kind === "local" ? local(placement, geometry) : remote(placement, geometry);
     this.sessions = new TerminalSessions({
       limits,
-      startServer: makeStartServer({ tools: deps.tools, socketDir: deps.socketDir.path, log: deps.log }),
+      startServer,
       connect: makeConnectUpstream(),
       log: deps.log,
     });

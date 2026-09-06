@@ -17,6 +17,7 @@
 import { defaultSocketPath } from "../../bridge/config.ts";
 import { HerdrClient } from "../../bridge/mux/herdr/client.ts";
 import type { TerminalTarget } from "./admit.ts";
+import type { Placement } from "./placement.ts";
 
 /** The single Pane fact this module needs, named structurally so a test needs no wire fixture. */
 export interface SnapshotPane {
@@ -34,10 +35,12 @@ export type ResolutionFailure =
   | "pane-absent"
   | "pane-ambiguous"
   | "no-terminal"
-  | "snapshot-unavailable";
+  | "snapshot-unavailable"
+  /** The target named a member this deployment has no terminal endpoint for. */
+  | "no-terminal-endpoint";
 
 export type Resolution =
-  | { readonly ok: true; readonly terminalId: string }
+  | { readonly ok: true; readonly placement: Placement }
   | { readonly ok: false; readonly reason: ResolutionFailure };
 
 /**
@@ -64,7 +67,35 @@ export function resolveInSnapshot(target: TerminalTarget, snapshot: TerminalSnap
   // undefined, and an empty string fails the shape below exactly as a missing one should.
   const terminalId = matches[0]!.terminal_id ?? "";
   if (!TERMINAL_ID.test(terminalId)) return { ok: false, reason: "no-terminal" };
-  return { ok: true, terminalId };
+  return { ok: true, placement: { kind: "local", terminalId, paneId: target.paneId } };
+}
+
+/** One member's terminal endpoint, as a lead's validated reachability list carries it. */
+export interface MemberTerminalEndpoint {
+  readonly memberId: string;
+  readonly terminal?: { readonly host: string; readonly port: number } | undefined;
+}
+
+/**
+ * Resolve a member's Pane WITHOUT resolving its terminal.
+ *
+ * The lead stops at the Pane on purpose. It cannot read that member's multiplexer server, it is not
+ * permitted to hold a terminal id for a machine it does not own, and the member re-resolves the Pane
+ * on every request — so a Pane that has closed since the address was written refuses there rather
+ * than resolving to whatever now answers to its id.
+ */
+export function resolveMember(
+  target: TerminalTarget,
+  members: readonly MemberTerminalEndpoint[],
+): Resolution {
+  const host = target.host;
+  if (host === undefined) return { ok: false, reason: "not-local" };
+  const member = members.find((entry) => entry.memberId === host);
+  const endpoint = member?.terminal;
+  // A member with no declared terminal endpoint is a member that runs no terminal service. There is
+  // no default to fall back to: an endpoint the lead invented is one the lead would then dial.
+  if (endpoint === undefined) return { ok: false, reason: "no-terminal-endpoint" };
+  return { ok: true, placement: { kind: "peer", host, paneId: target.paneId, endpoint } };
 }
 
 export type SnapshotSource = () => Promise<TerminalSnapshot>;
@@ -96,4 +127,17 @@ export async function resolveTerminal(
     return { ok: false, reason: "snapshot-unavailable" };
   }
   return resolveInSnapshot(target, snapshot);
+}
+
+/**
+ * The lead's whole answer: its own Panes from its own server, a member's Panes from the reachability
+ * list, and no third case. The local snapshot is not read for a member's Pane at all, so a Pane id
+ * that exists on both machines cannot resolve to the wrong one.
+ */
+export function leadResolver(
+  source: SnapshotSource,
+  members: () => readonly MemberTerminalEndpoint[],
+): (target: TerminalTarget) => Promise<Resolution> {
+  return async (target) =>
+    target.host === undefined ? resolveTerminal(target, source) : resolveMember(target, members());
 }

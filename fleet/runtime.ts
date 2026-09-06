@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { collieChildEnv } from "./collie-env.ts";
-import { isFleetLeadConfig, type FleetConfig } from "./config.ts";
+import { FLEET_TERMINAL_ENV, isFleetLeadConfig, type FleetConfig } from "./config.ts";
 import { sshLinkCommand } from "./pack-reachability.ts";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,13 +25,15 @@ export interface RuntimePaths {
 }
 
 export interface ChildSpec {
-  readonly name: "collie" | "gateway" | "link";
+  readonly name: "collie" | "gateway" | "link" | "terminal";
   readonly command: readonly string[];
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly logPath: string;
   /** The link child's recovery ceiling; omitted children keep the supervisor's own default. */
   readonly maxBackoffMs?: number;
+  /** Exit codes that mean this child finished on purpose. Only the terminal service has any. */
+  readonly idleExitCodes?: readonly number[];
 }
 
 function productionFiles(root: string, relative: string): string[] {
@@ -157,6 +159,25 @@ export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: 
       logPath: join(paths.stateDir, "link.log"),
       maxBackoffMs: config.transport.retryMaxSeconds * 1_000,
     });
+    if (config.terminal !== undefined) {
+      // The terminal service gets the terminal table and nothing else of Fleet's: not the
+      // configuration path, not the session state, not the Collie state directory. What it needs
+      // beyond that table is the multiplexer socket, which is ambient on this machine anyway.
+      const terminalEnv: NodeJS.ProcessEnv = { ...inherited };
+      for (const key of ["HERDR_FLEET_CONFIG", "HERDR_FLEET_SESSION_STATE", "HERDR_PLUGIN_CONFIG_DIR", "HERDR_PLUGIN_STATE_DIR"]) {
+        delete terminalEnv[key];
+      }
+      terminalEnv[FLEET_TERMINAL_ENV] = JSON.stringify(config.terminal);
+      children.push({
+        name: "terminal",
+        command: [process.execPath, "run", join(paths.pluginRoot, "fleet", "terminal", "peer-main.ts")],
+        cwd: paths.pluginRoot,
+        env: terminalEnv,
+        logPath: join(paths.stateDir, "terminal.log"),
+        // Standing itself down is this child's ordinary outcome, not a failure.
+        idleExitCodes: [0],
+      });
+    }
   }
   return children;
 }

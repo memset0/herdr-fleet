@@ -18,10 +18,17 @@
  * which is the only way to know a timer fires when it should and not when it should not.
  */
 
+import { placementKey, placementLabel, type Placement } from "./placement.ts";
 import { authFrame, decodeServerFrame, inputFrame, resizeFrame, type Geometry } from "./protocol.ts";
 import { retainedWindow, type RetainedWindow } from "./retain.ts";
 
-/** A terminal server the Gateway started, addressed by whatever its transport needs. */
+/**
+ * A terminal server the Gateway can talk to, whoever started it.
+ *
+ * For a local Pane the Gateway started it; for a member's Pane that member's own service did, and
+ * `stop` reaches across the link to say so. Both answer with a URL the Gateway's own client dials
+ * and nothing else knows, which is what lets everything above this line be one code path.
+ */
 export interface TerminalServer {
   /** Where the Gateway's own client connects. Never handed to a browser. */
   readonly endpoint: string;
@@ -42,7 +49,7 @@ export interface UpstreamHandlers {
   onClosed(): void;
 }
 
-export type StartServer = (terminalId: string, geometry: Geometry) => Promise<TerminalServer>;
+export type StartServer = (placement: Placement, geometry: Geometry) => Promise<TerminalServer>;
 export type ConnectUpstream = (
   server: TerminalServer,
   geometry: Geometry,
@@ -99,7 +106,8 @@ class Session {
   lastUsed: number;
 
   constructor(
-    readonly terminalId: string,
+    readonly placement: Placement,
+    readonly key: string,
     private readonly server: TerminalServer,
     private readonly deps: Required<Pick<SessionDeps, "limits">> & SessionDeps,
     private readonly onEnded: (session: Session) => void,
@@ -157,7 +165,7 @@ class Session {
     const set = this.deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.graceHandle = set(() => {
       this.graceHandle = null;
-      this.deps.log?.("terminal.grace-expired", { terminal: this.terminalId });
+      this.deps.log?.("terminal.grace-expired", { pane: placementLabel(this.placement) });
       this.close();
     }, this.deps.limits.graceMs);
   }
@@ -213,8 +221,8 @@ export class TerminalSessions {
     return this.sessions.size;
   }
 
-  held(terminalId: string): boolean {
-    return this.sessions.has(terminalId);
+  held(key: string): boolean {
+    return this.sessions.has(key);
   }
 
   /**
@@ -224,26 +232,27 @@ export class TerminalSessions {
    * of holding it. Establishing one may evict another, which happens before the new server starts so
    * the device is never briefly over its own maximum.
    */
-  async acquire(terminalId: string, geometry: Geometry): Promise<Session> {
-    const existing = this.sessions.get(terminalId);
+  async acquire(placement: Placement, geometry: Geometry): Promise<Session> {
+    const key = placementKey(placement);
+    const existing = this.sessions.get(key);
     if (existing !== undefined) {
       existing.lastUsed = (this.deps.now ?? Date.now)();
       return existing;
     }
     this.evictWhileAtCapacity();
-    const server = await this.deps.startServer(terminalId, geometry);
-    const session = new Session(terminalId, server, this.deps, (ended) => {
+    const server = await this.deps.startServer(placement, geometry);
+    const session = new Session(placement, key, server, this.deps, (ended) => {
       // Only remove the entry if it is still this session: a terminal that was closed and
       // re-established must not have its successor evicted by its predecessor's callback.
-      if (this.sessions.get(ended.terminalId) === ended) this.sessions.delete(ended.terminalId);
+      if (this.sessions.get(ended.key) === ended) this.sessions.delete(ended.key);
     });
-    this.sessions.set(terminalId, session);
+    this.sessions.set(key, session);
     const upstream = await this.deps.connect(server, geometry, {
       onOutput: (data) => session.receive(data),
       onClosed: () => session.close(),
     });
     session.bindUpstream(upstream);
-    this.deps.log?.("terminal.session-opened", { terminal: terminalId, held: this.sessions.size });
+    this.deps.log?.("terminal.session-opened", { pane: placementLabel(placement), held: this.sessions.size });
     return session;
   }
 
@@ -254,7 +263,7 @@ export class TerminalSessions {
         if (oldest === null || session.lastUsed < oldest.lastUsed) oldest = session;
       }
       if (oldest === null) return;
-      this.deps.log?.("terminal.session-evicted", { terminal: oldest.terminalId });
+      this.deps.log?.("terminal.session-evicted", { pane: placementLabel(oldest.placement) });
       oldest.close();
     }
   }

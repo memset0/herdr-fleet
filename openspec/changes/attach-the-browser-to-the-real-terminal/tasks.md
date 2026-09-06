@@ -42,7 +42,7 @@
 ## 5. The lead path, end to end
 
 - [ ] 5.1 Exercise a lead Pane end to end against a real terminal server — open, type, copy a selection, resize the browser, leave, return within the grace period, return after it — and record that the return within the period performs no new attachment and that the Pane's dimensions returned to their pre-connection value after the last disconnect
-- [ ] 5.2 Verify no terminal server, session, or upgrade route is exercised while the switch is off, and that the mirror surface's route, loader, polling, and rendering are unchanged
+- [x] 5.2 Verify no terminal server, session, or upgrade route is exercised while the switch is off, and that the mirror surface's route, loader, polling, and rendering are unchanged
 
 ## 6. Configuration grammar
 
@@ -52,33 +52,33 @@
 
 ## 7. The peer terminal service
 
-- [ ] 7.1 Implement peer-local Pane resolution against the peer's own multiplexer server, requiring exactly one live match with no fallback, and verify focused tests cover the match, absent, ambiguous, and no-terminal cases
-- [ ] 7.2 Implement the three-operation control contract with an exact message grammar, refusing unknown operations, unknown fields, out-of-range values, and any execution detail, and verify focused tests cover each refusal
-- [ ] 7.3 Bind only the peer's declared loopback terminal endpoint and refuse a connection arriving otherwise, and verify a focused test asserts refusal before any Pane is resolved
-- [ ] 7.4 Start one terminal server per resolved terminal with one writable client, after verifying the configured executable's identity, and verify focused tests cover a successful start, a missing executable, and a mismatched identity
-- [ ] 7.5 Hold no terminal server at peer startup, link establishment, or configuration install, and verify a focused test asserts the idle process set
-- [ ] 7.6 Stand the service down after its idle interval, removing its endpoint and ephemeral state, and bring it back with no residual state on the next request; verify focused tests drive both with an injected clock
-- [ ] 7.7 Verify the service reads, derives, stores, and forwards no Pack membership, identity, certificate, secret, browser cookie, or signing material, with a focused test over its inputs and outputs
+- [x] 7.1 Implement peer-local Pane resolution against the peer's own multiplexer server, requiring exactly one live match with no fallback, and verify focused tests cover the match, absent, ambiguous, and no-terminal cases
+- [x] 7.2 Implement the three-operation control contract with an exact message grammar, refusing unknown operations, unknown fields, out-of-range values, and any execution detail, and verify focused tests cover each refusal
+- [x] 7.3 Bind only the peer's declared loopback terminal endpoint and refuse a connection arriving otherwise, and verify a focused test asserts refusal before any Pane is resolved
+- [x] 7.4 Start one terminal server per resolved terminal with one writable client, after verifying the configured executable's identity, and verify focused tests cover a successful start, a missing executable, and a mismatched identity
+- [x] 7.5 Hold no terminal server at peer startup, link establishment, or configuration install, and verify a focused test asserts the idle process set
+- [x] 7.6 Stand the service down after its idle interval, removing its endpoint and ephemeral state, and bring it back with no residual state on the next request; verify focused tests drive both with an injected clock
+- [x] 7.7 Verify the service reads, derives, stores, and forwards no Pack membership, identity, certificate, secret, browser cookie, or signing material, with a focused test over its inputs and outputs
 
 ## 8. Reachability and lifecycle
 
-- [ ] 8.1 Add the third, terminal-only projection to the link's argument set, published only when the peer's configuration declares a terminal endpoint, and verify the pinning test gains a three-projection case while its existing two-projection case stays byte-identical
-- [ ] 8.2 Supervise the peer's terminal-service child with the peer's sanitized environment and no Fleet configuration path, session state, or browser material, and verify a focused test asserts the child's environment
-- [ ] 8.3 Report an idle stand-down as idle rather than failed, recover an unexpected exit without restarting the Collie or link child, and verify focused tests cover both
-- [ ] 8.4 Leave no orphaned terminal server, endpoint, or projection when the plugin stops or a start fails, and verify a focused test asserts cleanup
+- [x] 8.1 Add the third, terminal-only projection to the link's argument set, published only when the peer's configuration declares a terminal endpoint, and verify the pinning test gains a three-projection case while its existing two-projection case stays byte-identical
+- [x] 8.2 Supervise the peer's terminal-service child with the peer's sanitized environment and no Fleet configuration path, session state, or browser material, and verify a focused test asserts the child's environment
+- [x] 8.3 Report an idle stand-down as idle rather than failed, recover an unexpected exit without restarting the Collie or link child, and verify focused tests cover both
+- [x] 8.4 Leave no orphaned terminal server, endpoint, or projection when the plugin stops or a start fails, and verify a focused test asserts cleanup
 
 ## 9. The peer path, end to end
 
 - [ ] 9.1 Exercise a peer Pane end to end through the lead's Gateway — open, type, resize, leave, return — and record that the peer's terminal id never appeared on the lead outside the peer's own reply
-- [ ] 9.2 Verify a peer that declares no terminal endpoint runs the same two children and publishes the same two projections as before this change
+- [x] 9.2 Verify a peer that declares no terminal endpoint runs the same two children and publishes the same two projections as before this change
 - [ ] 9.3 Verify the Pane, its terminal, the multiplexer server, Collie, and the link are unchanged after a full terminal lifecycle on a peer
 
 ## 10. Boundaries and the commit gate
 
-- [ ] 10.1 Verify diagnostics across a full lifecycle and a failure at each layer contain no terminal content, retained output, cookie, token, signing material, injected identity header, or environment dump
-- [ ] 10.2 Audit the tracked tree for private facts and verify `bun test scripts/check-private-facts.test.ts && bun scripts/check-private-facts.ts` passes with no device, host, domain, account, mesh, path, credential, or parent-tooling value introduced
+- [x] 10.1 Verify diagnostics across a full lifecycle and a failure at each layer contain no terminal content, retained output, cookie, token, signing material, injected identity header, or environment dump
+- [x] 10.2 Audit the tracked tree for private facts and verify `bun test scripts/check-private-facts.test.ts && bun scripts/check-private-facts.ts` passes with no device, host, domain, account, mesh, path, credential, or parent-tooling value introduced
 - [ ] 10.3 Verify `FORK.toml` records every upstream path this change touched with its reason, and that `web/src/components/agent-chat.tsx` is not among them, via `bun scripts/check-fork.ts`
-- [ ] 10.4 Add one line per change under `## [Unreleased]` in `CHANGELOG.md` in the same commit as each functional change, never touching the three version files, and verify the pre-commit guard passes
-- [ ] 10.5 Assess the finished change against the release axis — whether a peer must redeploy — and say which axis it sits on rather than leaving the assessment for later
+- [x] 10.4 Add one line per change under `## [Unreleased]` in `CHANGELOG.md` in the same commit as each functional change, never touching the three version files, and verify the pre-commit guard passes
+- [x] 10.5 Assess the finished change against the release axis — whether a peer must redeploy — and say which axis it sits on rather than leaving the assessment for later — **MINOR**: a member gains a third supervised child and a third projection, so every member redeploys. The release itself waits on the end-to-end runs below, which need a terminal server installed on the lead and on a member.
 - [ ] 10.6 Run the full gate once when commit-ready: `bun test`, `cd web && bun run test`, both typechecks, `bun run lint`, `bun scripts/check-fork.ts`, `bash scripts/check-version.sh`, `bun run build`, `openspec validate attach-the-browser-to-the-real-terminal --strict`, `git diff --check`
-- [ ] 10.7 Verify the planning artifacts describe what was actually implemented, and record the chosen session maximum, grace period, and retained-output bound in design.md
+- [x] 10.7 Verify the planning artifacts describe what was actually implemented, and record the chosen session maximum, grace period, and retained-output bound in design.md

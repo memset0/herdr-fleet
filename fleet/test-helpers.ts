@@ -68,7 +68,7 @@ port = 18901
   return config;
 }
 
-export function fleetTestPackPeerConfig(): FleetSchema2PeerConfig {
+export function fleetTestPackPeerConfig(extra = ""): FleetSchema2PeerConfig {
   const config = parseFleetToml(`schema_version = 2
 role = "peer"
 [lifecycle]
@@ -91,7 +91,7 @@ peer_bind_port = 18902
 lead_collie_host = "127.0.0.1"
 lead_collie_port = 8787
 retry_max_seconds = 60
-`);
+${extra}`);
   if (config.schemaVersion !== 2 || config.role !== "peer") {
     throw new Error("test configuration did not parse as schema 2 peer");
   }

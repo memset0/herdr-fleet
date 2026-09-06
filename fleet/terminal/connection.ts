@@ -177,7 +177,7 @@ export class TerminalConnection {
     }
     let session: Session;
     try {
-      session = await this.deps.sessions.acquire(resolution.terminalId, geometry);
+      session = await this.deps.sessions.acquire(resolution.placement, geometry);
     } catch {
       this.end(NOTICE.unavailable);
       return;

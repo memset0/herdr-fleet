@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { childBackoffMs } from "./managed-child.ts";
+import { ManagedChild, childBackoffMs } from "./managed-child.ts";
 import { childSpecs, computeGeneration, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
 import {
   fleetTestConfig,
@@ -116,6 +118,97 @@ describe("Herdr-owned Fleet lifecycle", () => {
       "collie",
       "gateway",
     ]);
+  });
+
+  test("a peer that declares a terminal service runs a third child, and one that does not runs two", () => {
+    const paths = resolveRuntimePaths({
+      HERDR_PLUGIN_ROOT: root,
+      HERDR_FLEET_CONFIG: "/private/config/fleet.toml",
+      HERDR_PLUGIN_STATE_DIR: "/private/state",
+      XDG_RUNTIME_DIR: "/private/runtime",
+      HERDR_FLEET_GENERATION: "generation-a",
+    });
+    const declared = `[terminal]
+bind_host = "127.0.0.1"
+bind_port = 18903
+lead_bind_host = "127.0.0.1"
+lead_bind_port = 18911
+server_path = "/synthetic/fleet/bin/terminal-server"
+server_digest = "${"0".repeat(64)}"
+`;
+    const without = childSpecs(fleetTestPackPeerConfig(), paths, { PATH: "/usr/bin" });
+    expect(without.map((spec) => spec.name)).toEqual(["collie", "link"]);
+
+    const peer = childSpecs(fleetTestPackPeerConfig(declared), paths, {
+      PATH: "/usr/bin",
+      HERDR_FLEET_CONFIG: "/private/fleet.toml",
+      HERDR_FLEET_SESSION_STATE: "/inherited/sessions.json",
+      HERDR_PLUGIN_CONFIG_DIR: "/private/config",
+      HERDR_PLUGIN_STATE_DIR: "/private/state",
+    });
+    expect(peer.map((spec) => spec.name)).toEqual(["collie", "link", "terminal"]);
+
+    const terminal = peer[2];
+    expect(terminal?.logPath).toBe("/private/state/terminal.log");
+    // Standing itself down is this child's ordinary outcome, and the supervisor is told so here.
+    expect(terminal?.idleExitCodes).toEqual([0]);
+    // It gets the terminal table and none of Fleet's own environment: no configuration path, no
+    // session state, no state directory, nothing a browser ever touched.
+    expect(terminal?.env.HERDR_FLEET_CONFIG).toBeUndefined();
+    expect(terminal?.env.HERDR_FLEET_SESSION_STATE).toBeUndefined();
+    expect(terminal?.env.HERDR_PLUGIN_CONFIG_DIR).toBeUndefined();
+    expect(terminal?.env.HERDR_PLUGIN_STATE_DIR).toBeUndefined();
+    expect(JSON.parse(terminal?.env.HERDR_FLEET_TERMINAL ?? "null")).toEqual({
+      bind: { host: "127.0.0.1", port: 18_903 },
+      leadBind: { host: "127.0.0.1", port: 18_911 },
+      serverPath: "/synthetic/fleet/bin/terminal-server",
+      serverDigest: "0".repeat(64),
+      idleSeconds: 3_600,
+      maxServers: 8,
+    });
+    // And nothing about the Pack reaches it.
+    const envelope = terminal?.env.HERDR_FLEET_TERMINAL ?? "";
+    for (const secret of ["id_ed25519", "known_hosts", "lead.example.com", "fleet-tunnel"]) {
+      expect(envelope).not.toContain(secret);
+    }
+  });
+
+  test("a child that finishes on purpose is idle, and one that fails is not", async () => {
+    const logPath = join(tmpdir(), `herdr-fleet-idle-${process.pid}.log`);
+    const run = async (script: string, idleExitCodes: readonly number[]) => {
+      const child = new ManagedChild({
+        name: "terminal",
+        command: ["/bin/sh", "-c", script],
+        cwd: process.cwd(),
+        env: { PATH: "/usr/bin:/bin" },
+        logPath,
+        // Long enough that the restart cannot land inside this test; the point is the bookkeeping.
+        minBackoffMs: 60_000,
+        maxBackoffMs: 60_000,
+        idleExitCodes,
+      });
+      child.start();
+      for (let attempt = 0; attempt < 200 && child.status().running; attempt += 1) await Bun.sleep(10);
+      await Bun.sleep(20);
+      const status = child.status();
+      await child.stop();
+      return status;
+    };
+
+    const stoodDown = await run("exit 0", [0]);
+    expect(stoodDown.idle).toBe(true);
+    // Standing down is not a restart, so a device nobody uses never climbs its own backoff.
+    expect(stoodDown.restarts).toBe(0);
+
+    const failed = await run("exit 3", [0]);
+    expect(failed.idle).toBeUndefined();
+    expect(failed.restarts).toBe(1);
+
+    // A child with no idle codes has no idle outcome, whatever it exits with.
+    const ordinary = await run("exit 0", []);
+    expect(ordinary.idle).toBeUndefined();
+    expect(ordinary.restarts).toBe(1);
+    await rm(logPath, { force: true });
   });
 
   test("uses bounded exponential child restart delays", () => {

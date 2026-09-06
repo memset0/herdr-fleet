@@ -40,7 +40,9 @@ from the peer's own validated configuration and its own local multiplexer server
 
 The service SHALL be reachable only over the peer's own loopback projection of its terminal endpoint,
 SHALL refuse a request that arrives from anywhere else, and MUST NOT expose a publicly reachable
-listener.
+listener. The requested terminal SHALL be served over that same endpoint, and the stream SHALL be a
+byte-for-byte forward of the terminal server's own wire: this service SHALL NOT interpose a protocol
+of its own on it, so nothing about that wire has to be agreed twice.
 
 #### Scenario: A valid request is made
 - **WHEN** the service receives a well-formed request for one of the three declared operations
@@ -94,8 +96,10 @@ The peer terminal service SHALL stand itself down after a bounded idle interval 
 no terminal server and has received no request. The interval SHALL be configurable with an explicit
 default of one hour, and SHALL be validated against declared bounds.
 
-Standing down SHALL leave the peer in the process set it had before any terminal was requested, and
-SHALL remove the service's own endpoint and ephemeral state. It MUST NOT stop the multiplexer server,
+Standing down SHALL be an ordinary successful end of the service, not a failure, and the peer's
+supervisor SHALL report it as idle and make the service available again for the next request. It
+SHALL leave the peer in the process set it had before any terminal was requested, and SHALL remove
+the service's own endpoint and ephemeral state. It MUST NOT stop the multiplexer server,
 Collie, or the link, and MUST NOT require an operator to restart anything for the next request to
 succeed: a later request SHALL bring the service back with no residual state from the previous one.
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import type { Placement } from "./placement.ts";
 import {
   ATTACH_COMMAND_NAME,
   SERVER_WS_PATH,
@@ -15,6 +16,7 @@ import {
 
 const TOOLS: TerminalTools = { server: "/synthetic/bin/ttyd", attach: "/synthetic/bin/herdr" };
 const GEOMETRY = { columns: 100, rows: 30 };
+const at = (terminalId: string): Placement => ({ kind: "local", terminalId, paneId: "w1:p1" });
 
 describe("the two executables", () => {
   test("are found together or not at all", () => {
@@ -90,10 +92,12 @@ describe("starting one", () => {
       spawn: h.spawn,
       awaitSocket: async () => undefined,
     });
-    const first = await start("term_../../etc/passwd", GEOMETRY);
-    const second = await start("term_bbb", GEOMETRY);
-    expect(first.endpoint).toBe("/run/socket/t1.sock");
-    expect(second.endpoint).toBe("/run/socket/t2.sock");
+    const first = await start(at("term_../../etc/passwd"), GEOMETRY);
+    const second = await start(at("term_bbb"), GEOMETRY);
+    expect(first.endpoint).toBe(serverUrl("/run/socket/t1.sock"));
+    expect(second.endpoint).toBe(serverUrl("/run/socket/t2.sock"));
+    // The URL is what the Gateway dials, and it names the socket rather than the terminal.
+    expect(first.endpoint).not.toContain("passwd");
     // The id reaches the command it attaches to and nothing else.
     expect(h.commands[0]?.at(-1)).toBe("term_../../etc/passwd");
   });
@@ -106,7 +110,7 @@ describe("starting one", () => {
       spawn: h.spawn,
       awaitSocket: async () => undefined,
     });
-    const server = await start("term_abc", GEOMETRY);
+    const server = await start(at("term_abc"), GEOMETRY);
     server.stop();
     server.stop();
     expect(h.killed).toEqual([0]);
@@ -122,7 +126,7 @@ describe("starting one", () => {
         throw new Error("the terminal server did not open its socket");
       },
     });
-    await expect(start("term_abc", GEOMETRY)).rejects.toThrow("did not open its socket");
+    await expect(start(at("term_abc"), GEOMETRY)).rejects.toThrow("did not open its socket");
     expect(h.killed).toEqual([0]);
   });
 });

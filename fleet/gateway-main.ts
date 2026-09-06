@@ -4,7 +4,7 @@ import { isFleetLeadConfig, loadFleetConfig, resolveFleetConfigPath } from "./co
 import { startGateway } from "./server.ts";
 import { SessionStore } from "./session-store.ts";
 import { createSettingsStore, settingsPathFor } from "./settings/store.ts";
-import { localSnapshotSource, resolveTerminal } from "./terminal/resolve.ts";
+import { leadResolver, localSnapshotSource } from "./terminal/resolve.ts";
 import { createTerminalService } from "./terminal/service.ts";
 
 async function main(): Promise<void> {
@@ -17,8 +17,11 @@ async function main(): Promise<void> {
   // The snapshot source is resolved once: a Pane is resolved against the multiplexer this machine
   // owns, and asking is what proves the Pane is still there.
   const snapshots = localSnapshotSource();
+  // A member's terminal endpoint comes from the same validated reachability list the Pack link is
+  // projected from — a schema-1 lead has none, and therefore serves only its own Panes.
+  const members = config.schemaVersion === 2 ? config.reachability : [];
   const terminal = await createTerminalService({
-    resolve: (target) => resolveTerminal(target, snapshots),
+    resolve: leadResolver(snapshots, () => members),
     isActive: (session) => sessions.active({ version: 1, ...session }),
     log: (event, detail) => {
       // Lifecycle only, and it is the shape of this call that keeps it so: a fixed event name and a

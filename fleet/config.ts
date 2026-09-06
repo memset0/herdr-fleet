@@ -619,6 +619,49 @@ export function parseFleetConfig(value: JsonValue): FleetConfig {
   throw new Error("schema_version must be 1 or 2");
 }
 
+/** The one variable a member's terminal service is started with. */
+export const FLEET_TERMINAL_ENV = "HERDR_FLEET_TERMINAL";
+
+/**
+ * The terminal table as the supervisor hands it to the terminal-service child.
+ *
+ * The child is deliberately not given the Fleet configuration path: it has no business reading the
+ * transport's identity file path, and on any future role it would have no business reading what else
+ * that file holds. It gets this table and nothing else — and it validates it again on arrival, at
+ * the same bounds, because a child that trusts its parent blindly is a child that cannot say what
+ * went wrong when the parent is what is wrong.
+ */
+export function parseFleetTerminalEnvelope(source: string): FleetTerminalConfig {
+  let parsed: JsonValue;
+  try {
+    // SAFETY: JSON.parse yields the JsonValue representation; every field below is narrowed against
+    // the same readers and the same bounds the TOML table is validated with.
+    parsed = JSON.parse(source) as JsonValue;
+  } catch {
+    throw new Error(`${FLEET_TERMINAL_ENV} is not valid JSON`);
+  }
+  const raw = table(parsed, "terminal");
+  exactKeys(raw, ["bind", "leadBind", "serverPath", "serverDigest", "idleSeconds", "maxServers"], "terminal");
+  const endpoint = (value: JsonValue | undefined, label: string): FleetLoopbackEndpoint => {
+    const found = table(value, label);
+    exactKeys(found, ["host", "port"], label);
+    return {
+      host: loopbackHost(found.host, `${label}.host`),
+      port: integer(found.port, `${label}.port`, 1, 65_535),
+    };
+  };
+  const idle = FLEET_TERMINAL_BOUNDS.idleSeconds;
+  const servers = FLEET_TERMINAL_BOUNDS.maxServers;
+  return {
+    bind: endpoint(raw.bind, "terminal.bind"),
+    leadBind: endpoint(raw.leadBind, "terminal.lead_bind"),
+    serverPath: absolutePath(raw.serverPath, "terminal.server_path"),
+    serverDigest: serverDigest(raw.serverDigest),
+    idleSeconds: integer(raw.idleSeconds, "terminal.idle_seconds", idle.minimum, idle.maximum),
+    maxServers: integer(raw.maxServers, "terminal.max_servers", servers.minimum, servers.maximum),
+  };
+}
+
 export function parseFleetToml(source: string): FleetConfig {
   let parsed: JsonValue;
   try {

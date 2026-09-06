@@ -46,7 +46,7 @@ function service(over: { isActive?: (session: ConnectionSession) => Promise<bool
         removed.push("/synthetic/run");
       },
     },
-    resolve: async () => ({ ok: true, terminalId: "term_abc" }),
+    resolve: async () => ({ ok: true, placement: { kind: "local", terminalId: "term_abc", paneId: "w1:p1" } }),
     isActive: over.isActive ?? (async () => true),
     sweepMs: over.sweepMs,
     setInterval: (fn, ms) => {
