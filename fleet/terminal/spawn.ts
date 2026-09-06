@@ -21,6 +21,7 @@
  * geometry, returned when the attachment ends.
  */
 
+import { statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,10 +123,29 @@ function socketNameFor(sequence: number): string {
 const SOCKET_POLL_MS = 10;
 const SOCKET_TIMEOUT_MS = 5_000;
 
-async function defaultAwaitSocket(socketPath: string): Promise<void> {
-  const deadline = Date.now() + SOCKET_TIMEOUT_MS;
+/**
+ * Has the terminal server bound its socket yet?
+ *
+ * `stat`, and specifically `isSocket`, rather than a file-existence check. A UNIX socket is not a
+ * file, and the runtime's own `Bun.file(path).exists()` answers FALSE for one — which made every
+ * terminal wait out this timeout and then be killed for never having started. Measured, not
+ * reasoned about; the test below binds a real socket and pins the answer.
+ */
+export function socketIsBound(socketPath: string): boolean {
+  try {
+    return statSync(socketPath).isSocket();
+  } catch {
+    return false;
+  }
+}
+
+export async function awaitSocketBound(
+  socketPath: string,
+  timeoutMs = SOCKET_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await Bun.file(socketPath).exists()) return;
+    if (socketIsBound(socketPath)) return;
     await Bun.sleep(SOCKET_POLL_MS);
   }
   throw new Error("the terminal server did not open its socket");
@@ -144,7 +164,7 @@ export function makeStartServer(deps: SpawnDeps): StartServer {
         stdout: "ignore",
         stderr: "ignore",
       }));
-  const awaitSocket = deps.awaitSocket ?? defaultAwaitSocket;
+  const awaitSocket = deps.awaitSocket ?? ((path: string) => awaitSocketBound(path));
 
   return async (placement: Placement): Promise<TerminalServer> => {
     // A member's Pane is that member's to resolve and to serve. Reaching a spawn here would mean the

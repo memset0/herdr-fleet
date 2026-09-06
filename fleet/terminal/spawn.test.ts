@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { Placement } from "./placement.ts";
 import {
   ATTACH_COMMAND_NAME,
@@ -7,8 +11,10 @@ import {
   SERVER_WS_PROTOCOL,
   TERMINAL_SERVER_NAME,
   findTerminalTools,
+  awaitSocketBound,
   makeStartServer,
   serverUrl,
+  socketIsBound,
   terminalServerArguments,
   type SpawnedChild,
   type TerminalTools,
@@ -128,5 +134,36 @@ describe("starting one", () => {
     });
     await expect(start(at("term_abc"), GEOMETRY)).rejects.toThrow("did not open its socket");
     expect(h.killed).toEqual([0]);
+  });
+});
+
+describe("knowing the socket is there", () => {
+  test("a bound UNIX socket is recognised, and a regular file at the same path is not", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "herdr-fleet-socket-test-"));
+    const socketPath = join(directory, "t1.sock");
+    const filePath = join(directory, "plain");
+    await writeFile(filePath, "");
+
+    // The runtime's own file-existence check answers FALSE for a socket, which is why this exists:
+    // every terminal waited out its readiness timeout and was killed for never having started.
+    expect(await Bun.file(socketPath).exists()).toBe(false);
+    expect(socketIsBound(socketPath)).toBe(false);
+    expect(socketIsBound(filePath)).toBe(false);
+    expect(socketIsBound(join(directory, "absent"))).toBe(false);
+
+    const server = Bun.listen({ unix: socketPath, socket: { data: () => undefined } });
+    try {
+      expect(socketIsBound(socketPath)).toBe(true);
+      await awaitSocketBound(socketPath, 1_000);
+    } finally {
+      server.stop(true);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("a socket that never appears gives up rather than waiting forever", async () => {
+    await expect(awaitSocketBound(join(tmpdir(), "herdr-fleet-never.sock"), 60)).rejects.toThrow(
+      "did not open its socket",
+    );
   });
 });

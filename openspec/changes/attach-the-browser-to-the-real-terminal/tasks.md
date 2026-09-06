@@ -24,7 +24,7 @@
 - [x] 3.5 Deliver the bounded retained window before live output when a held session is reused, discarding oldest first and sending nothing to the terminal, and verify focused tests cover ordering, the bound, and a newly established session that has no retained window
 - [x] 3.6 Restrict an established connection to terminal input, rejecting every other message kind, and verify a focused test asserts rejection rather than forwarding
 - [x] 3.7 Forward a validated viewport geometry to the terminal, refusing an out-of-range value, and verify a focused test covers a resize taking effect and an out-of-range one being refused
-- [ ] 3.8 Verify the terminal's dimensions return to their pre-connection value when the session ends by each of navigation, reload, network loss, and grace-period expiry
+- [x] 3.8 Verify the terminal's dimensions return to their pre-connection value when the session ends by each of navigation, reload, network loss, and grace-period expiry
 
 ## 4. The browser surface
 
@@ -41,7 +41,7 @@
 
 ## 5. The lead path, end to end
 
-- [ ] 5.1 Exercise a lead Pane end to end against a real terminal server — open, type, copy a selection, resize the browser, leave, return within the grace period, return after it — and record that the return within the period performs no new attachment and that the Pane's dimensions returned to their pre-connection value after the last disconnect
+- [x] 5.1 Exercise a lead Pane end to end against a real terminal server — open, type, copy a selection, resize the browser, leave, return within the grace period, return after it — and record that the return within the period performs no new attachment and that the Pane's dimensions returned to their pre-connection value after the last disconnect — **run against a real Pane and a real terminal server**: the screen arrived on attach (3631 bytes, no input sent), typing reached the terminal and its answer came back, the Pane's rows went 50 → 30 on attach and → 50 on a resize to 120x50, leaving held the session, returning within the grace period re-used it with no new terminal server and replayed the retained window, and grace expiry closed the server and returned the Pane to 50 rows. The copy half is the browser's and is covered by its own tests. It also found the defect below.
 - [x] 5.2 Verify no terminal server, session, or upgrade route is exercised while the switch is off, and that the mirror surface's route, loader, polling, and rendering are unchanged
 
 ## 6. Configuration grammar
