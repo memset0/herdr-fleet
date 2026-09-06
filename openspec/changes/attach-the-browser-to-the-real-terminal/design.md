@@ -246,6 +246,23 @@ Global because the operator asked for one mode, not a per-Pane memory to maintai
 because it is a preference about how this browser draws a Pane, not a fact about the deployment, and
 `fleet/ui/native-navigation/preferences.ts` is the existing precedent for exactly that shape.
 
+### The renderer is pinned exactly, and costs nothing until it is imported
+
+`@xterm/xterm@6.0.0` with `@xterm/addon-fit@0.11.0`, both **exact** rather than ranged. This is the
+code that interprets whatever a remote terminal emits, so which bytes it runs is not a resolver's
+choice — the same reasoning the root manifest already applies to oxlint. Both are 257 days old,
+comfortably past the repository's seven-day supply-chain cooldown, which is why the install resolved
+them at all.
+
+Weight, measured rather than estimated: **nothing yet**. No module imports them, so the bundle
+tree-shakes them away entirely and `bun run build` produces what it produced before. The library's own
+ESM build is ~337 KiB unminified, and that is the figure to hold against the surface when it starts
+importing it — a number to re-measure at task 4.4 rather than one already spent.
+
+This is also the fork's first dependency and its first lockfile move. `web/bun.lock` had no
+classification because nothing upstream-owned had ever changed one; it is declared now, since a
+lockfile drifting outside the manifest is what the boundary check exists to refuse.
+
 ## Risks / Trade-offs
 
 - ~~**Same-origin `wss:` might not be admitted by `connect-src 'self'`.**~~ Retired: measured in a
@@ -281,14 +298,13 @@ output are all live-only.
 Deployment, device enrolment, terminal server acquisition, and the previous generation's retirement
 belong to the consuming repository and are not part of this change.
 
-## Re-verified against Collie 1.5.1
+## Re-verified against Collie 1.5.1, then 1.5.2
 
-This change was held at planning while the upstream merge was done first. That merge has landed:
-`FORK.toml` and `UPSTREAM.md` now record Collie **v1.5.1** (tag object `a326aedc`, commit
-`ba39c05c`), adopted through the repository's own `fleet-upstream-sync` procedure. Every statement in
-Context was originally read against v1.2.0, three minor releases earlier, so the whole list was run
-again on 2026-09-05 against the merged tree. **All of it held**, and none of the design changed as a
-result:
+This change was held at planning while upstream merges were done first. Two have landed since it was
+written: `FORK.toml` and `UPSTREAM.md` now record Collie **v1.5.2** (tag object `38798351`, commit
+`cea2035e`), adopted through the repository's own `fleet-upstream-sync` procedure. Every statement in
+Context was originally read against v1.2.0, so the whole list was run against v1.5.1 and again
+against v1.5.2. **All of it held both times**, and none of the design changed as a result:
 
 - **`web/src/router.tsx` is still claimed by no `FORK.toml` entry.** The whole port rests on this.
   The file did gain an upstream route (`settings/updates`), and the pane route's
@@ -307,6 +323,12 @@ result:
   which is why the wrapper was chosen over a branch there.
 - **`web/package.json` has gained no terminal renderer**, so that dependency is still this change's to
   add.
+
+The one thing that did change between the two runs is evidence the boundary works rather than a
+problem: 1.5.1 quietly centred the Pane and history routes, nobody decided it, and the fix declared
+those lines in the manifest. At 1.5.2 the preflight reported them and the adoption settled the
+refusal explicitly instead of inheriting it again. That is the same mechanism this change relies on
+for its own one invasive path.
 
 The multiplexer measurements were never Collie's to invalidate, and are unchanged.
 

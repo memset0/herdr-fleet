@@ -22,6 +22,7 @@ import { proxyCollie, type FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
 import type { SettingsStore } from "./settings/store.ts";
+import { TERMINAL_PATH, admit, type TerminalTarget } from "./terminal/admit.ts";
 
 const HTML_CSP =
   "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; " +
@@ -54,10 +55,14 @@ const PUBLIC_FILES = new Set([
 /** Fleet's own API surface. One path, so nothing else can grow under it by accident. */
 export const FLEET_SETTINGS_PATH = "/fleet/api/settings";
 
-/** Both API surfaces answer 401 rather than redirecting: a fetch cannot follow a login page. */
+/**
+ * Every machine surface answers 401 rather than redirecting: a fetch cannot follow a login page, and
+ * neither can a protocol upgrade — a WebSocket handshake that is answered with a redirect fails
+ * without ever telling the caller why, which is the one thing an unauthenticated terminal must not do.
+ */
 function isApiPath(pathname: string): boolean {
   if (pathname === "/api" || pathname.startsWith("/api/")) return true;
-  return pathname === FLEET_SETTINGS_PATH;
+  return pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
 }
 
 /**
@@ -75,6 +80,20 @@ function settingsWriteBody(value: JsonValue): { document: string; version: strin
 
 export interface GatewayContext {
   readonly peerAddress: string;
+  /**
+   * Completes a protocol upgrade, or reports that it could not be. Supplied by the server rather
+   * than reached for, so this handler stays a pure request→response function that a test can drive
+   * without a listener — and so that the decision to upgrade is visibly the handler's, taken before
+   * the upgrade rather than discovered after it.
+   */
+  readonly upgrade?: (request: Request, data: TerminalUpgrade) => boolean;
+}
+
+/** What the server attaches to an upgraded connection: the Pane it is for, and who asked. */
+export interface TerminalUpgrade {
+  readonly target: TerminalTarget;
+  /** The session behind the connection, so the socket can be closed when that session ends. */
+  readonly sessionId: string;
 }
 
 export interface GatewayOptions {
@@ -297,6 +316,35 @@ export function createGatewayHandler(options: GatewayOptions) {
         return json({ error: "invalid", at: result.rejection.at, message: result.rejection.message }, 422);
       }
       return json({ error: "method not allowed" }, 405);
+    }
+
+    // THE TERMINAL BOUNDARY. Above the proxy for a mechanical reason as well as a logical one:
+    // `proxyCollie` strips `upgrade` as a hop-by-hop header, so a terminal request that reached it
+    // would arrive at Collie as an ordinary GET and be answered as one. It is also the only route
+    // here that does not produce a response at all when it succeeds.
+    if (url.pathname === TERMINAL_PATH) {
+      const decision = admit(
+        {
+          url,
+          host,
+          origin: request.headers.get("origin"),
+          // Re-stated rather than assumed from the gate above, because this is the one branch whose
+          // refusal has to be certain BEFORE anything is handed to the socket layer.
+          authenticated: session !== null,
+        },
+        { publicHost: config.public.host, publicOrigin: config.public.origin },
+      );
+      // Every refusal answers identically. The reason is the operator's, through diagnostics; a
+      // caller learns only that it did not get a terminal, so "no such Pane" and "not signed in"
+      // are indistinguishable from outside.
+      if (!decision.ok) return text("terminal unavailable\n", 400);
+      if (context.upgrade === undefined) return text("terminal unavailable\n", 400);
+      const upgraded = context.upgrade(request, {
+        target: decision.target,
+        sessionId: session!.sessionId,
+      });
+      // `upgrade` answers the request itself when it succeeds; there is no response to return.
+      return upgraded ? new Response(null, { status: 101 }) : text("terminal unavailable\n", 400);
     }
 
     try {

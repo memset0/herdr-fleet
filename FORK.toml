@@ -215,7 +215,7 @@ review = "every-upstream-sync"
 reviewed = "v1.5.2"
 paths = [".oxlintrc.json#fleet/settings/document.ts"]
 verify = ["fleet/settings/document.test.ts", "fleet/settings/gateway-settings.test.ts"]
-reason = "ADR 0019 makes a finding fixable in code and never suppressible, and names one override class for files that ARE the I/O boundary the `no-runtime-typeof` rule tells you to parse at. The fork's settings document is that class a fourth time — one reader of an operator-authored JSON file, the Gateway route that replaces it, and that route's answer read back in the browser — so the three files join the existing list rather than carrying a disable comment. No rule is added, removed, or downgraded."
+reason = "ADR 0019 makes a finding fixable in code and never suppressible, and names one override class for files that ARE the I/O boundary the `no-runtime-typeof` rule tells you to parse at. The fork's settings document is that class a fourth time — one reader of an operator-authored JSON file, the Gateway route that replaces it, and that route's answer read back in the browser — so the three files join the existing list rather than carrying a disable comment. A fifth joins them with the Pane's terminal (attach-the-browser-to-the-real-terminal): `fleet/terminal/browser.ts` reads a viewport off a live WebSocket frame, and its one `typeof` is the object check that narrows an arbitrary parsed value to two integer fields before either becomes a real terminal's dimensions — the least trusted input in the list, and the only one whose parse result leaves the process. No rule is added, removed, or downgraded."
 
 [[invasive]]
 id = "plugin-identity"
@@ -235,10 +235,11 @@ review = "every-upstream-sync"
 reviewed = "v1.5.2"
 paths = [
   "CHANGELOG.md#private Fleet configuration",
+  "web/bun.lock#@xterm/xterm",
   "web/package.json#version"
 ]
 verify = ["scripts/check-version.sh"]
-reason = "Three files plus the newest numbered changelog heading must agree on one version, and `scripts/check-version.sh` and the pre-commit changelog guard both read those filenames directly. Giving our changelog a new name would mean editing both of those upstream scripts — two invasive paths, in tooling — to say what this file now honestly is, so CHANGELOG.md keeps the canonical name and holds our entries, and Collie's own history is retained beside it under its own name, which this file's header links — accumulatively, because upstream truncates that file and retaining Collie's history is not the same as retaining its bytes. The bump in the root package.json is the same one change and rides fleet-build-port, because this manifest allows one entry per path."
+reason = "Three files plus the newest numbered changelog heading must agree on one version, and `scripts/check-version.sh` and the pre-commit changelog guard both read those filenames directly. Giving our changelog a new name would mean editing both of those upstream scripts — two invasive paths, in tooling — to say what this file now honestly is, so CHANGELOG.md keeps the canonical name and holds our entries, and Collie's own history is retained beside it under its own name, which this file's header links — accumulatively, because upstream truncates that file and retaining Collie's history is not the same as retaining its bytes. The bump in the root package.json is the same one change and rides fleet-build-port, because this manifest allows one entry per path. This entry also carries the fork's first DEPENDENCY on that file, and the lockfile that follows from it (attach-the-browser-to-the-real-terminal): the Pane's terminal surface renders a byte stream, which needs a terminal emulator in the browser, and `@xterm/xterm` with `@xterm/addon-fit` is that. Both are pinned exactly rather than by range — this is the code that interprets whatever a remote terminal emits, so which bytes it runs is not a resolver's choice — and the same reasoning as oxlint's exact pins in the root manifest. `web/bun.lock` joins the paths because it is the first lockfile this fork has ever moved: nothing upstream-owned had changed one before, so it had no classification, and a lockfile that changes outside the manifest is exactly the drift the boundary check exists to refuse."
 
 [[invasive]]
 id = "fleet-build-port"

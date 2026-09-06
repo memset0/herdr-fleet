@@ -101,10 +101,10 @@ Non-goals:
 
 ## Impact
 
-Collie baseline: upstream `AltanS/collie`, tag `v1.5.1` (tag object
-`a326aedc6a44572cea51432545ea5762acc42648`, commit `ba39c05c6350a52bcb0a88f118cd0680ff85a1c5`).
-This change was planned against v1.2.0 and re-verified against v1.5.1 after that release was adopted;
-design.md records what was re-checked and that none of it changed.
+Collie baseline: upstream `AltanS/collie`, tag `v1.5.2` (tag object
+`38798351a64cae43c03f156c0b80f22f14d50565`, commit `cea2035e1f02d560d1bac66c85314828a7e01c20`).
+This change was planned against v1.2.0 and re-verified against v1.5.1 and again against v1.5.2 as
+each was adopted; design.md records what was re-checked and that none of it changed.
 
 Fork-owned, no upstream edit:
 

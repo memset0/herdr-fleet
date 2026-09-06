@@ -4,24 +4,24 @@
 - [x] 1.0 Probe the multiplexer's terminal-stream verbs and write the findings into the fork-owned `docs/herdr-fleet.md` rather than upstream's `HERDR_API.md`, which states what the bridge uses and would cost a second invasive path — frame format, whether cursor state is present, multi-observer semantics, behaviour when the Pane closes, and a version floor — because ADR 0008 records that none of it is verified and names this probe as the precondition for using them
 - [x] 1.0a Record the ADR 0008 departure in `AGENTS.md` in its short normative form, naming the ADR and stating that the mirror is unchanged and that the terminal surface holds the Pane's geometry only while attached and hands it back on leaving; extend the `FORK.toml` entry that already claims `AGENTS.md` to cover it; do not edit any file under `.adr/`
 - [x] 1.1 Assert same-origin `wss:` against the app's existing `connect-src 'self'` in a target browser, with a cross-origin negative control, and record the result in design.md; it is admitted, so no CSP directive was added and `bridge/server.ts` is untouched
-- [ ] 1.2 Add the browser terminal renderer to `web/package.json`, pinned, and verify `cd web && bun install` then `bun run build` succeeds and the added bundle weight is recorded in design.md
+- [x] 1.2 Add the browser terminal renderer to `web/package.json`, pinned, and verify `cd web && bun install` then `bun run build` succeeds and the added bundle weight is recorded in design.md — `@xterm/xterm@6.0.0` and `@xterm/addon-fit@0.11.0`, exact; build succeeds; weight is nil until something imports them, and `web/bun.lock` needed classifying as the fork's first lockfile move
 - [ ] 1.3 Extend the `FORK.toml` manifest with the `web/src/router.tsx` entry and its reason, and verify `bun scripts/check-fork.ts` and `bun test scripts/check-fork.test.ts scripts/fork-manifest.test.ts` pass
 
 ## 2. The Gateway's terminal boundary
 
-- [ ] 2.1 Add the upgrade route to the Gateway behind the existing session gate, refusing before the upgrade completes when the session, Host, or origin is wrong, and verify focused tests cover an accepted upgrade, a missing/expired/revoked session, a wrong Host, and a wrong origin
+- [x] 2.1 Add the upgrade route to the Gateway behind the existing session gate, refusing before the upgrade completes when the session, Host, or origin is wrong, and verify focused tests cover an accepted upgrade, a missing/expired/revoked session, a wrong Host, and a wrong origin
 - [ ] 2.2 Close an established connection when its session expires or is revoked, and verify a focused test drives revocation mid-connection
-- [ ] 2.3 Accept a Pane id with its Host and session scope and refuse any connection carrying a terminal id, command, argument, executable, socket path, or session selector, and verify a focused test asserts refusal rather than the value being ignored
-- [ ] 2.4 Resolve a lead-local Pane to exactly one terminal, refusing an absent, ambiguous, or out-of-scope Pane with no fallback to a focused or neighbouring Pane, and verify focused tests cover each refusal
-- [ ] 2.5 Implement the terminal server's framing as a client — the auth frame, input, resize, and the output/title/preferences replies — and verify a focused test drives the framing against a recorded fixture rather than a live server
+- [x] 2.3 Accept a Pane id with its Host and session scope and refuse any connection carrying a terminal id, command, argument, executable, socket path, or session selector, and verify a focused test asserts refusal rather than the value being ignored
+- [x] 2.4 Resolve a lead-local Pane to exactly one terminal, refusing an absent, ambiguous, or out-of-scope Pane with no fallback to a focused or neighbouring Pane, and verify focused tests cover each refusal
+- [x] 2.5 Implement the terminal server's framing as a client — the auth frame, input, resize, and the output/title/preferences replies — and verify a focused test drives the framing against a recorded fixture rather than a live server
 
 ## 3. Held sessions, single writer, replay
 
-- [ ] 3.1 Hold a session for its configured grace period after the browser disconnects and close it with its terminal server and attachment when the period expires, and verify focused tests drive both with an injected clock
-- [ ] 3.2 Re-establish a session transparently when the operator returns after it was closed, and verify a focused test asserts the surface behaves as on a first visit
-- [ ] 3.3 Bound the number of sessions a device holds at once, closing the least recently used at the maximum, and verify a focused test asserts eviction closes the server and disturbs no other session
-- [ ] 3.4 Refuse a second writable client to a terminal that already has one without displacing or exposing the established one, and verify a focused test asserts both properties
-- [ ] 3.5 Deliver the bounded retained window before live output when a held session is reused, discarding oldest first and sending nothing to the terminal, and verify focused tests cover ordering, the bound, and a newly established session that has no retained window
+- [x] 3.1 Hold a session for its configured grace period after the browser disconnects and close it with its terminal server and attachment when the period expires, and verify focused tests drive both with an injected clock
+- [x] 3.2 Re-establish a session transparently when the operator returns after it was closed, and verify a focused test asserts the surface behaves as on a first visit
+- [x] 3.3 Bound the number of sessions a device holds at once, closing the least recently used at the maximum, and verify a focused test asserts eviction closes the server and disturbs no other session
+- [x] 3.4 Refuse a second writable client to a terminal that already has one without displacing or exposing the established one, and verify a focused test asserts both properties
+- [x] 3.5 Deliver the bounded retained window before live output when a held session is reused, discarding oldest first and sending nothing to the terminal, and verify focused tests cover ordering, the bound, and a newly established session that has no retained window
 - [ ] 3.6 Restrict an established connection to terminal input, rejecting every other message kind, and verify a focused test asserts rejection rather than forwarding
 - [ ] 3.7 Forward a validated viewport geometry to the terminal, refusing an out-of-range value, and verify a focused test covers a resize taking effect and an out-of-range one being refused
 - [ ] 3.8 Verify the terminal's dimensions return to their pre-connection value when the session ends by each of navigation, reload, network loss, and grace-period expiry

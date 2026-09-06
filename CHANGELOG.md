@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- The Gateway has a terminal boundary: an authenticated upgrade that names a Pane and can name nothing else, a resolver that turns that Pane into its terminal on the machine that owns it, and a bounded set of held sessions so leaving a Pane and returning does not re-attach. No surface renders it yet.
+
 ### Fixed
 
 - A prefix sequence completes with a Chinese input method on: while a prefix is armed the caret is parked off the composer, so the IME has nothing to compose into and the second chord arrives as an ordinary key. It returns to the offset it left. An unregistered second chord now costs one character, deliberately.
