@@ -84,6 +84,7 @@ paths = [
   "web/src/components/fleet-settings-section.tsx",
   "web/src/lib/fleet-settings.ts",
   "web/src/lib/fleet-roster.ts",
+  "web/src/lib/fleet-roster.test.ts",
   "web/src/lib/fleet-composer-focus.ts",
   "web/src/lib/fleet-composer-focus.test.ts",
   "web/src/components/native-navigation-tree.test.tsx",

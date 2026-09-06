@@ -354,7 +354,7 @@ export function NativeNavigationShell({
   // to name the favourites revision as a dependency it never actually reads.
   // The rail draws exactly these sections, from this same function — so `next-agent` and the ninth
   // ordinal address the row the rail drew ninth, rather than agreeing by coincidence.
-  const roster = paneRosterFrom(triage(data.agents, "newest"), data.shellPanes);
+  const roster = paneRosterFrom(triage(data.agents, "newest"), data.shellPanes, data.servers);
 
   // The whole pack's tabs, matching the rails: a Tab command must be able to address the Space the
   // operator is actually on, and on a pack that Space may not be the one the URL's scope narrows to.

@@ -19,6 +19,15 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- A pane row in the switcher reads as an address: space, tab, then the pane's own name, then the host as a tag. Where it lives leads, because a dozen rows are called `claude`.
+- A match is marked with the highest-contrast ink and an underline instead of bold, so marking no longer shifts the text around it as you type. The host tag is never marked.
+
+### Fixed
+
+- The switcher names the lead machine `vultr`, not the internal id `lead` — the same name the navigation rail shows. The host tag appears only on a pack, and searching a host now matches the name that is displayed.
+
 ### Added
 
 - The Gateway has a terminal boundary: an authenticated upgrade that names a Pane and can name nothing else, a resolver that turns that Pane into its terminal on the machine that owns it, and a bounded set of held sessions so leaving a Pane and returning does not re-attach. No surface renders it yet.

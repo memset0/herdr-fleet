@@ -31,8 +31,18 @@ export type TriageSectionKey = (typeof TRIAGE_SECTION_KEYS)[number];
  */
 export interface RosterEntry {
   readonly paneId: string;
-  /** The pack member this row came from. Absent, or `""`, on a solo install. */
+  /**
+   * The pack member this row came from, as the snapshot IDENTIFIES it. Absent, or `""`, on a solo
+   * install. This is the id and not a name — the lead's is `lead` — so it addresses and identifies,
+   * and never appears on screen.
+   */
   readonly host?: string;
+  /**
+   * The same machine as a PERSON names it, resolved by the caller through the application's own
+   * host naming so that one machine has one name everywhere. Absent where there is only one machine,
+   * because naming it on every row says nothing.
+   */
+  readonly hostLabel?: string;
   readonly session?: string;
   readonly kind: "agent" | "shell";
   /** The Agent implementation behind an agent row. Absent on a shell row. */
@@ -64,9 +74,14 @@ export const ROSTER_SEARCH_FIELD_ORDER = ["label", "context", "tabLabel", "host"
 
 export type RosterSearchField = (typeof ROSTER_SEARCH_FIELD_ORDER)[number];
 
-/** The four strings, in {@link ROSTER_SEARCH_FIELD_ORDER}. An absent fact searches as empty. */
+/**
+ * The four strings, in {@link ROSTER_SEARCH_FIELD_ORDER}. An absent fact searches as empty.
+ *
+ * The host is searched by the NAME that is displayed, never by the id behind it: an operator types
+ * what they can see, and the id is on screen nowhere.
+ */
 export function rosterSearchFields(entry: RosterEntry): readonly string[] {
-  return [entry.label, entry.context ?? "", entry.tabLabel ?? "", entry.host ?? ""];
+  return [entry.label, entry.context ?? "", entry.tabLabel ?? "", entry.hostLabel ?? ""];
 }
 
 /** Which field an index from `fuzzyMatchAny` names, or `null` for an index from somewhere else. */

@@ -605,9 +605,11 @@ describe("the shell's command layer", () => {
       .getAllByRole("option")
       .map((option) => option.textContent);
 
-    // The two surfaces NAME a row differently — the rail shows the Tab, the bar shows the Agent —
-    // so the assertion is about which row each puts FIRST, which is the thing that has to agree.
-    expect(barOrder.map((text) => (text ?? "").startsWith("codex"))).toEqual([true, false]);
+    // The two surfaces NAME a row differently — the rail shows the Tab, and the bar reads as an
+    // address that leads with the Space — so the assertion is about which row each puts FIRST, which
+    // is the thing that has to agree. `codex` is the favourite's own name, wherever in its row it
+    // falls.
+    expect(barOrder.map((text) => (text ?? "").includes("codex"))).toEqual([true, false]);
     expect(railOrder.map((text) => (text ?? "").includes("Second"))).toEqual([true, false]);
   });
 

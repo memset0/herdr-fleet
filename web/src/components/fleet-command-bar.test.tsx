@@ -49,8 +49,18 @@ function namedRoster(): PaneRoster {
       {
         key: "needs",
         entries: [
-          entry("p1", "alpha", { host: "orinoco", context: "zephyr", tabLabel: "quicksand" }),
-          entry("p2", "bravo", { host: "danube", context: "mistral", tabLabel: "granite" }),
+          entry("p1", "alpha", {
+            host: "lead",
+            hostLabel: "orinoco",
+            context: "zephyr",
+            tabLabel: "quicksand",
+          }),
+          entry("p2", "bravo", {
+            host: "danube",
+            hostLabel: "danube",
+            context: "mistral",
+            tabLabel: "granite",
+          }),
         ],
       },
     ],
@@ -224,7 +234,7 @@ describe("finding a Pane by any of the four facts that name it", () => {
 
   it.each([
     ["the Pane's own name", "alpha"],
-    ["the host it is on", "orinoco"],
+    ["the host it is on, by its displayed name", "orinoco"],
     ["the Space it is in", "zephyr"],
     ["the Tab it sits in", "quicksand"],
   ])("matches on %s", async (_what, typed) => {
@@ -239,44 +249,71 @@ describe("finding a Pane by any of the four facts that name it", () => {
     view.unmount();
   });
 
-  it("shows the whole address, unfiltered", async () => {
-    // The slot does NOT switch on what matched. It is `tab · space · host`, always, so the operator
-    // reads where every Pane is rather than only where the matched ones are.
+  it("reads as an address: space, tab, pane name, host tag", async () => {
     const { view } = search();
-    expect(options(view.container)[0]?.textContent).toContain("quicksand · zephyr · orinoco");
+    const listed = options(view.container)[0];
+    const text = listed?.textContent ?? "";
+    // Where it lives leads; what it is called follows. A dozen rows are called the same thing.
+    expect(text.indexOf("zephyr")).toBeLessThan(text.indexOf("quicksand"));
+    expect(text.indexOf("quicksand")).toBeLessThan(text.indexOf("alpha"));
+    expect(text.indexOf("alpha")).toBeLessThan(text.indexOf("orinoco"));
     view.unmount();
   });
 
   it.each([
-    ["the Tab", "quicksand"],
     ["the Space", "zephyr"],
-    ["the host", "orinoco"],
-  ])("marks the part of the address that matched — %s", async (_what, typed) => {
+    ["the Tab", "quicksand"],
+    ["the Pane's own name", "alpha"],
+  ])("marks only the field that matched — %s", async (_what, typed) => {
     const user = userEvent.setup();
     const { view, input } = search();
     await user.type(input, typed);
     const listed = options(view.container)[0];
-    expect(listed?.textContent).toContain("quicksand · zephyr · orinoco");
-    // The offsets are the whole point: a match's positions are in ITS field's coordinates and have
-    // to be shifted into the joined string's, or the marks land on the wrong characters.
-    const marks = Array.from(listed?.querySelectorAll("span.font-semibold") ?? [])
+    const marks = Array.from(listed?.querySelectorAll("span.underline") ?? [])
       .map((span) => span.textContent)
       .join("");
     expect(marks).toBe(typed);
     view.unmount();
   });
 
-  it("leaves the address unmarked when the match was the Pane's own name", async () => {
+  it("never marks the host tag, even when the host is what matched", async () => {
+    // The tag says where the row is, not what was typed.
     const user = userEvent.setup();
     const { view, input } = search();
-    await user.type(input, "alpha");
+    await user.type(input, "orinoco");
     const listed = options(view.container)[0];
-    expect(listed?.textContent).toContain("quicksand · zephyr · orinoco");
-    const marks = Array.from(listed?.querySelectorAll("span.font-semibold") ?? [])
-      .map((span) => span.textContent)
-      .join("");
-    // The marks belong to the label, which is where the match was.
-    expect(marks).toBe("alpha");
+    expect(listed?.textContent).toContain("orinoco");
+    expect(listed?.querySelectorAll("span.underline")).toHaveLength(0);
+    view.unmount();
+  });
+
+  it("marks with ink and a rule, never with weight", async () => {
+    // Semibold changes a glyph's advance width, so marking used to shift the line as it was typed.
+    const user = userEvent.setup();
+    const { view, input } = search();
+    await user.type(input, "zephyr");
+    const listed = options(view.container)[0];
+    expect(listed?.querySelectorAll("span.font-semibold")).toHaveLength(0);
+    expect(listed?.querySelectorAll("span.underline").length ?? 0).toBeGreaterThan(0);
+    view.unmount();
+  });
+
+  it("carries no host tag where there is only one machine", async () => {
+    const view = render(
+      <FleetCommandBar
+        mode="pane"
+        onClose={vi.fn()}
+        rows={ROWS}
+        isAvailable={() => true}
+        roster={derivePaneRoster({
+          triaged: [{ key: "needs", entries: [entry("p1", "alpha", { context: "zephyr" })] }],
+          shellPanes: [],
+        })}
+        onRun={vi.fn()}
+        onOpenPane={vi.fn()}
+      />,
+    );
+    expect(options(view.container)[0]?.textContent).not.toContain("orinoco");
     view.unmount();
   });
 });
