@@ -253,12 +253,35 @@ describe("which side a modifier was on", () => {
     expect(recognizer.handle(key("KeyQ", { altKey: true })).kind).toBe("ignored");
   });
 
-  test("cancelling forgets every side, because the keyups will never arrive", () => {
-    const { recognizer } = harness([["fit-pane-width", ["RAlt+Q"]]]);
-    recognizer.handle(key("AltRight", { altKey: true }));
-    // The page lost focus. Every keyup between now and the next focus happens somewhere else, so a
-    // remembered side is a guess — and a stale side fires the wrong binding on the next press.
+  test("a side SURVIVES a blur between the modifier and the key it qualifies", () => {
+    // THE BUG THIS FIXES, and it is the whole reason `LAlt+Q` was reported dead. Pressing `Alt`
+    // focuses the menu bar on some platforms, which blurs the window BETWEEN the modifier's keydown
+    // and the key it qualifies. Forgetting the side there looked prudent and made the chord match
+    // nothing, every single time.
+    const { recognizer } = harness([["fit-pane-width", ["LAlt+Q"]]]);
+    recognizer.handle(key("AltLeft", { altKey: true }));
     recognizer.cancel();
+    const fired = recognizer.handle(key("KeyQ", { altKey: true }));
+    expect(fired.kind === "command" && fired.id).toBe("fit-pane-width");
+  });
+
+  test("a side is dropped by the first event that says its family is up", () => {
+    // Staleness is answered where it CAN be: the browser states on every event which families are
+    // down, and a family reported up cannot have either side held. That is a fact, not a guess,
+    // which is why nothing has to be forgotten defensively.
+    const { recognizer } = harness([["fit-pane-width", ["LAlt+Q"]]]);
+    recognizer.handle(key("AltLeft", { altKey: true }));
+    // Alt released — this event says so — and then the OTHER Alt is used.
+    recognizer.handle(key("KeyX"));
+    recognizer.handle(key("AltRight", { altKey: true }));
+    expect(recognizer.handle(key("KeyQ", { altKey: true })).kind).toBe("ignored");
+  });
+
+  test("a side nobody ever saw pressed refuses, rather than guessing", () => {
+    // The page was focused with the modifier already down, so its keydown happened somewhere else.
+    // Which side is genuinely unknowable here, and firing the wrong binding is worse than firing
+    // none: one keystroke recovers it.
+    const { recognizer } = harness([["fit-pane-width", ["LAlt+Q"]]]);
     expect(recognizer.handle(key("KeyQ", { altKey: true })).kind).toBe("ignored");
   });
 });

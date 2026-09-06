@@ -92,7 +92,7 @@ const MODIFIERS = new Map<string, ModifierName>([
 ]);
 
 /** Each modifier family's two physical codes, left first. */
-const MODIFIER_KEY_CODES = {
+export const MODIFIER_KEY_CODES = {
   ctrl: ["ControlLeft", "ControlRight"],
   alt: ["AltLeft", "AltRight"],
   shift: ["ShiftLeft", "ShiftRight"],
@@ -417,7 +417,7 @@ export interface ChordEvent {
   readonly metaKey: boolean;
 }
 
-function modifierIsDown(family: ModifierName, event: ChordEvent): boolean {
+export function modifierIsDown(family: ModifierName, event: ChordEvent): boolean {
   if (family === "ctrl") return event.ctrlKey;
   if (family === "alt") return event.altKey;
   if (family === "shift") return event.shiftKey;

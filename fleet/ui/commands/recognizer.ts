@@ -22,6 +22,9 @@ import {
   chordMatchesEvent,
   formatBinding,
   isModifierCode,
+  modifierIsDown,
+  MODIFIER_KEY_CODES,
+  MODIFIER_NAMES,
   type Binding,
   type Chord,
 } from "./bindings.ts";
@@ -139,13 +142,30 @@ export function createRecognizer(options: RecognizerOptions): Recognizer {
 
     cancel: () => {
       armedAt = null;
-      // The page stopped receiving events, so every keyup between now and the next focus is one this
-      // machine will never see. Anything still recorded is a guess, and a stale side is worse than
-      // no side: it would fire the wrong binding on the next press.
-      held.clear();
+      // THE RECORDED SIDES ARE NOT CLEARED HERE, and that is the correction of an earlier mistake.
+      // Clearing looked prudent — a keyup that happens while the page is unfocused is one this
+      // machine never sees — but it made a sided chord unusable in the one browser behaviour that
+      // matters: pressing `Alt` focuses the menu bar on some platforms, which blurs the window
+      // BETWEEN the modifier's keydown and the key it qualifies. The side was recorded, wiped, and
+      // the chord then matched nothing, every time.
+      //
+      // Staleness is answered where it can actually be answered: every event reconciles the set
+      // against its own modifier flags, below. A side that is no longer held is dropped the moment
+      // any event says that family is up, which is strictly better than dropping it on a guess.
     },
 
     handle: (event) => {
+      // RECONCILED FIRST, from the event's own flags. The browser states on every event which
+      // families are down, so a family it reports UP cannot have either of its sides held — and that
+      // is a fact, not an inference. It is what lets the recorded sides survive a blur: nothing has
+      // to be forgotten defensively, because anything genuinely released is dropped here on the very
+      // next key.
+      for (const family of MODIFIER_NAMES) {
+        if (modifierIsDown(family, event)) continue;
+        const codes = MODIFIER_KEY_CODES[family];
+        held.delete(codes[0]);
+        held.delete(codes[1]);
+      }
       // Recorded before anything else, and on the repeat too: a modifier that is down is down
       // whether or not this particular event goes on to mean something.
       if (isModifierCode(event.code)) held.add(event.code);

@@ -59,6 +59,16 @@ document SHALL be rejected as a whole when one does. A claim on one side refuses
 unsided use of the family; a claim on both sides, or one unsided claim, refuses the family entirely.
 The remaining side stays an ordinary modifier.
 
+A SIDED CHORD SHALL SURVIVE THE PAGE LOSING FOCUS between the modifier and the key it qualifies. A
+browser reports that a modifier is down and never which one, so recognising a side requires having
+seen that side's own key event; Fleet MUST NOT discard what it has seen merely because focus moved,
+because on some platforms pressing a modifier is itself what moves it.
+
+What Fleet knows about which sides are held SHALL instead be reconciled against every key event's own
+modifier state: a family an event reports as not held SHALL have both of its sides forgotten. Where a
+side was never observed at all — the page was focused with the modifier already down — a sided chord
+SHALL NOT fire, because guessing the side would run a binding the operator did not press.
+
 A modifier bound as a key SHALL be marked risky rather than refused: on the layouts where the right
 Alt is AltGr the browser reports Control alongside it, so the chord simply never matches, and some
 browsers give a bare modifier to their own menu bar.
@@ -109,6 +119,18 @@ anywhere; the risky mark is for one that depends on where it runs.
 #### Scenario: The prefix is a chord like any other
 - **WHEN** a document claims a modifier that the configured prefix chord holds
 - **THEN** the document is rejected rather than leaving every sequential binding silent
+
+#### Scenario: The modifier press itself moves focus
+- **WHEN** the operator presses a sided modifier, the window loses focus as a result, and the operator then presses the key it qualifies
+- **THEN** the command runs, exactly as if focus had never moved
+
+#### Scenario: The modifier is released between chords
+- **WHEN** a later key event reports that modifier family as not held
+- **THEN** both of that family's sides are forgotten, and a sided chord naming either does not fire until one is pressed again
+
+#### Scenario: The page is focused with the modifier already down
+- **WHEN** the first event Fleet sees carries a modifier whose own key press happened elsewhere
+- **THEN** a sided chord naming that family does not fire, and one fresh press of the modifier restores it
 
 ### Requirement: The recognizer matches exactly and cancels safely
 The recognizer SHALL match physical key codes and the exact modifier set. It SHALL ignore key

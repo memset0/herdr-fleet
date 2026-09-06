@@ -27,6 +27,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Fixed
 
+- A sided chord such as `LAlt+Q` fires again. Pressing a modifier moves focus to the menu bar on some platforms, and the recognizer was throwing away the side it had just recorded whenever focus moved — on exactly the sequence it was meant to protect. It now reconciles what is held against each event's own modifier state instead.
 - The switcher names the lead machine `vultr`, not the internal id `lead` — the same name the navigation rail shows. The host tag appears only on a pack, and searching a host now matches the name that is displayed.
 
 ### Added
