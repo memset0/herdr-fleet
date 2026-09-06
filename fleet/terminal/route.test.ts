@@ -102,7 +102,7 @@ describe("the terminal upgrade is authenticated before it completes", () => {
     expect(response.status).toBe(101);
     expect(server.seen).toHaveLength(1);
     expect(server.seen[0]!.target).toEqual({ paneId: "w1:p2", host: "laptop" });
-    expect(server.seen[0]!.sessionId).toMatch(/.+/);
+    expect(server.seen[0]!.session.sessionId).toMatch(/.+/);
   });
 
   test("an unauthenticated request is refused with 401, never a redirect a socket cannot follow", async () => {
@@ -163,7 +163,7 @@ describe("the terminal upgrade is authenticated before it completes", () => {
       upgrade: server.upgrade,
     });
     expect(first.status).toBe(101);
-    await sessions.revoke(server.seen[0]!.sessionId, 1_000);
+    await sessions.revoke(server.seen[0]!.session.sessionId, 1_000);
     const second = await handler(ask("?pane=w1:p2", { cookie }), {
       peerAddress: "127.0.0.1",
       upgrade: server.upgrade,

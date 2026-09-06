@@ -75,6 +75,12 @@ export interface FleetLoopbackEndpoint {
  */
 export interface FleetReachabilityEntry extends FleetLoopbackEndpoint {
   readonly memberId: string;
+  /**
+   * Where the Lead dials this member's terminal service, when that member runs one. Absent unless
+   * the entry declares it: a member with no terminal service must not acquire an endpoint by
+   * default, because an endpoint the Lead believes in is one it will dial.
+   */
+  readonly terminal?: FleetLoopbackEndpoint;
 }
 
 /**
@@ -95,6 +101,24 @@ export interface FleetTransportConfig {
   readonly retryMaxSeconds: number;
 }
 
+/**
+ * The Peer's optional terminal service. Absent unless the Peer declares it, and a Peer that declares
+ * nothing here runs exactly what it ran before: no endpoint, no projection, no child.
+ *
+ * `bind` is where the service listens on this machine; `leadBind` is the Lead-side endpoint the third
+ * reverse projection publishes it at. `serverPath` and `serverDigest` name the terminal server the
+ * service may start — the digest rather than a version string, because identity here has to be
+ * checkable without running the thing it identifies.
+ */
+export interface FleetTerminalConfig {
+  readonly bind: FleetLoopbackEndpoint;
+  readonly leadBind: FleetLoopbackEndpoint;
+  readonly serverPath: string;
+  readonly serverDigest: string;
+  readonly idleSeconds: number;
+  readonly maxServers: number;
+}
+
 export interface FleetSchema2LeadConfig extends FleetGatewayConfig {
   readonly schemaVersion: 2;
   readonly role: "lead";
@@ -109,6 +133,8 @@ export interface FleetSchema2PeerConfig {
   readonly lifecycle: FleetNativePackLifecycle;
   readonly collie: FleetLoopbackEndpoint;
   readonly transport: FleetTransportConfig;
+  /** Absent unless the Peer declared a `[terminal]` table; never defaulted into existence. */
+  readonly terminal?: FleetTerminalConfig;
 }
 
 export type FleetLeadConfig = FleetSchema1LeadConfig | FleetSchema2LeadConfig;
@@ -362,6 +388,84 @@ function transportConfig(value: JsonValue | undefined, collie: FleetLoopbackEndp
   };
 }
 
+/**
+ * Bounds for the Peer terminal service, stated once so a diagnostic can name them.
+ *
+ * The idle interval floor is a minute rather than a second because standing the service down is a
+ * process exit and bringing it back is a process start: below a minute the churn costs more than the
+ * memory it reclaims. The ceiling is a day because "stands down when nobody is using it" stops being
+ * true beyond that. The server maximum is a count of live terminal servers on one machine, and one
+ * is a legitimate answer — an operator who wants exactly one terminal at a time says so here.
+ */
+export const FLEET_TERMINAL_BOUNDS = {
+  idleSeconds: { minimum: 60, maximum: 86_400, fallback: 3_600 },
+  maxServers: { minimum: 1, maximum: 32, fallback: 8 },
+} as const;
+
+function serverDigest(value: JsonValue | undefined): string {
+  const digest = text(value, "terminal.server_digest");
+  // A digest rather than a version string: identity has to be checkable without running the thing
+  // it identifies, and this service starts a program that then has a terminal on the other end.
+  if (!/^[0-9a-f]{64}$/.test(digest)) {
+    throw new Error("terminal.server_digest must be a lowercase hex SHA-256 digest");
+  }
+  return digest;
+}
+
+function terminalConfig(
+  value: JsonValue | undefined,
+  collie: FleetLoopbackEndpoint,
+  transport: FleetTransportConfig,
+): FleetTerminalConfig | undefined {
+  // Absent is the answer, not a shape to fill in: a Peer that declares no terminal table gets no
+  // endpoint, no projection and no child, exactly as before this table existed.
+  if (value === undefined) return undefined;
+  const raw = table(value, "terminal");
+  exactKeys(
+    raw,
+    [
+      "bind_host",
+      "bind_port",
+      "lead_bind_host",
+      "lead_bind_port",
+      "server_path",
+      "server_digest",
+      "idle_seconds",
+      "max_servers",
+    ],
+    "terminal",
+  );
+  const bind = loopbackEndpoint(raw, "bind", "terminal");
+  const leadBind = loopbackEndpoint(raw, "lead_bind", "terminal");
+  // The two Lead-side endpoints are ports on one machine. A terminal projection landing on the Pack
+  // projection's port would take the Lead's Pack link, and one landing on the Lead's own Collie
+  // listener would take the Lead.
+  if (sameEndpoint(leadBind, transport.leadBind)) {
+    throw new Error("terminal.lead_bind and transport.lead_bind must use distinct endpoints");
+  }
+  if (sameEndpoint(leadBind, transport.leadCollie)) {
+    throw new Error("terminal.lead_bind and transport.lead_collie must use distinct endpoints");
+  }
+  // The same sentence on this machine: the service listens beside Collie and beside the Lead's own
+  // projection, never on top of either.
+  if (sameEndpoint(bind, collie)) {
+    throw new Error("terminal.bind and collie must use distinct endpoints");
+  }
+  if (sameEndpoint(bind, transport.peerBind)) {
+    throw new Error("terminal.bind and transport.peer_bind must use distinct endpoints");
+  }
+  const idle = FLEET_TERMINAL_BOUNDS.idleSeconds;
+  const servers = FLEET_TERMINAL_BOUNDS.maxServers;
+  return {
+    bind,
+    leadBind,
+    serverPath: absolutePath(raw.server_path, "terminal.server_path"),
+    serverDigest: serverDigest(raw.server_digest),
+    idleSeconds: integer(raw.idle_seconds ?? idle.fallback, "terminal.idle_seconds", idle.minimum, idle.maximum),
+    maxServers: integer(raw.max_servers ?? servers.fallback, "terminal.max_servers", servers.minimum, servers.maximum),
+  };
+}
+
 function reachabilityList(value: JsonValue | undefined): readonly FleetReachabilityEntry[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error("reachability must be a list of tables");
@@ -369,19 +473,36 @@ function reachabilityList(value: JsonValue | undefined): readonly FleetReachabil
   for (const [index, item] of value.entries()) {
     const label = `reachability[${index}]`;
     const raw = table(item, label);
-    exactKeys(raw, ["member_id", "host", "port"], label);
+    exactKeys(raw, ["member_id", "host", "port", "terminal_host", "terminal_port"], label);
     const memberId = text(raw.member_id, `${label}.member_id`);
     if (!isMemberId(memberId)) throw new Error(`${label}.member_id must be a Pack member id`);
-    const entry: FleetReachabilityEntry = {
-      memberId,
+    const pack: FleetLoopbackEndpoint = {
       host: loopbackHost(raw.host, `${label}.host`),
       port: integer(raw.port, `${label}.port`, 1, 65_535),
     };
+    // Half a terminal endpoint is not a terminal endpoint: a host with no port, or a port with no
+    // host, is a typo that would otherwise be read as "no terminal service on this member".
+    const declared = raw.terminal_host !== undefined || raw.terminal_port !== undefined;
+    const terminal = declared ? loopbackEndpoint(raw, "terminal", label) : undefined;
+    if (terminal !== undefined && sameEndpoint(terminal, pack)) {
+      throw new Error(`${label}.terminal must differ from this member's pack endpoint`);
+    }
+    const entry: FleetReachabilityEntry = terminal === undefined
+      ? { memberId, ...pack }
+      : { memberId, ...pack, terminal };
     if (entries.some((seen) => seen.memberId === entry.memberId)) {
       throw new Error(`${label}.member_id is already mapped`);
     }
     if (entries.some((seen) => sameEndpoint(seen, entry))) {
       throw new Error(`${label} reuses an endpoint already mapped to another member`);
+    }
+    if (
+      terminal !== undefined &&
+      entries.some(
+        (seen) => sameEndpoint(seen, terminal) || (seen.terminal !== undefined && sameEndpoint(seen.terminal, terminal)),
+      )
+    ) {
+      throw new Error(`${label}.terminal reuses an endpoint already mapped to another member`);
     }
     entries.push(entry);
   }
@@ -450,15 +571,18 @@ function nativePackLifecycle(value: JsonValue | undefined): FleetNativePackLifec
 function parseSchema2(root: JsonObject): FleetNativePackConfig {
   if (root.role !== "lead" && root.role !== "peer") throw new Error("role must be lead or peer");
   if (root.role === "peer") {
-    exactKeys(root, ["schema_version", "role", "lifecycle", "collie", "transport"], "fleet.toml");
+    exactKeys(root, ["schema_version", "role", "lifecycle", "collie", "transport", "terminal"], "fleet.toml");
     const collie = collieConfig(root.collie);
-    return {
+    const transport = transportConfig(root.transport, collie);
+    const terminal = terminalConfig(root.terminal, collie, transport);
+    const peer: FleetSchema2PeerConfig = {
       schemaVersion: 2,
       role: "peer",
       lifecycle: nativePackLifecycle(root.lifecycle),
       collie,
-      transport: transportConfig(root.transport, collie),
+      transport,
     };
+    return terminal === undefined ? peer : { ...peer, terminal };
   }
   exactKeys(
     root,

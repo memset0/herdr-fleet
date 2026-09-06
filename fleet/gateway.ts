@@ -86,14 +86,14 @@ export interface GatewayContext {
    * without a listener — and so that the decision to upgrade is visibly the handler's, taken before
    * the upgrade rather than discovered after it.
    */
-  readonly upgrade?: (request: Request, data: TerminalUpgrade) => boolean;
+  readonly upgrade?: ((request: Request, data: TerminalUpgrade) => boolean) | undefined;
 }
 
 /** What the server attaches to an upgraded connection: the Pane it is for, and who asked. */
 export interface TerminalUpgrade {
   readonly target: TerminalTarget;
   /** The session behind the connection, so the socket can be closed when that session ends. */
-  readonly sessionId: string;
+  readonly session: SessionClaims;
 }
 
 export interface GatewayOptions {
@@ -107,6 +107,12 @@ export interface GatewayOptions {
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
   readonly now?: () => number;
+  /**
+   * Told when a session is deliberately ended, so anything holding one can let go immediately rather
+   * than waiting for a sweep. A logout is the operator saying "not from this browser any more", and a
+   * terminal that survived it by a minute would be the one thing that did not hear them.
+   */
+  readonly onSessionRevoked?: ((sessionId: string) => void) | undefined;
   readonly loginCsrfToken?: string;
 }
 
@@ -256,7 +262,10 @@ export function createGatewayHandler(options: GatewayOptions) {
     if (url.pathname === "/auth/logout") {
       if (!sameOriginPost(request, config.public.origin)) return text("forbidden\n", 403);
       try {
-        if (session !== null) await sessions.revoke(session.sessionId, now());
+        if (session !== null) {
+          await sessions.revoke(session.sessionId, now());
+          options.onSessionRevoked?.(session.sessionId);
+        }
       } catch {
         return text("authentication state unavailable\n", 503);
       }
@@ -339,10 +348,7 @@ export function createGatewayHandler(options: GatewayOptions) {
       // are indistinguishable from outside.
       if (!decision.ok) return text("terminal unavailable\n", 400);
       if (context.upgrade === undefined) return text("terminal unavailable\n", 400);
-      const upgraded = context.upgrade(request, {
-        target: decision.target,
-        sessionId: session!.sessionId,
-      });
+      const upgraded = context.upgrade(request, { target: decision.target, session: session! });
       // `upgrade` answers the request itself when it succeeds; there is no response to return.
       return upgraded ? new Response(null, { status: 101 }) : text("terminal unavailable\n", 400);
     }

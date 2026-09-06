@@ -81,7 +81,7 @@ export interface SessionDeps {
   readonly setTimer?: (fn: () => void, ms: number) => TimerHandle;
   readonly clearTimer?: (handle: TimerHandle) => void;
   /** Reports lifecycle only. Never terminal bytes — see the diagnostics boundary. */
-  readonly log?: (event: string, detail: Record<string, string | number>) => void;
+  readonly log?: ((event: string, detail: Record<string, string | number>) => void) | undefined;
 }
 
 export type AttachResult =

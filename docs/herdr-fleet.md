@@ -45,7 +45,7 @@ Schema version 2 selects Collie's native Pack lifecycle without copying its trus
 | Role | Required tables | Runtime |
 | --- | --- | --- |
 | `lead` | root, `lifecycle`, `listen`, `public`, `collie`, `auth`; optional `auth.rate_limit`, `proxy` and `reachability` | One loopback Collie plus one loopback authenticated Gateway. |
-| `peer` | root, `lifecycle`, `collie`, `transport` | One loopback Collie plus one supervised SSH link; no Gateway, browser account, session store, or public listener. |
+| `peer` | root, `lifecycle`, `collie`, `transport`; optional `terminal` | One loopback Collie plus one supervised SSH link, and — only when `terminal` is declared — one terminal service behind a third projection. No Gateway, browser account, session store, or public listener. |
 
 Both roles require:
 
@@ -98,7 +98,13 @@ A Lead names where it dials each member, and only that:
 member_id = "peer-a"
 host = "127.0.0.1"
 port = 18901
+terminal_host = "127.0.0.1"
+terminal_port = 18911
 ```
+
+`terminal_host` and `terminal_port` are optional and belong to the terminal service below. Omit both
+for a member that runs none; supplying one without the other is a typo rather than a shorthand and is
+refused, because the reading that would otherwise survive is "this member has no terminal service".
 
 `mode` admits exactly `ssh-reverse`; a mode with no runtime behind it is refused rather than accepted
 as dormant. Every projection bind must be loopback, a Lead rejects `[transport]`, a Peer rejects
@@ -122,6 +128,47 @@ Before a schema-2 child starts, Fleet uses Collie's existing trust reader and mo
 the Collie child's isolated state directory. The configured role must match a valid active native
 Lead or Peer state. Missing, invalid, conflicted, solo, or mismatched state fails closed. Fleet never
 creates, repairs, enrolls, rotates, or otherwise writes that state.
+
+### The Peer's terminal service
+
+A Peer may run a terminal service beside its Collie, and a Peer that declares nothing here runs
+exactly what it ran before this table existed: no endpoint, no third projection, no child. It is
+optional in the strong sense — omitting it acquires no default endpoint, because an endpoint the Lead
+believes in is one the Lead will dial.
+
+```toml
+[terminal]
+bind_host = "127.0.0.1"
+bind_port = 18903
+lead_bind_host = "127.0.0.1"
+lead_bind_port = 18911
+server_path = "/private/fleet/bin/terminal-server"
+server_digest = "0000000000000000000000000000000000000000000000000000000000000000"
+idle_seconds = 3600
+max_servers = 8
+```
+
+`bind` is where the service listens on the Peer; `lead_bind` is where the link's third projection
+publishes it, and must match that member's `terminal_port` in the Lead's `[[reachability]]` entry.
+Both are loopback. The Lead-side endpoint must differ from the Pack projection's and from the Lead's
+own Collie; the Peer-side one must differ from this Peer's Collie and from its local projection of the
+Lead's. Each of those pairs shares a machine, so a collision is one service taking another's port.
+
+`server_digest` is the SHA-256 of the executable at `server_path`, lowercase hex. It is a digest
+rather than a version string because identity here has to be checkable without running the thing it
+identifies, and what this service starts has a terminal on the other end. A missing executable or a
+digest that does not match refuses the start.
+
+`idle_seconds` is how long the service waits, holding no terminal server and asked for nothing,
+before standing itself down — between 60 and 86400, one hour by default. `max_servers` bounds how
+many terminal servers it will hold at once, between 1 and 32, eight by default. Standing down is an
+ordinary idle outcome and not a failure: the supervisor reports it as idle and does not restart the
+service, which is what makes "holds no terminal machinery unless someone is using one" a property
+over time rather than only at startup.
+
+A Lead rejects `[terminal]`, exactly as it rejects `[transport]`. The table carries no terminal id,
+Pane id, command, argument, account, secret, certificate or browser material, and unknown fields are
+refused with their qualified names.
 
 ## Membership
 

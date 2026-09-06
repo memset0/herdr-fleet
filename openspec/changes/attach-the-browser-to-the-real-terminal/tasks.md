@@ -10,7 +10,7 @@
 ## 2. The Gateway's terminal boundary
 
 - [x] 2.1 Add the upgrade route to the Gateway behind the existing session gate, refusing before the upgrade completes when the session, Host, or origin is wrong, and verify focused tests cover an accepted upgrade, a missing/expired/revoked session, a wrong Host, and a wrong origin
-- [ ] 2.2 Close an established connection when its session expires or is revoked, and verify a focused test drives revocation mid-connection
+- [x] 2.2 Close an established connection when its session expires or is revoked, and verify a focused test drives revocation mid-connection
 - [x] 2.3 Accept a Pane id with its Host and session scope and refuse any connection carrying a terminal id, command, argument, executable, socket path, or session selector, and verify a focused test asserts refusal rather than the value being ignored
 - [x] 2.4 Resolve a lead-local Pane to exactly one terminal, refusing an absent, ambiguous, or out-of-scope Pane with no fallback to a focused or neighbouring Pane, and verify focused tests cover each refusal
 - [x] 2.5 Implement the terminal server's framing as a client — the auth frame, input, resize, and the output/title/preferences replies — and verify a focused test drives the framing against a recorded fixture rather than a live server
@@ -22,8 +22,8 @@
 - [x] 3.3 Bound the number of sessions a device holds at once, closing the least recently used at the maximum, and verify a focused test asserts eviction closes the server and disturbs no other session
 - [x] 3.4 Refuse a second writable client to a terminal that already has one without displacing or exposing the established one, and verify a focused test asserts both properties
 - [x] 3.5 Deliver the bounded retained window before live output when a held session is reused, discarding oldest first and sending nothing to the terminal, and verify focused tests cover ordering, the bound, and a newly established session that has no retained window
-- [ ] 3.6 Restrict an established connection to terminal input, rejecting every other message kind, and verify a focused test asserts rejection rather than forwarding
-- [ ] 3.7 Forward a validated viewport geometry to the terminal, refusing an out-of-range value, and verify a focused test covers a resize taking effect and an out-of-range one being refused
+- [x] 3.6 Restrict an established connection to terminal input, rejecting every other message kind, and verify a focused test asserts rejection rather than forwarding
+- [x] 3.7 Forward a validated viewport geometry to the terminal, refusing an out-of-range value, and verify a focused test covers a resize taking effect and an out-of-range one being refused
 - [ ] 3.8 Verify the terminal's dimensions return to their pre-connection value when the session ends by each of navigation, reload, network loss, and grace-period expiry
 
 ## 4. The browser surface
@@ -46,9 +46,9 @@
 
 ## 6. Configuration grammar
 
-- [ ] 6.1 Add the optional peer `[terminal]` table and the optional per-member terminal endpoint on a lead's `[[reachability]]` entries, with loopback, distinctness, and bounds validation, and verify focused tests cover a complete table, a non-loopback bind, a collision with the Pack projection's lead-side endpoint, and out-of-range bounds
-- [ ] 6.2 Verify a configuration omitting the terminal fields normalizes exactly as before, with a focused test asserting no default terminal endpoint is acquired
-- [ ] 6.3 Verify a lead rejects `[terminal]` and every table still rejects unknown fields with a qualified diagnostic
+- [x] 6.1 Add the optional peer `[terminal]` table and the optional per-member terminal endpoint on a lead's `[[reachability]]` entries, with loopback, distinctness, and bounds validation, and verify focused tests cover a complete table, a non-loopback bind, a collision with the Pack projection's lead-side endpoint, and out-of-range bounds
+- [x] 6.2 Verify a configuration omitting the terminal fields normalizes exactly as before, with a focused test asserting no default terminal endpoint is acquired
+- [x] 6.3 Verify a lead rejects `[terminal]` and every table still rejects unknown fields with a qualified diagnostic
 
 ## 7. The peer terminal service
 

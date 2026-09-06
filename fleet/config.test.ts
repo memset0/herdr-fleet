@@ -99,6 +99,26 @@ function peerTransport(field: string, value: string): string {
   return packPeerSource("", block);
 }
 
+const terminalTable = `[terminal]
+bind_host = "127.0.0.1"
+bind_port = 18903
+lead_bind_host = "127.0.0.1"
+lead_bind_port = 18911
+server_path = "/synthetic/fleet/bin/terminal-server"
+server_digest = "${"0".repeat(64)}"
+idle_seconds = 3600
+max_servers = 8
+`;
+
+/** The peer source with the terminal table appended, optionally with one field replaced. */
+function peerTerminal(field?: string, value?: string): string {
+  if (field === undefined) return `${packPeerSource()}${terminalTable}`;
+  const line = new RegExp(`^${field} = .*$`, "m");
+  const block = terminalTable.replace(line, `${field} = ${value}`);
+  if (block === terminalTable) throw new Error(`terminal.${field} is not in the fixture`);
+  return `${packPeerSource()}${block}`;
+}
+
 describe("fleet.toml", () => {
   test("parses one strict lead with distinct loopback endpoints", () => {
     const config = parseFleetToml(source());
@@ -194,25 +214,175 @@ port = 18902
     );
   });
 
+  test("a peer's terminal table is optional and never defaulted into existence", () => {
+    const peer = parseFleetToml(packPeerSource());
+    // Absent, not empty: `toEqual` above already pins the whole shape, and this says the word.
+    expect(peer).not.toHaveProperty("terminal");
+    expect(JSON.stringify(peer)).not.toContain("terminal");
+    // The lead's own reachability entries acquire no terminal endpoint either.
+    expect(
+      parseFleetToml(`${packLeadSource()}[[reachability]]\nmember_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\n`),
+    ).toMatchObject({ reachability: [{ memberId: "peer-a", host: "127.0.0.1", port: 18_901 }] });
+    // SAFETY: packLeadSource() states role "lead" at schema 2, which parseFleetToml narrows to this
+    // shape or throws; the assertion reads the reachability list only that shape has.
+    const [entry] = (parseFleetToml(
+      `${packLeadSource()}[[reachability]]\nmember_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\n`,
+    ) as FleetSchema2LeadConfig).reachability;
+    expect(entry).not.toHaveProperty("terminal");
+  });
+
+  test("a complete terminal table parses into loopback endpoints, a digest and bounds", () => {
+    expect(parseFleetToml(peerTerminal())).toEqual({
+      schemaVersion: 2,
+      role: "peer",
+      lifecycle: { mode: "native-pack", packState: "collie" },
+      collie: { host: "127.0.0.1", port: 8787 },
+      transport,
+      terminal: {
+        bind: { host: "127.0.0.1", port: 18_903 },
+        leadBind: { host: "127.0.0.1", port: 18_911 },
+        serverPath: "/synthetic/fleet/bin/terminal-server",
+        serverDigest: "0".repeat(64),
+        idleSeconds: 3_600,
+        maxServers: 8,
+      },
+    });
+  });
+
+  test("a terminal table's binds are loopback, its endpoints distinct and its bounds enforced", () => {
+    for (const [field, value, message] of [
+      ["bind_host", '"0.0.0.0"', "terminal.bind_host must be a loopback address"],
+      ["lead_bind_host", '"203.0.113.9"', "terminal.lead_bind_host must be a loopback address"],
+      ["server_path", '"bin/terminal-server"', "terminal.server_path must be an absolute path"],
+      ["server_digest", '"not-a-digest"', "terminal.server_digest must be a lowercase hex SHA-256 digest"],
+      ["server_digest", `"${"A".repeat(64)}"`, "terminal.server_digest must be a lowercase hex SHA-256 digest"],
+      ["idle_seconds", "59", "terminal.idle_seconds must be an integer between 60 and 86400"],
+      ["idle_seconds", "86401", "terminal.idle_seconds must be an integer between 60 and 86400"],
+      ["max_servers", "0", "terminal.max_servers must be an integer between 1 and 32"],
+      ["max_servers", "33", "terminal.max_servers must be an integer between 1 and 32"],
+    ] as const) {
+      expect(() => parseFleetToml(peerTerminal(field, value))).toThrow(message);
+    }
+
+    // Each collision is two services on one machine reaching for one port.
+    expect(() => parseFleetToml(peerTerminal("lead_bind_port", "18901"))).toThrow(
+      "terminal.lead_bind and transport.lead_bind must use distinct endpoints",
+    );
+    expect(() => parseFleetToml(peerTerminal("lead_bind_port", "8787"))).toThrow(
+      "terminal.lead_bind and transport.lead_collie must use distinct endpoints",
+    );
+    expect(() => parseFleetToml(peerTerminal("bind_port", "8787"))).toThrow(
+      "terminal.bind and collie must use distinct endpoints",
+    );
+    expect(() => parseFleetToml(peerTerminal("bind_port", "18902"))).toThrow(
+      "terminal.bind and transport.peer_bind must use distinct endpoints",
+    );
+
+    // Optional defaults exist for the two bounded numbers and for nothing else.
+    const withoutBounds = `${packPeerSource()}${terminalTable
+      .replace(/^idle_seconds = .*$\n/m, "")
+      .replace(/^max_servers = .*$\n/m, "")}`;
+    expect(parseFleetToml(withoutBounds)).toMatchObject({
+      terminal: { idleSeconds: 3_600, maxServers: 8 },
+    });
+    expect(() => parseFleetToml(`${packPeerSource()}${terminalTable.replace(/^bind_port = .*$\n/m, "")}`)).toThrow(
+      "terminal.bind_port must be an integer between 1 and 65535",
+    );
+  });
+
+  test("a terminal table carries no execution or trust material, and a lead has none at all", () => {
+    for (const field of [
+      "terminal_id",
+      "pane_id",
+      "command",
+      "args",
+      "user",
+      "pack_secret",
+      "certificate",
+      "cookie",
+    ]) {
+      expect(() => parseFleetToml(peerTerminal("max_servers", `8\n${field} = "x"`))).toThrow(
+        `terminal contains unknown field ${field}`,
+      );
+    }
+    // A lead rejects the table outright, by the same sentence that rejects [transport].
+    expect(() => parseFleetToml(`${packLeadSource()}${terminalTable}`)).toThrow("unknown field terminal");
+    // And schema 1 has never heard of it.
+    expect(() => parseFleetToml(`${source()}${terminalTable}`)).toThrow("unknown field terminal");
+  });
+
+  test("a member's terminal endpoint is optional, whole, loopback and its own", () => {
+    // SAFETY: every source passed here is packLeadSource()-derived, so it states role "lead" at
+    // schema 2 and the parse yields that shape or throws before the list is read.
+    const entries = (source_: string) => (parseFleetToml(source_) as FleetSchema2LeadConfig).reachability;
+    const one = (body: string) => `${packLeadSource()}[[reachability]]\n${body}`;
+
+    expect(entries(one(`member_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\nterminal_host = "127.0.0.1"\nterminal_port = 18911\n`)))
+      .toEqual([
+        { memberId: "peer-a", host: "127.0.0.1", port: 18_901, terminal: { host: "127.0.0.1", port: 18_911 } },
+      ]);
+
+    // Half an endpoint is a typo, and the reading it would otherwise get is "no terminal service".
+    expect(() =>
+      parseFleetToml(one(`member_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\nterminal_host = "127.0.0.1"\n`)),
+    ).toThrow("reachability[0].terminal_port must be an integer between 1 and 65535");
+    expect(() =>
+      parseFleetToml(one(`member_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\nterminal_port = 18911\n`)),
+    ).toThrow("reachability[0].terminal_host must be a non-empty string");
+
+    expect(() =>
+      parseFleetToml(one(`member_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\nterminal_host = "0.0.0.0"\nterminal_port = 18911\n`)),
+    ).toThrow("reachability[0].terminal_host must be a loopback address");
+    expect(() =>
+      parseFleetToml(one(`member_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\nterminal_host = "127.0.0.1"\nterminal_port = 18901\n`)),
+    ).toThrow("reachability[0].terminal must differ from this member's pack endpoint");
+    expect(() =>
+      parseFleetToml(
+        `${packLeadSource()}[[reachability]]\nmember_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\n` +
+          `terminal_host = "127.0.0.1"\nterminal_port = 18911\n` +
+          `[[reachability]]\nmember_id = "peer-b"\nhost = "127.0.0.1"\nport = 18902\n` +
+          `terminal_host = "127.0.0.1"\nterminal_port = 18911\n`,
+      ),
+    ).toThrow("reachability[1].terminal reuses an endpoint already mapped to another member");
+    expect(() =>
+      parseFleetToml(
+        `${packLeadSource()}[[reachability]]\nmember_id = "peer-a"\nhost = "127.0.0.1"\nport = 18901\n` +
+          `[[reachability]]\nmember_id = "peer-b"\nhost = "127.0.0.1"\nport = 18902\n` +
+          `terminal_host = "127.0.0.1"\nterminal_port = 18901\n`,
+      ),
+    ).toThrow("reachability[1].terminal reuses an endpoint already mapped to another member");
+  });
+
   test("the documented synthetic examples parse and carry no live value", () => {
     const doc = readFileSync(resolve(import.meta.dir, "..", "docs", "herdr-fleet.md"), "utf8");
     const blocks = [...doc.matchAll(/```toml\n([\s\S]*?)```/g)].map((match) => match[1] ?? "");
     const transportBlock = blocks.find((block) => block.includes("[transport]"));
     const reachabilityBlock = blocks.find((block) => block.includes("[[reachability]]"));
     const sharedBlock = blocks.find((block) => block.includes("[lifecycle]"));
+    const terminalBlock = blocks.find((block) => block.includes("[terminal]"));
     if (
       transportBlock === undefined ||
       reachabilityBlock === undefined ||
-      sharedBlock === undefined
+      sharedBlock === undefined ||
+      terminalBlock === undefined
     ) {
       throw new Error("the documented schema-2 examples are missing");
     }
 
     // The documented peer is the shared block with its role fixed plus the documented transport.
-    const peer = parseFleetToml(
-      `${sharedBlock.replace(`role = "peer" # or "lead"`, `role = "peer"`)}${transportBlock}`,
-    );
+    const peerBase = `${sharedBlock.replace(`role = "peer" # or "lead"`, `role = "peer"`)}${transportBlock}`;
+    const peer = parseFleetToml(peerBase);
     expect(peer).toMatchObject({ role: "peer", transport: { mode: "ssh-reverse" } });
+    // The documented terminal table belongs to that same peer, and the endpoint it publishes is the
+    // one the documented reachability entry dials.
+    expect(parseFleetToml(`${peerBase}${terminalBlock}`)).toMatchObject({
+      terminal: { leadBind: { host: "127.0.0.1", port: 18_911 } },
+    });
+    expect(parseFleetToml(`${packLeadSource()}${reachabilityBlock}`)).toMatchObject({
+      reachability: [{ terminal: { host: "127.0.0.1", port: 18_911 } }],
+    });
+    expect(terminalBlock).toMatch(/^server_path = "\/private\/[^"]+"$/m);
+    expect(terminalBlock).toMatch(/^server_digest = "0{64}"$/m);
     expect(parseFleetToml(`${packLeadSource()}${reachabilityBlock}`)).toMatchObject({
       reachability: [{ memberId: "peer-a" }],
     });
@@ -222,7 +392,7 @@ port = 18902
     expect(transportBlock).toMatch(/^ssh_host = "[a-z0-9-]+\.example\.com"$/m);
     expect(transportBlock).toMatch(/^identity_file = "\/private\/[^"]+"$/m);
     expect(transportBlock).toMatch(/^known_hosts_file = "\/private\/[^"]+"$/m);
-    for (const block of [transportBlock, reachabilityBlock]) {
+    for (const block of [transportBlock, reachabilityBlock, terminalBlock]) {
       for (const [, host] of block.matchAll(/^\w*host = "([^"]*)"$/gm)) {
         if (host === undefined || host.endsWith(".example.com")) continue;
         expect(["127.0.0.1", "::1"]).toContain(host);
