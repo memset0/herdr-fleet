@@ -53,6 +53,7 @@ import {
   type CommandAdapters,
 } from "@/components/fleet-commands";
 import { usePointerMenuGestures } from "@/components/fleet-context-menu";
+import { FleetPaneSurfaceToggle } from "@/components/fleet-pane-surface-toggle";
 import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
@@ -553,6 +554,10 @@ export function NativeNavigationShell({
           title={t("fleet.navigation.hierarchy")}
           width={preferences.left.preferredWidth}
           collapsed={railsCollapsed}
+          // The pane-surface switch stands under the hierarchy because that is where the operator
+          // already is when they want it — see fleet-pane-surface-toggle.tsx. It is the same switch
+          // Settings holds, not a second one.
+          footer={<FleetPaneSurfaceToggle />}
         >
           {hierarchyOpen ? null : hierarchy}
         </Rail>
@@ -713,11 +718,14 @@ function Rail({
   width,
   collapsed,
   children,
+  footer,
 }: {
   title: string;
   width: number;
   collapsed: boolean;
   children: ReactNode;
+  /** Held below the scrolling list, on the rail's own ground. Absent leaves the rail as it was. */
+  footer?: ReactNode;
 }) {
   return (
     <aside
@@ -747,6 +755,13 @@ function Rail({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      {footer === undefined ? null : (
+        // The seam is drawn once, from above (§4): this block closes its own top against the list
+        // and the footer's own contents draw no rule of their own.
+        <div className="shrink-0 border-t border-rule [padding-bottom:env(safe-area-inset-bottom)]">
+          {footer}
+        </div>
+      )}
     </aside>
   );
 }

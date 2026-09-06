@@ -29,6 +29,7 @@
 ## 4. The browser surface
 
 - [x] 4.1 Add the global switch with its browser-local store, default off, and safe recovery from an absent or unreadable value, and verify focused tests cover default, round-trip, and unreadable storage
+- [x] 4.1a Put a control for that same switch in the persistent left rail, reading and writing the one store rather than a copy, and verify focused tests cover the default, both directions, and that a change made elsewhere moves it
 - [x] 4.2 Add the fork-owned pane route element and loader wrappers and point `web/src/router.tsx` at them, and verify a focused test asserts that with the switch off the route renders Collie's own element and its loader is called unchanged
 - [x] 4.3 Verify the stub loader keeps `root.tsx`'s connection-bar dating on its snapshot branch, with a focused test that asserts `shownLastSeenAt` is unchanged while the switch is on and that `root.tsx` was not edited
 - [x] 4.4 Build the terminal surface: the renderer mounted inside the existing shell, the Pane's address unchanged, no mirror text requested, and a read-only establishment that says so where the device may not write; verify focused tests cover each

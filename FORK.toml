@@ -82,6 +82,8 @@ paths = [
   "web/src/components/fleet-prompt-panel.tsx",
   "web/src/components/fleet-confirm-dialog.test.tsx",
   "web/src/components/fleet-settings-section.tsx",
+  "web/src/components/fleet-pane-surface-toggle.tsx",
+  "web/src/components/fleet-pane-surface-toggle.test.tsx",
   "web/src/components/fleet-pane-route.tsx",
   "web/src/components/fleet-pane-route.test.tsx",
   "web/src/components/fleet-terminal.tsx",
@@ -298,6 +300,7 @@ verify = [
   "fleet/ui/terminal/pool.test.ts",
   "fleet/ui/terminal/clipboard.test.ts",
   "web/src/components/fleet-pane-route.test.tsx",
+  "web/src/components/fleet-pane-surface-toggle.test.tsx",
   "web/src/components/fleet-terminal.test.tsx"
 ]
 reason = "The alternative was a branch inside Collie's pane page, and it is worse in both halves. The element would have had to wrap everything that page does in a condition, and the loader would have had to fetch a mirror nobody was going to draw — a read of every visited Pane, on the poll loop, for a screen the operator has switched away from. Here the route names two fork-owned values instead of two upstream ones, and each is a drop-in: with the switch at its default they ARE `DetailRoute` and `paneLoader`, called with the same arguments, returning the same data, on the same route id — so the mirror path is not merely equivalent, it is the same code. One import and one line, and no other upstream file is touched: the switch, the retained instances, the geometry and the clipboard rules all live under fleet/. The route id stays `PANE_ROUTE_ID` because the root layout reads THIS route's data to date the connection banner, and the terminal branch returns the shape that dating already handles."

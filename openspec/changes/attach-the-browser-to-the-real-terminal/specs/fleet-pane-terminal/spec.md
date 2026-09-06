@@ -11,6 +11,12 @@ terminal surface or the existing mirror surface. The switch SHALL default to the
 be stored per browser rather than on any server, and SHALL be recoverable to its default when its
 stored value is absent or unreadable. It MUST NOT be settable per Pane, per Host, or by a link.
 
+The switch MAY be reachable from more than one place, and every such control SHALL read and write
+that one stored value rather than holding a copy: a control that could disagree with another about
+which surface is selected would be a second switch. At least one of them SHALL stand in the
+application's persistent navigation, so the surface can be changed from wherever the operator is
+rather than by navigating away from the Pane the choice is about.
+
 While the switch selects the mirror, the Pane's existing route, loader, data, polling, mirror,
 composer and every surface around them SHALL behave exactly as they do without this capability, and
 no terminal connection, process, or session SHALL be created.
@@ -27,6 +33,10 @@ terminal surface.
 #### Scenario: The switch selects the terminal
 - **WHEN** the switch is on and the operator opens any Pane
 - **THEN** that Pane's address is unchanged, the rails and header render as on every other route, the terminal surface replaces the mirror and composer, and the Pane's mirror text is not fetched
+
+#### Scenario: The switch is changed from the navigation
+- **WHEN** the operator changes the surface from the control in the persistent navigation
+- **THEN** every Pane is drawn as the chosen surface, and every other control for that switch shows the same choice
 
 #### Scenario: The stored switch value is unreadable
 - **WHEN** the browser's stored preference is missing, corrupt, or inaccessible
