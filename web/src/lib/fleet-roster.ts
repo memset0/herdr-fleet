@@ -49,11 +49,11 @@ export function toRosterEntry(pane: AgentView, servers?: readonly ServerSummary[
   // unlabelled tab). Absent means it is not a fact to search on, not that it is the empty string.
   if (pane.tabLabel !== undefined) entry.tabLabel = pane.tabLabel;
   if (pane.host !== undefined) entry.host = pane.host;
-  // ONE MACHINE, ONE NAME. The snapshot tags a Pane with an id — the lead's is `lead` — and the rails
-  // resolve it through `hostName` before showing it. Resolving it here rather than at the row keeps
-  // the two from ever disagreeing, which is the bug this replaced: the switcher said `lead` where
-  // the sidebar said `vultr`. Only on a pack: naming the only machine on every row says nothing, and
-  // `isMultiHost` is the same predicate the rails use to decide a host is worth distinguishing.
+  // ONE MACHINE, ONE NAME — for SEARCH. The snapshot tags a Pane with an id (the lead's is `lead`),
+  // and every surface resolves it through `hostName` before a person sees it. The host TAG does that
+  // resolution itself; what it cannot do is be typed into a query, so the same name is resolved here
+  // for the searchable fields. Gated on `isMultiHost`, which is the predicate the tag's own hide rule
+  // uses, so searching and showing agree about when the host dimension exists.
   if (isMultiHost(servers)) {
     const named = hostName(servers, pane.host);
     if (named !== undefined && named !== "") entry.hostLabel = named;

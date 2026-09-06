@@ -5,6 +5,8 @@ import { parseBinding } from "../../../fleet/ui/commands/bindings.ts";
 import { commandById } from "../../../fleet/ui/commands/catalog.ts";
 import type { CommandRow } from "../../../fleet/ui/commands/effective.ts";
 import { derivePaneRoster, type PaneRoster, type RosterEntry } from "../../../fleet/ui/pane-roster.ts";
+import { PackProvider } from "@/components/pack-provider";
+import type { ServerSummary } from "@/lib/types";
 import { FleetCommandBar } from "./fleet-command-bar";
 
 /**
@@ -37,6 +39,16 @@ function roster(): PaneRoster {
     shellPanes: [entry("p9", "spare shell", { kind: "shell", lastSeenAt: 5 })],
   });
 }
+
+/**
+ * A pack, so the host dimension exists at all: the tag hides itself on a solo install, and so does
+ * the searchable host name. The lead's id is `lead` and its NAME is the machine — the shape the live
+ * snapshot actually has, and the reason a row used to read `lead`.
+ */
+const SERVERS: readonly ServerSummary[] = [
+  { id: "lead", name: "orinoco", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 0 },
+  { id: "danube", name: "danube", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 0 },
+];
 
 /**
  * The same three Panes, each carrying a different one of the four searchable facts, and none of
@@ -218,15 +230,17 @@ describe("FleetCommandBar", () => {
 describe("finding a Pane by any of the four facts that name it", () => {
   function search() {
     const view = render(
-      <FleetCommandBar
-        mode="pane"
-        onClose={vi.fn()}
-        rows={ROWS}
-        isAvailable={() => true}
-        roster={namedRoster()}
-        onRun={vi.fn()}
-        onOpenPane={vi.fn()}
-      />,
+      <PackProvider servers={[...SERVERS]}>
+        <FleetCommandBar
+          mode="pane"
+          onClose={vi.fn()}
+          rows={ROWS}
+          isAvailable={() => true}
+          roster={namedRoster()}
+          onRun={vi.fn()}
+          onOpenPane={vi.fn()}
+        />
+      </PackProvider>,
     );
     const input = within(view.container).getByRole<HTMLInputElement>("combobox");
     return { view, input };
@@ -299,6 +313,8 @@ describe("finding a Pane by any of the four facts that name it", () => {
   });
 
   it("carries no host tag where there is only one machine", async () => {
+    // The hide rule is the tag's own, which is why it is mounted unconditionally: a caller that had
+    // to ask "am I on a pack?" first is a caller that eventually gets it wrong.
     const view = render(
       <FleetCommandBar
         mode="pane"

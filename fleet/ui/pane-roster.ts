@@ -38,9 +38,12 @@ export interface RosterEntry {
    */
   readonly host?: string;
   /**
-   * The same machine as a PERSON names it, resolved by the caller through the application's own
-   * host naming so that one machine has one name everywhere. Absent where there is only one machine,
-   * because naming it on every row says nothing.
+   * The same machine as a PERSON names it, for SEARCH.
+   *
+   * Displaying it is the host tag's own business — that component resolves the name, the tint and
+   * the hide rule for itself. What it cannot do is be typed into a query, so the resolved name is
+   * carried here as well, gated the same way the tag is gated, and the two therefore agree about
+   * when the host dimension exists at all.
    */
   readonly hostLabel?: string;
   readonly session?: string;

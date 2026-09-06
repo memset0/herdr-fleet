@@ -22,6 +22,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Changed
 
 - A pane row in the switcher reads as an address: space, tab, then the pane's own name, then the host as a tag. Where it lives leads, because a dozen rows are called `claude`.
+- That host tag is the same one the rest of the app uses, so it carries the machine's own colour and says when the lead cannot reach it — and it hides itself when there is only one machine.
 - A match is marked with the highest-contrast ink and an underline instead of bold, so marking no longer shifts the text around it as you type. The host tag is never marked.
 
 ### Fixed
