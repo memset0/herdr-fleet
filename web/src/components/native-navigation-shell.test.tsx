@@ -772,6 +772,27 @@ describe("the operator's own settings document", () => {
     );
   });
 
+  it("fires a SIDED chord the operator's document names, and only on that side", async () => {
+    // A sided qualifier is the one binding shape that cannot work from the event alone: a browser
+    // reports THAT Alt is down and never which one, so the recognizer has to have seen that side's
+    // own keydown. Nothing exercised that from a real document until this.
+    const user = userEvent.setup();
+    const requested = serve({
+      schemaVersion: 1,
+      shortcuts: { bindings: { "open-pane-switcher": ["LAlt+Q"] } },
+    });
+    renderShell();
+    await requested;
+
+    await waitFor(
+      async () => {
+        await user.keyboard("{Alt>}q{/Alt}");
+        expect(screen.queryByRole("dialog", { name: "Fleet commands" })).not.toBeNull();
+      },
+      { timeout: 8000 },
+    );
+  });
+
   it("keeps every shipped default when no document is served", async () => {
     const user = userEvent.setup();
     // The default handler answers 404 — a Collie with no Fleet Gateway in front of it.
@@ -827,4 +848,5 @@ describe("closing from the keyboard", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(closed).toEqual(["t1"]));
   });
+
 });
