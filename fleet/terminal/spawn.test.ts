@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 
+import { statSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -74,6 +75,23 @@ describe("what the terminal server is run with", () => {
   });
 });
 
+/**
+ * A directory under the temporary root, removed when the file is done.
+ *
+ * Not a fixed absolute path: `makeStartServer` now creates the directory it was given, and a test
+ * that names `/run/socket` creates `/run/socket` on whatever machine ran it.
+ */
+const made: string[] = [];
+function socketDirectory(): string {
+  const path = join(tmpdir(), `herdr-fleet-spawn-test-${process.pid}-${made.length}`);
+  made.push(path);
+  return path;
+}
+
+afterAll(async () => {
+  for (const path of made.splice(0)) await rm(path, { recursive: true, force: true });
+});
+
 function spawnHarness() {
   const commands: (readonly string[])[] = [];
   const killed: number[] = [];
@@ -92,16 +110,17 @@ function spawnHarness() {
 describe("starting one", () => {
   test("names its socket by a counter, so no terminal id ever becomes a path", async () => {
     const h = spawnHarness();
+    const directory = socketDirectory();
     const start = makeStartServer({
       tools: TOOLS,
-      socketDir: "/run/socket",
+      socketDir: directory,
       spawn: h.spawn,
       awaitSocket: async () => undefined,
     });
     const first = await start(at("term_../../etc/passwd"), GEOMETRY);
     const second = await start(at("term_bbb"), GEOMETRY);
-    expect(first.endpoint).toBe(serverUrl("/run/socket/t1.sock"));
-    expect(second.endpoint).toBe(serverUrl("/run/socket/t2.sock"));
+    expect(first.endpoint).toBe(serverUrl(join(directory, "t1.sock")));
+    expect(second.endpoint).toBe(serverUrl(join(directory, "t2.sock")));
     // The URL is what the Gateway dials, and it names the socket rather than the terminal.
     expect(first.endpoint).not.toContain("passwd");
     // The id reaches the command it attaches to and nothing else.
@@ -112,7 +131,7 @@ describe("starting one", () => {
     const h = spawnHarness();
     const start = makeStartServer({
       tools: TOOLS,
-      socketDir: "/run/socket",
+      socketDir: socketDirectory(),
       spawn: h.spawn,
       awaitSocket: async () => undefined,
     });
@@ -122,18 +141,36 @@ describe("starting one", () => {
     expect(h.killed).toEqual([0]);
   });
 
-  test("a socket that never appears kills the child rather than leaving it attached", async () => {
+  test("remakes its directory, because a host that sweeps /tmp takes it out from under us", async () => {
     const h = spawnHarness();
+    const directory = join(socketDirectory(), "sockets");
     const start = makeStartServer({
       tools: TOOLS,
-      socketDir: "/run/socket",
+      socketDir: directory,
+      spawn: h.spawn,
+      awaitSocket: async () => undefined,
+    });
+    const server = await start(at("term_abc"), GEOMETRY);
+    expect(server.endpoint).toBe(serverUrl(join(directory, "t1.sock")));
+    expect(statSync(directory).isDirectory()).toBe(true);
+  });
+
+  test("a socket that never appears is reported, and kills the child rather than leaving it attached", async () => {
+    const h = spawnHarness();
+    const events: string[] = [];
+    const start = makeStartServer({
+      tools: TOOLS,
+      socketDir: socketDirectory(),
       spawn: h.spawn,
       awaitSocket: async () => {
         throw new Error("the terminal server did not open its socket");
       },
+      log: (event) => events.push(event),
     });
     await expect(start(at("term_abc"), GEOMETRY)).rejects.toThrow("did not open its socket");
     expect(h.killed).toEqual([0]);
+    // The layer that decided says so; otherwise the browser hears "unavailable" and nobody knows why.
+    expect(events).toContain("terminal.server-unavailable");
   });
 });
 

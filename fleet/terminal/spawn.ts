@@ -22,7 +22,7 @@
  */
 
 import { statSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -171,6 +171,10 @@ export function makeStartServer(deps: SpawnDeps): StartServer {
     // lead had produced a terminal id for a machine it does not own.
     if (placement.kind !== "local") throw new Error("this starter serves local terminals only");
     const terminalId = placement.terminalId;
+    // The directory is made once at startup and this process may outlive it: a host that sweeps its
+    // temporary directory takes it, and then every terminal fails to bind a socket in a directory
+    // that is not there. Remaking it is idempotent and costs one syscall per start.
+    await mkdir(deps.socketDir, { recursive: true, mode: 0o700 });
     sequence += 1;
     const socketPath = join(deps.socketDir, socketNameFor(sequence));
     const child = spawn(terminalServerArguments(deps.tools, socketPath, terminalId));
@@ -191,6 +195,9 @@ export function makeStartServer(deps: SpawnDeps): StartServer {
       await awaitSocket(socketPath);
     } catch (error) {
       stop();
+      // Said out loud, because the failure is otherwise silent all the way up: the browser is told
+      // the terminal is unavailable and nothing records which layer decided that.
+      deps.log?.("terminal.server-unavailable", { pane: placement.paneId });
       throw error;
     }
     // The Pane, not the terminal it resolved to: see the diagnostics boundary.
