@@ -1,8 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import type { FleetLeadConfig } from "../config.ts";
 import { createGatewayHandler, type TerminalUpgrade } from "../gateway.ts";
@@ -41,8 +41,22 @@ function recorder(succeeds = true) {
   };
 }
 
+/**
+ * Every temporary root this file made, removed when it is done.
+ *
+ * Its own prefix, too: the Gateway's terminal SOCKET directories share the tmp directory, and one
+ * name for both is one name to confuse when something is left behind — which is how this leak went
+ * unnoticed for three hundred runs.
+ */
+const roots: string[] = [];
+
+afterAll(async () => {
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
+
 async function setup() {
-  const root = await mkdtemp(join(tmpdir(), "herdr-fleet-terminal-"));
+  const root = await mkdtemp(join(tmpdir(), "herdr-fleet-route-test-"));
+  roots.push(root);
   const sessions = new SessionStore(join(root, "sessions.json"));
   const handler = createGatewayHandler({
     config,
