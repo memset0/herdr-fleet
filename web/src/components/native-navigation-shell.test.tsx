@@ -134,6 +134,33 @@ describe("NativeNavigationShell", () => {
     expect(screen.queryByRole("button", { name: /^Collapse (Herds|Agents)/ })).toBeNull();
   });
 
+  it("carries the pane-surface switch in the rail and in the drawer, and they are one switch", () => {
+    renderShell();
+    // The drawer is the rail arriving from the edge, so a phone is not sent to Settings for a
+    // choice a desktop can make from where it already is.
+    // Queried from the DOM rather than by role: the drawer is a closed `aria-modal` dialog, so its
+    // copy is deliberately out of the accessibility tree until the drawer opens — which is the
+    // behaviour we want and the reason a role query finds only the rail's.
+    const controls = [...document.querySelectorAll<HTMLElement>('[role="radiogroup"]')];
+    expect(controls).toHaveLength(2);
+    expect(screen.getAllByRole("radiogroup", { name: "Pane surface" })).toHaveLength(1);
+    const segment = (control: HTMLElement, label: string): HTMLElement => {
+      const found = [...control.querySelectorAll<HTMLElement>('[role="radio"]')].find(
+        (node) => node.textContent === label,
+      );
+      if (found === undefined) throw new Error(`no ${label} segment`);
+      return found;
+    };
+    for (const control of controls) {
+      expect(segment(control, "Collie")).toHaveAttribute("aria-checked", "true");
+    }
+    // One store behind both: pressing in one moves the other.
+    fireEvent.click(segment(controls[1]!, "TTYD"));
+    for (const control of controls) {
+      expect(segment(control, "TTYD")).toHaveAttribute("aria-checked", "true");
+    }
+  });
+
   it("resizes a rail by keyboard within its bounds and remembers the width", () => {
     const { store } = renderShell();
     const separator = screen.getByRole("separator", { name: "Resize Herds sidebar" });

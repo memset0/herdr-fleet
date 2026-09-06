@@ -903,6 +903,12 @@ function HierarchyOverlay({
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        {/* The same footer the rail carries, for the same reason the drawer wears the rail's ground
+            and title: it is the rail arriving from the edge, and a switch that existed on one of
+            them and not the other would make that sentence false on a phone. */}
+        <div className="shrink-0 border-t border-rule [padding-bottom:env(safe-area-inset-bottom)]">
+          <FleetPaneSurfaceToggle />
+        </div>
       </section>
     </div>
   );

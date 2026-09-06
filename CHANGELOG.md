@@ -39,6 +39,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 - A Peer may declare an optional `[terminal]` table, and a Lead an optional terminal endpoint per member, for the terminal service a later change starts. A configuration that omits them is unchanged.
 - A Pane can be drawn as the terminal it mirrors. One switch in Settings chooses the surface for every Pane in this browser; it defaults to the mirror, and with it there the Pane route is the route it was. The terminal takes the browser's viewport while it is attached and shows the size it is at, a selection copies, and a program's own copy request is honoured within a bound while its request to READ the clipboard is refused.
 - That switch also stands at the foot of the left rail, as `Collie` and `TTYD`, so the surface can be changed from wherever you are. It is the same switch Settings holds — flipping either moves the other — and both now name the two surfaces the same way.
+- The drawer a phone slides in carries that switch too, so the surface is one press away there as well.
 - A member can serve its own Panes as terminals. It resolves each Pane against its own multiplexer server on every request, starts one terminal server for it after checking the executable's digest, and answers three operations on one loopback endpoint the link now projects a third time. It holds nothing until something asks, and stands itself down when nothing has for an hour — which the supervisor reports as idle rather than as a failure.
 
 ### Fixed
