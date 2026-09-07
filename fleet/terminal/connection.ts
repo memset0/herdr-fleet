@@ -20,9 +20,9 @@
 
 import type { TerminalTarget } from "./admit.ts";
 import { noticeFrame, outputFrame, readBrowserMessage, VIEWPORT_BOUNDS } from "./browser.ts";
-import { inputFrame, resizeFrame, type Geometry } from "./protocol.ts";
+import { inputFrame, type Geometry } from "./protocol.ts";
 import type { Resolution } from "./resolve.ts";
-import type { AttachedClient, Session, TerminalSessions } from "./session.ts";
+import type { AttachedClient, Session, SessionAcquisition, TerminalSessions } from "./session.ts";
 
 /**
  * What the browser is told when a connection ends or cannot start. A small closed vocabulary, not a
@@ -122,7 +122,7 @@ export class TerminalConnection {
       }
       // A later viewport is a resize of a terminal that already exists. While one is still being
       // established the newest geometry is simply what it will be started with.
-      if (this.state === "attached") this.held?.send(resizeFrame(geometry));
+      if (this.state === "attached") this.held?.resize(geometry);
       return;
     }
     if (this.state === "attached") {
@@ -175,32 +175,33 @@ export class TerminalConnection {
       this.end(NOTICE.unavailable);
       return;
     }
-    let session: Session;
+    let acquisition: SessionAcquisition;
     try {
-      session = await this.deps.sessions.acquire(resolution.placement, geometry);
+      acquisition = await this.deps.sessions.acquire(resolution.placement, geometry);
     } catch {
       this.end(NOTICE.unavailable);
       return;
     }
-    if (this.isClosed()) return;
-    const attached = session.attach(this.client);
-    if (!attached.ok) {
-      this.end(NOTICE.busy);
-      return;
+    try {
+      if (this.isClosed()) return;
+      const session = acquisition.session;
+      const attached = session.attach(this.client);
+      if (!attached.ok) {
+        this.end(NOTICE.busy);
+        return;
+      }
+      this.held = session;
+      this.state = "attached";
+      // A shared session may have been started for another caller's viewport. The winning browser
+      // applies its own latest geometry, including when its first viewport has not changed.
+      session.resize(this.geometry ?? geometry);
+      const queued = this.pending;
+      this.pending = [];
+      this.pendingBytes = 0;
+      for (const data of queued) session.send(inputFrame(data));
+    } finally {
+      acquisition.release();
     }
-    this.held = session;
-    this.state = "attached";
-    // The geometry the terminal was started with may already be stale: the browser can have been
-    // resized while the server was starting, and the operator's own machine is what carries the
-    // result of getting that wrong.
-    const current = this.geometry ?? geometry;
-    if (current.columns !== geometry.columns || current.rows !== geometry.rows) {
-      session.send(resizeFrame(current));
-    }
-    const queued = this.pending;
-    this.pending = [];
-    this.pendingBytes = 0;
-    for (const data of queued) session.send(inputFrame(data));
   }
 
   /** The browser went away — navigation, reload, or a dropped network. */

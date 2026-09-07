@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { TerminalTarget } from "./admit.ts";
 import { TO_BROWSER, inputMessage, viewportMessage } from "./browser.ts";
+import type { Placement } from "./placement.ts";
 import { CLIENT } from "./protocol.ts";
 import type { Resolution } from "./resolve.ts";
 import {
@@ -35,11 +36,13 @@ function harness(
     readonly resolveThrows?: boolean;
     readonly limits?: Partial<SessionDeps["limits"]>;
     readonly maxPendingInputBytes?: number;
+    readonly startBarrier?: Promise<void>;
   } = {},
 ) {
   let clock = 1_000;
   const timers = new Map<number, { fn: () => void; due: number }>();
   let nextTimer = 1;
+  const starting = Promise.withResolvers<void>();
 
   const started: string[] = [];
   const stopped: string[] = [];
@@ -63,6 +66,8 @@ function harness(
     startServer: async (placement): Promise<TerminalServer> => {
       const terminalId = placement.kind === "local" ? placement.terminalId : placement.paneId;
       started.push(terminalId);
+      starting.resolve();
+      await options.startBarrier;
       return {
         endpoint: `unix:${terminalId}`,
         stop: () => {
@@ -97,6 +102,7 @@ function harness(
     started,
     stopped,
     resolved,
+    starting: starting.promise,
     /** Everything the Gateway sent upstream, as command bytes and payload text. */
     upstreamFrames: () =>
       sent.map((frame) => ({ command: frame[0], body: decoder.decode(frame.subarray(1)) })),
@@ -409,5 +415,88 @@ describe("a session that stops being current takes its terminals with it", () =>
     registry.closeAll();
     expect(registry.size()).toBe(0);
     expect(first.s.closed()).toBe(true);
+  });
+});
+
+describe("browsers arriving during one establishment", () => {
+  const placements: Placement[] = [
+    { kind: "local", terminalId: "term_abc", paneId: "w1:p1" },
+    { kind: "peer", host: "member-a", paneId: "w1:p1", endpoint: { host: "127.0.0.1", port: 18_911 } },
+  ];
+
+  test.each(placements)("keeps one browser without another attach for $kind", async (placement) => {
+    const barrier = Promise.withResolvers<void>();
+    const h = harness({ resolution: { ok: true, placement }, startBarrier: barrier.promise });
+    const a = socket();
+    const b = socket();
+    const first = new TerminalConnection(TARGET, SESSION, a.handle, h.deps);
+    const second = new TerminalConnection(TARGET, OTHER_SESSION, b.handle, h.deps);
+    first.message(viewportMessage({ columns: 100, rows: 30 }));
+    second.message(viewportMessage({ columns: 80, rows: 24 }));
+    second.message(inputMessage(encoder.encode("must not be typed")));
+    await h.starting;
+    const ready = h.sessions.acquire(placement, { columns: 100, rows: 30 });
+    expect(h.started).toHaveLength(1);
+    barrier.resolve();
+    const lease = await ready;
+    lease.release();
+    expect(first.status()).toBe("attached");
+    expect(second.status()).toBe("closed");
+    expect(b.notices()).toEqual([NOTICE.busy]);
+    h.emit(h.started[0]!, encoder.encode("winner only"));
+    expect(a.output()).toBe("winner only");
+    expect(b.output()).toBe("");
+    expect(h.upstreamFrames()).toEqual([]);
+    expect(h.stopped).toEqual([]);
+    await h.sessions.closeAll();
+  });
+
+  test("a departed caller cannot orphan or resize the surviving browser's session", async () => {
+    const placement = placements[0]!;
+    const barrier = Promise.withResolvers<void>();
+    const h = harness({ resolution: { ok: true, placement }, startBarrier: barrier.promise });
+    const a = socket();
+    const b = socket();
+    const first = new TerminalConnection(TARGET, SESSION, a.handle, h.deps);
+    const second = new TerminalConnection(TARGET, OTHER_SESSION, b.handle, h.deps);
+    first.message(viewportMessage({ columns: 100, rows: 30 }));
+    second.message(viewportMessage({ columns: 80, rows: 24 }));
+    await h.starting;
+    first.closed();
+    const ready = h.sessions.acquire(placement, { columns: 100, rows: 30 });
+    barrier.resolve();
+    const lease = await ready;
+    lease.release();
+    expect(first.status()).toBe("closed");
+    expect(second.status()).toBe("attached");
+    expect(h.upstreamFrames()).toEqual([{ command: CLIENT.resize, body: '{"columns":80,"rows":24}' }]);
+    h.advance(10_000);
+    h.emit("term_abc", encoder.encode("still alive"));
+    expect(a.output()).toBe("");
+    expect(b.output()).toBe("still alive");
+    expect(h.stopped).toEqual([]);
+    second.closed();
+    h.advance(5_000);
+    expect(h.stopped).toEqual(["term_abc"]);
+  });
+
+  test("a browser closed during startup leaves only the ordinary bounded grace", async () => {
+    const placement = placements[0]!;
+    const barrier = Promise.withResolvers<void>();
+    const h = harness({ resolution: { ok: true, placement }, startBarrier: barrier.promise });
+    const s = socket();
+    const connection = new TerminalConnection(TARGET, SESSION, s.handle, h.deps);
+    connection.message(viewportMessage({ columns: 100, rows: 30 }));
+    await h.starting;
+    connection.closed();
+    const ready = h.sessions.acquire(placement, { columns: 100, rows: 30 });
+    barrier.resolve();
+    const lease = await ready;
+    lease.release();
+    expect(h.pendingTimers()).toBe(1);
+    h.advance(5_000);
+    expect(h.stopped).toEqual(["term_abc"]);
+    expect(h.sessions.size()).toBe(0);
+    expect(s.output()).toBe("");
   });
 });

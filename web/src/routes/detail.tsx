@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useLoaderData, useLocation, useNavigate, useParams } from "react-router";
 
-import { AgentChat } from "@/components/agent-chat";
+import { AgentChat, type PaneContentRenderer } from "@/components/agent-chat";
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
 import { type PaneData } from "@/lib/loaders";
 import { homePath, panePath } from "@/lib/nav";
@@ -16,7 +16,7 @@ import { useRootData } from "@/lib/route-data";
 // isn't in the snapshot yet, so we fall back to the `freshPane` passed via navigation state — the
 // composer stays live immediately while polling catches the snapshot up. Keyed by paneId so
 // switching panes remounts the composer fresh.
-export function DetailRoute() {
+export function DetailRoute({ renderContent }: { renderContent?: PaneContentRenderer | undefined } = {}) {
   // SAFETY: this is the `/pane/:paneId` route's element and `paneLoader` returns `PaneData`; the
   // element does not mount until that loader has resolved. React Router types a data-mode
   // `useLoaderData()` as `unknown`.
@@ -97,6 +97,7 @@ export function DetailRoute() {
       bridge={root.bridge}
       error={root.error}
       stalled={stalled}
+      renderContent={renderContent}
       onBack={() => navigate(homePath(scope))}
       onSelect={(id) =>
         navigate(

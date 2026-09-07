@@ -1,5 +1,4 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FROM_BROWSER, readBrowserMessage } from "../../../fleet/terminal/browser.ts";
@@ -27,6 +26,8 @@ class FakeTerminal {
   modes = { mouseTrackingMode: "none" };
   selection = "";
   disposed = false;
+  readonly parsedHandlers = new Set<() => void>();
+  readonly viewport = { width: 800, height: 600 };
   readonly parser = {
     registerOscHandler: (id: number, handler: OscHandler) => {
       this.oscHandlers.set(id, handler);
@@ -40,12 +41,20 @@ class FakeTerminal {
   }
 
   loadAddon(): void {}
-  open(): void {
+  open(element: HTMLElement): void {
     this.opened += 1;
+    Object.defineProperties(element, {
+      clientWidth: { configurable: true, get: () => this.viewport.width },
+      clientHeight: { configurable: true, get: () => this.viewport.height },
+    });
   }
   focus(): void {}
   write(data: Uint8Array): void {
     this.written.push(data);
+  }
+  onWriteParsed(handler: () => void) {
+    this.parsedHandlers.add(handler);
+    return { dispose: () => this.parsedHandlers.delete(handler) };
   }
   onData(handler: (data: string) => void) {
     this.dataHandlers.push(handler);
@@ -101,11 +110,6 @@ class FakeSocket {
   }
 }
 
-// The one header is the shell's, and mounting it here would drag a data router in for a row this
-// surface only portals a Pane name into. What the header does has its own tests.
-vi.mock("@/components/app-header", () => ({
-  RouteHeader: ({ children }: { children?: React.ReactNode }) => <div data-testid="route-header">{children}</div>,
-}));
 
 vi.mock("@xterm/xterm", () => ({ Terminal: FakeTerminal }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: FakeFitAddon }));
@@ -119,6 +123,12 @@ let paneCounter = 0;
 /** Every live ResizeObserver callback, so a rotation or a type-size change can be driven by hand. */
 const resizes: (() => void)[] = [];
 
+const bodyControls = {
+  zen: false,
+  find: { open: false, query: "", current: 0, onMatchCount: () => undefined },
+  onOutputChange: () => undefined,
+};
+
 function mount(over: { readOnly?: boolean } = {}) {
   paneCounter += 1;
   const paneId = `w1:p${paneCounter}`;
@@ -126,9 +136,9 @@ function mount(over: { readOnly?: boolean } = {}) {
     <FleetTerminal
       paneId={paneId}
       scope={{}}
-      label="claude"
+      {...bodyControls}
+      readOnly={over.readOnly === true}
       device={over.readOnly === true ? { enforced: true, device: "phone", authorized: false } : undefined}
-      onBack={() => undefined}
     />,
   );
   const socket = FakeSocket.instances.at(-1)!;
@@ -344,10 +354,43 @@ describe("leaving and coming back", () => {
     expect(terminal.disposed).toBe(false);
 
     render(
-      <FleetTerminal paneId={paneId} scope={{}} label="claude" device={undefined} onBack={() => undefined} />,
+      <FleetTerminal paneId={paneId} scope={{}} {...bodyControls} device={undefined} readOnly={false} />,
     );
     expect(FakeTerminal.instances).toHaveLength(1);
     expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  it("does not resize a held terminal from a detached host", () => {
+    const { view, socket, paneId } = mount();
+    socket.fire("open");
+    const oldReport = resizes.at(-1)!;
+    view.unmount();
+    proposed = { cols: 2, rows: 1 };
+    oldReport();
+    expect(socket.frames()).toEqual([{ kind: "viewport", viewport: { columns: 100, rows: 30 } }]);
+
+    proposed = { cols: 80, rows: 24 };
+    render(<FleetTerminal paneId={paneId} scope={{}} {...bodyControls} device={undefined} readOnly={false} />);
+    expect(socket.frames().at(-1)).toEqual({ kind: "viewport", viewport: { columns: 80, rows: 24 } });
+    proposed = { cols: 20, rows: 5 };
+    oldReport();
+    expect(socket.frames()).toHaveLength(2);
+    resizes.at(-1)!();
+    expect(socket.frames().at(-1)).toEqual({ kind: "viewport", viewport: { columns: 20, rows: 5 } });
+  });
+
+  it("waits for a real content area and then reports even a valid minimum viewport", () => {
+    const { socket, terminal } = mount();
+    socket.fire("open");
+    terminal.viewport.width = 0;
+    terminal.viewport.height = 0;
+    proposed = { cols: 20, rows: 5 };
+    resizes.at(-1)!();
+    expect(socket.frames()).toEqual([{ kind: "viewport", viewport: { columns: 100, rows: 30 } }]);
+    terminal.viewport.width = 128;
+    terminal.viewport.height = 80;
+    resizes.at(-1)!();
+    expect(socket.frames().at(-1)).toEqual({ kind: "viewport", viewport: { columns: 20, rows: 5 } });
   });
 
   it("builds a new one when the connection ended while it was away", () => {
@@ -357,7 +400,7 @@ describe("leaving and coming back", () => {
     view.unmount();
 
     render(
-      <FleetTerminal paneId={paneId} scope={{}} label="claude" device={undefined} onBack={() => undefined} />,
+      <FleetTerminal paneId={paneId} scope={{}} {...bodyControls} device={undefined} readOnly={false} />,
     );
     expect(FakeTerminal.instances).toHaveLength(2);
     expect(FakeSocket.instances).toHaveLength(2);

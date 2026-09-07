@@ -96,22 +96,30 @@ export type AttachResult =
   /** Another browser holds this terminal. The established one is neither displaced nor exposed. */
   | { readonly ok: false; readonly reason: "busy" };
 
+/** A caller's temporary claim while it decides whether to attach a browser. */
+export interface SessionAcquisition {
+  readonly session: Session;
+  release(): void;
+}
+
 class Session {
   private client: AttachedClient | null = null;
   private graceHandle: TimerHandle | null = null;
   private closed = false;
   readonly retained: RetainedWindow;
-  /** Set once the multiplexer's own attach repaint has been seen, so a first attach needs no replay. */
-  private everAttached = false;
+  private readonly onDetached: () => void;
   lastUsed: number;
 
   constructor(
     readonly placement: Placement,
     readonly key: string,
     private readonly server: TerminalServer,
+    private geometry: Geometry,
     private readonly deps: Required<Pick<SessionDeps, "limits">> & SessionDeps,
     private readonly onEnded: (session: Session) => void,
+    onDetached: () => void,
   ) {
+    this.onDetached = onDetached;
     this.retained = retainedWindow(deps.limits.retainBytes);
     this.lastUsed = (deps.now ?? Date.now)();
   }
@@ -119,10 +127,27 @@ class Session {
   private upstream: Upstream | null = null;
 
   bindUpstream(upstream: Upstream): void {
+    if (this.closed) {
+      upstream.close();
+      throw new Error("the terminal session ended while connecting");
+    }
     this.upstream = upstream;
   }
 
+  isClosed(): boolean {
+    return this.closed;
+  }
+
+  hold(): void {
+    this.cancelGrace();
+  }
+
+  idle(): void {
+    if (!this.closed && this.client === null && this.graceHandle === null) this.startGrace();
+  }
+
   receive(data: Uint8Array): void {
+    if (this.closed) return;
     this.retained.push(data);
     this.client?.write(data);
   }
@@ -133,14 +158,10 @@ class Session {
     this.cancelGrace();
     this.client = client;
     this.lastUsed = (this.deps.now ?? Date.now)();
-    // Only a REUSED session replays. A newly established one is about to receive the multiplexer's
-    // own attach repaint, and replaying an empty window before it would be a no-op that still had to
-    // be reasoned about at every call site.
-    if (this.everAttached) {
-      const replay = this.retained.replay();
-      if (replay.length > 0) client.write(replay);
-    }
-    this.everAttached = true;
+    // Output can arrive while the shared connection is still being established. Replay whatever
+    // has already arrived before handing this browser the live stream, including on first attach.
+    const replay = this.retained.replay();
+    if (replay.length > 0) client.write(replay);
     return { ok: true };
   }
 
@@ -148,7 +169,7 @@ class Session {
     if (this.client !== client) return;
     this.client = null;
     this.lastUsed = (this.deps.now ?? Date.now)();
-    this.startGrace();
+    this.onDetached();
   }
 
   hasClient(): boolean {
@@ -158,6 +179,12 @@ class Session {
   send(frame: Uint8Array): void {
     if (this.closed) return;
     this.upstream?.send(frame);
+  }
+
+  resize(geometry: Geometry): void {
+    if (this.closed || (geometry.columns === this.geometry.columns && geometry.rows === this.geometry.rows)) return;
+    this.geometry = geometry;
+    this.send(resizeFrame(geometry));
   }
 
   private startGrace(): void {
@@ -202,6 +229,16 @@ class Session {
 
 export type { Session };
 
+interface SessionEntry {
+  readonly key: string;
+  readonly placement: Placement;
+  readonly ready: Promise<Session>;
+  session: Session | null;
+  users: number;
+  reserved: boolean;
+  established: boolean;
+}
+
 /**
  * The set of sessions one device holds.
  *
@@ -210,70 +247,142 @@ export type { Session };
  * and closes the evicted session completely — nothing is reused across a close.
  */
 export class TerminalSessions {
-  private readonly sessions = new Map<string, Session>();
+  private readonly entries = new Map<string, SessionEntry>();
+  private slots = 0;
+  private closed = false;
+  private stopping: Promise<void> | null = null;
+  private changed = Promise.withResolvers<void>();
 
   constructor(private readonly deps: SessionDeps) {
     if (deps.limits.maxSessions < 1) throw new Error("a device must be allowed at least one session");
   }
 
-  /** How many sessions are held right now. */
+  /** Held and establishing sessions both consume a process slot. */
   size(): number {
-    return this.sessions.size;
+    return this.slots;
   }
 
   held(key: string): boolean {
-    return this.sessions.has(key);
+    return this.entries.get(key)?.reserved === true;
   }
 
-  /**
-   * The session for a terminal, establishing one if it is not held.
-   *
-   * A held session is returned as it stands, including its retained window — that is the whole point
-   * of holding it. Establishing one may evict another, which happens before the new server starts so
-   * the device is never briefly over its own maximum.
-   */
-  async acquire(placement: Placement, geometry: Geometry): Promise<Session> {
+  async acquire(placement: Placement, geometry: Geometry): Promise<SessionAcquisition> {
+    if (this.closed) throw new Error("the terminal session service has stopped");
     const key = placementKey(placement);
-    const existing = this.sessions.get(key);
-    if (existing !== undefined) {
-      existing.lastUsed = (this.deps.now ?? Date.now)();
-      return existing;
+    let entry = this.entries.get(key);
+    if (entry === undefined) {
+      const ready = Promise.withResolvers<Session>();
+      entry = { key, placement, ready: ready.promise, session: null, users: 1, reserved: false, established: false };
+      // Publish before calling anything asynchronous, including capacity admission and startup.
+      this.entries.set(key, entry);
+      void this.establish(entry, geometry).then(ready.resolve, ready.reject);
+    } else {
+      entry.users += 1;
+      entry.session?.hold();
     }
-    this.evictWhileAtCapacity();
-    const server = await this.deps.startServer(placement, geometry);
-    const session = new Session(placement, key, server, this.deps, (ended) => {
-      // Only remove the entry if it is still this session: a terminal that was closed and
-      // re-established must not have its successor evicted by its predecessor's callback.
-      if (this.sessions.get(ended.key) === ended) this.sessions.delete(ended.key);
-    });
-    this.sessions.set(key, session);
-    const upstream = await this.deps.connect(server, geometry, {
-      onOutput: (data) => session.receive(data),
-      onClosed: () => session.close(),
-    });
-    session.bindUpstream(upstream);
-    this.deps.log?.("terminal.session-opened", { pane: placementLabel(placement), held: this.sessions.size });
-    return session;
-  }
-
-  private evictWhileAtCapacity(): void {
-    while (this.sessions.size >= this.deps.limits.maxSessions) {
-      let oldest: Session | null = null;
-      for (const session of this.sessions.values()) {
-        if (oldest === null || session.lastUsed < oldest.lastUsed) oldest = session;
+    try {
+      const session = await entry.ready;
+      if (this.closed || session.isClosed() || this.entries.get(key) !== entry) {
+        throw new Error("the terminal session ended while acquiring");
       }
-      if (oldest === null) return;
-      this.deps.log?.("terminal.session-evicted", { pane: placementLabel(oldest.placement) });
-      oldest.close();
+      session.lastUsed = (this.deps.now ?? Date.now)();
+      let released = false;
+      return {
+        session,
+        release: () => {
+          if (released) return;
+          released = true;
+          this.release(entry);
+        },
+      };
+    } catch (error) {
+      this.release(entry);
+      throw error;
     }
   }
 
-  /** Close every session — used when the Gateway stops, so nothing is orphaned. */
-  closeAll(): void {
-    // Snapshotted first: `close()` removes the entry, and mutating a Map while iterating it is
-    // exactly the shape that silently skips half a collection.
-    const held = Array.from(this.sessions.values());
-    for (const session of held) session.close();
+  private release(entry: SessionEntry): void {
+    entry.users -= 1;
+    if (entry.users === 0) entry.session?.idle();
+    this.notify();
+  }
+
+  private notify(): void {
+    const changed = this.changed;
+    this.changed = Promise.withResolvers<void>();
+    changed.resolve();
+  }
+
+  private remove(entry: SessionEntry): void {
+    if (this.entries.get(entry.key) !== entry) return;
+    this.entries.delete(entry.key);
+    if (entry.reserved) {
+      entry.reserved = false;
+      this.slots -= 1;
+    }
+    this.notify();
+  }
+
+  private async reserve(entry: SessionEntry): Promise<void> {
+    while (!this.closed && this.slots >= this.deps.limits.maxSessions) {
+      let oldest: Session | null = null;
+      for (const candidate of this.entries.values()) {
+        if (!candidate.established || candidate.users !== 0 || candidate.session === null) continue;
+        if (oldest === null || candidate.session.lastUsed < oldest.lastUsed) oldest = candidate.session;
+      }
+      if (oldest !== null) {
+        this.deps.log?.("terminal.session-evicted", { pane: placementLabel(oldest.placement) });
+        oldest.close();
+      } else {
+        await this.changed.promise;
+      }
+    }
+    if (this.closed) throw new Error("the terminal session service has stopped");
+    entry.reserved = true;
+    this.slots += 1;
+  }
+
+  private async establish(entry: SessionEntry, geometry: Geometry): Promise<Session> {
+    try {
+      await this.reserve(entry);
+      if (this.closed) throw new Error("the terminal session service has stopped");
+      const server = await this.deps.startServer(entry.placement, geometry);
+      if (this.closed) {
+        server.stop();
+        throw new Error("the terminal session service has stopped");
+      }
+      const session = new Session(entry.placement, entry.key, server, geometry, this.deps, () => {
+        // A close during connect keeps its slot until that connect's late result is cleaned up.
+        if (entry.established) this.remove(entry);
+      }, () => {
+        if (entry.users === 0) entry.session?.idle();
+      });
+      entry.session = session;
+      const upstream = await this.deps.connect(server, geometry, {
+        onOutput: (data) => session.receive(data),
+        onClosed: () => session.close(),
+      });
+      session.bindUpstream(upstream);
+      entry.established = true;
+      this.notify();
+      this.deps.log?.("terminal.session-opened", { pane: placementLabel(entry.placement), held: this.slots });
+      return session;
+    } catch (error) {
+      entry.session?.close();
+      this.remove(entry);
+      throw error;
+    }
+  }
+
+  /** Shutdown invalidates first, then drains late starts before the socket directory is removed. */
+  closeAll(): Promise<void> {
+    if (this.stopping !== null) return this.stopping;
+    this.closed = true;
+    const entries = Array.from(this.entries.values());
+    for (const entry of entries) entry.session?.close();
+    this.notify();
+    this.stopping = Promise.allSettled(entries.map((entry) => entry.ready)).then(() => undefined);
+    return this.stopping;
   }
 }
 

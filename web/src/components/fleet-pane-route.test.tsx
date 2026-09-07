@@ -1,8 +1,16 @@
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { PaneContentProps } from "./agent-chat";
+import { ROOT_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
+import type * as LoaderModule from "@/lib/loaders";
+import { shownLastSeenAt } from "@/routes/root";
+import { fixtureAgents } from "@/test/handlers";
+import { withHeaderHost } from "@/test/header-host";
 import { paneSurfaceStore } from "../../../fleet/ui/terminal/switch.ts";
-import { fleetPaneLoader, terminalPaneData } from "./fleet-pane-route";
+import { FleetPaneRoute, fleetPaneLoader, terminalPaneData } from "./fleet-pane-route";
 
 interface PaneLoaderArgs {
   params: { paneId?: string };
@@ -10,104 +18,104 @@ interface PaneLoaderArgs {
 }
 
 const paneLoader = vi.fn();
-
 vi.mock("@/lib/loaders", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/loaders")>()),
+  ...(await importOriginal<typeof LoaderModule>()),
   paneLoader: (args: PaneLoaderArgs) => paneLoader(args),
 }));
-
-vi.mock("@/routes/detail", () => ({
-  DetailRoute: () => <div data-testid="mirror-surface" />,
-}));
-
 vi.mock("@/components/fleet-terminal", () => ({
-  FleetTerminal: () => <div data-testid="terminal-surface" />,
+  FleetTerminal: ({ onOutputChange }: PaneContentProps) => {
+    useEffect(() => onOutputChange(true), [onOutputChange]);
+    return <div data-testid="terminal-surface">terminal output</div>;
+  },
 }));
 
-vi.mock("@/lib/route-data", () => ({
-  useRootData: () => ({ agents: [], shellPanes: [], servers: undefined, sessions: undefined, device: undefined }),
-}));
+function mount() {
+  const agent = { ...fixtureAgents[0]!, paneLabel: "native-pane", cwd: "/workspace/other" };
+  const root: HomeData = {
+    bridge: "connected", agents: [agent], shellPanes: [], workspaces: [], tabs: [],
+    device: undefined, sessions: [], servers: [], ts: 0, scope: {}, viewAll: false,
+    snoozedUntil: null, update: undefined, error: false, authError: false,
+  };
+  paneLoader.mockImplementation((): PaneData => ({
+    ...terminalPaneData({ params: { paneId: agent.paneId } }),
+    text: "fresh mirror output", requestedLines: 600,
+  }));
+  const router = createMemoryRouter([{
+    id: ROOT_ROUTE_ID, path: "/", loader: () => root, element: withHeaderHost(<Outlet />),
+    children: [{ path: "pane/:paneId", loader: fleetPaneLoader, element: <FleetPaneRoute /> }],
+  }], { initialEntries: [`/pane/${agent.paneId}`] });
+  const view = render(<RouterProvider router={router} />);
+  return { ...view, router };
+}
 
-vi.mock("react-router", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react-router")>()),
-  useLoaderData: () => terminalPaneData({ params: { paneId: "w1:p1" } }),
-  useNavigate: () => vi.fn(),
-}));
+beforeAll(() => {
+  if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {};
+});
 
-// Imported after the mocks so the element under test sees them.
-const { FleetPaneRoute } = await import("./fleet-pane-route");
+beforeEach(() => {
+  paneSurfaceStore.set("mirror");
+  paneLoader.mockReset();
+});
 
-describe("which surface the pane route draws", () => {
-  beforeEach(() => {
-    paneLoader.mockReset();
-    paneSurfaceStore.set("mirror");
+describe("native Pane frame across surface changes", () => {
+  it("keeps identity and actions mounted, and restores fresh mirror text on return", async () => {
+    const { container, router } = mount();
+    await screen.findByText("fresh mirror output");
+    const identity = screen.getByRole("button", { name: /Open .+ overview/ });
+    const actions = screen.getByRole("button", { name: "Pane actions" });
+    expect(identity).toHaveTextContent("native-pane");
+    expect(identity).toHaveTextContent("/workspace/other");
+    paneLoader.mockClear();
+
+    await act(async () => { paneSurfaceStore.set("terminal"); });
+    await screen.findByTestId("terminal-surface");
+    expect(container.querySelector('[data-slot="pane-identity"]')).toBe(identity);
+    expect(screen.getByRole("button", { name: "Pane actions" })).toBe(actions);
+    expect(screen.queryByText("fresh mirror output")).toBeNull();
+    expect(screen.queryByPlaceholderText(/type a reply/i)).toBeNull();
+    expect(paneLoader).not.toHaveBeenCalled();
+    fireEvent.click(actions);
+    expect(await screen.findByRole("button", { name: "Find in output" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await act(async () => { paneSurfaceStore.set("mirror"); });
+    await screen.findByText("fresh mirror output");
+    expect(container.querySelector('[data-slot="pane-identity"]')).toBe(identity);
+    expect(within(identity).getByText("native-pane")).toBeInTheDocument();
+    await waitFor(() => expect(router.state.revalidation).toBe("idle"));
+    router.dispose();
   });
 
-  it("renders Collie's own element while the switch is at its default", () => {
-    render(<FleetPaneRoute />);
-    expect(screen.getByTestId("mirror-surface")).toBeInTheDocument();
-    expect(screen.queryByTestId("terminal-surface")).toBeNull();
-  });
-
-  it("renders the terminal surface while the switch is on", () => {
+  it("uses the native header on a direct terminal visit without reading a mirror", async () => {
     paneSurfaceStore.set("terminal");
-    render(<FleetPaneRoute />);
-    expect(screen.getByTestId("terminal-surface")).toBeInTheDocument();
-    expect(screen.queryByTestId("mirror-surface")).toBeNull();
-  });
-
-  it("ignores a surface named in the address or carried in navigation state", () => {
-    // The stored switch decides. A link that could put a browser into the terminal surface would be
-    // a link that types into somebody's terminal.
-    window.history.replaceState({ surface: "terminal" }, "", "/pane/w1:p1?surface=terminal");
-    render(<FleetPaneRoute />);
-    expect(screen.getByTestId("mirror-surface")).toBeInTheDocument();
+    const { container, router } = mount();
+    await screen.findByTestId("terminal-surface");
+    expect(container.querySelector('[data-slot="pane-identity"]')).toHaveTextContent("native-pane");
+    expect(screen.getByRole("button", { name: "Pane actions" })).toBeInTheDocument();
+    expect(paneLoader).not.toHaveBeenCalled();
+    router.dispose();
   });
 });
 
-describe("which loader runs", () => {
-  beforeEach(() => {
-    paneLoader.mockReset();
-    paneSurfaceStore.set("mirror");
-  });
-
-  it("is Collie's own, with the same arguments, while the switch is at its default", async () => {
-    const args = { params: { paneId: "w1:p1" }, request: new Request("https://fleet.example.com/pane/w1:p1") };
-    paneLoader.mockResolvedValue({ paneId: "w1:p1", text: "mirror text" });
-    await expect(fleetPaneLoader(args)).resolves.toEqual({ paneId: "w1:p1", text: "mirror text" });
-    expect(paneLoader).toHaveBeenCalledTimes(1);
-    expect(paneLoader).toHaveBeenCalledWith(args);
-  });
-
-  it("fetches no mirror at all while the switch is on", async () => {
+describe("terminal loader boundaries", () => {
+  it("fetches no mirror while keeping the requested host and session scope", async () => {
     paneSurfaceStore.set("terminal");
     const data = await fleetPaneLoader({
       params: { paneId: "w1:p1" },
       request: new Request("https://fleet.example.com/pane/w1:p1?h=laptop&s=work"),
     });
     expect(paneLoader).not.toHaveBeenCalled();
-    expect(data.text).toBe("");
     expect(data.scope).toEqual({ host: "laptop", session: "work" });
   });
 
-  it("fails loudly on a route with no pane, exactly as Collie's does", () => {
-    paneSurfaceStore.set("terminal");
+  it("rejects a route without a Pane", () => {
     expect(() => terminalPaneData({ params: {} })).toThrow("missing :paneId");
   });
-});
 
-describe("what the stub leaves alone", () => {
-  it("keeps the connection banner dated by the herd, exactly as an unedited root does", async () => {
-    // `root.tsx` is upstream's and carries no port of ours: the stub is the shape its existing
-    // fall-through already handles, which is the whole reason it has this shape.
-    const { shownLastSeenAt } = await import("@/routes/root");
-    // SAFETY: `shownLastSeenAt` reads exactly two fields of its first argument — `lastSeenAt`, and
-    // nothing else on this branch — so a literal carrying that field exercises the real function.
-    const home = { lastSeenAt: 1_700_000_000_000 } as Parameters<typeof shownLastSeenAt>[0];
-    const stub = terminalPaneData({ params: { paneId: "w1:p1" } });
-    expect(shownLastSeenAt(home, stub)).toBe(home.lastSeenAt);
-    // And the branch that WOULD borrow the pane's own stamp is not reachable from this shape.
-    expect(stub.error).toBe(false);
-    expect(stub.text).toBe("");
+  it("dates the connection banner from the herd when no mirror is being read", () => {
+    // SAFETY: only the root timestamp is read on the no-mirror branch being exercised.
+    const root = { lastSeenAt: 1_700_000_000_000 } as Parameters<typeof shownLastSeenAt>[0];
+    expect(shownLastSeenAt(root, terminalPaneData({ params: { paneId: "w1:p1" } }))).toBe(root.lastSeenAt);
   });
 });

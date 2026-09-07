@@ -64,6 +64,8 @@ export function findTerminalTools(which: (name: string) => string | null): Termi
  * terminal nobody can type into is the mirror this surface exists beside. The terminal type is
  * stated rather than inherited, because the environment this process runs in is the plugin runtime's
  * and not a terminal at all.
+ * Herdr's attach parser requires the terminal id before `--takeover`, despite the help synopsis.
+ * The flag displaces an external attachment; Fleet's own browser exclusivity lives above it.
  */
 export function terminalServerArguments(
   tools: TerminalTools,
@@ -84,6 +86,7 @@ export function terminalServerArguments(
     "terminal",
     "attach",
     terminalId,
+    "--takeover",
   ];
 }
 

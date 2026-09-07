@@ -142,7 +142,7 @@ export class TerminalService {
   async stop(): Promise<void> {
     this.sweeper?.stop();
     this.connections.closeAll();
-    this.sessions.closeAll();
+    await this.sessions.closeAll();
     await this.deps.socketDir.remove();
   }
 }

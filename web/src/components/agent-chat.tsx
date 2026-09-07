@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useNavigate, useRevalidator } from "react-router";
 import {
   ArrowUpToLine,
@@ -86,6 +86,24 @@ import { resizePane, sendKeys } from "@/lib/api";
 import { runManualPaneFit } from "../../../fleet/ui/manual-pane-fit.ts";
 import { useFleetCommandAdapters } from "@/components/fleet-commands";
 
+/** An alternate body keeps the native Pane header and its actions, not a copy of them. */
+export interface PaneContentProps {
+  paneId: string;
+  scope: Scope | undefined;
+  device: DeviceAuth | undefined;
+  readOnly: boolean;
+  zen: boolean;
+  find: {
+    open: boolean;
+    query: string;
+    current: number;
+    onMatchCount: (count: number) => void;
+  };
+  onOutputChange: (available: boolean) => void;
+}
+
+export type PaneContentRenderer = (props: PaneContentProps) => ReactNode;
+
 interface AgentChatProps {
   paneId: string;
   /** Which machine + which named session this pane lives in — scopes every read/write + the safety chip. */
@@ -114,6 +132,8 @@ interface AgentChatProps {
   stalled?: boolean;
   onBack: () => void;
   onSelect: (paneId: string) => void;
+  /** Optional body only; the native header, actions and scoped navigation remain mounted. */
+  renderContent?: PaneContentRenderer | undefined;
 }
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
@@ -178,6 +198,7 @@ export function AgentChat({
   stalled = false,
   onBack,
   onSelect,
+  renderContent,
 }: AgentChatProps) {
   const revalidator = useRevalidator();
   const navigate = useNavigate();
@@ -199,7 +220,7 @@ export function AgentChat({
   const mirrorFace = mirrorFont(prefs.fontFamily);
   // Raw-terminal escape hatch: when on, every Claude grammar is bypassed and the plain mirror shows,
   // so a mis-detected/mis-rendered dialog can always be driven by hand with the keys pad.
-  const grammarsOn = !prefs.rawTerminal;
+  const grammarsOn = renderContent === undefined && !prefs.rawTerminal;
   const isShell = agent?.kind === "shell";
   // The header's line 1 — the pane's rendered NAME. Hoisted out of the JSX because line 2 is gated
   // against it: the cwd shows only when it names a segment this string does not already show.
@@ -568,14 +589,15 @@ export function AgentChat({
   // against it would blind the guard to drift that happened before the freeze (live-vs-live always
   // matches). While following, the frozen pair IS the live pair by definition.
   const [following, setFollowing] = useState(true);
+  const [contentAvailable, setContentAvailable] = useState(false);
   // The same intent, mirrored out to lib/poll-intent so the POLLER can see it: it is mounted at the
   // data root, above this subtree, and a mirror the operator has scrolled away from is not one to
   // keep re-reading quickly (hooks/use-polling.ts). Published from an effect on the value rather
   // than from each of the eight call sites that set it, so the store can never learn about a change
   // that the mirror itself did not take.
   useEffect(() => {
-    publishFollowing(following);
-  }, [following]);
+    publishFollowing(renderContent === undefined ? following : true);
+  }, [following, renderContent]);
   // Leaving the pane hands the flag back to its "nothing is open" value. Without this, closing a
   // pane you had scrolled up in would leave the poller believing nobody is following anything.
   useEffect(() => () => publishFollowing(true), []);
@@ -588,7 +610,8 @@ export function AgentChat({
       prev.text === text && prev.revision === revision ? prev : { text, revision },
     );
   }, [text, revision, following]);
-  const display = shown.text;
+  const display = renderContent === undefined ? shown.text : "";
+  const hasOutput = renderContent === undefined ? display !== "" : contentAvailable;
   const hasNew = !following && display !== text;
 
   // The agent's own statusline (model · ctx% · cwd · branch · tokens · permission mode) is stripped
@@ -675,6 +698,15 @@ export function AgentChat({
     setFindOpen(false);
     setFindQuery("");
   }
+
+  // A body swap is not a Pane navigation, but its search/freeze state belongs to the body leaving.
+  useEffect(() => {
+    setFindOpen(false);
+    setFindQuery("");
+    setMatchCount(0);
+    setCurrentMatch(0);
+    setFollowing(true);
+  }, [renderContent]);
 
   // What the top of the buffer can offer — see the JSX for why these are mutually exclusive.
   // `historyAvailable`: the pane reported an agent session, so a transcript exists to open.
@@ -1449,6 +1481,16 @@ export function AgentChat({
             </ToastViewport>
           )}
 
+          {renderContent !== undefined ? renderContent({
+            paneId,
+            scope,
+            device,
+            readOnly,
+            zen,
+            find: { open: findOpen, query: findQuery, current: currentMatch, onMatchCount: handleMatchCount },
+            onOutputChange: setContentAvailable,
+          }) : <>
+
           {/* THE CHROME ABOVE THE MIRROR, AS ONE ROW THAT LEAVES. In zen these four surfaces go
               together — they are Collie talking about the pane, not the pane's own output — and they
               go through `Collapse`, DESIGN.md §1's only sanctioned way an in-flow surface arrives or
@@ -2000,6 +2042,7 @@ export function AgentChat({
               </div>
             </div>
           </Collapse>
+          </>}
         </div>
 
         {/* Swipe-up quick switcher — just the panes (agents + shells), reached by the thumb gesture.
@@ -2081,11 +2124,11 @@ export function AgentChat({
           readOnly={readOnly}
           onRenamed={() => revalidator.revalidate()}
           onClosed={(id) => (id === paneId ? onBack() : revalidator.revalidate())}
-          onFind={display ? openFind : undefined}
+          onFind={hasOutput ? openFind : undefined}
           onHistory={historyAvailable ? () => navigate(historyPath(paneId, scope)) : undefined}
           // ZEN'S ONE ENTRY POINT, and the absence of this callback IS the gate — the sheet hides a
           // row it was given nothing for, exactly as it does for find and history. Gated twice: the
-          // Settings toggle decides whether this phone offers zen at all, and `display` keeps it off
+          // Settings toggle decides whether this phone offers zen at all, and `hasOutput` keeps it off
           // a pane with nothing to look at, the way find is gated.
           //
           // It lives in the sheet rather than as a second header button because this header states
@@ -2094,7 +2137,7 @@ export function AgentChat({
           // in here. A third icon would take that width back off the pane name, which is the one
           // flexible element the budget protects. Zen is also the same FAMILY as the two rows it
           // joins — "look at the output differently" — so the menu it belongs in already existed.
-          onZen={zenAvailable && display ? enterZen : undefined}
+          onZen={zenAvailable && hasOutput ? enterZen : undefined}
         />
       </div>
     </CompactStripLabels>

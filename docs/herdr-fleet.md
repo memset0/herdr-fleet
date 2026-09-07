@@ -403,6 +403,17 @@ Settings edits the same document in a text area and validates it identically. It
 version it read, so a save cannot silently overwrite a change made on disk: the mismatch is refused
 and the current document is handed back.
 
+## Pane surfaces
+
+The browser's Collie/TTYD choice replaces only the Pane content. Both surfaces keep the same native
+Pane AppBar, identity, host context, actions and scoped navigation; Find searches the visible surface
+and Zen keeps its existing entry and exit. Terminal dimensions, connection state and copy feedback
+remain inside terminal content. The terminal uses the mirror's small 8px gutter on each side, inside
+the measured fit area, without changing either surface's fonts or preferences. Only the current,
+connected host with a nonzero content area reports geometry; a hidden or detached measurement cannot
+resize the held terminal, while a real viewport change still does. Matching horizontal clearance
+reduces surface-width differences, not every possible resize or difference in row count.
+
 ## Terminal stream verbs, as probed
 
 ADR 0008 declines a terminal emulator for the Pane *mirror*, and records that Herdr's terminal-stream
@@ -442,9 +453,9 @@ worse for this purpose: it applies `--cols/--rows` once, ignores a later `SIGWIN
 Pane at the size it set. The ADR's objection — that resizing fights the person at the keyboard — is
 therefore true of `control` and bounded for `attach`.
 
-**One attachment at a time, enforced by Herdr.** A second `attach` to a terminal that already has one
-exits `1` after emitting only its own terminal setup and teardown; the established attachment is
-unaffected and keeps streaming. Nothing above this layer has to implement single-writer.
+**Historical plain-attach probe: one attachment at a time, enforced by Herdr.** Without takeover,
+a second `attach` to a terminal that already has one exits `1` after emitting only its own terminal
+setup and teardown; the established attachment is unaffected and keeps streaming.
 
 **A closing Pane ends the attachment with a sentence in the stream.** Closing the Pane's tab ends the
 attach and closes the connection, preceded by a plain-text line —
@@ -453,6 +464,23 @@ anything rendering that stream will draw it. Detect the child's exit rather than
 
 **Version floor**: all of the above is verified on `0.8.2` / protocol `20` and stated as such. It is
 not a bisected floor, and an older server is unprobed.
+
+### Current terminal-surface attachment policy
+
+The terminal surface now runs `herdr terminal attach <terminal-id> --takeover`, on both the lead and
+peers. An external attachment is deliberately disconnected without another button or setting. The
+target must precede the flag: verified with Herdr 0.8.2 and ttyd 1.7.7, placing `--takeover` first
+produces an `unknown option` failure despite the CLI help synopsis. A disposable-terminal smoke
+verified actual external displacement, continued terminal input/output, and survival of the Pane on
+both the local and loopback peer paths.
+
+This does not let two Fleet browsers take turns owning the terminal. Concurrent requests for one
+placement share the complete server-and-connection startup; the second browser is refused as busy
+without seeing output, writing input, or starting another attachment. Failed establishment releases
+its resources, shutdown drains late results, and a browser that leaves while connecting releases
+only its own acquisition interest. Once no browser or acquiring caller needs a session, the ordinary
+bounded grace period applies. Establishing sessions count toward the same capacity bound as held
+ones. The manual Pane-fit controller's separate no-takeover policy is unchanged.
 
 ## Retained Collie deployment alternatives
 

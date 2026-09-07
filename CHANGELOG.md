@@ -13,6 +13,13 @@ number. The format follows [Keep a Changelog](https://keepachangelog.com/) and t
 
 Work that has landed but is not released yet collects under `## [Unreleased]
 
+## [Unreleased]
+
+### Fixed
+
+- Share terminal startup across concurrent browsers, clean up interrupted acquisitions, and take over external Herdr attachments on lead and peer without displacing another Fleet browser.
+- Keep the native Pane AppBar and actions in terminal mode, match the mirror's horizontal gutter, and ignore fit reports without a current drawable host.
+
 ## [3.3.0] - 2026-09-07
 
 ### Added

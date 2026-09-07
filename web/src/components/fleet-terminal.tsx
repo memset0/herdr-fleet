@@ -1,16 +1,17 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-import { RouteHeader } from "@/components/app-header";
+import type { PaneContentProps } from "@/components/agent-chat";
+import { Collapse } from "@/components/ui/collapse";
 import { fontStack, useDisplayPrefs, type FontFamily } from "@/hooks/use-display-prefs";
-import { paneScopeKey, type Scope } from "@/lib/scope";
-import { isReadOnly, type DeviceAuth } from "@/lib/types";
+import { paneScopeKey } from "@/lib/scope";
 import { copyToClipboard, readOsc52, type CopyOutcome } from "../../../fleet/ui/terminal/clipboard.ts";
 import { terminalFontFamily } from "../../../fleet/ui/terminal/font.ts";
 import { TerminalLink, terminalUrl } from "../../../fleet/ui/terminal/link.ts";
 import { InstancePool } from "../../../fleet/ui/terminal/pool.ts";
+import { terminalMatches } from "../../../fleet/ui/terminal/search.ts";
 import type { Viewport } from "../../../fleet/terminal/browser.ts";
 
 /**
@@ -54,6 +55,7 @@ interface RetainedTerminal {
   readonly link: TerminalLink;
   /** Set when the connection ends, so a return knows to establish a new one. */
   ended: boolean;
+  hasOutput: boolean;
   /**
    * What the mounted surface wants to hear when the socket opens. Held on the entry rather than
    * closed over, because the entry outlives the mount and a stale closure would be writing into a
@@ -71,14 +73,6 @@ const pool = new InstancePool<RetainedTerminal>({
   },
 });
 
-export interface FleetTerminalProps {
-  readonly paneId: string;
-  readonly scope: Scope;
-  /** The Pane's own name, for the header row. Never the terminal's contents. */
-  readonly label?: string | undefined;
-  readonly device: DeviceAuth | undefined;
-  readonly onBack: () => void;
-}
 
 const encoder = new TextEncoder();
 
@@ -104,7 +98,7 @@ function faceFor(family: FontFamily, size: number): TerminalFace {
   return { family: terminalFontFamily(fontStack(family), readRootProperty), size };
 }
 
-export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTerminalProps) {
+export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChange }: PaneContentProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const retained = useRef<RetainedTerminal | null>(null);
   const [geometry, setGeometry] = useState<Viewport | null>(null);
@@ -112,9 +106,12 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
   const [copied, setCopied] = useState<string | null>(null);
   const [mouseReporting, setMouseReporting] = useState(false);
   const { prefs } = useDisplayPrefs();
-  const readOnly = isReadOnly(device);
   const key = paneScopeKey(scope, paneId);
   const face = faceFor(prefs.fontFamily, prefs.fontSize);
+  const { open: findOpen, query: findQuery, current: currentMatch, onMatchCount } = find;
+  const [searchSource, setSearchSource] = useState<{ terminal: Terminal } | null>(null);
+  const finding = useRef(findOpen);
+  finding.current = findOpen;
 
   useEffect(() => {
     const container = host.current;
@@ -150,14 +147,17 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
       let self: RetainedTerminal | null = null;
       const link = new TerminalLink(new WebSocket(terminalUrl(window.location.origin, paneId, scope)), {
         onOpen: () => self?.opened?.(),
-        onOutput: (data) => terminal.write(data),
+        onOutput: (data) => {
+          if (self !== null) self.hasOutput = true;
+          terminal.write(data);
+        },
         onNotice: (word) => setNotice(word),
         onClose: () => {
           if (self !== null) self.ended = true;
           setNotice((shown) => shown ?? "ended");
         },
       });
-      entry = { terminal, fit, element, link, ended: false, opened: null, face };
+      entry = { terminal, fit, element, link, ended: false, hasOutput: false, opened: null, face };
       self = entry;
       if (!readOnly) terminal.onData((data) => link.type(encoder.encode(data)));
       terminal.parser.registerOscHandler(52, (data) => {
@@ -175,8 +175,18 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
     }
     const current = entry;
     retained.current = current;
+    setSearchSource({ terminal: current.terminal });
+    onOutputChange(current.hasOutput);
+    const parsed = current.terminal.onWriteParsed(() => {
+      current.hasOutput = true;
+      onOutputChange(true);
+      if (finding.current) setSearchSource({ terminal: current.terminal });
+    });
 
     const report = (): void => {
+      // DOM removal precedes effect cleanup; a queued old observer has no viewport to report.
+      if (!container.isConnected || retained.current !== current) return;
+      if (current.element.clientWidth <= 0 || current.element.clientHeight <= 0) return;
       const proposed = current.fit.proposeDimensions();
       if (proposed === undefined) return;
       current.link.report({ columns: proposed.cols, rows: proposed.rows });
@@ -225,6 +235,7 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
 
     return () => {
       live = false;
+      parsed.dispose();
       document.fonts?.removeEventListener("loadingdone", settle);
       observer.disconnect();
       current.opened = null;
@@ -235,7 +246,34 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
     // `readOnly` is deliberately not a dependency: a device's write permission does not change
     // under a mounted terminal, and rebuilding one on a snapshot field would throw away the screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, paneId, scope, face.family, face.size]);
+  }, [key, paneId, scope, face.family, face.size, onOutputChange]);
+
+  const matches = useMemo(() => {
+    const terminal = searchSource?.terminal;
+    return !findOpen || terminal === undefined
+      ? []
+      : terminalMatches(terminal.buffer.active, terminal.cols, findQuery);
+  }, [findOpen, findQuery, searchSource]);
+  useEffect(() => {
+    if (findOpen) onMatchCount(matches.length);
+  }, [findOpen, onMatchCount, matches]);
+  const wasFinding = useRef(false);
+  useEffect(() => {
+    const terminal = retained.current?.terminal;
+    if (terminal === undefined) return;
+    if (findOpen) {
+      const match = matches[Math.min(currentMatch, matches.length - 1)];
+      if (match === undefined) terminal.clearSelection();
+      else {
+        terminal.select(match.column, match.row, match.length);
+        terminal.scrollToLine(match.row);
+      }
+    } else if (wasFinding.current) {
+      terminal.clearSelection();
+      terminal.focus();
+    }
+    wasFinding.current = findOpen;
+  }, [findOpen, currentMatch, matches]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const current = retained.current;
@@ -261,9 +299,7 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
 
   return (
     <div className="flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col overflow-x-hidden">
-      <RouteHeader onHome={onBack} mark={false}>
-        <span className="truncate font-mono text-sm">{label ?? paneId}</span>
-      </RouteHeader>
+      <Collapse open={!zen}>
       <div className="flex items-center gap-3 px-3 py-1 text-xs text-muted-foreground" data-testid="fleet-terminal-status">
         <span data-testid="fleet-terminal-geometry">
           {geometry === null ? "connecting" : `${geometry.columns}×${geometry.rows}`}
@@ -273,9 +309,10 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
         {copied === null ? null : <span data-testid="fleet-terminal-copy">{copied}</span>}
         {notice === null ? null : <span data-testid="fleet-terminal-notice">{notice}</span>}
       </div>
+      </Collapse>
       <div
         ref={host}
-        className="min-h-0 w-full flex-1"
+        className="min-h-0 min-w-0 w-full flex-1 px-2"
         data-testid="fleet-terminal-host"
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}

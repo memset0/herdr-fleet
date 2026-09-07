@@ -1,12 +1,9 @@
-import { useSyncExternalStore } from "react";
-import { useLoaderData, useNavigate } from "react-router";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useRevalidator } from "react-router";
 
 import { FleetTerminal } from "@/components/fleet-terminal";
+import type { PaneContentProps } from "@/components/agent-chat";
 import { paneLoader, type PaneData } from "@/lib/loaders";
-import { homePath } from "@/lib/nav";
-import { findPane } from "@/lib/hosts";
-import { useRootData } from "@/lib/route-data";
-import { paneDisplayName } from "@/lib/types";
 import { internScope, scopeFromUrl } from "@/lib/scope";
 import { DetailRoute } from "@/routes/detail";
 import {
@@ -15,19 +12,10 @@ import {
   type PaneSurface,
 } from "../../../fleet/ui/terminal/switch.ts";
 
-/**
- * Which surface a Pane is drawn as, decided downstream of Collie's own route.
- *
- * The choice is made HERE, in a fork-owned element and a fork-owned loader the router points at,
- * rather than inside Collie's pane page. The page would have had to grow a branch around everything
- * it does, and the loader would have had to fetch a mirror nobody was going to draw. This way the
- * mirror route is exactly the route it was: with the switch off, Collie's own element renders and
- * Collie's own loader runs, unchanged and un-wrapped in any observable way.
- *
- * The stored switch decides, and nothing else may. A surface named in an address or carried in
- * navigation state is not read at all: a link that could put a browser into the terminal surface
- * would be a link that types into someone's terminal.
- */
+/** The browser-local switch replaces only the native Pane's body, never its header or route. */
+function terminalContent(props: PaneContentProps) {
+  return <FleetTerminal {...props} />;
+}
 
 /** Subscribe to the one switch. The server-render fallback is the default, as everywhere else. */
 export function usePaneSurface(): PaneSurface {
@@ -76,28 +64,15 @@ export async function fleetPaneLoader(args: {
   return terminalPaneData(args);
 }
 
-function FleetTerminalRoute() {
-  // SAFETY: this element is reached only through `fleetPaneLoader`, which returns `PaneData` on both
-  // of its branches; React Router types a data-mode `useLoaderData()` as `unknown`.
-  const pane = useLoaderData() as PaneData;
-  const root = useRootData();
-  const navigate = useNavigate();
-  const agent =
-    findPane(root.agents, pane.paneId, pane.scope, root.servers, root.sessions) ??
-    findPane(root.shellPanes, pane.paneId, pane.scope, root.servers, root.sessions);
-  return (
-    <FleetTerminal
-      paneId={pane.paneId}
-      scope={pane.scope}
-      label={agent === undefined ? undefined : paneDisplayName(agent)}
-      device={root.device}
-      onBack={() => navigate(homePath(pane.scope))}
-    />
-  );
-}
 
 export function FleetPaneRoute() {
   const surface = usePaneSurface();
-  if (surface !== "terminal") return <DetailRoute />;
-  return <FleetTerminalRoute />;
+  const previous = useRef(surface);
+  const { revalidate } = useRevalidator();
+  useEffect(() => {
+    if (previous.current === surface) return;
+    previous.current = surface;
+    void revalidate();
+  }, [surface, revalidate]);
+  return <DetailRoute renderContent={surface === "terminal" ? terminalContent : undefined} />;
 }

@@ -36,6 +36,9 @@ the browser leaves, which is what makes the ADR's objection — that resizing fi
 keyboard — bounded here rather than true. The ADR's other objection, that these verbs are unverified,
 was answered by probing them first; the findings are in
 [`docs/herdr-fleet.md`](./docs/herdr-fleet.md) and the reasoning in that change's `design.md`.
+The terminal surface SHALL always use `terminal attach <terminal-id> --takeover` on lead and peer,
+displacing an external Herdr attachment. Fleet SHALL still share one establishment per placement and
+refuse a second browser client without displacing the first; takeover is never a duplicate-start fix.
 
 ## Fork boundary — MANDATORY
 

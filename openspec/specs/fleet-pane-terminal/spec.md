@@ -122,15 +122,36 @@ than re-establishing its attachment. The grace period SHALL be configured and va
 declared bounds, and a session whose grace period expires SHALL be closed together with its terminal
 server and its attachment.
 
-The number of sessions a device holds at once SHALL have an explicit configured maximum, and a new
-session required while at that maximum SHALL close the least recently used one. At most one writable
-client SHALL be attached to a terminal at a time; a second connection to a terminal that already has
-one SHALL be refused without displacing, observing, or interleaving with the established one.
+Concurrent requests for the same resolved terminal placement SHALL share one complete establishment:
+one terminal server and one Gateway connection to it. No caller SHALL receive a usable session before
+both are established. A startup or connection failure SHALL fail all callers waiting on that attempt,
+release every resource acquired by it, and allow a later request to establish a new session.
+
+The number of sessions a device holds at once SHALL have an explicit configured maximum, including
+sessions whose establishment is still in progress. A new session required while at that maximum SHALL
+close the least recently used established session before starting another server. A session still
+being established or being handed to an acquiring caller SHALL NOT be evicted mid-establishment; when
+no established session is eligible, the new request SHALL wait for an existing acquisition transition
+and reevaluate the bound rather than exceed it. Requests for distinct placements SHALL be able to
+establish independently while capacity is available.
+
+At most one Fleet browser client SHALL be attached to a held session at a time. A second browser
+connection SHALL be refused without displacing, observing, or interleaving with the established one,
+and MUST NOT start a second terminal server or external attachment. This browser exclusivity is
+distinct from taking over an external Herdr attachment when establishing the session.
+
+Each acquiring caller SHALL relinquish only its own interest when it leaves or finishes attaching.
+One caller leaving during shared establishment MUST NOT cancel another caller's session. If no
+caller attaches, the completed session SHALL enter the same bounded grace period rather than remain
+held indefinitely. Reacquisition SHALL prevent an old grace timer from closing the reused session.
 
 Closing a session for any reason MUST NOT disturb the Pane, its terminal, the multiplexer server,
-Collie, or any other session. This requirement bounds a *cost*, not a correctness property: a session
-that was closed SHALL be re-established transparently on the next connection, so no behavior above
-this layer may depend on a session having survived.
+Collie, or any other session. This requirement bounds a cost, not a correctness property: a session
+that was closed SHALL be re-established transparently on the next connection while the Gateway
+remains running, so no behavior above this layer may depend on a session having survived. Gateway
+shutdown SHALL invalidate all pending acquisitions and close every resource they produce, including
+late results; no acquisition SHALL recreate a session after shutdown. An older attempt's completion
+or cleanup MUST NOT affect a newer session for the same placement.
 
 #### Scenario: An operator returns within the grace period
 - **WHEN** the operator leaves a Pane and returns to it within the configured grace period
@@ -145,12 +166,40 @@ this layer may depend on a session having survived.
 - **THEN** a session is established transparently and the surface behaves exactly as it does on a first visit
 
 #### Scenario: The session maximum is reached
-- **WHEN** a new session is required while the device holds its configured maximum
-- **THEN** the least recently used session is closed with its terminal server and attachment, and the new session is established
+- **WHEN** a new session is required while the device holds its configured maximum and an established session is eligible for eviction
+- **THEN** the least recently used eligible session is closed with its terminal server and attachment before the new session is established
 
 #### Scenario: A second writer connects
-- **WHEN** a connection is made to a terminal that already has a writable client
-- **THEN** it is refused, and the established client is neither displaced nor exposed
+- **WHEN** a Fleet browser connection is made to a held session that already has a browser client
+- **THEN** it is refused, the established client is neither displaced nor exposed, and no additional terminal server or Herdr attachment is started
+
+#### Scenario: Two browsers arrive while a server is starting
+- **WHEN** two browser requests address the same resolved placement before its terminal server and Gateway connection finish starting
+- **THEN** one establishment serves both requests, neither obtains a usable session early, and only one browser may attach
+
+#### Scenario: The shared attempt fails
+- **WHEN** terminal startup or Gateway connection establishment fails while multiple callers await it
+- **THEN** all callers fail, every resource from that attempt is released, and a later request can start exactly one new attempt
+
+#### Scenario: One waiting browser leaves
+- **WHEN** one browser disconnects during shared establishment and another remains
+- **THEN** the remaining browser can attach to the single completed session and the departed browser neither receives output nor closes that session
+
+#### Scenario: Every waiting browser leaves
+- **WHEN** every browser disconnects before shared establishment completes
+- **THEN** the completed session enters bounded grace with no attached client and is reclaimed if no browser returns
+
+#### Scenario: Capacity is occupied by in-flight requests
+- **WHEN** distinct placements concurrently request more sessions than the configured maximum and every occupied slot is still being established or acquired
+- **THEN** additional server starts wait for an existing transition, and establishment never exceeds the configured bound
+
+#### Scenario: Shutdown overlaps establishment
+- **WHEN** the Gateway shuts down while a terminal server or its connection is still being established
+- **THEN** the callers fail, late results are closed, owned cleanup completes before the terminal socket directory is removed, and no session is recreated
+
+#### Scenario: An old callback arrives after replacement
+- **WHEN** an earlier session's close callback or failed attempt completes after a replacement exists for the same placement
+- **THEN** the replacement remains registered and usable and receives none of the predecessor's resources or retained output
 
 ### Requirement: An attaching browser is given a coherent screen without input being sent
 A browser attaching to a terminal SHALL be given the terminal's current screen before live output,
@@ -290,3 +339,94 @@ can be diagnosed without reading what was on it.
 #### Scenario: A connection fails
 - **WHEN** authentication, Pane resolution, terminal startup, or transport fails
 - **THEN** the failing layer and a non-secret reason are reported, without terminal content or credential material
+
+### Requirement: Establishing a terminal takes over an external Herdr attachment
+When the terminal surface establishes the Gateway's attachment to a resolved local terminal, it SHALL
+request automatic Herdr attachment takeover. An external process already attached to that terminal
+SHALL be displaced without requiring another button, setting, request field, or confirmation. This
+policy SHALL NOT permit a second Fleet browser to displace the browser already attached to the same
+held session, and SHALL NOT change the manual Pane-fit controller's ownership policy.
+
+All existing admission, trusted Pane resolution, fixed execution arguments, owner-protected endpoint,
+single-client terminal-server, input, geometry, and diagnostic boundaries SHALL remain in effect.
+Takeover MUST NOT be used to mask duplicate session establishment.
+
+#### Scenario: Another process holds the terminal
+- **WHEN** an admitted browser requests the terminal surface for a Pane whose terminal has an external Herdr attachment
+- **THEN** Fleet establishes its attachment by taking over that external attachment and serves the requested terminal without additional operator interaction
+
+#### Scenario: A browser already owns the held session
+- **WHEN** another browser requests the same held session
+- **THEN** Fleet refuses the second browser under the existing single-browser rule rather than invoking takeover again
+
+#### Scenario: Admission fails
+- **WHEN** a request fails the existing authentication, Host, Origin, or Pane-resolution boundary
+- **THEN** no terminal server starts and no external attachment is displaced
+
+### Requirement: Both Pane surfaces use the same native AppBar
+Selecting the terminal surface SHALL replace the Pane's content, not its native AppBar. The same native Pane header owner SHALL supply identity, the applicable agent mark and state, Pane-name disambiguation, working-directory context, host context, overview navigation, status announcements, and Pane actions in both modes. At the same viewport and with the same Pane metadata, the header's information, controls, positions, height, safe-area handling, and accessible semantics SHALL be identical between surfaces.
+
+The terminal surface MUST NOT provide an alternative header or a separately styled imitation. Switching surface SHALL leave the native header mounted. Existing native controls and functions MUST NOT be removed or weakened from the mirror to produce parity. Existing capability, content-availability, session, and write-authorization gates SHALL continue to apply rather than becoming terminal-mode exclusions.
+
+The terminal's connection state, dimensions, read-only indication, and selection/copy feedback SHALL remain available inside terminal content. Those facts MUST NOT substitute for the native AppBar or be removed as though they were a duplicate AppBar.
+
+#### Scenario: The same Pane switches surfaces on a desktop
+- **WHEN** the operator switches between mirror and terminal for the same Pane at the same desktop viewport
+- **THEN** the native AppBar remains mounted with the same identity, host context, actions, positions, and height, while only the Pane content changes
+
+#### Scenario: The same Pane switches surfaces on a phone
+- **WHEN** the operator switches surfaces at a phone viewport
+- **THEN** the same native hierarchy trigger, Pane identity and available actions remain reachable with unchanged hit areas and without horizontal page overflow
+
+#### Scenario: Pane metadata changes while the terminal is visible
+- **WHEN** the shared snapshot changes the Pane's name, working directory, host health, or agent state
+- **THEN** the terminal-mode AppBar reflects the same native naming, truncation, state, and stale-data rules as the mirror
+
+#### Scenario: The operator uses Pane actions
+- **WHEN** an existing Pane action is available and the operator activates it from either surface
+- **THEN** the existing action surface, scope, authorization, confirmations, navigation, and focus behavior apply, with no terminal-only replacement menu
+
+#### Scenario: The operator finds text or enters Zen
+- **WHEN** rendered output is available and the operator invokes Find, or invokes Zen where the existing preference enables it
+- **THEN** the native control operates on the visible surface, Find retains its query and match-navigation behavior without requesting hidden mirror text, and Zen retains its existing entry and exit behavior
+
+#### Scenario: Terminal dimensions are needed
+- **WHEN** a connected terminal reports its current geometry or a terminal-specific notice
+- **THEN** the information remains legible in terminal content and the native AppBar remains intact above it
+
+### Requirement: Terminal horizontal clearance participates in measured fit
+The terminal surface SHALL have a small, symmetric horizontal inset matching the native mirror's existing content gutter, approximately two character cells in total rather than a new reading-column layout. The inset SHALL reduce the actual width available to the emulator's measured grid; it MUST NOT merely cover output or alter a reported column count independently of rendered geometry.
+
+The inset SHALL preserve the full native route column on desktop and remain inside the viewport on phones. Fitting SHALL continue to floor complete measured cells from available content width and account for the renderer's existing scrollbar and geometry rules. Necessary updates on viewport, rail, rotation, type-size, and font-load changes SHALL remain effective. This alignment MUST NOT suppress a necessary resize or claim that matching horizontal clearance eliminates every resize or guarantees identical rows.
+
+Only the current mounted terminal host with a positive drawable content width and height SHALL report a fitted viewport. A detached, superseded, or zero-area layout measurement MUST NOT resize a held terminal. When the visible content area returns, its first real geometry SHALL be reported normally; valid small viewports MUST NOT be excluded by their column or row values.
+
+The change MUST NOT modify terminal or mirror font families, fallbacks, preferences, preference keys, or font-loading behavior. The mirror's existing layout and manual-fit behavior SHALL remain unchanged.
+
+#### Scenario: The terminal is fitted with horizontal clearance
+- **WHEN** the terminal is measured in a visible Pane
+- **THEN** both horizontal insets are inside its layout bounds and the displayed grid and reported columns derive from the remaining usable width
+
+#### Scenario: Surfaces share measured cell metrics
+- **WHEN** both surfaces have the same route width and cell metrics and no differing scrollbar reservation
+- **THEN** the horizontal inset reduces their usable-width difference compared with the unpadded terminal, subject to whole-cell rounding rather than a hard-coded column correction
+
+#### Scenario: A phone or narrow desktop is used
+- **WHEN** the Pane is drawn at a narrow viewport or between resized desktop rails
+- **THEN** the inset does not create page-level horizontal overflow or clip the first or final fitted column
+
+#### Scenario: Font loading or viewport geometry changes
+- **WHEN** a font finishes loading or the attached terminal's viewport changes
+- **THEN** the existing remeasurement updates the real padded grid and reports any necessary geometry change, without changing font choices or preference state
+
+#### Scenario: Only horizontal padding changes
+- **WHEN** the inset is applied at unchanged height and cell metrics
+- **THEN** the row fit and native AppBar geometry are unchanged, and only the usable horizontal content space is reduced
+
+#### Scenario: A former host reports after a surface switch
+- **WHEN** a queued measurement belongs to a detached or superseded terminal host
+- **THEN** it sends no geometry and cannot change the held terminal, while the new host reports its own real fit
+
+#### Scenario: Drawable space disappears temporarily
+- **WHEN** the current host has zero drawable width or height and later gains a positive content area
+- **THEN** the zero-area measurement sends no geometry and the restored area reports its first real fit, including a valid small viewport

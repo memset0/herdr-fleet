@@ -59,8 +59,8 @@ describe("what the terminal server is run with", () => {
     expect(argv).toContain("-W");
   });
 
-  test("runs the multiplexer's own attach on exactly the resolved terminal, last", () => {
-    expect(argv.slice(-4)).toEqual([TOOLS.attach, "terminal", "attach", "term_abc"]);
+  test("takes over an external attachment to exactly the resolved terminal", () => {
+    expect(argv.slice(-5)).toEqual([TOOLS.attach, "terminal", "attach", "term_abc", "--takeover"]);
   });
 
   test("carries no credential, no origin check to stand in for one, and no browser", () => {
@@ -124,7 +124,7 @@ describe("starting one", () => {
     // The URL is what the Gateway dials, and it names the socket rather than the terminal.
     expect(first.endpoint).not.toContain("passwd");
     // The id reaches the command it attaches to and nothing else.
-    expect(h.commands[0]?.at(-1)).toBe("term_../../etc/passwd");
+    expect(h.commands[0]?.at(-2)).toBe("term_../../etc/passwd");
   });
 
   test("stopping kills the child, once, however many times it is asked", async () => {
