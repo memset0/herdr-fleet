@@ -11,46 +11,35 @@ number. The format follows [Keep a Changelog](https://keepachangelog.com/) and t
 [Semantic Versioning](https://semver.org/) on the axis stated in [`AGENTS.md`](./AGENTS.md) →
 *Versioning and releases*.
 
-Work that has landed but is not released yet collects under `## [Unreleased]`; the release commit
-renames that heading to `## [x.y.z] - YYYY-MM-DD`, appends each line's short commit hash, and opens
-an empty one above it. The newest *numbered* `## [x.y.z]` heading, which the Unreleased heading is
-not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json`
-(enforced by `scripts/check-version.sh`).
+Work that has landed but is not released yet collects under `## [Unreleased]
 
-## [Unreleased]
-
-### Changed
-
-- A pane row in the switcher reads as an address: space, tab, then the pane's own name, then the host as a tag. Where it lives leads, because a dozen rows are called `claude`.
-- That host tag is the same one the rest of the app uses, so it carries the machine's own colour and says when the lead cannot reach it — and it hides itself when there is only one machine.
-- A match is marked with the highest-contrast ink and an underline instead of bold, so marking no longer shifts the text around it as you type. The host tag is never marked.
-
-### Fixed
-
-- A sided chord such as `LAlt+Q` fires again. Pressing a modifier moves focus to the menu bar on some platforms, and the recognizer was throwing away the side it had just recorded whenever focus moved — on exactly the sequence it was meant to protect. It now reconciles what is held against each event's own modifier state instead.
-- The switcher names the lead machine `vultr`, not the internal id `lead` — the same name the navigation rail shows. The host tag appears only on a pack, and searching a host now matches the name that is displayed.
-- A terminal server's readiness is judged with `stat`, not a file-existence check: the runtime answers false for a UNIX socket, so every terminal waited out its readiness timeout and was then killed for never having started.
-- The terminal surface draws in the font it was always meant to: the operator's own terminal face with the CJK fallback under it, the same pair the mirror reads. It was rendering in the app's UI typeface — a proportional face in a monospace grid — because the family was handed to the emulator as an unresolved custom property, which is why the letters looked spaced out and Chinese was not twice the width of Latin. It also measures again when a face finishes loading, which is the other half of the same symptom.
-- A Gateway whose temporary socket directory has been swept away serves terminals again: the directory is remade before each start, and a terminal server that never binds its socket now says which layer gave up instead of failing silently.
+## [3.3.0] - 2026-09-07
 
 ### Added
 
-- The Gateway has a terminal boundary: an authenticated upgrade that names a Pane and can name nothing else, a resolver that turns that Pane into its terminal on the machine that owns it, and a bounded set of held sessions so leaving a Pane and returning does not re-attach. No surface renders it yet.
-- A Pane's terminal can be attached to over a WebSocket: the connection carries terminal input and the browser's viewport and nothing else, the terminal takes the browser's geometry while it is attached, and a session that is revoked or expires closes the terminals opened with it.
-- A Peer may declare an optional `[terminal]` table, and a Lead an optional terminal endpoint per member, for the terminal service a later change starts. A configuration that omits them is unchanged.
-- A Pane can be drawn as the terminal it mirrors. One switch in Settings chooses the surface for every Pane in this browser; it defaults to the mirror, and with it there the Pane route is the route it was. The terminal takes the browser's viewport while it is attached and shows the size it is at, a selection copies, and a program's own copy request is honoured within a bound while its request to READ the clipboard is refused.
-- That switch also stands at the foot of the left rail, as `Collie` and `TTYD`, so the surface can be changed from wherever you are. It is the same switch Settings holds — flipping either moves the other — and both now name the two surfaces the same way.
-- The drawer a phone slides in carries that switch too, so the surface is one press away there as well.
-- A member can serve its own Panes as terminals. It resolves each Pane against its own multiplexer server on every request, starts one terminal server for it after checking the executable's digest, and answers three operations on one loopback endpoint the link now projects a third time. It holds nothing until something asks, and stands itself down when nothing has for an hour — which the supervisor reports as idle rather than as a failure.
-
-### Fixed
-
-- A prefix sequence completes with a Chinese input method on: while a prefix is armed the caret is parked off the composer, so the IME has nothing to compose into and the second chord arrives as an ordinary key. It returns to the offset it left. An unregistered second chord now costs one character, deliberately.
-- A pending prefix outranks a focus-return still settling from an earlier command, which used to un-park the caret a tick later and hand the second chord back to the input method.
+- The Gateway has a terminal boundary: an authenticated upgrade that names a Pane and can name nothing else, a resolver that turns that Pane into its terminal on the machine that owns it, and a bounded set of held sessions so leaving a Pane and returning does not re-attach. ([e05627f](https://github.com/memset0/herdr-fleet/commit/e05627f))
+- A Pane's terminal can be attached to over a WebSocket: the connection carries terminal input and the browser's viewport and nothing else, the terminal takes the browser's geometry while it is attached, and a session that is revoked or expires closes the terminals opened with it. ([2ecb065](https://github.com/memset0/herdr-fleet/commit/2ecb065))
+- A Peer may declare an optional `[terminal]` table, and a Lead an optional terminal endpoint per member. A configuration that omits them is unchanged. ([2ecb065](https://github.com/memset0/herdr-fleet/commit/2ecb065))
+- A Pane can be drawn as the terminal it mirrors. One switch chooses the surface for every Pane in this browser; it defaults to the mirror, and with it there the Pane route is the route it was. The terminal takes the browser's viewport while it is attached and shows the size it is at, a selection copies, and a program's own copy request is honoured within a bound while its request to READ the clipboard is refused. ([1adb505](https://github.com/memset0/herdr-fleet/commit/1adb505))
+- That switch stands in Settings, at the foot of the left rail and in the drawer a phone slides in, as `Collie` and `TTYD` — one switch behind all three, so flipping any of them moves the others. ([70e3fb5](https://github.com/memset0/herdr-fleet/commit/70e3fb5)) ([fb78bd7](https://github.com/memset0/herdr-fleet/commit/fb78bd7))
+- A member can serve its own Panes as terminals. It resolves each Pane against its own multiplexer server on every request, starts one terminal server for it after checking the executable's digest, and answers three operations on one loopback endpoint the link now projects a third time. It holds nothing until something asks, and stands itself down when nothing has for an hour — which the supervisor reports as idle rather than as a failure. ([7b5826c](https://github.com/memset0/herdr-fleet/commit/7b5826c))
 
 ### Changed
 
-- The command palette no longer lists `Open Command Bar` — choosing it from the palette set the mode it was already in and did nothing. It stays bound and stays in the settings reference.
+- A pane row in the switcher reads as an address: space, tab, then the pane's own name, then the host as a tag. Where it lives leads, because a dozen rows are called `claude`. ([378eae6](https://github.com/memset0/herdr-fleet/commit/378eae6))
+- That host tag is the same one the rest of the app uses, so it carries the machine's own colour and says when the lead cannot reach it — and it hides itself when there is only one machine. ([417f4be](https://github.com/memset0/herdr-fleet/commit/417f4be))
+- A match is marked with the highest-contrast ink and an underline instead of bold, so marking no longer shifts the text around it as you type. The host tag is never marked. ([378eae6](https://github.com/memset0/herdr-fleet/commit/378eae6))
+- The command palette no longer lists `Open Command Bar` — choosing it from the palette set the mode it was already in and did nothing. It stays bound and stays in the settings reference. ([8cc7337](https://github.com/memset0/herdr-fleet/commit/8cc7337))
+
+### Fixed
+
+- A sided chord such as `LAlt+Q` fires again. Pressing a modifier moves focus to the menu bar on some platforms, and the recognizer was throwing away the side it had just recorded whenever focus moved — on exactly the sequence it was meant to protect. It now reconciles what is held against each event's own modifier state instead. ([d615586](https://github.com/memset0/herdr-fleet/commit/d615586))
+- A prefix sequence completes with a Chinese input method on: while a prefix is armed the caret is parked off the composer, so the IME has nothing to compose into and the second chord arrives as an ordinary key. It returns to the offset it left. An unregistered second chord now costs one character, deliberately. ([471e187](https://github.com/memset0/herdr-fleet/commit/471e187))
+- A pending prefix outranks a focus-return still settling from an earlier command, which used to un-park the caret a tick later and hand the second chord back to the input method. ([471e187](https://github.com/memset0/herdr-fleet/commit/471e187))
+- The switcher names the lead machine by the name the navigation rail shows, not the internal id. The host tag appears only on a pack, and searching a host now matches the name that is displayed. ([378eae6](https://github.com/memset0/herdr-fleet/commit/378eae6))
+- The terminal surface draws in the font it was always meant to: the operator's own terminal face with the CJK fallback under it, the same pair the mirror reads. It was rendering in the app's UI typeface — a proportional face in a monospace grid — which is why the letters looked spaced out and Chinese was not twice the width of Latin. It also measures again when a face finishes loading, which is the other half of the same symptom. ([8ad0f8f](https://github.com/memset0/herdr-fleet/commit/8ad0f8f))
+- A terminal server's readiness is judged with `stat`, not a file-existence check: the runtime answers false for a UNIX socket, so every terminal waited out its readiness timeout and was then killed for never having started. ([0606ab5](https://github.com/memset0/herdr-fleet/commit/0606ab5))
+- A Gateway whose temporary socket directory has been swept away serves terminals again: the directory is remade before each start, and a terminal server that never binds its socket now says which layer gave up instead of failing silently. ([3b22454](https://github.com/memset0/herdr-fleet/commit/3b22454))
 
 ## [3.2.0] - 2026-09-05
 
