@@ -1,16 +1,23 @@
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { createSessionToken } from "./auth.ts";
 import { SessionStore } from "./session-store.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
 
+const roots: string[] = [];
+
+afterEach(async () => {
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
+
 describe("active Fleet sessions", () => {
   test("survives restart, stores only a digest, and revokes a copied token", async () => {
     const root = await mkdtemp(join(tmpdir(), "herdr-fleet-sessions-"));
+    roots.push(root);
     const path = join(root, "sessions.json");
     const claims = createSessionToken(fleetTestConfig(), 1_000, () => "B".repeat(43));
     await new SessionStore(path).create(claims, 1_000);
@@ -22,6 +29,8 @@ describe("active Fleet sessions", () => {
 
   test("prunes expiry and fails closed on corrupt or broad state", async () => {
     const root = await mkdtemp(join(tmpdir(), "herdr-fleet-sessions-"));
+    roots.push(root);
+
     const path = join(root, "sessions.json");
     const config = fleetTestConfig();
     const expired = createSessionToken(config, 1_000, () => "C".repeat(43));

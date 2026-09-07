@@ -1,29 +1,31 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
 import type { FleetLeadConfig } from "./config.ts";
-import { startGateway } from "./server.ts";
+import { startGateway, type FleetGatewayServer } from "./server.ts";
+
 import { SessionStore } from "./session-store.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
 
 describe("Fleet Gateway listener", () => {
   test("binds loopback and applies the handler before the Collie fetcher", async () => {
     const state = await mkdtemp(join(tmpdir(), "herdr-fleet-listener-"));
-    const base = fleetTestConfig();
-    const config: FleetLeadConfig = { ...base, listen: { ...base.listen, port: 0 } };
-    let upstreamCalls = 0;
-    const server = startGateway({
-      config,
-      sessions: new SessionStore(join(state, "sessions.json")),
-      fetcher: async () => {
-        upstreamCalls += 1;
-        return new Response("unexpected");
-      },
-    });
+    let server: FleetGatewayServer | undefined;
     try {
+      const base = fleetTestConfig();
+      const config: FleetLeadConfig = { ...base, listen: { ...base.listen, port: 0 } };
+      let upstreamCalls = 0;
+      server = startGateway({
+        config,
+        sessions: new SessionStore(join(state, "sessions.json")),
+        fetcher: async () => {
+          upstreamCalls += 1;
+          return new Response("unexpected");
+        },
+      });
       const response = await fetch(`http://127.0.0.1:${server.port}/api/snapshot`, {
         headers: { host: config.public.host },
       });
@@ -31,7 +33,12 @@ describe("Fleet Gateway listener", () => {
       expect(upstreamCalls).toBe(0);
       expect(server.hostname).toBe("127.0.0.1");
     } finally {
-      await server.stop(true);
+      try {
+        await server?.stop(true);
+      } finally {
+        await rm(state, { recursive: true, force: true });
+      }
     }
   });
 });
+

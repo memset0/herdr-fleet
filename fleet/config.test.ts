@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -549,14 +549,18 @@ port = 18902
 
   test("loads only a regular owner-only file without echoing a secret", async () => {
     const root = await mkdtemp(join(tmpdir(), "herdr-fleet-config-"));
-    const path = join(root, "fleet.toml");
-    await writeFile(path, source(), { mode: 0o600 });
-    expect((await loadFleetConfig(path)).role).toBe("lead");
-    await chmod(path, 0o644);
-    await expect(loadFleetConfig(path)).rejects.toThrow("chmod 600");
-    await chmod(path, 0o600);
-    await writeFile(path, source().replace(secret, "secret-that-must-not-appear"), { mode: 0o600 });
-    await expect(loadFleetConfig(path)).rejects.not.toThrow("secret-that-must-not-appear");
+    try {
+      const path = join(root, "fleet.toml");
+      await writeFile(path, source(), { mode: 0o600 });
+      expect((await loadFleetConfig(path)).role).toBe("lead");
+      await chmod(path, 0o644);
+      await expect(loadFleetConfig(path)).rejects.toThrow("chmod 600");
+      await chmod(path, 0o600);
+      await writeFile(path, source().replace(secret, "secret-that-must-not-appear"), { mode: 0o600 });
+      await expect(loadFleetConfig(path)).rejects.not.toThrow("secret-that-must-not-appear");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("the lead may state its own pack timing, within the bounds Collie enforces", () => {

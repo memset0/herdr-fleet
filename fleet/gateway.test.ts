@@ -1,8 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import type { FleetLeadConfig } from "./config.ts";
 import { createGatewayHandler, trustedClientSource } from "./gateway.ts";
@@ -13,6 +13,11 @@ import { fleetTestConfig } from "./test-helpers.ts";
 
 let config: FleetLeadConfig;
 const loginCsrfToken = "C".repeat(43);
+const roots: string[] = [];
+
+afterAll(async () => {
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
 
 beforeAll(async () => {
   const base = fleetTestConfig();
@@ -37,6 +42,7 @@ function request(path: string, init: RequestInit = {}): Request {
 
 async function setup(fetcher: FleetFetcher = fetch) {
   const root = await mkdtemp(join(tmpdir(), "herdr-fleet-gateway-"));
+  roots.push(root);
   const sessions = new SessionStore(join(root, "sessions.json"));
   const limiter = new LoginRateLimiter(config.auth.rateLimit);
   return {

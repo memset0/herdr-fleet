@@ -1,8 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import type { JsonValue } from "../../bridge/json.ts";
 import type { FleetLeadConfig } from "../config.ts";
@@ -18,6 +18,11 @@ import { createSettingsStore, type SettingsStoreIo } from "./store.ts";
 
 let config: FleetLeadConfig;
 const loginCsrfToken = "C".repeat(43);
+const roots: string[] = [];
+
+afterAll(async () => {
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
 
 beforeAll(async () => {
   const base = fleetTestConfig();
@@ -65,7 +70,9 @@ function req(path: string, init: RequestInit = {}): Request {
 
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "herdr-fleet-settings-"));
+  roots.push(root);
   const disk = memoryIo();
+
   const handler = createGatewayHandler({
     config,
     sessions: new SessionStore(join(root, "sessions.json")),
