@@ -11,13 +11,16 @@ interface OscHandler {
 /** The options the surface passes the terminal, as the fake needs to read them back. */
 interface FakeTerminalOptions {
   readonly disableStdin?: boolean;
-  readonly fontSize?: number;
+  fontFamily?: string;
+  fontSize?: number;
   readonly scrollback?: number;
 }
 
 class FakeTerminal {
   static instances: FakeTerminal[] = [];
   readonly options: FakeTerminalOptions;
+  /** How many times the surface asked for a fresh DOM measurement. */
+  opened = 0;
   readonly written: Uint8Array[] = [];
   readonly dataHandlers: ((data: string) => void)[] = [];
   readonly oscHandlers = new Map<number, OscHandler>();
@@ -37,7 +40,9 @@ class FakeTerminal {
   }
 
   loadAddon(): void {}
-  open(): void {}
+  open(): void {
+    this.opened += 1;
+  }
   focus(): void {}
   write(data: Uint8Array): void {
     this.written.push(data);
@@ -139,6 +144,13 @@ beforeEach(() => {
   proposed = { cols: 100, rows: 30 };
   vi.stubGlobal("WebSocket", FakeSocket);
   resizes.length = 0;
+  // jsdom ships no FontFaceSet, which is why the surface reaches for it optionally. The one case
+  // that is ABOUT fonts arriving needs one, so it gets the two members the surface uses.
+  // SAFETY: the object is an EventTarget and the line below gives it the only other member the
+  // surface touches, so the asserted shape is the shape it has by the time anything reads it.
+  const fonts = new EventTarget() as EventTarget & { ready: Promise<unknown> };
+  fonts.ready = Promise.resolve();
+  Object.defineProperty(document, "fonts", { value: fonts, configurable: true });
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -152,6 +164,35 @@ beforeEach(() => {
   Object.defineProperty(window.navigator, "clipboard", {
     value: { writeText },
     configurable: true,
+  });
+});
+
+describe("the face it draws and measures with", () => {
+  it("is the operator's own two font settings, resolved — never a custom property", () => {
+    document.documentElement.style.setProperty(
+      "--font-mono",
+      '"Nerd Font Symbols", "JetBrains Mono", var(--font-cjk), monospace',
+    );
+    document.documentElement.style.setProperty("--font-cjk", '"Maple Mono NF CN"');
+    const { terminal } = mount();
+    expect(terminal.options.fontFamily).toBe(
+      '"Nerd Font Symbols", "JetBrains Mono", "Maple Mono NF CN", monospace',
+    );
+    // A grid measured from an unresolved term is a grid measured from nothing.
+    expect(terminal.options.fontFamily).not.toContain("var(");
+    expect(terminal.options.fontSize).toBe(10);
+  });
+
+  it("measures again when a font finishes loading, because that is what spaces the letters out", () => {
+    const { terminal, socket } = mount();
+    socket.fire("open");
+    const measured = terminal.opened;
+    proposed = { cols: 80, rows: 24 };
+    document.fonts.dispatchEvent(new Event("loadingdone"));
+    // `open` is the emulator's own "measure again"; without it the cell keeps the width it was
+    // given before the face arrived, and the narrower glyphs sit inside it.
+    expect(terminal.opened).toBeGreaterThan(measured);
+    expect(socket.frames().at(-1)).toEqual({ kind: "viewport", viewport: { columns: 80, rows: 24 } });
   });
 });
 

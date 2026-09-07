@@ -296,6 +296,7 @@ reviewed = "v1.5.2"
 paths = ["web/src/router.tsx#FleetPaneRoute"]
 verify = [
   "fleet/ui/terminal/switch.test.ts",
+  "fleet/ui/terminal/font.test.ts",
   "fleet/ui/terminal/link.test.ts",
   "fleet/ui/terminal/pool.test.ts",
   "fleet/ui/terminal/clipboard.test.ts",

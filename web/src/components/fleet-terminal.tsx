@@ -4,9 +4,11 @@ import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import { RouteHeader } from "@/components/app-header";
+import { fontStack, useDisplayPrefs, type FontFamily } from "@/hooks/use-display-prefs";
 import { paneScopeKey, type Scope } from "@/lib/scope";
 import { isReadOnly, type DeviceAuth } from "@/lib/types";
 import { copyToClipboard, readOsc52, type CopyOutcome } from "../../../fleet/ui/terminal/clipboard.ts";
+import { terminalFontFamily } from "../../../fleet/ui/terminal/font.ts";
 import { TerminalLink, terminalUrl } from "../../../fleet/ui/terminal/link.ts";
 import { InstancePool } from "../../../fleet/ui/terminal/pool.ts";
 import type { Viewport } from "../../../fleet/terminal/browser.ts";
@@ -38,10 +40,17 @@ import type { Viewport } from "../../../fleet/terminal/browser.ts";
 /** How many terminals this browser keeps alive across Pane switches. */
 export const RETAINED_TERMINALS = 3;
 
+/** The face and size the surface is currently drawn at, so a change to either can be noticed. */
+interface TerminalFace {
+  readonly family: string;
+  readonly size: number;
+}
+
 interface RetainedTerminal {
   readonly terminal: Terminal;
   readonly fit: FitAddon;
   readonly element: HTMLDivElement;
+  face: TerminalFace;
   readonly link: TerminalLink;
   /** Set when the connection ends, so a return knows to establish a new one. */
   ended: boolean;
@@ -80,6 +89,21 @@ function copyMessage(outcome: CopyOutcome): string | null {
   return null;
 }
 
+/**
+ * What this surface draws with: the operator's own two font settings, resolved.
+ *
+ * The same pair the mirror reads — their terminal face and the CJK fallback under it. A terminal is
+ * a grid, so the second one is not a nicety here: a CJK face whose advance is not twice the Latin
+ * one puts every column after the first Chinese character on a line in the wrong place.
+ */
+function readRootProperty(property: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(property);
+}
+
+function faceFor(family: FontFamily, size: number): TerminalFace {
+  return { family: terminalFontFamily(fontStack(family), readRootProperty), size };
+}
+
 export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTerminalProps) {
   const host = useRef<HTMLDivElement | null>(null);
   const retained = useRef<RetainedTerminal | null>(null);
@@ -87,8 +111,10 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
   const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [mouseReporting, setMouseReporting] = useState(false);
+  const { prefs } = useDisplayPrefs();
   const readOnly = isReadOnly(device);
   const key = paneScopeKey(scope, paneId);
+  const face = faceFor(prefs.fontFamily, prefs.fontSize);
 
   useEffect(() => {
     const container = host.current;
@@ -109,8 +135,10 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
         // terminal it can read and select in, and no keystroke path at all.
         disableStdin: readOnly,
         convertEol: false,
-        fontFamily: "var(--font-mono, ui-monospace, monospace)",
-        fontSize: 13,
+        // Their own two font settings, resolved — see `faceFor`. A `var()` here would be measured
+        // rather than resolved, and the cell would be sized from whatever the browser made of it.
+        fontFamily: face.family,
+        fontSize: face.size,
         scrollback: 0,
       });
       const fit = new FitAddon();
@@ -129,7 +157,7 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
           setNotice((shown) => shown ?? "ended");
         },
       });
-      entry = { terminal, fit, element, link, ended: false, opened: null };
+      entry = { terminal, fit, element, link, ended: false, opened: null, face };
       self = entry;
       if (!readOnly) terminal.onData((data) => link.type(encoder.encode(data)));
       terminal.parser.registerOscHandler(52, (data) => {
@@ -155,6 +183,20 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
       current.fit.fit();
       setGeometry(current.link.geometry());
     };
+    /**
+     * Re-run the emulator's own DOM measurements, then report the cell count they imply.
+     *
+     * `open` is the documented way to ask for that — its own contract says it should be called
+     * again whenever the measurements need redoing — and it is needed twice here. A web font that
+     * arrives AFTER the first measurement is the reason the letters look spaced out: the cell was
+     * sized from whatever answered before the face loaded, and the narrower glyphs are then painted
+     * inside it. And a change to either font setting is the same problem on purpose.
+     */
+    const remeasure = (): void => {
+      current.terminal.open(current.element);
+      report();
+    };
+
     report();
     // The first viewport is held until the socket opens, so the number is only real from then on.
     current.opened = () => setGeometry(current.link.geometry());
@@ -162,7 +204,28 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
     observer.observe(container);
     current.terminal.focus();
 
+    // The face may have changed under a retained terminal — the operator opened Settings between
+    // two visits to this Pane — and the emulator measures at construction, so it has to be told.
+    if (current.face.family !== face.family || current.face.size !== face.size) {
+      current.face = face;
+      current.terminal.options.fontFamily = face.family;
+      current.terminal.options.fontSize = face.size;
+      remeasure();
+    }
+
+    // Fonts load asynchronously and the CJK face loads one `unicode-range` chunk at a time, so
+    // "ready" can resolve more than once over a terminal's life. Every one of them is a reason to
+    // measure again; a cancelled flag keeps a late one out of an unmounted surface.
+    let live = true;
+    const settle = (): void => {
+      if (live) remeasure();
+    };
+    void document.fonts?.ready.then(settle).catch(() => undefined);
+    document.fonts?.addEventListener("loadingdone", settle);
+
     return () => {
+      live = false;
+      document.fonts?.removeEventListener("loadingdone", settle);
       observer.disconnect();
       current.opened = null;
       current.element.remove();
@@ -172,7 +235,7 @@ export function FleetTerminal({ paneId, scope, label, device, onBack }: FleetTer
     // `readOnly` is deliberately not a dependency: a device's write permission does not change
     // under a mounted terminal, and rebuilding one on a snapshot field would throw away the screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, paneId, scope]);
+  }, [key, paneId, scope, face.family, face.size]);
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const current = retained.current;
