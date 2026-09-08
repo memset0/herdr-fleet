@@ -312,7 +312,8 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
       </Collapse>
       <div
         ref={host}
-        className="min-h-0 min-w-0 w-full flex-1 px-2"
+        // Match an overflowing mirror's native scrollbar reservation before xterm measures.
+        className="min-h-0 min-w-0 w-full flex-1 px-2 overflow-hidden [scrollbar-gutter:stable]"
         data-testid="fleet-terminal-host"
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}

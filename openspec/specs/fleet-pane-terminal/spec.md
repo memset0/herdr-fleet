@@ -401,6 +401,8 @@ The inset SHALL preserve the full native route column on desktop and remain insi
 
 Only the current mounted terminal host with a positive drawable content width and height SHALL report a fitted viewport. A detached, superseded, or zero-area layout measurement MUST NOT resize a held terminal. When the visible content area returns, its first real geometry SHALL be reported normally; valid small viewports MUST NOT be excluded by their column or row values.
 
+In addition to symmetric padding, the terminal SHALL reserve the browser's native vertical scrollbar gutter in its actual drawable layout, matching an overflowing mirror's usable width at equal cell metrics. Overlay scrollbars SHALL consume no additional layout width. This reservation SHALL remain stable when terminal content changes; a mirror without vertical overflow MAY be wider. The surface MUST NOT fetch or render hidden mirror content to decide the reservation, and MUST NOT invoke the mirror's manual resize action.
+
 The change MUST NOT modify terminal or mirror font families, fallbacks, preferences, preference keys, or font-loading behavior. The mirror's existing layout and manual-fit behavior SHALL remain unchanged.
 
 #### Scenario: The terminal is fitted with horizontal clearance
@@ -408,8 +410,8 @@ The change MUST NOT modify terminal or mirror font families, fallbacks, preferen
 - **THEN** both horizontal insets are inside its layout bounds and the displayed grid and reported columns derive from the remaining usable width
 
 #### Scenario: Surfaces share measured cell metrics
-- **WHEN** both surfaces have the same route width and cell metrics and no differing scrollbar reservation
-- **THEN** the horizontal inset reduces their usable-width difference compared with the unpadded terminal, subject to whole-cell rounding rather than a hard-coded column correction
+- **WHEN** both surfaces have the same route width and cell metrics and the mirror has a native vertical scrollbar
+- **THEN** the terminal reserves the same native scrollbar width and horizontal padding before fitting whole cells, matching the manual-fit column count at equal cell metrics without a hard-coded column correction
 
 #### Scenario: A phone or narrow desktop is used
 - **WHEN** the Pane is drawn at a narrow viewport or between resized desktop rails
@@ -430,3 +432,11 @@ The change MUST NOT modify terminal or mirror font families, fallbacks, preferen
 #### Scenario: Drawable space disappears temporarily
 - **WHEN** the current host has zero drawable width or height and later gains a positive content area
 - **THEN** the zero-area measurement sends no geometry and the restored area reports its first real fit, including a valid small viewport
+
+#### Scenario: The browser uses overlay scrollbars
+- **WHEN** the browser draws native scrollbars over content rather than reserving layout width
+- **THEN** the terminal adds no scrollbar-width subtraction and retains its symmetric padding
+
+#### Scenario: The mirror has no vertical overflow
+- **WHEN** the mirror would not need a vertical scrollbar
+- **THEN** the terminal still targets the overflowing-mirror width, without hidden mirror rendering or content-dependent gutter changes

@@ -414,6 +414,12 @@ connected host with a nonzero content area reports geometry; a hidden or detache
 resize the held terminal, while a real viewport change still does. Matching horizontal clearance
 reduces surface-width differences, not every possible resize or difference in row count.
 
+The terminal also reserves the browser's native vertical scrollbar gutter before fitting, targeting
+the mirror with a scrollbar present. Overlay scrollbars consume no extra layout width; a mirror
+without overflow may be wider. The reservation is native CSS, not a fixed pixel or column correction,
+and does not fetch hidden mirror content or invoke manual Resize Pane. Different renderer cell
+rounding can still produce a one-column difference at a boundary.
+
 ## Terminal stream verbs, as probed
 
 ADR 0008 declines a terminal emulator for the Pane *mirror*, and records that Herdr's terminal-stream
