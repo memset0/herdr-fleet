@@ -15,6 +15,7 @@ import { StatusDot } from "@/components/status-badge";
 import { HOST_TEXT_CLASSES, hostSlot } from "@/lib/hosts";
 import { Collapse } from "@/components/ui/collapse";
 import { t } from "@/lib/i18n";
+import { clockTime } from "@/lib/format";
 import { statusLabel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
@@ -61,7 +62,8 @@ export function NativeNavigationTree({
     preferenceStore.ensureDisclosed(selection.ancestors);
   }, [preferenceStore, tree.selection]);
 
-  const empty = tree.rows.every((row) => row.children.length === 0);
+  // An empty solo snapshot has no spaces; named roster members still carry health/version evidence.
+  const empty = tree.rows.every((row) => row.children.length === 0 && !row.hostId);
   if (empty) {
     return <p className="px-3 py-6 text-sm text-muted-foreground">{t("fleet.navigation.empty")}</p>;
   }
@@ -218,21 +220,31 @@ function Row({
           className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-left text-[13px] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
         >
           <RowIcon row={row} />
-          <span className="truncate">{row.label}</span>
-          {/* The Agent's own logo took the leading slot, so the state moved to the trailing one —
-              the SAME dot the Tab row draws (components/tab-strip.tsx), so one colour means one
-              thing wherever it appears. `surface` is the rail's ground, because a resting state is
-              a hollow ring and a ring filled with the wrong colour reads as a notch. */}
-          {row.status !== undefined && (
+          {row.icon === "host" ? (
+            // Every Host reserves this second line, including a compatible version and `unknown`.
+            // Version freshness may repaint the words but cannot change the row's geometry.
+            <span className="min-w-0 flex-1 py-0.5">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate">{row.label}</span>
+                <HostState fault={row.fault} />
+              </span>
+              <HostVersion evidence={row.version} />
+            </span>
+          ) : (
             <>
-              <StatusDot status={row.status} surface="bg-chrome" className="ml-auto size-2 shrink-0" />
-              <span className="sr-only">{statusLabel(row.status)}</span>
+              <span className="truncate">{row.label}</span>
+              {/* The Agent's own logo took the leading slot, so the state moved to the trailing one —
+                  the SAME dot the Tab row draws (components/tab-strip.tsx), so one colour means one
+                  thing wherever it appears. `surface` is the rail's ground, because a resting state
+                  is a hollow ring and a ring filled with the wrong colour reads as a notch. */}
+              {row.status !== undefined && (
+                <>
+                  <StatusDot status={row.status} surface="bg-chrome" className="ml-auto size-2 shrink-0" />
+                  <span className="sr-only">{statusLabel(row.status)}</span>
+                </>
+              )}
             </>
           )}
-          {/* …and the machine's own reading, in the same trailing position a Pane's state takes. A
-              tinted glyph says WHICH machine but cannot say a machine is down without relying on
-              colour alone (WCAG 1.4.1), so the word stands here when there is one to say. */}
-          {row.icon === "host" && <HostState fault={row.fault} />}
         </button>
       </div>
 
@@ -320,6 +332,42 @@ function HostState({ fault }: { fault?: NavigationHostFault }) {
   return (
     <span className="ml-auto shrink-0 text-[10px] font-medium uppercase tracking-wide text-status-blocked">
       {word}
+    </span>
+  );
+}
+
+function HostVersion({ evidence }: { evidence: NavigationRow["version"] }) {
+  useLocale();
+  if (evidence === undefined) {
+    return <span className="block truncate text-[10px] leading-3 text-muted-foreground">{t("fleet.version.unknown")}</span>;
+  }
+  const version =
+    evidence.reported === null ? "" : `v${evidence.reported.replace(/^v/, "")}`;
+  let label: string;
+  if (evidence.state === "compatible") label = version;
+  else if (evidence.state === "outdated") label = t("fleet.version.outdated", { version });
+  else if (evidence.state === "manual-major") label = t("fleet.version.manualMajor", { version });
+  else if (evidence.state === "development") label = t("fleet.version.development", { version });
+  else if (evidence.state === "last-reported") {
+    label = evidence.development
+      ? t("fleet.version.lastReportedDevelopment", { version })
+      : t("fleet.version.lastReported", { version });
+  } else if (evidence.state === "release-stale" && evidence.checkedAt !== null) {
+    label = t("fleet.version.lastChecked", { version, time: clockTime(evidence.checkedAt) });
+  } else if (evidence.state === "release-stale" || evidence.state === "release-unavailable") {
+    label = t("fleet.version.freshnessUnavailable", { version });
+  } else {
+    label = t("fleet.version.unknown");
+  }
+  const urgent = evidence.state === "outdated" || evidence.state === "manual-major";
+  return (
+    <span
+      className={cn(
+        "block truncate text-[10px] leading-3",
+        urgent ? "font-medium text-status-blocked" : "text-muted-foreground",
+      )}
+    >
+      {label}
     </span>
   );
 }

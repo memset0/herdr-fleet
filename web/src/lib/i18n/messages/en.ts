@@ -410,6 +410,15 @@ export const en = {
   "fleet.navigation.resizeHierarchy": "Resize Herds sidebar",
   "fleet.navigation.resizeAgents": "Resize Agents sidebar",
   "fleet.navigation.close": "Close navigation",
+  "fleet.version.outdated": "Outdated · {version}",
+  "fleet.version.manualMajor": "Major update is manual · {version}",
+  "fleet.version.development": "Development · {version}",
+  "fleet.version.lastReported": "Last reported · {version}",
+  "fleet.version.lastReportedDevelopment": "Last reported development · {version}",
+  "fleet.version.lastChecked": "Last checked {time} · {version}",
+  "fleet.version.freshnessUnavailable": "Freshness unavailable · {version}",
+  "fleet.version.unknown": "Version unknown",
+  "fleet.version.footerName": "Herdr Fleet",
   // --- fleet.command (the command bar). Command NAMES are not translated: they are the catalog's
   // stable English identity, the same posture as the slash-command descriptions (ADR 0030). What is
   // translated is the chrome around them.

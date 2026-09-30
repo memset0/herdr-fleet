@@ -523,6 +523,13 @@ configuration keeps the egress on loopback, and the wire identity is probed hone
 ([ADR 0029](./.adr/0029-speech-to-text-is-a-provider-seam-collie-owns.md)). Setup is a CLI act, never
 a web form, for the reason pairing is.
 
+**The Fleet Gateway makes one fixed, bounded, credential-free outbound metadata observation for
+version display.** It reads this product's public Git refs, accepts only annotated stable tags, and
+retains the last success behind a cache-first authenticated route. The request has a short deadline,
+a bounded body, no redirects and no caller-selected destination. It never installs, deploys, reaches
+a peer, changes Collie trust state, or turns the bridge into an updater; the bridge boundary above is
+unchanged.
+
 **Two device gates guard writes, independently, and compose by AND.** `COLLIE_DEVICE_HEADER` trusts
 a name a proxy injects; **pairing** (`bridge/pairing.ts`, `collie pair` / `collie devices`) requires a
 bearer credential the device holds, and is on exactly when the registry is non-empty. Reads stay

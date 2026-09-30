@@ -1,4 +1,5 @@
 import { operatorChosenName } from "../pane-naming.ts";
+import type { HostVersionEvidence } from "../version-evidence.ts";
 
 export const MAX_NAVIGATION_SPACES = 256;
 export const MAX_NAVIGATION_TABS = 512;
@@ -118,6 +119,8 @@ export interface NavigationRow {
    * including when the lead is merely between sweeps, which says nothing about the machine.
    */
   fault?: NavigationHostFault;
+  /** Runtime-version evidence for this Host row, classified before rendering. */
+  version?: HostVersionEvidence;
   /** The Pane state this row stands for, when it stands for a Pane. */
   status?: NavigationStatus;
   /**
@@ -241,6 +244,8 @@ export interface NavigationHostInput {
    * pure data.
    */
   fault?: NavigationHostFault;
+  /** Runtime-version evidence for this member, independent of `fault`. */
+  version?: HostVersionEvidence;
   workspaces: readonly NavigationWorkspaceInput[];
   tabs: readonly NavigationTabInput[];
   agents: readonly NavigationPaneInput[];
@@ -401,6 +406,7 @@ function hostRow(
     children: spaces,
   };
   if (input.fault !== undefined) host.fault = input.fault;
+  if (input.version !== undefined) host.version = input.version;
   if (spaces.length > 0) {
     // Only a fault that means the member has NOTHING CURRENT closes it. A slow link is answering —
     // its rows are seconds old, not an outage's last-good screen — and folding them away for one

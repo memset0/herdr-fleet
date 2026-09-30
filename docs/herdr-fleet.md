@@ -210,7 +210,7 @@ Argon2id hash and returns a signed `__Host-` cookie backed by an owner-only acti
 The cookie is Secure, HttpOnly, SameSite=Strict, Path=/, and has no Domain attribute. Logout revokes
 the current server-side session before clearing the cookie.
 
-All Lead document navigations and `/api/*` requests require a current session before Collie is contacted.
+All Lead document navigations, `/api/*` requests, and `/fleet/api/*` requests require a current session before Collie is contacted.
 Only the authentication stylesheet and an exact set of PWA update assets are public. The service
 worker sends every document navigation to the network first, so an expired or logged-out session
 cannot recover an old authenticated app shell. The public Gateway never exposes `/pack/*`.
@@ -219,6 +219,29 @@ Login and logout require an exact-origin POST. Return targets are relative appli
 than user-provided URLs. Credential inputs, session files, attempt budgets, proxy bodies, headers,
 and redirects are bounded or allowlisted, and authentication material is removed before a request
 reaches Collie.
+
+## Version evidence
+
+The authenticated Gateway owns `GET /fleet/api/version`. It observes the public Git refs for this
+product at one fixed source, accepts only exact stable `vMAJOR.MINOR.PATCH` refs whose Git object is
+an annotated tag, and selects versions numerically. The request sends no credential, follows no
+redirect, has a short deadline and bounded response body, and is shared through one retained cache.
+Published annotated tags are the complete release signal; no branch head, Releases entry, or separate
+approval file participates.
+The route always answers immediately with fresh, stale, or unavailable cached evidence; a needed
+refresh runs in the background and a later ordinary UI revalidation observes it. A failed refresh
+keeps the last successful observation and cannot hold navigation behind the public source.
+
+The native Host rows join that publication evidence to Collie's existing `/api/pack` runtime
+reports. A reported value such as `3.3.0+2fc727c` is the member's full running identity; it is not a
+verified on-disk installation. Patch differences are compatible, a higher minor in the same major is
+shown as outdated, and a higher published major is explicitly a manual update. Only an explicit
+SemVer prerelease is a development build. A member that is not answering keeps its value qualified
+as last reported, while stale or unavailable publication evidence is stated rather than guessed.
+
+Below the shared Collie/TTYD selector, both the desktop rail and mobile drawer show this page's own
+`Herdr Fleet` build stamp. That footer is bundle identity, not the selected Host's runtime report.
+Neither observation surface installs, deploys, enrolls, reaches a peer, or carries release authority.
 
 ## Reverse-proxy contract
 

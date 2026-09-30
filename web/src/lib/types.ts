@@ -286,6 +286,21 @@ export interface ServerSummary {
   /** Epoch ms, stamped by the LEAD on receipt — never the peer's clock (§10.2). `0` = never answered. */
   lastSeenAt: number;
 }
+/** `GET /fleet/api/version` — cached publication evidence from the authenticated Fleet Gateway. */
+export interface FleetReleaseObservation {
+  latest: string | null;
+  majors: Array<{ major: number; version: string }>;
+  checkedAt: number | null;
+  freshUntil: number | null;
+  freshness: "fresh" | "stale" | "unavailable";
+}
+
+/** The shell's one joined view: publication evidence plus `/api/pack` runtime reports. */
+export interface FleetVersionView {
+  release: FleetReleaseObservation;
+  members: Array<{ id: string; version?: string }>;
+}
+
 
 /**
  * `GET /api/pack` — the lead's own answer to "how is my whole pack doing?" (PACK_PROTOCOL.md §9.2,

@@ -17,6 +17,7 @@ import type {
   LaunchersResponse,
   NotifyPrefs,
   PaneHistoryResponse,
+  FleetReleaseObservation,
   PackStatusResponse,
   PaneReadResponse,
   PaneResizeResponse,
@@ -835,6 +836,11 @@ export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
  */
 export function fetchPack(signal?: AbortSignal): Promise<PackStatusResponse> {
   return req<PackStatusResponse>("/api/pack", { signal });
+}
+
+/** Cached, read-only stable-tag evidence from the authenticated Fleet Gateway. */
+export function fetchFleetReleases(signal?: AbortSignal): Promise<FleetReleaseObservation> {
+  return req<FleetReleaseObservation>("/fleet/api/version", { signal });
 }
 
 /**

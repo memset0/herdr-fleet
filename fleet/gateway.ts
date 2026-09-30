@@ -22,6 +22,7 @@ import { proxyCollie, type FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
 import type { SettingsStore } from "./settings/store.ts";
+import type { FleetReleaseObserver } from "./version/release-observer.ts";
 import { TERMINAL_PATH, admit, type TerminalTarget } from "./terminal/admit.ts";
 
 const HTML_CSP =
@@ -52,8 +53,9 @@ const PUBLIC_FILES = new Set([
   "/web-app-manifest-512x512.png",
 ]);
 
-/** Fleet's own API surface. One path, so nothing else can grow under it by accident. */
+/** Fleet's own authenticated API surface. Neither route is proxied into Collie. */
 export const FLEET_SETTINGS_PATH = "/fleet/api/settings";
+export const FLEET_VERSION_PATH = "/fleet/api/version";
 
 /**
  * Every machine surface answers 401 rather than redirecting: a fetch cannot follow a login page, and
@@ -62,7 +64,7 @@ export const FLEET_SETTINGS_PATH = "/fleet/api/settings";
  */
 function isApiPath(pathname: string): boolean {
   if (pathname === "/api" || pathname.startsWith("/api/")) return true;
-  return pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
+  return pathname === FLEET_SETTINGS_PATH || pathname === FLEET_VERSION_PATH || pathname === TERMINAL_PATH;
 }
 
 /**
@@ -104,6 +106,11 @@ export interface GatewayOptions {
    * capability this Gateway does not have takes, rather than a half-answered endpoint.
    */
   readonly settings?: SettingsStore;
+  /**
+   * Shared read-only published-version observation. It returns cached evidence immediately and owns
+   * no installation or deployment operation.
+   */
+  readonly versions?: FleetReleaseObserver;
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
   readonly now?: () => number;
@@ -186,7 +193,7 @@ async function currentSession(
 }
 
 export function createGatewayHandler(options: GatewayOptions) {
-  const { config, sessions, settings } = options;
+  const { config, sessions, settings, versions } = options;
   const limiter = options.limiter ?? new LoginRateLimiter(config.auth.rateLimit);
   const fetcher = options.fetcher ?? fetch;
   const now = options.now ?? Date.now;
@@ -285,6 +292,26 @@ export function createGatewayHandler(options: GatewayOptions) {
 
     if (!safeMethod(request.method) && request.headers.get("origin") !== config.public.origin) {
       return text("forbidden\n", 403);
+    }
+
+    // Fleet's read-only publication evidence. It is below the same session gate as every native API
+    // and above the Collie proxy because the fixed release source and cache belong to this Gateway.
+    // `observe()` never waits for that source: it returns cached freshness now and coalesces a
+    // background refresh for the next ordinary React Router revalidation.
+    if (url.pathname === FLEET_VERSION_PATH) {
+      if (versions === undefined) return json({ error: "not found" }, 404);
+      if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
+      const observed = versions.observe();
+      return json(
+        {
+          latest: observed.latest,
+          majors: observed.majors.map(({ major, version }) => ({ major, version })),
+          checkedAt: observed.checkedAt,
+          freshUntil: observed.freshUntil,
+          freshness: observed.freshness,
+        },
+        200,
+      );
     }
 
     // FLEET'S OWN SURFACE, above the proxy and below the session gate. It is served here rather than

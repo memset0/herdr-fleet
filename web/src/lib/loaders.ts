@@ -15,6 +15,7 @@
 
 import {
   fetchDevices,
+  fetchFleetReleases,
   fetchHistory,
   fetchPack,
   fetchPane,
@@ -49,6 +50,8 @@ import type {
   AgentView,
   BridgeStatus,
   DeviceAuth,
+  FleetReleaseObservation,
+  FleetVersionView,
   PackStatusResponse,
   PairedDeviceWire,
   PaneHistoryResponse,
@@ -152,6 +155,11 @@ export interface HomeData {
   snoozedUntil: number | null;
   /** Version / upgrade status for the footer update banner; undefined on an older bridge. */
   update: UpdateInfo | undefined;
+  /**
+   * One shared, read-only view for the native shell. Optional discovery never blocks this loader;
+   * the next ordinary revalidation picks up a settled refresh.
+   */
+  fleetVersions?: FleetVersionView;
   /** True when this render is the last-good snapshot after a failed refresh. */
   error: boolean;
   /** True when the failed refresh was rejected with HTTP 401 or 403. */
@@ -216,6 +224,61 @@ function isAuthError<TThrown>(error: TThrown): boolean {
 let lastRootUrl: string | undefined;
 let lastPaneUrl: string | undefined;
 
+const UNAVAILABLE_RELEASE: FleetReleaseObservation = {
+  latest: null,
+  majors: [],
+  checkedAt: null,
+  freshUntil: null,
+  freshness: "unavailable",
+};
+let currentFleetVersions: FleetVersionView = { release: UNAVAILABLE_RELEASE, members: [] };
+let fleetVersionRefresh: Promise<void> | null = null;
+
+/**
+ * Refresh optional version evidence beside, never in front of, the usable snapshot. The Gateway
+ * release endpoint itself returns cache-first; `/api/pack` reads the lead's existing observations.
+ */
+function refreshFleetVersionView(): void {
+  if (fleetVersionRefresh !== null) return;
+  const release = fetchFleetReleases()
+    .then((observed) => {
+      currentFleetVersions = { ...currentFleetVersions, release: observed };
+      return undefined;
+    })
+    .catch(() => {
+      // If the authenticated observation route itself cannot answer, a previously fresh copy is no
+      // longer evidence of freshness. Keep its version and checked time, but qualify it immediately.
+      currentFleetVersions = {
+        ...currentFleetVersions,
+        release: {
+          ...currentFleetVersions.release,
+          freshness:
+            currentFleetVersions.release.checkedAt === null ? "unavailable" : "stale",
+        },
+      };
+    });
+  const members = fetchPack()
+    .then((status) => {
+      currentFleetVersions = {
+        ...currentFleetVersions,
+        members: status.members.map((member) =>
+          member.version === undefined ? { id: member.id } : { id: member.id, version: member.version },
+        ),
+      };
+      return undefined;
+    })
+    .catch((error) => {
+      if (isApiErrorStatus(error, 404)) {
+        currentFleetVersions = { ...currentFleetVersions, members: [] };
+      }
+    });
+  fleetVersionRefresh = Promise.all([release, members])
+    .then(() => undefined)
+    .finally(() => {
+      fleetVersionRefresh = null;
+    });
+}
+
 function isPaneUrl(url: string | undefined): boolean {
   if (!url) return false;
   try {
@@ -257,6 +320,7 @@ function toHomeData(
     viewAll,
     snoozedUntil: snap.notifications?.snoozedUntil ?? null,
     update: snap.update,
+    fleetVersions: currentFleetVersions,
     error,
     authError: error && hasAuthError(scope),
   };
@@ -297,6 +361,7 @@ function staleHome(scope: Scope, viewAll: boolean): HomeData {
     viewAll,
     snoozedUntil: null,
     update: undefined,
+    fleetVersions: currentFleetVersions,
     error: true,
     authError: hasAuthError(scope),
   };
@@ -321,6 +386,11 @@ export async function rootLoader({ request }: { request?: Request } = {}): Promi
   // than hanging on a doomed fetch. Revalidations fall through and really fetch (so recovery lands and
   // markLive clears the latch → the next run fetches live and replaces the stale herd).
   if (isNavigation && isLostLatched()) return staleHome(scope, viewAll);
+
+  // Optional release/member evidence starts beside the snapshot and is never awaited. On first load
+  // the shell can render unknown immediately; ordinary polling revalidates after the shared bounded
+  // reads settle and replaces it with fresh or explicitly stale evidence.
+  refreshFleetVersionView();
 
   try {
     const snap = await fetchSnapshot(scope, request?.signal, viewAll);

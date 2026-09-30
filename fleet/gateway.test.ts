@@ -10,6 +10,7 @@ import type { FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import { SessionStore } from "./session-store.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
+import type { FleetReleaseObserver } from "./version/release-observer.ts";
 
 let config: FleetLeadConfig;
 const loginCsrfToken = "C".repeat(43);
@@ -40,14 +41,22 @@ function request(path: string, init: RequestInit = {}): Request {
   return new Request(`${config.public.origin}${path}`, { ...init, headers });
 }
 
-async function setup(fetcher: FleetFetcher = fetch) {
+async function setup(fetcher: FleetFetcher = fetch, versions?: FleetReleaseObserver) {
   const root = await mkdtemp(join(tmpdir(), "herdr-fleet-gateway-"));
   roots.push(root);
   const sessions = new SessionStore(join(root, "sessions.json"));
   const limiter = new LoginRateLimiter(config.auth.rateLimit);
   return {
     sessions,
-    handler: createGatewayHandler({ config, sessions, limiter, fetcher, now: () => 1_000, loginCsrfToken }),
+    handler: createGatewayHandler({
+      config,
+      sessions,
+      limiter,
+      fetcher,
+      versions,
+      now: () => 1_000,
+      loginCsrfToken,
+    }),
   };
 }
 
@@ -229,6 +238,50 @@ describe("authenticated solo Gateway", () => {
     expect(await loginPage.text()).toContain(`name="csrf_token" value="${loginCsrfToken}"`);
     expect(loginPage.headers.get("x-frame-options")).toBe("DENY");
     expect(loginPage.headers.get("cache-control")).toBe("no-store");
+  });
+
+  test("serves cached publication evidence only through the authenticated read route", async () => {
+    let observations = 0;
+    const versions: FleetReleaseObserver = {
+      observe: () => {
+        observations += 1;
+        return {
+          latest: "3.3.0",
+          majors: [{ major: 3, version: "3.3.0" }],
+          checkedAt: 900,
+          freshUntil: 1_200,
+          freshness: "fresh",
+        };
+      },
+    };
+    const { handler } = await setup(fetch, versions);
+    expect(
+      (await handler(request("/fleet/api/version"), { peerAddress: "127.0.0.1" })).status,
+    ).toBe(401);
+    expect(observations).toBe(0);
+
+    const cookie = await login(handler);
+    const response = await handler(
+      request("/fleet/api/version", { headers: { cookie } }),
+      { peerAddress: "127.0.0.1" },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      latest: "3.3.0",
+      majors: [{ major: 3, version: "3.3.0" }],
+      checkedAt: 900,
+      freshUntil: 1_200,
+      freshness: "fresh",
+    });
+    const write = await handler(
+      request("/fleet/api/version", {
+        method: "POST",
+        headers: { cookie, origin: config.public.origin },
+      }),
+      { peerAddress: "127.0.0.1" },
+    );
+    expect(write.status).toBe(405);
+    expect(observations).toBe(1);
   });
 
   test("contains an authenticated upstream failure without exposing its exception", async () => {

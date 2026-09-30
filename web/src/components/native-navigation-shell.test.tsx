@@ -134,7 +134,7 @@ describe("NativeNavigationShell", () => {
     expect(screen.queryByRole("button", { name: /^Collapse (Herds|Agents)/ })).toBeNull();
   });
 
-  it("carries the pane-surface switch in the rail and in the drawer, and they are one switch", () => {
+  it("carries one surface switch and page-build footer in the rail and drawer", () => {
     renderShell();
     // The drawer is the rail arriving from the edge, so a phone is not sent to Settings for a
     // choice a desktop can make from where it already is.
@@ -143,6 +143,11 @@ describe("NativeNavigationShell", () => {
     // behaviour we want and the reason a role query finds only the rail's.
     const controls = [...document.querySelectorAll<HTMLElement>('[role="radiogroup"]')];
     expect(controls).toHaveLength(2);
+    const buildNames = screen.getAllByText("Herdr Fleet");
+    expect(buildNames).toHaveLength(2);
+    for (const name of buildNames) {
+      expect(name.parentElement).toHaveTextContent(/Herdr Fleet v.+ · \S+/);
+    }
     expect(screen.getAllByRole("radiogroup", { name: "Pane surface" })).toHaveLength(1);
     const segment = (control: HTMLElement, label: string): HTMLElement => {
       const found = [...control.querySelectorAll<HTMLElement>('[role="radio"]')].find(
@@ -253,6 +258,19 @@ describe("NativeNavigationShell", () => {
       allWorkspaces: [here.workspace, there.workspace],
       allTabs: [here.tab, there.tab],
       agents: [here.pane, there.pane],
+      fleetVersions: {
+        release: {
+          latest: "3.3.2",
+          majors: [{ major: 3, version: "3.3.2" }],
+          checkedAt: 1_700_000_000_000,
+          freshUntil: 1_700_000_300_000,
+          freshness: "fresh",
+        },
+        members: [
+          { id: "lead", version: "3.3.0+leadbuild" },
+          { id: "peer-a", version: "3.2.9+peerbuild" },
+        ],
+      },
     };
 
     const router = createMemoryRouter(
@@ -277,6 +295,8 @@ describe("NativeNavigationShell", () => {
     expect(screen.getByText("attic")).toBeInTheDocument();
     expect(screen.getByText("Project on lead")).toBeInTheDocument();
     expect(screen.getByText("Project on peer-a")).toBeInTheDocument();
+    expect(screen.getByText("v3.3.0+leadbuild")).toBeInTheDocument();
+    expect(screen.getByText("Outdated · v3.2.9+peerbuild")).toBeInTheDocument();
   });
   test("a member the lead is refusing sinks below the ones that answer", async () => {
     const rowsOn = (host: string) => ({

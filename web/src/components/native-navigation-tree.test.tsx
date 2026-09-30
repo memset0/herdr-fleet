@@ -67,7 +67,7 @@ describe("NativeNavigationTree", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "This host" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^This host/ })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "First task" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -96,11 +96,11 @@ describe("NativeNavigationTree", () => {
     // when it stops answering, the refusal — so the row's own label is the disclosure control and
     // the only place its state can be announced.
     expect(screen.getByRole("button", { name: "Project One" })).toBeInTheDocument();
-    const host = screen.getByRole("button", { name: "This host" });
+    const host = screen.getByRole("button", { name: /^This host/ });
     expect(host).toHaveAttribute("aria-expanded", "true");
     await user.click(host);
     expect(store.snapshot().disclosed).toEqual([hostCollapseId("")]);
-    expect(screen.getByRole("button", { name: "This host" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /^This host/ })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
@@ -141,12 +141,41 @@ describe("NativeNavigationTree", () => {
       .getAllByRole("button")
       .filter((row) => row.getAttribute("aria-expanded") !== null);
     expect(rows.map((row) => row.textContent)).toEqual([
-      "lead",
+      expect.stringContaining("lead"),
       expect.stringContaining("down"),
     ]);
     // The machine that is answering says nothing; the one that is not says why, in words.
     expect(rows[0]?.textContent).not.toMatch(/unreachable/i);
     expect(rows[1]?.textContent).toMatch(/unreachable/i);
+  });
+
+  it("keeps an empty roster member visible with its full version evidence", () => {
+    render(
+      <NativeNavigationTree
+        tree={deriveNavigationTree({
+          hosts: [{
+            hostId: "peer",
+            hostLabel: "peer",
+            version: {
+              reported: "3.2.1+2fc727c",
+              state: "outdated",
+              development: false,
+              checkedAt: 1_700_000_000_000,
+            },
+            workspaces: [],
+            tabs: [],
+            agents: [],
+            shellPanes: [],
+          }],
+        })}
+        onOpenSpace={vi.fn()}
+        onOpenPane={vi.fn()}
+      />,
+    );
+
+    const host = screen.getByRole("button", { name: /^peer/ });
+    expect(host).toHaveTextContent("Outdated");
+    expect(host).toHaveTextContent("v3.2.1+2fc727c");
   });
 
   it("does not call a member unreachable while the lead is merely between sweeps", () => {

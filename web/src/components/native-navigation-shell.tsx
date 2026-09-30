@@ -43,6 +43,7 @@ import {
   visitPane,
   type PaneHistory,
 } from "../../../fleet/ui/commands/targets.ts";
+import { classifyHostVersion } from "../../../fleet/ui/version-evidence.ts";
 import {
   rosterEntryKey,
   rosterOrdinal,
@@ -53,7 +54,7 @@ import {
   type CommandAdapters,
 } from "@/components/fleet-commands";
 import { usePointerMenuGestures } from "@/components/fleet-context-menu";
-import { FleetPaneSurfaceToggle } from "@/components/fleet-pane-surface-toggle";
+import { FleetNavigationFooter } from "@/components/fleet-navigation-footer";
 import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
@@ -104,6 +105,14 @@ interface NativeNavigationShellProps {
  * machine that has actually gone stays named within a sweep of going.
  */
 const MISSED_SWEEP_MS = 20_000;
+const UNAVAILABLE_FLEET_RELEASE = {
+  latest: null,
+  majors: [],
+  checkedAt: null,
+  freshUntil: null,
+  freshness: "unavailable",
+} as const;
+
 
 export function NativeNavigationShell({
   data,
@@ -168,6 +177,15 @@ export function NativeNavigationShell({
     }
     return faults;
   }, [data.servers, data.ts]);
+  const memberVersions = useMemo(
+    () =>
+      new Map(
+        (data.fleetVersions?.members ?? []).map(
+          (member) => [member.id, member.version] as const,
+        ),
+      ),
+    [data.fleetVersions?.members],
+  );
   // The member order is the ROSTER's, lead first, so the rail does not reorder itself as panes come
   // and go — except that a member which is not answering sinks below the ones that are, because it
   // has nothing current to contribute and should not sit between two machines that do. A host
@@ -197,6 +215,11 @@ export function NativeNavigationShell({
             // has no roster at all, so the tree says "this host" rather than inventing a name.
             hostLabel: hostName(data.servers, hostId || undefined) ?? t("fleet.navigation.thisHost"),
             fault: hostFaults.get(hostId),
+            version: classifyHostVersion({
+              reported: memberVersions.get(hostId),
+              answering: !hostFaultSinks(hostFaults.get(hostId)),
+              release: data.fleetVersions?.release ?? UNAVAILABLE_FLEET_RELEASE,
+            }),
             workspaces: on(data.allWorkspaces ?? data.workspaces),
             tabs: on(data.allTabs ?? data.tabs),
             agents: on(data.agents).map(toNavigationPane),
@@ -208,6 +231,8 @@ export function NativeNavigationShell({
     [
       hostIds,
       hostFaults,
+      memberVersions,
+      data.fleetVersions?.release,
       data.servers,
       data.allWorkspaces,
       data.workspaces,
@@ -556,8 +581,7 @@ export function NativeNavigationShell({
           collapsed={railsCollapsed}
           // The pane-surface switch stands under the hierarchy because that is where the operator
           // already is when they want it — see fleet-pane-surface-toggle.tsx. It is the same switch
-          // Settings holds, not a second one.
-          footer={<FleetPaneSurfaceToggle />}
+          footer={<FleetNavigationFooter />}
         >
           {hierarchyOpen ? null : hierarchy}
         </Rail>
@@ -907,7 +931,7 @@ function HierarchyOverlay({
             and title: it is the rail arriving from the edge, and a switch that existed on one of
             them and not the other would make that sentence false on a phone. */}
         <div className="shrink-0 border-t border-rule [padding-bottom:env(safe-area-inset-bottom)]">
-          <FleetPaneSurfaceToggle />
+          <FleetNavigationFooter />
         </div>
       </section>
     </div>

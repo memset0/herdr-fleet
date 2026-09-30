@@ -47,6 +47,30 @@ describe("rootLoader", () => {
     expect(data.agents).toHaveLength(2);
   });
 
+  it("does not hold the first usable snapshot behind optional version discovery", async () => {
+    let releaseEvidence = () => {};
+    const heldEvidence = new Promise<void>((resolve) => {
+      releaseEvidence = resolve;
+    });
+    server.use(
+      http.get("/fleet/api/version", async () => {
+        await heldEvidence;
+        return HttpResponse.json({
+          latest: "3.3.0",
+          majors: [{ major: 3, version: "3.3.0" }],
+          checkedAt: 1_700_000_000_000,
+          freshUntil: 1_700_000_300_000,
+          freshness: "fresh",
+        });
+      }),
+    );
+    const { rootLoader } = await import("./loaders");
+
+    const data = await rootLoader();
+    expect(data.bridge).toBe("connected");
+    releaseEvidence();
+  });
+
   it.each([401, 403] as const)("marks a %i response as an auth error", async (status) => {
     rejectSnapshot(status);
     const { rootLoader } = await import("./loaders");
