@@ -276,6 +276,18 @@ Recorded here, not fixed by this change unless the fix turns out to be trivial:
   were Collie's; it is inert at 3.4 and must be revisited by the adoption that crosses `v1.9.0`.
 - Upstream's Playwright browser tier may not fit the fork's shell; any case that fails inside a
   declared port is reported per task 8.3, and rewriting an upstream case needs its own entry.
+- Upstream's `v1.8` pre-commit hook added its own guard D (the `flake.lock` guard), so the fork's
+  private-fact guard is re-lettered **E** in the hook, its suite and the fork's privacy test; the
+  `AGENTS.md` lines that still call it guard D (and the hatch table) are corrected with task 6.7, and
+  the `private-fact-guard-port` reason with task 7.2.
+- Upstream's `v1.8` hook also refuses any `## [Unreleased]` bullet without a bold lead sentence,
+  because `scripts/release-notes.ts` prints those leads on a GitHub Release page. This product
+  publishes no GitHub Releases and its `AGENTS.md` asks for one crisp line per change, so every
+  existing Unreleased line fails that shape check. The merge commit was made with
+  `SKIP_VERSION_CHECK=1` after version consistency (`scripts/check-version.sh`) and the added
+  Unreleased line were verified by hand. **An owner decision is needed before the next functional
+  commit:** either port the hook to drop the shape check here (a declared change to the hook's
+  entry), or adopt bold-lead bullets in `AGENTS.md` and reshape the Unreleased lines.
 - Renaming this fork's own pack vocabulary (`[pack]` configuration section, `[[invasive]]`/`[[owned]]`
   entry ids, `fleet-pack-*` capability names) is left to a later change by owner decision; it is kept
   unchanged here.
