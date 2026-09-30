@@ -135,8 +135,10 @@ export interface PreflightInput {
   readonly tagObject: string | null;
   readonly commit: string;
   readonly mergeBase: string;
-  /** Paths the target release changes, measured from the adopted baseline. */
+  /** Paths the target release changes, measured from the adopted baseline; both sides of a rename. */
   readonly changedPaths: ReadonlySet<string>;
+  /** Every path the target release renamed, mapped to the path it arrived at. */
+  readonly renames: ReadonlyMap<string, string>;
   readonly targetFiles: ReadonlySet<string>;
 }
 
@@ -145,9 +147,19 @@ export interface PreflightEntry {
   readonly paths: readonly string[];
 }
 
+/** A declared path the target release moved, and where the port now has to live. */
+export interface PreflightMove {
+  readonly path: string;
+  readonly destination: string;
+}
+
+export interface PreflightDisturbedEntry extends PreflightEntry {
+  readonly moved: readonly PreflightMove[];
+}
+
 export interface PreflightReport {
   readonly errors: string[];
-  readonly disturbed: readonly PreflightEntry[];
+  readonly disturbed: readonly PreflightDisturbedEntry[];
   readonly undisturbed: readonly string[];
   readonly collisions: readonly PreflightEntry[];
   readonly activeChanges: readonly string[];
@@ -183,13 +195,17 @@ export function planUpstreamAdoption(manifest: ForkManifest, input: PreflightInp
     );
   }
 
-  const disturbed: PreflightEntry[] = [];
+  const disturbed: PreflightDisturbedEntry[] = [];
   const undisturbed: string[] = [];
   for (const entry of manifest.invasive) {
-    const paths = entry.paths
-      .map((declared) => splitInvasivePath(declared).path)
-      .filter((path) => input.changedPaths.has(path));
-    if (paths.length > 0) disturbed.push({ id: entry.id, paths });
+    const paths = [...new Set(entry.paths.map((declared) => splitInvasivePath(declared).path))].filter((path) =>
+      input.changedPaths.has(path),
+    );
+    const moved = paths.flatMap((path) => {
+      const destination = input.renames.get(path);
+      return destination === undefined ? [] : [{ path, destination }];
+    });
+    if (paths.length > 0) disturbed.push({ id: entry.id, paths, moved });
     else undisturbed.push(entry.id);
   }
 
@@ -228,6 +244,37 @@ export function parseGitChanges(source: string): ForkChange[] {
     });
   }
   return changes;
+}
+
+export interface TargetDiff {
+  /** Every path the diff touches, counting the source and the destination of each rename. */
+  readonly changed: ReadonlySet<string>;
+  readonly renames: ReadonlyMap<string, string>;
+}
+
+/**
+ * Reads `git diff --name-status --find-renames` output. A rename moves a port away from the path
+ * `FORK.toml` declares, so both of its sides count as changed and the pairing is kept for the report.
+ */
+export function parseTargetDiff(source: string): TargetDiff {
+  const changed = new Set<string>();
+  const renames = new Map<string, string>();
+  for (const line of source.split("\n")) {
+    if (line === "") continue;
+    const [status, first, second] = line.split("\t");
+    if (status === undefined || first === undefined) throw new Error(`unexpected git diff row: ${line}`);
+    if (status.startsWith("R")) {
+      if (second === undefined) throw new Error(`rename row has no destination: ${line}`);
+      changed.add(first);
+      changed.add(second);
+      renames.set(first, second);
+    } else if (status === "A" || status === "M" || status === "D" || status === "T") {
+      changed.add(first);
+    } else {
+      throw new Error(`unexpected git diff status ${status}: ${line}`);
+    }
+  }
+  return { changed, renames };
 }
 
 async function repositoryInput(root: string, manifest: ForkManifest): Promise<ForkCheckInput> {
@@ -296,6 +343,11 @@ export function preflightInput(root: string, ref: string, allowActiveChanges: bo
   const commit = tryGit(root, ["rev-parse", `${ref}^{commit}`])?.trim() ?? "";
   if (commit === "") throw new Error(`the target ref ${ref} does not resolve to a commit`);
   const mergeBase = tryGit(root, ["merge-base", "HEAD", commit])?.trim() ?? "";
+  const comparable = tagObject !== null && mergeBase === manifest.upstream.commit;
+  // --find-renames is passed explicitly so the operator's diff.renames setting cannot change the report.
+  const diff = comparable
+    ? parseTargetDiff(git(root, ["diff", "--name-status", "--find-renames", manifest.upstream.commit, commit]))
+    : { changed: new Set<string>(), renames: new Map<string, string>() };
   return {
     dirty,
     activeChanges: activeChanges(root),
@@ -303,16 +355,9 @@ export function preflightInput(root: string, ref: string, allowActiveChanges: bo
     tagObject,
     commit,
     mergeBase,
-    changedPaths: new Set(
-      tagObject === null || mergeBase !== manifest.upstream.commit
-        ? []
-        : lines(git(root, ["diff", "--name-only", manifest.upstream.commit, commit])),
-    ),
-    targetFiles: new Set(
-      tagObject === null || mergeBase !== manifest.upstream.commit
-        ? []
-        : lines(git(root, ["ls-tree", "-r", "--name-only", commit])),
-    ),
+    changedPaths: diff.changed,
+    renames: diff.renames,
+    targetFiles: new Set(comparable ? lines(git(root, ["ls-tree", "-r", "--name-only", commit])) : []),
   };
 }
 
@@ -368,7 +413,10 @@ if (import.meta.main) {
       console.log(`upstream adoption: ${manifest.upstream.tag} (${manifest.upstream.commit}) -> ${target} (${input.commit})`);
       console.log(`  tag object ${input.tagObject}`);
       console.log(`  ${report.disturbed.length} invasive entries disturbed by this release:`);
-      for (const entry of report.disturbed) console.log(`    ${entry.id}: ${entry.paths.length} path(s)`);
+      for (const entry of report.disturbed) {
+        console.log(`    ${entry.id}: ${entry.paths.length} path(s)`);
+        for (const move of entry.moved) console.log(`      ${move.path} → ${move.destination}`);
+      }
       console.log(`  ${report.undisturbed.length} untouched, and reviewed all the same: ${report.undisturbed.join(", ")}`);
       if (report.collisions.length > 0) {
         console.log("  ESCALATE - the release now ships paths declared downstream-owned:");

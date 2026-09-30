@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   CHANGELOG_SEAM,
   checkForkClassification,
   parseGitChanges,
+  parseTargetDiff,
   planUpstreamAdoption,
+  preflightInput,
   type PreflightInput,
 } from "./check-fork.ts";
 import { parseForkManifest } from "./fork-manifest.ts";
@@ -107,6 +112,39 @@ describe("fork classification", () => {
     );
   });
 
+  test("the target diff counts both sides of a rename and keeps the pairing", () => {
+    const diff = parseTargetDiff(
+      [
+        "R074\tbridge/pack/forward.ts\tbridge/crew/forward.ts",
+        "R100\tPACK_PROTOCOL.md\tCREW_PROTOCOL.md",
+        "A\tbridge/crew/state-migration.ts",
+        "M\tpackage.json",
+        "D\tbridge/retired.ts",
+        "T\tCLAUDE.md",
+        "",
+      ].join("\n"),
+    );
+    expect([...diff.changed].toSorted()).toEqual([
+      "CLAUDE.md",
+      "CREW_PROTOCOL.md",
+      "PACK_PROTOCOL.md",
+      "bridge/crew/forward.ts",
+      "bridge/crew/state-migration.ts",
+      "bridge/pack/forward.ts",
+      "bridge/retired.ts",
+      "package.json",
+    ]);
+    expect([...diff.renames]).toEqual([
+      ["bridge/pack/forward.ts", "bridge/crew/forward.ts"],
+      ["PACK_PROTOCOL.md", "CREW_PROTOCOL.md"],
+    ]);
+  });
+
+  test("the target diff refuses a row it does not understand", () => {
+    expect(() => parseTargetDiff("R100\tonly-source.ts\n")).toThrow("rename row has no destination");
+    expect(() => parseTargetDiff("X\tunknown.ts\n")).toThrow("unexpected git diff status X");
+  });
+
   test("parses renames as one deletion and one addition", () => {
     expect(parseGitChanges("R100\told.ts\tnew.ts\n")).toEqual([
       { status: "deleted", path: "old.ts" },
@@ -127,6 +165,7 @@ describe("upstream adoption preflight", () => {
       commit: "ba39c05c6350a52bcb0a88f118cd0680ff85a1c5",
       mergeBase: baseline,
       changedPaths: new Set(["package.json", "bridge/server.ts"]),
+      renames: new Map(),
       targetFiles: new Set(["package.json", "bridge/server.ts"]),
       ...overrides,
     });
@@ -134,9 +173,32 @@ describe("upstream adoption preflight", () => {
   test("reports the ports the release disturbs, and the ones it leaves alone", () => {
     const report = plan();
     expect(report.errors).toEqual([]);
-    expect(report.disturbed).toEqual([{ id: "host-port", paths: ["package.json"] }]);
+    expect(report.disturbed).toEqual([{ id: "host-port", paths: ["package.json"], moved: [] }]);
     expect(report.undisturbed).toEqual([]);
     expect(report.collisions).toEqual([]);
+  });
+
+  test("a declared path the release renamed is disturbed, and its destination is named", () => {
+    const renamed = parseForkManifest(source.replace('paths = ["package.json#fleet"]', 'paths = ["bridge/pack/forward.ts#resize"]'));
+    const report = planUpstreamAdoption(renamed, {
+      dirty: [],
+      activeChanges: [],
+      allowActiveChanges: false,
+      tagObject: "a326aedc6a44572cea51432545ea5762acc42648",
+      commit: "ba39c05c6350a52bcb0a88f118cd0680ff85a1c5",
+      mergeBase: baseline,
+      changedPaths: new Set(["bridge/pack/forward.ts", "bridge/crew/forward.ts"]),
+      renames: new Map([["bridge/pack/forward.ts", "bridge/crew/forward.ts"]]),
+      targetFiles: new Set(["bridge/crew/forward.ts"]),
+    });
+    expect(report.disturbed).toEqual([
+      {
+        id: "host-port",
+        paths: ["bridge/pack/forward.ts"],
+        moved: [{ path: "bridge/pack/forward.ts", destination: "bridge/crew/forward.ts" }],
+      },
+    ]);
+    expect(report.undisturbed).toEqual([]);
   });
 
   test("an untouched port is still listed for review", () => {
@@ -167,5 +229,78 @@ describe("upstream adoption preflight", () => {
     const authorized = plan({ activeChanges: ["attach-the-browser"], allowActiveChanges: true });
     expect(authorized.errors).toEqual([]);
     expect(authorized.activeChanges).toEqual(["attach-the-browser"]);
+  });
+});
+
+describe("upstream adoption preflight against a real repository", () => {
+  const isolated = {
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Example",
+    GIT_AUTHOR_EMAIL: "example@example.com",
+    GIT_COMMITTER_NAME: "Example",
+    GIT_COMMITTER_EMAIL: "example@example.com",
+  } as const;
+
+  function run(cwd: string, ...args: string[]): string {
+    const result = Bun.spawnSync(["git", ...args], { cwd, env: { ...process.env, ...isolated }, stdout: "pipe", stderr: "pipe" });
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+    return result.stdout.toString().trim();
+  }
+
+  test("reports a renamed declared path identically whatever diff.renames says", () => {
+    const root = mkdtempSync(join(tmpdir(), "check-fork-"));
+    const saved = new Map(Object.keys(isolated).map((key) => [key, process.env[key]] as const));
+    Object.assign(process.env, isolated);
+    try {
+      run(root, "init", "--quiet", "--initial-branch=main");
+      mkdirSync(join(root, "bridge/pack"), { recursive: true });
+      const body = Array.from({ length: 40 }, (_, index) => `export const line${index} = ${index};`).join("\n");
+      writeFileSync(join(root, "bridge/pack/forward.ts"), `${body}\n`);
+      writeFileSync(join(root, "package.json"), "{}\n");
+      run(root, "add", "--all");
+      run(root, "commit", "--quiet", "-m", "baseline");
+      const baseline = run(root, "rev-parse", "HEAD");
+
+      run(root, "checkout", "--quiet", "-b", "upstream");
+      mkdirSync(join(root, "bridge/crew"), { recursive: true });
+      run(root, "mv", "bridge/pack/forward.ts", "bridge/crew/forward.ts");
+      writeFileSync(join(root, "bridge/crew/forward.ts"), `${body}\nexport const renamed = true;\n`);
+      run(root, "add", "--all");
+      run(root, "commit", "--quiet", "-m", "rename the link");
+      run(root, "tag", "-a", "v2.0.0", "-m", "v2.0.0");
+      run(root, "checkout", "--quiet", "main");
+      writeFileSync(join(root, "fork.txt"), "downstream\n");
+      run(root, "add", "fork.txt");
+      run(root, "commit", "--quiet", "-m", "fork work");
+
+      const manifest = parseForkManifest(
+        source
+          .replace('commit = "4618c90534d6f818ed6788b8db00e1582c5abfdc"', `commit = "${baseline}"`)
+          .replace('paths = ["package.json#fleet"]', 'paths = ["bridge/pack/forward.ts#resize"]'),
+      );
+      const reports = ["false", "true", null].map((setting) => {
+        if (setting === null) Bun.spawnSync(["git", "config", "--unset", "diff.renames"], { cwd: root });
+        else run(root, "config", "diff.renames", setting);
+        return planUpstreamAdoption(manifest, preflightInput(root, "v2.0.0", false, manifest));
+      });
+
+      for (const report of reports) {
+        expect(report.errors).toEqual([]);
+        expect(report.disturbed).toEqual([
+          {
+            id: "host-port",
+            paths: ["bridge/pack/forward.ts"],
+            moved: [{ path: "bridge/pack/forward.ts", destination: "bridge/crew/forward.ts" }],
+          },
+        ]);
+      }
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

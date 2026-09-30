@@ -24,6 +24,7 @@ Work that has landed but is not released yet collects under `## [Unreleased]
 - Share terminal startup across concurrent browsers, clean up interrupted acquisitions, and take over external Herdr attachments on lead and peer without displacing another Fleet browser.
 - Keep the native Pane AppBar and actions in terminal mode, match the mirror's horizontal gutter, and ignore fit reports without a current drawable host.
 - Reserve the native scrollbar gutter in terminal fit to match an overflowing Collie mirror.
+- Count both sides of an upstream rename in the adoption preflight and name each moved port's destination, whatever Git's rename setting.
 
 ## [3.3.0] - 2026-09-07
 
