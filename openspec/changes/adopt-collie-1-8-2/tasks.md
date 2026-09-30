@@ -51,11 +51,11 @@
 
 ## 8. Verify
 
-- [ ] 8.1 Focused, locally: `bun run test:fork`, `bun test ./fleet`, the tests named in 5.x–6.x, `bash scripts/check-version.sh`, `bun scripts/check-private-facts.ts`, `bun run lint`, `bun run typecheck` and `cd web && bun run typecheck`; verify all pass
+- [x] 8.1 Focused, locally: `bun run test:fork`, `bun test ./fleet`, the tests named in 5.x–6.x, `bash scripts/check-version.sh`, `bun scripts/check-private-facts.ts`, `bun run lint`, `bun run typecheck` and `cd web && bun run typecheck`; verify all pass
 - [ ] 8.2 Full suites on a designated member (`bun run test` at the root, `cd web && bun run test`, `bun test ./cli`, the `scripts/` shell suites); verify they pass, and triage any failure against the pre-merge baseline and the known web-suite exit issue owned by `fix-stt-test-exit` rather than skipping it
 - [ ] 8.3 Upstream's browser tier: run `cd web && bun run e2e` where Chromium is available; verify it passes, or report each failing case with the port it meets and whether it failed before the merge. Do not rewrite an upstream e2e case without declaring it
-- [ ] 8.4 Run upstream's crew suites that dial in both protocol versions (`bun test bridge/crew/harness.test.ts bridge/crew/peer-client.test.ts bridge/crew/router.test.ts bridge/crew/state-migration.test.ts`) with the resize route present; verify they pass. Mixed-release proof on real machines belongs to the operator's rollout, not to this task
-- [ ] 8.5 Public-tree audit: verify the staged diff and this change's artifacts carry no private host, address, path, credential or deployment fact, and `FORK.toml` classifies every changed path
+- [x] 8.4 Run upstream's crew suites that dial in both protocol versions (`bun test bridge/crew/harness.test.ts bridge/crew/peer-client.test.ts bridge/crew/router.test.ts bridge/crew/state-migration.test.ts`) with the resize route present; verify they pass. Mixed-release proof on real machines belongs to the operator's rollout, not to this task
+- [x] 8.5 Public-tree audit: verify the staged diff and this change's artifacts carry no private host, address, path, credential or deployment fact, and `FORK.toml` classifies every changed path
 
 ## 9. Release
 
