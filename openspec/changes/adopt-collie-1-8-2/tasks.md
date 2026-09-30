@@ -43,11 +43,11 @@
 
 ## 7. Review every entry and record the boundary
 
-- [ ] 7.1 Set `[upstream]` to `v1.8.2`, tag object `5bfd5b9707ee5f4ea64b6ee05eda51b7a4264fac`, commit `78f74d1e3d1638a8e7889e58c610726582bafd1b`, and apply design decision 7's path renames and reason corrections; verify `bun scripts/check-fork.ts` reports no unclassified path and no stale anchor
-- [ ] 7.2 Review the 20 disturbed entries one at a time — keep, adapt, replace or drop — and run each entry's `verify` list; verify every listed test passes and record any drop by returning its paths to upstream's versions
-- [ ] 7.3 Review `authenticated-navigation-cache` for a reason upstream made unnecessary (including its service worker's version 1 denylist line); verify it is deliberately kept or dropped
-- [ ] 7.4 Advance `reviewed = "v1.8.2"` on all 21 entries (fewer if any was dropped); verify the boundary check no longer reports a lagging entry
-- [ ] 7.5 Add the `3.4.0` → `1.8.2` row to `UPSTREAM.md` and update its "currently corresponds to" lines; verify no version file moved in this step
+- [x] 7.1 Set `[upstream]` to `v1.8.2`, tag object `5bfd5b9707ee5f4ea64b6ee05eda51b7a4264fac`, commit `78f74d1e3d1638a8e7889e58c610726582bafd1b`, and apply design decision 7's path renames and reason corrections; verify `bun scripts/check-fork.ts` reports no unclassified path and no stale anchor
+- [x] 7.2 Review the 20 disturbed entries one at a time — keep, adapt, replace or drop — and run each entry's `verify` list; verify every listed test passes and record any drop by returning its paths to upstream's versions
+- [x] 7.3 Review `authenticated-navigation-cache` for a reason upstream made unnecessary (including its service worker's version 1 denylist line); verify it is deliberately kept or dropped
+- [x] 7.4 Advance `reviewed = "v1.8.2"` on all 21 entries (fewer if any was dropped); verify the boundary check no longer reports a lagging entry
+- [x] 7.5 Add the `3.4.0` → `1.8.2` row to `UPSTREAM.md` and update its "currently corresponds to" lines; verify no version file moved in this step
 
 ## 8. Verify
 

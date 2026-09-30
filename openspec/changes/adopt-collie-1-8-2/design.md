@@ -271,6 +271,35 @@ Alternative rejected: porting the hook to drop the shape check. It would add a d
 `private-fact-guard-port` entry's hook for a rule that costs this product nothing to follow, and every
 later adoption would have to re-apply it.
 
+### 12. Entry review against `v1.8.2` (task group 7)
+
+Every entry's anchors were re-read in the merged tree and its `verify` list run; none was dropped, so
+no path returned to upstream's version. `reviewed = "v1.8.2"` on all 21.
+
+| entry | decision | reason |
+| --- | --- | --- |
+| `native-row-actions-menu-port` | keep | strips still import one drop-in each; the sheets are untouched upstream |
+| `unnarrowed-pack-rows-port` | adapt | version evidence reads the crew census via `fetchCrew`; reason corrected |
+| `repository-guidance` | adapt | upstream now makes `CLAUDE.md` canonical; the fork keeps `AGENTS.md` canonical and the symlink |
+| `fake-network-fleet-routes` | keep | Fleet routes still unknown to upstream's MSW handlers |
+| `lint-parse-boundary` | keep | same override class, no rule changed |
+| `plugin-identity` | keep | Herdr still reads identity and actions only from the manifest |
+| `downstream-version-line` | adapt | changelog lines now take upstream's bold-lead shape (decision 11); reason notes it |
+| `fleet-build-port` | keep | root test and typecheck gates still owned upstream |
+| `native-agent-favorites-port` | keep | rows still expose only favorite ports; dictionaries still one entry |
+| `pane-surface-route-port` | keep | router still owns the Pane route; drop-ins unchanged |
+| `native-pane-content-port` | keep | detail frame unchanged in shape; body slot still narrower than a copy |
+| `authenticated-navigation-cache` | keep | upstream still serves navigations from the precache outside a denylist; the fork's network-first route supersedes it, version 1 line included |
+| `native-manual-pane-fit-port` | adapt | route moved to the crew router and `CREW_PROTOCOL.md`; capability asked per Pane Host; reason corrected |
+| `declined-centred-history-column` | keep | owner decision of 2026-09-05 stands; upstream's ladder not adopted |
+| `native-navigation-sidebars-port` | adapt | `web/src/routes/pack.tsx` re-pointed to `crew.tsx`; ports unchanged |
+| `native-pane-chrome-port` | keep | strips-summary trailing slot and mark ground still the narrowest ports |
+| `native-webfont-port` | keep | one `var()` hole per stack still suffices |
+| `private-fact-guard-port` | adapt | re-lettered guard E beside upstream's new flake.lock guard D; intent and reason corrected |
+| `composer-voice-rank-port` | keep | two-button split still reverses `abdbf45`; voice doc paragraph kept in upstream's new structure |
+| `fork-gate-in-ci` | keep | one step in upstream's CI beside its new e2e job |
+| `no-automatic-release-publication` | keep | upstream still publishes on tag push; this product publishes nothing |
+
 ## Risks / Trade-offs
 
 - [Rollback across the state rename] → a previous release started after 3.4.0's Collie has run finds
