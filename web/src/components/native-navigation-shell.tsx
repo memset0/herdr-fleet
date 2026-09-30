@@ -62,6 +62,7 @@ import { NativeNavigationTree } from "@/components/native-navigation-tree";
 import { FleetConfirmDialog } from "@/components/fleet-confirm-dialog";
 import { FleetRenameDialog, type RenameTarget } from "@/components/fleet-rename-dialog";
 import { FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
+import { useStripBandOpen } from "@/components/ui/strip-host";
 import { hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
@@ -751,6 +752,11 @@ function Rail({
   /** Held below the scrolling list, on the rail's own ground. Absent leaves the rail as it was. */
   footer?: ReactNode;
 }) {
+  // THE NOTCH IS RESERVED ONCE PER COLUMN, and the band above the shell spans every column. A rail
+  // is a column of its own beside the header, so it clears the inset exactly when the header does
+  // (`app-header.tsx`): while the band is showing a strip the band already paid for the notch, and a
+  // rail that reserved it as well stood its title an inset lower than the header beside it.
+  const bandOpen = useStripBandOpen();
   return (
     <aside
       aria-label={title}
@@ -768,7 +774,13 @@ function Rail({
         collapsed && "pointer-events-none opacity-0",
       )}
     >
-      <div className="shrink-0 [padding-top:env(safe-area-inset-top)]">
+      <div
+        className={cn(
+          // The same handover curve as the header's, so the two columns move as one (COLLAPSE_MS).
+          "shrink-0 transition-[padding-top] duration-[240ms] ease-out motion-reduce:transition-none",
+          !bandOpen && "[padding-top:env(safe-area-inset-top)]",
+        )}
+      >
         {/* The title sits DIRECTLY over its list. It carried the header's 60px floor so the three
             columns' first line agreed, but with no rule under it that agreement bought nothing and
             spent 30px of blank between a label and the thing it labels. */}

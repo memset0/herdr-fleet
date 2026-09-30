@@ -12,6 +12,7 @@ import { agentFavoriteStore, __resetAgentFavorites } from "../../../fleet/ui/age
 import type { HomeData } from "@/lib/loaders";
 import { NativeHierarchyToggle, useNativePaneSwitcher } from "./native-navigation-context";
 import { NativeNavigationShell } from "./native-navigation-shell";
+import { StripHost, StripSlot } from "./ui/strip-host";
 
 const pane = {
   paneId: "p1",
@@ -896,4 +897,60 @@ describe("closing from the keyboard", () => {
     await waitFor(() => expect(closed).toEqual(["t1"]));
   });
 
+});
+// THE NOTCH IS RESERVED ONCE PER COLUMN. The band sits above the shell and spans every column, so
+// each rail hands the inset to it exactly as the header does (`app-header.tsx`). Found by upstream's
+// whole-layout count in `routes/root.test.tsx` after the 1.8.2 adoption: the rails kept reserving
+// while a strip was showing, which stood their titles an inset lower than the header beside them.
+describe("the rails and the strip band", () => {
+  function renderInBand(strip: boolean) {
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <StripHost>
+              {strip ? (
+                <StripSlot priority={1}>
+                  <div>Update available</div>
+                </StripSlot>
+              ) : null}
+              <NativeNavigationShell data={data} preferenceStore={new NavigationPreferenceStore()}>
+                <Outlet />
+              </NativeNavigationShell>
+            </StripHost>
+          ),
+          children: [{ index: true, element: <div>Route</div> }],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+  }
+
+  /** Every element in a rail that reserves the top inset. */
+  function railReservations(): Element[] {
+    const found: Element[] = [];
+    for (const name of ["Herds", "Agents"]) {
+      const rail = screen.getByRole("complementary", { name });
+      found.push(...rail.querySelectorAll("[class*='safe-area-inset-top']"));
+    }
+    return found;
+  }
+
+  it("gives the inset to the band while a strip is showing", async () => {
+    renderInBand(true);
+    await screen.findByText("Update available");
+    expect(railReservations()).toHaveLength(0);
+    // The drawer is a fixed layer over the whole viewport, band included, so it keeps its own.
+    expect(
+      document.querySelector("#fleet-hierarchy-overlay [class*='safe-area-inset-top']"),
+    ).not.toBeNull();
+  });
+
+  it("keeps it on each rail while the band is empty", async () => {
+    renderInBand(false);
+    await screen.findByText("Route");
+    expect(railReservations()).toHaveLength(2);
+  });
 });
