@@ -459,3 +459,16 @@ For the operator's deployment side, which owns it (nothing here is done by this 
 6. Member proof: each member appears in the lead's crew census as reachable at 3.4.0 with a fresh
    receipt, and no member logs the version 1 fallback once the lead runs 3.4.0; a manual fit on a
    member Pane still resizes it.
+
+## Release
+
+Cut as `3.4.0` (MINOR, from `3.3.0`, owner-confirmed; the remote's newest tag was still `v3.3.0`) in
+one `chore(release): 3.4.0` commit, tagged `v3.4.0` and pushed with the tag named on the push line.
+No GitHub Release is published. The `3.4.0` changelog section carries the member obligations above
+in the operator's words: level the lead first, then every member, and all of them before any release
+that adopts Collie `v1.9.0`; enrol a peer only after the lead runs 3.4.0; roll back across the state
+rename by renaming `crew-*.json` back to `pack-*.json`; move census polling to `/api/crew`.
+
+The push is not a completed adoption. The Migration Plan is the deployment side's hand-off, and this
+change stays active until the operator reports every member on 3.4.0 through the new link (decision
+10); task 10.2 archives it then.

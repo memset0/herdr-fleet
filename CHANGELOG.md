@@ -15,23 +15,35 @@ Work that has landed but is not released yet collects under `## [Unreleased]
 
 ## [Unreleased]
 
+## [3.4.0] - 2026-09-30
+
+**Every member redeploys, lead first.** This release moves the link between the lead and its members
+onto Collie's crew link (`/crew/v1/*`, wire protocol version 2). Collie keeps one release of
+overlap, so a 3.3.x member and a 3.4.0 lead keep working in either order, but every member must be
+on 3.4.0 before any release that adopts Collie `v1.9.0` or newer. Enrol a new peer only after the
+lead runs 3.4.0: Fleet's enrolment has no fallback to protocol version 1. Collie renames its state
+files from `pack-*.json` to `crew-*.json` the first time 3.4.0 runs, so rolling a machine back to
+3.3.x after that requires renaming `crew-trust.json`, `crew-ops.json` and `crew-runtime.json` back
+to their `pack-` names. Tooling that polls the lead's census moves from `/api/pack` to `/api/crew`;
+the old path answers 308 for this release only. The Fleet configuration file needs no edit.
+
 ### Added
 
-- **Show each Host's full Fleet build and this page's build.** Each Host carries compatible, outdated, manual-major, development, last-reported, stale, or unavailable evidence, and this page's build sits below the shared Collie/TTYD selector.
+- **Show each Host's full Fleet build and this page's build.** Each Host carries compatible, outdated, manual-major, development, last-reported, stale, or unavailable evidence, and this page's build sits below the shared Collie/TTYD selector. ([8b42c2c](https://github.com/memset0/herdr-fleet/commit/8b42c2c))
 
 ### Changed
 
-- **Adopt Collie 1.8.2.** The crew rename with protocol version 2 and its one-release `/pack/v1/*` overlap, per-host multiplexer capabilities, and upstream's fixes.
-- **Follow Collie's crew naming and wire protocol version 2.** Enrolment posts protocol 2 to `/crew/v1/enroll` after Collie's own state move, the probe budget is projected as `COLLIE_CREW_TIMEOUT_MS` with both spellings reset, trust state is read as `crew-trust.json` with a read-only fallback to `pack-trust.json`, and the public Gateway refuses `/crew/*` as it refuses `/pack/*`.
+- **Adopt Collie 1.8.2.** The crew rename with protocol version 2 and its one-release `/pack/v1/*` overlap, per-host multiplexer capabilities, and upstream's fixes. ([40f3101](https://github.com/memset0/herdr-fleet/commit/40f3101))
+- **Follow Collie's crew naming and wire protocol version 2.** Enrolment posts protocol 2 to `/crew/v1/enroll` after Collie's own state move, the probe budget is projected as `COLLIE_CREW_TIMEOUT_MS` with both spellings reset, trust state is read as `crew-trust.json` with a read-only fallback to `pack-trust.json`, and the public Gateway refuses `/crew/*` as it refuses `/pack/*`. ([898f68c](https://github.com/memset0/herdr-fleet/commit/898f68c))
 
 ### Fixed
 
-- **Share terminal startup across concurrent browsers.** Interrupted acquisitions are cleaned up, and external Herdr attachments are taken over on lead and peer without displacing another Fleet browser.
-- **Keep the native Pane AppBar and actions in terminal mode.** The terminal matches the mirror's horizontal gutter and ignores fit reports without a current drawable host.
-- **Reserve the native scrollbar gutter in terminal fit.** It now matches an overflowing Collie mirror.
-- **Count both sides of an upstream rename in the adoption preflight.** Each moved port's destination is named, whatever Git's rename setting.
-- **Run Collie's scheduled-removal checks against the adopted Collie release.** They read `FORK.toml`'s upstream tag, not this product's version; Collie 1.8.2's new layout and browser tests account for the Fleet rails and network-first navigation.
-- **Stop the navigation rails reserving the notch under an open strip band.** Each rail hands the top safe-area inset to the band as the header does, so rail titles line up with the header.
+- **Share terminal startup across concurrent browsers.** Interrupted acquisitions are cleaned up, and external Herdr attachments are taken over on lead and peer without displacing another Fleet browser. ([4885706](https://github.com/memset0/herdr-fleet/commit/4885706))
+- **Keep the native Pane AppBar and actions in terminal mode.** The terminal matches the mirror's horizontal gutter and ignores fit reports without a current drawable host. ([4885706](https://github.com/memset0/herdr-fleet/commit/4885706))
+- **Reserve the native scrollbar gutter in terminal fit.** It now matches an overflowing Collie mirror. ([7a25076](https://github.com/memset0/herdr-fleet/commit/7a25076))
+- **Count both sides of an upstream rename in the adoption preflight.** Each moved port's destination is named, whatever Git's rename setting. ([d6a5695](https://github.com/memset0/herdr-fleet/commit/d6a5695))
+- **Run Collie's scheduled-removal checks against the adopted Collie release.** They read `FORK.toml`'s upstream tag, not this product's version; Collie 1.8.2's new layout and browser tests account for the Fleet rails and network-first navigation. ([65c9987](https://github.com/memset0/herdr-fleet/commit/65c9987))
+- **Stop the navigation rails reserving the notch under an open strip band.** Each rail hands the top safe-area inset to the band as the header does, so rail titles line up with the header. ([09efa2d](https://github.com/memset0/herdr-fleet/commit/09efa2d))
 
 ## [3.3.0] - 2026-09-07
 
