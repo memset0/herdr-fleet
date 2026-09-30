@@ -14,7 +14,7 @@ import { BottomSheet } from "@/components/ui/sheet";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { TabActionsSheet } from "@/components/tab-actions-sheet";
-import { useHostWriteBlock, usePack } from "@/components/pack-provider";
+import { useHostWriteBlock, useCrew } from "@/components/crew-provider";
 import { useActionEcho } from "@/hooks/use-action-echo";
 import { useLocale } from "@/hooks/use-locale";
 import * as api from "@/lib/api";
@@ -126,7 +126,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
   const canClose = useMuxCapability("closePane");
   const canFocus = useMuxCapability("setFocus");
   const localMuxName = useMuxName();
-  const { lead } = usePack();
+  const { lead } = useCrew();
   // `useMuxName()` answers for the collie THIS PAGE runs on. A pane on some other member may be
   // driven by a different multiplexer entirely, so naming the local one there would be a guess
   // dressed as a fact — the fallback copy is used instead. Same rule as the sheet's.

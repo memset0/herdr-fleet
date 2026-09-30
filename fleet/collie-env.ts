@@ -6,7 +6,10 @@ const RESET_KEYS = [
   "COLLIE_ALLOW_NON_LOOPBACK_BIND",
   "COLLIE_DEVICE_ALLOWLIST",
   "COLLIE_DEVICE_HEADER",
+  "COLLIE_CREW_TIMEOUT_MS",
   "COLLIE_HOST",
+  // REMOVE_IN_1_9_0 — Collie still reads this 1.7.0 spelling when the crew key is absent, so a stray
+  // inherited value would decide the budget the configuration left unstated. Reset, never set.
   "COLLIE_PACK_TIMEOUT_MS",
   "COLLIE_POLL_MS",
   "COLLIE_PORT",
@@ -35,12 +38,12 @@ export function collieChildEnv(
     env.COLLIE_PUBLIC_HOSTS = config.public.host;
     env.COLLIE_ALLOWED_ORIGINS = config.public.origin;
     env.COLLIE_PUBLIC_URL = config.public.origin;
-    // The lead's own pack timing, when it states any. Both keys are reset above, so a stray value in
-    // the inherited environment cannot decide how long a member has to answer — the configuration
-    // does, or nothing does and Collie keeps its own defaults.
+    // The lead's own pack timing, when it states any. Every spelling is reset above, so a stray value
+    // in the inherited environment cannot decide how long a member has to answer — the configuration
+    // does, or nothing does and Collie keeps its own defaults. Only the current name is set.
     const pack = config.pack;
     if (pack?.pollMs !== undefined) env.COLLIE_POLL_MS = String(pack.pollMs);
-    if (pack?.timeoutMs !== undefined) env.COLLIE_PACK_TIMEOUT_MS = String(pack.timeoutMs);
+    if (pack?.timeoutMs !== undefined) env.COLLIE_CREW_TIMEOUT_MS = String(pack.timeoutMs);
   }
   return env;
 }

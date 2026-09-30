@@ -5,7 +5,7 @@ import { parseBinding } from "../../../fleet/ui/commands/bindings.ts";
 import { commandById } from "../../../fleet/ui/commands/catalog.ts";
 import type { CommandRow } from "../../../fleet/ui/commands/effective.ts";
 import { derivePaneRoster, type PaneRoster, type RosterEntry } from "../../../fleet/ui/pane-roster.ts";
-import { PackProvider } from "@/components/pack-provider";
+import { CrewProvider } from "@/components/crew-provider";
 import type { ServerSummary } from "@/lib/types";
 import { FleetCommandBar } from "./fleet-command-bar";
 
@@ -230,7 +230,7 @@ describe("FleetCommandBar", () => {
 describe("finding a Pane by any of the four facts that name it", () => {
   function search() {
     const view = render(
-      <PackProvider servers={[...SERVERS]}>
+      <CrewProvider servers={[...SERVERS]}>
         <FleetCommandBar
           mode="pane"
           onClose={vi.fn()}
@@ -240,7 +240,7 @@ describe("finding a Pane by any of the four facts that name it", () => {
           onRun={vi.fn()}
           onOpenPane={vi.fn()}
         />
-      </PackProvider>,
+      </CrewProvider>,
     );
     const input = within(view.container).getByRole<HTMLInputElement>("combobox");
     return { view, input };

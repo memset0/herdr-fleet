@@ -305,7 +305,7 @@ export interface FleetReleaseObservation {
   freshness: "fresh" | "stale" | "unavailable";
 }
 
-/** The shell's one joined view: publication evidence plus `/api/pack` runtime reports. */
+/** The shell's one joined view: publication evidence plus `/api/crew` runtime reports. */
 export interface FleetVersionView {
   release: FleetReleaseObservation;
   members: Array<{ id: string; version?: string }>;

@@ -154,6 +154,14 @@ read-only through Collie's own parser, and never renames. Calling upstream's `mi
 from the runtime was rejected: the authority spec forbids the runtime from migrating trust state,
 and a reader-side fallback keeps that line intact.
 
+Found during apply: upstream's default filesystem io (`fsTrustStoreIo`) itself runs
+`migrateCrewStateOnce` before every read and write, so `new TrustStore(stateDir).load()` would rename
+the operator's file from inside Fleet's validation. The production reader therefore constructs
+Collie's `TrustStore` with a fork-owned read-only `TrustStoreIo` (`readOnlyTrustStoreIo`): it reads
+the current name, else the previous name taken from Collie's own `crewStateFileMoves()` table, never
+renames and refuses every write. Parsing, the solo/invalid warning and mode derivation stay Collie's.
+A mutation check (swapping in the default io) fails the legacy-only test, which is what proves it.
+
 Enrolment is an explicit operator act that opens the store for writing, which is exactly where
 upstream itself runs the move (its CLI deps builders). Fleet's enrolment calls upstream's
 `migrateCrewStateOnce(stateDir, warn)` before constructing the store, so it cannot create a second

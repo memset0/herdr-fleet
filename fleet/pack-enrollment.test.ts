@@ -1,14 +1,15 @@
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { material, T0 } from "../bridge/pack/fixtures.ts";
-import { enrollPeer, mintInvite, type EnrollResponse } from "../bridge/pack/enrollment.ts";
-import { createTrustStore, selfIdentity } from "../bridge/pack/enrollment.ts";
-import { TRUST_STORE_FILENAME, TrustStore } from "../bridge/pack/trust-store.ts";
+import { material, T0 } from "../bridge/crew/fixtures.ts";
+import { CREW_PROTOCOL_VERSION, enrollPeer, mintInvite, type EnrollResponse } from "../bridge/crew/enrollment.ts";
+import { createTrustStore, selfIdentity } from "../bridge/crew/enrollment.ts";
+import { CREW_ENROLL_PATH } from "../bridge/crew/router.ts";
+import { serializeTrustStore, TRUST_STORE_FILENAME, TrustStore } from "../bridge/crew/trust-store.ts";
 import type { JsonValue } from "../bridge/json.ts";
 import { joinPack, mintPeerInvite } from "./pack-enrollment.ts";
 
@@ -40,9 +41,9 @@ function leadAnswer(): EnrollResponse {
 function leadAnswerBody(answer: EnrollResponse): JsonValue {
   return {
     protocol: answer.protocol,
-    packId: answer.packId,
-    packName: answer.packName,
-    packSecret: answer.packSecret,
+    crewId: answer.crewId,
+    crewName: answer.crewName,
+    crewSecret: answer.crewSecret,
     secretGeneration: answer.secretGeneration,
     memberId: answer.memberId,
     leadMemberId: answer.leadMemberId,
@@ -70,7 +71,7 @@ describe("Fleet Pack enrolment", () => {
       const data = await new TrustStore(dir).load();
       expect(data?.invites).toHaveLength(1);
       expect(data?.self.fingerprint).toBe(material("lead").fingerprint);
-      expect(data?.pack).not.toBeNull();
+      expect(data?.crew).not.toBeNull();
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -92,7 +93,7 @@ describe("Fleet Pack enrolment", () => {
       expect(second?.self.memberId).toBe(first?.self.memberId);
       expect(second?.self.fingerprint).toBe(first?.self.fingerprint);
       expect(second?.self.createdAt).toBe(first?.self.createdAt);
-      expect(second?.pack?.packId).toBe(first?.pack?.packId);
+      expect(second?.crew?.crewId).toBe(first?.crew?.crewId);
       expect(second?.invites).toHaveLength(2);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -117,10 +118,13 @@ describe("Fleet Pack enrolment", () => {
           expect(request.token).toBe("an-invite-token");
           expect(request.address).toBe("127.0.0.1:19791");
           expect(request.fingerprint).toBe(material("peer").fingerprint);
+          expect(request.protocol).toBe(CREW_PROTOCOL_VERSION);
           return Promise.resolve(leadAnswerBody(answer));
         },
       });
-      expect(posted).toBe("http://127.0.0.1:19790/pack/v1/enroll");
+      expect(CREW_PROTOCOL_VERSION).toBe(2);
+      expect(CREW_ENROLL_PATH).toBe("/crew/v1/enroll");
+      expect(posted).toBe("http://127.0.0.1:19790/crew/v1/enroll");
       expect(response.memberId).toBe(answer.memberId);
 
       const data = await new TrustStore(dir).load();
@@ -129,7 +133,39 @@ describe("Fleet Pack enrolment", () => {
       expect(data?.lead?.fingerprint).toBe(answer.leadFingerprint);
       // A peer's roster is exactly its lead.
       expect(data?.peers).toEqual([]);
-      expect(data?.pack?.packId).toBe(answer.packId);
+      expect(data?.crew?.crewId).toBe(answer.crewId);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an enrolment against a legacy-named store moves it first and leaves one crew-named store", async () => {
+    const dir = await scratch();
+    try {
+      // The store as the previous Collie left it: its file name and its `pack`/`packId` spelling.
+      const lead = createTrustStore(selfIdentity("lead", material("lead"), T0));
+      const invited = mintInvite(lead, { now: T0 }).next;
+      const legacy = serializeTrustStore(invited)
+        .replace(/"crew":/g, '"pack":')
+        .replace(/"crewId":/g, '"packId":');
+      expect(legacy).toContain('"packId":');
+      await writeFile(join(dir, "pack-trust.json"), legacy, { mode: 0o600 });
+
+      await mintPeerInvite({
+        collieStateDir: dir,
+        selfId: "lead",
+        now: T0 + 1_000,
+        // The existing identity must be the one acted on; a second one would be a second store.
+        identity: () => Promise.reject(new Error("identity was minted twice")),
+      });
+
+      expect(await readdir(dir)).toEqual([TRUST_STORE_FILENAME]);
+      const raw = await readFile(storePath(dir), "utf8");
+      expect(raw).not.toContain('"packId":');
+      const data = await new TrustStore(dir).load();
+      expect(data?.self.fingerprint).toBe(material("lead").fingerprint);
+      expect(data?.crew?.crewId).toBe(invited.crew?.crewId);
+      expect(data?.invites).toHaveLength(2);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -157,7 +193,7 @@ describe("Fleet Pack enrolment", () => {
         // Nothing is persisted before a response has parsed, so this machine is untouched.
         const data = await new TrustStore(dir).load();
         expect(data?.lead ?? null).toBeNull();
-        expect(data?.pack ?? null).toBeNull();
+        expect(data?.crew ?? null).toBeNull();
         expect(label).not.toBe("");
       } finally {
         await rm(dir, { recursive: true, force: true });

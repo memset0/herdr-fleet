@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { TRUST_STORE_FILENAME, TrustStore } from "../bridge/pack/trust-store.ts";
+import { TRUST_STORE_FILENAME, TrustStore } from "../bridge/crew/trust-store.ts";
 import { main } from "./main.ts";
 
 const secret = Buffer.alloc(32, 9).toString("base64url");

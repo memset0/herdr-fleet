@@ -10,7 +10,7 @@ import type {
 import type { NativeNavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { nativeNavigationPreferences } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { AgentIcon } from "@/components/agent-icon";
-import { usePack } from "@/components/pack-provider";
+import { useCrew } from "@/components/crew-provider";
 import { StatusDot } from "@/components/status-badge";
 import { HOST_TEXT_CLASSES, hostSlot } from "@/lib/hosts";
 import { Collapse } from "@/components/ui/collapse";
@@ -304,7 +304,7 @@ function faultWord(fault: NavigationHostFault | undefined): string | null {
 }
 
 function HostGlyph({ hostId, fault }: { hostId: string; fault?: NavigationHostFault }) {
-  const { servers } = usePack();
+  const { servers } = useCrew();
   const slot = hostSlot(servers, hostId === "" ? undefined : hostId);
   const degraded = fault !== undefined;
   const Glyph = degraded ? ServerOff : Server;

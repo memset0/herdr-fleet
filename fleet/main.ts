@@ -69,7 +69,7 @@ async function readAll(stream: NodeJS.ReadableStream): Promise<string> {
  * The invite token, from standard input or an owner-only file and from nowhere else.
  *
  * `/proc/<pid>/cmdline` is world-readable, so a token passed as an argument is a token every local
- * uid can read for as long as the process lives (PACK_PROTOCOL.md §8.3). The refusal names both
+ * uid can read for as long as the process lives (CREW_PROTOCOL.md §8.3). The refusal names both
  * accepted forms rather than just declining.
  */
 async function readToken(source: string | undefined, stdin: NodeJS.ReadableStream): Promise<string> {

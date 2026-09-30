@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { agentFavoriteStore, __resetAgentFavorites } from "../../../fleet/ui/agent-favorites.ts";
 import type { AgentView } from "@/lib/types";
 import { NativeAgentRail } from "./native-agent-rail";
-import { PackProvider } from "@/components/pack-provider";
+import { CrewProvider } from "@/components/crew-provider";
 import type { ServerSummary } from "@/lib/types";
 
 function agent(paneId: string, overrides: Partial<AgentView> = {}): AgentView {
@@ -151,9 +151,9 @@ describe("NativeAgentRail", () => {
     const there = agent("there", { host: "peer-a" });
 
     const pack = render(
-      <PackProvider servers={servers} sessions={[]}>
+      <CrewProvider servers={servers} sessions={[]}>
         <NativeAgentRail agents={[here, there]} onOpen={() => undefined} />
-      </PackProvider>,
+      </CrewProvider>,
     );
     // Collie's own chip, not a second vocabulary: one marker per row, naming that row's machine.
     expect(screen.getAllByText("north")).not.toHaveLength(0);

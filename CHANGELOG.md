@@ -22,6 +22,7 @@ Work that has landed but is not released yet collects under `## [Unreleased]
 ### Changed
 
 - **Adopt Collie 1.8.2.** The crew rename with protocol version 2 and its one-release `/pack/v1/*` overlap, per-host multiplexer capabilities, and upstream's fixes.
+- **Follow Collie's crew naming and wire protocol version 2.** Enrolment posts protocol 2 to `/crew/v1/enroll` after Collie's own state move, the probe budget is projected as `COLLIE_CREW_TIMEOUT_MS` with both spellings reset, trust state is read as `crew-trust.json` with a read-only fallback to `pack-trust.json`, and the public Gateway refuses `/crew/*` as it refuses `/pack/*`.
 
 ### Fixed
 

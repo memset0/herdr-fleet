@@ -154,7 +154,7 @@ reach is the browser: the bundle a member does not serve, because a member serve
 So a member on `3.1.0` beside a lead on `3.1.4` is level, not behind, and any surface that compares
 versions compares `major.minor` — a member that levelled its checkout for a patch would report the
 old version anyway, because the version on the wire is read once at process start
-(`bridge/index.ts` composes `packVersion` at module load). Do not spend a member's restart on a
+(`bridge/index.ts` composes `crewVersion` at module load). Do not spend a member's restart on a
 release that cannot change what it runs.
 
 **A minor is the whole flow, and it starts on the lead.** A change that needs the backend restarted
@@ -295,6 +295,9 @@ kind must come from the install kind (`cli/install-kind.ts`), never assume one.
   every push — override once with `SKIP_TESTS=1 git push` (see *Linting* → escape hatches). The bits that genuinely need `Bun.serve` /
   `Bun.connect` (HTTP handlers, the socket client) stay unit-untested — Vitest-on-Node can't run them,
   so keep new backend logic pure/injectable enough for `bun test`, or exercise it through `web/`.
+- **Browser tier:** upstream's Playwright suite (`cd web && bun run e2e`, needs Chromium) runs in CI
+  and by hand, never in a hook; a failing upstream case is fixed in the port it meets or declared in
+  `FORK.toml`, never silently rewritten, and `cd web && bun run typecheck` is what covers `web/e2e/`.
 - Service: `systemd --user` unit `collie` on the deployment host; logs `journalctl --user -u collie -f`.
 - **Dependencies must be 7 days old to install** (`bunfig.toml` + `web/bunfig.toml`, mirrored in
   `.npmrc` for npm users) — a compromised release is usually pulled within hours. A brand-new
@@ -341,14 +344,15 @@ a single command; never export one.
 | --- | --- | --- |
 | `SKIP_VERSION_CHECK=1` | `git commit` (pre-commit hook) | the version-consistency + bump-on-change guard |
 | `SKIP_LINT_CHECK=1` | `git commit` (pre-commit hook) | oxlint over the staged files |
-| `SKIP_PACK_WIRE_CHECK=1` | `git commit` (pre-commit hook) | the pack-wire decision guard |
+| `SKIP_CREW_WIRE_CHECK=1` | `git commit` (pre-commit hook) | the crew-wire decision guard |
+| `SKIP_FLAKE_LOCK_CHECK=1` | `git commit` (pre-commit hook) | the `flake.lock`-only-in-a-release guard |
 | `SKIP_PRIVACY_CHECK=1` | `git commit` (pre-commit hook) | the private-fact guard over the fork-owned tree |
 | `SKIP_TYPECHECK=1` | `bun run build` / `collie build` | both typecheck steps |
 | `SKIP_TESTS=1` | `git push` (pre-push hook) | both test suites |
 | `SKIP_TAG_CHECK=1` | `git push` (pre-push hook) | the untagged-release warning |
 
-The pre-commit hook's four guards are **independent** — `SKIP_VERSION_CHECK=1` does not disarm the
-lint guard, the pack-wire guard or the privacy guard.
+The pre-commit hook's five guards are **independent** — `SKIP_VERSION_CHECK=1` does not disarm the
+lint guard, the crew-wire guard, the `flake.lock` guard or the privacy guard.
 
 ## Frontend data layer (React Router, not TanStack)
 
@@ -362,7 +366,7 @@ lint guard, the pack-wire guard or the privacy guard.
   a call site first is one that never gets promoted — the alert family cost six components that way.
 - **Check UI states in the playground** (`web/src/playground/`, `cd web && bun run playground`,
   README → "The states playground") before changing a banner, the mark, the boot splash, the idle
-  lock, or the pack page — it renders every state at once. Never import playground code from app
+  lock, or the crew page — it renders every state at once. Never import playground code from app
   code.
 - Data flows through **React Router** (`createBrowserRouter`, data mode): route **loaders**
   (`web/src/lib/loaders.ts`) fetch the snapshot + pane; **polling is `useRevalidator()` on an
@@ -405,7 +409,7 @@ lint guard, the pack-wire guard or the privacy guard.
   calls them subscribes via `useLocale()` so it re-renders on a locale (or lazy-dictionary) change.
   `messages/en.ts` is the source of truth; all six dictionary files change together, enforced by
   `tsc`. Not translated: terminal/agent output, quick replies, menu/dialog labels the screen printed,
-  key caps, pack role names, push notifications, service-worker strings, pack-link errors, and the
+  key caps, crew role names, push notifications, service-worker strings, crew-link errors, and the
   slash-command descriptions in `web/src/lib/agent-commands.ts` (another tool's vocabulary — deferred)
   ([ADR 0030](./.adr/0030-the-ui-is-translated-by-a-typed-dictionary-not-a-library.md)).
 - **PWA** via `vite-plugin-pwa` (`web/vite.config.ts`): manifest + `sw.js`, registered manually
@@ -472,7 +476,7 @@ lint guard, the pack-wire guard or the privacy guard.
   it with protection it doesn't provide
   ([ADR 0004](./.adr/0004-the-statusline-run-is-bounded.md)). `chrome.test.ts` pins both halves.
 - **The Herdr socket is never dialled across a machine boundary, and no Herdr vocabulary crosses a
-  pack link** — the lead consumes a peer's Collie API, never its Herdr socket
+  crew link** — the lead consumes a peer's Collie API, never its Herdr socket
   ([ADR 0011](./.adr/0011-the-pack-protocol-is-the-mux-driver-seam.md)).
 - **How soon Collie sees an out-of-band change is DECLARED (`topologyLatency`), never measured**, and
   `refresh()` is on the floor of the port so the phone can ask for a look now
@@ -506,15 +510,17 @@ conforming reverse proxy per docs/deployment.md Variant C (`COLLIE_SKIP_SERVE=1`
 optional identity/device gates · strict CSP. A socket call can type into a real terminal — treat a
 collie as remote shell access.
 
-**The loopback gates fail closed, and the pack link is exempt by construction, never by relaxation.**
+**The loopback gates fail closed, and the crew link is exempt by construction, never by relaxation.**
 Host validation is on by default (`COLLIE_ALLOW_ANY_HOST=1` opts out), `COLLIE_TRUSTED_USER` rejects
 an ABSENT `Tailscale-User-Login` as well as a wrong one (`COLLIE_TRUSTED_USER_OPTIONAL=1`), a
 non-loopback bind refuses to start (`COLLIE_ALLOW_NON_LOOPBACK_BIND=1`), and a non-loopback TCP peer
-is refused. **A collie in a pack is exempt from the bind refusal and `/pack/v1/*` from the peer
+is refused. **A collie in a crew is exempt from the bind refusal and `/crew/v1/*` from the peer
 check** — a member is dialled across a machine boundary and that surface carries pinned mutual TLS
-plus the pack secret ([ADR 0013](./.adr/0013-a-peer-listens-without-becoming-a-front-door.md)). The
+plus the crew secret ([ADR 0013](./.adr/0013-a-peer-listens-without-becoming-a-front-door.md)). The
 exemption is granted by POSITION — the peer check sits after the federated dispatch in
-`bridge/server.ts` — so no pack path is ever spelled there. The standby door is its own listener on
+`bridge/server.ts` — so no crew path is ever spelled there. (For the one release of upstream's
+protocol overlap a node also answers the previous `/pack/v1/*` prefix through the same handlers;
+everything said here of `/crew/v1/*` holds for it too, and the Fleet Gateway refuses both.) The standby door is its own listener on
 its own `COLLIE_STANDBY_HOST` and neither gate reaches it; don't route it through the front door's
 `fetch` to share them.
 
@@ -537,7 +543,7 @@ unchanged.
 **Two device gates guard writes, independently, and compose by AND.** `COLLIE_DEVICE_HEADER` trusts
 a name a proxy injects; **pairing** (`bridge/pairing.ts`, `collie pair` / `collie devices`) requires a
 bearer credential the device holds, and is on exactly when the registry is non-empty. Reads stay
-ungated by both. Neither applies to `/pack/v1/*`, which has its own two factors. The reasoning sits in
+ungated by both. Neither applies to `/crew/v1/*`, which has its own two factors. The reasoning sits in
 `bridge/pairing.ts`'s header; don't collapse the two gates into one.
 
 **Collie manages exactly one front door: `tailscale serve`** — the CLI (`cli/serve.ts`) publishes it,
@@ -547,22 +553,22 @@ Every other tunnel (NetBird, ZeroTier, Cloudflare Tunnel) is `COLLIE_SKIP_SERVE=
 Variant E: the operator owns the ingress, Collie publishes nothing. **Don't add a second managed front
 door** — [ADR 0001](./.adr/0001-one-managed-front-door.md).
 
-**The pack link (lead↔peer, `/pack/v1/*`) is specified in [`PACK_PROTOCOL.md`](./PACK_PROTOCOL.md)**
-— two factors gate it (pinned mutual TLS + pack secret), and a peer publishes no front door
+**The crew link (lead↔peer, `/crew/v1/*`) is specified in [`CREW_PROTOCOL.md`](./CREW_PROTOCOL.md)**
+— two factors gate it (pinned mutual TLS + crew secret), and a peer publishes no front door
 ([ADR 0013](./.adr/0013-a-peer-listens-without-becoming-a-front-door.md)); the one exception is the
 **deputy's standby door** — bound, never published, armed by silence and spent by the operator's
 pairing credential ([ADR 0027](./.adr/0027-the-deputy-is-named-ahead-of-time.md) ·
 [ADR 0028](./.adr/0028-the-standby-door-is-a-second-listener.md)).
 
-**Touching the pack wire surface forces a protocol decision** — a commit staging one of the
-wire-shape files in `bridge/pack/` must also stage `PACK_PROTOCOL.md` (additive-optional, §7.1) or
-bump `PACK_PROTOCOL_VERSION` (not expressible that way). `scripts/check-pack-wire.sh` is guard C of
-the pre-commit hook; a pure refactor takes the `SKIP_PACK_WIRE_CHECK=1` hatch
+**Touching the crew wire surface forces a protocol decision** — a commit staging one of the
+wire-shape files in `bridge/crew/` must also stage `CREW_PROTOCOL.md` (additive-optional, §7.1) or
+bump `CREW_PROTOCOL_VERSION` (not expressible that way). `scripts/check-crew-wire.sh` is guard C of
+the pre-commit hook; a pure refactor takes the `SKIP_CREW_WIRE_CHECK=1` hatch
 ([ADR 0025](./.adr/0025-the-wire-guard-forces-a-decision-never-a-bump.md)).
 
 **This product is developed against its operator's own production environment, so a real host, a
 real address or a real path is one paste away from the tree.** `scripts/check-private-facts.ts` is
-guard D of the pre-commit hook and the hatch is `SKIP_PRIVACY_CHECK=1`. Three things about it are
+guard E of the pre-commit hook and the hatch is `SKIP_PRIVACY_CHECK=1`. Three things about it are
 load-bearing:
 
 - It scans **what this fork owns**, read from `FORK.toml`. Upstream's own fixtures name upstream's
@@ -577,11 +583,11 @@ load-bearing:
 Add the value's synthetic form rather than taking the hatch. When a finding is genuinely public,
 widen the shape rule and say why in a comment — never add the literal to an allow-list.
 
-**Code reaches a peer over the operator's own SSH, never over the pack link** — `pack add` installs
-it and `pack update` levels it, both pushing the lead's own commit as a `git bundle`; the link
+**Code reaches a peer over the operator's own SSH, never over the crew link** — `crew add` installs
+it and `crew update` levels it, both pushing the lead's own commit as a `git bundle`; the link
 carries runtime data and never becomes a distribution channel
 ([ADR 0016](./.adr/0016-updates-ride-the-operators-ssh.md)). How the operator reached a member is
-remembered locally in `pack-ops.json`, which is never a wire field and never merged into the trust
+remembered locally in `crew-ops.json`, which is never a wire field and never merged into the trust
 store.
 
 ## Multi-host status — approved, and not yet production grade

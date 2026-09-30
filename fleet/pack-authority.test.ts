@@ -1,16 +1,37 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { leadStore, member, peerStore } from "../bridge/pack/fixtures.ts";
-import { serializeTrustStore, TRUST_STORE_FILENAME } from "../bridge/pack/trust-store.ts";
+import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
+import { serializeTrustStore, TRUST_STORE_FILENAME, type TrustStoreData } from "../bridge/crew/trust-store.ts";
 import { validatePackAuthority } from "./pack-authority.ts";
 import {
   fleetTestConfig,
   fleetTestPackLeadConfig,
   fleetTestPackPeerConfig,
 } from "./test-helpers.ts";
+
+/** The trust file's previous name, as the 1.7.0-era Collie wrote it. */
+const LEGACY_TRUST_STORE_FILENAME = "pack-trust.json";
+
+/** A store as the previous Collie serialised it: `pack` for `crew`, `packId` for `crewId`. */
+function legacySerialized(data: TrustStoreData): string {
+  const modern = serializeTrustStore(data);
+  const old = modern.replace(/"crew":/g, '"pack":').replace(/"crewId":/g, '"packId":');
+  expect(old).toContain('"pack":');
+  return old;
+}
+
+async function withStateDir(run: (root: string) => Promise<void>): Promise<void> {
+  const root = await mkdtemp(join(import.meta.dir, ".pack-trust-names-"));
+  try {
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    await run(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 describe("Fleet native Pack authority", () => {
   test("schema 1 remains independent of Pack trust state", async () => {
@@ -133,5 +154,52 @@ describe("Fleet native Pack authority", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("the first start after the upgrade validates from the previous name and leaves it in place", async () => {
+    await withStateDir(async (root) => {
+      expect(TRUST_STORE_FILENAME).not.toBe(LEGACY_TRUST_STORE_FILENAME);
+      const legacy = join(root, LEGACY_TRUST_STORE_FILENAME);
+      await writeFile(legacy, legacySerialized(leadStore({ peers: [member({ memberId: "peer-a" })] })), {
+        mode: 0o600,
+      });
+      const before = await readFile(legacy);
+      await validatePackAuthority(fleetTestPackLeadConfig(), root);
+      // The legacy file really decided: a role it does not hold is refused from it.
+      await expect(validatePackAuthority(fleetTestPackPeerConfig(), root)).rejects.toThrow(
+        "role peer does not match Collie Pack role lead",
+      );
+      expect(await readFile(legacy)).toEqual(before);
+      expect(await readdir(root)).toEqual([LEGACY_TRUST_STORE_FILENAME]);
+    });
+  });
+
+  test("when both names exist the current one wins and neither is touched", async () => {
+    await withStateDir(async (root) => {
+      const current = join(root, TRUST_STORE_FILENAME);
+      const legacy = join(root, LEGACY_TRUST_STORE_FILENAME);
+      await writeFile(current, serializeTrustStore(leadStore({ peers: [member({ memberId: "peer-a" })] })), {
+        mode: 0o600,
+      });
+      await writeFile(legacy, legacySerialized(peerStore()), { mode: 0o600 });
+      const currentBefore = await readFile(current);
+      const legacyBefore = await readFile(legacy);
+      await validatePackAuthority(fleetTestPackLeadConfig(), root);
+      await expect(validatePackAuthority(fleetTestPackPeerConfig(), root)).rejects.toThrow(
+        "role peer does not match Collie Pack role lead",
+      );
+      expect(await readFile(current)).toEqual(currentBefore);
+      expect(await readFile(legacy)).toEqual(legacyBefore);
+      expect((await readdir(root)).toSorted()).toEqual([TRUST_STORE_FILENAME, LEGACY_TRUST_STORE_FILENAME].toSorted());
+    });
+  });
+
+  test("trust state absent under both names fails closed and creates nothing", async () => {
+    await withStateDir(async (root) => {
+      await expect(validatePackAuthority(fleetTestPackLeadConfig(), root)).rejects.toThrow(
+        "unavailable or invalid",
+      );
+      expect(await readdir(root)).toEqual([]);
+    });
   });
 });

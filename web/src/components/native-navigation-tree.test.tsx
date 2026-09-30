@@ -9,7 +9,7 @@ import {
 } from "../../../fleet/ui/native-navigation/model.ts";
 import { NavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { NativeNavigationTree } from "./native-navigation-tree";
-import { PackProvider } from "./pack-provider";
+import { CrewProvider } from "./crew-provider";
 import type { ServerSummary } from "@/lib/types";
 
 function tree(selectedPaneId?: string) {
@@ -114,7 +114,7 @@ describe("NativeNavigationTree", () => {
       { id: "down", name: "down", isLead: false, reachable: false, protocol: "ok", lastSeenAt: 1_000 },
     ];
     render(
-      <PackProvider servers={roster} ts={10_000} pollMs={1500}>
+      <CrewProvider servers={roster} ts={10_000} pollMs={1500}>
         <NativeNavigationTree
           tree={deriveNavigationTree({
             hosts: roster.map((server) => ({
@@ -132,7 +132,7 @@ describe("NativeNavigationTree", () => {
           onOpenSpace={vi.fn()}
           onOpenPane={vi.fn()}
         />
-      </PackProvider>,
+      </CrewProvider>,
     );
 
     // The Host rows are the ones that announce their own disclosure, because the arrow that used to
@@ -188,7 +188,7 @@ describe("NativeNavigationTree", () => {
       { id: "peer", name: "peer", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 10_000 },
     ];
     render(
-      <PackProvider servers={roster} ts={20_000} pollMs={1500}>
+      <CrewProvider servers={roster} ts={20_000} pollMs={1500}>
         <NativeNavigationTree
           tree={deriveNavigationTree({
             hosts: roster.map((server) => ({
@@ -203,7 +203,7 @@ describe("NativeNavigationTree", () => {
           onOpenSpace={vi.fn()}
           onOpenPane={vi.fn()}
         />
-      </PackProvider>,
+      </CrewProvider>,
     );
 
     const rows = screen

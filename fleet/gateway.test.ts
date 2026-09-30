@@ -95,8 +95,35 @@ describe("authenticated solo Gateway", () => {
       const response = await handler(request(path), { peerAddress: "127.0.0.1" });
       expect(response.status).toBe(401);
     }
-    expect((await handler(request("/pack/v1/enroll"), { peerAddress: "127.0.0.1" })).status).toBe(404);
+    for (const path of ["/crew/v1/enroll", "/pack/v1/enroll"]) {
+      expect((await handler(request(path), { peerAddress: "127.0.0.1" })).status).toBe(404);
+    }
     expect(calls).toBe(0);
+  });
+
+  test("keeps the crew link denied after login and never contacts Collie for it", async () => {
+    let calls = 0;
+    const { handler } = await setup(async () => {
+      calls += 1;
+      return new Response("<!doctype html>", { headers: { "content-type": "text/html" } });
+    });
+    const cookie = await login(handler);
+    for (const path of ["/crew/v1/hello", "/crew/v1/snapshot", "/crew/v1/pane/p1/reply", "/crew/v1/enroll"]) {
+      for (const method of ["GET", "POST"]) {
+        const response = await handler(
+          request(path, { method, headers: { cookie } }),
+          { peerAddress: "127.0.0.1" },
+        );
+        expect(response.status).toBe(404);
+      }
+    }
+    expect(calls).toBe(0);
+    // The browser-facing crew page and its previous-name redirect are application routes.
+    for (const path of ["/crew", "/pack"]) {
+      const page = await handler(request(path, { headers: { cookie } }), { peerAddress: "127.0.0.1" });
+      expect(page.status).toBe(200);
+    }
+    expect(calls).toBe(2);
   });
 
   test("keeps Pack paths denied after login while normal native APIs remain proxied", async () => {

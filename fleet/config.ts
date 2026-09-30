@@ -3,7 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { jsonNumberField, jsonRecord, jsonStringField } from "../bridge/stt/json.ts";
 import type { JsonObject, JsonValue } from "../bridge/json.ts";
-import { isMemberId } from "../bridge/pack/identity.ts";
+import { isMemberId } from "../bridge/crew/identity.ts";
 
 export const FLEET_CONFIG_FILENAME = "fleet.toml";
 export const FLEET_CONFIG_ENV = "HERDR_FLEET_CONFIG";
@@ -34,8 +34,9 @@ export interface FleetAuthConfig {
 /**
  * The lead's own pack timing, handed to Collie as the two variables it already reads.
  *
- * Not invented here: `COLLIE_POLL_MS` and `COLLIE_PACK_TIMEOUT_MS` are upstream's, and upstream
- * clamps the budget to a fraction of the poll interval. This is the place to STATE them, because a
+ * Not invented here: `COLLIE_POLL_MS` and `COLLIE_CREW_TIMEOUT_MS` are upstream's, and upstream
+ * clamps the budget to a fraction of the poll interval. The section keeps its `[pack]` name: it is
+ * this product's configuration, and Collie renaming its variable renames nothing here. This is the place to STATE them, because a
  * plugin the Herdr runtime launches has no per-plugin environment and there was nowhere else.
  */
 export interface FleetPackTimingConfig {

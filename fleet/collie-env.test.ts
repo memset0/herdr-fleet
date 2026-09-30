@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { CREW_TIMEOUT_ENV, LEGACY_CREW_TIMEOUT_ENV } from "../bridge/crew/peer-client.ts";
 import { collieChildEnv } from "./collie-env.ts";
 import { parseFleetToml } from "./config.ts";
 import { fleetTestPackLeadConfig, fleetTestPackPeerConfig } from "./test-helpers.ts";
@@ -87,26 +88,46 @@ describe("Fleet Collie child environment", () => {
     }
   });
 
-  test("the lead's own pack timing is what Collie is started with", () => {
+  test("the lead's own pack timing is what Collie is started with, under the crew name only", () => {
     const timed = { ...fleetTestPackLeadConfig(), pack: { pollMs: 3000, timeoutMs: 2400 } };
     const env = collieChildEnv(timed, { PATH: "/usr/bin" });
     expect(env.COLLIE_POLL_MS).toBe("3000");
-    expect(env.COLLIE_PACK_TIMEOUT_MS).toBe("2400");
+    expect(env[CREW_TIMEOUT_ENV]).toBe("2400");
+    expect(env[LEGACY_CREW_TIMEOUT_ENV]).toBeUndefined();
   });
 
-  test("stating neither leaves Collie's own defaults alone", () => {
+  test("the names projected are the ones the adopted Collie reads", () => {
+    expect(CREW_TIMEOUT_ENV).toBe("COLLIE_CREW_TIMEOUT_MS");
+    expect(LEGACY_CREW_TIMEOUT_ENV).toBe("COLLIE_PACK_TIMEOUT_MS");
+  });
+
+  test("stating neither leaves Collie's own defaults alone under either spelling", () => {
     const env = collieChildEnv(fleetTestPackLeadConfig(), { PATH: "/usr/bin" });
     expect(env.COLLIE_POLL_MS).toBeUndefined();
-    expect(env.COLLIE_PACK_TIMEOUT_MS).toBeUndefined();
+    expect(env[CREW_TIMEOUT_ENV]).toBeUndefined();
+    expect(env[LEGACY_CREW_TIMEOUT_ENV]).toBeUndefined();
   });
 
   test("an inherited value cannot decide how long a member has to answer", () => {
     // Reset before it is set, like every other key the configuration owns: a stray variable in the
-    // environment must not be able to shorten the budget the operator wrote down.
-    const inherited = { PATH: "/usr/bin", COLLIE_POLL_MS: "250", COLLIE_PACK_TIMEOUT_MS: "100" };
-    expect(collieChildEnv(fleetTestPackLeadConfig(), inherited).COLLIE_POLL_MS).toBeUndefined();
-    const stated = { ...fleetTestPackLeadConfig(), pack: { pollMs: 3000 } };
-    expect(collieChildEnv(stated, inherited).COLLIE_POLL_MS).toBe("3000");
-    expect(collieChildEnv(stated, inherited).COLLIE_PACK_TIMEOUT_MS).toBeUndefined();
+    // environment must not be able to shorten the budget the operator wrote down — under the current
+    // name, or under the previous one Collie still falls back to.
+    const inherited = {
+      PATH: "/usr/bin",
+      COLLIE_POLL_MS: "250",
+      [CREW_TIMEOUT_ENV]: "100",
+      [LEGACY_CREW_TIMEOUT_ENV]: "90",
+    };
+    const omitted = collieChildEnv(fleetTestPackLeadConfig(), inherited);
+    expect(omitted.COLLIE_POLL_MS).toBeUndefined();
+    expect(omitted[CREW_TIMEOUT_ENV]).toBeUndefined();
+    expect(omitted[LEGACY_CREW_TIMEOUT_ENV]).toBeUndefined();
+    const stated = collieChildEnv({ ...fleetTestPackLeadConfig(), pack: { pollMs: 3000 } }, inherited);
+    expect(stated.COLLIE_POLL_MS).toBe("3000");
+    expect(stated[CREW_TIMEOUT_ENV]).toBeUndefined();
+    expect(stated[LEGACY_CREW_TIMEOUT_ENV]).toBeUndefined();
+    const budget = collieChildEnv({ ...fleetTestPackLeadConfig(), pack: { timeoutMs: 800 } }, inherited);
+    expect(budget[CREW_TIMEOUT_ENV]).toBe("800");
+    expect(budget[LEGACY_CREW_TIMEOUT_ENV]).toBeUndefined();
   });
 });

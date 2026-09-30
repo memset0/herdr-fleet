@@ -68,7 +68,7 @@ remote commands, or alternate trust paths.
 
 ### Reachability
 
-Reachability is the operator's, exactly as `PACK_PROTOCOL.md` §8.2 states: Collie authenticates a
+Reachability is the operator's, exactly as `CREW_PROTOCOL.md` §8.2 states: Collie authenticates a
 member, and nothing here does. A Peer opens one outbound SSH connection carrying two loopback
 projections and nothing else — a remote projection publishing this Peer's own `[collie]` endpoint at
 a Lead-local address, and a local projection publishing the Lead's Collie at a Peer-local address.
@@ -173,7 +173,8 @@ refused with their qualified names.
 ## Membership
 
 Herdr Fleet performs membership changes itself, through Collie's own Pack transitions and Collie's own
-trust-store update seam. **Do not run Collie's `pack` verbs against a Fleet deployment.** Those verbs
+trust-store update seam. **Do not run Collie's `crew` verbs (or their `pack` alias) against a Fleet
+deployment.** Those verbs
 resolve an upstream plugin identity from a constant and pick a host supervision tier by probing for a
 service manager, so one of them writes a foreign configuration directory and registers a service
 unit — and a Fleet peer runs rootless on hosts that have no service manager at all.
@@ -197,7 +198,10 @@ the SSH link rather than on a network. `--address` is where the lead will dial t
 lead's point of view. The invite is single-use and short-lived; it is printed once, on standard
 output, and only its hash is stored. `pack-join` reads it from standard input (`-`) or an owner-only
 file (`@<path>`) and refuses it as an argument, because `/proc/<pid>/cmdline` is readable by every
-local uid.
+local uid. Both commands first run Collie's own one-time move of its previous `pack-*.json` state names
+to `crew-*.json`, exactly as Collie's own commands do before they open the state directory, so an
+enrolment never creates a second trust store beside the first. A peer posts protocol version 2 to
+`/crew/v1/enroll` and has no fallback of its own: enrol a peer only after the lead runs this release.
 
 The lead's enrolment path does not exist until the running lead has read a trust store, which is why
 the first restart is part of the sequence rather than advice. A refused invite or an unreachable lead
@@ -213,7 +217,7 @@ the current server-side session before clearing the cookie.
 All Lead document navigations, `/api/*` requests, and `/fleet/api/*` requests require a current session before Collie is contacted.
 Only the authentication stylesheet and an exact set of PWA update assets are public. The service
 worker sends every document navigation to the network first, so an expired or logged-out session
-cannot recover an old authenticated app shell. The public Gateway never exposes `/pack/*`.
+cannot recover an old authenticated app shell. The public Gateway never exposes `/crew/*` or `/pack/*`.
 
 Login and logout require an exact-origin POST. Return targets are relative application paths rather
 than user-provided URLs. Credential inputs, session files, attempt budgets, proxy bodies, headers,
@@ -232,7 +236,7 @@ The route always answers immediately with fresh, stale, or unavailable cached ev
 refresh runs in the background and a later ordinary UI revalidation observes it. A failed refresh
 keeps the last successful observation and cannot hold navigation behind the public source.
 
-The native Host rows join that publication evidence to Collie's existing `/api/pack` runtime
+The native Host rows join that publication evidence to Collie's existing `/api/crew` runtime
 reports. A reported value such as `3.3.0+2fc727c` is the member's full running identity; it is not a
 verified on-disk installation. Patch differences are compatible, a higher minor in the same major is
 shown as outdated, and a higher published major is explicitly a manual update. Only an explicit
@@ -282,13 +286,20 @@ Fleet never starts a second Pack listener or projects that loopback endpoint off
 Fleet browser authentication and native Pack machine admission are independent. The Fleet cookie,
 password material, session secret, and active session state are not placed in the Collie child
 environment or translated into Pack credentials. The public Gateway returns not found for every
-`/pack/*` path before proxying, including for an authenticated browser.
+path on the machine-to-machine link before proxying — the crew prefix `/crew/*` and the previous
+`/pack/*` alike — including for an authenticated browser. The `/crew` page and its `/pack` redirect
+are ordinary application routes.
 
-Collie's `pack-trust.json`, pinned certificates, Pack secret/signatures, role derivation, membership
+Collie's `crew-trust.json`, pinned certificates, Pack secret/signatures, role derivation, membership
 transitions, strict no-grace rotation, member permissions, router, loaders, and native UI remain the
 only Pack authority and implementation. Fleet reads that state only to confirm schema-2 role
 agreement before startup. It adds no enrollment, rotation, sibling route, software-update authority,
 or fallback secret.
+
+Collie renames its state files from `pack-*.json` to `crew-*.json` once, on its own first start after
+the upgrade — and Fleet validates authority before that start. So while only `pack-trust.json`
+exists, Fleet reads it read-only through the same reader; when both names exist, `crew-trust.json`
+wins, as in Collie. Fleet never performs that rename itself and never writes either file.
 
 ## Native Web Push actions
 

@@ -6,7 +6,7 @@ import type { FleetLoopbackEndpoint, FleetSchema2PeerConfig, FleetTransportConfi
 // The SSH underlay beneath native Pack. It carries TCP and nothing else: Collie's pinned mutual TLS
 // and the Pack secret stay end to end inside the projections built here, and nothing in this module
 // reads, derives, or asserts a member identity. A process that can bind a projection has proven only
-// that it holds the SSH key the operator authorised for that one bind (PACK_PROTOCOL.md §8.2 —
+// that it holds the SSH key the operator authorised for that one bind (CREW_PROTOCOL.md §8.2 —
 // "Collie owns authentication; the operator owns reachability").
 
 /** `[::1]:8787` for an IPv6 literal, `127.0.0.1:8787` otherwise — OpenSSH's forwarding grammar. */

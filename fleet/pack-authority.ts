@@ -1,15 +1,68 @@
-import { deriveMode } from "../bridge/pack/mode.ts";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { deriveMode } from "../bridge/crew/mode.ts";
+import { crewStateFileMoves } from "../bridge/crew/state-migration.ts";
 import {
   enrollmentOf,
+  TRUST_STORE_FILENAME,
   TrustStore,
   type TrustStoreData,
-} from "../bridge/pack/trust-store.ts";
+  type TrustStoreIo,
+} from "../bridge/crew/trust-store.ts";
 import type { FleetConfig, FleetNativePackConfig, FleetSchema2LeadConfig } from "./config.ts";
 
 export type PackTrustReader = () => Promise<TrustStoreData | null>;
 
+/** Read a file, or `null` when it does not exist. Any other error propagates. */
+async function readIfPresent(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (err) {
+    if (err instanceof Error && "code" in err && err.code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+/**
+ * The trust file's previous name, taken from Collie's own move table rather than typed here.
+ *
+ * REMOVE_IN_1_9_0 — with Collie's own one-time move.
+ */
+function legacyTrustStoreFilename(): string | null {
+  return crewStateFileMoves().find((move) => move.current === TRUST_STORE_FILENAME)?.legacy ?? null;
+}
+
+/**
+ * A read-only view of Collie's state directory for its own `TrustStore`.
+ *
+ * WHY NOT COLLIE'S DEFAULT IO. The adopted Collie's filesystem io runs its one-time `pack-*` → `crew-*`
+ * rename before every read. Fleet validates authority before Collie has started, so reading through
+ * that io would make this runtime the thing that renames the operator's trust state — which the
+ * authority boundary forbids. This io never renames and never writes.
+ *
+ * WHY THE FALLBACK. On the first start after the upgrade only the previous name exists, because the
+ * rename is Collie's own act at its own start. Refusing then would fail closed for ever: Collie would
+ * never start to perform it. So while the current name is absent the previous one is read — through
+ * the same reader and parser — and left exactly where and as it is. The current name wins when both
+ * exist, as it does in Collie.
+ */
+export function readOnlyTrustStoreIo(stateDir: string): TrustStoreIo {
+  const legacy = legacyTrustStoreFilename();
+  return {
+    async read(path) {
+      const current = await readIfPresent(path);
+      if (current !== null || legacy === null) return current;
+      return readIfPresent(join(stateDir, legacy));
+    },
+    async write() {
+      throw new Error("Fleet never writes Collie trust state");
+    },
+  };
+}
+
 function productionReader(stateDir: string): PackTrustReader {
-  const store = new TrustStore(stateDir);
+  const store = new TrustStore(stateDir, readOnlyTrustStoreIo(stateDir));
   return () => store.load();
 }
 
