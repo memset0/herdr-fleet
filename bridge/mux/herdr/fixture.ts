@@ -5,8 +5,8 @@
 // conformance engine (../conformance.ts) drives the WHOLE translation layer — the wire joins, the key
 // spelling, the event split, the refusal mapping — without a socket.
 //
-// WHY A HAND-WRITTEN FAKE AND NOT `bridge/pack/fake-herdr.ts`. That one is a real unix-socket daemon,
-// because its subject is the pack TRANSPORT: two Collie processes and a live connection between them.
+// WHY A HAND-WRITTEN FAKE AND NOT `bridge/crew/fake-herdr.ts`. That one is a real unix-socket daemon,
+// because its subject is the crew TRANSPORT: two Collie processes and a live connection between them.
 // Conformance's subject is the adapter, and the five things it has to simulate — a reconnect, a
 // multiplexer restart, an out-of-band rename, changed pane content, a pane dying — are state
 // transitions, not bytes. Doing them in memory keeps the pure layer deterministic and keeps it
@@ -519,7 +519,12 @@ export const herdrConformanceFixture: MuxConformanceFixture = {
   mux: "herdr",
   create(): Promise<MuxConformanceWorld> {
     const fake = new FakeHerdr();
-    const adapter = new HerdrMux(fake);
+    // Two sessions, because the `listSessions` leg of conformance has to see a real answer: the
+    // primary's own socket plus one named session, exactly the shape `./sessions.ts` reads off disk.
+    const adapter = new HerdrMux(fake, () => [
+      { name: "default", endpoint: "/tmp/collie-conformance/herdr.sock" },
+      { name: "conformance", endpoint: "/tmp/collie-conformance/sessions/conformance/herdr.sock" },
+    ]);
     return Promise.resolve({
       adapter,
       writes: () => fake.writes(),

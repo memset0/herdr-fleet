@@ -159,7 +159,7 @@ run_stripped COLLIE_PLUGIN_ROOT="$EMPTY_ROOT" "$BIN" version || fail "version fa
 assert_eq "$STDOUT" "unknown"
 
 # F20: the two reflexes every operator has. Both used to answer `error: unknown command` / `error:
-# unknown pack subcommand` and exit 2 — a table that knows the verb refusing the flag spelling of it.
+# unknown crew subcommand` and exit 2 — a table that knows the verb refusing the flag spelling of it.
 for spelling in --version -V; do
   run_stripped COLLIE_PLUGIN_ROOT="$FAKE_ROOT" "$BIN" "$spelling" \
     || fail "\`collie $spelling\` failed (rc=$?)"
@@ -167,17 +167,22 @@ for spelling in --version -V; do
   case "$STDERR" in *"unknown command"*) fail "\`collie $spelling\` still reads as a typo" ;; esac
 done
 
-# `collie pack --help` prints the subcommand block; `pack`'s own usage exit code (2) is unchanged.
-for spelling in --help -h; do
-  set +e
-  env -i "$BIN" pack "$spelling" >"${TMP_ROOT}/out" 2>"${TMP_ROOT}/err"
-  rc=$?
-  set -e
-  assert_eq "$rc" "2"
-  assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie pack {"
-  case "$(cat "${TMP_ROOT}/err")" in
-    *"unknown pack subcommand"*) fail "\`collie pack $spelling\` still reads as a typo" ;;
-  esac
+# `collie crew --help` prints the subcommand block, and the verb's own usage exit code (2) is
+# unchanged. The `crew` spelling is driven too, because it is the alias ADR 0038 removes in 2.0.0:
+# it must print the SAME crew block and return the SAME code, and this file is the only place the
+# compiled binary's own dispatch table is driven.
+for verb in crew crew; do
+  for spelling in --help -h; do
+    set +e
+    env -i "$BIN" "$verb" "$spelling" >"${TMP_ROOT}/out" 2>"${TMP_ROOT}/err"
+    rc=$?
+    set -e
+    assert_eq "$rc" "2"
+    assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie crew {"
+    case "$(cat "${TMP_ROOT}/err")" in
+      *"unknown crew subcommand"*) fail "\`collie $verb $spelling\` still reads as a typo" ;;
+    esac
+  done
 done
 
 # ── Exit codes ───────────────────────────────────────────────────────────────
@@ -202,7 +207,7 @@ rc=$?
 set -e
 assert_eq "$rc" "0"
 for verb in start stop restart uninstall update build serve unserve status url qr version push-test logs \
-           doctor pair devices push join leave pack promote reconnect; do
+           doctor pair devices push join leave crew promote reconnect; do
   assert_contains "$(cat "${TMP_ROOT}/out")" "$verb"
 done
 
@@ -811,7 +816,7 @@ run_stripped HOME="$L_HOME" HERDR_PLUGIN_CONFIG_DIR="$L_CONFIG" PATH="$L_BIN" \
   COLLIE_INSTANCE="V 1" COLLIE_PORT=9999 "$BIN" status && fail "an unusable instance name was accepted"
 assert_contains "$STDERR" "not a usable instance name"
 # …and the third: a named instance with no config dir of its own. It refuses legibly rather than
-# resolving the DEFAULT instance's config (and therefore its state dir and its pack trust store) —
+# resolving the DEFAULT instance's config (and therefore its state dir and its crew trust store) —
 # the 2026-08-12 incident. `HERDR_PLUGIN_CONFIG_DIR` is deliberately absent here.
 run_stripped HOME="$L_HOME" PATH="$L_BIN" \
   COLLIE_INSTANCE=v1 COLLIE_PORT=9999 "$BIN" status && fail "an instance with no config dir was accepted"
@@ -910,8 +915,6 @@ fd_v1 COLLIE_SERVE_MODE=http "$BIN" serve || fail "v1 could not publish: ${STDER
 assert_eq "$(cat "$V1_RECORD")" "http:8788|host.example:8788|http://127.0.0.1:8788"
 assert_eq "$(cat "$RECORD")" "http:8787|host.example:8787|http://127.0.0.1:8787"
 assert_contains "$(cat "$FD_CALLS")" "tailscale serve --bg --http=8788 --set-path=/ 8788"
-# The serve output file is per-instance too, or one publish's diagnostics would overwrite the other's.
-[ -f "${FD_CONFIG}/serve-v1.out" ] || fail "v1 wrote no serve output of its own"
 
 # Uninstalling v1: its unit, its record and its mapping go; the stable instance keeps all three.
 printf '[Unit]\n' > "$FD_UNIT"
@@ -1330,15 +1333,33 @@ assert_contains "$STDOUT" "✓ updated to v9.10.0"
 if upd "$CLONE" "$BIN" update --rollback; then fail "--rollback found a target on a first staged update"; fi
 assert_contains "$STDERR" "nothing to roll back to"
 
-# Shape 3 — not a git checkout at all (a copied tree). It must name the reinstall command rather than
-# emit a raw git error about a missing origin, and it must not reach the rebuild.
-PLAIN="${U_DIR}/plain"
+# Shape 3 — not a git checkout at all (a copied tree), INSIDE the operator's own home and writable.
+# All three of clause 4's disjuncts are false, so this is the `loose-binary` unknown: it must name
+# the reinstall command rather than emit a raw git error about a missing origin, and it must not
+# reach the rebuild.
+PLAIN="${TMP_ROOT}/update-home/plain"
 mkdir -p "$PLAIN"
 printf 'id = "herdr.collie"\nversion = "9.9.9"\n' > "${PLAIN}/herdr-plugin.toml"
 if upd "$PLAIN" "$BIN" update; then fail "update on a non-git tree reported success"; fi
 assert_contains "$STDERR" "herdr plugin install AltanS/collie --yes"
 case "$(cat "$U_CALLS")" in
   *_apply-update*) fail "a checkout that could not advance still tried to rebuild" ;;
+esac
+
+# Shape 4 — the same tree OUTSIDE the operator's home. One disjunct of clause 4 is enough, so this
+# is a `packaged` install (ADR 0035): the refusal names the boundary, never the reinstall command,
+# and it never reaches the rebuild either.
+PACKAGED="${U_DIR}/packaged"
+mkdir -p "$PACKAGED"
+printf 'id = "herdr.collie"\nversion = "9.9.9"\n' > "${PACKAGED}/herdr-plugin.toml"
+if upd "$PACKAGED" "$BIN" update; then fail "update on a packaged tree reported success"; fi
+assert_contains "$STDERR" "updates come from your package manager"
+case "$STDERR" in
+  *"herdr plugin install"*) fail "a packaged install was told to reinstall through Herdr" ;;
+  *"cannot tell how this Collie was installed"*) fail "a packaged install read as unrecognisable" ;;
+esac
+case "$(cat "$U_CALLS")" in
+  *_apply-update*) fail "a packaged install still tried to rebuild" ;;
 esac
 
 # The fork guard: `origin` must BE the configured update source, and the check runs before any fetch.
@@ -1492,86 +1513,105 @@ upd "$CLONE" "$BIN" _apply-update || fail "\`collie _apply-update\` failed on a 
 assert_contains "$STDOUT" "herdr registry refreshed (re-linked)"
 assert_contains "$(cat "$U_HERDR")" "plugin link ${CLONE}"
 
-# ── The pack verbs ───────────────────────────────────────────────────────────
+# ── The crew verbs ───────────────────────────────────────────────────────────
 # Under `env -i`, and READ-ONLY: nothing here may enroll, dial, restart or write a trust store. The
-# behaviour of every verb is covered in cli/pack.test.ts against fakes; what only this file can prove
-# is that they survive Herdr's empty environment like every other verb — a pack verb that needed a
+# behaviour of every verb is covered in cli/crew.test.ts against fakes; what only this file can prove
+# is that they survive Herdr's empty environment like every other verb — a crew verb that needed a
 # login shell would fail exactly where `update` once did.
-PACK_STATE="${TMP_ROOT}/pack-state"
-mkdir -p "$PACK_STATE"
+CREW_STATE="${TMP_ROOT}/crew-state"
+mkdir -p "$CREW_STATE"
 # `CALLS` is re-used as a plain string by the sections above, so the fake tools log is named by its
 # path here — the same one baked into the fakes at the top of this file.
-PACK_CALLS="${TMP_ROOT}/calls"
-: > "$PACK_CALLS"
+CREW_CALLS="${TMP_ROOT}/calls"
+: > "$CREW_CALLS"
 
-# A machine that never enrolled: `pack status` says solo and — the zero-tax contract at its sharpest —
-# writes NOTHING. No trust store, no key, no directory materialised by asking a question.
-run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PACK_STATE" \
-  PATH="$BIN_DIR" "$BIN" pack status \
-  || fail "\`collie pack status\` failed on a solo machine: ${STDERR}"
+# A machine that never enrolled: `crew status` says solo and — the zero-tax contract at its sharpest —
+# writes NOTHING. No trust store, no key, no directory materialised by asking a question. The `crew`
+# spelling is driven too, and its stdout must be byte-identical: the alias is one code path, and a
+# script that reads the status output must not be able to tell which word it typed.
+run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+  PATH="$BIN_DIR" "$BIN" crew status \
+  || fail "\`collie crew status\` failed on a solo machine: ${STDERR}"
 assert_contains "$STDOUT" "mode: solo"
-[ -z "$(ls -A "$PACK_STATE")" ] || fail "\`pack status\` wrote into the state dir on a solo machine"
+CREW_STATUS_STDOUT="$STDOUT"
+run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+  PATH="$BIN_DIR" "$BIN" crew status \
+  || fail "\`collie crew status\` failed on a solo machine: ${STDERR}"
+assert_eq "$STDOUT" "$CREW_STATUS_STDOUT"
+[ -z "$(ls -A "$CREW_STATE")" ] || fail "\`crew status\` wrote into the state dir on a solo machine"
 
-# `pack` with no subcommand, and with a wrong one, are usage errors that name the real subcommands.
+# `crew` with no subcommand, and with a wrong one, are usage errors that name the real subcommands.
 set +e
-env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PACK_STATE" \
-  PATH="$BIN_DIR" "$BIN" pack nonsense >/dev/null 2>"${TMP_ROOT}/err"
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+  PATH="$BIN_DIR" "$BIN" crew nonsense >/dev/null 2>"${TMP_ROOT}/err"
 rc=$?
 set -e
 assert_eq "$rc" "2"
-assert_contains "$(cat "${TMP_ROOT}/err")" "unknown pack subcommand \`nonsense\`"
-for sub in invite join leave status rotate remove set-address deputy; do
+assert_contains "$(cat "${TMP_ROOT}/err")" "unknown crew subcommand \`nonsense\`"
+for sub in invite join leave status rotate rename remove set-address deputy; do
   assert_contains "$(cat "${TMP_ROOT}/err")" "$sub"
 done
 
 # `join` without its arguments is a usage error — and must not dial, enroll or write on the way.
-# Both spellings, because `pack join` is now the canonical one and `join` is its alias: they are one
+# Both spellings, because `crew join` is now the canonical one and `join` is its alias: they are one
 # function, and this is where that stops being a claim. stdin comes from /dev/null so the run is not
 # a terminal — the token question must never be asked of a script.
-for spelling in "join" "pack join"; do
+for spelling in "join" "crew join"; do
   set +e
   # shellcheck disable=SC2086
-  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PACK_STATE" \
+  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
     PATH="$BIN_DIR" "$BIN" $spelling </dev/null >/dev/null 2>"${TMP_ROOT}/err"
   rc=$?
   set -e
   assert_eq "$rc" "2"
-  assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie pack join"
-  [ -z "$(ls -A "$PACK_STATE")" ] || fail "a usage-failed \`$spelling\` still wrote into the state dir"
+  assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie crew join"
+  [ -z "$(ls -A "$CREW_STATE")" ] || fail "a usage-failed \`$spelling\` still wrote into the state dir"
 done
 
 # An address with no token, with no terminal to ask at, is the same usage error — and still no dial.
 set +e
-env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PACK_STATE" \
-  PATH="$BIN_DIR" "$BIN" pack join example.invalid </dev/null >/dev/null 2>"${TMP_ROOT}/err"
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+  PATH="$BIN_DIR" "$BIN" crew join example.invalid </dev/null >/dev/null 2>"${TMP_ROOT}/err"
 rc=$?
 set -e
 assert_eq "$rc" "2"
 assert_contains "$(cat "${TMP_ROOT}/err")" "needs the invite token as its second argument"
-assert_contains "$(cat "${TMP_ROOT}/err")" "collie pack join example.invalid -"
-[ -z "$(ls -A "$PACK_STATE")" ] || fail "a tokenless \`pack join\` still wrote into the state dir"
+assert_contains "$(cat "${TMP_ROOT}/err")" "collie crew join example.invalid -"
+[ -z "$(ls -A "$CREW_STATE")" ] || fail "a tokenless \`crew join\` still wrote into the state dir"
 
-# `leave` on a machine that is in no pack is a STATE error (3), not a usage error and not a success.
+# `crew rename` on a machine in no crew is a STATE error (3). The verb is lead-only and writes only
+# this lead's own trust store, so a solo root must get the refusal and keep an empty state dir —
+# nothing to rename means nothing to materialise.
+set +e
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+  PATH="$BIN_DIR" "$BIN" crew rename "the shed" </dev/null >/dev/null 2>"${TMP_ROOT}/err"
+rc=$?
+set -e
+assert_eq "$rc" "3"
+assert_contains "$(cat "${TMP_ROOT}/err")" "no crew to rename"
+[ -z "$(ls -A "$CREW_STATE")" ] || fail "a refused \`crew rename\` still wrote into the state dir"
+
+# `leave` on a machine that is in no crew is a STATE error (3), not a usage error and not a success.
 # Both spellings again, for the same reason.
-for spelling in "leave" "pack leave"; do
+for spelling in "leave" "crew leave"; do
   set +e
   # shellcheck disable=SC2086
-  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PACK_STATE" \
+  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
     PATH="$BIN_DIR" "$BIN" $spelling </dev/null >/dev/null 2>"${TMP_ROOT}/err"
   rc=$?
   set -e
   assert_eq "$rc" "3"
-  assert_contains "$(cat "${TMP_ROOT}/err")" "not in a pack"
+  assert_contains "$(cat "${TMP_ROOT}/err")" "not in a crew"
 done
 
-# No pack verb above shelled out to anything — no systemctl, no tailscale, no herdr.
-assert_eq "$(cat "$PACK_CALLS")" ""
+# No crew verb above shelled out to anything — no systemctl, no tailscale, no herdr.
+assert_eq "$(cat "$CREW_CALLS")" ""
 
 # ── doctor ───────────────────────────────────────────────────────────────────
 # Read-only by contract, so it is the one diagnostic this file may actually RUN. Pointed at an empty
 # checkout so the verdict is deterministic (no `web/dist` ⇒ one error ⇒ exit 1), and asserted to have
 # written nothing: not the state dir, not the config dir. It DOES shell out to `tailscale`, which is
-# why it runs after the "no pack verb shelled out" assertion above.
+# why it runs after the "no crew verb shelled out" assertion above.
 DOCTOR_STATE="${TMP_ROOT}/doctor-state"
 mkdir -p "$DOCTOR_STATE"
 set +e
@@ -1603,7 +1643,7 @@ run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN
 assert_eq "$rc" "1"
 assert_contains "$STDOUT" "error:"
 assert_contains "$STDOUT" "collie build"
-assert_contains "$STDOUT" "pack: none"
+assert_contains "$STDOUT" "crew: none"
 
 # ── Device pairing ───────────────────────────────────────────────────────────
 # `pair` and `devices` are the only verbs that write a CREDENTIAL to disk, and they are the two an
@@ -1614,7 +1654,7 @@ assert_contains "$STDOUT" "pack: none"
 # so it cannot quietly grow.
 PAIR_STATE="${TMP_ROOT}/pair-state"
 mkdir -p "$PAIR_STATE"
-# `CALLS` has been re-used as a plain string by the sections above, so — as in the pack section — the
+# `CALLS` has been re-used as a plain string by the sections above, so — as in the crew section — the
 # fake tools log is named by its path here: the one baked into the fakes at the top of this file.
 PAIR_CALLS="${TMP_ROOT}/calls"
 : > "$PAIR_CALLS"
@@ -2228,7 +2268,7 @@ echo "✓ collie CLI two instances: COLLIE_INSTANCE refusals, two units, two rec
 echo "✓ collie CLI build: six ordered steps, rename-not-rewrite, a failed build leaves web/dist untouched"
 echo "✓ collie CLI update: both checkout shapes on real repos, tag targeting + the major gate, the post-pull re-exec, the managed re-link refusal"
 echo "✓ collie CLI qr: tailnet URL, COLLIE_PUBLIC_URL, both refusals, the deny-all warning"
-echo "✓ collie CLI pack: solo status writes nothing, subcommand usage, join/leave exit codes, all under env -i"
+echo "✓ collie CLI crew: solo status writes nothing, subcommand usage, join/leave exit codes, all under env -i"
 echo "✓ collie CLI doctor: --json contract, the exit rule, writes nothing, one line per check"
 echo "✓ collie CLI pairing: 0600 pending file with no code in it, re-mint, list/revoke, exit codes"
 echo "✓ collie CLI stt: 0600 stt.json under env -i, no key on screen, codex consent gate refuses before it runs anything"

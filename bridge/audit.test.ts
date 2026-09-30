@@ -57,7 +57,7 @@ describe("formatAuditLine", () => {
     expect(parsed.detail.keys).toEqual(["Enter", "a b"]);
   });
 
-  test("renders host right after action, before paneId (PACK_PROTOCOL.md §4)", () => {
+  test("renders host right after action, before paneId (CREW_PROTOCOL.md §4)", () => {
     const line = formatAuditLine(
       { action: "reply", host: "peer-a", paneId: "w1:p1", detail: { text: "ship it" } },
       0,
@@ -67,7 +67,7 @@ describe("formatAuditLine", () => {
     );
   });
 
-  test("omits host when absent — byte-identical to a pre-pack line (solo zero-tax, §11)", () => {
+  test("omits host when absent — byte-identical to a pre-crew line (solo zero-tax, §11)", () => {
     const line = formatAuditLine({ action: "reply", paneId: "w1:p1", detail: { text: "ship it" } }, 0);
     expect(line).toBe(
       '{"ts":"1970-01-01T00:00:00.000Z","action":"reply","paneId":"w1:p1","detail":{"text":"ship it"}}',
@@ -212,13 +212,13 @@ describe("fileAuditAppender rotation", () => {
   });
 
   test("a flood of refusals stays bounded — the whole trail never exceeds two generations", async () => {
-    // The threat the cap answers: `/pack/v1/enroll` audits a refusal before any factor
+    // The threat the cap answers: `/crew/v1/enroll` audits a refusal before any factor
     // authenticates, so anyone who can reach the listener can add lines for free. Rotation is only
     // a bound if the TOTAL on disk stops growing — one live file plus one `.1`, and nothing else.
     const io = fakeIo();
     const cap = 200;
     const append = fileAuditAppender("/s/audit.log", io, cap);
-    const line = `${JSON.stringify({ action: "pack.refused", detail: { code: "unauthorized" } })}\n`;
+    const line = `${JSON.stringify({ action: "crew.refused", detail: { code: "unauthorized" } })}\n`;
     for (let i = 0; i < 1000; i++) await append(line);
     // Exactly two files ever exist — no third generation accumulates behind the rotation.
     expect(Object.keys(io.files).toSorted()).toEqual(["/s/audit.log", "/s/audit.log.1"]);
@@ -240,25 +240,25 @@ describe("fileAuditAppender rotation", () => {
   });
 });
 
-// ── §12: a pack-originated write is identifiable in the PEER's own log ───────
+// ── §12: a crew-originated write is identifiable in the PEER's own log ───────
 
-describe("pack attribution", () => {
+describe("crew attribution", () => {
   test("via + from ride next to device, and only when present", () => {
     // SAFETY: `formatAuditLine` is the sole writer of this line, and it emits the entry it was
     // handed plus its own `ts` — the key-order assertion right below re-checks that field for field.
     const line = JSON.parse(
       formatAuditLine(
-        { action: "reply", paneId: "w1:p1", session: "work", device: "phone-7", via: "pack", from: "desk", detail: { text: "hi" } },
+        { action: "reply", paneId: "w1:p1", session: "work", device: "phone-7", via: "crew", from: "desk", detail: { text: "hi" } },
         0,
       ),
     ) as AuditEntry & { ts: string };
     expect(Object.keys(line)).toEqual(["ts", "action", "paneId", "session", "device", "via", "from", "detail"]);
-    expect(line.via).toBe("pack");
+    expect(line.via).toBe("crew");
     expect(line.from).toBe("desk");
   });
 
-  test("a line with no pack attribution is byte-identical to a pre-pack one", () => {
-    // The solo zero-tax contract (PACK_PROTOCOL.md §11): optional fields are OMITTED, never nulled.
+  test("a line with no crew attribution is byte-identical to a pre-crew one", () => {
+    // The solo zero-tax contract (CREW_PROTOCOL.md §11): optional fields are OMITTED, never nulled.
     const line = formatAuditLine({ action: "reply", paneId: "w1:p1", session: "work", detail: {} }, 0);
     expect(line).not.toContain("via");
     expect(line).not.toContain("from");
@@ -269,21 +269,21 @@ describe("pack attribution", () => {
 
   test("`scoped()` stamps every entry, so a handler cannot forget the attribution", async () => {
     // This is how the peer hands the UNMODIFIED browser handlers a log that already knows the action
-    // arrived over a pack link — the handlers take no `via` parameter and there is nothing to forget.
+    // arrived over a crew link — the handlers take no `via` parameter and there is nothing to forget.
     const lines: string[] = [];
     const log = new AuditLog((l) => void lines.push(l), { now: () => 0 });
-    const packLog = log.scoped({ via: "pack", from: "desk" });
-    packLog.record({ action: "keys", paneId: "w1:p1", device: "phone-7", detail: { keys: ["Enter"] } });
+    const crewLog = log.scoped({ via: "crew", from: "desk" });
+    crewLog.record({ action: "keys", paneId: "w1:p1", device: "phone-7", detail: { keys: ["Enter"] } });
     // The unscoped log is untouched — one process, two views, no leakage between them.
     log.record({ action: "keys", paneId: "w1:p1", detail: {} });
     await Bun.sleep(5);
-    expect(JSON.parse(lines[0]!)).toMatchObject({ action: "keys", via: "pack", from: "desk", device: "phone-7" });
-    expect(lines[1]).not.toContain("pack");
+    expect(JSON.parse(lines[0]!)).toMatchObject({ action: "keys", via: "crew", from: "desk", device: "phone-7" });
+    expect(lines[1]).not.toContain("crew");
   });
 
   test("an entry's own field beats the scope's — the record is what happened, not what was assumed", () => {
     const lines: string[] = [];
-    const log = new AuditLog((l) => void lines.push(l), { now: () => 0 }).scoped({ via: "pack", from: "desk" });
+    const log = new AuditLog((l) => void lines.push(l), { now: () => 0 }).scoped({ via: "crew", from: "desk" });
     log.record({ action: "reply", from: "nas", detail: {} });
     expect(JSON.parse(lines[0]!).from).toBe("nas");
   });
@@ -296,10 +296,10 @@ describe("pack attribution", () => {
     const log = new AuditLog((l) => void lines.push(l), {
       now: () => 0,
       content: "none",
-    }).scoped({ via: "pack", from: "desk" });
+    }).scoped({ via: "crew", from: "desk" });
     log.record({ action: "reply", paneId: "w1:p1", detail: { text: "the secret" } });
     const entry = JSON.parse(lines[0]!);
-    expect(entry).toMatchObject({ action: "reply", via: "pack", from: "desk" });
+    expect(entry).toMatchObject({ action: "reply", via: "crew", from: "desk" });
     expect(lines[0]).not.toContain("the secret");
   });
 });

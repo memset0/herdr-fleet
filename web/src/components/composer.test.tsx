@@ -8,9 +8,10 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { clearStatus, useStatus } from "@/lib/status";
 import { isReloadHeld, __resetReloadGuard } from "@/lib/reload-guard";
 import { loadDraft } from "@/lib/drafts";
+import { __resetOperatorCommands } from "@/lib/operator-config";
 import { server } from "@/test/setup";
 import { fixtureServers, recordReply } from "@/test/handlers";
-import { PackProvider } from "./pack-provider";
+import { CrewProvider } from "./crew-provider";
 import { Composer, TUI_SETTLE_MS } from "./composer";
 import { statusLabel, type ServerSummary } from "@/lib/types";
 
@@ -67,11 +68,12 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true },
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
+    setExpandClippedReply: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
   };
@@ -103,7 +105,7 @@ function StatusSentinel() {
 }
 
 /** renderComposer + the status sentinel, for cases that assert on the status line. `servers` opts
- *  the render into a pack (default: solo, i.e. no host chrome and no host in any copy). */
+ *  the render into a crew (default: solo, i.e. no host chrome and no host in any copy). */
 function renderComposerWithStatus(
   overrides: Partial<ComponentProps<typeof Composer>> = {},
   servers?: ServerSummary[],
@@ -118,11 +120,12 @@ function renderComposerWithStatus(
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true },
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
     setWrap: vi.fn(),
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
+    setExpandClippedReply: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
   };
@@ -130,10 +133,10 @@ function renderComposerWithStatus(
     {
       path: "/",
       element: (
-        <PackProvider servers={servers}>
+        <CrewProvider servers={servers}>
           <StatusSentinel />
           <Composer {...props} />
-        </PackProvider>
+        </CrewProvider>
       ),
     },
   ]);
@@ -493,11 +496,12 @@ describe("Composer — send", () => {
               text="pane output"
               terminalDraft={null}
               rawTerminalDraft="leftover"
-              prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true }}
+              prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
               setWrap={vi.fn()}
               stepFontSize={vi.fn()}
               setRawTerminal={vi.fn()}
               setTapToFocus={vi.fn()}
+              setExpandClippedReply={vi.fn()}
               onSent={vi.fn()}
             />
           </>
@@ -586,11 +590,12 @@ describe("Composer — send", () => {
       text: "pane output",
       terminalDraft: null,
       rawTerminalDraft: null,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
+      setExpandClippedReply: vi.fn(),
       onSent: vi.fn(),
     };
     const router = createMemoryRouter([
@@ -682,11 +687,12 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
+            setExpandClippedReply={vi.fn()}
             onSent={vi.fn()}
           />
         </>
@@ -814,11 +820,12 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
+            setExpandClippedReply={vi.fn()}
             onSent={vi.fn()}
           />
         </>
@@ -1005,11 +1012,12 @@ describe("Composer — typing into the terminal", () => {
             text="pane output"
             terminalDraft={null}
             rawTerminalDraft={null}
-            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true }}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
             setWrap={vi.fn()}
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
+            setExpandClippedReply={vi.fn()}
             onSent={vi.fn()}
           />
         </>
@@ -1114,6 +1122,7 @@ describe("Composer — the draft field wears its own size", () => {
         fontSize: 11,
         draftFontSize: 13,
         fontFamily: "jetbrains",
+        expandClippedReply: true,
         rawTerminal: false,
         tapToFocus: true,
       },
@@ -1340,7 +1349,7 @@ describe("Composer — destructive-input confirm", () => {
     expect(props.onSent).toHaveBeenCalled();
   });
 
-  it("names the machine in the confirm — and only on a pack", async () => {
+  it("names the machine in the confirm — and only on a crew", async () => {
     const user = userEvent.setup();
     // Solo: the copy is exactly what it has always been, host clause and all absent.
     renderComposerWithStatus({ scope: { host: "workshop" } });
@@ -1351,7 +1360,7 @@ describe("Composer — destructive-input confirm", () => {
     );
     cleanup();
 
-    // On a pack, "rm -r" is a different sentence depending on whose disk it runs on.
+    // On a crew, "rm -r" is a different sentence depending on whose disk it runs on.
     clearStatus();
     renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
     await user.type(screen.getByPlaceholderText(/type a reply/i), "sudo reboot");
@@ -1412,7 +1421,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     expect(band().querySelector('[aria-label*="host" i]')).toBeNull();
     cleanup();
 
-    // Pack — the chip appears, INSIDE the band and nowhere else. Not inside the controls group: it
+    // Crew — the chip appears, INSIDE the band and nowhere else. Not inside the controls group: it
     // names a machine, not a run of five buttons, and `role="group"` is named "Controls".
     renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
     const chip = screen.getByLabelText("Sends to host: workshop");
@@ -1422,8 +1431,8 @@ describe("Composer — the machine and the state, on a band of their own", () =>
 
   it("is NOT in the composer field: no chip in the box, and the typing width is the attach strip alone", async () => {
     // The revision this round is. `pr-11` and only `pr-11` — MEASURED at 254px of typing width at a
-    // true 390px content width and 184px at 320px, on a pack exactly as on a solo install; docked,
-    // the pack figures were 194px and 124px. A second conditional `pr-*` would not stack
+    // true 390px content width and 184px at 320px, on a crew exactly as on a solo install; docked,
+    // the crew figures were 194px and 124px. A second conditional `pr-*` would not stack
     // (tailwind-merge keeps the last padding-right), which is why the number is read off the class.
     const user = userEvent.setup();
     renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
@@ -1453,7 +1462,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     expect(label.className).toMatch(/(?:^|\s)sr-only(?=\s|$)/);
   });
 
-  it("holds host + word on a pack, the word ALONE on a solo install, in that order", () => {
+  it("holds host + word on a crew, the word ALONE on a solo install, in that order", () => {
     // THE MOVE THIS ROUND MADE. The pane header's caption line carried the status word by itself, so
     // the top of a 60px row was spent on one word; it came down here, beside the machine, where
     // "which machine, and what is it doing" reads as one sentence at the surface being typed into.
@@ -1479,7 +1488,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
   it("reserves the WORD's slot, so no status can change its width", () => {
     // THE BUG THE OPERATOR FOUND. The band is right-aligned and the word is variable-width, so every
     // status change slid the host sideways — DESIGN.md §2, verbatim: a state may repaint, it may not
-    // re-lay-out. MEASURED in the playground at a true 390px content width, pack pane, host chip's
+    // re-lay-out. MEASURED in the playground at a true 390px content width, crew pane, host chip's
     // left edge: it was 262.92 / 271.89 / 290.86 / 296.28 / 267.33px for the five statuses (a 33.4px
     // swing) and is 262.92px for all five now. In German the swing was 41.3px and is zero.
     //
@@ -1558,9 +1567,9 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     // beside the colour, and this pin fails if either is dropped.
   });
 
-  it("stands at ONE height — solo, pack, shell, gone, and across every status", () => {
+  it("stands at ONE height — solo, crew, shell, gone, and across every status", () => {
     // MEASURED in the browser on the pane screen at a true 390px viewport, both themes: the band is
-    // 14.00px — 1 + 12 + 1 — with the word alone (solo), with host + word (pack), on a shell, with
+    // 14.00px — 1 + 12 + 1 — with the word alone (solo), with host + word (crew), on a shell, with
     // no word at all (a gone pane) and on every one of the five statuses. The five buttons below
     // still measure 44.00px, DESIGN.md §6's floor.
     //
@@ -1568,9 +1577,9 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     // band's new top rule cost 1px back.
     //
     // The height is STATED (`h-[14px]`) rather than summed from whatever stands in the band. It used
-    // to be 12px of line box plus the rules, i.e. equal solo and on a pack only because the occupants
+    // to be 12px of line box plus the rules, i.e. equal solo and on a crew only because the occupants
     // happened to agree; an occupant that ever measured 13 would have grown the band and nothing
-    // would have said so. Pinning the border box makes solo and pack identical by construction.
+    // would have said so. Pinning the border box makes solo and crew identical by construction.
     //
     // jsdom has no layout, so what is pinned are the facts that make that true and that a refactor
     // could quietly undo.
@@ -1602,7 +1611,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
       { scope: { host: "workshop" }, status: undefined },
     ]) {
       renderComposerWithStatus(overrides, fixtureServers);
-      expect(band().className).toBe(soloBand); // the pack pays nothing for the chip
+      expect(band().className).toBe(soloBand); // the crew pays nothing for the chip
       expect(row().className).toBe(soloRow);
       // Both runs state the same 12px line box, as ONE utility.
       for (const run of [band().firstElementChild!, slot().firstElementChild!.firstElementChild!]) {
@@ -1668,7 +1677,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     cleanup();
 
     // A SOLO install renders no host at all, so the band's only occupant is the word — and the
-    // centring must not be a fact about the pack. Same utilities, same class string.
+    // centring must not be a fact about the crew. Same utilities, same class string.
     renderComposerWithStatus({ scope: { host: "workshop" }, status: "working" });
     expect(band().querySelector("svg")).toBeNull();
     expect(band().className).toMatch(/(?:^|\s)items-center(?=\s|$)/);
@@ -1723,11 +1732,12 @@ function renderDraftHarness(overrides: Partial<ComponentProps<typeof Composer>> 
       readOnly: false,
       dialogPresent: false,
       text: "pane output",
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
+      setExpandClippedReply: vi.fn(),
       onSent: vi.fn(),
       ...rest,
       terminalDraft: stable,
@@ -1994,11 +2004,12 @@ describe("Composer — in-flight echo suppression (match-last-sent)", () => {
       text: "pane output",
       terminalDraft: draft,
       rawTerminalDraft: draft,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
+      setExpandClippedReply: vi.fn(),
       onSent: vi.fn(),
     };
     return (
@@ -2126,9 +2137,8 @@ describe("Composer — reload-guard hold (no-SW self-update safety gate)", () =>
     expect(isReloadHeld()).toBe(false);
 
     const file = new File(["x"], "shot.png", { type: "image/png" });
-    // SAFETY: the composer renders exactly one `input[type=file]` (its upload trigger), and
-    // `querySelector` is typed `Element | null` for an arbitrary selector string.
-    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const fileInput = screen.getByTestId("attach-files") as HTMLInputElement;
     fireEvent.change(fileInput, { target: { files: [file] } });
 
     await waitFor(() => expect(isReloadHeld()).toBe(true)); // uploading → held
@@ -2148,16 +2158,99 @@ describe("Composer — quick keys / image attach", () => {
     expect(screen.queryByRole("button", { name: "Tab" })).not.toBeInTheDocument();
 
     // The attach button now lives on the always-visible reply-input row instead of the strip.
-    const attach = screen.getByRole("button", { name: "Attach image" });
+    const attach = screen.getByRole("button", { name: "Attach file" });
     expect(attach).toBeEnabled();
     await user.click(attach); // clickable without throwing (opens the hidden file input)
   });
 
-  it("does not render digit shortcut buttons in the composer (they live on the Keys dock's 123 tab)", () => {
+  it("does not render digit shortcut buttons in the composer (they live behind the Keys dock's 123 chip)", () => {
     renderComposer();
     for (const d of ["1", "2", "3", "4", "5"]) {
       expect(screen.queryByRole("button", { name: d })).not.toBeInTheDocument();
     }
+  });
+});
+
+// The picker's own refusal (lib/attachments.ts), driven by what THIS bridge published on
+// /api/config's `upload` block — never the pre-attachment fallback, since every case here publishes
+// one. The store (lib/operator-config.ts) caches its one read for the life of a "page", so each case
+// resets it and republishes its own /api/config before rendering, and waits for the file input's
+// `accept` to reflect the published block before touching the picker — otherwise the assertion could
+// run against the LEGACY fallback the composer renders on its very first tick.
+describe("Composer — attachment limits published by this bridge", () => {
+  beforeEach(() => __resetOperatorCommands());
+  afterEach(() => __resetOperatorCommands());
+
+  function publishUpload(upload: { maxBytes: number; imageTypes: string[]; textTypes: string[] }) {
+    server.use(
+      http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "", upload })),
+    );
+  }
+
+  // The FILES input, not the photos one. The composer renders two (lib/attachments.ts explains
+  // why); the photos input's `accept` is the constant `image/*` and says nothing about what this
+  // bridge published, so every assertion here is about the second.
+  async function waitForPublishedAccept(accept: string) {
+    await waitFor(() => expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", accept));
+  }
+
+  it("refuses a file larger than the published cap and never calls the upload API", async () => {
+    publishUpload({ maxBytes: 1 * 1024 * 1024, imageTypes: ["png"], textTypes: [] });
+    let uploadCalls = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        uploadCalls++;
+        return HttpResponse.json({ ok: true, path: "/tmp/should-not-happen" });
+      }),
+    );
+    renderComposerWithStatus();
+    await waitForPublishedAccept("image/*,.png");
+
+    const file = new File(["x".repeat(2 * 1024 * 1024)], "shot.png", { type: "image/png" });
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const fileInput = screen.getByTestId("attach-files") as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/bigger than 1 MB/));
+    expect(uploadCalls).toBe(0);
+  });
+
+  it("uploads a .md file when the bridge published md in textTypes", async () => {
+    publishUpload({ maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md"] });
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/notes.md" })),
+    );
+    renderComposer();
+    await waitForPublishedAccept("image/*,.png,.md");
+
+    const file = new File(["# hi"], "notes.md", { type: "text/markdown" });
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const fileInput = screen.getByTestId("attach-files") as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await waitFor(() => expect(box).toHaveValue("/tmp/notes.md"));
+  });
+
+  it("refuses a .rb file the bridge did not publish and never calls the upload API", async () => {
+    publishUpload({ maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md"] });
+    let uploadCalls = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        uploadCalls++;
+        return HttpResponse.json({ ok: true, path: "/tmp/should-not-happen" });
+      }),
+    );
+    renderComposerWithStatus();
+    await waitForPublishedAccept("image/*,.png,.md");
+
+    const file = new File(["puts 1"], "app.rb", { type: "text/x-ruby" });
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const fileInput = screen.getByTestId("attach-files") as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("Collie can't attach app.rb."));
+    expect(uploadCalls).toBe(0);
   });
 });
 
@@ -2177,6 +2270,17 @@ describe("Composer — clipboard image paste", () => {
   });
 
   it("leaves a plain-text paste alone — no upload, nothing written by the paste handler", () => {
+    // The regression that matters most: `onPasteFile` only intercepts `item.kind === "file"`, so a
+    // clipboard item MSW/jsdom never sees as a file (kind "string", the shape a normal text copy
+    // produces) must fall straight through to the textarea's own paste handling — no upload call,
+    // no path written into the box.
+    let uploadCalls = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        uploadCalls++;
+        return HttpResponse.json({ ok: true, path: "/tmp/should-not-happen" });
+      }),
+    );
     renderComposer();
     const box = screen.getByPlaceholderText(/type a reply/i);
     const item = { kind: "string", type: "text/plain", getAsFile: () => null };
@@ -2185,6 +2289,7 @@ describe("Composer — clipboard image paste", () => {
 
     expect(box).toHaveValue("");
     expect(screen.queryByText(/Image added/i)).not.toBeInTheDocument();
+    expect(uploadCalls).toBe(0);
   });
 });
 
@@ -2431,8 +2536,10 @@ describe("Composer — a composed key queue is guarded on the way out", () => {
 
   // The ✕ is not the only exit — the Keys toggle and the other drawer buttons unmount the tray just
   // as effectively, which is why the guard lives on the drawer transition rather than the button.
-  // The Controls row's "Keys" toggle and the tray's own "Keys" segmented tab share an accessible
-  // name; only the toggle carries aria-expanded, which is what ties it to the dock.
+  // `getAllByRole` + a filter on `aria-expanded` used to be load-bearing here because the tray's own
+  // segmented "Keys" tab shared the Controls row toggle's accessible name; that tab is gone (the tray
+  // is one fixed pad now), so a plain `getByRole` would resolve too, but the filter still says
+  // precisely which button this helper means.
   const controlsToggle = (name: string): HTMLElement => {
     const toggle = screen
       .getAllByRole("button", { name })
@@ -2537,11 +2644,12 @@ describe("Composer — draft persistence", () => {
       text: "pane output",
       terminalDraft: null,
       rawTerminalDraft: null,
-      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true },
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
       setWrap: vi.fn(),
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
+      setExpandClippedReply: vi.fn(),
       onSent: vi.fn(),
       ...overrides,
     };
@@ -2650,7 +2758,7 @@ describe("Composer — the placeholder cannot resize the field", () => {
 // `break-word` (the textarea's UA default) does not. `ui/chat/chat-input.tsx` carries
 // `field-sizing-content`, which is the property that turns an intrinsic width into a laid-out one,
 // so under the default the field's min-content width was the width of the longest unbreakable
-// token. `uploadImage()` appends exactly such a token — the bridge's host path for the attached
+// token. `uploadFile()` appends exactly such a token — the bridge's host path for the attached
 // image — so the composer row was laid out wider than the screen and Send, its last element,
 // landed past the right edge. Measured in Chrome at 390px; reported as "the Send button
 // disappeared after I uploaded a picture".
@@ -2683,5 +2791,126 @@ describe("Composer — a long upload path cannot widen the field", () => {
 
     await waitFor(() => expect(box).toHaveValue(path));
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+});
+
+// ── THE PICKER ASKS WHICH, BECAUSE ONE INPUT CANNOT ─────────────────────────────────────────────
+//
+// A phone offers the camera roll only when every entry in `accept` maps to a gallery, so the
+// extension list that makes a `.md` pickable is what hid the gallery: the attach button opened the
+// file browser and nothing else. Two inputs, and one question in front of them.
+describe("Composer — the attach picker offers photos as well as files", () => {
+  beforeEach(() => __resetOperatorCommands());
+  afterEach(() => __resetOperatorCommands());
+
+  function publishUpload(upload: { maxBytes: number; imageTypes: string[]; textTypes: string[] }) {
+    server.use(
+      http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "", upload })),
+    );
+  }
+
+  it("the photos input asks for image/* alone, whatever else the bridge publishes", async () => {
+    publishUpload({ maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md", "ts"] });
+    renderComposer();
+    await waitFor(() =>
+      expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", "image/*,.png,.md,.ts"),
+    );
+    expect(screen.getByTestId("attach-photos")).toHaveAttribute("accept", "image/*");
+  });
+
+  it("flashes the icon and buzzes on the tap, and lets go once nothing is standing on it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const buzzes: unknown[] = [];
+    // `navigator.vibrate` is undefined in jsdom, which is also how iOS Safari behaves — so the
+    // stub is what makes the call observable, not a change in behaviour.
+    Object.defineProperty(navigator, "vibrate", {
+      configurable: true,
+      value: (ms: number) => {
+        buzzes.push(ms);
+        return true;
+      },
+    });
+    // The PHOTOS-ONLY host, deliberately: there the tap opens a native picker and nothing else, so
+    // the flash is the whole of the acknowledgement and its timer is observable. On a host that
+    // opens the picker menu the button stays lit for as long as that menu stands, which the
+    // anchored-picker test above covers.
+    publishUpload({ maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: [] });
+    renderComposer();
+    await waitFor(() =>
+      expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", "image/*,.png"),
+    );
+
+    // Anchored on whitespace: the ghost variant carries `hover:bg-accent` at rest, and a bare
+    // substring match would read that as the pressed tone on every render.
+    const PRESSED = /(^|\s)bg-primary(\s|$)/;
+    const attach = screen.getByRole("button", { name: "Attach file" });
+    expect(attach.className).not.toMatch(PRESSED);
+    await user.click(attach);
+    expect(buzzes).toHaveLength(1);
+    expect(attach.className).toMatch(PRESSED);
+
+    // The flash is a timer, not a state the button can get stuck in.
+    await vi.advanceTimersByTimeAsync(400);
+    await waitFor(() => expect(attach.className).not.toMatch(PRESSED));
+  });
+
+  it("opens the two-row picker on a bridge that takes text as well, ABOVE the button", async () => {
+    const user = userEvent.setup();
+    publishUpload({ maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md"] });
+    renderComposer();
+    await waitFor(() =>
+      expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", "image/*,.png,.md"),
+    );
+    const attach = screen.getByRole("button", { name: "Attach file" });
+    expect(attach).toHaveAttribute("aria-expanded", "false");
+    await user.click(attach);
+    expect(await screen.findByRole("button", { name: "Photos" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Files" })).toBeInTheDocument();
+    expect(attach).toHaveAttribute("aria-expanded", "true");
+    // ABOVE, not over. A bottom sheet covered this button 42ms after the tap, which is what made
+    // its press highlight unseeable; the anchor is what the highlight depends on.
+    expect(screen.getByRole("dialog").className).toMatch(/(^|\s)bottom-full(\s|$)/);
+    // And the trigger stays lit under its own open menu.
+    expect(attach.className).toMatch(/(^|\s)bg-primary(\s|$)/);
+  });
+
+  it("a photos-only bridge opens the camera roll directly — no sheet with one answer in it", async () => {
+    const user = userEvent.setup();
+    publishUpload({ maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: [] });
+    renderComposer();
+    await waitFor(() =>
+      expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", "image/*,.png"),
+    );
+    let opened: string | null = null;
+    for (const id of ["attach-photos", "attach-files"]) {
+      screen.getByTestId(id).addEventListener("click", () => {
+        opened = id;
+      });
+    }
+    await user.click(screen.getByRole("button", { name: "Attach file" }));
+    expect(screen.queryByRole("button", { name: "Photos" })).not.toBeInTheDocument();
+    expect(opened).toBe("attach-photos");
+  });
+
+  it("each row opens its own input, and the sheet closes behind it", async () => {
+    const user = userEvent.setup();
+    publishUpload({ maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md"] });
+    renderComposer();
+    await waitFor(() =>
+      expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", "image/*,.png,.md"),
+    );
+    const opened: string[] = [];
+    for (const id of ["attach-photos", "attach-files"]) {
+      screen.getByTestId(id).addEventListener("click", () => opened.push(id));
+    }
+
+    await user.click(screen.getByRole("button", { name: "Attach file" }));
+    await user.click(await screen.findByRole("button", { name: "Photos" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Photos" })).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Attach file" }));
+    await user.click(await screen.findByRole("button", { name: "Files" }));
+    expect(opened).toEqual(["attach-photos", "attach-files"]);
   });
 });

@@ -13,9 +13,13 @@
 # copies its script: both derive their ROOT from BASH_SOURCE and cd there, so a symlink would point
 # them back at the real checkout and they would answer about THIS repository's versions.
 #
-# Guard (B), lint, and guard (C), pack wire, are out of scope here and are held off with their own
-# SKIP_* switches: they own their file lists and their messages, and check-pack-wire.sh is covered
-# against its own fixtures. What is asserted below is only which commits guard (A) lets through.
+# Guard (B), lint, and guard (D), flake.lock, are out of scope here and are held off with their own
+# SKIP_* switches: they own their file lists and their messages. What the cases in the middle assert
+# is only which commits guard (A) lets through.
+#
+# Guard (C), the crew wire, has its own section at the bottom. It is driven directly rather than
+# through the hook, because the script takes `STAGED_FILES` as an override and that is the whole
+# input it judges — so a case is one variable and one exit code, with no commit in between.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,26 +52,51 @@ write_version() {
   printf '{ "version": "%s" }\n' "$1" > "${REPO}/web/package.json"
 }
 
-# The CHANGELOG, with the bullets of the `## [Unreleased]` section given as arguments. No argument
-# leaves the section empty, which is the state a release commit must reach.
+# The CHANGELOG, with the bullets of the `## [Unreleased]` section given as arguments. Each is
+# written under a `### Fixed` heading with a bold lead, the shape the release page is built from.
+# No argument leaves the section empty, which is the state a release commit must reach.
 write_changelog() {
   {
     echo "# Changelog"
     echo
     echo "## [Unreleased]"
     echo
-    for line in "$@"; do echo "- $line"; done
-    [ "$#" -eq 0 ] || echo
+    if [ "$#" -gt 0 ]; then
+      echo "### Fixed"
+      echo
+      for line in "$@"; do echo "- **${line}.** The detail follows here."; done
+      echo
+    fi
     echo "## [1.0.0] - 2026-01-01"
     echo
-    echo "- the first one"
+    echo "### Fixed"
+    echo
+    echo "- **The first one.** The detail follows here."
+  } > "${REPO}/CHANGELOG.md"
+}
+
+# The same section written by hand, so a case can put a badly shaped bullet in it.
+write_changelog_raw() {
+  {
+    echo "# Changelog"
+    echo
+    echo "## [Unreleased]"
+    echo
+    for line in "$@"; do echo "$line"; done
+    echo
+    echo "## [1.0.0] - 2026-01-01"
+    echo
+    echo "### Fixed"
+    echo
+    echo "- **The first one.** The detail follows here."
   } > "${REPO}/CHANGELOG.md"
 }
 
 mkdir -p "${REPO}/scripts/git-hooks" "${REPO}/web/src/hooks" "${REPO}/cli" "${REPO}/bridge" "${REPO}/docs"
 cp "$HOOK" "${REPO}/scripts/git-hooks/pre-commit"
 cp "${ROOT}/scripts/check-version.sh" "${REPO}/scripts/check-version.sh"
-cp "${ROOT}/scripts/check-pack-wire.sh" "${REPO}/scripts/check-pack-wire.sh"
+cp "${ROOT}/scripts/check-crew-wire.sh" "${REPO}/scripts/check-crew-wire.sh"
+cp "${ROOT}/scripts/check-flake-lock.sh" "${REPO}/scripts/check-flake-lock.sh"
 chmod +x "${REPO}/scripts/git-hooks/pre-commit" "${REPO}/scripts"/check-*.sh
 
 write_version "1.0.0"
@@ -87,8 +116,8 @@ git commit -q --no-verify -m "baseline"
 
 # ── Running one case ─────────────────────────────────────────────────────────
 # Each case stages a set of paths and runs the hook the way git would: from the repository root,
-# with only guard (A) armed. DOWNSTREAM PORT — the fork's private-fact guard (D) joins the guards
-# this fixture disarms, for the reason the other two are on that list: the throwaway repository
+# with only guard (A) armed. DOWNSTREAM PORT — the fork's private-fact guard (E) joins the guards
+# this fixture disarms, for the reason the others are on that list: the throwaway repository
 # carries copies of the scripts guard (A) needs and of nothing else, so a guard whose script is not
 # there fails on the missing module rather than on anything this suite is asking about. `run_guard` leaves the verdict in $RC and the message in $OUT, and
 # always resets the index and worktree, so one case can never colour the next.
@@ -97,7 +126,8 @@ OUT=""
 run_guard() {
   git add -A
   set +e
-  OUT="$(SKIP_LINT_CHECK=1 SKIP_PACK_WIRE_CHECK=1 SKIP_PRIVACY_CHECK=1 bash "${REPO}/scripts/git-hooks/pre-commit" 2>&1)"
+  OUT="$(SKIP_LINT_CHECK=1 SKIP_CREW_WIRE_CHECK=1 SKIP_FLAKE_LOCK_CHECK=1 SKIP_PRIVACY_CHECK=1 \
+    bash "${REPO}/scripts/git-hooks/pre-commit" 2>&1)"
   RC=$?
   set -e
   git reset -q --hard HEAD
@@ -186,6 +216,58 @@ run_guard
 assert_blocked "a reworded bullet is not a new one" "functional code changed but nothing was recorded"
 git reset -q --hard HEAD~1
 
+# ── The shape the release page is built from ─────────────────────────────────
+# Since 1.6.0 `scripts/release-notes.ts` prints each Unreleased bullet's bold lead under its group
+# heading on the GitHub Release page. A bullet the script cannot read is refused here, at commit
+# time, rather than at tag time when the page is already being published.
+
+# A group heading is not a bullet: adding one records nothing, so the guard still asks for a line.
+touch_file cli/pairing.ts
+write_changelog_raw "### Added"
+run_guard
+assert_blocked "a group heading is not a bullet" "functional code changed but nothing was recorded"
+
+# A bullet with no bold lead has nothing for the release page to print.
+touch_file cli/pairing.ts
+write_changelog_raw "### Fixed" "" "- the pairing code now does the thing"
+run_guard
+assert_blocked "a bullet with no bold lead" "no bold lead:"
+
+# A lead whose bold is never closed is the same failure, caught by the same guard.
+touch_file cli/pairing.ts
+write_changelog_raw "### Fixed" "" "- **the pairing code now does the thing"
+run_guard
+assert_blocked "a bullet whose bold lead never closes" "no bold lead:"
+
+# A bullet above every group heading has no group to be printed under.
+touch_file cli/pairing.ts
+write_changelog_raw "- **The pairing code does the thing.** No group owns it."
+run_guard
+assert_blocked "a bullet above every group heading" "above a group:"
+
+# A group heading that is not one of the five is refused: the release page has no column for it.
+touch_file cli/pairing.ts
+write_changelog_raw "### Removed" "" "- **The pairing code does the thing.** The detail follows here."
+run_guard
+assert_blocked "an unknown group heading" "unknown group:"
+
+# The shape the guard wants, spelled out: a group heading, a bold lead, then the detail.
+touch_file cli/pairing.ts
+write_changelog_raw "### Fixed" "" "- **The pairing code does the thing.** The detail follows here. (#147)"
+run_guard
+assert_allowed "a grouped bullet with a bold lead"
+
+# All five groups at once, each with its own bullet, is the shape a release folds away whole.
+touch_file cli/pairing.ts
+write_changelog_raw \
+  "### Added" "" "- **A verb arrives.** The detail follows here." "" \
+  "### Changed" "" "- **A default moves.** The detail follows here." "" \
+  "### Fixed" "" "- **A bug goes away.** The detail follows here." "" \
+  "### Packaging" "" "- **The package files its docs.** The detail follows here." "" \
+  "### Docs" "" "- **A page names the route.** The detail follows here."
+run_guard
+assert_allowed "all five groups at once"
+
 # ── The release commit ───────────────────────────────────────────────────────
 # The version moved, so the guard switches to the other question: did the Unreleased section get
 # folded away, and did the version go forward.
@@ -217,7 +299,7 @@ assert_blocked "a version that went backwards" "version went backwards"
 touch_file cli/pairing.ts
 git add -A
 set +e
-OUT="$(SKIP_VERSION_CHECK=1 SKIP_LINT_CHECK=1 SKIP_PACK_WIRE_CHECK=1 SKIP_PRIVACY_CHECK=1 \
+OUT="$(SKIP_VERSION_CHECK=1 SKIP_LINT_CHECK=1 SKIP_CREW_WIRE_CHECK=1 SKIP_FLAKE_LOCK_CHECK=1 SKIP_PRIVACY_CHECK=1 \
   bash "${REPO}/scripts/git-hooks/pre-commit" 2>&1)"
 RC=$?
 set -e
@@ -226,6 +308,69 @@ assert_allowed "SKIP_VERSION_CHECK=1 over an unrecorded source change"
 case "$OUT" in
   *"SKIP_VERSION_CHECK=1"*) ;;
   *) fail "the override passed silently: ${OUT}" ;;
+esac
+
+# ── Guard (C): the crew wire ─────────────────────────────────────────────────
+# ADR 0025: a commit that stages a wire-shape file must record a protocol decision — a staged
+# `CREW_PROTOCOL.md` (additive-optional, §7.1) or a bumped `CREW_PROTOCOL_VERSION`. Both names moved
+# in 1.8.0 (protocol version 2, ADR 0039), and the guard asks for the new ones.
+#
+# `STAGED_FILES` is the script's own override, so each case is one variable. Pass (b) reads the
+# staged and HEAD blobs of `bridge/crew/enrollment.ts` with `git show`, which is why that file has to
+# exist in the fixture and be committed.
+mkdir -p "${REPO}/bridge/crew"
+printf 'export const CREW_PROTOCOL_VERSION = 2;\n' > "${REPO}/bridge/crew/enrollment.ts"
+printf '# Crew protocol v2\n' > "${REPO}/CREW_PROTOCOL.md"
+printf '// REMOVE_IN_1_9_0 — the version 1 overlap.\n' > "${REPO}/bridge/crew/v1-overlap.ts"
+git add -A
+git commit -q --no-verify -m "crew wire fixture"
+
+wire_guard() {
+  set +e
+  OUT="$(STAGED_FILES="$1" bash "${REPO}/scripts/check-crew-wire.sh" 2>&1)"
+  RC=$?
+  set -e
+}
+
+wire_guard "docs/deployment.md"
+assert_allowed "no wire file staged"
+
+wire_guard "bridge/crew/router.ts"
+assert_blocked "a wire file with no decision" "no protocol decision was recorded"
+case "$OUT" in
+  *"CREW_PROTOCOL.md"*) ;;
+  *) fail "the refusal did not name CREW_PROTOCOL.md: ${OUT}" ;;
+esac
+
+wire_guard "bridge/crew/router.ts
+CREW_PROTOCOL.md"
+assert_allowed "a wire file with the contract doc staged"
+case "$OUT" in
+  *"staged CREW_PROTOCOL.md"*) ;;
+  *) fail "the pass did not name CREW_PROTOCOL.md: ${OUT}" ;;
+esac
+
+# The overlap is on the file list, so touching it is a wire change like any other. REMOVE_IN_1_9_0
+# together with `bridge/crew/v1-overlap.ts` itself.
+wire_guard "bridge/crew/v1-overlap.ts"
+assert_blocked "the version 1 overlap with no decision" "bridge/crew/v1-overlap.ts"
+
+# And while the overlap exists it must carry its removal marker, whatever else is staged — a file
+# that lost the marker is a file nobody will remember to delete in 1.9.0. REMOVE_IN_1_9_0.
+printf '// no marker here\n' > "${REPO}/bridge/crew/v1-overlap.ts"
+wire_guard "docs/deployment.md"
+assert_blocked "the overlap without its marker" "carries no REMOVE_IN_1_9_0 marker"
+printf '// REMOVE_IN_1_9_0 — the version 1 overlap.\n' > "${REPO}/bridge/crew/v1-overlap.ts"
+
+# The hatch, and it says so on the way past.
+set +e
+OUT="$(SKIP_CREW_WIRE_CHECK=1 STAGED_FILES="bridge/crew/router.ts" bash "${REPO}/scripts/check-crew-wire.sh" 2>&1)"
+RC=$?
+set -e
+assert_allowed "SKIP_CREW_WIRE_CHECK=1 over a wire change"
+case "$OUT" in
+  *"SKIP_CREW_WIRE_CHECK=1"*) ;;
+  *) fail "the crew-wire override passed silently: ${OUT}" ;;
 esac
 
 echo "✓ pre-commit.test.sh — all cases passed"

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { PACK_SUBCOMMANDS } from "./pack.ts";
+import { CREW_SUBCOMMANDS } from "./crew.ts";
 import { DEVICES_SUBCOMMANDS } from "./pairing.ts";
 import { PUSH_SUBCOMMANDS } from "./push.ts";
 import { STT_SUBCOMMANDS } from "./stt.ts";
@@ -47,10 +47,11 @@ const SHELL_VERBS = [
   "logs",
 ];
 
-// The pack verbs (M4/07). They have no shell ancestor — `collie-ctl.sh` never knew about federation
-// — so they are listed separately: the assertion above is "the port kept every verb the shell had",
-// and this one is "the binary grew exactly these".
-const PACK_VERBS = ["join", "leave", "pack", "promote", "reconnect"];
+// The crew verbs (M4/07, renamed in M24). They have no shell ancestor — `collie-ctl.sh` never knew
+// about federation — so they are listed separately: the assertion above is "the port kept every verb
+// the shell had", and this one is "the binary grew exactly these". `crew` is the alias of `crew`
+// (ADR 0038); it sits right after it in the table and is internal, so the usage line never names it.
+const CREW_VERBS = ["join", "leave", "crew", "pack", "promote", "reconnect"];
 
 // The diagnostic verbs (M7/02). No shell ancestor either, and they sit between the two groups above
 // because that is where they are declared — the usage line's order is the table's order.
@@ -65,7 +66,7 @@ const LINK_VERBS = ["link", "unlink"];
 // internal emitter the entry it writes calls.
 const BEACON_VERBS = ["hooks", "beacon"];
 
-// The device-pairing verbs. Declared between the diagnostics and the pack, because that is where
+// The device-pairing verbs. Declared between the diagnostics and the crew, because that is where
 // they sit in the table, and grouped separately for the same reason as the two above.
 const PAIRING_VERBS = ["pair", "devices"];
 
@@ -78,6 +79,9 @@ const PUSH_VERBS = ["push"];
 // operator's own terminal is the only right place to configure, because they mint or accept a
 // credential.
 const STT_VERBS = ["stt"];
+// The manual, printed out of the binary: `collie skill` for an AI agent, `collie docs` for the
+// operator pages. Neither was ever a shell verb — there was nothing to print before it was embedded.
+const MANUAL_VERBS = ["skill", "docs"];
 
 function capture(): Io & { stdout: string[]; stderr: string[] } {
   const stdout: string[] = [];
@@ -95,7 +99,8 @@ describe("the verb table", () => {
       ...PAIRING_VERBS,
       ...PUSH_VERBS,
       ...STT_VERBS,
-      ...PACK_VERBS,
+      ...CREW_VERBS,
+      ...MANUAL_VERBS,
       "help",
     ]);
   });
@@ -106,6 +111,8 @@ describe("the verb table", () => {
       "_exec-bridge",
       // The emitter is spelled by a hook, never typed — see cli/beacon.ts.
       "beacon",
+      // The `crew` alias. Dispatchable, but never named in the usage line (ADR 0038).
+      "pack",
     ]);
   });
 
@@ -125,6 +132,17 @@ describe("the verb table", () => {
 
   test("every verb has a summary", () => {
     for (const c of COMMANDS) expect(c.summary.length).toBeGreaterThan(0);
+  });
+
+  // ADR 0038 removes the `collie pack` alias in 2.0.0. Today this passes because the version is
+  // 1.x and the assertion is not reached; the day the major moves to 2, it fails until the entry
+  // is deleted, so the removal is remembered by the test suite and not by anyone's memory.
+  test("the `crew` alias is gone in 2.0.0", () => {
+    const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+    const major = Number.parseInt(/"version": *"(\d+)\./.exec(pkg)?.[1] ?? "", 10);
+    expect(Number.isNaN(major)).toBe(false);
+    if (major < 2) return;
+    expect(COMMANDS.map((c) => c.name)).not.toContain("pack");
   });
 });
 
@@ -182,8 +200,8 @@ describe("dispatch", () => {
   });
 
   test("a subcommand is matched by name; anything else reaches the parent", async () => {
-    const { command, seen } = spy("pack", ["invite", "status"]);
-    for (const argv of [["pack", "status", "--no-probe"], ["pack"], ["pack", "nonsense"]]) {
+    const { command, seen } = spy("crew", ["invite", "status"]);
+    for (const argv of [["crew", "status", "--no-probe"], ["crew"], ["crew", "nonsense"]]) {
       expect(await go(argv, [command])).toBe(EXIT.OK);
     }
     expect(seen).toEqual([
@@ -202,9 +220,9 @@ describe("dispatch", () => {
   });
 
   test("--plain is accepted anywhere and never reaches the verb", async () => {
-    const { command, seen } = spy("pack", ["status"]);
-    expect(await go(["--plain", "pack", "status"], [command])).toBe(EXIT.OK);
-    expect(await go(["pack", "status", "--plain", "--no-probe"], [command])).toBe(EXIT.OK);
+    const { command, seen } = spy("crew", ["status"]);
+    expect(await go(["--plain", "crew", "status"], [command])).toBe(EXIT.OK);
+    expect(await go(["crew", "status", "--plain", "--no-probe"], [command])).toBe(EXIT.OK);
     expect(seen).toEqual([
       ["status"],
       ["status", "--no-probe"],
@@ -220,9 +238,9 @@ describe("dispatch", () => {
 });
 
 describe("the subcommand trees", () => {
-  test("`pack` declares exactly `cli/pack.ts`'s sub-verbs, in its order", () => {
-    const pack = findCommand("pack");
-    expect(pack?.subcommands?.map((s) => s.name)).toEqual([...PACK_SUBCOMMANDS]);
+  test("`crew` declares exactly `cli/crew.ts`'s sub-verbs, in its order", () => {
+    const crew = findCommand("crew");
+    expect(crew?.subcommands?.map((s) => s.name)).toEqual([...CREW_SUBCOMMANDS]);
   });
 
   test("`devices` declares exactly `cli/pairing.ts`'s sub-verbs, in its order", () => {
@@ -245,6 +263,8 @@ describe("the subcommand trees", () => {
       "devices",
       "push",
       "stt",
+      "crew",
+      // The alias carries the SAME array — that is what `cli/crew.test.ts` pins.
       "pack",
     ]);
   });
@@ -326,12 +346,12 @@ describe("exit codes", () => {
       "url",
       // `qr` shells out to `tailscale` to decide which URL is worth encoding.
       "qr",
-      // Every pack verb writes the trust store, dials another machine, or restarts the service —
-      // and `pack` with no subcommand would still resolve a real context and a real audit path. All
-      // of them are covered in cli/pack.test.ts against fakes.
-      ...PACK_VERBS,
+      // Every crew verb writes the trust store, dials another machine, or restarts the service —
+      // and `crew` with no subcommand would still resolve a real context and a real audit path. All
+      // of them are covered in cli/crew.test.ts against fakes.
+      ...CREW_VERBS,
       // `doctor` writes nothing, but it is not runnable here either: it shells out to `tailscale`
-      // and would dial this host's real pack members. cli/doctor.test.ts drives it against fakes.
+      // and would dial this host's real crew members. cli/doctor.test.ts drives it against fakes.
       ...DIAGNOSTIC_VERBS,
       // `link`/`unlink` write into the developer's own `~/.local/bin` — the one place a test must
       // not publish a name. cli/link.test.ts drives both against a fake symlink seam.
@@ -352,7 +372,9 @@ describe("exit codes", () => {
       // real state dir. cli/beacon.test.ts drives it against fakes.
       ...BEACON_VERBS,
     ];
-    const readOnly = ["version", "help"];
+    // `skill` and `docs` print text compiled into this binary. They read nothing, resolve no state
+    // dir and touch no machine, so the suite may run them for real.
+    const readOnly = ["version", "help", "skill", "docs"];
     for (const name of [...worldTouching, ...readOnly]) expect(findCommand(name)).toBeDefined();
     expect([...worldTouching, ...readOnly].length).toBe(COMMANDS.length);
     // The grep stops at the verb's closing quote, NOT at the `"]` that used to follow it: a verb
@@ -401,6 +423,8 @@ describe("exit codes", () => {
     expect(normalizeArgv(["--version"])).toEqual(["version"]);
     expect(normalizeArgv(["-V"])).toEqual(["version"]);
     expect(normalizeArgv(["logs", "--version"])).toEqual(["logs", "--version"]);
+    expect(normalizeArgv(["--skill"])).toEqual(["skill"]);
+    expect(normalizeArgv(["logs", "--skill"])).toEqual(["logs", "--skill"]);
     // `-v` is left for a future `--verbose`; a flag that changes meaning later is worse than none.
     expect(normalizeArgv(["-v"])).toEqual(["-v"]);
     expect(normalizeArgv([])).toEqual([]);

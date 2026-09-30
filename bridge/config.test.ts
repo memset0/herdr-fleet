@@ -10,6 +10,7 @@ import {
   nonLoopbackBindRefusal,
   resolveBridgeHost,
 } from "./config.ts";
+import { DEFAULT_MAX_UPLOAD_BYTES } from "./uploads.ts";
 
 // loadConfig is the deployment contract — env vars in, a resolved Config out. Pure (just reads
 // process.env + homedir), so we drive it by mutating the environment and restoring it after.
@@ -27,6 +28,7 @@ const KEYS = [
   "COLLIE_PI_ROOT",
   "COLLIE_OPENCODE_ROOT",
   "COLLIE_GROK_ROOT",
+  "COLLIE_HERMES_ROOT",
   // Each harness's own home var participates in journal-root resolution, so the suite must own them
   // too — otherwise a developer with CODEX_HOME set gets different results than CI.
   "CODEX_HOME",
@@ -49,6 +51,8 @@ const KEYS = [
   "COLLIE_STATE_DIR",
   "COLLIE_MULTI_SESSION",
   "COLLIE_SKIP_SERVE",
+  "COLLIE_MAX_UPLOAD_MB",
+  "COLLIE_UPLOAD_EXTRA_TYPES",
   "HERDR_SOCKET_PATH",
   "HERDR_PLUGIN_STATE_DIR",
   "HERDR_PLUGIN_CONFIG_DIR",
@@ -89,6 +93,7 @@ describe("loadConfig", () => {
     // OpenCode keeps ONE sqlite database at the top of its XDG data dir — no per-session files.
     expect(cfg.journalRoots.opencode).toEqual([join(homedir(), ".local", "share", "opencode")]);
     expect(cfg.journalRoots.grok).toEqual([join(homedir(), ".grok", "sessions")]);
+    expect(cfg.journalRoots.hermes).toEqual([join(homedir(), ".hermes")]);
     expect(cfg.submitKeys).toEqual(["Enter"]);
     expect(cfg.trustedUser).toBe("");
     expect(cfg.trustedUserOptional).toBe(false);
@@ -217,6 +222,11 @@ describe("loadConfig", () => {
     expect(loadConfig().journalRoots.codex).toEqual(["/elsewhere/rollouts"]);
   });
 
+  test("COLLIE_HERMES_ROOT relocates Hermes state.db", () => {
+    process.env.COLLIE_HERMES_ROOT = "/srv/hermes";
+    expect(loadConfig().journalRoots.hermes).toEqual(["/srv/hermes"]);
+  });
+
   // The operator's rows sit beside their .env, and the launcher hands us that dir precisely so the
   // bridge and scripts/collie-ctl.sh never disagree about which one it is.
   test("commands.toml is resolved in the plugin config dir the launcher passed", () => {
@@ -273,6 +283,26 @@ describe("loadConfig", () => {
     expect(loadConfig().notifyDelayMs).toBe(0);
   });
 
+  test("uses the default upload cap when unset, and resolves COLLIE_MAX_UPLOAD_MB to bytes", () => {
+    expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+    process.env.COLLIE_MAX_UPLOAD_MB = "5";
+    expect(loadConfig().maxUploadBytes).toBe(5 * 1024 * 1024);
+  });
+
+  test("an out-of-range or non-integer COLLIE_MAX_UPLOAD_MB falls back to the default", () => {
+    process.env.COLLIE_MAX_UPLOAD_MB = "0";
+    expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+    process.env.COLLIE_MAX_UPLOAD_MB = "9999";
+    expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+    process.env.COLLIE_MAX_UPLOAD_MB = "not-a-number";
+    expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+  });
+
+  test("COLLIE_UPLOAD_EXTRA_TYPES normalises entries: lowercased, leading dot forgiven, invalid dropped, deduped", () => {
+    process.env.COLLIE_UPLOAD_EXTRA_TYPES = " .RB, ex ,bad name,rb";
+    expect(loadConfig().uploadExtraTypes).toEqual(["rb", "ex"]);
+  });
+
   test("reads the public-hosts allowlist, trimming and dropping blanks", () => {
     process.env.COLLIE_PUBLIC_HOSTS = " collie.example.ts.net , collie.example.com:8443 ,";
     expect(loadConfig().publicHosts).toEqual([
@@ -301,7 +331,7 @@ describe("loadConfig", () => {
 
   test("carries a non-loopback bind and its escape hatch without deciding either", () => {
     process.env.COLLIE_HOST = "0.0.0.0";
-    // loadConfig REPORTS the bind; it does not refuse it. The refusal needs the pack mode, which is
+    // loadConfig REPORTS the bind; it does not refuse it. The refusal needs the crew mode, which is
     // resolved after this runs (bridge/index.ts) — see nonLoopbackBindRefusal below.
     expect(loadConfig().host).toBe("0.0.0.0");
     expect(loadConfig().allowNonLoopbackBind).toBe(false);
@@ -407,7 +437,7 @@ describe("resolveBridgeHost", () => {
   });
 });
 
-// Exported so mode-scoped config (bridge/pack/config.ts) parses its env in this exact style instead
+// Exported so mode-scoped config (bridge/crew/config.ts) parses its env in this exact style instead
 // of growing a second reader. The env source is injectable, which is the only new thing here — the
 // truth table below is the one loadConfig has always used.
 describe("envBool", () => {

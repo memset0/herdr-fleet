@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { STANDBY_VERSION_HEADER } from "../bridge/pack/standby.ts";
-import { leadStore, member, peerStore } from "../bridge/pack/fixtures.ts";
-import { serializeTrustStore } from "../bridge/pack/trust-store.ts";
+import { STANDBY_VERSION_HEADER } from "../bridge/crew/standby.ts";
+import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
+import { serializeTrustStore } from "../bridge/crew/trust-store.ts";
 import { UPDATE_RUN_SCHEMA, type UpdateRun } from "../bridge/update-run.ts";
 import { fakeFiles } from "./fakes.ts";
 import {
@@ -58,7 +58,7 @@ describe("probe target", () => {
   });
 
   test("the config is read off this instance's env and its trust store", () => {
-    const files = fakeFiles({ [`${STATE}/pack-trust.json`]: serializeTrustStore(peerStore()) });
+    const files = fakeFiles({ [`${STATE}/crew-trust.json`]: serializeTrustStore(peerStore()) });
     const cfg = probeConfigOf(
       { COLLIE_HOST: "100.64.0.8", COLLIE_STANDBY_PORT: "8799" },
       files,
@@ -71,7 +71,7 @@ describe("probe target", () => {
 
   test("a lead's store names no lead, so its own port is the target", () => {
     const files = fakeFiles({
-      [`${STATE}/pack-trust.json`]: serializeTrustStore(leadStore({ peers: [member({ memberId: "nas" })] })),
+      [`${STATE}/crew-trust.json`]: serializeTrustStore(leadStore({ peers: [member({ memberId: "nas" })] })),
     });
     expect(probeConfigOf({ COLLIE_STANDBY_PORT: "8799" }, files, STATE, 8787).pinsALead).toBe(false);
   });

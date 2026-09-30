@@ -1,19 +1,26 @@
 import { describe, expect, test } from "bun:test";
 
-import { adapterFor, buildJournalRegistry, journalAgents, KNOWN_HARNESS_NAMES } from "./registry.ts";
+import {
+  adapterFor,
+  AGENT_ALIASES,
+  buildJournalRegistry,
+  journalAgents,
+  KNOWN_HARNESS_NAMES,
+} from "./registry.ts";
 
 // The registry is the SINGLE decision site for "which agents have a journal". These tests pin the
 // two properties that keep it from rotting: keys come from the adapters themselves, and a hostile
 // agent name can't resolve to something that isn't an adapter.
 
-const roots = { claude: ["/c"], codex: ["/x"], pi: ["/p"], opencode: ["/o"], grok: ["/g"] };
+const roots = { claude: ["/c"], codex: ["/x"], pi: ["/p"], opencode: ["/o"], grok: ["/g"], hermes: ["/h"] };
 
 describe("buildJournalRegistry", () => {
-  test("serves the five verified harnesses", () => {
+  test("serves the six verified harnesses", () => {
     expect(journalAgents(buildJournalRegistry(roots))).toEqual([
       "claude",
       "codex",
       "grok",
+      "hermes",
       "opencode",
       "pi",
     ]);
@@ -28,8 +35,14 @@ describe("buildJournalRegistry", () => {
 describe("adapterFor", () => {
   const registry = buildJournalRegistry(roots);
 
-  test.each(["claude", "codex", "pi", "opencode", "grok"])("resolves %s", (agent) => {
+  test.each(["claude", "codex", "pi", "opencode", "grok", "hermes"])("resolves %s", (agent) => {
     expect(adapterFor(registry, agent)?.agent).toBe(agent);
+  });
+
+  // An alias is a second NAME for one adapter, never a sixth adapter — derived from the map so a
+  // new pair is covered the day it is added.
+  test.each(Object.entries(AGENT_ALIASES))("resolves the %s alias to %s", (alias, canonical) => {
+    expect(adapterFor(registry, alias)?.agent).toBe(canonical);
   });
 
   test("an agent with no journal is undefined, not a throw", () => {
@@ -59,6 +72,9 @@ describe("the frontend mirror", () => {
     // The `new Set([…])` literal alone — the prose around it names agents too ("claude-code").
     const literal = /new Set\(\[([^\]]*)\]\)/.exec(source)?.[1] ?? "";
     const listed = [...literal.matchAll(/"([a-z][a-z0-9-]*)"/g)].map((m) => m[1]);
-    expect(listed.toSorted()).toEqual([...KNOWN_HARNESS_NAMES].toSorted());
+    // DERIVED, never patched by hand: the browser's set is the adapters plus every alias name, so
+    // adding either on this side fails here until the frontend follows.
+    const expected = [...KNOWN_HARNESS_NAMES, ...Object.keys(AGENT_ALIASES)];
+    expect(listed.toSorted()).toEqual(expected.toSorted());
   });
 });

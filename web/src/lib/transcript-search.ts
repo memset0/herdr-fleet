@@ -17,6 +17,10 @@ export function searchableText(entry: TranscriptEntry): string {
   for (const part of entry.parts) {
     if (part.kind === "tool") {
       parts.push(part.name, part.summary);
+    } else if (part.kind === "image") {
+      // Deliberately skipped: an image part carries a URL and a mime type, and neither is text the
+      // operator typed or the agent said. Indexing the URL would make a find hit on a sha-256.
+      continue;
     } else {
       parts.push(part.text);
     }

@@ -3,8 +3,8 @@ import { Server, ServerOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddressTag } from "@/components/ui/address-tag";
 import { HOST_TEXT_CLASSES, hostName, hostSlot } from "@/lib/hosts";
-import type { HostState } from "@/lib/host-health";
-import { useHostHealth, usePack } from "@/components/pack-provider";
+import { linkPresentation, type HostState } from "@/lib/host-health";
+import { useHostHealth, useCrew } from "@/components/crew-provider";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -33,9 +33,9 @@ interface HostChipProps {
 // question is even worth asking.
 //
 // ── THE HIDE RULE LIVES HERE, NOT IN THE CALLERS ─────────────────────────────
-// Renders `null` when the pack is a single machine — i.e. for every install that exists today —
-// which is why callers may mount it unconditionally. If each caller had to ask "am I on a pack?"
-// first, a solo install would eventually grow a stray chip and, far worse, a pack install would
+// Renders `null` when the crew is a single machine — i.e. for every install that exists today —
+// which is why callers may mount it unconditionally. If each caller had to ask "am I on a crew?"
+// first, a solo install would eventually grow a stray chip and, far worse, a crew install would
 // eventually drop one at the surface that mattered.
 //
 // ── AND WHY IT IS NEVER THE SESSION SWITCHER'S TWIN ──────────────────────────
@@ -46,9 +46,9 @@ interface HostChipProps {
 // user-supplied string that reaches this UI.
 export function HostChip({ host, state, variant = "tag", className }: HostChipProps) {
   useLocale();
-  const { servers, multi } = usePack();
+  const { servers, multi } = useCrew();
   const health = useHostHealth(host);
-  // No pack, or nothing to name: the whole dimension is invisible. (Hooks run first — the hide rule
+  // No crew, or nothing to name: the whole dimension is invisible. (Hooks run first — the hide rule
   // is a render decision, not a reason to call a hook conditionally.)
   if (!multi || host === undefined) return null;
 
@@ -69,7 +69,7 @@ export function HostChip({ host, state, variant = "tag", className }: HostChipPr
   // "(unreachable)" with it, so a peer answering every request — its receipt merely older than the
   // sweep's cadence — was announced down to a screen reader, beside a composer that was accepting
   // sends. The dashed border and the word are the same fact as the refusal: the lead's plain
-  // boolean, unsmoothed, exactly what `writeRefusal` gates on. Absent health on a pack is a departed
+  // boolean, unsmoothed, exactly what `writeRefusal` gates on. Absent health on a crew is a departed
   // member, which is not writable either.
   const unreachable = !health?.writable;
   // ONE condition drives BOTH the styling and the label, so the two can never drift into a chip that
@@ -77,6 +77,15 @@ export function HostChip({ host, state, variant = "tag", className }: HostChipPr
   // `!writable` may spell "unreachable".
   const degraded =
     unreachable || health?.incompatible === true || (state ?? health?.state ?? "unknown") === "unknown";
+  // WHICH degraded reading this is (§10.2's presentation split), from the lead's own answer and never
+  // re-derived here — the crew page reads the same function, so the two screens cannot describe one
+  // machine two ways. It takes `unreachable` and not `degraded` for the reason above: only
+  // `!writable` may put a WORD on this chip, and an absent `linkState` keeps that word as it is.
+  const link = linkPresentation(unreachable, health?.linkState);
+  // ONE value for the styling, and it reads `link` wherever `link` says anything. Reconnecting is the
+  // quiet fault: the lead is retrying inside its budget and will most likely have it back on the next
+  // poll, so it is dashed and amber rather than red. Everything else keeps today's alert exactly.
+  const tone = link === "reconnecting" ? "waiting" : degraded ? "alert" : "quiet";
   const target = variant === "target";
   const caption = variant === "caption";
   // The name is decorative repetition for a screen reader if it were bare text, so the WHOLE chip
@@ -86,7 +95,7 @@ export function HostChip({ host, state, variant = "tag", className }: HostChipPr
   // verb, beside the one control whose whole question is where the text is going.
   const label = t(target || caption ? "connection.host.ariaSends" : "connection.host.ariaHost", {
     name,
-    unreachable: unreachable ? t("connection.host.ariaUnreachableSuffix") : "",
+    unreachable: linkSuffix(link),
   });
 
   // THE CAPTION RUN IS NOT A PILL, which is why it is not an AddressTag. It is a small uppercase run
@@ -113,11 +122,11 @@ export function HostChip({ host, state, variant = "tag", className }: HostChipPr
           // Degraded first, always: the run is two hundred pixels from the box being typed into, and
           // "which machine" must never outrank "that machine is not taking writes". The NAME stays
           // this colour either way — only the glyph below carries the identity tint.
-          degraded ? "text-status-blocked" : "text-muted-foreground",
+          tone === "alert" ? "text-status-blocked" : tone === "waiting" ? "text-status-working" : "text-muted-foreground",
           className,
         )}
       >
-        {degraded ? (
+        {tone !== "quiet" ? (
           <ServerOff className="size-2.5 shrink-0" aria-hidden />
         ) : (
           <Server
@@ -139,9 +148,32 @@ export function HostChip({ host, state, variant = "tag", className }: HostChipPr
       prefix={target ? t("connection.host.onPrefix") : undefined}
       name={name}
       size={target ? "md" : "sm"}
-      tone={degraded ? "alert" : "quiet"}
+      tone={tone}
       slot={slot}
       className={className}
     />
   );
+}
+
+/**
+ * The chip's whole label, appended to the name: what is wrong, in the operator's language, or `""`
+ * when nothing is.
+ *
+ * A screen reader gets the same three readings the eye does, which is the point — the amber and the
+ * red are not on the accessibility tree, and a chip that looked different and read identical would be
+ * the drift this file's header is written against.
+ */
+function linkSuffix(link: ReturnType<typeof linkPresentation>): string {
+  switch (link) {
+    case "ok":
+      return "";
+    case "reconnecting":
+      return t("connection.host.ariaSuffix", { word: t("connection.host.reconnecting") });
+    case "attention":
+      return t("connection.host.ariaSuffix", { word: t("connection.host.attention") });
+    case "unreachable":
+      // The one word that keeps its own key: it is the string every released build already ships,
+      // and an absent `linkState` has to read exactly as it read before this split existed.
+      return t("connection.host.ariaUnreachableSuffix");
+  }
 }

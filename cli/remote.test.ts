@@ -6,22 +6,33 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { AuditLog, type AuditEntry } from "../bridge/audit.ts";
-import { PACK_PROTOCOL_VERSION } from "../bridge/pack/enrollment.ts";
-import { fp, leadStore, material, member, PACK, T0 } from "../bridge/pack/fixtures.ts";
-import { serializeTrustStore, TrustStore, type TrustStoreData, type TrustStoreIo } from "../bridge/pack/trust-store.ts";
-import { capture, context, fakeExec, fakeFiles, fakeOps, ROOT, type SeededOps } from "./fakes.ts";
+import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
+import { fp, leadStore, material, member, CREW, T0 } from "../bridge/crew/fixtures.ts";
+import { serializeTrustStore, TrustStore, type TrustStoreData, type TrustStoreIo } from "../bridge/crew/trust-store.ts";
+import {
+  capture,
+  context,
+  fakeExec,
+  fakeFiles,
+  fakeOps,
+  HOME,
+  ROOT,
+  type SeededFiles,
+  type SeededOps,
+} from "./fakes.ts";
+import { sshResolveArgs } from "./candidates.ts";
 import type { Environment } from "./context.ts";
 import { EXIT } from "./io.ts";
-import { cmdPack, type PackDeps } from "./pack.ts";
+import { cmdCrew, type CrewDeps } from "./crew.ts";
 import {
   bindOverwriteConfirmation,
-  cmdPackAdd,
+  cmdCrewAdd,
   composeStdin,
   configureScript,
   enrollScript,
   installScript,
   membershipScript,
-  packAddDeps,
+  crewAddDeps,
   parseMembership,
   parseProbe,
   probeScript,
@@ -30,15 +41,15 @@ import {
   shqPath,
   sshOptions,
   STDIN_MARKER,
-  type PackAddDeps,
+  type CrewAddDeps,
   type RemoteResult,
 } from "./remote.ts";
 import { realExec } from "./sys.ts";
 
-// `collie pack add` against fakes for every seam. **NOTHING here spawns `ssh` or reaches a network**:
+// `collie crew add` against fakes for every seam. **NOTHING here spawns `ssh` or reaches a network**:
 // the transport is a function that records `(script, stdin)` pairs and answers from a table, the
 // prompts are values, and the trust store is in memory. That is the same safety boundary
-// `cli/fakes.ts` draws for the lifecycle verbs and `cli/pack.test.ts` draws for the pack verbs — a
+// `cli/fakes.ts` draws for the lifecycle verbs and `cli/crew.test.ts` draws for the crew verbs — a
 // verb that installs software on another machine is exactly the one that must never be run for real
 // by a test suite.
 
@@ -51,7 +62,7 @@ function legOf(script: string): Leg {
   if (script.includes("collie-probe:")) return "probe";
   if (script.includes("collie-install:")) return "install";
   if (script.includes("collie-configure:")) return "configure";
-  if (script.includes("pack status --no-probe")) return "membership";
+  if (script.includes("crew status --no-probe")) return "membership";
   if (script.includes('"$ROOT/bin/collie" restart')) return "restart";
   if (script.includes("'join'")) return "enroll";
   throw new Error(`unrecognised leg script:\n${script}`);
@@ -95,19 +106,21 @@ function probeOut(over: Record<string, string> = {}): string {
 }
 
 const SOLO_STATUS = [
-  "mode: solo — this collie is not in a pack (no trust store, or an empty one).",
-  "  `collie pack invite` here makes it a lead; `collie join …` makes it a peer.",
+  "mode: solo — this collie is not in a crew (no trust store, or an empty one).",
+  "  `collie crew invite` here makes it a lead; `collie join …` makes it a peer.",
 ].join("\n");
 
 type LegAnswers = Partial<Record<Leg, Partial<RemoteResult>>>;
 
 interface Harness {
-  deps: PackAddDeps;
+  deps: CrewAddDeps;
   io: ReturnType<typeof capture>;
   calls: Recorded[];
   closed: number;
   data(): TrustStoreData | null;
   restarts: number;
+  /** Every LOCAL spawn, in order — what the candidate picker asked this machine. */
+  exec: { calls: string[] };
 }
 
 interface HarnessOptions {
@@ -123,8 +136,16 @@ interface HarnessOptions {
   flags?: string[];
   /** Extra resolved env — `COLLIE_PUBLIC_URL` is the one that steers the lead's own address. */
   env?: Record<string, string>;
-  /** Seed for the ops store — how `pack add` remembers a host it already reached. */
+  /** Seed for the ops store — how `crew add` remembers a host it already reached. */
   ops?: SeededOps;
+  /** `~/.ssh/config`'s contents, for the candidate picker. Absent ⇒ there is no such file. */
+  sshConfig?: string;
+  /** Any other file the picker may read — an ssh `Include` target, say. */
+  extraFiles?: Readonly<Record<string, string>>;
+  /** `herdr machine list --json`'s stdout. Absent ⇒ there is no `herdr` binary to ask. */
+  machines?: string;
+  /** `ssh -G <target>` output per target. Absent ⇒ there is no `ssh` to resolve with. */
+  resolve?: Readonly<Record<string, string>>;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -144,22 +165,33 @@ function harness(opts: HarnessOptions = {}): Harness {
   let restarts = 0;
   let closed = 0;
 
+  // The candidate picker's two sources, and the resolver. All three are ABSENT by default, so every
+  // test written before the picker existed sees the machine it always saw: no ssh config, no `herdr`
+  // to ask for a machine list, and no `ssh` to resolve an alias with.
+  const seeded: SeededFiles = { ...opts.extraFiles };
+  if (opts.sshConfig !== undefined) seeded[`${HOME}/.ssh/config`] = opts.sshConfig;
+  const answers: [string, Partial<ReturnType<typeof realExec>["capture"]> | { stdout: string }][] = [
+    [`git -C ${ROOT} rev-parse HEAD`, { stdout: `${COMMIT}\n` }],
+    [`git -C ${ROOT} status --porcelain`, { stdout: "" }],
+    [`git -C ${ROOT} show ${COMMIT}:herdr-plugin.toml`, { stdout: `version = "${VERSION}"\n` }],
+    ["tailscale status --json", { stdout: TAILSCALE_JSON }],
+  ];
+  if (opts.machines !== undefined) answers.push(["herdr machine list --json", { stdout: opts.machines }]);
+  for (const [target, stdout] of Object.entries(opts.resolve ?? {})) {
+    answers.push([`ssh ${sshResolveArgs(target).join(" ")}`, { stdout }]);
+  }
   const exec = fakeExec({
-    answers: [
-      [`git -C ${ROOT} rev-parse HEAD`, { stdout: `${COMMIT}\n` }],
-      [`git -C ${ROOT} status --porcelain`, { stdout: "" }],
-      [`git -C ${ROOT} show ${COMMIT}:herdr-plugin.toml`, { stdout: `version = "${VERSION}"\n` }],
-      ["tailscale status --json", { stdout: TAILSCALE_JSON }],
-    ],
+    absent: [...(opts.machines === undefined ? ["herdr"] : []), ...(opts.resolve === undefined ? ["ssh"] : [])],
+    answers,
   });
 
-  const deps: PackAddDeps = {
-    // The same reason `cli/pack.test.ts` sets this: the real `setTimeout` in `PeerClient` must never
+  const deps: CrewAddDeps = {
+    // The same reason `cli/crew.test.ts` sets this: the real `setTimeout` in `PeerClient` must never
     // fire and report a fake peer as unreachable.
-    ctx: context({ COLLIE_PACK_TIMEOUT_MS: "60000", ...opts.env }),
+    ctx: context({ COLLIE_CREW_TIMEOUT_MS: "60000", ...opts.env }),
     io: out,
     exec,
-    files: fakeFiles(),
+    files: fakeFiles(seeded),
     store,
     ops,
     // SAFETY: `AuditLog` hands its sink the line it just serialised from an `AuditEntry` — the
@@ -168,12 +200,12 @@ function harness(opts: HarnessOptions = {}): Harness {
     fetch: async () =>
       opts.reachable === false
         ? Promise.reject(new Error("connection refused"))
-        : new Response(JSON.stringify({ protocol: PACK_PROTOCOL_VERSION, member: "nas", version: VERSION }), {
+        : new Response(JSON.stringify({ protocol: CREW_PROTOCOL_VERSION, member: "nas", version: VERSION }), {
             status: 200,
             headers: {
               "content-type": "application/json",
-              "x-pack-protocol": String(PACK_PROTOCOL_VERSION),
-              "x-pack-member": "nas",
+              "x-crew-protocol": String(CREW_PROTOCOL_VERSION),
+              "x-crew-member": "nas",
             },
           }),
     now: () => T0,
@@ -232,11 +264,12 @@ function harness(opts: HarnessOptions = {}): Harness {
     get restarts() {
       return restarts;
     },
+    exec,
   };
 }
 
 const text = (io: ReturnType<typeof capture>): string => [...io.stdout, ...io.stderr].join("\n");
-const run = (h: Harness, args: string[] = ["nas.example"]): Promise<number> => cmdPackAdd(h.deps, args);
+const run = (h: Harness, args: string[] = ["nas.example"]): Promise<number> => cmdCrewAdd(h.deps, args);
 
 // ── The generated scripts, pinned ────────────────────────────────────────────
 // A leg script is a program that runs on someone ELSE's machine. Pinning the text is what stops a
@@ -253,7 +286,7 @@ const GOLDEN: [file: string, script: string][] = [
     configureScript({ configDir: "/cfg", host: "100.1.2.3", port: 9000, instance: "v1" }),
   ],
   ["leg4-membership.sh", membershipScript("/home/pat/.collie")],
-  // Not one of `pack add`'s legs — `pack update` drives it, and it is pinned here with the rest
+  // Not one of `crew add`'s legs — `crew update` drives it, and it is pinned here with the rest
   // because it is the same kind of thing: a program this machine writes and another one runs.
   ["restart.sh", restartScript("/home/pat/.collie")],
   [
@@ -416,12 +449,17 @@ describe("parseProbe", () => {
 
 describe("parseMembership", () => {
   test("solo", () => {
-    expect(parseMembership(SOLO_STATUS)).toEqual({ packId: null, packName: null, memberId: null });
+    expect(parseMembership(SOLO_STATUS)).toEqual({ packId: null, crewName: null, memberId: null });
   });
 
-  test("a member of a pack", () => {
-    const status = ["pack   the herd  (pack-1)", "mode   peer", "self   nas  abcd…"].join("\n");
-    expect(parseMembership(status)).toEqual({ packId: "pack-1", packName: "the herd", memberId: "nas" });
+  test("a member of a crew", () => {
+    const status = ["crew   the herd  (crew-1)", "mode   peer", "self   nas  abcd…"].join("\n");
+    expect(parseMembership(status)).toEqual({ packId: "crew-1", crewName: "the herd", memberId: "nas" });
+  });
+
+  test("a 1.6.0 machine still says `crew`, and that reads the same", () => {
+    const status = ["crew   the herd  (crew-1)", "mode   peer", "self   nas  abcd…"].join("\n");
+    expect(parseMembership(status)).toEqual({ packId: "crew-1", crewName: "the herd", memberId: "nas" });
   });
 
   test("a shape this build cannot read fails rather than assuming solo", () => {
@@ -431,10 +469,146 @@ describe("parseMembership", () => {
 
 // ── The verb ─────────────────────────────────────────────────────────────────
 
-describe("collie pack add", () => {
+describe("collie crew add", () => {
   test("no host is a usage error", async () => {
     const h = harness();
     expect(await run(h, [])).toBe(EXIT.USAGE);
+    expect(h.calls).toHaveLength(0);
+  });
+
+  // ── The candidate picker (M22/07) ───────────────────────────────────────────
+  // With a target NOTHING below runs and every golden above still matches. With none, `crew add`
+  // offers the machines this box already knows about and the operator picks one.
+
+  test("an absent herdr and an absent ssh config both yield no candidates and no error", async () => {
+    const h = harness();
+    expect(await run(h, [])).toBe(EXIT.USAGE);
+    expect(h.io.stdout).toEqual([]);
+    expect(text(h.io)).toContain("usage: collie crew add <ssh-host>");
+    expect(text(h.io)).not.toContain("warn:");
+    expect(text(h.io)).not.toContain("Candidate hosts");
+  });
+
+  test("a target skips the picker entirely — nothing local is asked", async () => {
+    const h = harness({ sshConfig: "Host attic", machines: '[{"target":"nas"}]', resolve: {} });
+    expect(await run(h)).toBe(EXIT.OK);
+    expect(h.exec.calls.filter((c) => c.startsWith("ssh ") || c.startsWith("herdr "))).toEqual([]);
+  });
+
+  test("no host lists the ssh config candidates and adds the one the operator picks", async () => {
+    const h = harness({ sshConfig: "Host attic\nHost build-box", prompt: "2" });
+    expect(await run(h, [])).toBe(EXIT.OK);
+    expect(h.io.stdout).toContain("Candidate hosts on this machine:");
+    // Each row states its source, so a name's origin is never a guess.
+    expect(h.io.stdout.some((l) => l.includes("1  attic      ssh config"))).toBe(true);
+    expect(h.io.stdout.some((l) => l.includes("2  build-box  ssh config"))).toBe(true);
+    expect(text(h.io)).toContain("probing build-box…");
+    expect(h.calls.map((c) => c.leg)).toEqual(["probe", "install", "configure", "membership", "enroll"]);
+  });
+
+  test("a name may be typed instead of a number, and the existing confirm still runs", async () => {
+    const h = harness({ sshConfig: "Host attic", prompt: "attic" });
+    expect(await run(h, [])).toBe(EXIT.OK);
+    expect(text(h.io)).toContain("probing attic…");
+    expect(h.calls.map((c) => c.leg)).toEqual(["probe", "install", "configure", "membership", "enroll"]);
+  });
+
+  test("two aliases for one machine are ONE row, showing both names and both sources", async () => {
+    const h = harness({
+      sshConfig: "Host attic",
+      machines: '[{"target":"op@attic.lan:22","label":"attic"}]',
+      resolve: {
+        attic: "user op\nhostname attic.lan\nport 22",
+        "op@attic.lan:22": "user op\nhostname attic.lan\nport 22",
+      },
+      prompt: "",
+    });
+    expect(await run(h, [])).toBe(EXIT.STATE);
+    const rows = h.io.stdout.filter((l) => l.includes("ssh config") || l.includes("herdr"));
+    expect(rows).toEqual(["   1  attic  ssh config, herdr  also op@attic.lan:22"]);
+    expect(h.io.stdout).toContain("Nothing was added.");
+  });
+
+  test("a candidate already in the crew is marked with its member id rather than dropped", async () => {
+    const h = harness({
+      store: leadStore({ peers: [member({ memberId: "nas", address: "100.64.0.9:8787" })] }),
+      ops: { nas: { sshHost: "nas-box", path: REMOTE_CHECKOUT, port: 8787, recordedAt: T0 } },
+      sshConfig: "Host nas-box\nHost attic",
+      prompt: "1",
+      after: leadStore({
+        peers: [
+          member({ memberId: "nas", address: "100.64.0.9:8787" }),
+          member({ memberId: "attic", address: "100.64.0.9:8787" }),
+        ],
+      }),
+    });
+    expect(await run(h, [])).toBe(EXIT.OK);
+    // The source tag and the mark are SEPARATE columns: "where the name came from" and "this lead
+    // already has it" are different facts, and a merged column would read as one.
+    expect(h.io.stdout.some((l) => l.includes('nas-box  ssh config  already enrolled as "nas"'))).toBe(true);
+    // Marked, not offered: number 1 is the OTHER row.
+    expect(text(h.io)).toContain("probing attic…");
+  });
+
+  test("every candidate already enrolled is a refusal, and it says which", async () => {
+    const h = harness({
+      store: leadStore({ peers: [member({ memberId: "nas", address: "100.64.0.9:8787" })] }),
+      ops: { nas: { sshHost: "nas-box", path: REMOTE_CHECKOUT, port: 8787, recordedAt: T0 } },
+      sshConfig: "Host nas-box",
+    });
+    expect(await run(h, [])).toBe(EXIT.USAGE);
+    expect(text(h.io)).toContain("every candidate above is already a member of this crew");
+    expect(h.calls).toHaveLength(0);
+  });
+
+  test("the resolver spawns nothing but `ssh -G`, over a config with ProxyCommand and Include", async () => {
+    const h = harness({
+      sshConfig: [
+        "Host bastion",
+        "  HostName bastion.example",
+        "Host attic",
+        "  ProxyCommand corkscrew proxy 8080 %h %p",
+        "Match host attic exec \"corkscrew --probe\"",
+        "  ForwardAgent yes",
+        "Include work/hosts",
+      ].join("\n"),
+      extraFiles: { [`${HOME}/.ssh/work/hosts`]: "Host office\n  ProxyJump bastion" },
+      machines: "[]",
+      resolve: {},
+      prompt: "",
+    });
+    expect(await run(h, [])).toBe(EXIT.STATE);
+    // The recorded spawns, in full: the machine list, then one `ssh -G` per alias. No ProxyCommand
+    // ran, no connection was made, and no leg script reached the transport.
+    expect(h.exec.calls).toEqual([
+      "herdr machine list --json",
+      "ssh -G bastion",
+      "ssh -G attic",
+      "ssh -G office",
+    ]);
+    expect(h.exec.calls.every((c) => !c.startsWith("ssh") || c.startsWith("ssh -G "))).toBe(true);
+    expect(h.exec.calls.some((c) => c.includes("corkscrew"))).toBe(false);
+    expect(h.calls).toHaveLength(0);
+  });
+
+  test("a broken herdr is one warn line and no candidates, never a failure", async () => {
+    const h = harness({ sshConfig: "Host attic", machines: "{ not a list }", prompt: "1" });
+    expect(await run(h, [])).toBe(EXIT.OK);
+    expect(h.io.stderr.filter((l) => l.startsWith("warn: `herdr machine list --json`"))).toHaveLength(1);
+    expect(text(h.io)).toContain("probing attic…");
+  });
+
+  test("a non-interactive run with candidates refuses rather than picking one", async () => {
+    const h = harness({ sshConfig: "Host attic", prompt: null });
+    expect(await run(h, [])).toBe(EXIT.USAGE);
+    expect(text(h.io)).toContain("it would have asked which host to add");
+    expect(h.calls).toHaveLength(0);
+  });
+
+  test("an answer that names nothing on the list is refused, never guessed at", async () => {
+    const h = harness({ sshConfig: "Host attic", prompt: "somewhere-else" });
+    expect(await run(h, [])).toBe(EXIT.USAGE);
+    expect(text(h.io)).toContain('error: "somewhere-else" is not one of the candidates above.');
     expect(h.calls).toHaveLength(0);
   });
 
@@ -528,7 +702,7 @@ describe("collie pack add", () => {
   });
 
   // F9: the refusal came from `collie join` on the FAR machine, after the bundle push, the remote
-  // build, the .env write and two lead restarts — and it named `--insecure`, which `pack add` does
+  // build, the .env write and two lead restarts — and it named `--insecure`, which `crew add` does
   // not accept. Re-running with the flag produced the identical refusal: a closed loop with no exit.
   test("an http:// lead address is refused at parse time, naming a remedy that exists", async () => {
     for (const [args, env] of [
@@ -541,7 +715,7 @@ describe("collie pack add", () => {
       expect(h.restarts).toBe(0);
       const said = text(h.io);
       expect(said).toContain("in the clear");
-      expect(said).toContain("`pack add` has no --insecure and will not get one");
+      expect(said).toContain("`crew add` has no --insecure and will not get one");
       expect(said).toContain("collie join <lead-address> <token> --insecure` THERE");
       expect(said).toContain("Nothing was pushed, built or restarted.");
     }
@@ -566,7 +740,7 @@ describe("collie pack add", () => {
     const h = harness();
     await run(h);
     // Once for the invite, once so the new member takes effect. Both are the same reason the other
-    // pack verbs restart: the trust store is read once per process.
+    // crew verbs restart: the trust store is read once per process.
     expect(h.restarts).toBe(2);
   });
 });
@@ -819,11 +993,11 @@ describe("re-running against the same host", () => {
     expect(h.calls.map((c) => c.leg)).not.toContain("configure");
   });
 
-  test("already a member of THIS pack is a ✓ and exit OK — nothing is minted", async () => {
+  test("already a member of THIS crew is a ✓ and exit OK — nothing is minted", async () => {
     const h = harness({
       answers: {
         probe: { stdout: probeOut({ checkout: REMOTE_CHECKOUT, commit: COMMIT }) },
-        membership: { stdout: ["pack   the herd  (pack-1)", "mode   peer", "self   nas  abcd…"].join("\n") },
+        membership: { stdout: ["crew   the herd  (crew-1)", "mode   peer", "self   nas  abcd…"].join("\n") },
       },
     });
     expect(await run(h)).toBe(EXIT.OK);
@@ -835,8 +1009,8 @@ describe("re-running against the same host", () => {
   // ── THE FIELD BUG (2026-08-15) ────────────────────────────────────────────
   // A re-run against an ENROLLED peer whose checkout is behind: the push and the build landed, and
   // the machine kept answering with the old build because nothing restarted it — no `collie join`
-  // runs on this path, and a join is the only thing that ever restarted a peer from `pack add`. The
-  // operator had just consented to "replace it with 1.2.3"; `pack status` then still said 1.2.2.
+  // runs on this path, and a join is the only thing that ever restarted a peer from `crew add`. The
+  // operator had just consented to "replace it with 1.2.3"; `crew status` then still said 1.2.2.
   test("re-adding an enrolled peer whose build was replaced RESTARTS it there", async () => {
     const h = harness({
       // The peer is in this lead's roster already — which is what makes the `hello` below the lead's
@@ -852,7 +1026,7 @@ describe("re-running against the same host", () => {
             dirty: "no",
           }),
         },
-        membership: { stdout: ["pack   the herd  (pack-1)", "mode   peer", "self   nas  abcd…"].join("\n") },
+        membership: { stdout: ["crew   the herd  (crew-1)", "mode   peer", "self   nas  abcd…"].join("\n") },
       },
     });
     expect(await run(h)).toBe(EXIT.OK);
@@ -877,7 +1051,7 @@ describe("re-running against the same host", () => {
             dirty: "no",
           }),
         },
-        membership: { stdout: ["pack   the herd  (pack-1)", "mode   peer", "self   nas  abcd…"].join("\n") },
+        membership: { stdout: ["crew   the herd  (crew-1)", "mode   peer", "self   nas  abcd…"].join("\n") },
         restart: { code: 1, stderr: "error: the unit did not come back" },
       },
     });
@@ -889,7 +1063,7 @@ describe("re-running against the same host", () => {
     const h = harness({
       answers: {
         probe: { stdout: probeOut({ checkout: REMOTE_CHECKOUT, commit: COMMIT, envhost: "100.64.0.9" }) },
-        membership: { stdout: ["pack   the herd  (pack-1)", "mode   peer", "self   nas  abcd…"].join("\n") },
+        membership: { stdout: ["crew   the herd  (crew-1)", "mode   peer", "self   nas  abcd…"].join("\n") },
       },
     });
     expect(await run(h)).toBe(EXIT.OK);
@@ -897,11 +1071,11 @@ describe("re-running against the same host", () => {
     expect(text(h.io)).toContain('✓ already a member of "the herd" as "nas"');
   });
 
-  test("a member of ANOTHER pack is STATE, naming `collie leave` there — never run for you", async () => {
+  test("a member of ANOTHER crew is STATE, naming `collie leave` there — never run for you", async () => {
     const h = harness({
       answers: {
         probe: { stdout: probeOut({ checkout: REMOTE_CHECKOUT, commit: COMMIT }) },
-        membership: { stdout: ["pack   someone else  (pack-99)", "mode   peer", "self   nas  abcd…"].join("\n") },
+        membership: { stdout: ["crew   someone else  (crew-99)", "mode   peer", "self   nas  abcd…"].join("\n") },
       },
     });
     expect(await run(h)).toBe(EXIT.STATE);
@@ -945,27 +1119,27 @@ describe("the join's outcome", () => {
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 describe("dispatch", () => {
-  test("`collie pack add` routes here, and the help lists it", async () => {
+  test("`collie crew add` routes here, and the help lists it", async () => {
     const h = harness();
-    expect(await cmdPack(h.deps, ["add", "nas.example"])).toBe(EXIT.OK);
+    expect(await cmdCrew(h.deps, ["add", "nas.example"])).toBe(EXIT.OK);
     expect(h.calls.map((c) => c.leg)).toContain("enroll");
     const usage = harness();
-    await cmdPack(usage.deps, ["nonsense"]);
+    await cmdCrew(usage.deps, ["nonsense"]);
     expect(text(usage.io)).toContain("add      install and enroll a peer over SSH");
   });
 
-  test("the pack it joins is the one this lead already leads", () => {
-    expect(PACK.packId).toBe("pack-1");
+  test("the crew it joins is the one this lead already leads", () => {
+    expect(CREW.crewId).toBe("crew-1");
   });
 });
 
-// ── `packAddDeps().gitBundle` against a REAL git ─────────────────────────────
+// ── `crewAddDeps().gitBundle` against a REAL git ─────────────────────────────
 // The fakes above stub `gitBundle` entirely, which is exactly how the field bug (a bare commit sha
 // is not a REF, so `git bundle create - <sha>` refuses with "Refusing to create empty bundle")
 // survived. This suite spawns a real `git` against a throwaway repo instead.
 
-/** {@link PackDeps} whose `io` is the recording one, so a failure can print what the verb said. */
-interface RepoPackDeps extends PackDeps {
+/** {@link CrewDeps} whose `io` is the recording one, so a failure can print what the verb said. */
+interface RepoCrewDeps extends CrewDeps {
   io: ReturnType<typeof capture>;
 }
 
@@ -974,7 +1148,7 @@ function gitEnv(): Environment {
   return { PATH: process.env.PATH };
 }
 
-function minimalPackDeps(root: string): RepoPackDeps {
+function minimalCrewDeps(root: string): RepoCrewDeps {
   const storeIo: TrustStoreIo = { read: async () => null, write: async () => {} };
   return {
     ctx: context(gitEnv(), { root }),
@@ -996,7 +1170,7 @@ function minimalPackDeps(root: string): RepoPackDeps {
   };
 }
 
-describe("packAddDeps().gitBundle, against a real repo", () => {
+describe("crewAddDeps().gitBundle, against a real repo", () => {
   test("bundles HEAD when the commit given is still HEAD, and refuses when it has moved", async () => {
     const root = mkdtempSync(join(tmpdir(), "collie-gitbundle-"));
     try {
@@ -1016,12 +1190,12 @@ describe("packAddDeps().gitBundle, against a real repo", () => {
       git("commit", "-q", "-m", "second");
       const second = git("rev-parse", "HEAD").trim();
 
-      const staleDeps = minimalPackDeps(root);
-      const staleBundle = await packAddDeps(staleDeps).gitBundle(first, staleDeps.io);
+      const staleDeps = minimalCrewDeps(root);
+      const staleBundle = await crewAddDeps(staleDeps).gitBundle(first, staleDeps.io);
       expect(staleBundle).toBeNull();
 
-      const freshDeps = minimalPackDeps(root);
-      const encoded = await packAddDeps(freshDeps).gitBundle(second, freshDeps.io);
+      const freshDeps = minimalCrewDeps(root);
+      const encoded = await crewAddDeps(freshDeps).gitBundle(second, freshDeps.io);
       if (encoded === null) {
         throw new Error(`gitBundle returned null; stderr: ${freshDeps.io.stderr.join("\n")}`);
       }
@@ -1054,8 +1228,8 @@ describe("packAddDeps().gitBundle, against a real repo", () => {
       git("commit", "-q", "-m", "first");
       const head = git("rev-parse", "HEAD").trim();
 
-      const deps = minimalPackDeps(root);
-      const encoded = await packAddDeps(deps).gitBundle(head, deps.io);
+      const deps = minimalCrewDeps(root);
+      const encoded = await crewAddDeps(deps).gitBundle(head, deps.io);
       if (encoded === null) {
         throw new Error(`gitBundle returned null; stderr: ${deps.io.stderr.join("\n")}`);
       }
@@ -1068,7 +1242,7 @@ describe("packAddDeps().gitBundle, against a real repo", () => {
       ).toThrow(/need a repository/);
 
       // installScript's remedy: init an empty scratch repo, verify `-C` into it. Succeeds, because
-      // the bundle pushed by `pack add` is complete (bundle of HEAD, no prerequisites).
+      // the bundle pushed by `crew add` is complete (bundle of HEAD, no prerequisites).
       const scratch = join(nonRepoCwd, "verify");
       execFileSync("git", ["init", "-q", scratch], { env });
       expect(() =>

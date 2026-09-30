@@ -3,7 +3,8 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
-import type { UpdateStatus } from "./types.ts";
+import { herdrActionCommand } from "./front-door.ts";
+import type { CrewMode, UpdateLinkChange, UpdateStatus } from "./types.ts";
 import type { UpdateRun } from "./update-run.ts";
 
 // Update-availability signal, surfaced on the (access-gated) /api/snapshot as `update`. Two
@@ -31,6 +32,10 @@ const SEMVER_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 const PRERELEASE_SEMVER_TAG = /^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 // The upstream tag check is bounded — a hung request must never wedge the monitor's timer.
 const TAGS_TIMEOUT_MS = 10_000;
+// The release reading (`collie-release.json`, M27/06) is bounded far tighter than the tag list,
+// because it is an EXTRA inside the same check budget: the tags are the answer, this is a footnote
+// on it. A release that does not answer in three seconds reads as one that says nothing.
+const RELEASE_READING_TIMEOUT_MS = 3_000;
 // bridgeStale is read on every snapshot poll; recompute the on-disk stamp at most this often so a
 // busy poll loop doesn't stat the source tree dozens of times a second (the value barely changes).
 const STALE_TTL_MS = 5_000;
@@ -321,11 +326,22 @@ export function shouldNotify(a: {
 }
 
 /** The push body for a digest: one version names itself, several name the count AND every version —
- *  a count alone can't tell a patch train from a feature release. */
-export function updateDigestBody(current: string, versions: readonly string[]): string {
+ *  a count alone can't tell a patch train from a feature release.
+ *
+ *  A release that moves the CREW WIRE adds one sentence (M27/06), and adds it here rather than in
+ *  the sender, so the push says what the band and the card say. Without a link change the body is
+ *  byte-identical to what it always was. */
+export function updateDigestBody(
+  current: string,
+  versions: readonly string[],
+  linkChange: UpdateLinkChange | null = null,
+): string {
   const first = versions[0];
-  if (versions.length <= 1) return `Collie ${first ?? current} is available`;
-  return `${versions.length} updates since ${current}: ${versions.join(", ")}`;
+  const body =
+    versions.length <= 1
+      ? `Collie ${first ?? current} is available`
+      : `${versions.length} updates since ${current}: ${versions.join(", ")}`;
+  return linkChange === null ? body : `${body}. ${LINK_CHANGE_SENTENCE}`;
 }
 
 /** A stable, comparable stamp of source files by (path, mtime, size). Order-independent. Equality is
@@ -422,6 +438,79 @@ export function githubTagsFetcher(repo: string): () => Promise<ApiTag[]> {
   };
 }
 
+// ── The release reading (`collie-release.json`, M27/06) ──────────────────────
+// One tiny document per release, published beside the payloads by `.github/workflows/release.yml`:
+// the version, and the CREW WIRE VERSION that release speaks. It exists so an install can be told,
+// BEFORE it confirms, that the update changes the link its crew talks over — and be told generically,
+// off a number, rather than off a hard-coded release name that would have to be edited every time.
+//
+// It is a courtesy, never a gate. Absent, unreachable, truncated or foreign all read the same way:
+// no change. Every release before 1.8.0 published none at all.
+
+/** What a release says about itself. Unknown fields are ignored — additive is free. */
+export interface ReleaseReading {
+  version: string;
+  /** The crew wire version that release speaks — see `CREW_PROTOCOL_VERSION`. */
+  crewProtocol: number;
+}
+
+/** Where the asset sits. Constructed from (repo, version), never taken from a document, for the
+ *  reason the manifest carries no URLs: a release must not be able to redirect a read to another
+ *  host. The trust boundary stays "which repo", which is what COLLIE_UPDATE_REPO names. */
+export function releaseReadingUrl(repo: string, version: string): string {
+  return `https://github.com/${repo}/releases/download/v${version}/collie-release.json`;
+}
+
+/** The asset, parsed. Null for anything that is not the document we asked for — a wrong shape, a
+ *  non-integer protocol, a GitHub 404 page served as JSON. */
+export function parseReleaseReading(data: JsonValue): ReleaseReading | null {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return null;
+  const { version, crewProtocol } = data;
+  if (typeof version !== "string" || version === "") return null;
+  if (typeof crewProtocol !== "number" || !Number.isInteger(crewProtocol)) return null;
+  return { version, crewProtocol };
+}
+
+/** Fetch one release's reading. Never throws and never waits long: the caller is a check whose
+ *  answer is the tag list, and this is a footnote on it. */
+export function releaseReadingFetcher(repo: string): (version: string) => Promise<ReleaseReading | null> {
+  return async (version) => {
+    try {
+      const res = await fetch(releaseReadingUrl(repo, version), {
+        headers: { accept: "application/json", "user-agent": "collie-update-check" },
+        signal: AbortSignal.timeout(RELEASE_READING_TIMEOUT_MS),
+      });
+      if (!res.ok) return null; // 404 is the ordinary answer for every release before 1.8.0
+      // SAFETY: `Response.json()` output IS a JsonValue by construction; the parser checks it.
+      return parseReleaseReading((await res.json()) as JsonValue);
+    } catch {
+      return null; // timeout, DNS, unparseable body — all of it reads as "says nothing"
+    }
+  };
+}
+
+/**
+ * Does the newest release change the link, and from what to what?
+ *
+ * Three ways to be null, and they are all "nothing to say to this operator": no crew (a solo install
+ * has no link), no reading (the release published none, or it could not be read), and the same number
+ * on both ends (an update that changes nothing about the wire).
+ */
+export function linkChangeOf(a: {
+  mode: CrewMode;
+  own: number;
+  reading: ReleaseReading | null;
+}): UpdateLinkChange | null {
+  if (a.mode === "solo") return null;
+  if (a.reading === null) return null;
+  if (a.reading.crewProtocol === a.own) return null;
+  return { from: a.own, to: a.reading.crewProtocol };
+}
+
+/** The one sentence the notice adds, in the bridge's own English — the push has no locale to read
+ *  (the phone's surfaces take theirs from `updateRibbon.linkChange`). */
+export const LINK_CHANGE_SENTENCE = "Changes the crew link. Update the lead first, members follow.";
+
 // ── The per-release integrity manifest (M14/01 §2.1) ─────────────────────────
 // One document per release, attached to the GitHub Release and copied into every tarball as
 // `RELEASE.json`. It carries NO URLs: every download URL is constructed from (repo, version, name),
@@ -492,6 +581,8 @@ export function parseReleaseManifest(data: JsonValue): ManifestVerdict {
 export class UpdateStateStore {
   private lastVersion: string | null = null;
   private pushedAt: string | null = null;
+  private dismissed: string | null = null;
+  private dismissedCrew: string | null = null;
   private readonly file: string;
 
   constructor(private readonly cfg: Config) {
@@ -506,7 +597,18 @@ export class UpdateStateStore {
       const rec = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
       const last = rec === null ? undefined : rec.lastNotified;
       const pushed = rec === null ? undefined : rec.lastPushedAt;
+      const closed = rec === null ? undefined : rec.dismissedVersion;
+      // REMOVE_IN_1_9_0: `dismissedPackVersion` is 1.7.0's name for `dismissedCrewVersion`. A
+      // record written by that build is read once under the old key here and written back under the
+      // new one by the next dismissal, so no separate rewrite step is needed.
+      const closedCrew =
+        rec === null ? undefined : (rec.dismissedCrewVersion ?? rec.dismissedPackVersion);
       this.lastVersion = typeof last === "string" ? last : null;
+      // A record written before M17/08 carries neither dismissal. Both read as "nothing dismissed",
+      // which is the band's own default — an operator who closed the band on an older build simply
+      // sees it once more.
+      this.dismissed = typeof closed === "string" ? closed : null;
+      this.dismissedCrew = typeof closedCrew === "string" ? closedCrew : null;
       // A LEGACY record carries no timestamp. It reads as "no push yet" — the window opens at once
       // rather than crashing the monitor or pinning it shut for a day.
       this.pushedAt = typeof pushed === "string" ? pushed : null;
@@ -524,21 +626,98 @@ export class UpdateStateStore {
     return this.pushedAt;
   }
 
+  /** The release whose OFFER the operator closed, or null when none was. */
+  dismissedVersion(): string | null {
+    return this.dismissed;
+  }
+
+  /** The version whose quiet CREW notice the operator closed, or null. A different decision from
+   *  the one above, and so a different field — see {@link DismissScope}. */
+  dismissedCrewVersion(): string | null {
+    return this.dismissedCrew;
+  }
+
   async setLastNotified(version: string, pushedAt: string): Promise<void> {
     this.lastVersion = version;
     this.pushedAt = pushedAt;
+    await this.write();
+  }
+
+  /**
+   * Remember the version whose band the operator closed, in the scope they closed.
+   *
+   * It lives HERE, beside `lastNotified`, rather than in a browser: a dismissal is a decision about
+   * this machine's update, and a decision kept per browser leaves the band up on the phone after it
+   * was closed on the laptop (M17/08).
+   *
+   * `notified` folds the digest snooze into the SAME write. Two writes can be interrupted between
+   * them and leave half a decision on disk: a band closed with a push still armed for the version
+   * just declined, or the reverse.
+   */
+  async setDismissed(
+    scope: DismissScope,
+    version: string,
+    notified?: { version: string; pushedAt: string },
+  ): Promise<void> {
+    if (scope === "offer") this.dismissed = version;
+    else this.dismissedCrew = version;
+    if (notified !== undefined) {
+      this.lastVersion = notified.version;
+      this.pushedAt = notified.pushedAt;
+    }
+    await this.write();
+  }
+
+  /** One record, one atomic write (tmp + rename), matching Push/NotifyPrefs/Snooze — a crash
+   *  mid-write can't leave a corrupt file that would re-nag (or worse) on the next load. */
+  private async write(): Promise<void> {
     await mkdir(this.cfg.stateDir, { recursive: true, mode: 0o700 });
-    // Atomic write (tmp + rename), matching Push/NotifyPrefs/Snooze — a crash mid-write can't leave a
-    // corrupt file that would re-nag (or worse) on the next load.
+    const body = {
+      lastNotified: this.lastVersion,
+      lastPushedAt: this.pushedAt,
+      dismissedVersion: this.dismissed,
+      dismissedCrewVersion: this.dismissedCrew,
+    };
     const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify({ lastNotified: version, lastPushedAt: pushedAt }, null, 2), {
-      mode: 0o600,
-    });
+    await writeFile(tmp, JSON.stringify(body, null, 2), { mode: 0o600 });
     await rename(tmp, this.file);
   }
 }
 
+/**
+ * The command that restarts THIS Collie, spelled for the install kind — the one place it is spelled.
+ *
+ * TWO spellings, and the split is Herdr-managed against everything else (M14/01 §5.3):
+ *   • `detached-checkout` is Herdr-managed, and Herdr resolves the plugin's checkout, so its action
+ *     runs from any directory where `bin/collie` would not.
+ *   • Everything else — a linked clone, a binary install, an unknown layout and a PACKAGED install —
+ *     takes the `collie` verb, which drives the `systemd --user` unit and works anywhere the CLI is
+ *     on PATH.
+ *
+ * **A packaged install is not a system unit**, which is the mistake worth naming here because it is
+ * the obvious guess. Our package ships NO unit file: `collie start` writes the operator's own
+ * `~/.config/systemd/user` unit and drives it with `systemctl --user`
+ * (`packaging/aur/PKGBUILD`). So `sudo systemctl restart collie` names a unit that does not exist,
+ * and asks for a password to do it. Only UPDATING is someone else's on a packaged install (ADR
+ * 0035); restarting is still the operator's own, exactly as `update-banner.tsx` already had it.
+ *
+ * Pure and exported: the phone renders what the host answered, so this is the only derivation.
+ */
+export function restartCommandFor(kind: UpdateStatus["installKind"], instance: string | null): string {
+  return kind === "detached-checkout" ? herdrActionCommand("restart", instance) : "collie restart";
+}
+
 // ── The monitor ───────────────────────────────────────────────────────────────
+
+/**
+ * WHICH band was closed. Two decisions, never one key.
+ *
+ * `offer` is "a release is available on this machine". `crew` is "another machine is standing
+ * behind, and a package manager owns it". They are about different machines and they are put down
+ * separately: hiding a peer's quiet notice must not also hide this host's own offer, even when the
+ * two name the same version.
+ */
+export type DismissScope = "offer" | "crew";
 
 /** Persistence seam — just what the monitor needs from {@link UpdateStateStore}. */
 export interface UpdateStore {
@@ -546,6 +725,17 @@ export interface UpdateStore {
   /** ISO-8601 stamp of the last push, or null — the digest window is measured from it. */
   lastPushedAt(): string | null;
   setLastNotified(version: string, pushedAt: string): Promise<void>;
+  /** The release whose OFFER was closed, or null. Reported on the snapshot, so the decision holds
+   *  on every screen rather than in the browser that made it. */
+  dismissedVersion(): string | null;
+  /** The version whose quiet CREW notice was closed, or null. */
+  dismissedCrewVersion(): string | null;
+  /** Record a dismissal, folding the digest snooze into the same write when one is asked for. */
+  setDismissed(
+    scope: DismissScope,
+    version: string,
+    notified?: { version: string; pushedAt: string },
+  ): Promise<void>;
 }
 
 export interface UpdateMonitorDeps {
@@ -565,13 +755,58 @@ export interface UpdateMonitorDeps {
   /** How this Collie is installed, probed once at startup — it cannot change under a running process
    *  (an update restarts the service), so the monitor just reports it. */
   installKind: UpdateStatus["installKind"];
+  /** `COLLIE_INSTANCE`, or `null` for the host's first Collie — it names the plugin id the restart
+   *  command prints. Injected, not read here: the monitor resolves nothing from the environment. */
+  instance: string | null;
+  /**
+   * The version this process was running when it started, read the way `collie version` reads it.
+   *
+   * Captured ONCE, at boot, beside the install kind — for the same reason the kind is: it cannot
+   * change under a running process. `liveVersion` re-reads the same files, and a difference between
+   * the two is the whole of the restart-needed signal. No new state file and no new mechanism.
+   */
+  bootVersion: string;
+  /** The same reading, taken NOW. Throttled by the monitor, never called per request unthrottled. */
+  liveVersion: () => string;
+  /**
+   * Has the binary this process is EXECUTING been replaced on disk (`bridge/exe-replaced.ts`)?
+   *
+   * The half {@link liveVersion} cannot see. A package manager that rebuilds the SAME version — a
+   * new Arch pkgrel, say — replaces `bin/collie` under the live service and moves no version string
+   * at all, so the version comparison stays quiet while the process serves the old code. The
+   * executable is the only witness to that, and it is one readlink plus two `stat`s.
+   *
+   * Injected, and throttled by the monitor exactly as {@link liveVersion} is. Answering `false` is
+   * what an install this cannot be asked about looks like — the version comparison then decides
+   * alone, as it did before.
+   */
+  exeReplaced: () => boolean;
+  /** The package manager's upgrade command for this root, or null when there is none to name.
+   *  Resolved once at startup beside the kind, for the reason the kind is: it cannot change under a
+   *  running process, and the phone must never derive it. */
+  packageCommand: string | null;
   store: UpdateStore;
   now: () => number;
   /** Whether update pushes are enabled (the `updates` notify pref — the user's off-switch). */
   updatesEnabled: () => boolean;
   /** Fire the update-available push for the digest — every version folded into it, oldest first.
-   *  Never empty; the last element is the newest available version. */
-  notify: (versions: string[]) => void;
+   *  Never empty; the last element is the newest available version. The link change rides along so
+   *  the body can name it (M27/06); null is the ordinary release. */
+  notify: (versions: string[], linkChange: UpdateLinkChange | null) => void;
+  /** This build's own crew wire version (`CREW_PROTOCOL_VERSION`). Injected rather than imported so
+   *  the monitor resolves nothing for itself and a test can name both ends of a difference. */
+  crewProtocol: number;
+  /**
+   * This install's crew mode, read at each check. A `solo` install has no link, so it is never told
+   * that one changed — the mode is resolved at boot and cannot move under a running process, but it
+   * is a function so the monitor holds no copy of a fact it does not own.
+   */
+  crewMode: () => CrewMode;
+  /**
+   * Read the newest release's own `collie-release.json` (M27/06). Never throws: null is "the release
+   * says nothing", which is every release before 1.8.0 and every failed read.
+   */
+  fetchReleaseReading: (version: string) => Promise<ReleaseReading | null>;
   /**
    * The detached updater's run record, read from disk (M15/04). Injected rather than read here so
    * the monitor stays a pure poller over seams — and read PER CALL, never cached, because the file
@@ -589,8 +824,15 @@ export class UpdateMonitor {
   private newerVersions: string[] = [];
   private majorAvailable: string | null = null;
   private checkedAt: number | null = null;
+  // CACHED WITH THE READING, never in a store of its own (M27/06): it is a fact about the release
+  // the last check found, so it lives and dies with `latest`.
+  private linkChange: UpdateLinkChange | null = null;
   private staleAt = Number.NEGATIVE_INFINITY;
   private staleValue = false;
+  private swappedAt = Number.NEGATIVE_INFINITY;
+  private swappedValue = false;
+  private exeAt = Number.NEGATIVE_INFINITY;
+  private exeValue = false;
   private inFlight: Promise<void> | null = null;
 
   constructor(private readonly deps: UpdateMonitorDeps) {}
@@ -634,6 +876,17 @@ export class UpdateMonitor {
     // The whole list, not just its top: a digest has to be able to NAME the releases it folded.
     this.newerVersions = updatesNewerThan(tags, this.deps.current);
     this.checkedAt = this.deps.now();
+    // ONE SMALL GET INSIDE THIS CHECK'S BUDGET (M27/06), and only when there is a release to ask
+    // about. It cannot fail the check: the fetcher answers null for everything that is not the
+    // document, and null reads as "no change".
+    this.linkChange =
+      this.latest === null
+        ? null
+        : linkChangeOf({
+            mode: this.deps.crewMode(),
+            own: this.deps.crewProtocol,
+            reading: await this.deps.fetchReleaseReading(this.latest),
+          });
 
     const { current, store } = this.deps;
     // The snapshot above is already updated — suppressing a push must never suppress state.
@@ -648,7 +901,7 @@ export class UpdateMonitor {
     });
     if (!verdict.send) return;
     await store.setLastNotified(verdict.versions[verdict.versions.length - 1] ?? current, this.nowIso());
-    this.deps.notify(verdict.versions);
+    this.deps.notify(verdict.versions, this.linkChange);
   }
 
   private nowIso(): string {
@@ -665,6 +918,31 @@ export class UpdateMonitor {
     await this.deps.store.setLastNotified(this.latest, this.nowIso());
   }
 
+  /**
+   * The band was closed, for `version`, in the scope it was closed in.
+   *
+   * Closing the OFFER for the release this host is actually being offered also snoozes the digest,
+   * in the SAME write: being pushed tomorrow morning about a version just declined is the app
+   * arguing with a decision the operator already made. Two conditions gate that, and both matter:
+   *
+   *   • Scope. A quiet CREW notice is about another machine and the push is about this one, so
+   *     hiding it must never silence a release this host was never told about.
+   *   • The version. An offer for anything other than the release upstream currently names is not
+   *     the release the digest would push, and moving `lastNotified` there would either swallow the
+   *     current version or re-announce an old one.
+   *
+   * A NEWER release is a different version and raises the band again — this is not a mute, and it
+   * carries no clock of its own (the digest owns the clock).
+   */
+  async dismiss(version: string, scope: DismissScope = "offer"): Promise<void> {
+    const snoozes = scope === "offer" && this.latest !== null && version === this.latest;
+    await this.deps.store.setDismissed(
+      scope,
+      version,
+      snoozes ? { version, pushedAt: this.nowIso() } : undefined,
+    );
+  }
+
   /** Recompute (throttled) whether the running process is behind the on-disk bridge source. */
   private bridgeStale(): boolean {
     const now = this.deps.now();
@@ -672,6 +950,35 @@ export class UpdateMonitor {
     this.staleValue = this.deps.bridgeStamp() !== this.deps.startupStamp;
     this.staleAt = now;
     return this.staleValue;
+  }
+
+  /**
+   * Have the files on disk stopped naming the version this process is running?
+   *
+   * Throttled exactly as {@link bridgeStale} is, and for the same reason: this is two small file
+   * reads and the snapshot is polled. Latching is deliberately NOT done — a package manager that
+   * rolls its change back leaves a process whose code matches disk again, and a latched flag would
+   * keep asking for a restart nobody needs.
+   */
+  private versionSwapped(): boolean {
+    const now = this.deps.now();
+    if (now - this.swappedAt < STALE_TTL_MS) return this.swappedValue;
+    this.swappedValue = this.deps.liveVersion() !== this.deps.bootVersion;
+    this.swappedAt = now;
+    return this.swappedValue;
+  }
+
+  /**
+   * Has the executable moved under this process? Throttled as {@link versionSwapped} is, and not
+   * latched for the same reason: a package manager that rolls its change back leaves a process
+   * running the file that is on disk again.
+   */
+  private exeSwapped(): boolean {
+    const now = this.deps.now();
+    if (now - this.exeAt < STALE_TTL_MS) return this.exeValue;
+    this.exeValue = this.deps.exeReplaced();
+    this.exeAt = now;
+    return this.exeValue;
   }
 
   /** The snapshot-facing status. Cheap: `latest` is cached from the last check, `bridgeStale` throttled. */
@@ -689,15 +996,27 @@ export class UpdateMonitor {
           ? null
           : githubReleaseUrl(this.deps.repo, this.majorAvailable),
       installKind: this.deps.installKind,
+      dismissedVersion: this.deps.store.dismissedVersion(),
+      dismissedCrewVersion: this.deps.store.dismissedCrewVersion(),
       bridgeStale: this.bridgeStale(),
+      // Two witnesses to one fact, and either is enough: the version files stopped naming what this
+      // process runs, or the executable itself was replaced. The second catches the rebuild of an
+      // identical version, which the first cannot see.
+      restartNeeded: this.versionSwapped() || this.exeSwapped(),
       checkedAt: this.checkedAt,
       // The whole list, oldest first — the card names what a single update folds in (M15/05). Empty
       // until the first successful check, which reads as "nothing to name", the same as up to date.
       newerVersions: this.newerVersions,
     };
     // Assigned, never conditionally spread: an install that has never updated through the runner
-    // must carry NO `run` key rather than one whose value is `undefined`.
+    // must carry NO `run` key rather than one whose value is `undefined`. The same for the package
+    // command, which most installs have none of.
     if (run !== null) status.run = run;
+    // The link change (M27/06), on the same rule: absent when there is nothing to say, which is
+    // every solo install, every ordinary release and every check that has not run yet.
+    if (this.linkChange !== null) status.linkChange = this.linkChange;
+    if (this.deps.packageCommand !== null) status.packageCommand = this.deps.packageCommand;
+    if (status.restartNeeded) status.restartCommand = restartCommandFor(this.deps.installKind, this.deps.instance);
     return status;
   }
 }

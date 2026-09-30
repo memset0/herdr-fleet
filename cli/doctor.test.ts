@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { PACK_PROTOCOL_VERSION } from "../bridge/pack/enrollment.ts";
-import { leadStore, member, PACK, peerStore, T0 } from "../bridge/pack/fixtures.ts";
-import { markerFor } from "../bridge/pack/staleness.ts";
-import { serializeTrustStore, TrustStore, type TrustStoreData, type TrustStoreIo } from "../bridge/pack/trust-store.ts";
+import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
+import { leadStore, member, CREW, peerStore, T0 } from "../bridge/crew/fixtures.ts";
+import { markerFor } from "../bridge/crew/staleness.ts";
+import { serializeTrustStore, TrustStore, type TrustStoreData, type TrustStoreIo } from "../bridge/crew/trust-store.ts";
 import { fakeBeaconReader, FAKE_BEACON_NOW, type FakeBeacon } from "../bridge/beacon/fake.ts";
 import { BEACON_SCHEMA_VERSION } from "../bridge/beacon/types.ts";
 import type { JsonObject } from "../bridge/json.ts";
@@ -27,7 +27,7 @@ import {
 } from "./fakes.ts";
 import { EXIT } from "./io.ts";
 
-// `collie doctor`, against fakes for every seam. Like cli/pack.test.ts, NOTHING here reaches a
+// `collie doctor`, against fakes for every seam. Like cli/crew.test.ts, NOTHING here reaches a
 // service manager, a tailnet, a real trust store or a network — and unlike it, there is nothing to
 // reach even in principle: `DoctorDeps` names no verb that could change something, so a test that
 // wanted to assert "doctor wrote nothing" is asserting a type, not a behaviour. It is asserted
@@ -78,10 +78,18 @@ const HEALTHY_ANSWERS: Scripted["answers"] = [
   [`git -C ${ROOT} remote get-url origin`, { stdout: "https://github.com/AltanS/collie.git\n" }],
   [`git -C ${ROOT} symbolic-ref --short HEAD`, { stdout: "main\n" }],
   ["herdr integration status", { stdout: INTEGRATION_OK }],
-  ["tailscale status --json", { stdout: JSON.stringify({ Self: { DNSName: "laptop.tail.ts.net." } }) }],
+  [
+    "tailscale status --json",
+    // `CertDomains` is what says this tailnet HAS https at all — without it the front-door check
+    // reports a tailnet that can carry no door (#172), which is not what these fixtures describe.
+    { stdout: JSON.stringify({ Self: { DNSName: "laptop.tail.ts.net." }, CertDomains: ["laptop.tail.ts.net"] }) },
+  ],
   ["tailscale serve status --json", { stdout: SERVE_OK }],
   ...netmapAnswers(NETMAP_OPEN),
 ];
+
+/** A status that names no node but DOES name a certificate domain: no hostname, https available. */
+const CERTS_ONLY = JSON.stringify({ CertDomains: ["laptop.tail.ts.net"] });
 
 /**
  * The files a healthy install has: a built bundle, a Herdr socket, an ownership record — and the
@@ -137,7 +145,7 @@ function fakeUi(): FakeUi {
     ui: {
       doctor: async (view) => void views.push(view),
       status: async () => {},
-      packMembers: async () => {},
+      crewMembers: async () => {},
     },
   };
 }
@@ -172,10 +180,10 @@ function harness(
   let n = 0;
   return {
     deps: {
-      // As in cli/pack.test.ts: the peer client races the fake fetch against a REAL timer, so the
+      // As in cli/crew.test.ts: the peer client races the fake fetch against a REAL timer, so the
       // budget is set far above anything this process could stall for.
       ctx: context(
-        { COLLIE_PACK_TIMEOUT_MS: "60000", ...over.env },
+        { COLLIE_CREW_TIMEOUT_MS: "60000", ...over.env },
         over.root === undefined ? { socket: SOCKET } : { socket: SOCKET, root: over.root },
       ),
       io: out,
@@ -215,12 +223,12 @@ function hello(
 ): Response {
   const headers = new Headers({
     "content-type": "application/json",
-    "x-pack-protocol": String(PACK_PROTOCOL_VERSION),
-    "x-pack-member": over.memberId ?? "laptop",
+    "x-crew-protocol": String(CREW_PROTOCOL_VERSION),
+    "x-crew-member": over.memberId ?? "laptop",
   });
   if (over.date !== null) headers.set("date", new Date(over.date ?? T0).toUTCString());
   const version = over.version === undefined ? "1.0.0-alpha.12" : over.version;
-  const body: HelloBody = { protocol: PACK_PROTOCOL_VERSION, member: over.memberId ?? "laptop" };
+  const body: HelloBody = { protocol: CREW_PROTOCOL_VERSION, member: over.memberId ?? "laptop" };
   if (version !== null) body.version = version;
   return new Response(JSON.stringify(body), { status: 200, headers });
 }
@@ -246,7 +254,7 @@ const LEAD = leadStore({ peers: [member({ memberId: "laptop" })] });
 
 /** A boot marker that matches a store exactly — the "the running bridge holds this roster" case. */
 const markerFile = (data: TrustStoreData): SeededFiles => ({
-  [`${STATE}/pack-runtime.json`]: JSON.stringify(markerFor(data, T0, 42)),
+  [`${STATE}/crew-runtime.json`]: JSON.stringify(markerFor(data, T0, 42)),
 });
 
 /** A seed with one path taken out of it — the "that file is simply not there" cases. */
@@ -282,6 +290,7 @@ describe("collie doctor — the contract", () => {
       "integration-claude",
       "integration-codex",
       "integration-grok",
+      "integration-hermes",
       "integration-opencode",
       "integration-pi",
       "hook-python3",
@@ -321,7 +330,7 @@ describe("collie doctor — the contract", () => {
     const h = harness(LEAD, [new Error("connection refused")], {
       files: { [HANDLER]: "" },
       answers: [
-        ["tailscale status --json", { stdout: "{}" }],
+        ["tailscale status --json", { stdout: CERTS_ONLY }],
         ["tailscale serve status --json", { stdout: "{}" }],
         ["tailscale debug netmap", { stdout: NETMAP_DENY }],
       ],
@@ -380,11 +389,11 @@ describe("collie doctor — the contract", () => {
 // ── Sections ─────────────────────────────────────────────────────────────────
 
 describe("collie doctor — the section sets", () => {
-  test("solo prints ONE `no pack` line, never a column of padded skipped pack checks", async () => {
+  test("solo prints ONE `no crew` line, never a column of padded skipped crew checks", async () => {
     const h = harness(null);
     await cmdDoctor(h.deps, []);
     const text = h.io.stdout.join("\n");
-    expect(text).toContain("pack: none — this collie is not in a pack.");
+    expect(text).toContain("crew: none — this collie is not in a crew.");
     expect(text).toContain("mode solo");
     expect(text).not.toContain("member-reach");
     expect(text).not.toContain("store-drift");
@@ -512,7 +521,7 @@ describe("collie doctor — the local checks", () => {
     expect(code).toBe(EXIT.OK);
   });
 
-  // The gate main brought (#129) and the pack carve-out that keeps it honest: a wide bind stops a
+  // The gate main brought (#129) and the crew carve-out that keeps it honest: a wide bind stops a
   // SOLO collie from starting at all, so doctor says the same thing the bridge would — while a peer
   // binds wide by construction and hears only the wildcard warning (ADR 0013).
   test("bind: a wide bind is an ERROR on solo, cleared by the hatch, and never one on a peer", async () => {
@@ -531,7 +540,7 @@ describe("collie doctor — the local checks", () => {
     const denied = await findings(
       harness(null, [], {
         answers: [
-          ["tailscale status --json", { stdout: "{}" }],
+          ["tailscale status --json", { stdout: CERTS_ONLY }],
           ["tailscale serve status --json", { stdout: SERVE_OK }],
           ...netmapAnswers(NETMAP_DENY),
         ],
@@ -558,7 +567,7 @@ describe("collie doctor — the local checks", () => {
     const stolen = await findings(
       harness(null, [], {
         answers: [
-          ["tailscale status --json", { stdout: "{}" }],
+          ["tailscale status --json", { stdout: CERTS_ONLY }],
           [
             "tailscale serve status --json",
             {
@@ -576,6 +585,21 @@ describe("collie doctor — the local checks", () => {
     expect(stolen.byCheck.get("front-door")?.status).toBe("warn");
   });
 
+  test("front-door: a tailnet with no HTTPS certificates warns with the console pointer (#172)", async () => {
+    const { byCheck } = await findings(
+      harness(null, [], {
+        answers: [
+          ["tailscale status --json", { stdout: JSON.stringify({ Self: { DNSName: "laptop.tail.ts.net." } }) }],
+          ["tailscale serve status --json", { stdout: SERVE_OK }],
+          ...netmapAnswers(NETMAP_OPEN),
+        ],
+      }),
+    );
+    expect(byCheck.get("front-door")?.status).toBe("warn");
+    expect(byCheck.get("front-door")?.detail).toContain("no HTTPS certificates");
+    expect(byCheck.get("front-door")?.remedy).toContain("https://login.tailscale.com/admin/dns");
+  });
+
   test("front-door: a LEAD with no mapping and no COLLIE_SKIP_SERVE is an error", async () => {
     const files = { ...healthyFiles(), ...markerFile(LEAD) };
     delete files[HANDLER];
@@ -583,7 +607,7 @@ describe("collie doctor — the local checks", () => {
       harness(LEAD, [hello()], {
         files,
         answers: [
-          ["tailscale status --json", { stdout: "{}" }],
+          ["tailscale status --json", { stdout: CERTS_ONLY }],
           ["tailscale serve status --json", { stdout: "{}" }],
           ...netmapAnswers(NETMAP_OPEN),
         ],
@@ -810,15 +834,15 @@ describe("collie doctor — the clock (§8.6's ±5m window)", () => {
   });
 });
 
-// ── The pack checks ──────────────────────────────────────────────────────────
+// ── The crew checks ──────────────────────────────────────────────────────────
 
-describe("collie doctor — the pack checks", () => {
+describe("collie doctor — the crew checks", () => {
   test("store-drift: a roster the running bridge never wired is an error naming `collie restart`", async () => {
     // The marker was written when this lead had NO peers; the store now has one.
     const stale = markerFor(leadStore(), T0, 42);
     const { code, byCheck } = await findings(
       harness(LEAD, [hello()], {
-        files: { ...healthyFiles(), [`${STATE}/pack-runtime.json`]: JSON.stringify(stale) },
+        files: { ...healthyFiles(), [`${STATE}/crew-runtime.json`]: JSON.stringify(stale) },
       }),
     );
     expect(byCheck.get("store-drift")?.status).toBe("error");
@@ -832,15 +856,15 @@ describe("collie doctor — the pack checks", () => {
     expect(byCheck.get("store-drift")?.status).toBe("skipped");
   });
 
-  test("secret-generation: a member behind the pack's generation warns, and does not fail the run", async () => {
+  test("secret-generation: a member behind the crew's generation warns, and does not fail the run", async () => {
     const behind = leadStore({ peers: [member({ memberId: "laptop", secretGeneration: 0 })] });
     const { code, byCheck } = await findings(
       harness(behind, [hello()], { files: { ...healthyFiles(), ...markerFile(behind) } }),
     );
     expect(byCheck.get("secret-generation")?.status).toBe("warn");
-    expect(byCheck.get("secret-generation")?.remedy).toContain("collie pack rotate");
+    expect(byCheck.get("secret-generation")?.remedy).toContain("collie crew rotate");
     expect(code).toBe(EXIT.OK);
-    expect(PACK.secretGeneration).toBe(1);
+    expect(CREW.secretGeneration).toBe(1);
   });
 
   test("member-reach: an unreachable member is an error naming `collie reconnect`", async () => {
@@ -866,15 +890,15 @@ describe("collie doctor — the pack checks", () => {
     const f = byCheck.get("member-reach");
     expect(f?.status).toBe("error");
     expect(f?.detail).toContain("served no data");
-    expect(f?.remedy).toContain("COLLIE_PACK_TIMEOUT_MS");
+    expect(f?.remedy).toContain("COLLIE_CREW_TIMEOUT_MS");
     expect(f?.remedy).toContain("COLLIE_POLL_MS");
     expect(f?.remedy).not.toContain("collie reconnect");
     expect(code).toBe(EXIT.FAIL);
   });
 
-  // F21: the peer's side of the same check. `/pack/v1/snapshot` is not on the closed peer → lead
+  // F21: the peer's side of the same check. `/crew/v1/snapshot` is not on the closed peer → lead
   // route set (§8.6), so the only answer the second question can get is §8.1's bare 401 — which this
-  // check reported as "answered but served no data", with the budget remedy, on a healthy pack.
+  // check reported as "answered but served no data", with the budget remedy, on a healthy crew.
   test("lead-reach: a peer asks its lead `hello` and nothing else", async () => {
     const peer = peerStore();
     const h = harness(peer, [hello({ memberId: "desk" })], {
@@ -882,7 +906,7 @@ describe("collie doctor — the pack checks", () => {
       files: without({ ...healthyFiles(), ...markerFile(peer) }, HANDLER),
     });
     const { byCheck } = await findings(h);
-    expect(h.requests).not.toContain("https://desk.example:8787/pack/v1/snapshot");
+    expect(h.requests).not.toContain("https://desk.example:8787/crew/v1/snapshot");
     const f = byCheck.get("lead-reach");
     expect(f?.status).toBe("ok");
     expect(f?.detail).toContain("answered `hello`");
@@ -895,8 +919,8 @@ describe("collie doctor — the pack checks", () => {
     expect(byCheck.get("member-reach")?.status).toBe("ok");
     expect(byCheck.get("member-reach")?.detail).toContain("served a snapshot");
     expect(h.requests).toEqual([
-      "https://laptop.example:8787/pack/v1/hello",
-      "https://laptop.example:8787/pack/v1/snapshot",
+      "https://laptop.example:8787/crew/v1/hello",
+      "https://laptop.example:8787/crew/v1/snapshot",
       // The history section's one GET of THIS bridge's own snapshot (issue #137), on the same seam.
       "http://127.0.0.1:8787/api/snapshot",
     ]);
@@ -912,7 +936,7 @@ describe("collie doctor — the pack checks", () => {
     expect(f?.status).toBe("warn");
     expect(f?.detail).toContain("1.0.0-alpha.9");
     expect(f?.detail).toContain("1.0.0-alpha.12");
-    expect(f?.remedy).toContain("collie pack update");
+    expect(f?.remedy).toContain("collie crew update");
     expect(code).toBe(EXIT.OK);
   });
 
@@ -1370,8 +1394,8 @@ describe("the terminal renderer", () => {
     expect(views).toHaveLength(1);
     // The same findings, not a re-derived summary of them.
     expect(views[0]!.local.map((f) => f.check)).toEqual((await plainFindings()).map((f) => f.check));
-    expect(views[0]!.pack).toEqual([]);
-    expect(views[0]!.packNote[0]).toContain("not in a pack");
+    expect(views[0]!.crew).toEqual([]);
+    expect(views[0]!.crewNote[0]).toContain("not in a crew");
   });
 
   test("`--json` outranks the renderer — a script's stdout is never a drawing", async () => {
@@ -1390,3 +1414,115 @@ async function plainFindings(): Promise<Finding[]> {
   // SAFETY: as in `findings` above — `--json` prints the serialised `Finding[]` and nothing else.
   return JSON.parse(fresh.io.stdout.join("\n")) as Finding[];
 }
+
+// ── A packaged install (ADR 0035) ──────────────────────────────────────────
+// doctor gained a `packaged` case, and the code review caught that its NEIGHBOURS did not: three
+// other findings key on install kind, and each fell through to a line that is false on this one.
+// Every case here is one of those, so the omission cannot come back quietly.
+
+describe("collie doctor — a packaged install", () => {
+  /** A Collie with a manifest, no `.git`, in a folder a package manager owns. */
+  function systemOwned(link: Record<string, LinkProbe> = {}, answers: Scripted["answers"] = []) {
+    const h = harness(null, [], {
+      link,
+      answers: [...answers, [`git -C ${ROOT} rev-parse --git-dir`, { code: 128 }], ...(HEALTHY_ANSWERS ?? [])],
+      // The manifest is what makes this a Collie at all — `hasMarker` is asked before ownership, so
+      // without it the tree classifies `no-marker` and none of these findings would be exercised.
+      files: { ...healthyFiles(), [`${ROOT}/herdr-plugin.toml`]: 'id = "herdr.collie"\nversion = "1.5.2"\n' },
+    });
+    h.files.rootOwned.add(ROOT);
+    return h;
+  }
+
+  test("the install line reports the kind, the prefix and the PATH name pointing at it", async () => {
+    // The three facts an operator checks the install by hand with. Healthy, never a warning:
+    // nothing is wrong with this install.
+    const f = (await findings(systemOwned())).byCheck.get("install");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail ?? "").toContain("packaged install");
+    expect(f?.detail ?? "").toContain(ROOT);
+    expect(f?.detail ?? "").toContain("updates come from your package manager");
+  });
+
+  test("the symlink is named when one points into this root, and its absence is stated", async () => {
+    const h = systemOwned();
+    // `/opt/collie` is the fake's root; a PATH name pointing into it is what a package installs.
+    expect((await findings(h)).byCheck.get("install")?.detail ?? "").toContain("no PATH name points at it");
+    const linked = systemOwned({ "/usr/bin/collie": { kind: "symlink", target: `${ROOT}/bin/collie` } });
+    expect((await findings(linked)).byCheck.get("install")?.detail ?? "").toContain("via /usr/bin/collie");
+  });
+
+  test("`versions` no longer promises a staging that will never happen", async () => {
+    // The regression the review found: the generic branch says "the next `collie update` stages
+    // one", three lines under an install line saying this install does not update itself.
+    const f = (await findings(systemOwned())).byCheck.get("versions");
+    expect(f?.status).toBe("skipped");
+    expect(f?.detail ?? "").not.toContain("stages one");
+  });
+
+  test("`update-source` does not name a GitHub repo this install never fetches from", async () => {
+    const f = (await findings(systemOwned())).byCheck.get("update-source");
+    expect(f?.detail ?? "").not.toContain("github.com");
+    expect(f?.detail ?? "").toContain("updates come from your package manager");
+  });
+
+  // ── restart-pending, the check this kind is the whole reason for ───────────
+  // `pacman -U` replaces `bin/collie` under a live service and restarts nothing. Everything below
+  // is that machine: a pid from the unit, and an executable that either is or is not the installed
+  // one. The old skip reason claimed "whatever installs the new version restarts it", which is
+  // exactly what a package manager does not do.
+
+  const MAIN_PID = "systemctl --user show collie --property=MainPID --value";
+  const PID = 4242;
+  const EXE = `/proc/${String(PID)}/exe`;
+  const BINARY = `${ROOT}/bin/collie`;
+  const supervised = (link: Record<string, LinkProbe> = {}) =>
+    systemOwned(link, [[MAIN_PID, { stdout: `${String(PID)}\n` }]]);
+
+  test("`restart-pending` fires when the running collie was unlinked under the service", async () => {
+    const h = supervised();
+    h.files.links.set(EXE, `${BINARY} (deleted)`);
+    const f = (await findings(h)).byCheck.get("restart-pending");
+    expect(f?.status).toBe("warn");
+    expect(f?.detail ?? "").toContain(BINARY);
+    expect(f?.remedy).toContain("collie restart");
+  });
+
+  test("`restart-pending` fires on a same-version rebuild, where no version string moved", async () => {
+    // The inode is the only witness here: `pacman -U` of a new pkgrel writes a NEW file at the same
+    // path, so the link resolves, every version file agrees, and the process is still stale.
+    const h = supervised();
+    h.files.links.set(EXE, BINARY);
+    h.files.stats.set(EXE, { inode: 111, mtimeMs: 0 });
+    h.files.stats.set(BINARY, { inode: 222, mtimeMs: 0 });
+    const f = (await findings(h)).byCheck.get("restart-pending");
+    expect(f?.status).toBe("warn");
+    expect(f?.remedy).toContain("collie restart");
+  });
+
+  test("`restart-pending` passes when the process and the file are one inode", async () => {
+    const h = supervised();
+    h.files.links.set(EXE, BINARY);
+    h.files.stats.set(EXE, { inode: 111, mtimeMs: 0 });
+    h.files.stats.set(BINARY, { inode: 111, mtimeMs: 0 });
+    const f = (await findings(h)).byCheck.get("restart-pending");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail ?? "").toContain(BINARY);
+    expect(f?.remedy).toBeNull();
+  });
+
+  test("`restart-pending` is skipped with no pid, and no longer claims anything restarts the process", async () => {
+    const f = (await findings(systemOwned())).byCheck.get("restart-pending");
+    expect(f?.status).toBe("skipped");
+    expect(f?.detail ?? "").toContain("no pid");
+    expect(f?.detail ?? "").not.toContain("restarts it");
+    expect(f?.remedy).toContain("collie restart");
+  });
+
+  test("a linked clone still gets every one of those answers the old way", async () => {
+    // The control. All four assertions above must fail on a checkout, or they are pinning nothing.
+    const run = await findings(harness(null));
+    expect(run.byCheck.get("update-source")?.detail ?? "").toContain("github.com");
+    expect(run.byCheck.get("versions")?.status).not.toBe("skipped");
+  });
+});

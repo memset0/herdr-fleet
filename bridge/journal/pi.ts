@@ -22,8 +22,7 @@
 import { readdir } from "node:fs/promises";
 
 import type { JsonObject, JsonValue } from "../json.ts";
-import { join } from "node:path";
-
+import { dirname, join } from "node:path";
 import {
   containedRealpath,
   containedRealpathIn,
@@ -48,6 +47,22 @@ export function isPiSessionId(value: string): boolean {
   return SESSION_ID_RE.test(value);
 }
 
+/** pi / omp content-addressed blob hash: 64-hex SHA-256 digest. */
+const BLOB_HASH_RE = /^[0-9a-f]{64}$/i;
+
+export function isBlobHash(value: string): boolean {
+  return BLOB_HASH_RE.test(value);
+}
+
+/** How pi names a blob inside its own log — `blob:sha256:<64 hex>`. Spelled once. */
+const BLOB_REF_PREFIX = "blob:sha256:";
+
+/** The route that serves those bytes back (`bridge/server.ts` § BLOB_ROUTE). Spelled once. */
+const BLOB_ROUTE_PREFIX = "/api/blobs/";
+
+/** Base64, with the whitespace a wrapped payload carries. A closed charset, never an escaper. */
+const BASE64_PAYLOAD_RE = /^[A-Za-z0-9+/=\s]+$/;
+
 /** Flatten a pi content list into text, keeping only `text` blocks. */
 function textBlocks(content: JsonValue | undefined): string {
   if (typeof content === "string") return content;
@@ -63,17 +78,59 @@ function textBlocks(content: JsonValue | undefined): string {
     .join("\n");
 }
 
+/**
+ * An image block's `data` as a URL the phone may load, or `null` when it is not one.
+ *
+ * TWO SHAPES ARE ALLOWED AND NOTHING ELSE: this collie's own `/api/blobs/<64 hex>` route, and a
+ * `data:image/*` payload the log carried inline. A journal is an AGENT's output, so `data` is
+ * untrusted content: an `http://`/`https://` value would make the phone fetch an arbitrary host on
+ * the agent's word — a request the operator never made, from a page inside the tailnet — so it is
+ * DROPPED rather than passed through. `resolveImageUrl` returning null is how a block with nothing
+ * renderable simply produces no part.
+ */
+export function resolveImageUrl(data: string, mimeType?: string): string | null {
+  if (data.startsWith(BLOB_REF_PREFIX)) {
+    const hash = data.slice(BLOB_REF_PREFIX.length);
+    return isBlobHash(hash) ? `${BLOB_ROUTE_PREFIX}${hash}` : null;
+  }
+  // A `data:` value is taken as written, so only an image one is taken at all — `data:text/html`
+  // would be a document, not a picture.
+  if (data.startsWith("data:")) return data.startsWith("data:image/") ? data : null;
+  // Anything left is bare base64, which the block's own `mimeType` names. An absent or non-image
+  // mime type is not guessed at: png was a guess, and a guess here is a data URL nobody declared.
+  if (mimeType === undefined || !mimeType.startsWith("image/")) return null;
+  // And it must actually BE base64. Without this a `mimeType: "image/png"` beside a `data` of
+  // `http://evil.example/x.png` came back out as a data URL wrapping a remote address, which is the
+  // http case sneaking through the branch that was meant to have dropped it.
+  if (!BASE64_PAYLOAD_RE.test(data)) return null;
+  return `data:${mimeType};base64,${data}`;
+}
+
+/** The first renderable image URL in a content block list, or undefined when there is none. */
+function extractImageUrl(content: JsonValue | undefined): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  for (const b of content) {
+    if (b === null || typeof b !== "object" || Array.isArray(b)) continue;
+    if (b.type !== "image" || typeof b.data !== "string") continue;
+    const mimeType = typeof b.mimeType === "string" ? b.mimeType : undefined;
+    const url = resolveImageUrl(b.data, mimeType);
+    if (url !== null) return url;
+  }
+  return undefined;
+}
+
 /** A session-log line, once JSON.parse has admitted it is an object at all. */
 type PiRow = JsonObject;
 
-/** A `tool` part's answered result — {@link Clamped} plus the error flag the result row carried. */
-type ToolResult = Clamped & { isError?: boolean };
+/** A `tool` part's answered result — {@link Clamped} plus the error flag and optional image URL. */
+type ToolResult = Clamped & { isError?: boolean; imageUrl?: string };
 
 /** One row's `toolResult` payload, folded onto the call it answers. */
-function toolResult(text: string, isError: boolean): ToolResult {
+function toolResult(text: string, isError: boolean, imageUrl?: string): ToolResult {
   const result: ToolResult = clamp(text, MAX_RESULT_CHARS);
   // Assigned, never conditionally spread: `isError` is ABSENT when false, not `false`.
   if (isError) result.isError = true;
+  if (imageUrl) result.imageUrl = imageUrl;
   return result;
 }
 
@@ -115,12 +172,13 @@ export function parsePiTranscript(text: string): TranscriptEntry[] {
       const target = pendingTools.get(id);
       const resultText = stripAnsi(textBlocks(m.content));
       const isError = m.isError === true;
+      const imageUrl = extractImageUrl(m.content);
       if (target) {
         // Mutated in place — the part already sits in an emitted entry, which is why results attach
         // without reordering anything.
         pendingTools.delete(id);
-        target.result = toolResult(resultText, isError);
-      } else if (resultText.trim() !== "") {
+        target.result = toolResult(resultText, isError, imageUrl);
+      } else if (resultText.trim() !== "" || imageUrl) {
         // Orphan result (its call fell outside a tail-read window) — kept unattached so the window
         // never silently drops output.
         entries.push({
@@ -132,7 +190,7 @@ export function parsePiTranscript(text: string): TranscriptEntry[] {
               kind: "tool",
               name: typeof m.toolName === "string" ? m.toolName : "result",
               summary: "",
-              result: toolResult(resultText, isError),
+              result: toolResult(resultText, isError, imageUrl),
             },
           ],
         });
@@ -151,6 +209,16 @@ export function parsePiTranscript(text: string): TranscriptEntry[] {
       } else if (b.type === "thinking" && typeof b.thinking === "string") {
         if (b.thinking.trim() !== "")
           parts.push({ kind: "thinking", ...clamp(stripAnsi(b.thinking), MAX_TEXT_CHARS) });
+      } else if (b.type === "image" && typeof b.data === "string") {
+        const mimeType = typeof b.mimeType === "string" ? b.mimeType : undefined;
+        const url = resolveImageUrl(b.data, mimeType);
+        // A reference this build refuses to load contributes NO part, rather than a broken <img>.
+        // Assigned, never conditionally spread: an unnamed mime type leaves the key OFF.
+        if (url !== null) {
+          const part: Extract<TranscriptPart, { kind: "image" }> = { kind: "image", url };
+          if (mimeType !== undefined) part.mimeType = mimeType;
+          parts.push(part);
+        }
       } else if (b.type === "toolCall") {
         const part: Extract<TranscriptPart, { kind: "tool" }> = {
           kind: "tool",
@@ -251,4 +319,26 @@ export function piJournal(roots: string | readonly string[]): JournalAdapter {
     source: new PiTranscriptSource(roots),
     parse: parsePiTranscript,
   };
+}
+
+/**
+ * Resolve a content-addressed blob hash to an absolute file path contained within one of the
+ * configured pi/omp blob directories (sibling `blobs/` to each `sessions/` root).
+ *
+ * Validates that hash is a 64-character hex string and that the resolved file exists and is
+ * contained within one of the derived blob roots.
+ */
+export async function resolveBlobPath(
+  hash: string,
+  sessionRoots: readonly string[],
+): Promise<string | null> {
+  if (!isBlobHash(hash)) return null;
+  const blobRoots = sessionRoots.map((r) => join(dirname(r), "blobs"));
+  for (const blobDir of blobRoots) {
+    const candidate = join(blobDir, hash);
+    if (!(await exists(candidate))) continue;
+    const real = await containedRealpathIn(candidate, blobRoots);
+    if (real !== null) return real;
+  }
+  return null;
 }

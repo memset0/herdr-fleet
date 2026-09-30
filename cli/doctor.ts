@@ -32,11 +32,11 @@ import {
 import { ZELLIJ_BINARY_OPTION, ZELLIJ_MUX } from "../bridge/mux/zellij/adapter.ts";
 import { resolveZellijBinary, zellijBinaryCandidates } from "../bridge/mux/zellij/exec.ts";
 import { chooseSession, parseSessionList, ZELLIJ_LIST_SESSIONS_ARGS } from "../bridge/mux/zellij/protocol.ts";
-import { bindIsWildcard } from "../bridge/pack/config.ts";
-import { deriveMode } from "../bridge/pack/mode.ts";
-import type { HelloResult, PackFetch, PeerOutcome } from "../bridge/pack/peer-client.ts";
-import { packRuntimePath, parseMarker, rosterDrift } from "../bridge/pack/staleness.ts";
-import { enrollmentOf, TrustStore, type TrustedMember, type TrustStoreData } from "../bridge/pack/trust-store.ts";
+import { bindIsWildcard } from "../bridge/crew/config.ts";
+import { deriveMode } from "../bridge/crew/mode.ts";
+import type { HelloResult, CrewFetch, PeerOutcome } from "../bridge/crew/peer-client.ts";
+import { crewRuntimePath, parseMarker, rosterDrift, type CrewRuntimeMarker } from "../bridge/crew/staleness.ts";
+import { enrollmentOf, TrustStore, type TrustedMember, type TrustStoreData } from "../bridge/crew/trust-store.ts";
 import { collieVersionBare, type CliContext } from "./context.ts";
 import { bad, ok, skipped, warn, type DoctorStatus, type Finding } from "./finding.ts";
 import { explicitMux, probeMuxes, refusedMux, type MuxSighting } from "./mux.ts";
@@ -53,14 +53,24 @@ import {
   probeInstall,
   publishedBinary,
   updateRepoOf,
+  PACKAGED_SENTENCE,
 } from "./install-kind.ts";
-import { classifyLink, linkDir, linkPath, type LinkReader, onPath, realLinkFs } from "./link.ts";
+import { packageCommand } from "./package-command.ts";
+import { classifyLink, linkDir, linkPath, type LinkReader, onPath, realLinkFs, resolveLinkTarget } from "./link.ts";
+import { classifyExe, exePathOf, type ExeEvidence } from "../bridge/exe-replaced.ts";
+import { collieBinary, unitName } from "./unit.ts";
+import { pidFilePath } from "./lifecycle.ts";
 import type { Ui } from "./render.ts";
-import { failureLine, type MemberReach, parsePackArgs, probeMemberReach, VERSION_REPORTED_SINCE } from "./pack.ts";
+import { failureLine, type MemberReach, parseCrewArgs, probeMemberReach, VERSION_REPORTED_SINCE } from "./crew.ts";
 import { fingerprintRoot, parseRecord, parseServeStatus, rootAvailability } from "./serve.ts";
 import type { Exec, Files } from "./sys.ts";
 import { BUILD_MARKER, currentVersionDir, listVersions, platformId, readBuildMarker } from "./update.ts";
-import { tailnetInboundBlocked, tailnetName } from "./tailnet.ts";
+import {
+  HTTPS_DISABLED_HINT,
+  tailnetCertDomains,
+  tailnetInboundBlocked,
+  tailnetName,
+} from "./tailnet.ts";
 
 // `collie doctor` — one read-only pass over the traps that fail silently (M7/02).
 //
@@ -71,11 +81,11 @@ import { tailnetInboundBlocked, tailnetName } from "./tailnet.ts";
 // enforced structurally rather than by care: {@link DoctorDeps} names no lifecycle verb, no audit
 // log and no mutating store method, so there is nothing to call.
 //
-// ── IT REUSES `pack status`'s PROBES ─────────────────────────────────────────
+// ── IT REUSES `crew status`'s PROBES ─────────────────────────────────────────
 // `deriveMode`, `bindIsWildcard`, `probeMembers`, `parseMarker`/`rosterDrift` (the two pure halves
 // `reportDrift` itself prints from), `tailnetInboundBlocked`, and `serve.ts`'s ownership parsing are
 // all imported, never re-derived. A second implementation of a probe is a second thing to drift, and
-// a doctor that disagrees with `pack status` is worse than no doctor.
+// a doctor that disagrees with `crew status` is worse than no doctor.
 //
 // ── EVERY FINDING NAMES A VERB ───────────────────────────────────────────────
 // Each check is one line with a status and, unless it passed, the remedy. "Something is wrong"
@@ -90,7 +100,7 @@ import { tailnetInboundBlocked, tailnetName } from "./tailnet.ts";
 export type { DoctorStatus, Finding };
 
 /**
- * Where `doctor` reaches the world. Same shape as `packDeps` minus everything that could change
+ * Where `doctor` reaches the world. Same shape as `crewDeps` minus everything that could change
  * something: no `restart`/`serve`/`unserve`, no audit log, no identity minter, no entropy.
  */
 export interface DoctorDeps {
@@ -107,7 +117,7 @@ export interface DoctorDeps {
    * THIS bridge's own `/api/snapshot` (the history section, issue #137). Every one of them is a
    * read, which is what keeps this verb's contract; there is no mutating route on the other end.
    */
-  readonly fetch: PackFetch;
+  readonly fetch: CrewFetch;
   /**
    * The agent-beacon sweep's two seams — a directory listing and a pid probe, both READS
    * (`bridge/beacon/reader.ts`). There is no writer of a beacon anywhere in the bridge: an agent's
@@ -132,10 +142,10 @@ const CLOCK_WARN_MS = 2 * 60_000;
 
 /** `collie doctor [--json]`. Exit 0 unless some check is error-severity. */
 export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Promise<number> {
-  const { bare } = parsePackArgs(args, ["json"]);
+  const { bare } = parseCrewArgs(args, ["json"]);
   const data = await deps.store.load();
   const { mode } = deriveMode(enrollmentOf(data));
-  const inPack = data !== null && data.pack !== null;
+  const inCrew = data !== null && data.crew !== null;
 
   // The members this collie talks to: its peers on a lead, its one lead on a peer. Probed ONCE, and
   // read by three checks (reachability, versions, clocks). Two calls per member and no more: the
@@ -143,7 +153,7 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
   const members: readonly TrustedMember[] =
     data === null ? [] : data.lead === null ? data.peers : [data.lead, ...data.peers];
   const reaches: Map<string, MemberReach> =
-    inPack && data !== null && members.length > 0 ? await probeMemberReach(deps, data, members) : new Map();
+    inCrew && data !== null && members.length > 0 ? await probeMemberReach(deps, data, members) : new Map();
   // Versions and clocks read the `hello` half alone — they are questions about the far side's build
   // and clock, which a data request cannot answer better.
   const probes: Map<string, PeerOutcome<HelloResult>> = new Map(
@@ -165,6 +175,9 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
   // How this Collie got here, and where its updates come from — read once, and by the same functions
   // `collie update` decides on, so the two verbs can never disagree about what they are looking at.
   const install = classifyInstall(probeInstall(deps, deps.ctx.root));
+  // The one artefact a running bridge leaves behind, read once: `restart-pending` takes the pid and
+  // the boot stamp out of it, and `storeDrift` below reads the same marker for the roster.
+  const runtimeMarker = parseMarker(deps.files.read(crewRuntimePath(deps.ctx.stateDir)));
   const local: Finding[] = [
     identity(deps),
     webDist(deps),
@@ -190,11 +203,11 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
       files: deps.files,
       snapshot: () => ownSnapshot(deps),
     })),
-    restartPending(install),
-    clock(inPack, probes),
+    restartPending(deps, install, runtimeMarker),
+    clock(inCrew, probes),
   ].filter((f) => appliesToMux(f.check, chosen.name));
-  const pack: Finding[] =
-    inPack && data !== null
+  const crew: Finding[] =
+    inCrew && data !== null
       ? [
           storeDrift(deps, data),
           secretGeneration(data, members),
@@ -203,12 +216,12 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
         ]
       : [];
 
-  const findings = [...local, ...pack];
+  const findings = [...local, ...crew];
   if (bare.has("json")) {
     // stdout and nothing else: the whole point of `--json` is that a script can read it.
     deps.io.out(JSON.stringify(findings, null, 2));
   } else {
-    await render(deps, data, mode, local, pack);
+    await render(deps, data, mode, local, crew);
   }
   return findings.some((f) => f.status === "error") ? EXIT.FAIL : EXIT.OK;
 }
@@ -245,12 +258,12 @@ async function render(
   data: TrustStoreData | null,
   mode: string,
   local: readonly Finding[],
-  pack: readonly Finding[],
+  crew: readonly Finding[],
 ): Promise<void> {
   const heading = `collie doctor — ${collieVersionBare(deps.ctx.root, (p) => deps.files.read(p))} · mode ${mode}`;
-  const packNote = [
-    "pack: none — this collie is not in a pack.",
-    "  `collie pack invite` here makes it a lead; `collie join …` makes it a peer.",
+  const crewNote = [
+    "crew: none — this collie is not in a crew.",
+    "  `collie crew invite` here makes it a lead; `collie join …` makes it a peer.",
   ];
   // One findings list, two renderings. The terminal gets the columns laid out and the statuses
   // coloured; everything else gets exactly the lines below, which are what `--json`'s human twin has
@@ -259,9 +272,9 @@ async function render(
     await deps.ui.doctor({
       heading,
       local,
-      packTitle: pack.length === 0 ? "pack:" : `pack: ${data?.pack?.name ?? "?"}`,
-      pack,
-      packNote: pack.length === 0 ? packNote : [],
+      crewTitle: crew.length === 0 ? "crew:" : `crew: ${data?.crew?.name ?? "?"}`,
+      crew,
+      crewNote: crew.length === 0 ? crewNote : [],
     });
     return;
   }
@@ -270,14 +283,14 @@ async function render(
   deps.io.out("local:");
   for (const f of local) deps.io.out(line(f));
   deps.io.out("");
-  if (pack.length === 0) {
-    // One line, exactly as `pack status` does — never a column of padded `skipped` pack checks,
+  if (crew.length === 0) {
+    // One line, exactly as `crew status` does — never a column of padded `skipped` crew checks,
     // which would train an operator to skim past the ones that mean something.
-    for (const n of packNote) deps.io.out(n);
+    for (const n of crewNote) deps.io.out(n);
     return;
   }
-  deps.io.out(`pack: ${data?.pack?.name ?? "?"}`);
-  for (const f of pack) deps.io.out(line(f));
+  deps.io.out(`crew: ${data?.crew?.name ?? "?"}`);
+  for (const f of crew) deps.io.out(line(f));
 }
 
 /** One check, one line. The status leads, the identifier is the second word, the remedy closes it. */
@@ -361,6 +374,24 @@ function pathLink(deps: DoctorDeps): Finding {
  * makes it a binary install, and anything else is reported as unknown rather than guessed at. The
  * verdict comes from `classifyInstall`, which is also the one `collie update` forks on.
  */
+/**
+ * The PATH name that points INTO this root, or null when none of the usual ones does.
+ *
+ * A package installs `/usr/bin/collie` as a symlink into its own prefix, which is the layout
+ * `bridge/root.ts` resolves the root back through. The candidates are read, never written, and a
+ * name that points somewhere else is not this install's — so a second Collie on `$PATH` is reported
+ * as "no PATH name points at it" rather than claimed.
+ */
+function packageSymlink(deps: DoctorDeps): string | null {
+  const own = collieBinary(deps.ctx.root);
+  const candidates = ["/usr/bin/collie", "/usr/local/bin/collie", "/opt/homebrew/bin/collie", linkPath(deps.ctx.home)];
+  for (const at of candidates) {
+    const probe = deps.link.probe(at);
+    if (probe.kind === "symlink" && resolveLinkTarget(at, probe.target) === own) return at;
+  }
+  return null;
+}
+
 function installKind(deps: DoctorDeps, install: InstallKind): Finding {
   const root = deps.ctx.root;
   const version = collieVersionBare(root, (p) => deps.files.read(p));
@@ -401,6 +432,21 @@ function installKind(deps: DoctorDeps, install: InstallKind): Finding {
       const origin = originOf(deps.exec, root);
       const from = origin.kind === "repo" ? origin.repo : origin.kind === "other" ? origin.url : "no origin";
       return ok("install", `linked clone at ${root} (branch ${branch.stdout.trim() || "?"}, origin ${from})`);
+    }
+    case "packaged": {
+      // THREE FACTS, because they are the three an operator needs to check the install by hand: the
+      // kind, the prefix the root resolved to (which is what `bridge/root.ts` derived from a
+      // realpath'd `execPath`, and what decides whether `web/dist` is found), and the PATH name
+      // pointing into it (ADR 0021's pointer, here owned by the package manager rather than by
+      // `collie link`). Healthy, never a warning: nothing is wrong with this install.
+      const via = packageSymlink(deps);
+      const named = packageCommand(root);
+      const tail = [
+        `version ${version}`,
+        via === null ? "no PATH name points at it" : `via ${via}`,
+        named === null ? PACKAGED_SENTENCE : `${PACKAGED_SENTENCE} — \`${named}\``,
+      ].join(", ");
+      return ok("install", `packaged install at ${root} (${tail})`);
     }
     case "unknown":
       if (install.why === "orphan-layout") {
@@ -445,6 +491,17 @@ function versionsLayout(deps: DoctorDeps, install: InstallKind): Finding {
   const staged = isStagedCheckout(deps, root);
   if (install.kind === "unknown") {
     return skipped("versions", "install kind unknown — nothing to report a layout for", "see docs/install.md");
+  }
+  if (install.kind === "packaged") {
+    // The generic line below says "the next `collie update` stages one", which on this kind is a
+    // promise about the exact command that refuses. Before `packaged` existed the same tree was
+    // `unknown` and this check was skipped, so falling through would be a regression to a false
+    // statement sitting three lines under an install line that says the opposite.
+    return skipped(
+      "versions",
+      `a packaged install stages no versions — ${PACKAGED_SENTENCE}`,
+      "your package manager keeps its own previous versions, if it keeps any",
+    );
   }
   if (!staged && install.kind !== "binary") {
     if (install.kind === "detached-checkout") {
@@ -507,6 +564,13 @@ function worktreeDrift(deps: DoctorDeps, layout: BinaryLayout, dirs: readonly st
  */
 function updateSource(deps: DoctorDeps, install: InstallKind): Finding {
   const repo = updateRepoOf(deps.ctx.env);
+  if (install.kind === "packaged") {
+    // Naming a GitHub repo here would answer a question this install does not have. Nothing Collie
+    // does fetches from it: `update` refuses, and the release listing is only ever read to say
+    // whether a newer version exists. Where the new files actually come from is not on disk.
+    const named = packageCommand(deps.ctx.root);
+    return ok("update-source", named === null ? PACKAGED_SENTENCE : `${PACKAGED_SENTENCE} — \`${named}\``);
+  }
   const isGit = install.kind === "linked-clone" || install.kind === "detached-checkout";
   if (!isGit) {
     return repo === DEFAULT_UPDATE_REPO
@@ -599,12 +663,12 @@ function bindCheck(deps: DoctorDeps, mode: string): Finding {
     const suggestion = tailnetName(deps.exec) ?? "<address the lead can dial>";
     return bad(
       "bind",
-      `COLLIE_HOST=${host} on a PEER — only this machine can reach the pack listener, so the lead's` +
+      `COLLIE_HOST=${host} on a PEER — only this machine can reach the crew listener, so the lead's` +
         " probe never lands and the member stays provisional",
       `set COLLIE_HOST=${suggestion} in ${join(deps.ctx.configDir, ".env")}, then \`collie restart\``,
     );
   }
-  // The other direction, and it stops the process rather than degrading it: outside a pack, a bind
+  // The other direction, and it stops the process rather than degrading it: outside a crew, a bind
   // that is not loopback is REFUSED at boot (bridge/index.ts), because every browser write gate is a
   // header a client can set. Asking bridge/config.ts rather than re-deciding here keeps one rule.
   if (
@@ -616,7 +680,7 @@ function bindCheck(deps: DoctorDeps, mode: string): Finding {
   ) {
     return bad(
       "bind",
-      `COLLIE_HOST=${shown} is not loopback and this collie is in no pack — the bridge refuses to start`,
+      `COLLIE_HOST=${shown} is not loopback and this collie is in no crew — the bridge refuses to start`,
       `set COLLIE_HOST=127.0.0.1 in ${join(deps.ctx.configDir, ".env")} and put your ingress in front, or set COLLIE_ALLOW_NON_LOOPBACK_BIND=1 if you meant it`,
     );
   }
@@ -625,7 +689,7 @@ function bindCheck(deps: DoctorDeps, mode: string): Finding {
 
 /**
  * `COLLIE_HOST` as the BRIDGE resolves it (`resolveBridgeHost` in `bridge/config.ts`: absent ⇒
- * loopback, explicitly empty ⇒ every interface), which is also how `pack status` prints it and how
+ * loopback, explicitly empty ⇒ every interface), which is also how `crew status` prints it and how
  * the `collie start`/`status` banner probes readiness. Resolving it differently here would make
  * `doctor` warn about a bind the process never had.
  */
@@ -636,7 +700,7 @@ function bindWildcard(deps: DoctorDeps): Finding {
   if (!bindIsWildcard(resolvedBind(deps))) return ok("bind-wildcard", "bound to one address");
   return warn(
     "bind-wildcard",
-    "COLLIE_HOST is a wildcard — ALL interfaces, gated only by pinned mTLS + the pack secret (§3)",
+    "COLLIE_HOST is a wildcard — ALL interfaces, gated only by pinned mTLS + the crew secret (§3)",
     `deliberate? nothing to do. Otherwise set COLLIE_HOST to one address in ${join(deps.ctx.configDir, ".env")} and \`collie restart\``,
   );
 }
@@ -700,6 +764,16 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
       "install tailscale and `collie serve`, or set COLLIE_SKIP_SERVE=1 if you own the ingress (docs/deployment.md Variant E)",
     );
   }
+  // No certificates, no https door — and `tailscale serve` says so by asking a question at a
+  // terminal a service has not got (#172). `collie serve` refuses on this same fact; doctor names it
+  // here so the operator reads it before they type the verb.
+  if (deps.ctx.serveMode === "https" && tailnetCertDomains(deps.exec)?.length === 0) {
+    return warn(
+      "front-door",
+      "this tailnet has no HTTPS certificates, so an https front door cannot be published",
+      HTTPS_DISABLED_HINT,
+    );
+  }
   const status = liveServeStatus(deps);
   if (status === null) {
     return skipped(
@@ -710,7 +784,7 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
   }
 
   if (raw === null) {
-    // No record. On a peer that is the correct state; on a lead it is a pack with no published URL.
+    // No record. On a peer that is the correct state; on a lead it is a crew with no published URL.
     const proxy = `http://127.0.0.1:${deps.ctx.port}`;
     const listener = deps.ctx.serveMode === "http" ? deps.ctx.port : deps.ctx.servePort;
     let availability;
@@ -739,7 +813,7 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
     return mode === "lead"
       ? bad(
           "front-door",
-          `${detail} — the pack has a lead with no URL for the phone`,
+          `${detail} — the crew has a lead with no URL for the phone`,
           "`collie serve` here (or COLLIE_SKIP_SERVE=1 if you own the ingress)",
         )
       : warn(
@@ -820,37 +894,113 @@ async function ownSnapshot(deps: DoctorDeps): Promise<string | null> {
 const SNAPSHOT_BUDGET_MS = 3000;
 
 /**
- * Rebuilt but not restarted — the repo's documented #1 "my change didn't take" trap — and `doctor`
- * **cannot see it**, honestly reported as such.
+ * Is the running bridge still executing the collie that is installed?
  *
- * The running bridge leaves exactly one artefact behind (`pack-runtime.json`, bridge/pack/staleness.ts)
- * and it records `bootedAt`, `pid`, the mode and the roster — **not a version**. `/api/config`'s build
- * id is read off `web/dist` at request time, so it describes the bundle on disk rather than the
- * process; nothing else the bridge writes names the code it is running. Answering this check would
- * therefore take a new field, a new file or a new route — all three forbidden here — so it ships
- * `skipped` rather than approximating. A diagnostic that overstates its coverage invites someone to
- * skip a real check on its strength.
+ * Two different questions live under one check id, because the operator's question is one:
+ * "is what I am talking to the code that is on this disk?"
+ *
+ * ── ON A SINGLE-FILE INSTALL (`binary`, `packaged`) IT IS ANSWERED ───────────
+ * The payload ships no `bridge/` — the bridge is compiled INTO `bin/collie` — so there is no source
+ * tree for the process to be behind, and `bridgeStale` is permanently false there. What there IS is
+ * an executable, and a package manager replaces it and restarts NOTHING. Observed on Arch:
+ * `pacman -U` of a rebuilt `collie-bin` leaves the service active on a deleted inode, still serving
+ * the old code, while every version file around it describes the new build. On a rebuild of the same
+ * version the version comparison in `bridge/update.ts` cannot see it at all, because no version
+ * string moved.
+ *
+ * So the executable is read directly: `/proc/<pid>/exe` of the bridge's own pid, judged by
+ * {@link classifyExe}. The check was previously skipped here with the sentence "whatever installs
+ * the new version restarts it", which is simply false for a package manager.
+ *
+ * ── ON A CHECKOUT IT STILL IS NOT ───────────────────────────────────────────
+ * There the process may be behind `bridge/*.ts`, and the running bridge leaves exactly one artefact
+ * (`crew-runtime.json`, bridge/crew/staleness.ts) recording `bootedAt`, `pid`, the mode and the
+ * roster — not a version, and not a source stamp. Answering that would take a new field, a new file
+ * or a new route, so it ships `skipped` rather than approximating.
  */
-function restartPending(install: InstallKind): Finding {
-  // On a binary install the question does not arise. The payload ships no `bridge/` — the bridge is
-  // compiled INTO `bin/collie` — so `bridgeStampSync` reads an empty stamp at boot and every time
-  // after, `bridgeStale` is permanently false, and that is correct rather than broken: there is no
-  // on-disk source for the process to be behind, and the only way the code changes is an update,
-  // which restarts the service itself (M14/01 §4.4). Written here so nobody "fixes" it later.
-  if (install.kind === "binary") {
+function restartPending(deps: DoctorDeps, install: InstallKind, marker: CrewRuntimeMarker | null): Finding {
+  if (install.kind !== "binary" && install.kind !== "packaged") {
     return skipped(
       "restart-pending",
-      "a binary install ships no bridge/ source, so there is nothing for the running process to be" +
-        " behind — `collie update` restarts the service itself",
-      "`collie logs` dates the running process",
+      "the running bridge records no version — `crew-runtime.json` carries its boot time, pid, mode and" +
+        " roster, and nothing names the code it is executing",
+      "`collie restart` after any build if in doubt; `collie logs` dates the running process",
     );
   }
-  return skipped(
-    "restart-pending",
-    "the running bridge records no version — `pack-runtime.json` carries its boot time, pid, mode and" +
-      " roster, and nothing names the code it is executing",
-    "`collie restart` after any build if in doubt; `collie logs` dates the running process",
-  );
+  const pid = bridgePid(deps, marker);
+  const evidence = exeEvidence(deps, pid, marker);
+  const installed = exePathOf(evidence.exeLink) ?? collieBinary(deps.ctx.root);
+  switch (classifyExe(evidence)) {
+    case "replaced":
+      return warn(
+        "restart-pending",
+        `the running bridge is executing a collie that ${installed} no longer holds — the files were` +
+          " replaced under it and nothing restarted it",
+        "`collie restart`",
+      );
+    case "current":
+      return ok("restart-pending", `the running bridge is executing ${installed}, the installed collie`);
+    case "unknown":
+      return skipped(
+        "restart-pending",
+        pid === null
+          ? "no pid for the bridge — without one there is no executable to compare against the" +
+              " installed collie"
+          : `the executable behind pid ${String(pid)} could not be read, so it cannot be compared` +
+              " against the installed collie",
+        "`collie restart` after a package upgrade — a package manager replaces the files and restarts" +
+          " nothing; `collie logs` dates the running process",
+      );
+  }
+}
+
+/**
+ * The bridge's pid, from the tier that started it: the systemd unit's `MainPID`, else the pidfile
+ * the unsupervised tier writes, else the pid the running bridge recorded in `crew-runtime.json`.
+ *
+ * Read-only throughout — `systemctl show` prints a property and touches nothing.
+ */
+function bridgePid(deps: DoctorDeps, marker: CrewRuntimeMarker | null): number | null {
+  const shown = deps.exec.capture("systemctl", [
+    "--user",
+    "show",
+    unitName(deps.ctx.instance),
+    "--property=MainPID",
+    "--value",
+  ]);
+  const main = shown.found && shown.code === 0 ? Number(shown.stdout.trim()) : Number.NaN;
+  if (Number.isInteger(main) && main > 1) return main;
+  const fromFile = Number(deps.files.read(pidFilePath(deps.ctx.configDir, deps.ctx.instance))?.trim() ?? "");
+  if (Number.isInteger(fromFile) && fromFile > 1) return fromFile;
+  // A bridge that neither systemd nor the pidfile tier owns still wrote its own pid, but only in a
+  // crew — a solo instance writes no marker (CREW_PROTOCOL.md §11's zero-tax contract).
+  return marker === null ? null : marker.pid;
+}
+
+/**
+ * The five probes {@link classifyExe} judges. Each one is allowed to decline, and every one of them
+ * is a read.
+ *
+ * `startedAtMs` comes from the marker only when it names THIS pid: it is the boot stamp of the
+ * process that wrote it, and taken from any other pid it would be a start time for a process it does
+ * not describe. That is the mtime fallback's only source here, which is why a non-Linux solo install
+ * lands on `unknown` rather than on a guess.
+ */
+function exeEvidence(deps: DoctorDeps, pid: number | null, marker: CrewRuntimeMarker | null): ExeEvidence {
+  if (pid === null) {
+    return { exeLink: null, exeInode: null, installedInode: null, installedMtimeMs: null, startedAtMs: null };
+  }
+  const procExe = `/proc/${String(pid)}/exe`;
+  const exeLink = deps.files.readlink(procExe);
+  const installedPath = exePathOf(exeLink) ?? collieBinary(deps.ctx.root);
+  const installed = deps.files.stat(installedPath);
+  return {
+    exeLink,
+    exeInode: deps.files.stat(procExe)?.inode ?? null,
+    installedInode: installed?.inode ?? null,
+    installedMtimeMs: installed?.mtimeMs ?? null,
+    startedAtMs: marker !== null && marker.pid === pid ? marker.bootedAt : null,
+  };
 }
 
 /**
@@ -858,12 +1008,12 @@ function restartPending(install: InstallKind): Finding {
  * **no new route, field or exchange** (§8.6's window is the threshold, and a failure there is the
  * uniform 401 that says nothing about clocks).
  */
-function clock(inPack: boolean, probes: Map<string, PeerOutcome<HelloResult>>): Finding {
-  if (!inPack) {
+function clock(inCrew: boolean, probes: Map<string, PeerOutcome<HelloResult>>): Finding {
+  if (!inCrew) {
     return skipped(
       "clock",
       "solo — there is no far side to compare against, and inventing a reference clock is worse than silence",
-      "re-run `collie doctor` once this collie is in a pack",
+      "re-run `collie doctor` once this collie is in a crew",
     );
   }
   const deltas: { member: string; delta: number }[] = [];
@@ -875,7 +1025,7 @@ function clock(inPack: boolean, probes: Map<string, PeerOutcome<HelloResult>>): 
     return skipped(
       "clock",
       "no member answered with a readable `Date` header — nothing to compare this clock against",
-      "fix the link first (`collie pack status`), then re-run `collie doctor`",
+      "fix the link first (`collie crew status`), then re-run `collie doctor`",
     );
   }
   const worst = deltas.reduce((a, b) => (Math.abs(b.delta) > Math.abs(a.delta) ? b : a));
@@ -1311,16 +1461,16 @@ async function beacons(deps: DoctorDeps, installed: boolean): Promise<Finding> {
   );
 }
 
-// ── Pack checks ──────────────────────────────────────────────────────────────
+// ── Crew checks ──────────────────────────────────────────────────────────────
 
 /**
  * "Enrolled but INACTIVE" — a membership change that reached the store but not the running process.
  *
- * The comparison is `parseMarker` + `rosterDrift`, i.e. the two pure functions `pack status`'s
+ * The comparison is `parseMarker` + `rosterDrift`, i.e. the two pure functions `crew status`'s
  * `reportDrift` prints from, so the two verbs cannot disagree about what drift is.
  */
 function storeDrift(deps: DoctorDeps, data: TrustStoreData): Finding {
-  const marker = parseMarker(deps.files.read(packRuntimePath(deps.ctx.stateDir)));
+  const marker = parseMarker(deps.files.read(crewRuntimePath(deps.ctx.stateDir)));
   if (marker === null) {
     return skipped(
       "store-drift",
@@ -1344,7 +1494,7 @@ function storeDrift(deps: DoctorDeps, data: TrustStoreData): Finding {
 
 /** A member that missed a rotation (§8.4), or one a rotation already dropped. */
 function secretGeneration(data: TrustStoreData, members: readonly TrustedMember[]): Finding {
-  const current = data.pack?.secretGeneration ?? 0;
+  const current = data.crew?.secretGeneration ?? 0;
   const behind = members
     .filter((m) => m.status === "enrolled" && m.secretGeneration !== current)
     .map((m) => `${m.memberId} (generation ${m.secretGeneration})`);
@@ -1358,7 +1508,7 @@ function secretGeneration(data: TrustStoreData, members: readonly TrustedMember[
   return warn(
     "secret-generation",
     parts.join("; "),
-    "`collie pack rotate` on the lead — or, for one already unenrolled, `collie pack invite` here and" +
+    "`collie crew rotate` on the lead — or, for one already unenrolled, `collie crew invite` here and" +
       " `collie join` there",
   );
 }
@@ -1369,7 +1519,7 @@ function secretGeneration(data: TrustStoreData, members: readonly TrustedMember[
  * **Both halves of {@link MemberReach}, because `hello` alone was a lie.** The verdict probe runs on
  * the patient budget and every real read runs on the strict clamped one, so a link whose handshake
  * outprices the poll answered the probe while the phone got nothing — and this check printed `✓` over
- * a pack that was 503ing every pane. A member that answers and then starves is now its own finding,
+ * a crew that was 503ing every pane. A member that answers and then starves is now its own finding,
  * with its own remedy: the address is right, the budget is not.
  */
 function reach(data: TrustStoreData, members: readonly TrustedMember[], reaches: Map<string, MemberReach>): Finding {
@@ -1379,7 +1529,7 @@ function reach(data: TrustStoreData, members: readonly TrustedMember[], reaches:
     return skipped(
       check,
       "no enrolled members to dial",
-      "`collie pack invite` here, then `collie join` on the other machine",
+      "`collie crew invite` here, then `collie join` on the other machine",
     );
   }
   const silent: string[] = [];
@@ -1396,7 +1546,7 @@ function reach(data: TrustStoreData, members: readonly TrustedMember[], reaches:
       continue;
     }
     // F21: on a peer the one enrolled member is the LEAD, and a peer asks its lead for no snapshot —
-    // `/pack/v1/snapshot` is not on the closed peer → lead route set (`bridge/pack/router.ts`, RFC
+    // `/crew/v1/snapshot` is not on the closed peer → lead route set (`bridge/crew/router.ts`, RFC
     // §8.6), so the question has no answer but a refusal. `hello` is the whole verdict for that row.
     if (m.role === "lead") continue;
     if (answered.data === null || !answered.data.ok) {
@@ -1419,7 +1569,7 @@ function reach(data: TrustStoreData, members: readonly TrustedMember[], reaches:
       check,
       `${enrolled.length} of ${enrolled.length} answered \`hello\`, but ${starved.length} served no data:` +
         ` ${starved.join("; ")} — the machines are there; their data misses the per-poll budget`,
-      "raise BOTH `COLLIE_PACK_TIMEOUT_MS` and `COLLIE_POLL_MS` here (the first is clamped to 0.8 of the" +
+      "raise BOTH `COLLIE_CREW_TIMEOUT_MS` and `COLLIE_POLL_MS` here (the first is clamped to 0.8 of the" +
         " second), then `collie restart`",
     );
   }
@@ -1433,7 +1583,7 @@ function reach(data: TrustStoreData, members: readonly TrustedMember[], reaches:
 }
 
 /**
- * Build skew across the pack (§7.1). Skew **refuses nothing on the wire**, so it must not fail this
+ * Build skew across the crew (§7.1). Skew **refuses nothing on the wire**, so it must not fail this
  * verb's exit either — it is a `warn` naming both versions and the remedy. A member that answers
  * without the field is pre-{@link VERSION_REPORTED_SINCE} and renders as such: informational, never an
  * error and never a reason to skip the whole check.
@@ -1450,7 +1600,7 @@ function memberVersions(
     return skipped(
       "member-versions",
       "no member answered, so no version can be compared",
-      "fix the link first (`collie pack status`), then re-run `collie doctor`",
+      "fix the link first (`collie crew status`), then re-run `collie doctor`",
     );
   }
   const ours = collieVersionBare(deps.ctx.root, (p) => deps.files.read(p));
@@ -1477,7 +1627,7 @@ function memberVersions(
     "member-versions",
     `this machine runs ${ours}; ${skewed.join(", ")} — build skew refuses nothing (§7.1), the link keeps` +
       ` working${note}`,
-    `\`collie pack update ${behind.map((e) => e.id).join(" ")}\` here, or \`collie update\` on each`,
+    `\`collie crew update ${behind.map((e) => e.id).join(" ")}\` here, or \`collie update\` on each`,
   );
 }
 
@@ -1485,7 +1635,7 @@ function memberVersions(
 
 /**
  * The real seams, built from the lifecycle set. Deliberately assembled here rather than reusing
- * `packDeps`: what `doctor` cannot reach, it cannot be made to call by a later edit.
+ * `crewDeps`: what `doctor` cannot reach, it cannot be made to call by a later edit.
  */
 export function doctorDeps(base: {
   ctx: CliContext;

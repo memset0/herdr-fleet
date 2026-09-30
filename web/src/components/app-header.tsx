@@ -25,6 +25,7 @@ import { settingsPath } from "@/lib/nav";
 import { CollieHome } from "@/components/collie-home";
 import { AlphaBar } from "@/components/alpha-bar";
 import { Collapse } from "@/components/ui/collapse";
+import { useStripBandOpen } from "@/components/ui/strip-host";
 import { SectionLabel } from "@/components/ui/section-label";
 import type { BridgeStatus } from "@/lib/types";
 import type { Scope } from "@/lib/scope";
@@ -37,7 +38,7 @@ interface HeaderClaim {
   /** Show the stacked identity beside the mark: the "Collie" brand line over the "on <mux>" line. */
   wordmark: boolean;
   /** `column` = the header is as wide as the route's own `max-w-screen-sm` content column (640px),
-   *  which is what the dashboard, space, Settings, Pack and Updates screens have always been;
+   *  which is what the dashboard, space, Settings, Crew and Updates screens have always been;
    *  `wide` = a LADDER rather than one number: 768px from `md`, then 1024, 1280 and 1400px at `lg`,
    *  `xl` and `2xl`, which is what the pane and history screens claim — they were `full` until
    *  landscape on a tablet showed what that costs, then flat at 768px until a desktop showed what
@@ -52,7 +53,7 @@ interface HeaderClaim {
    *  number. AgentChat's wrapper carries the measurement and the same four classes; the two must
    *  not drift, or the header and the mirror stop sharing a right edge. */
   width: "column" | "wide" | "full";
-  /** The route has taken the whole row (Settings, Pack, and either find bar). The shell then draws
+  /** The route has taken the whole row (Settings, Crew, and either find bar). The shell then draws
    *  no mark, no caption and no slots — see `RouteHeader`. */
   override: boolean;
   /** DOWNSTREAM PORT — draw the Collie mark. True everywhere except the route that asks otherwise.
@@ -66,7 +67,8 @@ interface HeaderClaim {
    *
    *  It is a claim rather than a prop for the same reason the other three are: the shell owns the
    *  `<header>` element, so only the shell can stop drawing it, and the route that wants it gone is
-   *  mounted below it. The element itself STAYS, with its safe-area inset and its reserved rule; the
+   *  mounted below it. The element itself STAYS, with its reserved rule and with whatever safe-area
+   *  inset it is currently holding (see the class list); the
    *  row inside it leaves through `Collapse` — DESIGN.md §1's only sanctioned way an in-flow surface
    *  arrives or leaves, and §2's reason for not tearing 60px out of the top of the page in one frame.
    *  Keeping the inset is deliberate: the notch is not screen a mirror could use anyway, and a route
@@ -145,8 +147,9 @@ interface AppHeaderHostProps {
  * entirely. None of that is reachable by memoising inside the mark: the `useMemo` on its markup is
  * per-instance, and a new instance is exactly what was happening.
  *
- * The pattern is `RootLayout`'s existing one — UpdateRibbon and ConnectionBanner already sit
- * above the outlet and already survive navigation. This is the third thing on that shelf.
+ * The pattern is `RootLayout`'s existing one — the strip band, with UpdateRibbon and
+ * ConnectionBanner registering into it, already sits above the outlet and already survives
+ * navigation. This is the second thing on that shelf, and it renders the outlet itself.
  *
  * Routes feed it through `<RouteHeader/>`; see the note there for why that is a portal and not a
  * store of nodes.
@@ -164,10 +167,13 @@ export function AppHeaderHost({ bridge, error, leading, children }: AppHeaderHos
   const lost = useConnectionLost(connecting);
   // What this collie drives, printed beside the wordmark. It ALWAYS describes the LOCAL collie and
   // never changes with the viewed scope: `/api/config`'s mux block is this bridge's own, and a peer's
-  // is not fetched (the pack link carries runtime data, not a second config channel). So on `?h=peer`
+  // is not fetched (the crew link carries runtime data, not a second config channel). So on `?h=peer`
   // the line still reads "on <the lead's mux>" — the name of the thing the page you are running is
   // built on, which is what a support question needs.
   const mux = useMuxName();
+  // Whether the band above this bar is showing a strip right now. It decides ONE thing — who
+  // reserves the safe-area inset — and the reasoning sits on the class below.
+  const bandOpen = useStripBandOpen();
   // The mark that goes with that name, served by the bridge from the ADAPTER's own bytes. Empty
   // whenever no logo was published, and empty renders nothing — see useMuxLogoUrl.
   const muxLogo = useMuxLogoUrl();
@@ -201,8 +207,9 @@ export function AppHeaderHost({ bridge, error, leading, children }: AppHeaderHos
 
   return (
     <HeaderSlotContext.Provider value={slots}>
-      {/* A column, not a row: the sticky bar owns the safe-area inset and stacks the (usually absent)
-          prerelease strip above the header row proper, which keeps its original padding. On a stable
+      {/* A column, not a row: the sticky bar reserves the safe-area inset when nothing above it does
+          (see the class list), and stacks the (usually absent) prerelease strip above the header row
+          proper, which keeps its original padding. On a stable
           build AlphaBar renders null and the geometry is byte-for-byte what it always was — the inset +
           the row's own py-2 reproduce the old `calc(safe-area + 0.5rem)` top padding exactly. The strip
           sits ABOVE everything including the find-bar override: while you're searching an alpha it is
@@ -226,7 +233,31 @@ export function AppHeaderHost({ bridge, error, leading, children }: AppHeaderHos
           // two rails and this row — and a header the same colour as the route it heads read as
           // part of it. --chrome is the raised ground the composer dock already stands on, so the
           // three agree and the page and the mirror keep theirs.
-          "sticky top-0 z-20 flex flex-col border-b bg-chrome [padding-top:env(safe-area-inset-top)]",
+          "sticky top-0 z-20 flex flex-col border-b bg-chrome",
+          /*
+           * THE NOTCH IS RESERVED ONCE, BY WHATEVER IS ACTUALLY ON TOP.
+           *
+           * This bar owned `env(safe-area-inset-top)` unconditionally, on a claim that was true when
+           * it was written and is not any more: that the header is the first thing on the screen. It
+           * is not, whenever the band above it (`ui/strip-host.tsx`) is showing a strip — and the
+           * band reserves the inset too, because a strip that clears the notch is the whole reason
+           * the band exists in that position. Two unconditional reservations is one dead inset-tall
+           * strip at the top of an iPhone, which is exactly the bug reported for ribbon + header.
+           *
+           * `useStripBandOpen()` and NOT a `:first-child` selector: the band never unmounts (it
+           * collapses to nothing and keeps its live regions), so the header is never the DOM's first
+           * child once a host is mounted, and the question is whether the band is currently OPEN.
+           * Outside a host the hook is false and this bar owns the inset exactly as before.
+           *
+           * The transition is load-bearing, not decoration. The two reservations hand over during
+           * the band's own 240ms open/close, so without it the header's inset would appear in one
+           * frame while the band was still half-way through animating its own away, and the page
+           * below would jog down and back. On the same duration and the same easing as
+           * `ui/collapse.tsx`'s (COLLAPSE_MS), the sum of the two is monotonic and the operator sees
+           * one movement. Under reduced motion both sides snap together, which is also correct.
+           */
+          "transition-[padding-top] duration-[240ms] ease-out motion-reduce:transition-none",
+          !bandOpen && "[padding-top:env(safe-area-inset-top)]",
           // The rule is RECOLOURED, never removed — DESIGN.md §2's own technique, and the width stays
           // reserved in the base string above. While a route has the row hidden (zen) there are no
           // two regions left to cut apart, so the edge goes transparent; nothing moves by a pixel
@@ -334,57 +365,70 @@ export function AppHeaderHost({ bridge, error, leading, children }: AppHeaderHos
                     logo changes none of it: 1.15em on a -0.2em baseline shift stays inside the
                     line box the type already asked for.
 
-                    It rides WITH the wordmark claim (dashboard + space, never the pane, where the
-                    breadcrumb owns the width) and sits OUTSIDE the home button, as the mux line
-                    always has: that button's aria-label would otherwise replace both lines for a
-                    screen reader. The brand word moved out of the button with it, so the tap target
+                    IT IS MOUNTED ONCE AND HIDDEN off the wordmark routes, rather than rendered
+                    conditionally. It shows where the claim asks for it (dashboard + space, never the
+                    pane, where the breadcrumb owns the width), but the node stays: rendering it on
+                    the claim unmounted it on every dashboard → pane → dashboard move, and each
+                    remount built a fresh mux-logo `<img>`, which the bridge answers with a
+                    conditional request before the picture paints. On a phone over Tailscale that is
+                    a blank logo box for a round trip on every dashboard open, reproduced 2026-09-10.
+                    The switch is the HTML `hidden` ATTRIBUTE and not a `hidden` utility class:
+                    Tailwind's preflight gives `[hidden]` `display: none !important`, so the block
+                    takes no width and leaves the accessibility tree, and no later display utility
+                    can undo it. It also states the fact in the DOM, where a test and a screen
+                    reader read it without a stylesheet.
+
+                    It sits OUTSIDE the home button, as the mux line always has: that button's
+                    aria-label would otherwise replace both lines for a screen reader. The brand word moved out of the button with it, so the tap target
                     is the mark's own 44px box and nothing else — the floor §6 asks for, and the same
                     box the gear at the other end of the row has. */}
-                {claim.wordmark && (
-                  <div data-slot="header-identity" className="relative min-w-0">
-                    <SectionLabel className="absolute bottom-full left-0 max-w-full truncate leading-none">
-                      Collie
-                    </SectionLabel>
-                    {/* The line the freed width is FOR — "on <mux>", the sentence the brand line
-                        above starts. `min-h-6` RESERVES it whether or not a name has arrived:
-                        nothing renders until a bridge has actually named one (an old bridge, a
-                        cached page or a read still in flight all leave it empty, never an "on
-                        unknown" placeholder), and a box with no line box inside it is 0px tall — so
-                        without the reservation the brand line would jump 24px upward the moment
-                        /api/config landed. DESIGN.md §2: a state with nothing to say keeps its slot.
+                <div
+                  data-slot="header-identity"
+                  hidden={!claim.wordmark}
+                  className="relative min-w-0"
+                >
+                  <SectionLabel className="absolute bottom-full left-0 max-w-full truncate leading-none">
+                    Collie
+                  </SectionLabel>
+                  {/* The line the freed width is FOR — "on <mux>", the sentence the brand line
+                      above starts. `min-h-6` RESERVES it whether or not a name has arrived:
+                      nothing renders until a bridge has actually named one (an old bridge, a
+                      cached page or a read still in flight all leave it empty, never an "on
+                      unknown" placeholder), and a box with no line box inside it is 0px tall — so
+                      without the reservation the brand line would jump 24px upward the moment
+                      /api/config landed. DESIGN.md §2: a state with nothing to say keeps its slot.
 
-                        The prefix stays a dictionary string and stays on this line. It is the word
-                        that makes two stacked runs one sentence rather than two loose labels, and it
-                        is the only translated word here — the brand and the multiplexer's own name
-                        are names, and names are not translated. */}
-                    <span className="block min-h-6 truncate text-base">
-                      {mux !== "" && (
-                        <>
-                          {t("nav.mux.onPrefix")}{" "}
-                          {/* The multiplexer's own mark, between "on" and its name. `alt=""` and
-                              nothing else: the name is right there in the same sentence, so a screen
-                              reader announcing the picture too would read the multiplexer twice —
-                              this is decoration OF that word. An `<img>` and never inline SVG: these
-                              bytes come from an adapter, and the one way to be certain adapter-
-                              supplied markup can never become document markup is to never put it in
-                              the document (the mirror's XSS boundary, same rule). The bridge serves
-                              it sandboxed. Sized in `em` so it tracks this line's own type rather
-                              than a pixel guess, and inline so the line stays ONE text run — the
-                              sentence is still "on <name>" to a screen reader and to a text query.
-                              Nothing renders when the bridge published no URL. */}
-                          {muxLogo !== "" && (
-                            <img
-                              src={muxLogo}
-                              alt=""
-                              className="mr-1 inline-block size-[1.15em] align-[-0.2em]"
-                            />
-                          )}
-                          {mux}
-                        </>
-                      )}
-                    </span>
-                  </div>
-                )}
+                      The prefix stays a dictionary string and stays on this line. It is the word
+                      that makes two stacked runs one sentence rather than two loose labels, and it
+                      is the only translated word here — the brand and the multiplexer's own name
+                      are names, and names are not translated. */}
+                  <span className="block min-h-6 truncate text-base">
+                    {mux !== "" && (
+                      <>
+                        {t("nav.mux.onPrefix")}{" "}
+                        {/* The multiplexer's own mark, between "on" and its name. `alt=""` and
+                            nothing else: the name is right there in the same sentence, so a screen
+                            reader announcing the picture too would read the multiplexer twice —
+                            this is decoration OF that word. An `<img>` and never inline SVG: these
+                            bytes come from an adapter, and the one way to be certain adapter-
+                            supplied markup can never become document markup is to never put it in
+                            the document (the mirror's XSS boundary, same rule). The bridge serves
+                            it sandboxed. Sized in `em` so it tracks this line's own type rather
+                            than a pixel guess, and inline so the line stays ONE text run — the
+                            sentence is still "on <name>" to a screen reader and to a text query.
+                            Nothing renders when the bridge published no URL. */}
+                        {muxLogo !== "" && (
+                          <img
+                            src={muxLogo}
+                            alt=""
+                            className="mr-1 inline-block size-[1.15em] align-[-0.2em]"
+                          />
+                        )}
+                        {mux}
+                      </>
+                    )}
+                  </span>
+                </div>
                 {/* Center region: the breadcrumb (or, on the dashboard/space, an empty flex-1 spacer that
                     pushes the right cluster to the edge). min-w-0 so the breadcrumb truncates when tight.
                     Unmounted, not hidden, while a route owns the row: an empty `flex-1` box left standing
@@ -439,7 +483,7 @@ interface RouteHeaderProps {
   /** Full-width takeover of the header row: the caller supplies the row's whole content instead of
    *  the mark + breadcrumb + right cluster. Two users, and they are deliberately the same mechanism.
    *  The pane's FIND BAR sets it while searching, so the find bar owns the row one-handed. Settings
-   *  and Pack set it permanently, because they lead with a back button where the mark stands rather
+   *  and Crew set it permanently, because they lead with a back button where the mark stands rather
    *  than with the mark. Either way the row still lives inside this one shell, so the
    *  sticky/safe-area/prerelease-strip/rule/height recipe is never copy-pasted — which is what a
    *  hand-rolled `<header>` on those two routes had been doing, 20px shorter and with no AlphaBar. */

@@ -13,12 +13,13 @@ import type {
   ActionResponse,
   BridgeConfig,
   CreateResponse,
+  DismissScope,
   DevicesResponse,
   LaunchersResponse,
   NotifyPrefs,
   PaneHistoryResponse,
   FleetReleaseObservation,
-  PackStatusResponse,
+  CrewStatusResponse,
   PaneReadResponse,
   PaneResizeResponse,
   PairFailure,
@@ -31,6 +32,7 @@ import type {
   WorktreeListResponse,
   WorktreeOpenResponse,
 } from "./types";
+import type { SubscribeBody } from "./push";
 
 export type { NotifyPrefs, UpdateInfo };
 
@@ -177,6 +179,28 @@ function withScope(path: string, scope?: Scope): string {
   if (host) out += `${out.includes("?") ? "&" : "?"}host=${encodeURIComponent(host)}`;
   if (session) out += `${out.includes("?") ? "&" : "?"}session=${encodeURIComponent(session)}`;
   return out;
+}
+
+/**
+ * A journal image reference as a URL this phone may load, or `null` when it is not one.
+ *
+ * ── TWO SHAPES, AND NOTHING ELSE ─────────────────────────────────────────────
+ * A blob path served by the owning collie (`/api/blobs/<64 hex>`) and an inline `data:image/*`
+ * payload. The bridge already refuses everything else (`bridge/journal/pi.ts` § resolveImageUrl),
+ * and this is the second, independent check on the side that would do the fetching: a journal is an
+ * AGENT's output, so a remote URL in it would have the phone call an arbitrary host on the agent's
+ * word. Anything unrecognised answers null and renders as no image.
+ *
+ * ── AND THE BLOB CARRIES ITS HOST ────────────────────────────────────────────
+ * The bytes sit on the machine whose journal named them, so the path takes the scope every other
+ * per-pane request takes and the lead forwards it (CREW_PROTOCOL.md §9.1). A `data:` URL is already
+ * the bytes and is scoped to nothing.
+ */
+const BLOB_REF = /^\/api\/blobs\/[0-9a-f]{64}$/i;
+
+export function imageSrc(ref: string, scope?: Scope): string | null {
+  if (BLOB_REF.test(ref)) return withScope(ref, scope);
+  return ref.startsWith("data:image/") ? ref : null;
 }
 
 // Best-effort human-readable failure detail: the response body if present, else the status text.
@@ -360,7 +384,7 @@ export async function fetchPane(
   const q = lines ? `?lines=${lines}` : "";
   const url = withScope(`/api/pane/${encodeURIComponent(paneId)}${q}`, scope);
   // Pane ids are unique only within one session on one machine (each session is its own Herdr
-  // server; each pack member is its own machine again), so the ETag/body cache is keyed by the full
+  // server; each crew member is its own machine again), so the ETag/body cache is keyed by the full
   // (host, session, paneId) triple — otherwise a "w1:p1" in one session, or on one host, would 304
   // into another's mirror. Shared with the loaders' caches via lib/scope, so the two can't drift.
   const cacheKey = paneScopeKey(scope, paneId);
@@ -490,7 +514,7 @@ export function sendKeys(
  * ceremony around the first half.
  *
  * **A scope naming a PEER is a no-op, and that is the honest answer rather than a shortcut.** The
- * route is not on the pack link's forwarding table (`bridge/pack/forward.ts`), because what is stale
+ * route is not on the crew link's forwarding table (`bridge/crew/forward.ts`), because what is stale
  * about a peer on the lead's screen is the LEAD's swept copy of it, which the lead refreshes on its
  * own sweep — not the peer's census, which the peer tightens itself the moment the lead forwards a
  * pane read to it. Sending it anyway would spend one legible 501 per foreground to change nothing.
@@ -664,9 +688,20 @@ export function openWorktree(
  * Read once per page load by lib/operator-config.ts, which is the only caller that should exist:
  * every field here is startup-resolved on the bridge, so a second channel would be a second answer
  * to the same question.
+ *
+ * `scope` names ONE MEMBER of the crew, and then the only field that differs is `mux`: the lead
+ * answers that member's own capability declaration, from what its last `hello` taught it, and every
+ * other field stays the lead's own (M22/03). It is NOT forwarded to the member, so this read cannot
+ * make the lead dial a machine. Absent, which is every solo install and every lead-scoped read, puts
+ * nothing on the wire and gets the byte-identical body it always did.
  */
-export function fetchConfig(): Promise<BridgeConfig> {
-  return req<BridgeConfig>("/api/config");
+export function fetchConfig(scope?: Scope): Promise<BridgeConfig> {
+  return req<BridgeConfig>(withScope("/api/config", scope));
+}
+
+/** Register push through the same timeout, authentication and error handling as the other APIs. */
+export function registerPushSubscription(body: SubscribeBody): Promise<void> {
+  return req<void>("/api/subscribe", { method: "POST", body: JSON.stringify(body) });
 }
 
 /**
@@ -741,7 +776,7 @@ export function startUpdate(a: {
   target: string;
   major: boolean;
   /**
-   * "Retry pack update": a new run whose only legs are the peers (M16/04). Sent only when true, so
+   * "Retry crew update": a new run whose only legs are the peers (M16/04). Sent only when true, so
    * the ordinary confirm's body is byte-identical to the one that shipped and a bridge that does
    * not know the field yet is never handed it.
    */
@@ -758,11 +793,27 @@ export function snoozeUpdate(): Promise<UpdateInfo> {
 }
 
 /**
+ * The update band was closed, for the version it named — the band's own dismiss (M17/08).
+ *
+ * The version goes to the BRIDGE rather than to this browser's storage, so the decision holds
+ * wherever the band is read next. `scope` says WHICH band: `offer` is a release available on this
+ * machine, and closing it snoozes the digest for that version too; `crew` is the quiet notice about
+ * a machine a package manager owns, and closing it touches no push. Not a mute either way — a newer
+ * version is a different fact and raises the band again.
+ */
+export function dismissUpdate(version: string, scope: DismissScope = "offer"): Promise<UpdateInfo> {
+  return req<UpdateInfo>("/api/update/dismiss", {
+    method: "POST",
+    body: JSON.stringify({ version, scope }),
+  });
+}
+
+/**
  * The run record from the STANDBY door (`GET /standby/update`), for the window in which the front
  * door is not answering because the update is restarting it.
  *
  * Same-origin, because that is the deployment this can help in: a failover proxy publishes
- * `/standby/*` beside the app (PACK_PROTOCOL.md §18.15, and `lib/sw-routes.ts` keeps the service
+ * `/standby/*` beside the app (CREW_PROTOCOL.md §18.15, and `lib/sw-routes.ts` keeps the service
  * worker's hands off it). Everywhere else it simply fails, which is exactly what the caller already
  * handles — the card treats a failed poll during `restarting` as expected either way.
  */
@@ -826,16 +877,16 @@ export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
 }
 
 /**
- * The pack census (`GET /api/pack`). Read-level, like the snapshot — looking at who is in the pack
+ * The crew census (`GET /api/crew`). Read-level, like the snapshot — looking at who is in the crew
  * needs no token; changing it is a CLI verb and has no endpoint here at all.
  *
  * Carries NO scope: the question is "what does this collie lead", and only a lead can answer it. A
- * solo collie and a peer both refuse with 404, which the loader reads as "no pack" rather than as a
+ * solo collie and a peer both refuse with 404, which the loader reads as "no crew" rather than as a
  * failure — so this throws for that case exactly as it does for any other refusal, and the branch
- * lives at the one call site that knows what a 404 means here (lib/loaders.ts `packLoader`).
+ * lives at the one call site that knows what a 404 means here (lib/loaders.ts `crewLoader`).
  */
-export function fetchPack(signal?: AbortSignal): Promise<PackStatusResponse> {
-  return req<PackStatusResponse>("/api/pack", { signal });
+export function fetchCrew(signal?: AbortSignal): Promise<CrewStatusResponse> {
+  return req<CrewStatusResponse>("/api/crew", { signal });
 }
 
 /** Cached, read-only stable-tag evidence from the authenticated Fleet Gateway. */
@@ -856,10 +907,12 @@ export function revokeDevice(label: string): Promise<DevicesResponse> {
 }
 
 /**
- * Upload an image; the bridge saves it to a host file and returns the path to reference in a
- * message. Uses multipart/form-data (NOT the JSON `req` helper — the browser sets the boundary).
+ * Upload an attachment — an image or a text file; the bridge saves it to a host file and returns the
+ * path to reference in a message. Uses multipart/form-data (NOT the JSON `req` helper — the browser
+ * sets the boundary). What the host will actually take is `/api/config`'s `upload` block, and
+ * lib/attachments.ts is where the phone reads it.
  */
-export function uploadImage(paneId: string, file: File, scope?: Scope): Promise<UploadResponse> {
+export function uploadFile(paneId: string, file: File, scope?: Scope): Promise<UploadResponse> {
   // Multipart, so it bypasses `req` (the browser sets the boundary) — track it explicitly instead.
   return trackBusy(
     (async () => {

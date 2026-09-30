@@ -1,5 +1,5 @@
 import type { CliContext, ServeMode } from "./context.ts";
-import { DEFAULT_SERVE_PORT, instanceSuffix, parseServePort } from "./context.ts";
+import { DEFAULT_SERVE_PORT, parseServePort } from "./context.ts";
 import {
   fingerprintRoot,
   formatRecord,
@@ -13,11 +13,17 @@ import {
   type ServeHandlers,
   type ServeStatus,
 } from "../bridge/front-door.ts";
-import { deriveMode, type PackMode } from "../bridge/pack/mode.ts";
-import { enrollmentOf, parseTrustStore, trustStorePath } from "../bridge/pack/trust-store.ts";
+import { deriveMode, type CrewMode } from "../bridge/crew/mode.ts";
+import { enrollmentOf, parseTrustStore, trustStorePath } from "../bridge/crew/trust-store.ts";
 import { EXIT, type Io } from "./io.ts";
 import type { Exec, Files } from "./sys.ts";
-import { bridgeUrl, localBridgeHostPort, tailnetName } from "./tailnet.ts";
+import {
+  bridgeUrl,
+  HTTPS_DISABLED_HINT,
+  localBridgeHostPort,
+  tailnetCertDomains,
+  tailnetName,
+} from "./tailnet.ts";
 
 // The single managed front door, ported from the pre-shim `collie-ctl.sh`. ADR 0001 is the whole
 // point of it: Collie manages exactly ONE `tailscale serve` mapping, records it, and only ever tears
@@ -157,7 +163,7 @@ export function cmdServe(deps: ServeDeps): number {
   }
 
   // ADR 0013 / §3: A PEER PUBLISHES NO FRONT DOOR. The one managed front door is the lead's — it is
-  // what the phone opens and what the pack's peer→lead direction rides — and a peer that published
+  // what the phone opens and what the crew's peer→lead direction rides — and a peer that published
   // its own would be a second door onto a machine that answers no phone.
   //
   // The gate lives here, in the one function that publishes, rather than in each verb that might
@@ -166,7 +172,7 @@ export function cmdServe(deps: ServeDeps): number {
   // with `tailscale not found` on a machine that was never supposed to ask. `join` had the same
   // shape and only got away with it because it calls `unserve` afterwards — publish, then undo.
   //
-  // The mode is read from the trust store ON DISK, not from `pack-runtime.json`: the marker records
+  // The mode is read from the trust store ON DISK, not from `crew-runtime.json`: the marker records
   // what the RUNNING bridge wired at ITS boot, and every membership verb restarts precisely because
   // the two differ for a moment. Disk is the decision the operator just made. A store that is
   // absent, unreadable or malformed derives `solo`, which publishes — the untaxed path is unchanged
@@ -175,12 +181,12 @@ export function cmdServe(deps: ServeDeps): number {
   // Teardown still runs, exactly as it does under `COLLIE_SKIP_SERVE=1` and for the same reason: a
   // machine that has just become a peer must drop the door it published as a lead, and skipping the
   // teardown would leave it reachable by a path the operator believes is closed.
-  if (packModeOnDisk(deps) === "peer") {
+  if (crewModeOnDisk(deps) === "peer") {
     const torn = stopTailscaleServe(deps);
     if (torn !== EXIT.OK) return torn;
     deps.io.out(
-      "tailscale serve skipped — this collie is a PEER of a pack, and a peer publishes no front" +
-        " door (ADR 0013). The lead's door speaks for the whole pack.",
+      "tailscale serve skipped — this collie is a PEER of a crew, and a peer publishes no front" +
+        " door (ADR 0013). The lead's door speaks for the whole crew.",
     );
     return EXIT.OK;
   }
@@ -201,6 +207,31 @@ export function cmdServe(deps: ServeDeps): number {
     return EXIT.FAIL;
   }
 
+  // A tailnet with no certificates cannot carry an https front door, and `tailscale serve` says so
+  // by ASKING — it prints "HTTPS must be enabled…" and waits for an answer at a terminal it has not
+  // got. The command then looks hung and the publish never lands (#172). The precondition is read
+  // first, so the operator gets the one sentence that ends the wait instead of the wait.
+  if (deps.ctx.serveMode === "https") {
+    const domains = tailnetCertDomains(deps.exec);
+    if (domains !== null && domains.length === 0) {
+      deps.io.err(
+        "error: HTTPS certificates are not enabled on this tailnet, so `tailscale serve` would stop" +
+          ` and wait for an answer nobody sees; ${HTTPS_DISABLED_HINT}`,
+      );
+      return EXIT.FAIL;
+    }
+    // `null` is "can't tell", never "no HTTPS" — the refusal above is deliberately not taken on a
+    // status document this build could not read. The publish goes ahead, and it says so, because
+    // the one failure it cannot rule out is the hang the check exists to prevent (#172).
+    if (domains === null) {
+      deps.io.err(
+        "warn: could not read this tailnet's HTTPS status from `tailscale status --json`;" +
+          " publishing anyway. If the command seems to hang, HTTPS is off:" +
+          ` ${HTTPS_DISABLED_HINT}`,
+      );
+    }
+  }
+
   const proxy = `http://127.0.0.1:${deps.ctx.port}`;
   const listenerPort = deps.ctx.serveMode === "http" ? deps.ctx.port : httpsPort;
   if (!ensureRootAvailable(deps, listenerPort, deps.ctx.serveMode, proxy)) return EXIT.FAIL;
@@ -216,11 +247,12 @@ export function cmdServe(deps: ServeDeps): number {
   deps.files.write(deps.ctx.handlerFile, formatRecord(record));
 
   const args = publishArgs(deps.ctx.serveMode, deps.ctx.port, httpsPort);
-  const r = deps.exec.capture("tailscale", args);
-  // The shell captured this into ${CONFIG_DIR}/serve.out and `cat`-ed it on failure; the file stays
-  // so an operator who went looking for it after a failed publish still finds it.
-  const output = `${r.stdout}${r.stderr}`;
-  deps.files.write(serveOutPath(deps.ctx), output);
+  // OUR stdio, not a capture (#172). The shell captured this into `${CONFIG_DIR}/serve.out` and
+  // `cat`-ed it on failure, which reads back everything `tailscale serve` said — but only once it
+  // has returned. Anything it prints WHILE it waits then reaches nobody, and the operator watches a
+  // command that looks hung. Nothing parses this output, so letting it through costs nothing and
+  // buys back every question tailscale decides to ask.
+  const r = deps.exec.inherit("tailscale", args);
   if (r.found && r.code === 0) {
     deps.io.out(
       deps.ctx.serveMode === "http"
@@ -232,10 +264,10 @@ export function cmdServe(deps: ServeDeps): number {
   deps.files.remove(deps.ctx.handlerFile);
   deps.io.out(
     deps.ctx.serveMode === "http"
-      ? "note: tailscale serve failed (try 'sudo tailscale set --operator=$USER'):"
-      : "note: tailscale serve (https) failed — on Headscale/.internal domains use COLLIE_SERVE_MODE=http:",
+      ? "note: tailscale serve failed (try 'sudo tailscale set --operator=$USER')"
+      : "note: tailscale serve (https) failed — on Headscale/.internal domains use COLLIE_SERVE_MODE=http",
   );
-  if (output.trim() !== "") deps.io.out(output.trimEnd());
+  // No echo of the failure text: tailscale printed it on this terminal as it happened.
   return EXIT.FAIL;
 }
 
@@ -253,14 +285,14 @@ export function cmdServe(deps: ServeDeps): number {
 export function cmdServeVerb(deps: ServeDeps): number {
   const code = cmdServe(deps);
   if (code !== EXIT.OK) return code;
-  if (packModeOnDisk(deps) === "peer") return EXIT.OK;
+  if (crewModeOnDisk(deps) === "peer") return EXIT.OK;
   deps.io.out(`open: ${bridgeUrl(deps.exec, deps.ctx)}`);
   return EXIT.OK;
 }
 
 /**
  * This collie's mode as the trust store on disk decides it (§3) — `solo` when there is no store, no
- * readable store, or no enrollment, which is every instance that never joined a pack.
+ * readable store, or no enrollment, which is every instance that never joined a crew.
  *
  * Exported for the ONE other surface that must agree with the publish decision: the status banner,
  * whose `tailnet` row is a row about the front door this function decides never to publish
@@ -269,7 +301,7 @@ export function cmdServeVerb(deps: ServeDeps): number {
  * Sync and file-shaped because `cmdServe` is: it runs inside `start`, which has no `await` to spare
  * for a `TrustStore` handle it would otherwise have to thread through four call sites.
  */
-export function packModeOnDisk(deps: ServeDeps): PackMode {
+export function crewModeOnDisk(deps: ServeDeps): CrewMode {
   const raw = deps.files.read(trustStorePath(deps.ctx.stateDir));
   return deriveMode(enrollmentOf(raw === null ? null : parseTrustStore(raw))).mode;
 }
@@ -287,10 +319,6 @@ function publishArgs(mode: ServeMode, bridgePort: number, httpsPort: number): st
   if (httpsPort === DEFAULT_SERVE_PORT) return ["serve", "--bg", "--set-path=/", target];
   return ["serve", "--bg", `--https=${httpsPort}`, "--set-path=/", target];
 }
-
-/** Per-instance, like every other file the CLI drops in the config dir — two instances may share one. */
-export const serveOutPath = (ctx: CliContext): string =>
-  `${ctx.configDir}/serve${instanceSuffix(ctx.instance)}.out`;
 
 /** The publish-side gate. True means "go ahead"; it prints its own refusal otherwise. */
 function ensureRootAvailable(

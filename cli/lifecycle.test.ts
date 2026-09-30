@@ -14,8 +14,8 @@ import {
   STATE,
   type Scripted,
 } from "./fakes.ts";
-import { leadStore, member, peerStore } from "../bridge/pack/fixtures.ts";
-import { serializeTrustStore } from "../bridge/pack/trust-store.ts";
+import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
+import { serializeTrustStore } from "../bridge/crew/trust-store.ts";
 import { EXIT, type Io } from "./io.ts";
 
 /** The `Io` a nested `serve` was handed — `null` until it has been called. */
@@ -37,6 +37,7 @@ import {
   stopPidfileProcess,
   resolveTailscaleHosts,
   supervisionTier,
+  systemdUserReachable,
   writeUnit,
 } from "./lifecycle.ts";
 
@@ -187,6 +188,47 @@ describe("supervision tiers", () => {
   });
 });
 
+// A Herdr plugin action injects `HERDR_SOCKET_PATH` / `HERDR_PLUGIN_CONFIG_DIR` and nothing else —
+// no login shell, so no `XDG_RUNTIME_DIR` or `DBUS_SESSION_BUS_ADDRESS` either, and the plain probe
+// fails even on a host where systemd --user is running (#194).
+describe("systemdUserReachable's session-env retry (#194)", () => {
+  const uid = process.getuid?.() ?? 0;
+
+  test("a failed probe retries once with a derived session env when the caller's env has neither var", () => {
+    let retryEnv: Readonly<Record<string, string>> | undefined;
+    const exec = fakeExec({
+      answers: [
+        [
+          "systemctl --user show-environment",
+          {
+            perCall: (n, env) => {
+              if (n === 2) retryEnv = env;
+              return { code: env?.XDG_RUNTIME_DIR === undefined ? 1 : 0 };
+            },
+          },
+        ],
+      ],
+    });
+    expect(systemdUserReachable(exec, {})).toBe(true);
+    expect(exec.calls.filter((c) => c === "systemctl --user show-environment")).toHaveLength(2);
+    expect(retryEnv?.XDG_RUNTIME_DIR).toBe(`/run/user/${uid}`);
+    expect(retryEnv?.DBUS_SESSION_BUS_ADDRESS).toBe(`unix:path=/run/user/${uid}/bus`);
+  });
+
+  test("the caller's own XDG_RUNTIME_DIR wins — a failed probe is never retried over it", () => {
+    const exec = fakeExec({ answers: NO_SYSTEMD });
+    expect(systemdUserReachable(exec, { XDG_RUNTIME_DIR: "/run/user/9999" })).toBe(false);
+    // One call, not two: a name the caller's env already carries is never overridden or retried.
+    expect(exec.calls.filter((c) => c === "systemctl --user show-environment")).toHaveLength(1);
+  });
+
+  test("a probe that still fails with the derived env reports unsupervised — the container case", () => {
+    const exec = fakeExec({ answers: NO_SYSTEMD });
+    expect(systemdUserReachable(exec, {})).toBe(false);
+    expect(supervisionTier(exec, "linux", {})).toBe("unsupervised");
+  });
+});
+
 describe("the pidfile guard", () => {
   test("recognises our own bridge by the command line ExecStart produces", () => {
     expect(isOurBridge(`${BINARY} _exec-bridge`, BINARY)).toBe(true);
@@ -196,6 +238,19 @@ describe("the pidfile guard", () => {
     expect(isOurBridge("/Applications/Something.app/Contents/MacOS/Something", BINARY)).toBe(false);
     // The binary invoked as a CLI is not the daemon.
     expect(isOurBridge(`${BINARY} status`, BINARY)).toBe(false);
+  });
+
+  test("recognises a binary install's bridge across a version flip, but not a stranger install", () => {
+    const OLD = "/home/pat/.local/share/collie/versions/1.5.6/bin/collie";
+    const NEW = "/home/pat/.local/share/collie/versions/1.6.0/bin/collie";
+    // The post-flip restart runs as NEW (`ctx.root` resolves through `process.execPath`), and must
+    // still recognise the OLD version's bridge as its own to stop it — the one case a self-update
+    // wedges forever in if this predicate cannot see past the version directory.
+    expect(isOurBridge(`${OLD} _exec-bridge`, NEW)).toBe(true);
+    expect(isOurBridge(`${NEW} _exec-bridge`, OLD)).toBe(true);
+    // A different install entirely — same version string, different root — is still refused.
+    const STRANGER = "/home/pat/.local/share/collie-other/versions/1.6.0/bin/collie";
+    expect(isOurBridge(`${STRANGER} _exec-bridge`, NEW)).toBe(false);
   });
 
   test("kills the pid only when it is still our bridge, and always drops the record", () => {
@@ -508,24 +563,24 @@ describe("the status banner", () => {
 
   // F24: the banner's other half of the same finding. A peer publishes no front door (ADR 0013), so
   // a `tailnet` row was a row about a door that is not there — and the URL it offered was loopback,
-  // which on a peer is not the bind either. The pack row answers the question the tailnet row was
+  // which on a peer is not the bind either. The crew row answers the question the tailnet row was
   // asked: where DO I point my phone.
-  test("a peer's banner names the pack, not a tailnet door it does not serve", async () => {
+  test("a peer's banner names the crew, not a tailnet door it does not serve", async () => {
     const h = harness({
       ready: true,
       env: { COLLIE_HOST: "192.168.77.2" },
-      files: { [`${STATE}/pack-trust.json`]: serializeTrustStore(peerStore()) },
+      files: { [`${STATE}/crew-trust.json`]: serializeTrustStore(peerStore()) },
     });
     const lines = (await statusBanner(h.deps)).join("\n");
     expect(lines).toContain("local     http://192.168.77.2:8787");
-    expect(lines).toContain("pack      peer — no front door here");
+    expect(lines).toContain("crew      peer — no front door here");
     expect(lines).not.toContain("tailnet");
   });
 
   test("a LEAD, and a solo collie, keep the tailnet row exactly as it was", async () => {
     const lead = harness({
       ready: true,
-      files: { [`${STATE}/pack-trust.json`]: serializeTrustStore(leadStore({ peers: [member({ memberId: "nas" })] })) },
+      files: { [`${STATE}/crew-trust.json`]: serializeTrustStore(leadStore({ peers: [member({ memberId: "nas" })] })) },
     });
     expect((await statusBanner(lead.deps)).join("\n")).toContain("tailnet");
     expect((await statusBanner(harness({ ready: true }).deps)).join("\n")).toContain("tailnet");
@@ -562,7 +617,7 @@ describe("the status banner", () => {
 
   test("prints the tailnet URL, or the proxy line under COLLIE_SKIP_SERVE", async () => {
     const tailnet = harness({
-      answers: [["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."}}' }]],
+      answers: [["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."},"CertDomains":["host.example"]}' }]],
     });
     expect((await statusBanner(tailnet.deps)).join("\n")).toContain("tailnet   https://host.example");
 
@@ -591,7 +646,7 @@ describe("url", () => {
   test("https by default, http+port in http mode, loopback when the tailnet has no name", () => {
     const withName = (over: HarnessOptions = {}): string => {
       const h = harness({
-        answers: [["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."}}' }]],
+        answers: [["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."},"CertDomains":["host.example"]}' }]],
         ...over,
       });
       cmdUrl(h.deps);
@@ -601,7 +656,7 @@ describe("url", () => {
     expect(withName({ env: { COLLIE_SERVE_MODE: "http" } })).toBe("https://host.example");
 
     const http = harness({
-      answers: [["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."}}' }]],
+      answers: [["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."},"CertDomains":["host.example"]}' }]],
     });
     http.deps.ctx.serveMode = "http";
     cmdUrl(http.deps);

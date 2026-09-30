@@ -5,6 +5,7 @@ import type { AuditContent } from "./audit.ts";
 import type { DialMode } from "./dial.ts";
 import type { JournalRoots } from "./journal/registry.ts";
 import { DEFAULT_MUX, muxEndpointVar } from "./mux/registry.ts";
+import { DEFAULT_MAX_UPLOAD_MB } from "./uploads.ts";
 
 // All bridge configuration, resolved once at startup. Env-driven so the systemd unit and the
 // plugin launcher can configure it without code changes. Defaults are safe for a single-user,
@@ -45,6 +46,25 @@ function envList(name: string, env: Record<string, string | undefined> = process
 }
 
 /**
+ * The operator's extra upload types, made safe to compare against a filename's own extension:
+ * lowercased, a leading dot forgiven (`.rb` and `rb` are the same declaration), and anything that
+ * is not plain alphanumerics dropped with a warning. The result is joined to the shipped text list
+ * in `uploads.ts` and eventually becomes part of a filename on disk, so this is the gate.
+ */
+function normaliseUploadTypes(raw: string[]): string[] {
+  const out: string[] = [];
+  for (const entry of raw) {
+    const ext = entry.replace(/^\./, "").toLowerCase();
+    if (!/^[a-z0-9]+$/.test(ext)) {
+      console.warn(`[config] COLLIE_UPLOAD_EXTRA_TYPES entry "${entry}" is not a bare extension — ignored`);
+      continue;
+    }
+    if (!out.includes(ext)) out.push(ext);
+  }
+  return out;
+}
+
+/**
  * A journal root setting: a list of directories, or `fallback` when unset.
  *
  * Comma-separated, like every other list Collie reads ({@link envList}) — deliberately NOT `PATH`'s
@@ -54,11 +74,12 @@ function envList(name: string, env: Record<string, string | undefined> = process
  */
 function envRoots(
   name: string,
-  fallback: string,
+  fallback: string | string[],
   env: Record<string, string | undefined> = process.env,
 ): string[] {
   const list = envList(name, env);
-  return list.length > 0 ? list : [fallback];
+  const fallbacks = Array.isArray(fallback) ? fallback : [fallback];
+  return list.length > 0 ? list : fallbacks;
 }
 
 /**
@@ -79,7 +100,7 @@ function envEnum<T extends string>(name: string, allowed: readonly T[], fallback
  * Read a boolean env var. Empty/unset → `fallback`. `off`/`0`/`false`/`no` → false; `on`/`1`/`true`/
  * `yes` → true (case-insensitive); anything else falls back with a warning.
  *
- * Exported so mode-scoped config (`bridge/pack/config.ts`) parses its env in exactly this style
+ * Exported so mode-scoped config (`bridge/crew/config.ts`) parses its env in exactly this style
  * rather than growing a second, subtly different reader. The env source is a parameter so a caller
  * can drive it purely; it defaults to `process.env`, which is how everything in this file reads.
  */
@@ -168,6 +189,23 @@ export interface Config {
   notifyDelayMs: number;
   /** How many lines of scrollback to pull for the agent detail view. */
   readLines: number;
+  /**
+   * Largest attachment the upload route accepts, decoded, in bytes. Set in whole megabytes with
+   * `COLLIE_MAX_UPLOAD_MB` (default {@link DEFAULT_MAX_UPLOAD_MB}); resolved to bytes here so the
+   * two enforcement points in `bridge/uploads.ts` never each do the arithmetic.
+   *
+   * In a crew this is per MEMBER, and the member that will WRITE the file is the one whose number
+   * decides. The lead's pre-check only saves a phone's uplink — see docs/configure.md.
+   */
+  maxUploadBytes: number;
+  /**
+   * Extra text extensions the upload route accepts, beyond the shipped list in
+   * `bridge/uploads.ts` — bare, lowercase, no dot (`COLLIE_UPLOAD_EXTRA_TYPES=rb,ex,zig`).
+   *
+   * Text only, by construction: an image is identified by its signature bytes and there is no
+   * signature an operator could declare here, so this list cannot teach Collie a binary format.
+   */
+  uploadExtraTypes: string[];
   /**
    * Serve agent conversation history from the agent's own on-disk session log. This is the only
    * way to get scrollback for most agent panes at all — they run on the terminal's alternate
@@ -335,10 +373,10 @@ export function isLoopbackBindHost(host: string): boolean {
  * **The decision is not config's to take alone, which is why this is a predicate and not a throw.**
  * Loopback is the trust basis for every browser-side write gate — the `Tailscale-User-Login` header,
  * `COLLIE_DEVICE_HEADER` and the same-origin check are all client-settable, so on a wide bind they
- * mean nothing. That is why a solo instance and a lead refuse to start. But a pack **peer** binds off
+ * mean nothing. That is why a solo instance and a lead refuse to start. But a crew **peer** binds off
  * loopback BY CONSTRUCTION: its lead dials it across a machine boundary, and the surface it exposes
- * there is gated by pinned mutual TLS plus the pack secret rather than by any of those headers
- * (PACK_PROTOCOL.md §3, [ADR 0013](../.adr/0013-a-peer-listens-without-becoming-a-front-door.md)).
+ * there is gated by pinned mutual TLS plus the crew secret rather than by any of those headers
+ * (CREW_PROTOCOL.md §3, [ADR 0013](../.adr/0013-a-peer-listens-without-becoming-a-front-door.md)).
  * The mode that decides is not known until the trust store has been read, which happens after this
  * function runs — so `bridge/index.ts` calls it once the mode is in hand.
  *
@@ -378,10 +416,10 @@ export function defaultSocketPath(
 
 /**
  * Where runtime state lives: uploads, `audit.log`, `push-subscriptions.json`, `snooze.json` — and the
- * pack trust store. Herdr's injected dir wins, then the explicit override, then the user state dir.
+ * crew trust store. Herdr's injected dir wins, then the explicit override, then the user state dir.
  *
  * Pure and exported because the CLI resolves the same directory from its own `.env`-merged
- * environment (`cli/context.ts`): the pack verbs write the trust store the bridge reads, so the two
+ * environment (`cli/context.ts`): the crew verbs write the trust store the bridge reads, so the two
  * must land on the same path or an enrollment would be invisible to the running service. It names no
  * key `loadConfig` did not already name — the solo baseline's env-key list is unchanged by it.
  */
@@ -421,9 +459,14 @@ export function resolveJournalRoots(
       join(env.CODEX_HOME ?? join(home, ".codex"), "sessions"),
       env,
     ),
+    // TWO defaults, one adapter: Oh My Pi ships as `omp` and writes pi's own format into
+    // `~/.omp/agent/sessions`, so a host that runs it has a second home for the same log format.
+    // `PI_CODING_AGENT_DIR`, when the operator set it, is the one answer and neither is added.
     pi: envRoots(
       "COLLIE_PI_ROOT",
-      join(env.PI_CODING_AGENT_DIR ?? join(home, ".pi", "agent"), "sessions"),
+      env.PI_CODING_AGENT_DIR
+        ? join(env.PI_CODING_AGENT_DIR, "sessions")
+        : [join(home, ".omp", "agent", "sessions"), join(home, ".pi", "agent", "sessions")],
       env,
     ),
     // OpenCode keeps one SQLite database at the top of its XDG data dir, not per-session files.
@@ -437,6 +480,7 @@ export function resolveJournalRoots(
       join(env.GROK_HOME ?? join(home, ".grok"), "sessions"),
       env,
     ),
+    hermes: envRoots("COLLIE_HERMES_ROOT", join(home, ".hermes"), env),
   };
 }
 
@@ -493,6 +537,11 @@ export function loadConfig(): Config {
     pollIdleMs: envInt("COLLIE_POLL_IDLE_MS", 12_000, { min: 1000 }),
     notifyDelayMs: envInt("COLLIE_NOTIFY_DELAY_MS", 30_000, { min: 0 }),
     readLines: envInt("COLLIE_READ_LINES", 200, { min: 1 }),
+    // Whole megabytes in, bytes out. The floor is 1 MB (a cap below one screenshot is a broken
+    // install, not a tight one) and the ceiling 512 MB, which is well past useful and still short
+    // of the point where a single buffered body is the thing that ends the process.
+    maxUploadBytes: envInt("COLLIE_MAX_UPLOAD_MB", DEFAULT_MAX_UPLOAD_MB, { min: 1, max: 512 }) * 1024 * 1024,
+    uploadExtraTypes: normaliseUploadTypes(envList("COLLIE_UPLOAD_EXTRA_TYPES")),
     transcript: envBool("COLLIE_TRANSCRIPT", true),
     journalRoots: resolveJournalRoots(),
     submitKeys: submitKeys.length ? submitKeys : ["Enter"],

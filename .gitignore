@@ -51,6 +51,8 @@ Thumbs.db
 !.claude/commands/**
 !.claude/skills/
 !.claude/skills/**
+
+# The tracker lives in the collie-workspace repo, never here
 .tracker/
 
 # Private operator/deployment context; never commit this file.
@@ -64,3 +66,14 @@ docs/bugs/
 
 # Local tooling scratch (browser-automation captures)
 .playwright-mcp/
+
+# The browser tier's output: a screenshot and a trace kept only when a case fails, plus the HTML
+# report over them. Evidence for whoever reads the failure, never a baseline — the CI job uploads
+# these as an artefact and nothing compares them run to run.
+web/test-results/
+web/playwright-report/
+
+# The service-worker tier's two bundles (M26/04). `web/e2e/.builds/a` and `.builds/b` are two real
+# `vite build` runs, produced fresh whenever the swappable server starts, plus the one-line pointer
+# that says which of them is being served. Build output, like `dist/` — never committed.
+web/e2e/.builds/

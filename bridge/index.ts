@@ -1,10 +1,11 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 
 import { classifyInstall, probeInstall } from "../cli/install-kind.ts";
 import { realLinkFs } from "../cli/link.ts";
+import { packageCommand } from "../cli/package-command.ts";
 import { realExec, realFiles } from "../cli/sys.ts";
 import { ActivityLedger } from "./activity.ts";
 import { AuditLog, fileAuditAppender } from "./audit.ts";
@@ -12,9 +13,11 @@ import { beaconReader, hooksInstalledProbe } from "./beacon-io.ts";
 import { withAgentBeacons } from "./beacon/decorate.ts";
 import { withAgentHints } from "./beacon/hint.ts";
 import { loadConfig, nonLoopbackBindRefusal, resolveConfigDir, type Config } from "./config.ts";
-import type { PackMode, PackStatusResponse } from "./types.ts";
+import type { CrewMode, CrewStatusResponse } from "./types.ts";
 import { EventPoker } from "./event-poker.ts";
+import { exePathOf, exeReplaced } from "./exe-replaced.ts";
 import {
+  herdrActionCommand,
   instanceSuffixOf,
   managedHandlerPath,
   realFrontDoorExec,
@@ -24,6 +27,7 @@ import {
 } from "./front-door.ts";
 import { HERDR_DIAL_MODE_OPTION } from "./mux/herdr/adapter.ts";
 import { DEFAULT_TIMEOUT_MS } from "./mux/herdr/client.ts";
+import { deriveConfigRoot } from "./mux/herdr/sessions.ts";
 import {
   buildMuxRegistry,
   createMux,
@@ -39,8 +43,8 @@ import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./not
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { filePairingIo, PairingStore } from "./pairing.ts";
 import { createSttGate } from "./stt/index.ts";
-import { runBootGate } from "./pack/boot-gate.ts";
-import { PEER_BROWSER_ENV, resolvePackRuntime, warnsOnWildcardBind } from "./pack/config.ts";
+import { runBootGate } from "./crew/boot-gate.ts";
+import { PEER_BROWSER_ENV, resolveCrewRuntime, warnsOnWildcardBind } from "./crew/config.ts";
 import {
   deposedAnswer,
   deposedStateFrom,
@@ -48,29 +52,35 @@ import {
   outcomeNow,
   selfHeal,
   type DeposedState,
-} from "./pack/deposed.ts";
-import { LeadContact } from "./pack/lead-contact.ts";
-import { deputyAnchorOf, dialTls, peerListenerTls } from "./pack/transport.ts";
-import { commitPackChange } from "./pack/enrollment.ts";
-import { PackLead } from "./pack/lead.ts";
-import { leadLabel } from "./pack/merge.ts";
-import { packStatusBody } from "./pack/status-wire.ts";
-import { herdPushGate, PeerNotifier } from "./pack/notify.ts";
-import { packHelloBudget, packTimeoutBudget, packTimeoutClampWarning, PeerClient } from "./pack/peer-client.ts";
-import { PackRegistry } from "./pack/registry.ts";
-import { leadReleaseHeader, PackFollower, UpdateTurns } from "./pack/follow.ts";
-import { createPackRouter, type PackRouterDeps } from "./pack/router.ts";
+} from "./crew/deposed.ts";
+import { LeadContact } from "./crew/lead-contact.ts";
+import { deputyAnchorOf, dialTls, peerListenerTls } from "./crew/transport.ts";
+import { commitCrewChange, CREW_PROTOCOL_VERSION } from "./crew/enrollment.ts";
+import { CrewLead } from "./crew/lead.ts";
+import { leadLabel } from "./crew/merge.ts";
+import { crewStatusBody } from "./crew/status-wire.ts";
+import { herdPushGate, PeerNotifier } from "./crew/notify.ts";
+import {
+  crewEnvFallbackWarning,
+  crewHelloBudget,
+  crewTimeoutBudget,
+  crewTimeoutClampWarning,
+  PeerClient,
+} from "./crew/peer-client.ts";
+import { CrewRegistry } from "./crew/registry.ts";
+import { leadReleaseHeader, LEG_WALL_CLOCK_MS, CrewFollower, UpdateTurns } from "./crew/follow.ts";
+import { createCrewRouter, type CrewRouterDeps } from "./crew/router.ts";
 import {
   checkpointMarker,
   formatMarker,
   markerFor,
   NO_RUNTIME_FACTS,
-  packRuntimePath,
+  crewRuntimePath,
   rosterDrift,
-  type PackRuntimeFacts,
+  type CrewRuntimeFacts,
   type PairingCollision,
-} from "./pack/staleness.ts";
-import { signDial, signRequest } from "./pack/signing.ts";
+} from "./crew/staleness.ts";
+import { signDial, signRequest } from "./crew/signing.ts";
 import {
   armThresholdMs,
   armThresholdWarning,
@@ -84,7 +94,7 @@ import {
   withStandbyVersion,
   warrantNamesSelf,
   type StandbyFacts,
-} from "./pack/standby.ts";
+} from "./crew/standby.ts";
 import {
   collidingLabels,
   collisionReportOf,
@@ -94,7 +104,8 @@ import {
   syncDigest,
   syncedDevicesOf,
   type SyncedDevice,
-} from "./pack/standby-devices.ts";
+} from "./crew/standby-devices.ts";
+import { migrateCrewStateOnce } from "./crew/state-migration.ts";
 import {
   adoptLeadership,
   clearRePin,
@@ -105,14 +116,13 @@ import {
   takeoverMessage,
   TAKEOVER_RESTART_EXIT,
   type CommitOutcome,
-} from "./pack/takeover.ts";
-import { enrollmentOf, TrustStore, type TrustStoreData, type Warrant } from "./pack/trust-store.ts";
-import { currentWarrant, discardForeignWarrant, refreshWarrant, type WarrantPush } from "./pack/warrant.ts";
+} from "./crew/takeover.ts";
+import { enrollmentOf, TrustStore, type TrustStoreData, type Warrant } from "./crew/trust-store.ts";
+import { currentWarrant, discardForeignWarrant, refreshWarrant, type WarrantPush } from "./crew/warrant.ts";
 import { Push } from "./push.ts";
 import { pluginRoot } from "./root.ts";
 import { buildId, startServer } from "./server.ts";
 import {
-  deriveConfigRoot,
   herdTagFor,
   SessionRegistry,
   type SessionFactory,
@@ -122,12 +132,13 @@ import { StateEngine } from "./state-engine.ts";
 import {
   bridgeStampSync,
   githubTagsFetcher,
+  releaseReadingFetcher,
   UpdateMonitor,
   UpdateStateStore,
   updateDigestBody,
 } from "./update.ts";
 import { SWEEP_INTERVAL_MS, sweepUploads } from "./uploads.ts";
-import { readUpdateRun, updateLockHeld } from "./update-run.ts";
+import { crewTurnStart, readUpdateRun, updateLockHeld } from "./update-run.ts";
 import {
   FreshPreflightGate,
   parsePreflightReport,
@@ -138,7 +149,7 @@ import {
   updateCadenceTick,
   updateStartCommand,
 } from "./update-action.ts";
-import { collieVersionBare } from "./version.ts";
+import { collieVersion, collieVersionBare } from "./version.ts";
 import { createManualPaneFitAction } from "../fleet/manual-pane-fit/action.ts";
 
 // How often the registry rescans the filesystem for sessions that appeared/disappeared after boot.
@@ -150,7 +161,7 @@ const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 // Entry point: resolve config, wire the pieces, start polling and serving.
 // loadConfig throws on config it cannot parse at all. Print the reason alone — a stack trace here
-// buries the one line the operator needs. (The bind refusal is NOT here; it needs the pack mode,
+// buries the one line the operator needs. (The bind refusal is NOT here; it needs the crew mode,
 // which is not known until the trust store below has been read.)
 let cfg: Config;
 try {
@@ -160,15 +171,19 @@ try {
   process.exit(1);
 }
 
-// The pack mode, resolved BEFORE anything is wired, because a peer wires fewer things than a lead
-// (PACK_PROTOCOL.md §3) and a mode discovered halfway through startup would already have opened
+// The crew mode, resolved BEFORE anything is wired, because a peer wires fewer things than a lead
+// (CREW_PROTOCOL.md §3) and a mode discovered halfway through startup would already have opened
 // what it was supposed to keep shut.
 //
 // Enrollment comes from the trust store and from nothing else — no env var, no flag (§3). On a solo
 // instance the store file does not exist, so this is one failed `open()`: nothing is created, no key
 // is generated, no default is written back and no timer is armed. That is the zero-tax contract
 // (§11) holding at its startup seam — and `trustStore.load()` returning `null` is the same `null` a
-// solo instance will hand `resolvePackRuntime` forever after.
+// solo instance will hand `resolveCrewRuntime` forever after.
+// REMOVE_IN_1_9_0: the 1.7.0 `pack-*.json` names are moved to their crew names here — before the
+// store is opened, and before the ops store or the runtime marker below is touched.
+migrateCrewStateOnce(cfg.stateDir, (line) => console.warn(line));
+
 const trustStore = new TrustStore(cfg.stateDir);
 const bootTrust = await trustStore.load();
 
@@ -184,17 +199,17 @@ await mkdir(cfg.stateDir, { recursive: true, mode: 0o700 });
 // inside record() so it can never break the user action it's auditing.
 //
 // Constructed here, before the mode is resolved, for the boot gate's sake: a deposition is an audited
-// membership change (`pack.deposed`) and it happens before there is anything else to audit with.
+// membership change (`crew.deposed`) and it happens before there is anything else to audit with.
 const audit = new AuditLog(fileAuditAppender(join(cfg.stateDir, "audit.log")), {
   content: cfg.auditContent,
 });
 
 /**
- * Gap A (PACK_PROTOCOL.md §18.9): when this collie's lead last called it.
+ * Gap A (CREW_PROTOCOL.md §18.9): when this collie's lead last called it.
  *
  * Constructed unconditionally and armed by nothing — it holds two `null`s and this process's start
  * time until the router hands it a receipt, so a solo instance carries an object and no behaviour.
- * In memory on purpose (`bridge/pack/lead-contact.ts` says why at length).
+ * In memory on purpose (`bridge/crew/lead-contact.ts` says why at length).
  */
 const leadContact = new LeadContact(Date.now());
 
@@ -204,7 +219,7 @@ const leadContact = new LeadContact(Date.now());
  *
  * `""` on a lead that was never a deputy, which is every lead that did not take over. It is only
  * ever needed by a machine that DID: its peers must be told where to dial their new lead, and this
- * is the one address in the pack that other machines have demonstrably reached it at. An address is
+ * is the one address in the crew that other machines have demonstrably reached it at. An address is
  * a hint the operator may re-point (§4, `collie reconnect`), never an identity, so a wrong one costs
  * a `reconnect` and nothing else.
  */
@@ -228,27 +243,36 @@ let deposed: DeposedState | null = null;
  * warning and the bridge comes up anyway. A peer that failed to unpublish is a routing problem the
  * operator can still fix from a keyboard; a peer that refused to start is not.
  */
+/**
+ * `COLLIE_INSTANCE`, or `null` for the host's first Collie. Read here, once, and passed down.
+ *
+ * It names two things this process must not get wrong: the front door record it owns, and the Herdr
+ * plugin id it prints in a restart command. A named instance that printed the bare id would be
+ * telling the operator to restart its neighbour.
+ */
+const collieInstance = process.env.COLLIE_INSTANCE?.trim() || null;
+
 let frontDoorReleased = false;
-function releaseFrontDoor(mode: PackMode, isDeposed: boolean, why: string): void {
+function releaseFrontDoor(mode: CrewMode, isDeposed: boolean, why: string): void {
   if (frontDoorReleased) return;
   const handlerFile = managedHandlerPath(
     resolveConfigDir(),
-    instanceSuffixOf(process.env.COLLIE_INSTANCE),
+    instanceSuffixOf(collieInstance),
   );
   // The record — and nothing else — decides whether there is anything of ours to take down. An
   // unrecorded mapping is by definition not ours and is never touched.
   if (!shouldReleaseFrontDoor({ mode, deposed: isDeposed, hasRecord: existsSync(handlerFile) })) return;
   frontDoorReleased = true;
-  console.warn(`[pack] ${why} — taking this machine's own tailscale serve mapping down.`);
+  console.warn(`[crew] ${why} — taking this machine's own tailscale serve mapping down.`);
   try {
     releaseManagedFrontDoor({
       handlerFile,
-      io: { out: (l) => console.log(`[pack] ${l}`), err: (l) => console.warn(`[pack] ${l}`) },
+      io: { out: (l) => console.log(`[crew] ${l}`), err: (l) => console.warn(`[crew] ${l}`) },
       exec: realFrontDoorExec(process.env, homedir()),
       files: realFrontDoorFiles,
     });
   } catch (err) {
-    console.warn(`[pack] could not take the front door down: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[crew] could not take the front door down: ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -261,23 +285,34 @@ function releaseFrontDoor(mode: PackMode, isDeposed: boolean, why: string): void
 let pairingCollision: PairingCollision | null = null;
 
 /**
- * One pack client, built the same way for the boot gate and for the lead's sweep — because two would
- * be two places for a pack request to forget its budget, its pin or its secret.
+ * REMOVE_IN_1_9_0 — which members THIS PROCESS has already said speak version 1 (§0.1).
+ *
+ * One set for every client this file builds, because this file builds more than one per peer: the
+ * boot gate's, the sweep's and the takeover's. A set per client wrote the same sentence once per
+ * client; the journal wants it once per member.
  */
-function packPeerClient(data: TrustStoreData): PeerClient {
+const toldVersion1 = new Set<string>();
+
+/**
+ * One crew client, built the same way for the boot gate and for the lead's sweep — because two would
+ * be two places for a crew request to forget its budget, its pin or its secret.
+ */
+function crewPeerClient(data: TrustStoreData): PeerClient {
   return new PeerClient({
     self: data.self.memberId,
+    // REMOVE_IN_1_9_0: the process-wide set, so the fallback's line is written once per member.
+    toldVersion1,
     // Read at call time so a rotation is picked up without a restart (§8.3, §8.4).
-    secret: () => trustStore.current()?.pack?.secret ?? null,
+    secret: () => trustStore.current()?.crew?.secret ?? null,
     // Strictly below the lead's own poll interval, so a slow peer can never stall this snapshot
-    // (§10.1). The clamp lives in packTimeoutBudget; nothing here is allowed to widen it.
-    timeoutMs: packTimeoutBudget(cfg.pollMs),
+    // (§10.1). The clamp lives in crewTimeoutBudget; nothing here is allowed to widen it.
+    timeoutMs: crewTimeoutBudget(cfg.pollMs),
     // …and the patient one, which the poll fraction deliberately does not clamp (§10.4). A cold
     // pinned-TLS handshake over a relay costs more than a whole poll budget, so the strict budget can
     // decide "this poll is stale" but must never be what decides "this peer is gone", nor what a cold
-    // link's FIRST data request has to fit inside — see packHelloBudget and takeDataBudget for the
+    // link's FIRST data request has to fit inside — see crewHelloBudget and takeDataBudget for the
     // measurements that produced this pair. It is also the boot gate's whole budget (§18.11).
-    patientTimeoutMs: packHelloBudget(cfg.pollMs),
+    patientTimeoutMs: crewHelloBudget(cfg.pollMs),
     fetch: (url, init) => fetch(url, init),
     // EVERY dial is attested with this collie's own key (§8.6's dial attestation). A peer that has
     // anchored a deputy can no longer read "the handshake was pin-enforcing" as "this is my lead" —
@@ -293,7 +328,7 @@ function packPeerClient(data: TrustStoreData): PeerClient {
     // for §8.6's own reason — so nothing is pulled into memory on the security path.
     sign: (parts) => signRequest(trustStore.current()?.self.keyPem ?? data.self.keyPem, parts),
     // Pinned mutual TLS, per member, read through the store on every dial for the same reason the
-    // secret and the roster are: `pack remove`, a re-join and a rotation all change what this lead
+    // secret and the roster are: `crew remove`, a re-join and a rotation all change what this lead
     // may pin, and a captured copy would keep trusting a certificate the operator revoked. A member
     // we cannot build a pin for is dialled with no TLS material at all — which the peer's own
     // listener then refuses at the handshake, i.e. `unreachable`, never an unpinned connection.
@@ -314,49 +349,49 @@ async function applyDeposition(proof: Warrant | null, reason: string): Promise<D
   const heal = data === null ? ({ outcome: "parked", reason: "no-proof" } as const) : selfHeal(data, proof);
   const state =
     data === null
-      ? { outcome: "parked-unverifiable" as const, leadMemberId: null, generation: 0, at: Date.now(), packName: null, reason: "no-proof" as const }
+      ? { outcome: "parked-unverifiable" as const, leadMemberId: null, generation: 0, at: Date.now(), crewName: null, reason: "no-proof" as const }
       : deposedStateFrom(data, proof, heal, Date.now());
   if (heal.outcome === "healed") {
-    await commitPackChange(trustStore, audit, (current) => (current === null ? null : heal.change));
+    await commitCrewChange(trustStore, audit, (current) => (current === null ? null : heal.change));
     console.warn(
-      `[pack] DEPOSED — ${reason}. This machine has demoted itself to a peer of "${state.leadMemberId}" ` +
+      `[crew] DEPOSED — ${reason}. This machine has demoted itself to a peer of "${state.leadMemberId}" ` +
         `(warrant generation ${state.generation}) on materials both machines already held. Its front door ` +
         "is down and its health check now fails.",
     );
   } else {
     audit.record({
-      action: "pack.deposed",
+      action: "crew.deposed",
       detail: { lead: state.leadMemberId, generation: state.generation, outcome: "parked", reason: heal.reason },
     });
     console.warn(
-      `[pack] DEPOSED — ${reason}. This machine could NOT rejoin by itself and has parked: ` +
-        `${heal.reason}. Recover it with \`collie pack add\` from the new lead, or \`collie join\`.`,
+      `[crew] DEPOSED — ${reason}. This machine could NOT rejoin by itself and has parked: ` +
+        `${heal.reason}. Recover it with \`collie crew add\` from the new lead, or \`collie join\`.`,
     );
   }
-  // Either outcome ends this machine's claim on the pack's front door, so the door comes down here
+  // Either outcome ends this machine's claim on the crew's front door, so the door comes down here
   // rather than at the mode check below: a machine that PARKED never reaches `peer` mode at all, and
   // a parked ex-lead holding a live mapping is the "public hostname routes into a void" half of what
   // the drill found. Healing reaches this too, and the flag makes the second call a no-op.
-  releaseFrontDoor(resolvePackRuntime(enrollmentOf(trustStore.current())).mode, true, "the crown has moved");
+  releaseFrontDoor(resolveCrewRuntime(enrollmentOf(trustStore.current())).mode, true, "the crown has moved");
   return state;
 }
 
-// ── A warrant from a pack this collie is not in is discarded, at boot ────────
-// Belt and braces behind `leavePack`, which now clears the deputy fields. A store written by an
-// older build can still hold a warrant for a pack this machine has left — and holding it makes this
+// ── A warrant from a crew this collie is not in is discarded, at boot ────────
+// Belt and braces behind `leaveCrew`, which now clears the deputy fields. A store written by an
+// older build can still hold a warrant for a crew this machine has left — and holding it makes this
 // machine report a generation its own lead never minted, which is what the far end reads as a
 // takeover. Cheap, local, and it runs before the gate below so the gate reads a clean store.
 {
   const held = trustStore.current();
   const foreign = held === null ? null : discardForeignWarrant(held);
   if (foreign !== null) {
-    const dropped = await commitPackChange(trustStore, audit, (current) =>
+    const dropped = await commitCrewChange(trustStore, audit, (current) =>
       current === null ? null : discardForeignWarrant(current),
     );
     if (dropped !== null) {
       console.warn(
-        `[pack] discarded a stored warrant for pack "${dropped.packId}" (generation ${dropped.generation}): ` +
-          "this collie is in a different pack, so that warrant proves nothing here.",
+        `[crew] discarded a stored warrant for crew "${dropped.crewId}" (generation ${dropped.generation}): ` +
+          "this collie is in a different crew, so that warrant proves nothing here.",
       );
     }
   }
@@ -368,17 +403,17 @@ async function applyDeposition(proof: Warrant | null, reason: string): Promise<D
 // Nothing is armed and nothing repeats — this is boot-only, and it is not an election (§15).
 {
   const data = trustStore.current();
-  if (data !== null && resolvePackRuntime(enrollmentOf(data)).mode === "lead") {
-    const client = packPeerClient(data);
+  if (data !== null && resolveCrewRuntime(enrollmentOf(data)).mode === "lead") {
+    const client = crewPeerClient(data);
     const verdict = await runBootGate({
       links: data.peers
         .filter((p) => p.status === "enrolled")
         .map((p) => ({ memberId: p.memberId, address: p.address })),
       hello: (link) => client.hello(link),
       generation: currentWarrant(data)?.warrant.generation ?? 0,
-      packId: data.pack?.packId ?? "",
+      crewId: data.crew?.crewId ?? "",
       // The gate's whole deposition test, and it is this collie's own: a warrant it signed itself,
-      // for this pack, at a generation not behind the one it holds. Nothing weaker deposes a lead.
+      // for this crew, at a generation not behind the one it holds. Nothing weaker deposes a lead.
       verifies: (warrant) => isDepositionProof(data, warrant),
     });
     if (verdict.kind === "deposed") {
@@ -390,8 +425,8 @@ async function applyDeposition(proof: Warrant | null, reason: string): Promise<D
     } else {
       // A claim that could not be proved. It is printed ONCE, here, at the boot that read it — the
       // lead keeps leading, so nothing else in this process will ever mention it, and an operator
-      // who never sees the line has a peer quietly refusing this pack for the rest of its uptime.
-      for (const warning of verdict.warnings) console.warn(`[pack] warn: ${warning}`);
+      // who never sees the line has a peer quietly refusing this crew for the rest of its uptime.
+      for (const warning of verdict.warnings) console.warn(`[crew] warn: ${warning}`);
     }
   }
 }
@@ -399,31 +434,31 @@ async function applyDeposition(proof: Warrant | null, reason: string): Promise<D
 // The mode is resolved AFTER the gate, from whatever the gate left on disk — a machine that healed
 // boots as a peer, wires a peer's listener and serves no front door, with no second process involved.
 const enrollment = enrollmentOf(trustStore.current());
-const pack = resolvePackRuntime(enrollment);
-if (pack.conflict) console.warn(`[pack] ${pack.conflict}`);
-if (pack.mode !== "solo") console.log(`[pack] mode: ${pack.mode}`);
+const crew = resolveCrewRuntime(enrollment);
+if (crew.conflict) console.warn(`[crew] ${crew.conflict}`);
+if (crew.mode !== "solo") console.log(`[crew] mode: ${crew.mode}`);
 
 // The bind refusal, taken HERE rather than in loadConfig because the mode is what decides it.
 //
 // A solo instance and a lead are browser front doors: every write gate they own is a header a client
 // can set, so a wide bind hands write access to anything that can reach the port and the bridge
-// refuses to start. A collie IN A PACK is exempt, and by construction rather than by indulgence — its
-// lead dials it across a machine boundary, and `/pack/v1/*` is admitted by pinned mutual TLS plus the
-// pack secret, neither of which the bind bounds (PACK_PROTOCOL.md §3, ADR 0013). A peer already gets
+// refuses to start. A collie IN A CREW is exempt, and by construction rather than by indulgence — its
+// lead dials it across a machine boundary, and `/crew/v1/*` is admitted by pinned mutual TLS plus the
+// crew secret, neither of which the bind bounds (CREW_PROTOCOL.md §3, ADR 0013). A peer already gets
 // the wildcard warning below; a LEAD is exempt too, because the machine that took over from a deputy
 // keeps the peer's wide COLLIE_HOST and would otherwise refuse to boot into the crown it just won
 // (ADR 0027/0028) — the worst possible moment to discover a config gate.
 {
   const refusal = nonLoopbackBindRefusal(cfg);
   if (refusal !== null) {
-    if (pack.mode === "solo") {
+    if (crew.mode === "solo") {
       console.error(`[bridge] FATAL: ${refusal}`);
       process.exit(1);
     }
     console.warn(
-      `[pack] this ${pack.mode} binds ${cfg.host.trim() === "" ? "every interface" : cfg.host}, not ` +
-        "loopback. Allowed because a pack member is dialled across a machine boundary and " +
-        "/pack/v1/* carries its own two factors — but the browser gates (Tailscale-User-Login, " +
+      `[crew] this ${crew.mode} binds ${cfg.host.trim() === "" ? "every interface" : cfg.host}, not ` +
+        "loopback. Allowed because a crew member is dialled across a machine boundary and " +
+        "/crew/v1/* carries its own two factors — but the browser gates (Tailscale-User-Login, " +
         "COLLIE_DEVICE_HEADER, same-origin) are client-settable here and bound nothing. Whatever " +
         "fronts this port is the only control on /api/*.",
     );
@@ -433,10 +468,10 @@ if (pack.mode !== "solo") console.log(`[pack] mode: ${pack.mode}`);
 // A peer publishes nothing (§3, ADR 0013) — including a mapping it published back when it was a
 // lead. BEFORE any listener binds: tailscaled holds the serve port until this returns, and the peer
 // listener that tried to bind it first is what crash-looped in the drill.
-releaseFrontDoor(pack.mode, deposed !== null, "this collie is a peer");
+releaseFrontDoor(crew.mode, deposed !== null, "this collie is a peer");
 
-// The roster THIS PROCESS wired, left on disk for `collie pack status` to compare the store against
-// (bridge/pack/staleness.ts). A membership change can arrive over the wire — the first enrollment
+// The roster THIS PROCESS wired, left on disk for `collie crew status` to compare the store against
+// (bridge/crew/staleness.ts). A membership change can arrive over the wire — the first enrollment
 // lands in a running lead, a promotion demotes a running lead — and no re-read follows, by design.
 //
 // Gated on a trust store EXISTING: a solo instance writes no file here, which is §11's zero-tax
@@ -445,13 +480,13 @@ releaseFrontDoor(pack.mode, deposed !== null, "this collie is a peer");
 //
 // Built from the store AS THE GATE LEFT IT, not from the bytes read at line one: a machine that
 // self-healed at boot (§18.11) really did wire a peer's roster, and a marker claiming otherwise
-// would make `pack status` report drift against a store that is perfectly in step.
+// would make `crew status` report drift against a store that is perfectly in step.
 const bootMarker = markerFor(trustStore.current(), Date.now(), process.pid);
 if (bootTrust !== null) {
   try {
-    await writeFile(packRuntimePath(cfg.stateDir), formatMarker(bootMarker), { mode: 0o600 });
+    await writeFile(crewRuntimePath(cfg.stateDir), formatMarker(bootMarker), { mode: 0o600 });
   } catch (err) {
-    console.warn(`[pack] could not record the boot roster: ${err instanceof Error ? err.message : err}`);
+    console.warn(`[crew] could not record the boot roster: ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -459,15 +494,15 @@ if (bootTrust !== null) {
  * The facts only THIS PROCESS holds, for the checkpoint below. Reassigned once, after the listener
  * has been built — until then this process has resolved none of them and says so (§18.9).
  */
-let runtimeFacts: () => PackRuntimeFacts = () => NO_RUNTIME_FACTS;
+let runtimeFacts: () => CrewRuntimeFacts = () => NO_RUNTIME_FACTS;
 
 /**
- * Re-stamp the runtime marker with those facts, so `collie pack status` — a different process — can
- * print them (`bridge/pack/staleness.ts`, PACK_PROTOCOL.md §18.9's 2026-08-20 amendment).
+ * Re-stamp the runtime marker with those facts, so `collie crew status` — a different process — can
+ * print them (`bridge/crew/staleness.ts`, CREW_PROTOCOL.md §18.9's 2026-08-20 amendment).
  *
- * **It rides the session-refresh tick and adds no timer of its own.** The pack's rule is that a
+ * **It rides the session-refresh tick and adds no timer of its own.** The crew's rule is that a
  * sweep costs one budget no matter what else it decided to do, and the same reasoning applies to a
- * diagnostic: a second interval for a file nobody reads between `pack status` runs would be a second
+ * diagnostic: a second interval for a file nobody reads between `crew status` runs would be a second
  * clock to explain. Best effort throughout — a marker that failed to write is a missing line in a
  * status report, never a reason to disturb a running bridge.
  */
@@ -475,7 +510,7 @@ async function checkpointRuntime(): Promise<void> {
   if (bootTrust === null) return;
   try {
     const marker = checkpointMarker(bootMarker, runtimeFacts(), Date.now());
-    await writeFile(packRuntimePath(cfg.stateDir), formatMarker(marker), { mode: 0o600 });
+    await writeFile(crewRuntimePath(cfg.stateDir), formatMarker(marker), { mode: 0o600 });
   } catch {
     // Deliberately silent, unlike the boot write above: that one happens once and a failure there is
     // news, while this one repeats every 15 s and a warning per tick would be the actual problem.
@@ -486,18 +521,18 @@ async function checkpointRuntime(): Promise<void> {
  * A membership change landed on THIS running process, from the wire. Say so, once per change, with
  * the verb that fixes it — the store is already correct, and this process is not.
  */
-function packStoreChanged(): void {
+function crewStoreChanged(): void {
   const drift = rosterDrift(bootMarker, trustStore.current());
   if (drift === null) return;
   console.warn(
-    "[pack] the trust store changed under this running process — it still holds the roster it read " +
+    "[crew] the trust store changed under this running process — it still holds the roster it read " +
       "at boot. Run `collie restart` on THIS machine to activate the change.",
   );
-  if (drift.gained.length > 0) console.warn(`[pack]   enrolled but not yet active: ${drift.gained.join(", ")}`);
-  if (drift.lost.length > 0) console.warn(`[pack]   no longer members: ${drift.lost.join(", ")}`);
+  if (drift.gained.length > 0) console.warn(`[crew]   enrolled but not yet active: ${drift.gained.join(", ")}`);
+  if (drift.lost.length > 0) console.warn(`[crew]   no longer members: ${drift.lost.join(", ")}`);
   if (drift.modeChanged !== null) {
     console.warn(
-      `[pack]   this machine is now a ${drift.modeChanged}, but the process is still running as a ` +
+      `[crew]   this machine is now a ${drift.modeChanged}, but the process is still running as a ` +
         `${bootMarker.mode} — its listener and its front door are the ${bootMarker.mode}'s until it restarts.`,
     );
   }
@@ -547,12 +582,12 @@ const currentVersion = (
   JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")) as { version: string }
 ).version;
 
-// What this process answers `GET /pack/v1/hello` with (PACK_PROTOCOL.md §5, §7.1). Resolved ONCE,
+// What this process answers `GET /crew/v1/hello` with (CREW_PROTOCOL.md §5, §7.1). Resolved ONCE,
 // here, by the same rule `collie version` uses (`bridge/version.ts`, shared with `cli/context.ts`)
 // so one machine never reports two different versions — and never per request, since the answer
 // cannot change without a restart. Bare: no `(manifest; web not built)` parenthetical on the wire,
 // or a machine with an unbuilt bundle would read as skewed against every peer including itself.
-const packVersion = collieVersionBare(rootDir);
+const crewVersion = collieVersionBare(rootDir);
 
 const updateStore = new UpdateStateStore(cfg);
 await updateStore.load();
@@ -564,15 +599,94 @@ const updateRepo = process.env.COLLIE_UPDATE_REPO?.trim() || "AltanS/collie";
 // startup because the answer cannot change under a running process (an update restarts the service).
 // The banner spells its commands from this: Herdr actions for a Herdr-managed checkout, the `collie`
 // verbs for everything else (M14/01 §5.3).
+// The version this process is RUNNING, captured once, here, beside the kind — for the same reason
+// the kind is captured once: neither can change under a live process. A package manager can still
+// change the FILES, and `collieVersion` re-reads them on every call, so the difference between this
+// string and a fresh read is the restart-needed signal (M17/02). No new state file.
+const bootVersion = collieVersion(rootDir);
+
 const installKind = classifyInstall(
-  probeInstall({ exec: realExec(process.env, homedir()), files: realFiles, link: realLinkFs }, rootDir),
+  probeInstall(
+    { ctx: { home: homedir() }, exec: realExec(process.env, homedir()), files: realFiles, link: realLinkFs },
+    rootDir,
+  ),
 ).kind;
+/**
+ * Has the collie this process is executing been replaced on disk? Linux, and single-file installs.
+ *
+ * The signal the version comparison cannot give. A package manager unlinks `bin/collie` and writes a
+ * new one, restarting nothing: on Arch the service stays active on the deleted inode and keeps
+ * serving, and when the rebuild carries the same version, every file on disk still agrees with
+ * `bootVersion`. `/proc/self/exe` is the one thing that disagrees.
+ *
+ * Scoped twice, and both scopes are the honest shape of the question rather than caution:
+ *  - **Linux only.** `/proc/self/exe` is where the kernel states this, and there is no second place.
+ *  - **`binary` and `packaged` only.** Those two ship one file and no `bridge/` source; on a checkout
+ *    the answer is already `bridgeStale`, whose comparison is over the source the process would
+ *    re-read, and a rebuilt `bin/collie` there would raise both bands for one fact.
+ *
+ * One readlink and two `stat`s, and the monitor throttles it to the snapshot's cadence.
+ */
+function selfExeReplaced(): boolean {
+  if (process.platform !== "linux") return false;
+  if (installKind !== "binary" && installKind !== "packaged") return false;
+  const link = readLinkOrNull(SELF_EXE);
+  const installedPath = exePathOf(link);
+  if (installedPath === null) return false;
+  return exeReplaced({
+    exeLink: link,
+    exeInode: inodeOrNull(SELF_EXE),
+    installedInode: inodeOrNull(installedPath),
+    // Both are Linux-only fallbacks for a host that has no `/proc`, which this branch already has.
+    installedMtimeMs: null,
+    startedAtMs: null,
+  });
+}
+
+/** Where Linux states which executable this process is running. */
+const SELF_EXE = "/proc/self/exe";
+
+function readLinkOrNull(p: string): string | null {
+  try {
+    return readlinkSync(p);
+  } catch {
+    return null;
+  }
+}
+
+function inodeOrNull(p: string): number | null {
+  try {
+    return Number(statSync(p).ino);
+  } catch {
+    return null;
+  }
+}
+
 const updateMonitor = new UpdateMonitor({
   repo: updateRepo,
   current: currentVersion,
   installKind,
+  instance: collieInstance,
+  // Named only where it is true: a packaged install under a prefix we recognise. Every other kind
+  // takes Collie's own updater, and printing a package manager's command there would be a command
+  // that does not apply. Resolved here, at boot, for the reason `installKind` is.
+  packageCommand: installKind === "packaged" ? packageCommand(rootDir) : null,
+  bootVersion,
+  // Read from disk on each (throttled) snapshot: noticing that the files moved under this process is
+  // the whole job, so this one must NOT be cached the way `bootVersion` is.
+  liveVersion: () => collieVersion(rootDir),
+  // The other half of restart-needed: the executable itself, for the package swap that moves no
+  // version string (M17/02, the Arch pkgrel rebuild).
+  exeReplaced: selfExeReplaced,
   startupStamp: bridgeStampSync(bridgeDir, rootDir),
   fetchTags: githubTagsFetcher(updateRepo),
+  // The newest release's own reading (M27/06) — one small GET beside the tag list, from the same
+  // repo the release links point at. It answers null for every release that published none.
+  fetchReleaseReading: releaseReadingFetcher(updateRepo),
+  // Both ends of a link change: what this build speaks, and whether this machine is in a crew at
+  // all. The mode was resolved above, at boot, from what the enrolment gate left on disk.
+  crewProtocol: CREW_PROTOCOL_VERSION,
+  crewMode: () => crew.mode,
   bridgeStamp: () => bridgeStampSync(bridgeDir, rootDir),
   store: updateStore,
   now: Date.now,
@@ -584,14 +698,14 @@ const updateMonitor = new UpdateMonitor({
   // saying nothing happened.
   runState: () => readUpdateRun(cfg.stateDir),
   // One push a DAY, naming every release folded into it — the digest decides that; this only renders it.
-  notify: (versions) =>
+  notify: (versions, linkChange) =>
     void push.send({
       type: "update",
       tag: "collie:update",
       // No command in the body — the tap opens Settings (target below), and the update banner / linked
       // release page carry the location-independent Herdr actions. Keeps this off the cwd-dependent path.
       title: "Collie update available",
-      body: updateDigestBody(currentVersion, versions),
+      body: updateDigestBody(currentVersion, versions, linkChange),
       target: "settings",
     }),
 });
@@ -715,25 +829,25 @@ const updateAction = canRunUpdate
       lockHeld: () => updateLockHeld(cfg.stateDir),
       newRunId,
       start: startDetachedUpdate,
-      beginPackRun: (a: { runId: string; to: string }) => {
+      beginCrewRun: (a: { runId: string; to: string }) => {
         updateTurns.begin(a.runId, a.to);
         // §20's FIRST immediate sweep: the operator has confirmed, so the first turn goes out on a
         // sweep of its own rather than waiting out the idle cadence.
-        packLead?.resweep();
+        crewLead?.resweep();
       },
     }
   : undefined;
 
 // ── The peer's own preflight, on the monitor's cadence (M16/03) ──────────────
-// A peer answers the pack's update question for ITSELF, over the link its lead already polls
-// (PACK_PROTOCOL.md §19). The answer is this very cache, refreshed on the two timers below and read
-// — never run — by the pack route. So there is no third timer, no second subprocess shape and no
-// SSH: the six hours a background fact deserves, plus the lead's `X-Pack-Preflight: fresh` for the
+// A peer answers the crew's update question for ITSELF, over the link its lead already polls
+// (CREW_PROTOCOL.md §19). The answer is this very cache, refreshed on the two timers below and read
+// — never run — by the crew route. So there is no third timer, no second subprocess shape and no
+// SSH: the six hours a background fact deserves, plus the lead's `X-Crew-Preflight: fresh` for the
 // moment an operator is actually looking at the page.
 const freshPreflightGate = new FreshPreflightGate({ now: Date.now });
 const updateTick = () =>
   updateCadenceTick({
-    isPeer: pack.mode === "peer",
+    isPeer: crew.mode === "peer",
     checkRelease: () => void updateMonitor.checkRelease(),
     // A no-op on an install with no compiled binary to run: there is nothing honest to spawn there,
     // and the field this would refresh is simply omitted (which the lead reads as unknown).
@@ -765,10 +879,11 @@ updateTimer.unref();
  * checkout with nothing compiled has nothing honest to spawn. It arms no timer: the router hands the
  * headers over as they arrive on the sweep its lead already makes.
  */
-const packFollower =
-  pack.mode === "peer" && canRunUpdate
-    ? new PackFollower({
-        self: () => ({ version: packVersion, self: trustStore.current()?.self.memberId ?? "" }),
+const crewFollower =
+  crew.mode === "peer" && canRunUpdate
+    ? new CrewFollower({
+        installKind,
+        self: () => ({ version: crewVersion, self: trustStore.current()?.self.memberId ?? "" }),
         // Re-read on every decision, never captured: it IS the memory, and the record on disk is
         // what survives this machine's own restart.
         run: () => readUpdateRun(cfg.stateDir),
@@ -882,9 +997,9 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
     cancel: (h) => clearTimeout(h),
   };
   // In peer mode this machine's own herd alerts are muted at the sink: the lead derives them from the
-  // swept snapshot and owns the one phone registration (PACK_PROTOCOL.md §5). Nothing is deleted —
-  // see herdPushGate. Solo and lead get `snooze` back by identity, so there is no pack tax here.
-  const sink = makeNotifySink(push, herdPushGate(pack.mode, snooze), herdTagFor(isPrimary, name), {
+  // swept snapshot and owns the one phone registration (CREW_PROTOCOL.md §5). Nothing is deleted —
+  // see herdPushGate. Solo and lead get `snooze` back by identity, so there is no crew tax here.
+  const sink = makeNotifySink(push, herdPushGate(crew.mode, snooze), herdTagFor(isPrimary, name), {
     session: isPrimary ? undefined : name,
   });
   const notifications = new NotificationCoordinator(clock, sink, cfg.notifyDelayMs, (status) =>
@@ -905,27 +1020,16 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   };
 };
 
-// List the session directory names under `<configRoot>/sessions` (empty if the dir doesn't exist).
-const listSessionDirs = (dir: string): string[] => {
-  try {
-    return readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
-  } catch {
-    return [];
-  }
-};
-
 const registry = new SessionRegistry({
   configRoot: deriveConfigRoot(cfg.socketPath),
   primarySocketPath: cfg.socketPath,
   factory: makeSession,
-  // Multi-session discovery walks HERDR's config root for herdr sockets — it is that adapter's own
-  // shape, not the port's, so it is off for any other multiplexer rather than scanning for sockets
-  // nothing there would answer. A tmux collie fronts one tmux server, which is what its endpoint names.
-  multiSession: cfg.multiSession && cfg.mux === DEFAULT_MUX,
-  listSessionDirs,
-  exists: (p) => existsSync(p),
+  // The OPERATOR's switch, and nothing else. Whether this multiplexer has other instances on this
+  // machine to front is the adapter's own `listSessions` declaration, asked by `registry.refresh()`.
+  // An adapter that keeps no such list refuses the call and the registry pins to the primary. This
+  // line used to compare `cfg.mux` with the default multiplexer's name, which decided a feature by
+  // a multiplexer's NAME rather than by anything the adapter said (ADR 0022, ADR 0036, M22/02).
+  multiSession: cfg.multiSession,
 });
 
 // Fail soft with a clear message if the PRIMARY multiplexer isn't reachable at startup. Other
@@ -962,16 +1066,16 @@ sweepTimer.unref();
 
 // ── The lead runtime ─────────────────────────────────────────────────────────
 // Built only in `lead` mode — which `deriveMode` defines as "≥1 enrolled peer and no lead of my
-// own". So the condition under which `servers` goes on the wire is exactly "a pack with peers
+// own". So the condition under which `servers` goes on the wire is exactly "a crew with peers
 // exists": an instance that has a trust store but has enrolled nobody keeps emitting a solo body,
-// and a peer builds none at all (it has no peers to sweep, and a pack link never forwards a
-// `host=` — PACK_PROTOCOL.md §4, §9.2, §11).
+// and a peer builds none at all (it has no peers to sweep, and a crew link never forwards a
+// `host=` — CREW_PROTOCOL.md §4, §9.2, §11).
 // The lead's notification coordinators for its peers — one phone registration, on the lead (§5).
 // Built only in `lead` mode, so a solo instance holds no map and adds no tag (§11); it arms nothing
 // on its own, being driven entirely by bodies the sweep hands it below. The lead's OWN snooze and
-// notify-prefs are what it reads, which is what makes them pack-wide by construction.
+// notify-prefs are what it reads, which is what makes them crew-wide by construction.
 const peerNotifier =
-  pack.mode === "lead"
+  crew.mode === "lead"
     ? new PeerNotifier<ReturnType<typeof setTimeout>>({
         clock: { schedule: (fn, ms) => setTimeout(fn, ms), cancel: (h) => clearTimeout(h) },
         push,
@@ -984,23 +1088,23 @@ const peerNotifier =
 // ── The transport half of §8.1's first factor ────────────────────────────────
 // A PEER pins its lead's certificate on its own listener, so BoringSSL refuses an unpinned or absent
 // client certificate at the handshake and the admission gate is told, as a fact it cannot be lied to
-// about, that the transport already did its half (`bridge/pack/transport.ts`).
+// about, that the transport already did its half (`bridge/crew/transport.ts`).
 //
-// A LEAD pins nothing here: its pack surface rides the front door, which terminates TLS. Peer→lead
+// A LEAD pins nothing here: its crew surface rides the front door, which terminates TLS. Peer→lead
 // requests carry a §8.6 signature instead. A SOLO instance never reaches this — `listenerTls` is
 // `null` and no `tls` key is passed to `Bun.serve` (§11: "Ports opened — exactly one, loopback, as
 // today", unchanged in shape as well as in count).
 //
 // MIS-WIRING IS FAIL-CLOSED, NOT DEGRADED: a peer whose store cannot produce an anchor gets
 // `transportPinned === false`, and admission then refuses every request rather than running on the
-// pack secret alone.
+// crew secret alone.
 //
 // The second anchor is read HERE, off one clock, and handed to both the listener and the admission
 // gate — a listener built with two anchors while the gate believed there was one would be exactly
 // the mis-resolution §8.1's amendment exists to close.
 const listenerBuiltAt = Date.now();
-const listenerTls = peerListenerTls(pack.mode, trustStore.current(), listenerBuiltAt);
-const deputyAnchorPem = deputyAnchorOf(pack.mode, trustStore.current(), listenerBuiltAt);
+const listenerTls = peerListenerTls(crew.mode, trustStore.current(), listenerBuiltAt);
+const deputyAnchorPem = deputyAnchorOf(crew.mode, trustStore.current(), listenerBuiltAt);
 const deputyAnchorId = currentWarrant(trustStore.current())?.warrant.deputyMemberId ?? null;
 const deputyAnchor =
   deputyAnchorPem === null || deputyAnchorId === null
@@ -1008,15 +1112,15 @@ const deputyAnchor =
     : { memberId: deputyAnchorId, certPem: deputyAnchorPem };
 const transportPinned = listenerTls !== null;
 
-// ── The standby half (RFC §6, §7; PACK_PROTOCOL.md §18.14–§18.16) ────────────
+// ── The standby half (RFC §6, §7; CREW_PROTOCOL.md §18.14–§18.16) ────────────
 // A deputy is a peer that holds its lead's standing, signed permission to take the crown. Three
 // things follow from that and nothing else does: it keeps a SYNCED copy of the lead's paired-device
 // registry (in its own file, never merged — `standby-devices.ts` says why at length), it may bind a
 // second listener the phone can reach, and it may run the takeover exchange.
 //
 // The threshold is read ONCE, here, and handed to everything that needs it: the door, the router's
-// witness answer and — through `pack status`'s own copy of the formula — the operator's screen. RFC
-// §10.1's rule is that there is exactly one silence clock in a pack.
+// witness answer and — through `crew status`'s own copy of the formula — the operator's screen. RFC
+// §10.1's rule is that there is exactly one silence clock in a crew.
 const standbyArmMs = armThresholdMs(process.env);
 {
   const warning = armThresholdWarning(process.env);
@@ -1024,7 +1128,7 @@ const standbyArmMs = armThresholdMs(process.env);
 }
 
 /** A verified warrant on this machine's own disk names THIS machine. Re-read: a revocation disarms. */
-const holdsOwnWarrant = (): boolean => warrantNamesSelf(pack.mode, trustStore.current(), Date.now());
+const holdsOwnWarrant = (): boolean => warrantNamesSelf(crew.mode, trustStore.current(), Date.now());
 
 /**
  * The lead's synced pairing registry, on a peer. Constructed for any peer with a trust store — the
@@ -1032,20 +1136,20 @@ const holdsOwnWarrant = (): boolean => warrantNamesSelf(pack.mode, trustStore.cu
  * only for a machine that was ALREADY the deputy at boot would have nowhere to put the first sync.
  * Constructing it opens nothing and writes nothing; solo never reaches this line (§11).
  */
-const standbyStore = pack.mode === "peer" && bootTrust !== null ? new StandbyDeviceStore(cfg.stateDir) : null;
+const standbyStore = crew.mode === "peer" && bootTrust !== null ? new StandbyDeviceStore(cfg.stateDir) : null;
 if (standbyStore !== null) await standbyStore.load();
 
 /** The synced devices, or none. The credential the standby door checks a confirm against — only that. */
 const syncedDevices = (): readonly SyncedDevice[] => standbyStore?.current()?.devices ?? [];
 
 /**
- * What the two standby-shaped pack routes need from this process (`router.ts` → `StandbySurface`).
+ * What the two standby-shaped crew routes need from this process (`router.ts` → `StandbySurface`).
  *
  * `undefined` on a lead and on solo — a lead has no lead to be silent, no warrant naming itself and
- * nothing to sync. That absence is what makes `/pack/v1/pairing` refuse and a takeover probe read as
+ * nothing to sync. That absence is what makes `/crew/v1/pairing` refuse and a takeover probe read as
  * maximally silent, both of which are the closed readings.
  */
-const standbySurface: PackRouterDeps["standby"] =
+const standbySurface: CrewRouterDeps["standby"] =
   standbyStore === null
     ? undefined
     : {
@@ -1065,7 +1169,7 @@ const standbySurface: PackRouterDeps["standby"] =
           // has to be able to REMOVE a device here.
           await standbyStore.replace({
             version: STANDBY_DEVICES_VERSION,
-            packId: sync.packId,
+            crewId: sync.crewId,
             leadMemberId: sync.leadMemberId,
             syncedAt: Date.now(),
             devices: sync.devices,
@@ -1094,7 +1198,7 @@ const standbySurface: PackRouterDeps["standby"] =
 // It is also captured AT BIND rather than read per checkpoint: the question is what this listener
 // came up holding, and a warrant that landed a minute after boot is stored without being active.
 const boundWarrantGeneration = currentWarrant(trustStore.current())?.warrant.generation ?? null;
-const deputyRoleAtBind = warrantNamesSelf(pack.mode, trustStore.current(), listenerBuiltAt);
+const deputyRoleAtBind = warrantNamesSelf(crew.mode, trustStore.current(), listenerBuiltAt);
 const activatedGeneration =
   deputyAnchorPem === null && !deputyRoleAtBind ? null : boundWarrantGeneration;
 
@@ -1112,62 +1216,66 @@ void checkpointRuntime();
 
 if (deputyAnchor !== undefined) {
   console.log(
-    `[pack] this peer anchors its deputy "${deputyAnchor.memberId}" as a second TLS anchor — every ` +
+    `[crew] this peer anchors its deputy "${deputyAnchor.memberId}" as a second TLS anchor — every ` +
       "caller must now attest its dials, and a caller that is not this peer's lead is refused on every route.",
   );
 }
-if (pack.mode === "peer" && !transportPinned) {
+if (crew.mode === "peer" && !transportPinned) {
   console.warn(
-    "[pack] this peer could not build its pinned listener (no enrolled lead certificate in the trust " +
-      "store) — the pack surface will refuse every request. Re-run `collie join` on this machine.",
+    "[crew] this peer could not build its pinned listener (no enrolled lead certificate in the trust " +
+      "store) — the crew surface will refuse every request. Re-run `collie join` on this machine.",
   );
 }
-if (transportPinned && pack.peerServesBrowser) {
+if (transportPinned && crew.peerServesBrowser) {
   console.warn(
-    `[pack] ${PEER_BROWSER_ENV} is set, but this peer's port now requires the lead's client certificate ` +
+    `[crew] ${PEER_BROWSER_ENV} is set, but this peer's port now requires the lead's client certificate ` +
       "at the TLS handshake — a browser cannot present one, so the browser surface is unreachable here. " +
-      "Use the lead's front door, or leave the pack on this machine.",
+      "Use the lead's front door, or leave the crew on this machine.",
   );
 }
-// The peer's pack listener binds COLLIE_HOST (one address, PACK_PROTOCOL.md §3) — the operator owns
+// The peer's crew listener binds COLLIE_HOST (one address, CREW_PROTOCOL.md §3) — the operator owns
 // that bind, exactly as they own reachability everywhere else. A wildcard bind is not a hole: pinned
-// mutual TLS + the pack secret still gate every request. But it widens WHICH networks can attempt the
+// mutual TLS + the crew secret still gate every request. But it widens WHICH networks can attempt the
 // gate to all of them, so say so, loudly, once — and do NOT refuse to start (ADR 0013: a peer warns
 // rather than fails; the same posture as the lead's front-door detection). A specific overlay/LAN
 // address bounds it; loopback-only refuses the lead, which is why the operator set it wide.
-if (warnsOnWildcardBind(pack.mode, cfg.host)) {
+if (warnsOnWildcardBind(crew.mode, cfg.host)) {
   const shown = cfg.host.trim() === "" ? "0.0.0.0/:: (COLLIE_HOST empty → all interfaces)" : cfg.host;
   console.warn(
-    `[pack] this peer's pack listener binds ${shown} — reachable on ALL interfaces, not one. It is ` +
-      "gated only by pinned mutual TLS + the pack secret; the bind bounds nothing further. Set " +
-      "COLLIE_HOST to the specific overlay/LAN address the lead dials (PACK_PROTOCOL.md §3).",
+    `[crew] this peer's crew listener binds ${shown} — reachable on ALL interfaces, not one. It is ` +
+      "gated only by pinned mutual TLS + the crew secret; the bind bounds nothing further. Set " +
+      "COLLIE_HOST to the specific overlay/LAN address the lead dials (CREW_PROTOCOL.md §3).",
   );
 }
 
 // The per-peer budget is clamped by the poll interval, and a clamp nobody is told about reads as a
-// knob that does nothing. Said once, at boot, next to the other pack warnings.
+// knob that does nothing. Said once, at boot, next to the other crew warnings.
 {
-  const clamped = packTimeoutClampWarning(cfg.pollMs);
+  const clamped = crewTimeoutClampWarning(cfg.pollMs);
   if (clamped !== null) console.warn(clamped);
+  // REMOVE_IN_1_9_0: the same posture for the 1.7.0 spelling of the two crew budget keys — said
+  // once here, never on the poll path that actually reads them.
+  const legacyEnv = crewEnvFallbackWarning();
+  if (legacyEnv !== null) console.warn(legacyEnv);
 }
 
 /**
  * This collie's own id and operator-facing MACHINE label (§9.2), resolved in ONE place.
  *
- * `servers[0]` (the merged snapshot) and `members[0]` (the pack overview) name the same machine, so
- * they take the same value rather than two computations that agree today. Never the PACK's name,
+ * `servers[0]` (the merged snapshot) and `members[0]` (the crew overview) name the same machine, so
+ * they take the same value rather than two computations that agree today. Never the CREW's name,
  * which is not a roster member and would collide visually with every peer's per-machine label — see
  * `leadLabel`'s doc for the hostname/fallback rule.
  */
-function packSelfOf(data: TrustStoreData) {
+function crewSelfOf(data: TrustStoreData) {
   return { id: data.self.memberId, name: leadLabel(hostname(), data.self.memberId) };
 }
 
-const packLead = (() => {
-  if (pack.mode !== "lead") return undefined;
+const crewLead = (() => {
+  if (crew.mode !== "lead") return undefined;
   const data = trustStore.current();
   if (data === null) return undefined;
-  const packRegistry = new PackRegistry({
+  const crewRegistry = new CrewRegistry({
     sessions: registry,
     self: data.self.memberId,
     // Read through the store on every call, never snapshotted: `join`, `leave` and a rotation all
@@ -1175,15 +1283,19 @@ const packLead = (() => {
     // the operator has revoked.
     members: () => trustStore.current()?.peers ?? [],
   });
-  const client = packPeerClient(data);
-  return new PackLead({
-    registry: packRegistry,
-    snapshot: (link, freshPreflight, follow) => client.snapshot(link, undefined, freshPreflight, follow),
+  const client = crewPeerClient(data);
+  return new CrewLead({
+    registry: crewRegistry,
+    // §13's refuse-before-forward budget: this lead's own cap, not a constant (COLLIE_MAX_UPLOAD_MB).
+    maxUploadBytes: cfg.maxUploadBytes,
+    // The sweep's ask is the LEAD's decision, not this wiring's: `CrewLead` passes the view (M22/06)
+    // and this hands it to the transport unchanged.
+    snapshot: (link, view, freshPreflight, follow) => client.snapshot(link, view, freshPreflight, follow),
     // §20's half of the sweep: what this lead may state about itself, and the queue that hands out
     // one turn at a time. Every member of it is read through, never captured — a lead settles
     // mid-life, and the roster changes under a running bridge.
     follow: {
-      leadRelease: () => leadReleaseHeader({ version: packVersion, run: readUpdateRun(cfg.stateDir) }),
+      leadRelease: () => leadReleaseHeader({ version: crewVersion, run: readUpdateRun(cfg.stateDir) }),
       turns: updateTurns,
       enrolledAt: (memberId) =>
         trustStore.current()?.peers.find((m) => m.memberId === memberId)?.enrolledAt ?? 0,
@@ -1194,14 +1306,22 @@ const packLead = (() => {
     hello: (link) => client.hello(link),
     // The per-pane forward (§5, §9.1). `proxy`, not `raw`: the peer's own status codes — its 304
     // above all — are the answer, and flattening them would cost the conditional-GET win end to end.
-    proxy: (link, route, params, init) => client.proxy(link, route, params, init),
-    self: packSelfOf(data),
+    // The budget is passed THROUGH rather than chosen here: `forward.ts` owns the read/write split
+    // (§10.1's 2026-09-08 amendment), and a write's WRITE_BUDGET_MS must not be a wiring detail.
+    proxy: (link, route, params, init, budgetMs) => client.proxy(link, route, params, init, budgetMs),
+    self: crewSelfOf(data),
     // Notifications for a peer's panes, derived on the lead from the body this sweep just parsed and
     // pushed through the same coordinator machinery a local session uses (M4/06).
     onPeerSnapshot: (memberId, body) => peerNotifier?.observe(memberId, body),
-    onPeerGone: (memberId) => peerNotifier?.forget(memberId),
+    onPeerGone: (memberId) => {
+      peerNotifier?.forget(memberId);
+      // The client remembers one thing that reaches a verdict, how long this member has been
+      // answering without a protocol header (M20/03). A member pruned with that run nearly spent,
+      // then enrolled again under the same id, would inherit it and land on the ladder at once.
+      client.forget(memberId);
+    },
     // Warrant distribution (§18). Read through the store on every sweep for the reason the secret and
-    // the roster are: `pack deputy` writes the designation in another process, and a captured copy
+    // the roster are: `crew deputy` writes the designation in another process, and a captured copy
     // would keep pushing a warrant the operator has already superseded. A lead that has named nobody
     // has no warrant, `current()` answers `null`, and not one byte moves.
     warrant: {
@@ -1209,15 +1329,15 @@ const packLead = (() => {
       // RFC §9's other half: the member took the proof, so it never needs telling again. One extra
       // round trip, once per member, on the first contact after a takeover — and never again.
       confirm: async (memberId) => {
-        await commitPackChange(trustStore, audit, (current) =>
+        await commitCrewChange(trustStore, audit, (current) =>
           current === null ? null : clearRePin(current, memberId),
         );
       },
       current: async (at) => {
         // The refresh is a WRITE, and it is the only one on this path: at most one an hour, and only
         // when a warrant exists (`refreshWarrant` answers `null` for everything else, including a
-        // warrant already past its 30 days — a dark pack disarms rather than silently re-arming).
-        await commitPackChange(trustStore, audit, (current) =>
+        // warrant already past its 30 days — a dark crew disarms rather than silently re-arming).
+        await commitCrewChange(trustStore, audit, (current) =>
           current === null ? null : refreshWarrant(current, at),
         );
         const held = trustStore.current();
@@ -1258,20 +1378,20 @@ const packLead = (() => {
     },
     // RFC §6.5: keep the DEPUTY's copy of the paired-device registry current, and nobody else's.
     // Hashes only, and never merged into that machine's own registry — the reasoning is in
-    // `bridge/pack/standby-devices.ts` and in the amended note at `bridge/server.ts`.
+    // `bridge/crew/standby-devices.ts` and in the amended note at `bridge/server.ts`.
     pairing: {
       deputy: () => trustStore.current()?.deputy ?? null,
       current: () => {
         const held = trustStore.current();
-        if (held === null || held.pack === null) return null;
+        if (held === null || held.crew === null) return null;
         const devices = syncedDevicesOf(pairing.registry());
         return {
-          sync: { packId: held.pack.packId, leadMemberId: held.self.memberId, devices },
+          sync: { crewId: held.crew.crewId, leadMemberId: held.self.memberId, devices },
           digest: syncDigest(devices),
         };
       },
       push: (link, sync) => client.pairing(link, sync),
-      // §18.14's refusal, carried to the checkpoint so `collie pack status` here can name the labels.
+      // §18.14's refusal, carried to the checkpoint so `collie crew status` here can name the labels.
       // An empty list would be a warning with nothing to rename in it, so it reads as "no finding".
       collision: (labels) => {
         pairingCollision = labels === null || labels.length === 0 ? null : { at: Date.now(), labels };
@@ -1289,65 +1409,82 @@ const packLead = (() => {
 })();
 
 /**
- * `GET /api/pack`'s body, asked for per request and answered from memory (bridge/pack/status-wire.ts).
+ * `GET /api/crew`'s body, asked for per request and answered from memory (bridge/crew/status-wire.ts).
  *
- * `undefined` unless this process leads a pack, which is the route's 404 for a solo instance and for
+ * `undefined` unless this process leads a crew, which is the route's 404 for a solo instance and for
  * a peer alike (ADR 0013: a peer is not a front door). The closure still re-reads
  * `trustStore.current()` on every call — a cached value, no disk — because a rotation, a
- * `pack remove` or a `pack deputy` in another process lands there while this one runs, and a body
+ * `crew remove` or a `crew deputy` in another process lands there while this one runs, and a body
  * composed from a snapshot taken at boot would report a roster the operator has already changed.
  *
  * Nothing here can dial: `contributions()` is the sweep's own ledger, read, never refreshed.
  */
-const packStatus =
-  packLead === undefined
+const crewStatus =
+  crewLead === undefined
     ? undefined
-    : (): PackStatusResponse | null => {
+    : (): CrewStatusResponse | null => {
         const data = trustStore.current();
         if (data === null) return null;
-        return packStatusBody({
+        return crewStatusBody({
           store: data,
-          self: packSelfOf(data),
-          // The same string `hello` answers with (§7.1) — resolved once at boot, like the pack
+          self: crewSelfOf(data),
+          // The same string `hello` answers with (§7.1) — resolved once at boot, like the crew
           // router's, so the two surfaces cannot name this build two different versions.
-          version: packVersion,
-          peers: packLead.contributions(),
+          version: crewVersion,
+          peers: crewLead.contributions(),
           now: Date.now(),
         });
       };
 
 // THE SWEEP RIDES THE EXISTING POLL — there is no second timer (§10.1, §11). The primary session's
 // engine is the lead's clock: it is created eagerly, never disposed, and already ticks at
-// COLLIE_POLL_MS (relaxing to the idle cadence with the herd), so the pack inherits the exact
+// COLLIE_POLL_MS (relaxing to the idle cadence with the herd), so the crew inherits the exact
 // cadence and idle relaxation the herd link has. `onTick` rather than `onUpdate` so a local Herdr
 // outage cannot freeze a healthy peer's freshness.
 // A DEPOSED collie stops polling (§18.12): its roster is void as a *lead's* roster, and dialling it
-// would be a second lead's traffic on a pack that has already moved on. It keeps the roster's
+// would be a second lead's traffic on a crew that has already moved on. It keeps the roster's
 // CONTENTS — the self-heal reads the new lead's certificate out of it — but it dials nobody.
 /**
  * §20's SECOND immediate sweep: this lead's own health gate has settled.
  *
  * It also does the re-derivation a restart needs. An update restarts this very process, so the run
- * that started the pack levelling belongs to a bridge that no longer exists — the record on disk is
+ * that started the crew levelling belongs to a bridge that no longer exists — the record on disk is
  * what survives it, and reading it here is what makes a restarted lead pick the turns back up
  * instead of leaving every member waiting for the next confirm. `UpdateTurns.begin` is idempotent
  * per run id, so the sweep fires once and the queue is rebuilt from the roster, never from disk.
  */
 let settledRunId: string | null = null;
 function settleUpdateGate(): void {
-  const run = readUpdateRun(cfg.stateDir);
-  if (run === null || run.state !== "done" || run.runId === undefined || run.to === null) return;
-  if (run.runId === settledRunId) return;
-  settledRunId = run.runId;
-  updateTurns.begin(run.runId, run.to);
-  packLead?.resweep();
+  const start = crewTurnStart(readUpdateRun(cfg.stateDir));
+  if (start === null) return;
+  if (start.runId === settledRunId) return;
+  settledRunId = start.runId;
+  // A RUN OLDER THAN THE WALL CLOCK IS OVER (M20/01). The record on disk survives a crash, a power
+  // cut and a week of downtime, and re-deriving the queue from it would start levelling peers
+  // against a confirm the operator gave long ago and has every right to consider finished. The leg
+  // wall clock is the same bound the live run uses, so a run cannot end one way in memory and
+  // another way across a restart.
+  const age = Date.now() - start.at;
+  if (start.at > 0 && age >= LEG_WALL_CLOCK_MS) {
+    console.log(
+      `[crew] update ${start.runId}: not levelling, that run finished ${Math.round(age / 60_000)} minutes ago`,
+    );
+    return;
+  }
+  // The one line an operator can grep for in the BRIDGE's own journal, which is the journal they
+  // are already tailing. The update that wrote this record ran under a transient `--collect` unit
+  // whose name nobody knows and whose journal outlives it by nothing, so a trace left only there is
+  // a trace left nowhere. Once per run id per process, so a poll tick cannot make it a stream.
+  console.log(`[crew] update ${start.runId}: levelling peers to ${start.to}`);
+  updateTurns.begin(start.runId, start.to);
+  crewLead?.resweep();
 }
 
-if (packLead) {
+if (crewLead) {
   registry.get()?.engine.onTick(() => {
     if (deposed !== null) return;
     settleUpdateGate();
-    void packLead.sweep();
+    void crewLead.sweep();
   });
 }
 
@@ -1358,22 +1495,24 @@ if (packLead) {
  * ever fail to verify and become a refusal. What authenticates it is the pinned handshake against the
  * certificate the receiver anchored, plus the dial attestation naming which anchor is calling.
  *
- * **Except toward the LEAD, where there is no handshake to pin** — its pack surface rides a front
- * door that terminates TLS before the process ({@link takeoverDialTls}). There the pack secret and
+ * **Except toward the LEAD, where there is no handshake to pin** — its crew surface rides a front
+ * door that terminates TLS before the process ({@link takeoverDialTls}). There the crew secret and
  * the dial attestation are the whole of it, and both ride EVERY call this client makes.
  */
 function takeoverClient(data: TrustStoreData): PeerClient {
   return new PeerClient({
     self: data.self.memberId,
-    secret: () => trustStore.current()?.pack?.secret ?? null,
-    timeoutMs: packTimeoutBudget(cfg.pollMs),
-    patientTimeoutMs: packHelloBudget(cfg.pollMs),
+    // REMOVE_IN_1_9_0: the same process-wide set the sweep's client uses. See `toldVersion1`.
+    toldVersion1,
+    secret: () => trustStore.current()?.crew?.secret ?? null,
+    timeoutMs: crewTimeoutBudget(cfg.pollMs),
+    patientTimeoutMs: crewHelloBudget(cfg.pollMs),
     fetch: (url, init) => fetch(url, init),
     dialSign: (parts) => signDial(trustStore.current()?.self.keyPem ?? data.self.keyPem, parts),
     // Re-read from the store on every dial, and NOT the same answer for every member: a witness is
     // pinned to the certificate the warrant push carried, and the LEAD is dialled with no pin at all,
     // because a lead's address is a front door that terminates TLS before the process
-    // (`bridge/pack/transport.ts`'s note; the CLI's dials were fixed the same way in `b126989`).
+    // (`bridge/crew/transport.ts`'s note; the CLI's dials were fixed the same way in `b126989`).
     // The rule is a pure function of the store, so it is decided — and tested — in `takeover.ts`.
     tls: (link) => takeoverDialTls(trustStore.current(), link.memberId),
   });
@@ -1426,7 +1565,7 @@ async function performTakeover(deviceLabel: string): Promise<{ ok: boolean; mess
       const devices = syncedDevices();
       const clash = collidingLabels(pairing.registry(), devices);
       if (clash.length > 0) return { kind: "refused", reason: "pairing-collision", labels: clash };
-      const result = await commitPackChange(trustStore, audit, (current) =>
+      const result = await commitCrewChange(trustStore, audit, (current) =>
         current === null ? null : adoptLeadership(current, { roster, confirmed, now: Date.now() }),
       );
       if (result === null) return { kind: "refused", reason: "commit-failed" };
@@ -1435,7 +1574,7 @@ async function performTakeover(deviceLabel: string): Promise<{ ok: boolean; mess
         // Belt and braces: the read-only check above already passed, so reaching this means the
         // registry changed underneath. The store is already a lead's, which is the state that matters;
         // say so rather than pretending the adoption happened.
-        console.warn(`[pack] takeover: could not adopt ${collisions.join(", ")} — rename or revoke, then re-pair.`);
+        console.warn(`[crew] takeover: could not adopt ${collisions.join(", ")} — rename or revoke, then re-pair.`);
       }
       return { kind: "committed", pending: result.pending };
     },
@@ -1444,18 +1583,18 @@ async function performTakeover(deviceLabel: string): Promise<{ ok: boolean; mess
 
   const message = takeoverMessage(outcome);
   audit.record({
-    action: "pack.takeover",
+    action: "crew.takeover",
     device: deviceLabel,
     detail: { outcome: outcome.kind === "committed" ? "committed" : outcome.reason },
   });
   if (outcome.kind !== "committed") return { ok: false, message };
   console.warn(
-    `[pack] TOOK OVER — this machine is the lead of pack "${data.pack?.name ?? "?"}" now (warrant ` +
+    `[crew] TOOK OVER — this machine is the lead of crew "${data.crew?.name ?? "?"}" now (warrant ` +
       `generation ${currentWarrant(trustStore.current())?.warrant.generation ?? 0}), confirmed by ` +
       `${outcome.repinned.length} peer(s). Exiting ${TAKEOVER_RESTART_EXIT} so the supervisor brings ` +
       "this machine back up in LEAD mode — that status is non-zero on purpose, because `Restart=" +
       "on-failure` does not revive a clean exit. If nothing restarts this process, its supervision is " +
-      "unmanaged: run `herdr plugin action invoke restart --plugin herdr.collie` here.",
+      `unmanaged: run \`${herdrActionCommand("restart", collieInstance)}\` here.`,
   );
   // Long enough for the answer above to reach the phone, short enough that the failover proxy's next
   // health check finds a lead. Not unref'd: this timer is the whole remaining purpose of the process.
@@ -1467,7 +1606,7 @@ async function performTakeover(deviceLabel: string): Promise<{ ok: boolean; mess
 const standbyDoor = standbyStore === null ? null : createStandbyDoor({
   // What this machine is running, for the updater's health gate reading this port (M15/05) — the
   // same `<semver>+<sha>` `/api/health` answers with, and the same bundle id `/api/config` reports.
-  version: packVersion,
+  version: crewVersion,
   build: () => buildId(),
   facts: (): StandbyFacts => {
     const held = trustStore.current();
@@ -1482,7 +1621,7 @@ const standbyDoor = standbyStore === null ? null : createStandbyDoor({
       ).length,
       leadMemberId: held?.lead?.memberId ?? null,
       selfMemberId: held?.self.memberId ?? "this machine",
-      packName: held?.pack?.name ?? null,
+      crewName: held?.crew?.name ?? null,
     };
   },
   devices: syncedDevices,
@@ -1527,27 +1666,27 @@ const standbyServer =
           // is the one door still answering in the window the operator most wants to look (M15/04).
           // It is the same file `/api/update/check` reports, read through the same staleness rule.
           const update = standbyUpdateAnswer(req, url, () => readUpdateRun(cfg.stateDir));
-          if (update !== null) return withStandbyVersion(update, packVersion);
+          if (update !== null) return withStandbyVersion(update, crewVersion);
           const answered =
             deposed !== null
-              ? deposedAnswer(deposed, outcomeNow(deposed, leadContact.facts()), url)
-              : (frontDoorHealth(pack.mode, url) ?? (standbyDoor === null ? null : await standbyDoor(req, url)));
+              ? deposedAnswer(deposed, outcomeNow(deposed, leadContact.facts()), url, collieInstance)
+              : (frontDoorHealth(crew.mode, url) ?? (standbyDoor === null ? null : await standbyDoor(req, url)));
           // STAMPED HERE, ONCE, so it covers every answer this port can make — including the 404 for
           // a path nobody owns and the deposed page, which are exactly the answers a runner probing a
           // machine mid-update is most likely to meet (M15/05).
-          return withStandbyVersion(answered ?? new Response("not found", { status: 404 }), packVersion);
+          return withStandbyVersion(answered ?? new Response("not found", { status: 404 }), crewVersion);
         },
       });
 
 if (standbyServer !== null && standbyDoor !== null) {
   console.log(
-    `[pack] standby door listening on http://${standbyHostOf(process.env)}:${standbyPort} — it arms ` +
+    `[crew] standby door listening on http://${standbyHostOf(process.env)}:${standbyPort} — it arms ` +
       `after ${Math.round(standbyArmMs / 1000)}s of silence from this peer's lead, and only while a ` +
       "verified warrant names this machine and its lead has synced a paired device here.",
   );
 } else if (standbyServer !== null) {
   console.log(
-    `[pack] standby port ${standbyPort} answers the failover proxy's health check only — this collie ` +
+    `[crew] standby port ${standbyPort} answers the failover proxy's health check only — this collie ` +
       "is not a deputy standing by.",
   );
 }
@@ -1562,43 +1701,43 @@ const server = startServer({
   // The preflight and the handoff, or undefined on an install with no compiled binary to run —
   // where the route answers 503 and the phone says so (M15/05).
   updateAction,
-  // The bare `<semver>+<sha>` this process answers `/api/health` and `/pack/v1/hello` with — one
+  // The bare `<semver>+<sha>` this process answers `/api/health` and `/crew/v1/hello` with — one
   // string, resolved once, so the detached updater's health gate and a peer can never be told two
   // different things about this machine (M15/04).
-  version: packVersion,
+  version: crewVersion,
   audit,
   activity,
-  pack,
+  crew,
   pairing,
   stt,
   manualPaneFit,
-  packLead,
-  packStatus,
+  crewLead,
+  crewStatus,
   peerNotifier,
   // Registered on the EXISTENCE of a trust store, not on the mode: a lead answering its very first
   // `collie join` still has zero peers and is therefore still `solo` by mode. An instance that never
-  // enrolled has no store, gets no handler, and so registers no pack route at all (§11). The
+  // enrolled has no store, gets no handler, and so registers no crew route at all (§11). The
   // surface is handed back by server.ts so a peer answers its lead out of the same closures its own
   // browser routes use — the same snapshot body, and the same session-scoped handlers (§5).
-  packRouter:
+  crewRouter:
     trustStore.current() === null
       ? undefined
       : (surface) =>
-          createPackRouter({
+          createCrewRouter({
             store: trustStore,
             audit,
             transportPinned,
             // Present only on a two-anchored peer. Its presence is what makes a dial attestation
             // mandatory and identity signature-resolved (§8.1's 2026-08-20 amendment).
             deputyAnchor,
-            version: packVersion,
+            version: crewVersion,
             // §18.17: what THIS listener activated, reported so the lead stops inferring it from
             // whether its own operator once restarted this machine. A restart done any other way —
-            // an update, a systemd unit, a hand on a keyboard — is invisible to `pack-ops.json` and
+            // an update, a systemd unit, a hand on a keyboard — is invisible to `crew-ops.json` and
             // was therefore rendered as `anchor INACTIVE` on a machine that was fully armed.
             warrantActiveGeneration: activatedGeneration,
             // §19: this machine's own `collie update --check --local` verdict, published beside the
-            // snapshot body so one confirm on the phone can cover the whole pack. A REPORT and never
+            // snapshot body so one confirm on the phone can cover the whole crew. A REPORT and never
             // an order — it names no code, no route and no version anybody should install.
             updatePreflight: updatePreflightReport,
             // §20: this machine's own run, beside its preflight. It is what lets a lead's page say
@@ -1607,10 +1746,14 @@ const server = startServer({
             // §20's two REQUEST headers, handed to this peer's own follow. A build with no follower
             // — a lead, or a checkout with nothing compiled — passes `undefined` and ignores both,
             // which is a correct peer.
-            onFollow: packFollower === undefined ? undefined : (a) => packFollower.observe(a),
-            onMembershipChange: packStoreChanged,
+            onFollow: crewFollower === undefined ? undefined : (a) => crewFollower.observe(a),
+            onMembershipChange: crewStoreChanged,
             // Gap A (§18.9), and its rotation-shaped sibling. Two receipts, one holder, in memory.
             onLeadDialled: (at) => leadContact.record(at),
+            // M20/02: a peer that speaks to us is due. It marks the member due now and dials nothing;
+            // the sweep 1.5 s later is what dials. A solo instance and a peer both pass a `crewLead`
+            // of `undefined`, so this is a no-op there.
+            onMemberDialled: (memberId) => crewLead?.noteAdmittedContact(memberId),
             onLeadRefused: (at) => leadContact.recordSecretRefusal(at),
             // §18.12's delivery path 1: the new lead tells this one, on first contact. The router has
             // already verified the proof against THIS collie's own certificate and written the healed
@@ -1627,7 +1770,7 @@ const server = startServer({
   // The one page a deposed collie serves, and the health check it must now fail (§18.12). `undefined`
   // until something deposes this process, so an ordinary instance's dispatch is byte-identical.
   // The paths this file's route table does not name and must not: `/standby/*` is declared in
-  // `bridge/pack/deposed.ts` and `bridge/pack/standby.ts`, so `solo-baseline.test.ts` can keep
+  // `bridge/crew/deposed.ts` and `bridge/crew/standby.ts`, so `solo-baseline.test.ts` can keep
   // proving by grep that server.ts routes exactly today's set. Three answers, in order:
   //
   //   1. a DEPOSED collie serves its one page everywhere and FAILS `/standby/health` (§18.12) — the
@@ -1639,14 +1782,14 @@ const server = startServer({
   //
   // A solo instance answers `null` to all three and gains no route at all (§11).
   deposed: (_req, url) => {
-    if (deposed !== null) return deposedAnswer(deposed, outcomeNow(deposed, leadContact.facts()), url);
+    if (deposed !== null) return deposedAnswer(deposed, outcomeNow(deposed, leadContact.facts()), url, collieInstance);
     if (bootTrust === null) return null;
-    const health = frontDoorHealth(pack.mode, url);
+    const health = frontDoorHealth(crew.mode, url);
     if (health !== null) return health;
     if (url.pathname === STANDBY_PREFIX || url.pathname.startsWith(`${STANDBY_PREFIX}/`)) {
       return new Response(
-        "This machine is not standing by. The standby door is a separate port on the pack's deputy " +
-          "(COLLIE_STANDBY_PORT), reachable through your failover proxy — see PACK_PROTOCOL.md \u00a718.15.\n",
+        "This machine is not standing by. The standby door is a separate port on the crew's deputy " +
+          "(COLLIE_STANDBY_PORT), reachable through your failover proxy — see CREW_PROTOCOL.md \u00a718.15.\n",
         { status: 404, headers: { "content-type": "text/plain; charset=utf-8" } },
       );
     }

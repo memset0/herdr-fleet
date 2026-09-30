@@ -1,4 +1,5 @@
 import type { JsonObject, JsonValue } from "./json.ts";
+import type { UpdateStatus } from "./types.ts";
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { compareSemver } from "./update.ts";
 import { inFlight, type UpdateRun, type UpdateRunState } from "./update-run.ts";
@@ -41,7 +42,32 @@ export interface PreflightCheck {
 export interface PreflightReport {
   readonly schema: number;
   readonly verdict: "green" | "amber" | "red";
+  /**
+   * How the machine that produced this report is installed, when it named a kind this build knows.
+   *
+   * **A FIELD, never a check id** — an id labels a sentence and a sentence gets reworded; the kind
+   * is the fact. Absent means unknown, and unknown counts as not packaged, which is exactly how a
+   * report older than the field behaved before it existed.
+   */
+  readonly installKind?: UpdateStatus["installKind"];
   readonly checks: readonly PreflightCheck[];
+}
+
+/** The install kinds this build knows. A report naming anything else reads as unknown, never a kind. */
+const KNOWN_INSTALL_KINDS: ReadonlySet<string> = new Set<UpdateStatus["installKind"]>([
+  "linked-clone",
+  "detached-checkout",
+  "binary",
+  "packaged",
+  "unknown",
+]);
+
+/** The kind off a foreign document, or `undefined` for absent and for anything this build cannot read. */
+function readInstallKind(value: JsonValue | undefined): UpdateStatus["installKind"] | undefined {
+  if (typeof value !== "string" || !KNOWN_INSTALL_KINDS.has(value)) return undefined;
+  // SAFETY: `KNOWN_INSTALL_KINDS` holds exactly the five members of the union, and the guard above
+  // returned for every string that is not one of them.
+  return value as UpdateStatus["installKind"];
 }
 
 const VERDICTS: ReadonlySet<string> = new Set(["green", "amber", "red"]);
@@ -58,8 +84,8 @@ export function worstVerdict(verdicts: readonly ("green" | "amber" | "red")[]): 
 /**
  * The argv of the preflight the PHONE runs.
  *
- * `--local` is the load-bearing word: this is the LEAD's own machine's answer. The pack's half of
- * the preflight comes from the peers themselves over the pack link (§19, M16/03) and is merged
+ * `--local` is the load-bearing word: this is the LEAD's own machine's answer. The crew's half of
+ * the preflight comes from the peers themselves over the crew link (§19, M16/03) and is merged
  * below, never walked from here — the CLI's member walk runs over the operator's SSH, which a
  * bridge running as a service does not have.
  */
@@ -130,15 +156,22 @@ export function parsePreflightReport(stdout: string): PreflightReport | null {
     if (typeof remedy === "string") parsed.remedy = remedy;
     checks.push(parsed);
   }
-  // The phone's payload carries no `pack` — the card is the LEAD's own answer. A report that still
+  // The phone's payload carries no `crew` — the card is the LEAD's own answer. A report that still
   // has one (an older CLI, or a terminal run read here) folded its members into the top verdict, so
   // dropping the members while keeping that verdict would show a red card with no red row. The
   // verdict is re-derived from the checks that remain. `--local` makes this a belt-and-braces path.
   // SAFETY: `verdict` was checked against `VERDICTS` above, which holds exactly the three members of
   // the union, and the guard there returned for every string that is not one of them.
   const printed = verdict as "green" | "amber" | "red";
-  const topLevel = rec.pack === undefined ? printed : worstVerdict(checks.map((c) => c.verdict));
-  return { schema: PREFLIGHT_SCHEMA, verdict: topLevel, checks };
+  // REMOVE_IN_1_9_0: `pack` is 1.7.0's name for `crew`. The document read here is printed by a
+  // SEPARATE process — `collie update --check --json` — which may be the older binary mid-swap, so
+  // both names are accepted. Only `crew` is ever written.
+  const members = rec.crew ?? rec.pack;
+  const topLevel = members === undefined ? printed : worstVerdict(checks.map((c) => c.verdict));
+  const kind = readInstallKind(rec.installKind);
+  // Assigned, never conditionally spread: a report that named no kind must carry NO such key.
+  const report: PreflightReport = { schema: PREFLIGHT_SCHEMA, verdict: topLevel, checks };
+  return kind === undefined ? report : { ...report, installKind: kind };
 }
 
 /** The first red check in `report`, or null. What the refusal NAMES — "unavailable" is not a reason. */
@@ -149,11 +182,11 @@ export function firstRed(report: PreflightReport): PreflightCheck | null {
 /** How long a cached preflight stays fresh. The card polls; the CLI shells out to git and doctor. */
 export const PREFLIGHT_TTL_MS = 60_000;
 
-// ── The pack's half of the preflight (M16/03) ────────────────────────────────
+// ── The crew's half of the preflight (M16/03) ────────────────────────────────
 //
 // Every collie builds a `PreflightCache`, lead or peer, so a peer can answer for ITSELF without an
 // SSH session anybody has to hold. It publishes that answer as one additive-optional object beside
-// `GET /pack/v1/snapshot`'s body (PACK_PROTOCOL.md §19), the lead's sweep banks it, and the card
+// `GET /crew/v1/snapshot`'s body (CREW_PROTOCOL.md §19), the lead's sweep banks it, and the card
 // reads the bank. Nothing here dials, spawns or walks members: `--local` is untouched, and the lead
 // never asks a peer to check a third machine.
 
@@ -166,9 +199,9 @@ export const PREFLIGHT_TTL_MS = 60_000;
  * survived — a truncated list can therefore never turn a red member green — and the list is ordered
  * worst-first BEFORE it is cut, so a red member always keeps the reason that made it red.
  */
-export const PACK_PREFLIGHT_MAX_CHECKS = 16;
+export const CREW_PREFLIGHT_MAX_CHECKS = 16;
 /** The synthetic trailing check. GREEN on purpose: stating a truncation must not invent a finding. */
-export const PACK_PREFLIGHT_TRUNCATED_ID = "checks-truncated";
+export const CREW_PREFLIGHT_TRUNCATED_ID = "checks-truncated";
 
 /** One member's own preflight, as it crosses the link and as the lead banks it. */
 export interface PeerPreflight {
@@ -176,6 +209,13 @@ export interface PeerPreflight {
   readonly verdict: "green" | "amber" | "red";
   /** When that member produced the report, on **its own** clock, epoch ms. Passed through untouched. */
   readonly asOf: number;
+  /**
+   * How that member is installed, when it named a kind (CREW_PROTOCOL.md §19, added 2026-09-06).
+   *
+   * Additive-optional with the closed reading §7.1 requires: **absent means unknown, and unknown is
+   * not packaged**, so a member older than this field is driven exactly as it was before it existed.
+   */
+  readonly installKind?: UpdateStatus["installKind"];
   readonly checks: readonly PreflightCheck[];
 }
 
@@ -185,40 +225,43 @@ export function worstFirst(checks: readonly PreflightCheck[]): readonly Prefligh
 }
 
 /**
- * The check list one member publishes: worst first, capped at {@link PACK_PREFLIGHT_MAX_CHECKS},
+ * The check list one member publishes: worst first, capped at {@link CREW_PREFLIGHT_MAX_CHECKS},
  * and **truncation stated rather than silent**.
  *
  * Applied on both ends — the peer caps what it emits, the lead caps what it reads — because a bound
  * that only one side enforces is a bound the other side can be talked out of.
  */
-export function packPreflightChecks(checks: readonly PreflightCheck[]): readonly PreflightCheck[] {
+export function crewPreflightChecks(checks: readonly PreflightCheck[]): readonly PreflightCheck[] {
   const ordered = worstFirst(checks);
-  if (ordered.length <= PACK_PREFLIGHT_MAX_CHECKS) return ordered;
-  const kept = ordered.slice(0, PACK_PREFLIGHT_MAX_CHECKS - 1);
+  if (ordered.length <= CREW_PREFLIGHT_MAX_CHECKS) return ordered;
+  const kept = ordered.slice(0, CREW_PREFLIGHT_MAX_CHECKS - 1);
   const dropped = ordered.length - kept.length;
   return [
     ...kept,
     {
-      id: PACK_PREFLIGHT_TRUNCATED_ID,
+      id: CREW_PREFLIGHT_TRUNCATED_ID,
       verdict: "green",
-      reason: `${dropped} further check${dropped === 1 ? "" : "s"} were not carried over the pack link`,
+      reason: `${dropped} further check${dropped === 1 ? "" : "s"} were not carried over the crew link`,
     },
   ];
 }
 
-/** The wire name of the field, and of the header that asks for a fresh one (PACK_PROTOCOL.md §19). */
-export const PACK_PREFLIGHT_FIELD = "updatePreflight";
+/** The wire name of the field, and of the header that asks for a fresh one (CREW_PROTOCOL.md §19). */
+export const CREW_PREFLIGHT_FIELD = "updatePreflight";
 
 /** What one member publishes beside its snapshot body. `null` ⇒ it has nothing to say, which is unknown. */
 export function peerPreflightWire(report: PreflightReport | null, asOf: number | null): PeerPreflight | null {
   if (report === null || asOf === null) return null;
-  return {
+  const wire: PeerPreflight = {
     verdict: report.verdict,
     asOf,
     // The remedy is deliberately dropped: it is a command for the operator of THAT machine, and the
     // lead's card names a member and a reason, never a shell line to run somewhere else.
-    checks: packPreflightChecks(report.checks).map((c) => ({ id: c.id, verdict: c.verdict, reason: c.reason })),
+    checks: crewPreflightChecks(report.checks).map((c) => ({ id: c.id, verdict: c.verdict, reason: c.reason })),
   };
+  // Assigned, never conditionally spread: a member that knows no kind sends NO key rather than one
+  // whose value is `undefined`, which is what "absent" has to look like on the wire.
+  return report.installKind === undefined ? wire : { ...wire, installKind: report.installKind };
 }
 
 /**
@@ -231,7 +274,7 @@ export function peerPreflightWire(report: PreflightReport | null, asOf: number |
 export function parsePeerPreflight(value: JsonValue): PeerPreflight | null {
   const rec = asRecord(value);
   if (rec === null) return null;
-  const field = asRecord(rec[PACK_PREFLIGHT_FIELD] ?? null);
+  const field = asRecord(rec[CREW_PREFLIGHT_FIELD] ?? null);
   if (field === null) return null;
   const verdict = field.verdict;
   const asOf = field.asOf;
@@ -251,23 +294,25 @@ export function parsePeerPreflight(value: JsonValue): PeerPreflight | null {
     // returned for every string that is not one of them.
     checks.push({ id, verdict: cv as "green" | "amber" | "red", reason });
   }
-  return {
+  const parsed: PeerPreflight = {
     // SAFETY: checked against `VERDICTS` above, which holds exactly the three members of the union.
     verdict: verdict as "green" | "amber" | "red",
     asOf,
-    checks: packPreflightChecks(checks),
+    checks: crewPreflightChecks(checks),
   };
+  const kind = readInstallKind(field.installKind);
+  return kind === undefined ? parsed : { ...parsed, installKind: kind };
 }
 
-// ── The pack's half of the RUN (M16/04) ──────────────────────────────────────
+// ── The crew's half of the RUN (M16/04) ──────────────────────────────────────
 
 /**
- * The trimmed run record a member publishes beside its snapshot body (PACK_PROTOCOL.md §20).
+ * The trimmed run record a member publishes beside its snapshot body (CREW_PROTOCOL.md §20).
  *
  * The lead cannot otherwise know a peer is moving or has fallen back: the version alone says only
  * "still behind", and a peer that tried and rolled back looks exactly like a peer that has not
  * started. It rides ALONGSIDE the body for the reason `updatePreflight` does — `body` is the object
- * that machine serves its own browser, and a pack-only fact has no business in the browser's
+ * that machine serves its own browser, and a crew-only fact has no business in the browser's
  * snapshot type — and it carries no pid, no log tail and no recovery command: those are for the
  * operator of THAT machine, and the lead's page names a member, a state and a reason.
  */
@@ -282,20 +327,20 @@ export interface PeerRunReport {
   readonly updatedAt: number | null;
 }
 
-/** The wire name of {@link PeerRunReport}'s field, beside {@link PACK_PREFLIGHT_FIELD} (§20). */
-export const PACK_RUN_FIELD = "updateRun";
+/** The wire name of {@link PeerRunReport}'s field, beside {@link CREW_PREFLIGHT_FIELD} (§20). */
+export const CREW_RUN_FIELD = "updateRun";
 
 /**
  * The wire name of the member's own running version on `snapshot`'s answer, in the same seat as
- * {@link PACK_PREFLIGHT_FIELD} and {@link PACK_RUN_FIELD} (§5, §19 — the 2026-09-04 amendment).
+ * {@link CREW_PREFLIGHT_FIELD} and {@link CREW_RUN_FIELD} (§5, §19 — the 2026-09-04 amendment).
  *
  * Spelled exactly as `hello` spells it, because it is the same fact: `hello` and `snapshot` are two
  * places one version crosses one link, and a second spelling would invite a second reading.
  */
-export const PACK_VERSION_FIELD = "version";
+export const CREW_VERSION_FIELD = "version";
 
-/** How much of a reason crosses the link. A log tail is that machine's own business, not the pack's. */
-export const PACK_RUN_REASON_MAX = 240;
+/** How much of a reason crosses the link. A log tail is that machine's own business, not the crew's. */
+export const CREW_RUN_REASON_MAX = 240;
 
 /** What one member publishes. `null` ⇒ it has never run an update, which is nothing to report. */
 export function peerRunWire(run: UpdateRun | null): PeerRunReport | null {
@@ -304,7 +349,7 @@ export function peerRunWire(run: UpdateRun | null): PeerRunReport | null {
     state: run.state,
     to: run.to,
     runId: run.runId ?? null,
-    reason: run.reason === undefined ? null : run.reason.slice(0, PACK_RUN_REASON_MAX),
+    reason: run.reason === undefined ? null : run.reason.slice(0, CREW_RUN_REASON_MAX),
     updatedAt: run.updatedAt,
   };
 }
@@ -319,7 +364,7 @@ export function peerRunWire(run: UpdateRun | null): PeerRunReport | null {
 export function parsePeerRun(value: JsonValue): PeerRunReport | null {
   const rec = asRecord(value);
   if (rec === null) return null;
-  const field = asRecord(rec[PACK_RUN_FIELD] ?? null);
+  const field = asRecord(rec[CREW_RUN_FIELD] ?? null);
   if (field === null) return null;
   const state = field.state;
   if (typeof state !== "string" || !RUN_STATES.has(state)) return null;
@@ -330,7 +375,7 @@ export function parsePeerRun(value: JsonValue): PeerRunReport | null {
     state: state as UpdateRunState,
     to: typeof to === "string" && to !== "" ? to : null,
     runId: typeof runId === "string" && runId !== "" ? runId : null,
-    reason: typeof reason === "string" && reason !== "" ? reason.slice(0, PACK_RUN_REASON_MAX) : null,
+    reason: typeof reason === "string" && reason !== "" ? reason.slice(0, CREW_RUN_REASON_MAX) : null,
     updatedAt: typeof updatedAt === "number" && Number.isSafeInteger(updatedAt) ? updatedAt : null,
   };
 }
@@ -352,22 +397,31 @@ const RUN_STATES: ReadonlySet<string> = new Set<UpdateRunState>([
  * A member's verdict as the card reads it. `unknown` is the fourth, and it is not a shade of green:
  * it is "we could not check this machine", which blocks the confirm exactly as a red does.
  */
-export type PackVerdict = "green" | "amber" | "red" | "unknown";
+export type CrewVerdict = "green" | "amber" | "red" | "unknown";
 
-/** One row of `GET /api/update/check`'s `pack` array. */
-export interface PackUpdateRow {
+/** One row of `GET /api/update/check`'s `crew` array. */
+export interface CrewUpdateRow {
   readonly name: string;
   /** What that member last reported over the link, or `null` when it has reported none. */
   readonly version: string | null;
-  readonly verdict: PackVerdict;
+  readonly verdict: CrewVerdict;
   /** The reason strings of its non-green checks, worst first. A red row always has at least one. */
   readonly reasons: readonly string[];
   /** That member's own stamp for the report, or `null` when there is no report to date. */
   readonly asOf: number | null;
+  /**
+   * How that member is installed, when its own report named a kind (§19). Absent means unknown, and
+   * unknown counts as not packaged.
+   *
+   * The page reads it for one thing only: a `packaged` member waits for its package manager, so it
+   * is shown as such and left out of the peers-behind count. A count the operator cannot clear from
+   * the phone is a nag, and the tap it would send them to refuses on that machine (ADR 0035).
+   */
+  readonly installKind?: UpdateStatus["installKind"];
 }
 
 /** What the lead knows about one member when it composes a row. All of it banked by the sweep. */
-export interface PackMemberFacts {
+export interface CrewMemberFacts {
   readonly name: string;
   readonly version: string | null;
   readonly preflight: PeerPreflight | null;
@@ -392,13 +446,13 @@ export function unknownReason(name: string): string {
  * never green. `asOf` is that member's own stamp, passed through untouched: a green from six hours
  * ago and a green from four seconds ago are different claims.
  */
-export function packUpdateRows(members: readonly PackMemberFacts[]): PackUpdateRow[] {
+export function crewUpdateRows(members: readonly CrewMemberFacts[]): CrewUpdateRow[] {
   return members.map((m) => {
     if (m.preflight === null) {
       return { name: m.name, version: m.version, verdict: "unknown", reasons: [unknownReason(m.name)], asOf: null };
     }
     const reasons = reasonsOf(m.preflight.checks);
-    return {
+    const row: CrewUpdateRow = {
       name: m.name,
       version: m.version,
       verdict: m.preflight.verdict,
@@ -407,46 +461,53 @@ export function packUpdateRows(members: readonly PackMemberFacts[]): PackUpdateR
       reasons: m.preflight.verdict === "red" && reasons.length === 0 ? [unknownReason(m.name)] : reasons,
       asOf: m.preflight.asOf,
     };
+    // Assigned, never conditionally spread: a member that named no kind carries NO such key.
+    const kind = m.preflight.installKind;
+    return kind === undefined ? row : { ...row, installKind: kind };
   });
 }
 
-const PACK_VERDICTS: ReadonlySet<string> = new Set(["green", "amber", "red", "unknown"]);
+const CREW_VERDICTS: ReadonlySet<string> = new Set(["green", "amber", "red", "unknown"]);
 
 /**
- * The `pack` rows inside a `GET /api/update/check` answer, read defensively.
+ * The `crew` rows inside a `GET /api/update/check` answer, read defensively.
  *
- * The reader is `collie pack update`, over loopback against this collie's own bridge — a different
+ * The reader is `collie crew update`, over loopback against this collie's own bridge — a different
  * process, possibly a different build, so the body is parsed like any other foreign document. A row
  * this build cannot read whole is DROPPED rather than half-believed; the transcript is then quieter
  * and nothing else changes, because that transcript is a nicety and never a gate.
  */
-export function parsePackRows(doc: JsonValue): PackUpdateRow[] {
+export function parseCrewRows(doc: JsonValue): CrewUpdateRow[] {
   const rec = asRecord(doc);
   if (rec === null) return [];
-  const rows = rec.pack;
+  // REMOVE_IN_1_9_0: `pack` is 1.7.0's name for `crew`, and the answer read here comes from a
+  // bridge that may still be the older build. Both names are accepted; only `crew` is written.
+  const rows = rec.crew ?? rec.pack;
   if (!Array.isArray(rows)) return [];
-  const out: PackUpdateRow[] = [];
+  const out: CrewUpdateRow[] = [];
   for (const raw of rows) {
     const row = asRecord(raw);
     if (row === null) continue;
     const { name, verdict, version, reasons, asOf } = row;
-    if (typeof name !== "string" || typeof verdict !== "string" || !PACK_VERDICTS.has(verdict)) continue;
-    out.push({
+    if (typeof name !== "string" || typeof verdict !== "string" || !CREW_VERDICTS.has(verdict)) continue;
+    const parsed: CrewUpdateRow = {
       name,
       version: typeof version === "string" ? version : null,
-      // SAFETY: checked against `PACK_VERDICTS` on the line above, which holds exactly the four
+      // SAFETY: checked against `CREW_VERDICTS` on the line above, which holds exactly the four
       // members of the union, and the guard there skipped every string that is not one of them.
-      verdict: verdict as PackVerdict,
+      verdict: verdict as CrewVerdict,
       reasons: Array.isArray(reasons) ? reasons.filter((r): r is string => typeof r === "string") : [],
       asOf: typeof asOf === "number" && Number.isSafeInteger(asOf) ? asOf : null,
-    });
+    };
+    const kind = readInstallKind(row.installKind);
+    out.push(kind === undefined ? parsed : { ...parsed, installKind: kind });
   }
   return out;
 }
 
-/** The merged answer: the worst verdict in the pack, and the machine that produced it. */
+/** The merged answer: the worst verdict in the crew, and the machine that produced it. */
 export interface MergedUpdateVerdict {
-  readonly verdict: PackVerdict;
+  readonly verdict: CrewVerdict;
   /** The member the verdict came from, or `null` when everything is green. */
   readonly member: string | null;
   /** That member's own sentence for it, or `null`. */
@@ -459,7 +520,7 @@ export interface MergedUpdateVerdict {
  * The ONE function the card, the ribbon and `POST /api/update`'s refusal all read (M16/03).
  *
  * The lead's own `preflight.verdict` stays what it is — its own machine's answer, from `--local`.
- * This is the pack-wide gate on top of it, computed with {@link worstVerdict} so a second summary
+ * This is the crew-wide gate on top of it, computed with {@link worstVerdict} so a second summary
  * rule cannot come to disagree with the first, and it always names the machine: "red" rendered
  * without a member beside it is a dead end for the operator holding the phone.
  *
@@ -468,14 +529,14 @@ export interface MergedUpdateVerdict {
  */
 export function mergedUpdateVerdict(
   lead: PreflightReport | null,
-  pack: readonly PackUpdateRow[],
+  crew: readonly CrewUpdateRow[],
   selfName = "this collie",
 ): MergedUpdateVerdict {
-  const leadRow: PackUpdateRow =
+  const leadRow: CrewUpdateRow =
     lead === null
       ? { name: selfName, version: null, verdict: "unknown", reasons: [unknownReason(selfName)], asOf: null }
       : { name: selfName, version: null, verdict: lead.verdict, reasons: reasonsOf(lead.checks), asOf: null };
-  const rows = [leadRow, ...pack];
+  const rows = [leadRow, ...crew];
   const red = rows.find((r) => r.verdict === "red");
   if (red !== undefined) return { verdict: "red", member: red.name, reason: red.reasons[0] ?? null, blocks: true };
   const unknown = rows.find((r) => r.verdict === "unknown");
@@ -490,7 +551,7 @@ export function mergedUpdateVerdict(
 }
 
 /**
- * The peer's allowance for `X-Pack-Preflight: fresh` (PACK_PROTOCOL.md §19).
+ * The peer's allowance for `X-Crew-Preflight: fresh` (CREW_PROTOCOL.md §19).
  *
  * The header is a **request** for a re-read, not an order, and it is honoured at most once per
  * {@link PREFLIGHT_TTL_MS} — so a phone sitting on the update page cannot make a peer shell out to
@@ -563,8 +624,8 @@ export class PreflightCache {
   /**
    * What the cache holds **right now**, without running anything. `null` until a run has landed.
    *
-   * The pack's read (`GET /pack/v1/snapshot`) takes this path and not {@link PreflightCache.get}:
-   * the lead's sweep runs on a strict per-poll budget (PACK_PROTOCOL.md §10.1), and a stale entry
+   * The crew's read (`GET /crew/v1/snapshot`) takes this path and not {@link PreflightCache.get}:
+   * the lead's sweep runs on a strict per-poll budget (CREW_PROTOCOL.md §10.1), and a stale entry
    * that shelled out to git mid-sweep would turn a healthy member unreachable. The peer's own 6 h
    * refresh is what keeps this warm; `asOf` is what says how warm.
    */
@@ -625,7 +686,7 @@ export interface UpdateStartRequest {
   /** The second consent, and only a major crossing needs it (ADR 0020). */
   readonly major: boolean;
   /**
-   * "Retry pack update" (M16/04): start a run whose only legs are the PEERS.
+   * "Retry crew update" (M16/04): start a run whose only legs are the PEERS.
    *
    * The page offers it as its single action exactly when this lead is current and a member is
    * behind or has rolled back — there is nothing to move the lead to, and a per-peer button would be
@@ -663,13 +724,18 @@ export interface UpdateStartState {
   /** The freshly-run preflight, or null when it could not be run at all. */
   readonly preflight: PreflightReport | null;
   /**
+   * How this Collie is installed. Read for exactly one refusal: a `packaged` root is one Collie
+   * does not replace files in, and its preflight is green, so no other gate here would catch it.
+   */
+  readonly installKind?: UpdateStatus["installKind"];
+  /**
    * Every member's row, as the sweep banked it (M16/03). Absent ⇒ solo, which is `[]` and green.
    *
-   * One confirm covers the pack, so the gate covers the pack: a member that is red — or that nobody
+   * One confirm covers the crew, so the gate covers the crew: a member that is red — or that nobody
    * could check — refuses the run here, with its own name and its own sentence, exactly as the card
    * showed before the operator tapped.
    */
-  readonly pack?: readonly PackUpdateRow[];
+  readonly crew?: readonly CrewUpdateRow[];
   /**
    * Every peer's leg of the run this lead last drove (M16/04). Absent ⇒ no run, which is `[]`.
    *
@@ -708,19 +774,33 @@ export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartSt
   // ── THE PEERS-ONLY RUN (M16/04) ─────────────────────────────────────────────
   // Decided here, above the preflight, because the gates below are about THIS machine's own move and
   // this request asks for none: the lead is current, so there is no target for it and its own
-  // `latest` says nothing about whether a member is behind. What is NOT skipped is the pack's half
-  // of the gate — one confirm still covers the pack, so a member that is red or that nobody could
+  // `latest` says nothing about whether a member is behind. What is NOT skipped is the crew's half
+  // of the gate — one confirm still covers the crew, so a member that is red or that nobody could
   // check refuses this exactly as it refuses an ordinary start.
   if (req.peersOnly) {
-    const blocked = mergedUpdateVerdict(state.preflight, state.pack ?? []);
+    const blocked = mergedUpdateVerdict(state.preflight, state.crew ?? []);
     if (blocked.blocks) {
       return refuse(412, "update.preflight_red", {
-        check: blocked.member ?? "the pack",
-        reason: blocked.reason ?? "the pack preflight could not be read",
+        check: blocked.member ?? "the crew",
+        reason: blocked.reason ?? "the crew preflight could not be read",
       });
     }
     return peersNeedLevelling(state) ? { kind: "peers", to: state.current } : refuse(409, "update.none_available");
   }
+
+  // ── A PACKAGED INSTALL MOVES NOTHING OF ITS OWN (ADR 0035) ─────────────────
+  // BELOW the peers-only branch on purpose. This install cannot move ITSELF, and that is the whole
+  // claim; levelling the peers is a different act that works perfectly well from a lead that cannot
+  // update itself, and refusing it here would take away the phone's only route to them.
+  //
+  // ABOVE the preflight checks, because there is nothing for them to catch: a packaged install's
+  // preflight is deliberately green — nothing is wrong with it — so `firstRed` finds nothing and the
+  // start would proceed. The client's disabled button is a courtesy, as the route that calls this
+  // says outright; a cached bundle from before that button shipped, a second tab, or a plain POST
+  // all arrive here with a green report. Without this line they mint a run id and spawn a
+  // `collie update` whose only possible outcome is the refusal, recorded as a failed update on a
+  // perfectly healthy machine.
+  if (state.installKind === "packaged") return refuse(409, "update.packaged");
 
   if (state.preflight === null) return refuse(503, "update.preflight_unavailable");
   const red = firstRed(state.preflight);
@@ -730,15 +810,15 @@ export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartSt
     return refuse(412, "update.preflight_red", { check: red.id, reason: red.reason });
   }
 
-  // The pack's half of the same gate, decided by the ONE merge function the card and the ribbon
+  // The crew's half of the same gate, decided by the ONE merge function the card and the ribbon
   // read (M16/03). The lead's own red is refused above and names its CHECK; a member's is named by
   // MACHINE, because that is the only handle the operator holding a phone has on it. An unknown
   // member blocks here too — "we could not check attic" is not "attic is fine".
-  const merged = mergedUpdateVerdict(state.preflight, state.pack ?? []);
+  const merged = mergedUpdateVerdict(state.preflight, state.crew ?? []);
   if (merged.blocks) {
     return refuse(412, "update.preflight_red", {
-      check: merged.member ?? "the pack",
-      reason: merged.reason ?? "the pack preflight could not be read",
+      check: merged.member ?? "the crew",
+      reason: merged.reason ?? "the crew preflight could not be read",
     });
   }
 
@@ -765,7 +845,7 @@ export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartSt
  * on its own row, and starting a run over it would send the operator to an action that cannot help.
  */
 function peersNeedLevelling(state: UpdateStartState): boolean {
-  const behind = (state.pack ?? []).some((m) => m.version !== null && compareSemver(m.version, state.current) < 0);
+  const behind = (state.crew ?? []).some((m) => m.version !== null && compareSemver(m.version, state.current) < 0);
   const fellBack = (state.peers ?? []).some((leg) => leg.state === "rolled-back" || leg.state === "unreachable");
   return behind || fellBack;
 }
@@ -781,11 +861,15 @@ function peersNeedLevelling(state: UpdateStartState): boolean {
  *
  * **What it does add is one hop out of its own cgroup.** `collie update` stages first and hands off
  * second, and the handoff is what restarts this very service — so a staging child left inside the
- * bridge's unit would be killed by the restart it asked for. `systemd-run --user --collect` moves it
- * into a transient unit of its own; `setsid` at least leaves the process group where there is no
- * user manager; a bare spawn is the last resort on a host with neither. That ladder is deliberately
- * the same three tiers as `cli/update-run.ts`'s `launchPlan`, for the same reasons written there —
- * it is restated rather than imported because nothing in `bridge/` may import from `cli/`.
+ * bridge's unit would be killed by the restart it asked for. `systemd-run --user --collect` asks the
+ * user manager to run the staging in a transient unit of its own, and it is that UNIT which sits
+ * outside this cgroup; the `systemd-run` client stays a member of it until it exits, which is the
+ * distinction the handoff inside `collie update` has to honour in turn
+ * ([ADR 0037](../.adr/0037-a-staged-update-confirms-its-runner-before-it-exits.md)). `setsid` at
+ * least leaves the process group where there is no user manager; a bare spawn is the last resort on
+ * a host with neither. That ladder is deliberately the same three tiers as `cli/update-run.ts`'s
+ * `launchPlan`, for the same reasons written there — it is restated rather than imported because
+ * nothing in `bridge/` may import from `cli/`.
  */
 export function updateStartCommand(a: {
   readonly platform: string;

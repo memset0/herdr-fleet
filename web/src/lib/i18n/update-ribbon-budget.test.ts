@@ -6,18 +6,19 @@ import { es } from "./messages/es";
 import { ja } from "./messages/ja";
 import { ko } from "./messages/ko";
 import { zh } from "./messages/zh";
+import { zhTW } from "./messages/zh-TW";
 
 // ── THE BAND'S 40-CHARACTER BUDGET ──────────────────────────────────────────────────────────────
 //
 // The update band is ONE truncating row at the top of a phone, which is about forty characters wide.
 // A string that overflows it in German or Japanese is a string nobody can read — so the budget is
-// enforced here rather than recommended in a comment, over ALL SIX dictionaries, and it is why the
+// enforced here rather than recommended in a comment, over ALL SEVEN dictionaries, and it is why the
 // English strings are as terse as they are.
 //
 // The budget is measured with the SLOTS FILLED, because a slot is not what reaches the screen: the
-// template `Collie {version} available. Tap to update.` is 42 characters and the line it prints is
-// 37. Each slot gets one representative value, and they are deliberately generous — a five-part
-// version and an eight-letter machine name.
+// template `Collie {version} available.` is 27 characters and the line it prints is 23. Each slot
+// gets one representative value, and they are deliberately generous — a five-part version and an
+// eight-letter machine name.
 //
 // `{reason}` is the exception, and it is filled EMPTY: a peer's rollback reason is that machine's own
 // prose of unbounded length, so it can never be budgeted as a fixed string. It is cut on a word
@@ -35,6 +36,7 @@ const LOCALES: readonly (readonly [string, Dictionary])[] = [
   ["ja", ja],
   ["ko", ko],
   ["zh", zh],
+  ["zh-TW", zhTW],
 ];
 
 /** Every key the band can print, plus the aria-label on its dismiss. */
@@ -43,10 +45,16 @@ const BAND_PREFIX = "updateRibbon.";
 /** One representative value per slot. See the header for why `reason` is empty. */
 const SAMPLE = {
   version: "1.5.0",
+  // The longest manager name the band can print today: pacman, nix and brew are the three
+  // `cli/package-command.ts` resolves.
+  manager: "pacman",
   count: "1",
   name: "minibuch",
   names: "minibuch",
   reason: "",
+  // The longest duration the band prints in practice: a run past this is a run the wall clock has
+  // already failed (`bridge/crew/follow.ts`, LEG_WALL_CLOCK_MS = 20 minutes).
+  elapsed: "20 min",
 } as const;
 
 const BUDGET = 40;
@@ -64,7 +72,7 @@ function bandKeys(): MessageKey[] {
 }
 
 describe("i18n — the update band", () => {
-  it("holds every band string to the 40 character budget in all six locales", () => {
+  it("holds every band string to the 40 character budget in all seven locales", () => {
     const keys = bandKeys();
     expect(keys.length).toBeGreaterThan(0); // the assertion must never pass by finding nothing
 
@@ -78,7 +86,7 @@ describe("i18n — the update band", () => {
     expect(over, `over the ${BUDGET}-character band budget`).toEqual([]);
   });
 
-  it("carries every band key in all six locales", () => {
+  it("carries every band key in all seven locales", () => {
     // `Dictionary` already makes a missing key a compile error; this is the runtime half, so a
     // hand-edited bundle that lost a line fails a test rather than printing `undefined`.
     const keys = bandKeys();

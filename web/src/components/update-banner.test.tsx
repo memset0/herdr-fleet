@@ -139,12 +139,46 @@ function renderBanner(update: UpdateInfo | undefined) {
   return render(<RouterProvider router={router} />);
 }
 
+// ── A PACKAGE SWAP UNDER A LIVE PROCESS (M17/02) ─────────────────────────────
+// `pacman -Syu` replaces the root while the bridge runs, so the version on disk stops being the
+// version running. The HOST decides both the state and the command; the phone renders them.
+describe("updateNotice — restart needed after a package swap", () => {
+  it("outranks the stale-source restart and takes the host's own command", () => {
+    expect(
+      updateNotice(
+        someUpdate({
+          restartNeeded: true,
+          restartCommand: "collie restart",
+          bridgeStale: true,
+          releaseAvailable: true,
+        }),
+      ),
+    ).toEqual({
+      line: "Collie was replaced on disk. Restart it.",
+      command: "collie restart",
+    });
+  });
+
+  it("says nothing on a bridge that sends neither field, which is every install before this", () => {
+    expect(updateNotice(someUpdate({}))).toBeNull();
+    // And a raised flag with no command to name falls through rather than printing a bare line: a
+    // restart notice the operator cannot act on is a notice with nothing in it.
+    expect(updateNotice(someUpdate({ restartNeeded: true }))).toBeNull();
+  });
+});
+
 describe("UpdateBanner", () => {
   it("shows the release notice as a link to the release, with no command (the page carries it)", async () => {
     renderBanner(someUpdate({ releaseAvailable: true, latest: "0.10.3" }));
     const link = await screen.findByRole("link", { name: "Collie 0.10.3 available" });
     expect(link).toHaveAttribute("href", RELEASE_URL);
     expect(screen.queryByRole("button")).toBeNull(); // no copyable command for the release case
+  });
+
+  it("shows the package-swap restart line with the host's command", async () => {
+    renderBanner(someUpdate({ restartNeeded: true, restartCommand: "collie restart" }));
+    expect(await screen.findByText("Collie was replaced on disk. Restart it.")).toBeInTheDocument();
+    expect(screen.getByText("collie restart")).toBeInTheDocument();
   });
 
   it("shows the restart line (no link) when the running bridge is stale", async () => {
@@ -161,5 +195,38 @@ describe("UpdateBanner", () => {
     await screen.findByTestId("root"); // wait for the loader to resolve
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.queryByText(/available|restart/i)).toBeNull();
+  });
+});
+
+// ── A packaged install (ADR 0035) ────────────────────────────────────────────
+// The kind that does not update itself. It is the one place the footer must NOT name an update
+// command: `collie update --major` is exactly what the CLI refuses on an unwritable root, so
+// printing it here would tell the operator to run the thing this build made fail.
+
+describe("updateNotice — a system package", () => {
+  it("names no update command for a major, and still links the release", () => {
+    const notice = updateNotice(
+      someUpdate({ majorAvailable: "2.0.0", majorUrl: RELEASE_URL, installKind: "packaged" }),
+    );
+    expect(notice?.command).toBeUndefined();
+    expect(notice?.href).toBe(RELEASE_URL);
+    // The LINE stays: that a major is out is worth knowing however it gets taken.
+    expect(notice?.line).toContain("2.0.0");
+  });
+
+  it("every other kind still gets its command, so this is not a blanket removal", () => {
+    expect(
+      updateNotice(someUpdate({ majorAvailable: "2.0.0", installKind: "detached-checkout" }))?.command,
+    ).toBe("herdr plugin action invoke update-major --plugin herdr.collie");
+    expect(updateNotice(someUpdate({ majorAvailable: "2.0.0", installKind: "binary" }))?.command).toBe(
+      "collie update --major",
+    );
+  });
+
+  it("restart still carries a command — a package restarts like anything else on PATH", () => {
+    // Only UPDATING is someone else's; the binary is on PATH and `collie restart` drives the unit.
+    expect(updateNotice(someUpdate({ bridgeStale: true, installKind: "packaged" }))?.command).toBe(
+      "collie restart",
+    );
   });
 });

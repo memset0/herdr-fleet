@@ -25,11 +25,70 @@ Configuration and state sit outside the checkout and persist across updates
 devices and `stt.json` are in the state dir, `~/.local/state/collie` unless `COLLIE_STATE_DIR`
 moves it.
 
+## A packaged install
+
+Where your package manager installed Collie, it updates Collie, and everything below this section
+does not apply:
+
+```bash
+sudo pacman -Syu collie-bin    # or `nix profile upgrade collie`, or `brew upgrade collie`
+```
+
+Collie recognises this install from shapes on disk: no `.git`, no `versions/` layout, the manifest
+the release payload carries, and a root that is read-only, outside your home directory, or owned by
+root. Any one of the last three is enough. It then refuses to update in place and names the command
+where it can tell which manager owns the folder:
+
+```
+error: /opt/collie is a packaged install — updates come from your package manager.
+       `collie update` will not replace its files.
+       Take the new version with: sudo pacman -Syu collie-bin
+```
+
+Where the prefix names no manager Collie knows, it prints the first two lines and stops rather than
+guessing a command you cannot run.
+
+`collie doctor` reports the same install as healthy, and the phone's update card still shows that a
+newer release exists — with the package command in place of the update button.
+
+> **Note.** This is not a limitation to work around. The folder belongs to your package manager, and
+> replacing its files out from under it would leave its database lying about what is installed.
+> `sudo collie update` refuses the same way.
+
+To take a new version, run your package manager and then restart the service:
+
+```bash
+paru -Syu collie-bin                              # Arch, or your AUR helper of choice
+nix profile upgrade collie                        # Nix
+mise upgrade --bump github:AltanS/collie          # mise
+collie restart
+```
+
+A mise install is the odd one out: Collie does not read it as packaged, because the tree sits in
+your home directory with no `.git` and no `versions/` layout, so `collie update` declines with
+`cannot tell how this Collie was installed` and names no manager. mise still owns it. See
+[Install](install.md#mise).
+
+The restart is the part Collie cannot do for you, and it is not optional. Your package manager swaps
+the files under the running bridge, so that process keeps executing the old code while it already
+reports the new version. Collie sees that mismatch and says so: `collie doctor` raises
+`restart-pending`, and the phone shows a "Bridge restart needed" banner reading "Collie was replaced
+on disk. Restart it." Both clear the moment `collie restart` has run.
+
+In a [crew](crew.md#members-that-were-not-installed-by-installsh), a packaged member never takes an
+update from the phone. The crew lists it as "waits for the package manager" and counts the run as
+complete without it, so the two commands above are what levels it.
+
+A packaged **lead** declines only its own move. The phone still levels every member to the version
+the lead is running, and one confirm covers them. After the two commands above have moved the lead,
+nothing levels by itself: tap the Updates page once more and the members follow to the lead's new
+version.
+
 ## Update, from the phone or the terminal
 
 Two update paths exist, and both run the same steps on each host: stage the new release beside the
-active one, flip the symlink, restart, and check that the service answers. On a pack lead, both
-paths cover the whole pack. The phone is the short path. The terminal is the fallback for a machine
+active one, flip the symlink, restart, and check that the service answers. On a crew lead, both
+paths cover the whole crew. The phone is the short path. The terminal is the fallback for a machine
 the phone cannot level.
 
 ### From the phone
@@ -43,10 +102,10 @@ says so and offers nothing.
 ![The Updates page on a host running the newest release.](images/updates/updates-page-up-to-date.png)
 
 Under that sits the preflight, one line per check: `doctor`, `disk`, `bun`, `tree`, `upstream` and
-`service`. On a lead, every pack member is checked too.
+`service`. On a lead, every crew member is checked too.
 
 - **Green** is clear.
-- **Amber** is worth knowing and never blocks: version skew across a pack, an unusual install kind,
+- **Amber** is worth knowing and never blocks: version skew across a crew, an unusual install kind,
   a major that is out but is not being taken. Untracked scratch files in a checkout stay green.
 - **Red** blocks the update. The line names the reason, such as a red `collie doctor`, less than
   1 GB free for the staged build, no `bun` on the host, or an upstream that cannot be reached. Where
@@ -85,14 +144,14 @@ the waiting patches with it. Held releases are folded, never dropped. The card a
 current state regardless of the window. The `updates` notification preference, under Settings →
 notifications ([Web Push](voice-and-push.md#web-push-optional)), is the single off switch.
 
-On a pack lead, the button shows **Update pack to `<version>`**, and one confirmation applies to
+On a crew lead, the button shows **Update crew to `<version>`**, and one confirmation applies to
 every machine. The lead updates first, under its own health gate. Each peer then levels itself to
 the same release, one at a time, using its own preflight, its own health gate and its own rollback.
 There is no per-peer button and no second confirmation prompt. For details, the two recovery paths,
 and the one case the phone cannot fix, see
-[Updating the rest of the pack](#updating-the-rest-of-the-pack).
+[Updating the rest of the crew](#updating-the-rest-of-the-crew).
 
-![The Updates page on a lead, with the preflight per member and one button for the pack.](images/updates/updates-page-pack-available.png)
+![The Updates page on a lead, with the preflight per member and one button for the crew.](images/updates/updates-page-crew-available.png)
 
 A band across the top of every screen carries the run: the release on offer, then
 `Starting update…`, `Updating to <version>`, `Updated to <version>. Tap to reload.`, and finally
@@ -111,7 +170,7 @@ A band across the top of every screen carries the run: the release on offer, the
 
 ```bash
 collie update --check            # read-only preflight, --json for a script
-collie update --check --local    # the same, this instance only, no pack members
+collie update --check --local    # the same, this instance only, no crew members
 collie update                    # stage, flip, restart, verify
 collie update --status           # what the updater did, or is doing, --json for a script
 collie update --rollback         # put the previous version back
@@ -127,9 +186,9 @@ bin/collie update                                            # Standalone
 
 `collie update --check` changes nothing. It runs `collie doctor`, reads the free space, the `bun`
 version, the working tree, the upstream release list and the service unit, and on a lead it asks
-every pack member the same question over your own SSH. It exits 0 unless something is red, and
-`--json` prints a versioned report. Add `--local` to check this instance only and skip the pack
-members. The phone runs that local check on its own host and reads each peer's line over the pack
+every crew member the same question over your own SSH. It exits 0 unless something is red, and
+`--json` prints a versioned report. Add `--local` to check this instance only and skip the crew
+members. The phone runs that local check on its own host and reads each peer's line over the crew
 link, so its preflight needs no SSH.
 
 `collie update` fetches the newest release of your current major and stages it. The command then
@@ -173,6 +232,27 @@ is detached and shallow, and it lives in a directory Herdr owns, so there is no 
 beside it, nothing to hand off, and nothing to flip back to. `--rollback` is refused there; the
 recovery path is a reinstall of a named tag
 (`herdr plugin install AltanS/collie --ref vX.Y.Z --yes`).
+
+**Rolling back from 1.8.0 to 1.7.0 needs two hand edits in the state directory.** 1.8.0 renames the
+three state files on its first start, so `~/.local/state/collie/` now holds `crew-trust.json`,
+`crew-ops.json` and `crew-runtime.json`, and a 1.7.0 build reads only the old names. Rename all
+three back before you start the 1.7.0 build:
+
+```bash
+cd ~/.local/state/collie
+mv crew-trust.json pack-trust.json
+mv crew-ops.json pack-ops.json
+mv crew-runtime.json pack-runtime.json
+```
+
+Then edit two key names inside `pack-trust.json`. 1.8.0 reads the crew block under either spelling
+and writes it back as `"crew"`, with `"crewId"` inside it, where 1.7.0 wrote `"pack"` and
+`"packId"`. A 1.7.0 build reads only its own spelling, so once 1.8.0 has written the store — which
+it does on any join, rotation, warrant refresh or removal — rename that block back to `"pack"` and
+its id field back to `"packId"`. Nothing else inside the three files changed, and `crew-ops.json`
+and `crew-runtime.json` need no edit at all. If you would rather not touch the file, put back a copy
+of `pack-trust.json` taken before the update, or stay on 1.8.0: a 1.7.0 build that cannot read the
+trust store starts solo and enforces no roster.
 
 #### Verify
 
@@ -226,61 +306,79 @@ herdr plugin action invoke version --plugin herdr.collie
 Your config in Herdr's plugin config dir, `~/.config/herdr/plugins/config/herdr.collie` by
 convention, is preserved.
 
-### Updating the rest of the pack
+### Updating the rest of the crew
 
-Update a pack from the phone, with one tap and one confirmation. Open **Settings → Updates** on the
-lead and select **Update pack to `<version>`**. The preflight above the button covers every member,
-not just the lead. If a check is red anywhere, the button is disabled and names the failing machine
-and the reason.
+```bash
+collie crew update <member>…      # on the lead
+collie crew update --all
+```
+
+That is the terminal path, for a peer the phone cannot level. From the phone, update the whole crew
+with one tap and one confirmation: open **Settings → Updates** on the lead and select
+**Update crew to `<version>`**. The preflight above the button covers every member, not just the
+lead. If a check is red anywhere, the button is disabled and names the failing machine and the
+reason.
 
 The lead updates first, under its own health gate. Only once it has settled does the first peer
-start. Each peer then levels **itself**: it reads the release its lead is running, fetches that
-exact tag from GitHub, and runs its own preflight, its own health gate and its own rollback. Peers
-move one at a time. The Updates page keeps a line per member: `waiting`, `checking`, `staging`,
-`restarting`, `verifying`, `updated`, `rolled back` or `unreachable`.
+start. From 1.7.0 that order also matters for the words: a lead older than 1.7.0 reads a member's
+status by its first printed line, and a 1.7.0 member prints `crew   …` where a 1.6.0 one printed
+`pack   …`, so an un-updated lead cannot read it. A 1.7.0 lead reads both. Each peer then levels
+**itself**: it reads the release its lead is running, fetches that exact tag from GitHub, and runs
+its own preflight, its own health gate and its own rollback. Peers move one at a time. The Updates
+page keeps a line per member: `waiting`, `checking`, `staging`, `restarting`, `verifying`, `updated`,
+`rolled back` or `unreachable`.
+
+**1.7.0 to 1.8.0.** Lead first again, for a second reason: 1.8.0 renames the wire paths, the two
+environment keys, the three state files and the journal prefix to crew. A 1.8.0 lead answers the old
+`/pack/v1/*` paths for one release, so a member still on 1.7.0 follows the roll over the link it
+already has. Both old spellings go away in 1.9.0. The names and what each one does on your machine
+are in [Updating from 1.7.0](crew.md#updating-from-170). The `collie-release.json` asset the
+release publishes only feeds the wording of that notice on the band, on the Updates card and in the
+daily push; it never gates an update and never changes what one does.
 
 Two requirements decide whether a peer can follow at all:
 
 - **A peer needs outbound HTTPS to `github.com`.** That is where its code comes from. Without that
-  access, the peer is reported as behind and is levelled from the terminal instead, below.
+  access, the peer is reported as behind and is levelled from the terminal instead, using the
+  command above.
 - **A `-dev+` build never follows.** A machine on a development build stays on it, whatever its lead
   is running.
 
 A peer that rolls back says so on the Updates page and does not retry on its own. Two paths give it
 another attempt:
 
-![The Updates page after a peer rollback, with Retry pack update.](images/updates/updates-page-peer-rolled-back.png)
+![The Updates page after a peer rollback, with Retry crew update.](images/updates/updates-page-peer-rolled-back.png)
 
 - **From the phone.** Once the lead is current and a peer is behind, the button reads
-  **Retry pack update**. It starts a new run whose only legs are the peers, and that new run is what
+  **Retry crew update**. It starts a new run whose only legs are the peers, and that new run is what
   grants each of them one more attempt.
 - **From the terminal, on the lead.** Use this for a peer the phone cannot level at all. The command
   is unchanged:
 
 ```bash
-collie pack update <member>…      # on the lead
-collie pack update --all
+collie crew update <member>…      # on the lead
+collie crew update --all
 ```
 
-It runs as one sequence over your own SSH. It preflights every machine first, and prints each peer's
-own report beside the answer it gets over SSH, so a disagreement is explicit rather than averaged.
-It asks for one consent. It then updates the lead itself, if the lead is not yet running the build
-it is handing out. Next it takes each peer in turn: the peer is pushed the lead's commit as a git
-bundle, rebuilt, restarted, and polled until it answers the new build within the same 30 second
-budget.
+Running it on the lead is one sequence over your own SSH. It preflights every machine first, and
+prints each peer's own report beside the answer it gets over SSH, so a disagreement is explicit
+rather than averaged. It asks for one consent. It then updates the lead itself, if the lead is not
+yet running the build it is handing out. Next it takes each peer in turn: the peer is pushed the
+lead's commit as a git bundle, rebuilt, restarted, and polled until it answers the new build within
+the same 30 second budget.
 
 The first failure stops the run. Every member after it is left untouched and reported as
 "not attempted", and the summary names the one command that clears the failure. A lead that cannot
-take its own update touches no peer at all. Stopping there is safe, because a pack tolerates version
-skew ([PACK_PROTOCOL.md §7.1](../PACK_PROTOCOL.md#71-version-skew-inside-a-protocol-version)), so a
-half-updated pack is a supported state and pressing on is not.
+take its own update touches no peer at all. Stopping there is safe, because a crew tolerates version
+skew ([CREW_PROTOCOL.md §7.1](../CREW_PROTOCOL.md#71-version-skew-inside-a-protocol-version)), so a
+half-updated crew is a supported state and pressing on is not.
 
 **One case the phone cannot fix.** If you roll the lead back by hand after its peers have levelled,
 the peers are left ahead of their lead. Nothing steps a peer down: a lead that could move a peer
 backwards is a lead that could move it anywhere. The skew is harmless, and the remedy is
-`collie pack update <member>` on the lead.
+`collie crew update <member>` on the lead.
 
-Code reaches a peer over your SSH and never over the pack link
+Code reaches a peer over your SSH and never over the crew link
 ([ADR 0016](../.adr/0016-updates-ride-the-operators-ssh.md), addendum 2026-09-04). When a peer
 levels itself, its code comes from GitHub over anonymous HTTPS and the peer decides for itself. The
 lead states only the version it is running and which peer may proceed.
@@ -293,6 +391,28 @@ The updater writes one record, `<state dir>/update.json` (by default
 `~/.local/state/collie/update.json`, or under `$COLLIE_STATE_DIR`). Read it first: it names the
 state, the version the run came from, the version it was going to, the updater's pid, and on a
 failure a tail of the service log and the recovery command.
+
+An update the phone started does not print to your terminal at all. It runs under a transient
+systemd unit of its own, named `collie-api-update-<stamp>`, and `--collect` removes that unit as
+soon as it exits, so its transcript is only in the journal:
+
+```bash
+journalctl --user -u 'collie-api-update-*' --since '30 min ago'
+```
+
+That is where to look when the phone reported success and something downstream did not happen — a
+warning that the run record could not be written, for instance, which is a lead that updated itself
+and will not level its crew. The bridge's own journal carries the other half: one
+`[crew] update <run id>: levelling peers to <version>` line per run, when the lead picks the record
+up. Before 1.8.0 that prefix was `[pack]`. No such line, and the turns never started.
+
+### A pre-1.5.4 update stuck at bunx
+
+Before version 1.5.4, updates started from a phone run in a transient systemd user unit that lacks
+your PATH. When Bun lives only in `~/.bun/bin` on a checkout install, the checkout advances, but the
+rebuild fails with `bunx: command not found`. Fix this by running `collie update` once from a
+terminal where Bun is on PATH, or run the Herdr action, whose shim locates Bun itself. Either method
+rebuilds the advanced checkout. Starting in 1.5.4, the updater finds Bun on its own.
 
 Beside it sits `<state dir>/update.lock`, holding a pid and a timestamp. One run at a time. A record
 that still reads `preflight`, `staging`, `restarting` or `verifying`, has not moved for 10 minutes,
@@ -386,13 +506,13 @@ bin/collie update --major
 
 Verify with `bin/collie version` or `herdr plugin action invoke version --plugin herdr.collie`.
 
-**For pack setups:** Update the lead first, then run `collie pack update <member>…`
-([Updating the rest of the pack](#updating-the-rest-of-the-pack)). Note:
+**For crew setups:** Update the lead first, then run `collie crew update <member>…`
+([Updating the rest of the crew](#updating-the-rest-of-the-crew)). Note:
 - `join` requires `--insecure` for plain `http://` leads.
-- Pre-1.0 invite tokens must be regenerated with `pack invite`.
+- Pre-1.0 invite tokens must be regenerated with `crew invite`.
 - Older member records require `reconnect`.
-- Unupgraded peers display as `warn:` in `pack status`
-  ([PACK_PROTOCOL §7.1](../PACK_PROTOCOL.md#71-version-skew-inside-a-protocol-version)).
+- Unupgraded peers display as `warn:` in `crew status`
+  ([CREW_PROTOCOL §7.1](../CREW_PROTOCOL.md#71-version-skew-inside-a-protocol-version)).
 
 ### What 1.0 changes for you
 
@@ -407,7 +527,7 @@ CLI verbs are compiled into `<checkout>/bin/collie` ([Commands](commands.md)). U
 New features:
 - **`pair` / `devices`**: Per-device write credentials
   ([Pair a device](security.md#pair-a-device--the-write-credential)).
-- **`pack …` / `join` / `promote`**: Multi-host clustering ([Pack commands](pack.md)).
+- **`crew …` / `join` / `promote`**: Multi-host clustering ([Crew commands](crew.md)).
 - **`doctor`**: Configuration diagnostics.
 - **`stt setup`**: Voice composer configuration
   ([Voice input](voice-and-push.md#voice-input-optional)).
@@ -434,7 +554,7 @@ rm -f bin/collie    # 1.0's binary otherwise survives the rollback
 ```
 
 Rebuild with `bash scripts/collie-ctl.sh build` and invoke Herdr's `restart` action. State files
-(`pack-trust.json`, `pack-runtime.json`, `paired-devices.json`, `pairing-pending.json`) can remain.
+(`crew-trust.json`, `crew-runtime.json`, `paired-devices.json`, `pairing-pending.json`) can remain.
 Rollback removes device pairing enforcement; configure `COLLIE_DEVICE_HEADER` if write protection
 is required.
 
@@ -475,7 +595,7 @@ ls ~/.local/share/collie/versions/
 To install a specific version directly:
 
 ```bash
-COLLIE_TAG=v1.0.0 curl -fsSL https://colliepwa.dev/install.sh | sh
+curl -fsSL https://colliepwa.dev/install.sh | COLLIE_TAG=v1.0.0 sh
 ```
 
 For checkouts or Herdr installs, run `git checkout <tag>` or

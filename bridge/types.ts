@@ -132,8 +132,8 @@ export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent" | "viewpo
    *  file is missing still answers `available:false` with reason `no-log`. */
   hasSession?: boolean;
   /**
-   * Which member of the pack this pane lives on — the `?h=` value completing the `(host, session,
-   * paneId)` address (PACK_PROTOCOL.md §4). Present exactly when {@link SnapshotResponse.servers}
+   * Which member of the crew this pane lives on — the `?h=` value completing the `(host, session,
+   * paneId)` address (CREW_PROTOCOL.md §4). Present exactly when {@link SnapshotResponse.servers}
    * is; absent on every solo snapshot (§11). Pane ids are only unique per machine, which is why a
    * merged list must carry this and why the phone's per-pane cache keys on it.
    */
@@ -213,12 +213,12 @@ export interface WorkspaceView {
    */
   isWorktree?: boolean;
   /**
-   * Which member of the pack this space lives on — the same tag panes and sessions carry.
+   * Which member of the crew this space lives on — the same tag panes and sessions carry.
    *
    * **Present exactly when {@link SnapshotResponse.servers} is**, and absent otherwise (§11), so a
    * solo body is unchanged to the byte. It is not decoration: Herdr numbers spaces PER MACHINE, so
    * two default installs both call theirs `w1` and a merged list keyed on `workspaceId` alone
-   * collapses them into one row carrying one machine's counts. The identity of a space in a pack is
+   * collapses them into one row carrying one machine's counts. The identity of a space in a crew is
    * `(host, workspaceId)`, and every join against a pane must use both halves.
    */
   host?: string;
@@ -233,7 +233,7 @@ export interface TabView {
   focused: boolean;
   paneCount: number;
   /**
-   * Which member of the pack this tab lives on — see {@link WorkspaceView.host}, which this mirrors
+   * Which member of the crew this tab lives on — see {@link WorkspaceView.host}, which this mirrors
    * exactly. A tab id is `w1:t1` on every default install, so `(host, tabId)` is the identity, and
    * `(host, workspaceId)` is the parent it belongs to.
    */
@@ -259,7 +259,7 @@ export interface SessionSummary {
   working: number;
   blocked: number;
   /**
-   * Which member of the pack fronts this session — the `?h=` value (PACK_PROTOCOL.md §4).
+   * Which member of the crew fronts this session — the `?h=` value (CREW_PROTOCOL.md §4).
    *
    * **Present exactly when {@link SnapshotResponse.servers} is**, and absent otherwise. A solo
    * instance emits neither (§11: "no `host` field is added to sessions or panes"), so a session name
@@ -303,12 +303,12 @@ export interface SnapshotResponse {
    */
   sessions: SessionSummary[];
   /**
-   * Every member of the pack, the lead's own entry included (PACK_PROTOCOL.md §9.2).
+   * Every member of the crew, the lead's own entry included (CREW_PROTOCOL.md §9.2).
    *
    * **Optional-and-absent, following `update?` rather than the always-present `sessions`** — and the
    * choice is forced, not stylistic (§11). An always-present field, even an empty array, changes
    * every solo snapshot body and therefore every solo snapshot ETag exactly once: one forced refetch
-   * for every solo user, bought for a uniformity nothing needs. Absent means "no pack", which is
+   * for every solo user, bought for a uniformity nothing needs. Absent means "no crew", which is
    * precisely true. Present ⇒ `host` is stamped on every session and every pane; absent ⇒ on none.
    */
   servers?: ServerSummary[];
@@ -321,7 +321,7 @@ export interface SnapshotResponse {
 }
 
 /**
- * One member of the pack in the merged snapshot (PACK_PROTOCOL.md §9.2) — the row `pack status` and
+ * One member of the crew in the merged snapshot (CREW_PROTOCOL.md §9.2) — the row `crew status` and
  * the phone's host list render.
  *
  * `reachable` is not an invention: {@link SessionSummary.reachable} already models an unreachable
@@ -341,6 +341,16 @@ export interface ServerSummary {
   /** The peer's refusal reason, verbatim, when incompatible. */
   protocolDetail?: string;
   /**
+   * §10.2's presentation split for a member that is not answering, exactly as
+   * {@link CrewMemberStatus.linkState} carries it: `reconnecting` needs nothing of the operator,
+   * `attention` does.
+   *
+   * Additive and optional (§7.1): omitted for a reachable member, and omitted by a lead that predates
+   * the field. An absent value beside `reachable: false` therefore means "no distinction offered",
+   * and the chip renders today's word.
+   */
+  linkState?: "reconnecting" | "attention";
+  /**
    * Epoch ms, **stamped by the lead on receipt — never the peer's clock** (§10.2). The client
    * derives "stale since …" from it (stale once older than 3 × pollMs or 15 s, whichever is first);
    * `0` means this member has never answered.
@@ -349,24 +359,24 @@ export interface ServerSummary {
 }
 
 /**
- * GET /api/pack — what the RUNNING lead already knows about its own pack, for the phone's Pack
- * overview page. The read-only browser spelling of `collie pack status` (cli/pack.ts).
+ * GET /api/crew — what the RUNNING lead already knows about its own crew, for the phone's Crew
+ * overview page. The read-only browser spelling of `collie crew status` (cli/crew.ts).
  *
  * **It is a report, never a probe.** Every field below is answered from state this process already
  * holds: the trust store it read at startup (`TrustStore.current()`, no disk touched per request)
- * and the {@link PeerState} the lead's existing sweep maintains (bridge/pack/registry.ts). Nothing
+ * and the {@link PeerState} the lead's existing sweep maintains (bridge/crew/registry.ts). Nothing
  * in this shape can make the lead dial a member — which is what lets a phone poll it beside the
- * snapshot without adding a second call rate to every peer (PACK_PROTOCOL.md §10.1, §11).
+ * snapshot without adding a second call rate to every peer (CREW_PROTOCOL.md §10.1, §11).
  *
- * **Only a lead answers it.** A solo instance and a peer 404 (`pack.not_lead`): a peer is not a
- * front door (ADR 0013), and a solo instance has no pack to describe.
+ * **Only a lead answers it.** A solo instance and a peer 404 (`crew.not_lead`): a peer is not a
+ * front door (ADR 0013), and a solo instance has no crew to describe.
  *
- * Nothing here is a secret. Fingerprints, certificates, the pack secret and pairing credentials are
+ * Nothing here is a secret. Fingerprints, certificates, the crew secret and pairing credentials are
  * absent by construction, exactly as {@link ServerSummary} keeps them off the snapshot.
  */
-export interface PackStatusResponse {
-  /** The pack itself, as the trust store records it (`PackIdentity`). */
-  pack: { id: string; name: string; secretGeneration: number; rotatedAt: number };
+export interface CrewStatusResponse {
+  /** The crew itself, as the trust store records it (`CrewIdentity`). */
+  crew: { id: string; name: string; secretGeneration: number; rotatedAt: number };
   /** This lead. `version` per bridge/version.ts, the same string `hello` answers with. */
   self: { id: string; name: string; version: string };
   /**
@@ -374,26 +384,26 @@ export interface PackStatusResponse {
    *
    * The DESIGNATION is the source, never the warrant: after a takeover the new lead keeps a warrant
    * naming itself, so reading the deputy off it reports a lead as its own deputy (cli/
-   * pack-status-deputy.ts says so at length). `warrantGeneration` is the generation of the warrant
+   * crew-status-deputy.ts says so at length). `warrantGeneration` is the generation of the warrant
    * this lead currently holds, and it is **nullable rather than omitted**: a designation with no
    * warrant behind it is a state the operator has to see, not a key to go missing.
    */
   deputy: { id: string; warrantGeneration: number | null } | null;
   /** The lead's own entry FIRST, then peers by member id — the exact order of `servers[]` (§9.2). */
-  members: PackMemberStatus[];
+  members: CrewMemberStatus[];
   /** The LEAD's clock, like every other timestamp the lead publishes (§10.2). */
   ts: number;
 }
 
 /**
- * One member's row on the Pack overview page.
+ * One member's row on the Crew overview page.
  *
  * Mostly {@link PeerState} re-spelled for the browser, plus the three roster facts the registry does
  * not carry (`address`, `enrolledAt`, `secretBehind`). Optional keys are OMITTED when absent and
- * never sent as null (PACK_PROTOCOL.md §11) — the lead's own entry therefore carries no `address`
+ * never sent as null (CREW_PROTOCOL.md §11) — the lead's own entry therefore carries no `address`
  * and no `enrolledAt`, because a lead is not in its own roster.
  */
-export interface PackMemberStatus {
+export interface CrewMemberStatus {
   /** Member id — the same value `?h=` takes and `servers[].id` reports. */
   id: string;
   name: string;
@@ -410,12 +420,35 @@ export interface PackMemberStatus {
   lastSeenAt: number;
   /** What this member last reported, over the sweep or over `hello` (§7.1, §19), when it has. */
   version?: string;
-  /** This member has not picked up the current pack secret (§8.4). False for the lead. */
+  /** This member has not picked up the current crew secret (§8.4). False for the lead. */
   secretBehind: boolean;
   /** Enrolled but never once reachable — the shape a half-finished join takes (§8.2). */
   provisional: boolean;
   /** Who a `conflicted` member says it follows instead (§18.10). Present only in that state. */
   conflict?: { leadMemberId: string; warrantGeneration: number | null };
+  /**
+   * {@link PeerState.linkState} — §10.2's **presentation split**, and NOT a fifth value of `health`.
+   *
+   * `reconnecting` says the lead is retrying inside its budget and the operator does nothing.
+   * `attention` says re-dialling cannot fix this and the operator must look.
+   *
+   * **Omitted whenever there is nothing to say**, which is every reachable member — and omitted by a
+   * lead older than this field, so an absent value on a member that is NOT reachable means "this lead
+   * does not make the distinction" and the page renders today's single word (§7.1).
+   */
+  linkState?: "reconnecting" | "attention";
+}
+
+/**
+ * The crew wire version this release moves to, and the one this install speaks (M27/06).
+ *
+ * `from` is this install's own `CREW_PROTOCOL_VERSION`; `to` is the number the newest release
+ * published in its `collie-release.json` asset. Both are present or the whole field is null: the
+ * notice is about a DIFFERENCE, and half of one says nothing.
+ */
+export interface UpdateLinkChange {
+  from: number;
+  to: number;
 }
 
 /**
@@ -445,9 +478,55 @@ export interface UpdateStatus {
    * banner's command spelling is a function of it: Herdr actions reach only a Herdr-managed
    * (detached) checkout; every other kind is told the `collie` verbs (M14/01 §5.3).
    */
-  installKind: "linked-clone" | "detached-checkout" | "binary" | "unknown";
+  installKind: "linked-clone" | "detached-checkout" | "binary" | "packaged" | "unknown";
+  /**
+   * The package manager's own upgrade command for this machine, when the resolved root names a
+   * manager Collie recognises (`cli/package-command.ts`). Absent on every other kind, and absent on
+   * a packaged install under a prefix nobody recognises — there the boundary sentence stands alone.
+   *
+   * **Resolved on the HOST, once, at boot.** The prefix is a fact about this machine, and a second
+   * derivation on the phone would be a second thing to drift.
+   */
+  packageCommand?: string;
+  /**
+   * The release whose OFFER the operator closed, or null when none was closed.
+   *
+   * It is the BRIDGE's fact, not a browser's: a dismissal is a decision about this machine's
+   * update, so it holds on every screen that polls this snapshot (M17/08). Keyed by version — a
+   * newer release is a different fact and raises the band again.
+   */
+  dismissedVersion: string | null;
+  /**
+   * The version whose quiet CREW notice the operator closed, or null.
+   *
+   * Two decisions, two fields. "A release is available here" and "that machine is standing behind,
+   * and a package manager owns it" are about different machines, so putting one down must not put
+   * the other down with it, even when both name the same version.
+   */
+  dismissedCrewVersion: string | null;
   /** The running process is behind the on-disk bridge source — needs `systemctl --user restart collie`. */
   bridgeStale: boolean;
+  /**
+   * The collie on disk is no longer the collie this process is running.
+   *
+   * Only a package manager can produce it: every other kind swaps files through Collie's own
+   * updater, which restarts the service as its last act. `pacman -Syu` replaces the root under a
+   * live process, and `collieVersion()` re-reads from disk on every call — so without this the
+   * bridge would answer with the NEW version while running the OLD code, on `/api/health`, on
+   * `hello` and therefore on the crew wire, where a lead reads it as "that peer already levelled".
+   *
+   * TWO witnesses, either of which raises it: the version files stopped naming what this process
+   * runs, and — on a single-file install under Linux — the executable behind `/proc/self/exe` was
+   * replaced (`bridge/exe-replaced.ts`). The second is what catches a package REBUILD of the same
+   * version, where no version string moves at all and the first sees nothing.
+   *
+   * While it is raised, what this process puts ON THE CREW WIRE stays the version captured at boot:
+   * stale but true, never new but false.
+   */
+  restartNeeded: boolean;
+  /** The command that clears {@link restartNeeded}, spelled for the install kind. Absent when
+   *  nothing needs restarting. */
+  restartCommand?: string;
   /** When the upstream check last completed (epoch ms), or null if it hasn't run yet. */
   checkedAt: number | null;
   /**
@@ -466,6 +545,22 @@ export interface UpdateStatus {
    * `interrupted`, never as still in flight.
    */
   run?: UpdateRun;
+  /**
+   * The newest release changes the CREW LINK, and by how much — or null when it does not (M27/06).
+   *
+   * Null on a solo install (there is no link to change), null when the release speaks the wire this
+   * install already speaks, and null when the release says nothing about it: every release before
+   * 1.8.0 published no `collie-release.json`, and a release that cannot be read reads as no change
+   * rather than as a warning nobody can act on.
+   *
+   * It is a generic reading of a NUMBER, never a hard-coded release name, so the release after the
+   * next one says it too without a line of code moving.
+   *
+   * OPTIONAL, and absent rather than null when there is nothing to say — the reason `run` and
+   * `packageCommand` are: a solo instance's snapshot must stay byte-identical to what it always was
+   * (`bridge/solo-baseline.test.ts`), and a solo instance never has a link change.
+   */
+  linkChange?: UpdateLinkChange | null;
 }
 
 /** GET /api/pane/:id — recent terminal output for one agent (ANSI/SGR, rendered colored). */
@@ -578,10 +673,10 @@ export type WorktreeOpenResponse =
 
 
 /**
- * Which role this collie plays in a pack (PACK_PROTOCOL.md §3). `solo` is a lead with zero peers —
+ * Which role this collie plays in a crew (CREW_PROTOCOL.md §3). `solo` is a lead with zero peers —
  * today's Collie, exactly — and is the only mode that needs no configuration whatsoever.
  */
-export type PackMode = "solo" | "lead" | "peer";
+export type CrewMode = "solo" | "lead" | "peer";
 
 /**
  * One operator-declared slash command (a `[[commands]]` row in their `commands.toml`). A pane any of
@@ -775,7 +870,7 @@ export interface Launcher {
 /**
  * GET /api/launchers — this HOST's own launcher rows, read live off its `launchers.toml`. Session-
  * scoped so a `?host=` call forwards to the peer that runs the rows, exactly like `/api/launch`
- * (PACK_PROTOCOL.md §5): rows must come from the machine that will run them, never from the lead's
+ * (CREW_PROTOCOL.md §5): rows must come from the machine that will run them, never from the lead's
  * own file. `home` is that host's operator home dir, so the client can shorten a pinned `cwd` with a
  * leading `~` without knowing which machine answered.
  */
@@ -791,12 +886,12 @@ export interface BridgeConfig {
   /** Build id of the bundle the bridge is currently serving (for stale-cache detection). */
   build?: string;
   /**
-   * This collie's pack mode, so `pack status` and the UI can render it without probing behaviour.
-   * **Omitted when the mode is `solo`** — absent means "no pack", which is precisely true, and keeps
-   * a solo `/api/config` body byte-identical to today's (the `servers` reasoning, PACK_PROTOCOL.md
+   * This collie's crew mode, so `crew status` and the UI can render it without probing behaviour.
+   * **Omitted when the mode is `solo`** — absent means "no crew", which is precisely true, and keeps
+   * a solo `/api/config` body byte-identical to today's (the `servers` reasoning, CREW_PROTOCOL.md
    * §11). Read it as `mode ?? "solo"`.
    */
-  mode?: PackMode;
+  mode?: CrewMode;
   /** The operator's own palette rows. Absent/empty when there is no `commands.toml`. */
   operatorCommands?: OperatorCommand[];
   /** The operator's own Keys-tray presets. Absent/empty when there is no `keys.toml`. */
@@ -823,6 +918,30 @@ export interface BridgeConfig {
    * decides whether to draw a button, not where the audio goes.
    */
   stt?: SttCapability;
+  /**
+   * What this collie accepts as an attachment. **Absent is a bridge older than this field**, which
+   * a client reads as the contract that shipped before it: 10 MB, images only. Present, it is the
+   * whole answer — the phone builds its file picker's `accept` list from it and refuses an oversize
+   * file before spending an uplink on a refusal it can already predict.
+   *
+   * Per HOST, not per crew: `?h=peer` reads the LEAD's config body, so a member with a different
+   * `COLLIE_MAX_UPLOAD_MB` still answers for itself when the bytes arrive. See docs/configure.md.
+   */
+  upload?: UploadCapability;
+}
+
+/**
+ * What `/api/config` says about attachments — the two facts a client needs to ask a sensible
+ * question before it uploads. Both are the host's own settings (`COLLIE_MAX_UPLOAD_MB`,
+ * `COLLIE_UPLOAD_EXTRA_TYPES` + the shipped list in bridge/uploads.ts).
+ */
+export interface UploadCapability {
+  /** Largest attachment accepted, decoded, in bytes. */
+  maxBytes: number;
+  /** Image extensions accepted, bare and lowercase — sniffed from the bytes, never from the name. */
+  imageTypes: string[];
+  /** Text extensions accepted, bare and lowercase — taken from the name, with a binary veto. */
+  textTypes: string[];
 }
 
 /**

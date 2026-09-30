@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { leadStore, member, peerStore } from "../bridge/pack/fixtures.ts";
-import type { OpsRecord } from "../bridge/pack/ops-store.ts";
-import type { TrustStoreData } from "../bridge/pack/trust-store.ts";
+import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
+import type { OpsRecord } from "../bridge/crew/ops-store.ts";
+import type { TrustStoreData } from "../bridge/crew/trust-store.ts";
 import {
   capture,
   context,
@@ -16,6 +16,7 @@ import {
   type Scripted,
   type SeededFiles,
 } from "./fakes.ts";
+import type { InstallKind } from "./install-kind.ts";
 import type { Finding } from "./finding.ts";
 import { EXIT } from "./io.ts";
 import { COMMANDS } from "./program.ts";
@@ -23,7 +24,6 @@ import type { RemoteResult, RemoteRunner } from "./remote.ts";
 import type { Net } from "./sys.ts";
 import { unitFilePath } from "./unit.ts";
 import {
-  anonymousTagUrl,
   bunCheck,
   checkLine,
   classifyTagFailure,
@@ -72,7 +72,9 @@ const HEALTHY: NonNullable<Scripted["answers"]> = [
   [`${GIT} ls-remote --tags`, { stdout: LS_REMOTE }],
   [`${GIT} rev-parse HEAD`, { stdout: "cccccccc\n" }],
   ["df -Pk", { stdout: df(50_000_000) }],
-  ["bun --version", { stdout: "1.3.14\n" }],
+  // `fakeExec.which` answers `/fake/<tool>`, and `bunCheck` now runs the RESOLVED path — so the
+  // version answer is keyed on that path, not on the bare name it used to spawn.
+  ["/fake/bun --version", { stdout: "1.3.14\n" }],
   ["systemctl --user show-environment", { code: 0 }],
   ["systemctl --user is-active collie", { stdout: "active\n" }],
 ];
@@ -205,7 +207,7 @@ describe("preflight — the healthy instance", () => {
     expect(report.checks.map((c) => c.id)).toEqual(["doctor", "disk", "bun", "tree", "upstream", "service"]);
     expect(report.checks.every((c) => c.verdict === "green")).toBe(true);
     expect(report.verdict).toBe("green");
-    expect(report.pack).toBeUndefined();
+    expect(report.crew).toBeUndefined();
   });
 
   test("read-only: it writes no file, moves nothing and starts no service", async () => {
@@ -296,8 +298,45 @@ describe("preflight — the bun check", () => {
   });
 
   test("an older bun is amber, never red", () => {
-    const check = bunCheck(harness({ answers: [["bun --version", { stdout: "1.1.0\n" }]] }).deps);
+    const check = bunCheck(harness({ answers: [["/fake/bun --version", { stdout: "1.1.0\n" }]] }).deps);
     expect(check.verdict).toBe("amber");
+  });
+
+  // #169: PATH alone made this red on a host the shim builds on happily. A Bun at a known candidate
+  // is green, and the reason names it — the operator's own shell will not show them that one.
+  test("bun off PATH at a known candidate is green, and the reason names the absolute path", () => {
+    const bun = `${HOME}/.bun/bin/bun`;
+    const h = harness({
+      absent: ["bun"],
+      answers: [[`${bun} --version`, { stdout: "1.3.14\n" }]],
+      files: { [bun]: "" },
+    });
+    const check = bunCheck(h.deps);
+    expect(check.verdict).toBe("green");
+    expect(check.reason).toContain(bun);
+    expect(h.exec.calls).toContain(`${bun} --version`);
+    // Never the bare name: that would answer for a different Bun than the update runs.
+    expect(h.exec.calls).not.toContain("bun --version");
+  });
+
+  test("$BUN_INSTALL is honoured, exactly as the shim honours it", () => {
+    const bun = "/opt/bun/bin/bun";
+    const h = harness({
+      absent: ["bun"],
+      answers: [[`${bun} --version`, { stdout: "1.3.14\n" }]],
+      env: { BUN_INSTALL: "/opt/bun" },
+      files: { [bun]: "", [`${HOME}/.bun/bin/bun`]: "" },
+    });
+    expect(bunCheck(h.deps).reason).toContain(bun);
+  });
+
+  test("`bun is not installed` keeps today's red, sentence for sentence", () => {
+    const check = bunCheck(harness({ absent: ["bun"] }).deps);
+    expect(check.verdict).toBe("red");
+    expect(check.reason).toBe(
+      "bun is not installed, and this install rebuilds from source — the update would stop after the fetch",
+    );
+    expect(check.remedy).toBe("install Bun from https://bun.sh, then re-run this check");
   });
 
   test("a binary install is never asked about bun", async () => {
@@ -418,17 +457,8 @@ describe("preflight — the upstream check", () => {
     });
     await preflight(h.deps);
     const listing = h.exec.calls.find((c) => c.includes("ls-remote"))!;
-    expect(listing).toBe(`${GIT} ls-remote --tags https://github.com/AltanS/collie.git`);
+    expect(listing).toBe(`${GIT} ls-remote --tags https::https://github.com/AltanS/collie.git`);
     expect(h.exec.timeouts.find((t) => t.call.includes("ls-remote"))?.ms).toBe(15_000);
-  });
-
-  test("anonymousTagUrl maps the GitHub ssh spellings to https and leaves everything else alone", () => {
-    expect(anonymousTagUrl("git@github.com:a/b.git")).toBe("https://github.com/a/b.git");
-    expect(anonymousTagUrl("git@github.com:a/b")).toBe("https://github.com/a/b.git");
-    expect(anonymousTagUrl("ssh://git@github.com/a/b.git")).toBe("https://github.com/a/b.git");
-    expect(anonymousTagUrl("https://github.com/a/b.git")).toBe("https://github.com/a/b.git");
-    expect(anonymousTagUrl("git@git.example.com:a/b.git")).toBe("git@git.example.com:a/b.git");
-    expect(anonymousTagUrl("/srv/mirrors/collie.git")).toBe("/srv/mirrors/collie.git");
   });
 
   test("the failure classifier tells a dead network from a credential", () => {
@@ -495,18 +525,18 @@ describe("preflight — the service check", () => {
   });
 });
 
-describe("preflight pack — the members of a lead", () => {
+describe("preflight crew — the members of a lead", () => {
   const lead = (peers: string[]): TrustStoreData => leadStore({ peers: peers.map((id) => member({ memberId: id })) });
 
   test("a member with no ops record is red, with a remedy naming host and path", async () => {
     const report = await preflight(harness({ store: lead(["nas"]) }).deps);
-    expect(report.pack).toHaveLength(1);
-    const nas = report.pack![0]!;
+    expect(report.crew).toHaveLength(1);
+    const nas = report.crew![0]!;
     expect(nas.memberId).toBe("nas");
     expect(nas.verdict).toBe("red");
     expect(nas.checks[0]!.id).toBe("ops-record");
     expect(nas.checks[0]!.reason).toContain("no ssh record");
-    expect(nas.checks[0]!.remedy).toContain("pack update nas --host");
+    expect(nas.checks[0]!.remedy).toContain("crew update nas --host");
     expect(nas.checks[0]!.remedy).toContain("--path");
     // The member's OWN verdict stays red (the card and the terminal must still show it), but this
     // does not need a route to a peer, so it must not disable the lead's own Update button — see
@@ -517,7 +547,7 @@ describe("preflight pack — the members of a lead", () => {
   test("ops-record: a lead with one peer lacking an ops record is amber at the top and exits 0", async () => {
     const h = harness({ store: lead(["nas"]) });
     const report = await preflight(h.deps);
-    const nas = report.pack![0]!;
+    const nas = report.crew![0]!;
     // The member's own ops-record check stays red with its remedy — the card still shows it.
     expect(nas.checks[0]!.id).toBe("ops-record");
     expect(nas.checks[0]!.verdict).toBe("red");
@@ -530,7 +560,7 @@ describe("preflight pack — the members of a lead", () => {
   test("ops-record: a lead with an unreachable peer still yields red and exits 1", async () => {
     const h = harness({ store: lead(["nas"]), ops: { nas: record() }, remote: () => () => NOT_SPAWNED });
     const report = await preflight(h.deps);
-    const nas = report.pack![0]!;
+    const nas = report.crew![0]!;
     expect(nas.checks[0]!.id).toBe("reachable");
     expect(nas.verdict).toBe("red");
     expect(report.verdict).toBe("red");
@@ -541,7 +571,7 @@ describe("preflight pack — the members of a lead", () => {
     const report = await preflight(
       harness({ store: lead(["nas"]), ops: { nas: record() }, remote: () => () => NOT_SPAWNED }).deps,
     );
-    const nas = report.pack![0]!;
+    const nas = report.crew![0]!;
     expect(nas.verdict).toBe("red");
     expect(nas.checks[0]!.id).toBe("reachable");
     expect(nas.checks[0]!.reason).toContain("nas.local");
@@ -555,10 +585,40 @@ describe("preflight pack — the members of a lead", () => {
         remote: () => (script) => (script.includes("update --check") ? ok("") : ok(probeOut({ checkout: "" }))),
       }).deps,
     );
-    const nas = report.pack![0]!;
+    const nas = report.crew![0]!;
     expect(nas.verdict).toBe("red");
     expect(nas.checks.map((c) => c.id)).toEqual(["reachable", "collie-present"]);
     expect(nas.checks[1]!.reason).toContain("/home/pat/collie");
+  });
+
+  test("an override beats the record: the walk probes the path this run was given", async () => {
+    // A stale record used to fail the gate before `collie crew update <member> --path …` was read,
+    // so the red's remedy could never clear it. The walk takes the override, and the record's path
+    // is not even mentioned.
+    const h = harness({
+      store: lead(["nas"]),
+      ops: { nas: record({ path: "/home/pat/apps/collie-v1" }) },
+      remote: () => (script) =>
+        script.includes("/opt/collie") ? ok(probeOut()) : ok(probeOut({ checkout: "" })),
+    });
+    const report = await preflight(h.deps, { overrides: { nas: { path: "/opt/collie" } } });
+    const nas = report.crew![0]!;
+    expect(nas.checks.map((c) => c.id)).toContain("collie-present");
+    expect(nas.verdict).not.toBe("red");
+  });
+
+  test("an override names its own path in the red, not the stale record's", async () => {
+    const h = harness({
+      store: lead(["nas"]),
+      ops: { nas: record({ path: "/home/pat/apps/collie-v1" }) },
+      remote: () => (script) => (script.includes("update --check") ? ok("") : ok(probeOut({ checkout: "" }))),
+    });
+    const report = await preflight(h.deps, { overrides: { nas: { sshHost: "nas.new", path: "/opt/collie" } } });
+    const nas = report.crew![0]!;
+    expect(nas.host).toBe("nas.new");
+    expect(nas.checks[1]!.id).toBe("collie-present");
+    expect(nas.checks[1]!.reason).toContain("/opt/collie");
+    expect(nas.checks[1]!.reason).not.toContain("collie-v1");
   });
 
   test("a healthy member merges its own remote checks in, and its runner is closed", async () => {
@@ -574,7 +634,7 @@ describe("preflight pack — the members of a lead", () => {
         script.includes("update --check") ? ok(JSON.stringify(remoteReport)) : ok(probeOut()),
     });
     const report = await preflight(h.deps);
-    const nas = report.pack![0]!;
+    const nas = report.crew![0]!;
     expect(nas.host).toBe("nas.local");
     expect(nas.checks.map((c) => c.id)).toEqual(["reachable", "collie-present", "version", "disk"]);
     expect(nas.verdict).toBe("green");
@@ -595,7 +655,7 @@ describe("preflight pack — the members of a lead", () => {
         script.includes("update --check") ? { ...ok(JSON.stringify(remoteReport)), code: 1 } : ok(probeOut()),
     });
     const report = await preflight(h.deps);
-    expect(report.pack![0]!.verdict).toBe("red");
+    expect(report.crew![0]!.verdict).toBe("red");
     expect(report.verdict).toBe("red");
     expect(await cmdUpdateCheck(h.deps, ["--json"])).toBe(EXIT.FAIL);
   });
@@ -610,14 +670,14 @@ describe("preflight pack — the members of a lead", () => {
           : ok(probeOut()),
     });
     const report = await preflight(h.deps);
-    const preflightCheck = report.pack![0]!.checks.find((c) => c.id === "preflight")!;
+    const preflightCheck = report.crew![0]!.checks.find((c) => c.id === "preflight")!;
     expect(preflightCheck.verdict).toBe("amber");
     expect(preflightCheck.reason).toContain("peer predates preflight");
     expect(report.verdict).toBe("amber");
     expect(await cmdUpdateCheck(h.deps, ["--json"])).toBe(EXIT.OK);
   });
 
-  test("skew is amber, never red (PACK_PROTOCOL §7.1)", () => {
+  test("skew is amber, never red (CREW_PROTOCOL §7.1)", () => {
     expect(skewCheck("1.0.0", "1.0.0").verdict).toBe("green");
     const skewed = skewCheck("0.32.0", "1.0.0");
     expect(skewed.verdict).toBe("amber");
@@ -626,26 +686,26 @@ describe("preflight pack — the members of a lead", () => {
     expect(skewCheck("", "1.0.0").verdict).toBe("amber");
   });
 
-  test("a peer runs no pack checks — it leads nobody", async () => {
+  test("a peer runs no crew checks — it leads nobody", async () => {
     const report = await preflight(harness({ store: peerStore() }).deps);
-    expect(report.pack).toBeUndefined();
+    expect(report.crew).toBeUndefined();
   });
 });
 
 describe("preflight --local — the answer the phone's card reads", () => {
   const lead = (peers: string[]): TrustStoreData => leadStore({ peers: peers.map((id) => member({ memberId: id })) });
 
-  test("the members are not walked at all, and the report carries no pack", async () => {
+  test("the members are not walked at all, and the report carries no crew", async () => {
     const h = harness({ store: lead(["nas"]), ops: { nas: record() }, remote: () => () => NOT_SPAWNED });
     const report = await preflight(h.deps, { local: true });
-    expect(report.pack).toBeUndefined();
+    expect(report.crew).toBeUndefined();
     // No ssh was opened: the walk is skipped, never run and discarded.
     expect(h.runners.size).toBe(0);
   });
 
   test("a peer this lead cannot reach never refuses the lead's own update (ADR 0016)", async () => {
     const h = harness({ store: lead(["nas"]), ops: { nas: record() }, remote: () => () => NOT_SPAWNED });
-    // Without --local the same pack turns the whole report red.
+    // Without --local the same crew turns the whole report red.
     expect((await preflight(h.deps)).verdict).toBe("red");
     const local = await preflight(h.deps, { local: true });
     expect(local.verdict).toBe("green");
@@ -657,10 +717,10 @@ describe("preflight --local — the answer the phone's card reads", () => {
     expect(wantsLocal(["--check", "--json"])).toBe(false);
     const h = harness({ store: lead(["nas"]), ops: { nas: record() }, remote: () => () => NOT_SPAWNED });
     expect(await cmdUpdateCheck(h.deps, ["--check", "--local", "--json"])).toBe(EXIT.OK);
-    expect(parseReport(h.io.stdout.join("\n"))!.pack).toBeUndefined();
+    expect(parseReport(h.io.stdout.join("\n"))!.crew).toBeUndefined();
     const terminal = harness({ store: lead(["nas"]), ops: { nas: record() }, remote: () => () => NOT_SPAWNED });
     expect(await cmdUpdateCheck(terminal.deps, ["--check", "--json"])).toBe(EXIT.FAIL);
-    expect(parseReport(terminal.io.stdout.join("\n"))!.pack).toHaveLength(1);
+    expect(parseReport(terminal.io.stdout.join("\n"))!.crew).toHaveLength(1);
   });
 
   test("a red on this instance is still a red under --local", async () => {
@@ -691,6 +751,23 @@ describe("the JSON contract", () => {
     expect(parseReport("collie: unknown flag --check")).toBeNull();
     expect(parseReport('{"schema":1,"verdict":"puce","checks":[]}')).toBeNull();
     expect(parseReport('{"schema":1,"checks":[]}')).toBeNull();
+  });
+
+  // REMOVE_IN_1_9_0: this document is printed by a MEMBER, over ssh, and during the roll that member
+  // may still be on 1.7.0 — which spells the crew rows `pack`. Read under both names, written under
+  // `crew` alone.
+  test("a member still on 1.7.0 spells the rows `pack`, and they are read as `crew`", () => {
+    const rows = [{ memberId: "nas", host: "nas.local", verdict: "red", checks: [] }];
+    const old = parseReport(JSON.stringify({ schema: 1, verdict: "red", checks: [], pack: rows }))!;
+    expect(old.crew).toHaveLength(1);
+    expect(old.crew![0]!.memberId).toBe("nas");
+    // The new spelling reads the same, and a document carrying both takes `crew`.
+    const fresh = parseReport(JSON.stringify({ schema: 1, verdict: "red", checks: [], crew: rows }))!;
+    expect(fresh.crew).toHaveLength(1);
+    const both = parseReport(
+      JSON.stringify({ schema: 1, verdict: "red", checks: [], crew: rows, pack: [] }),
+    )!;
+    expect(both.crew).toHaveLength(1);
   });
 
   test("exit code — 0 with no red, 1 with one", async () => {
@@ -731,6 +808,34 @@ describe("the human output", () => {
     expect(disk).toContain("→");
   });
 
+  test("member row names the install kind", async () => {
+    const lead = (): TrustStoreData => leadStore({ peers: [member({ memberId: "nas" })] });
+    const base: PreflightReport = {
+      schema: PREFLIGHT_SCHEMA,
+      verdict: "green",
+      checks: [{ id: "disk", verdict: "green", reason: "9.0 GB free at /home/pat/collie" }],
+    };
+    // A member that names no kind is exactly what one older than the field puts on the wire.
+    const remoteReport = (installKind?: InstallKind["kind"]): PreflightReport =>
+      installKind === undefined ? base : { ...base, installKind };
+    const rowFor = async (installKind?: InstallKind["kind"]): Promise<string> => {
+      const h = harness({
+        store: lead(),
+        ops: { nas: record() },
+        remote: () => (script) =>
+          script.includes("update --check") ? ok(JSON.stringify(remoteReport(installKind))) : ok(probeOut()),
+      });
+      await cmdUpdateCheck(h.deps, []);
+      return h.io.stdout.find((l) => l.startsWith("  nas ("))!;
+    };
+
+    // The kind closes the row, so the operator sees which machines a package manager owns.
+    expect(await rowFor("packaged")).toBe("  nas (nas.local) — green · packaged");
+    expect(await rowFor("binary")).toBe("  nas (nas.local) — green · binary");
+    // A member that named no kind renders exactly as it did before the field existed.
+    expect(await rowFor()).toBe("  nas (nas.local) — green");
+  });
+
   test("colour paints the verdict only, and only when asked", () => {
     const check: PreflightCheck = { id: "disk", verdict: "red", reason: "no room" };
     expect(checkLine(check, false)).not.toContain("");
@@ -755,5 +860,143 @@ describe("the dispatcher", () => {
     expect(update.run.toString()).toContain("wantsCheck");
     expect(update.run.toString()).toContain("cmdUpdateCheck");
     expect(update.summary).toContain("--check");
+  });
+});
+
+// ── An install whose updates are not Collie's to make ────────────────────────
+// The shape that started this: `herdr plugin install` leaves a git checkout, so `buildsFromSource`
+// said yes, so the phone asked for Bun on a host whose service could not see it. A packaged install
+// is the honest end of that thread — nothing here compiles, and nothing here is even writable.
+
+describe("preflight — a folder a package manager owns", () => {
+  /** A Collie in a folder a package manager owns, with a release listing that answers. */
+  function packaged(over: Parameters<typeof harness>[0] = {}) {
+    const h = harness({
+      answers: [[`${GIT} rev-parse --git-dir`, { code: 128 }]],
+      net: {
+        ...deadNet,
+        getJson: () => Promise.resolve({ ok: true, value: [{ name: "v1.0.0", commit: { sha: "cccccccc" } }] }),
+      },
+      ...over,
+    });
+    h.files.rootOwned.add(ROOT);
+    return h;
+  }
+
+  test("the list is shorter, and every omission is a fact", async () => {
+    // No bun: nothing compiles. No tree: there is no working tree. No disk: the floor exists for a
+    // staged payload, and a red over free space nobody can act on is worse than no line at all.
+    const report = await preflight(packaged().deps);
+    expect(report.checks.map((c) => c.id)).toEqual(["doctor", "package", "upstream", "service"]);
+  });
+
+  test("bun is never asked about, even when it is genuinely missing", async () => {
+    const report = await preflight(packaged({ absent: ["bun"] }).deps);
+    expect(report.checks.some((c) => c.id === "bun")).toBe(false);
+    expect(report.verdict).not.toBe("red");
+  });
+
+  test("the `package` check says why the others are absent, in one sentence", async () => {
+    const check = byId(await preflight(packaged().deps), "package");
+    expect(check.verdict).toBe("green");
+    expect(check.reason).toBe("updates come from your package manager");
+    // `/opt/collie` is where `collie-bin` installs, so the command is named beside the sentence.
+    expect(check.remedy).toBe("sudo pacman -Syu collie-bin");
+  });
+
+  test("a root no manager claims gets the sentence and no command", async () => {
+    // The other half of the same rule: an unrecognised prefix costs the operator a command, never a
+    // wrong kind, and Collie never invents one it cannot run.
+    const NAMELESS = "/srv/collie";
+    const h = packaged({ answers: [[`git -C ${NAMELESS} rev-parse --git-dir`, { code: 128 }]] });
+    h.files.entries.set(`${NAMELESS}/herdr-plugin.toml`, { text: 'id = "herdr.collie"\nversion = "1.0.0"\n' });
+    const check = byId(await preflight({ ...h.deps, ctx: { ...h.deps.ctx, root: NAMELESS } }), "package");
+    expect(check.verdict).toBe("green");
+    expect(check.reason).toBe("updates come from your package manager");
+    expect(check.remedy).toBeUndefined();
+  });
+
+  test("the report names the kind, which is what the crew flow branches on", async () => {
+    expect((await preflight(packaged().deps)).installKind).toBe("packaged");
+  });
+
+  test("a prefix we publish to names its command, on the check and on the upstream remedy", async () => {
+    // The prefix is NOT what decided the kind — clause 4 did, before this runs. It only chooses the
+    // words, which is why an unrecognised prefix costs a command and never a misclassification.
+    const AUR = "/usr/lib/collie";
+    const h = packaged({
+      installed: "1.0.0",
+      answers: [[`git -C ${AUR} rev-parse --git-dir`, { code: 128 }]],
+      net: {
+        ...deadNet,
+        getJson: () =>
+          Promise.resolve({
+            ok: true,
+            value: [
+              { name: "v1.0.0", commit: { sha: "cccccccc" } },
+              { name: "v2.0.0", commit: { sha: "dddddddd" } },
+            ],
+          }),
+      },
+    });
+    h.files.entries.set(`${AUR}/herdr-plugin.toml`, { text: 'id = "herdr.collie"\nversion = "1.0.0"\n' });
+    const report = await preflight({ ...h.deps, ctx: { ...h.deps.ctx, root: AUR } });
+    expect(byId(report, "package").remedy).toBe("sudo pacman -Syu collie-bin");
+    expect(byId(report, "upstream").remedy).toBe("sudo pacman -Syu collie-bin");
+  });
+
+  test("an upstream remedy never tells this install to run `collie update`", async () => {
+    // A major sitting above the installed version is the case that carries a remedy, and its default
+    // wording is `collie update --major` — the one command this install must not run.
+    const h = packaged({
+      installed: "1.0.0",
+      net: {
+        ...deadNet,
+        getJson: () =>
+          Promise.resolve({
+            ok: true,
+            value: [
+              { name: "v1.0.0", commit: { sha: "cccccccc" } },
+              { name: "v2.0.0", commit: { sha: "dddddddd" } },
+            ],
+          }),
+      },
+    });
+    const check = byId(await preflight(h.deps), "upstream");
+    // Replaced by the package manager's own command, never by prose: a remedy is the one command
+    // that clears a check, not a paragraph pretending to be one.
+    expect(check.remedy).toBe("sudo pacman -Syu collie-bin");
+    expect(check.remedy).not.toContain("collie update");
+    expect(check.selfUpdateRemedy).toBeUndefined();
+    // The REASON is untouched: that a release exists is true however it gets applied.
+    expect(check.reason).toContain("2.0.0");
+  });
+
+  test("a remedy that has nothing to do with `collie update` is left ALONE", async () => {
+    // The regression this pins. The first cut replaced EVERY upstream remedy, so an offline
+    // packaged host was told to run its package manager instead of "check this machine's network" —
+    // and because that check is red, the clobbered sentence became the blocking reason the phone
+    // displayed, hiding the real fault behind advice that fixes nothing.
+    const h = packaged({
+      net: {
+        ...deadNet,
+        getJson: () => Promise.resolve({ ok: false, failure: { status: null, message: "no route to host" } }),
+      },
+    });
+    const check = byId(await preflight(h.deps), "upstream");
+    expect(check.verdict).toBe("red");
+    expect(check.remedy).toContain("network");
+    expect(check.remedy).not.toContain("package manager");
+  });
+
+  test("the rate-limit remedy survives too — same rule, different sentence", async () => {
+    const h = packaged({
+      net: {
+        ...deadNet,
+        getJson: () => Promise.resolve({ ok: false, failure: { status: 429, message: "rate limited" } }),
+      },
+    });
+    const check = byId(await preflight(h.deps), "upstream");
+    expect(check.remedy).toContain("wait an hour");
   });
 });

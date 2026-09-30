@@ -9,7 +9,7 @@ import { ConnectionInfo } from "@/components/connection-info";
 import { Card } from "@/components/ui/card";
 import { NotifyPrefsControl } from "@/components/notify-prefs-control";
 import { PairedDevices } from "@/components/paired-devices";
-import { PackSettingsCard } from "@/components/pack-settings-card";
+import { CrewSettingsCard } from "@/components/crew-settings-card";
 import { SnoozeControl } from "@/components/snooze-control";
 import { ThemeControl } from "@/components/theme-control";
 import { HapticsControl } from "@/components/haptics-control";
@@ -30,6 +30,7 @@ import { type DevicesData } from "@/lib/loaders";
 import { homePath } from "@/lib/nav";
 import { useScope } from "@/lib/session";
 import type { PushAvailability } from "@/lib/push";
+import { describeThrownError } from "@/lib/api-error-message";
 import { useOptionalRootData } from "@/lib/route-data";
 
 const EMPTY_DEVICES: DevicesData = { enforced: false, current: null, devices: [], error: false };
@@ -66,13 +67,18 @@ export function SettingsRoute() {
   // "On" = the user hasn't disabled it AND a live subscription exists on this device.
   const on = Boolean(state && !state.userDisabled && state.subscribed);
   const blocked = Boolean(state && state.availability !== "ready");
-  // When blocked we can still allow turning OFF a lingering subscription, but never turning ON.
-  const toggleDisabled = busy || !state || (blocked && !on);
+  // Capability/permission refusals block enabling; a failed config read must remain retryable.
+  const toggleDisabled =
+    busy || !state || (blocked && !on && state.availability !== "unavailable");
 
   async function toggle(next: boolean) {
     setError(null);
-    const res = await setEnabled(next);
-    if (next && !res.ok) setError(reasonText(res.reason));
+    try {
+      const res = await setEnabled(next);
+      if (next && !res.ok) setError(reasonText(res.reason));
+    } catch (err) {
+      setError(describeThrownError(err));
+    }
   }
 
   return (
@@ -191,7 +197,7 @@ export function SettingsRoute() {
             </p>
           )}
           {error && (
-            <p className="border-t border-border px-4 py-2.5 text-xs text-status-blocked">
+            <p role="alert" className="border-t border-border px-4 py-2.5 text-xs text-status-blocked">
               {error}
             </p>
           )}
@@ -212,7 +218,7 @@ export function SettingsRoute() {
         {/* ONE row for the whole subject, where three cards used to stand. Updating is a flow with
             a lead, N peers, progress and a rollback state, so it lives on `/settings/updates` and
             this page keeps the row that opens it — a status line and a chevron, in the same idiom
-            as the pack row below. */}
+            as the crew row below. */}
         <UpdatesSettingsCard />
 
         {/* Access sits with the connection diagnostics — both answer "what is this device allowed
@@ -220,10 +226,10 @@ export function SettingsRoute() {
             reports the header-based one. */}
         <PairedDevices data={devices} />
 
-        {/* The pack census, immediately above the connection diagnostics: both answer "what is this
+        {/* The crew census, immediately above the connection diagnostics: both answer "what is this
             thing talking to, and is it well". Renders NOTHING on a solo install — the card owns that
-            gate itself (usePack().multi), so this page needs no pack-shaped conditional. */}
-        <PackSettingsCard />
+            gate itself (useCrew().multi), so this page needs no crew-shaped conditional. */}
+        <CrewSettingsCard />
 
         <ConnectionInfo bridge={root?.bridge} device={root?.device} build={serverBuild} />
 
@@ -245,6 +251,8 @@ function reasonText(reason: PushAvailability | undefined): string {
       return t("settings.push.reason.insecure");
     case "server-off":
       return t("settings.push.reason.serverOff");
+    case "unavailable":
+      return t("settings.push.availability.unavailable");
     case "denied":
       return t("settings.push.reason.denied");
     case "unsupported":
@@ -260,6 +268,8 @@ function availabilityNote(a: PushAvailability): string {
       return t("settings.push.availability.insecure");
     case "server-off":
       return t("settings.push.availability.serverOff");
+    case "unavailable":
+      return t("settings.push.availability.unavailable");
     case "denied":
       return t("settings.push.availability.denied");
     case "unsupported":

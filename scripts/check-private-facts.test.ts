@@ -116,10 +116,10 @@ describe("the private-fact guard", () => {
   });
 
   /**
-   * Run the real pre-commit hook against a throwaway checkout, with the other three guards taken out
+   * Run the real pre-commit hook against a throwaway checkout, with the other four guards taken out
    * by their own hatches.
    *
-   * The wiring is the part that broke once: guard D was first added INSIDE the lint guard's skip
+   * The wiring is the part that broke once: this guard (now E) was first added INSIDE the lint guard's skip
    * branch, where it ran only when linting was skipped and never otherwise. A test that only calls
    * the script would have stayed green through that.
    */
@@ -137,13 +137,15 @@ describe("the private-fact guard", () => {
       await Bun.$`git -C ${root} add -A`.quiet();
       const run = Bun.spawnSync(["bash", join(root, "scripts/git-hooks/pre-commit")], {
         cwd: root,
-        // Guard A needs a version tree, guard B needs node_modules, guard C needs a protocol doc.
+        // Guard A needs a version tree, guard B needs node_modules, guard C needs a protocol doc, and
+        // guard D judges a lock file.
         // Every one of them is off here, which is exactly what makes this an independence check.
         env: {
           ...process.env,
           SKIP_VERSION_CHECK: "1",
           SKIP_LINT_CHECK: "1",
-          SKIP_PACK_WIRE_CHECK: "1",
+          SKIP_CREW_WIRE_CHECK: "1",
+          SKIP_FLAKE_LOCK_CHECK: "1",
           ...env,
         },
       });
@@ -153,7 +155,7 @@ describe("the private-fact guard", () => {
     }
   }
 
-  test("the hook runs it even when all three other hatches are taken", async () => {
+  test("the hook runs it even when all four other hatches are taken", async () => {
     expect(await hook({})).toBe(1);
   });
 

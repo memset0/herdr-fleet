@@ -250,6 +250,13 @@ export type ComposerPrepResult =
   /** Abort the send with this error, nothing typed. */
   | { ok: false; error: string };
 
+// A cumulative prefix alone can match a stale screen after a later paste was
+// dropped. Multipart sends must also show the end that was just delivered.
+function carriesReplyTail(sent: string, draft: string | null): boolean {
+  const tail = Array.from(sent.replace(/\s/g, "")).slice(-32).join("");
+  return tail.length > 0 && draft !== null && draft.replace(/\s/g, "").endsWith(tail);
+}
+
 export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOutcome> {
   const adapter = adapterFor(args.agent ?? undefined);
   // No grammar for this harness → the input box is unreadable, so there is nothing to verify
@@ -276,9 +283,53 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   const aborted = await runPreType?.();
   if (aborted) return aborted;
 
+  const chunks = adapter.replyChunks?.(args.text) ?? [args.text];
+  if (chunks.length === 0 || chunks.join("") !== args.text) {
+    return { status: "error", error: t("reply.stalled.generic") };
+  }
+  let delivered = "";
+  let previousDraft: string | null = null;
+  if (chunks.length > 1) {
+    try {
+      const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
+      const lines = splitLines(parseAnsi(fresh.text));
+      if (!adapter.composerReady?.(lines)) return { status: "blocked", error: noBoxMessage() };
+      previousDraft = adapter.extractInputDraft(lines);
+    } catch (e) {
+      return { status: "error", error: message(e) };
+    }
+  }
+  for (let i = 0; i < chunks.length - 1; i++) {
+    let part;
+    try {
+      part = await sendReply(args.paneId, chunks[i]!, false, args.scope);
+    } catch (e) {
+      return { status: "error", error: message(e) };
+    }
+    if (!part.ok) return { status: "error", error: describeApiError(part) };
+    delivered += chunks[i]!;
+    let verified = false;
+    for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+      if (attempt > 0) await (args.sleep ?? defaultSleep)(POLL_DELAY_MS);
+      try {
+        const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
+        const lines = splitLines(parseAnsi(fresh.text));
+        const draft = adapter.extractInputDraft(lines);
+        if (draft !== previousDraft && adapter.composerReady?.(lines) && draftCarriesSend(delivered, draft) && carriesReplyTail(delivered, draft)) {
+          verified = true;
+          previousDraft = draft;
+          break;
+        }
+      } catch {
+        // Retry the read only. Never repeat an acknowledged paste.
+      }
+    }
+    if (!verified) return { status: "stalled", error: t("reply.stalled.generic") };
+  }
+
   let typed;
   try {
-    typed = await sendReply(args.paneId, args.text, false, args.scope);
+    typed = await sendReply(args.paneId, chunks[chunks.length - 1]!, false, args.scope);
   } catch (e) {
     return { status: "error", error: message(e) };
   }
@@ -296,6 +347,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
     // POLL_DELAY_MS off the common path — the old blind flow always paid a fixed 350ms here.
     if (attempt > 0) await sleep(POLL_DELAY_MS);
     let draft: string | null = null;
+    let verifiedPrompt: string | undefined;
     try {
       const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
       const lines = splitLines(parseAnsi(fresh.text));
@@ -309,10 +361,13 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
       const composerVisible = adapter.composerReady?.(lines) ?? false;
       lastSeen = composerVisible ? null : detectNoEchoPrompt(lines);
       draft = adapter.extractInputDraft(lines);
+      // Carry the exact region from the same read that verified the text. The bridge checks it again
+      // before sending submitKeys, so a focus change after verification becomes prompt_changed.
+      verifiedPrompt = adapter.composerPrompt?.(lines) ?? undefined;
     } catch {
       continue; // transient read failure — the bounded loop is the timeout
     }
-    if (draftCarriesSend(args.text, draft)) return submitOnly(args);
+    if (draftCarriesSend(args.text, draft) && (chunks.length === 1 || (draft !== previousDraft && carriesReplyTail(args.text, draft)))) return submitOnly(args, verifiedPrompt);
     // The adapter gets a second look, and only a second look: a harness can SWALLOW what we typed and
     // paint a token of its own instead (Claude collapses anything past its paste threshold into
     // `[Pasted text #N +M lines]`), so the box never holds our words and the match above structurally
@@ -320,7 +375,9 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
     // thing that knows its harness's token and whether this one is consistent with THIS send
     // (.adr/0010). It can only widen the evidence, never narrow it, so a harness without the
     // capability is untouched.
-    if (draft !== null && adapter.draftCarriesSend?.(args.text, draft)) return submitOnly(args);
+    if (draft !== null && adapter.draftCarriesSend?.(args.text, draft)) {
+      return submitOnly(args, verifiedPrompt);
+    }
   }
 
   // The text never showed up on the input line. The likeliest cause is a dialog holding focus and
@@ -471,12 +528,15 @@ async function oneShot(args: GuardedReplyArgs): Promise<ReplyOutcome> {
 
 /**
  * Empty text + submit: `sendReplySteps` skips the send_text step entirely and sends ONLY the
- * bridge's configured submit keys (COLLIE_SUBMIT_KEYS). So the submit-key contract stays
- * server-owned and this whole guard needs no bridge change.
+ * bridge's configured submit keys (COLLIE_SUBMIT_KEYS). When available, the verified prompt region
+ * rides along as `expected_prompt`, so the bridge can refuse a stale submit before those keys land.
  */
-async function submitOnly(args: GuardedReplyArgs): Promise<ReplyOutcome> {
+async function submitOnly(
+  args: GuardedReplyArgs,
+  expectedPrompt?: string,
+): Promise<ReplyOutcome> {
   try {
-    const res = await sendReply(args.paneId, "", true, args.scope);
+    const res = await sendReply(args.paneId, "", true, args.scope, expectedPrompt);
     if (res.ok) return { status: "sent" };
     // The text is verifiably sitting in the input box and only the submit key failed — same shape as
     // the bridge's own partial-failure case. Tell the caller not to resend.
@@ -484,7 +544,10 @@ async function submitOnly(args: GuardedReplyArgs): Promise<ReplyOutcome> {
       // The bridge's own `reply.not_submitted` case, reached from the client side — so it says it
       // with the bridge's own catalogued sentence rather than a second copy of the English.
       status: "error",
-      error: t("apiError.reply.not_submitted"),
+      error:
+        res.code === "prompt_changed"
+          ? t("apiError.prompt_changed")
+          : t("apiError.reply.not_submitted"),
       textDelivered: true,
     };
   } catch (e) {

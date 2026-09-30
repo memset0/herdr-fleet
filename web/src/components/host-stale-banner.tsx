@@ -18,7 +18,7 @@ import { useLocale } from "@/hooks/use-locale";
 //
 // ── AND WHY IT NAMES THE REFUSAL, NOT JUST THE STALENESS ─────────────────────
 // "Showing last known" alone would leave the operator to discover the write ban by tapping Send. The
-// composer is disabled and every handler refuses (PACK_PROTOCOL.md §10.3 — a write to a member the
+// composer is disabled and every handler refuses (CREW_PROTOCOL.md §10.3 — a write to a member the
 // lead believes unreachable is refused BEFORE it is attempted, never queued, never retried), so the
 // banner says so up front. That is ADR 0010's posture carried across a lossier link: an unsent
 // message you know about beats a send whose outcome you have to guess at.
@@ -48,7 +48,7 @@ import { useLocale } from "@/hooks/use-locale";
 //   state "stale",   writable       → NOTHING. The lead believes this machine is up, writes are
 //                                     accepted, and the screen below arrived through that very link
 //                                     (every landed forward now refreshes the receipt on the lead —
-//                                     `PackRegistry.recordExchange`). A banner here would be
+//                                     `CrewRegistry.recordExchange`). A banner here would be
 //                                     describing the sweep's cadence, not this pane's freshness.
 export function HostStaleBanner({
   health,

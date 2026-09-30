@@ -11,8 +11,8 @@ import {
   type UpdateRun,
   type UpdateRunState,
 } from "../bridge/update-run.ts";
-import { STANDBY_HEALTH_PATH, STANDBY_VERSION_HEADER, standbyPortOf } from "../bridge/pack/standby.ts";
-import { parseTrustStore, trustStorePath } from "../bridge/pack/trust-store.ts";
+import { STANDBY_HEALTH_PATH, STANDBY_VERSION_HEADER, standbyPortOf } from "../bridge/crew/standby.ts";
+import { parseTrustStore, trustStorePath } from "../bridge/crew/trust-store.ts";
 import type { Environment } from "./context.ts";
 import type { Exec, Files, Net } from "./sys.ts";
 
@@ -272,8 +272,8 @@ export type HealthVerdict = { readonly ok: true } | { readonly ok: false; readon
 /**
  * Did the service come up as the version we flipped to?
  *
- * Three ways to fail, and the third is the one that gets missed: a DEPOSED pack member answers, and
- * answering is not the same as being live (`bridge/pack/deposed.ts` — a deposed collie serves one
+ * Three ways to fail, and the third is the one that gets missed: a DEPOSED crew member answers, and
+ * answering is not the same as being live (`bridge/crew/deposed.ts` — a deposed collie serves one
  * page and fails its health check). Counting that as a successful update would leave the operator on
  * a machine that routes nothing.
  */
@@ -298,14 +298,14 @@ export function healthVerdict(answer: HealthAnswer, version: string, commit: str
 export function aliveVerdict(answer: HealthAnswer): HealthVerdict {
   if (!answer.ok) return { ok: false, reason: answer.reason };
   if (answer.deposed) {
-    return { ok: false, reason: "the service answers, but as a DEPOSED pack member — nothing routes there" };
+    return { ok: false, reason: "the service answers, but as a DEPOSED crew member — nothing routes there" };
   }
   return { ok: true };
 }
 
 // ── Waiting on somebody else's run ───────────────────────────────────────────
 // The runner is detached, so a caller that wants to know how it ended cannot await a promise — it
-// reads the record. `collie pack update` does exactly that when it updates the lead before any peer
+// reads the record. `collie crew update` does exactly that when it updates the lead before any peer
 // (M15/06): it hands off through the same path `collie update` uses and then waits here.
 
 /** How a run somebody else was driving ended, as a waiting caller reads it. */
@@ -447,7 +447,7 @@ export function healthProbe(net: Net, target: ProbeTarget): () => Promise<Health
  * The standby door's answer, read for the one thing the gate wants: what is running there.
  *
  * The header first, the body second. They carry the same string by construction
- * (`bridge/pack/standby.ts`), and reading both is what keeps this working against a peer whose door
+ * (`bridge/crew/standby.ts`), and reading both is what keeps this working against a peer whose door
  * predates the header — which, on the day of an update, is every peer being updated.
  */
 function standbyAnswer(net: Net, url: string): () => Promise<HealthAnswer> {
@@ -536,11 +536,32 @@ export function serviceLogTail(
 
 // ── The launch seam ──────────────────────────────────────────────────────────
 
+/**
+ * How long the staging process waits for the manager to answer, before it calls the handoff refused.
+ *
+ * Job acceptance is tens of milliseconds, so this bound is not a latency budget: it is the answer to
+ * a wedged D-Bus, which without it would leave a staging process that never exits at all — worse
+ * than the ten minute stall it replaces.
+ */
+export const HANDOFF_CONFIRM_MS = 15_000;
+
 /** How the runner was detached, and with what. `note` is the line the transcript prints. */
 export interface LaunchPlan {
   readonly kind: "systemd-run" | "setsid" | "fork";
   readonly command: string[];
   readonly note: string;
+  /**
+   * Whether this tier can PROVE the runner exists before the staging process exits.
+   *
+   * `"manager"`: the command is a fast client of the user manager, so running it synchronously and
+   * reading its exit code answers the question. The runner it created lives in a unit of its own,
+   * outside this process's cgroup, which is the whole guarantee.
+   *
+   * `"none"`: there is no manager to ask, and the child IS the runner rather than a client of one.
+   * `handOff` dispatches on this field and never on {@link LaunchPlan.kind}, so a tier added later
+   * has to answer the question instead of inheriting an answer that does not hold for it.
+   */
+  readonly confirms: "manager" | "none";
 }
 
 /**
@@ -582,6 +603,7 @@ export function launchPlan(a: {
         ...a.args,
       ],
       note: `handed off to systemd-run --user --collect (transient unit ${a.unit}-update-${a.stamp})`,
+      confirms: "manager",
     };
   }
   if (a.hasSetsid) {
@@ -589,12 +611,14 @@ export function launchPlan(a: {
       kind: "setsid",
       command: ["setsid", a.binary, ...a.args],
       note: "handed off to a setsid double-forked child",
+      confirms: "none",
     };
   }
   return {
     kind: "fork",
     command: [a.binary, ...a.args],
     note: "handed off to a detached child (neither systemd-run nor setsid is available here)",
+    confirms: "none",
   };
 }
 

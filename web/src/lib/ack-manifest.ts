@@ -28,7 +28,7 @@
 // acknowledgement for `closePane` is a spinner in a bottom sheet three components away, and
 // asserting on it from a manifest would be asserting on a mock of itself.
 //
-// What it does is exactly what the pack-wire guard does for a protocol change (ADR 0025 — "the guard
+// What it does is exactly what the crew-wire guard does for a protocol change (ADR 0025 — "the guard
 // checks that a decision was recorded; it never says which one is right"). Add a mutating export to
 // lib/api.ts next month and ack-manifest.test.ts FAILS until you write one classified line here. The
 // line is then in the diff, and it gets reviewed. The guard cannot do the work for you; it can
@@ -144,6 +144,10 @@ export const ACK_MANIFEST = {
     channel: "echo",
     why: "The switch flips optimistically under the thumb; the server's merged view then reconciles it, and a REVERT is paired with an error status because a switch that moves back in silence misinforms anyone who has stopped looking (hooks/use-notify-prefs.ts).",
   },
+  registerPushSubscription: {
+    channel: "inline",
+    why: "Settings switches on only after the bridge acknowledges registration; setup failures stay beside the switch so the operator can read them and retry (routes/settings.tsx).",
+  },
   checkForUpdates: {
     channel: "inline",
     why: "The answer — up to date, an offer, or 'the check itself failed' — is a standing fact about this install that belongs in the card that states it, and it must not fade out from under the operator (components/update-check-control.tsx).",
@@ -156,6 +160,10 @@ export const ACK_MANIFEST = {
     channel: "silent",
     why: "\"Remind me next digest\" is answered by the card's own line changing to say so, in the same tap. A second acknowledgement of a dismissal is noise about noise.",
   },
+  dismissUpdate: {
+    channel: "silent",
+    why: "The acknowledgement is the band leaving the screen, on the same tap. A toast confirming that a band was closed would be a notice about declining a notice, and the state it records is visible in its absence.",
+  },
   pairDevice: {
     channel: "inline",
     why: "A mistyped or expired code is a refusal the operator fixes IN the form, one field away, so the sentence belongs beside the field rather than floating over the page (components/paired-devices.tsx).",
@@ -164,7 +172,7 @@ export const ACK_MANIFEST = {
     channel: "inline",
     why: "A failed revoke leaves the row it was aimed at still on screen, and that row is the only place the message is unambiguous about WHICH device is still paired.",
   },
-  uploadImage: {
+  uploadFile: {
     channel: "status",
     why: "Success appends a host path to the draft, which is easy to miss in a box the operator was already typing in, so the status line names what just went into it (components/composer.tsx).",
   },

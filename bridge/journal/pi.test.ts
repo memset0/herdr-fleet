@@ -1,8 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, realpath, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { isPiSessionId, parsePiTranscript, PiTranscriptSource } from "./pi.ts";
+import {
+  isBlobHash,
+  isPiSessionId,
+  parsePiTranscript,
+  PiTranscriptSource,
+  resolveBlobPath,
+  resolveImageUrl,
+} from "./pi.ts";
 
 /**
  * Any JSON document — what a row of an agent's on-disk log actually is, before the adapter parses
@@ -74,6 +82,73 @@ describe("parsePiTranscript", () => {
     expect(entries[0]!.parts).toEqual([
       { kind: "thinking", text: "**Identifying single subagent call**" },
     ]);
+  });
+
+  test("an image block in turn content renders as an image part", () => {
+    const entries = parsePiTranscript(
+      row("a", {
+        role: "assistant",
+        content: [
+          { type: "image", data: "abcd1234", mimeType: "image/png" },
+        ],
+      }),
+    );
+    expect(entries[0]!.parts).toEqual([
+      { kind: "image", url: "data:image/png;base64,abcd1234", mimeType: "image/png" },
+    ]);
+  });
+
+  // A journal is an AGENT's own output, so a URL in it is untrusted content. A remote one would
+  // make the phone fetch an arbitrary host on the agent's word, from a page inside the tailnet.
+  test("a remote image URL contributes no part at all", () => {
+    for (const data of ["http://evil.example/x.png", "https://evil.example/x.png"]) {
+      const entries = parsePiTranscript(
+        row("a", { role: "assistant", content: [{ type: "image", data, mimeType: "image/png" }] }),
+      );
+      expect(entries).toEqual([]);
+    }
+  });
+
+  test("a toolResult with image content maps to imageUrl on the tool part", () => {
+    const entries = parsePiTranscript(
+      [
+        row("a", {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_img", name: "screenshot", arguments: {} }],
+        }),
+        row("b", {
+          role: "toolResult",
+          toolCallId: "call_img",
+          toolName: "screenshot",
+          content: [{ type: "image", data: "base64data", mimeType: "image/webp" }],
+        }),
+      ].join("\n"),
+    );
+    expect(entries[0]!.parts[0]).toMatchObject({
+      kind: "tool",
+      result: { imageUrl: "data:image/webp;base64,base64data" },
+    });
+  });
+  test("a toolResult with blob:sha256: content maps to /api/blobs/<hash>", () => {
+    const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const entries = parsePiTranscript(
+      [
+        row("a", {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_blob", name: "view", arguments: {} }],
+        }),
+        row("b", {
+          role: "toolResult",
+          toolCallId: "call_blob",
+          toolName: "view",
+          content: [{ type: "image", data: `blob:sha256:${hash}`, mimeType: "image/png" }],
+        }),
+      ].join("\n"),
+    );
+    expect(entries[0]!.parts[0]).toMatchObject({
+      kind: "tool",
+      result: { imageUrl: `/api/blobs/${hash}` },
+    });
   });
 
   test("a toolCall summarises from its arguments OBJECT (no JSON string, unlike codex)", () => {
@@ -273,6 +348,68 @@ describe("PiTranscriptSource — several sessions roots", () => {
   test("the id fallback scans every root", async () => {
     const { base, first, second, logB } = await fixture();
     expect(await new PiTranscriptSource([first, second]).resolve({ kind: "id", value: B })).toBe(logB);
+    await rm(base, { recursive: true, force: true });
+  });
+});
+
+describe("resolveImageUrl — only this collie's own blobs and inline images", () => {
+  const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  test("a blob reference becomes this collie's own route", () => {
+    expect(resolveImageUrl(`blob:sha256:${hash}`)).toBe(`/api/blobs/${hash}`);
+  });
+
+  test("a blob reference whose hash is not 64 hex is dropped", () => {
+    expect(resolveImageUrl("blob:sha256:../../etc/passwd")).toBeNull();
+    expect(resolveImageUrl("blob:sha256:1234")).toBeNull();
+  });
+
+  test("an inline data image rides through, and a non-image data URL does not", () => {
+    expect(resolveImageUrl("data:image/webp;base64,AAAA")).toBe("data:image/webp;base64,AAAA");
+    expect(resolveImageUrl("data:text/html;base64,PHNjcmlwdD4=")).toBeNull();
+  });
+
+  test("http and https are dropped — a remote URL would make the phone call an arbitrary host", () => {
+    expect(resolveImageUrl("http://evil.example/x.png", "image/png")).toBeNull();
+    expect(resolveImageUrl("https://evil.example/x.png", "image/png")).toBeNull();
+  });
+
+  test("anything else is dropped, and a bare payload needs its own image mime type", () => {
+    expect(resolveImageUrl("file:///etc/passwd")).toBeNull();
+    expect(resolveImageUrl("//evil.example/x.png")).toBeNull();
+    // No mime type is NOT guessed at as png: a guess here is a data URL nobody declared.
+    expect(resolveImageUrl("AAAA")).toBeNull();
+    expect(resolveImageUrl("AAAA", "text/plain")).toBeNull();
+    expect(resolveImageUrl("AAAA", "image/gif")).toBe("data:image/gif;base64,AAAA");
+  });
+});
+
+describe("resolveBlobPath", () => {
+  const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  test("refuses non-hex or wrong length hashes", async () => {
+    expect(isBlobHash("not-a-hash")).toBe(false);
+    expect(isBlobHash("1234")).toBe(false);
+    expect(isBlobHash(hash)).toBe(true);
+    expect(await resolveBlobPath("not-a-hash", ["/tmp"])).toBeNull();
+  });
+
+  test("resolves candidate contained in sibling blobs directory", async () => {
+    const base = await mkdtemp(join(tmpdir(), "collie-pi-blob-"));
+    const sessionsDir = join(base, "sessions");
+    const blobsDir = join(base, "blobs");
+    await mkdir(sessionsDir, { recursive: true });
+    await mkdir(blobsDir, { recursive: true });
+    const blobFile = join(blobsDir, hash);
+    await Bun.write(blobFile, "pretend image data");
+
+    const resolved = await resolveBlobPath(hash, [sessionsDir]);
+    expect(resolved).toBe(blobFile);
+
+    // Refuses when not present
+    const otherHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    expect(await resolveBlobPath(otherHash, [sessionsDir])).toBeNull();
+
     await rm(base, { recursive: true, force: true });
   });
 });

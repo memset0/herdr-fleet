@@ -6,11 +6,13 @@ import { parseAnsi } from "../ansi";
 import { splitLines } from "../blocks";
 import { ompAdapter } from "./omp";
 import { lineText, rstrip } from "./omp/markers";
+import { locateRuleComposer } from "./omp/rule";
 import { describeAdapterConformance } from "./conformance";
 import { parseKeyHintFooter } from "./menu-hints";
+import { decorateOmpDisplay } from "./omp/display";
 
 // The omp adapter's CI gate. This adapter is Tier 1 BY CHOICE — it up-levels nothing, so `ownFixtures`
-// is empty and every one of the 20 captures is a NEUTRAL fixture the adapter must leave raw. That is
+// is empty and every one of the captures is a NEUTRAL fixture the adapter must leave raw. That is
 // not a weaker gate than Claude's; it is the whole promise this contribution makes, asserted over the
 // entire corpus rather than over a chosen subset: no interactive block kind is ever constructed, so no
 // tap can reach a keystroke. See harness/omp/index.ts for why the dialog layer is a later PR.
@@ -33,12 +35,20 @@ const allCodexFixtures = readdirSync(PANES_DIR)
 const allGrokFixtures = readdirSync(PANES_DIR)
   .filter((f) => f.startsWith("grok--") && f.endsWith(".txt"))
   .toSorted();
+const allForeignFixtures = [...allClaudeFixtures, ...allCodexFixtures, ...allGrokFixtures];
+// `omp--menu-dismissed.txt` matches this prefix and is a COMPOSER capture, not a modal.
+const allOmpModalFixtures = allOmpFixtures.filter(
+  (name) =>
+    name.startsWith("omp--menu-") ||
+    name.startsWith("omp--select-") ||
+    name.startsWith("omp--approval-"),
+);
 
 // Every omp screen this adapter DECLINES — which is every screen IN THIS CORPUS, not every screen omp
-// can draw (omp's tool-approval dialog, in particular, was never captured; see omp/index.ts). These
-// are NOT "neutral output" in the plain sense: eleven of them are live modals with the keyboard, and
-// the conformance assertion (raw-only) is exactly the promise worth pinning, because it is a promise
-// about a screen where being wrong would type a keystroke. One reason per line.
+// can draw. These are NOT "neutral output" in the plain sense: fourteen of them are live modals with
+// the keyboard, and the conformance assertion (raw-only) is exactly the promise worth pinning,
+// because it is a promise about a screen where being wrong would type a keystroke. The tool-approval
+// dialog, once this corpus's one known gap, is now three of those fourteen. One reason per line.
 const DECLINED = new Set([
   // — Composer states. An input box is chrome, never a dialog; stripChrome peels it, the statusline
   //   and stranded-draft probes re-surface what it carried.
@@ -50,6 +60,9 @@ const DECLINED = new Set([
   "omp--draft-wrapped.txt",
   "omp--fresh-idle.txt",
   "omp--menu-dismissed.txt",
+  "omp--v18-rule-draft.txt",
+  "omp--v18-rule-idle.txt",
+  "omp--v18-rule-wrapped.txt",
   "omp--working.txt",
   // — The slash palette is composer chrome too, and it is drawn BELOW the box, so it is stripped along
   //   with it rather than lifted. What replaces it on the phone is collie's own palette for omp
@@ -78,17 +91,26 @@ const DECLINED = new Set([
   "omp--menu-resume.txt",
   "omp--menu-settings-moved.txt",
   "omp--menu-settings.txt",
+  // — The tool-approval dialog: a `bash` screen and a `write` screen, the `write` one in both
+  //   selection states. Captured 2026-09-10 against omp v18.1.17, the screen omp/index.ts named as
+  //   the corpus's one gap. It is a box at column 0 like every modal above, so `locateComposer`
+  //   refuses the composer under it and the adapter stays raw — which these fixtures now MEASURE
+  //   rather than infer. Fail-closed is still the right answer regardless: `Approve`/`Deny` is the
+  //   screen where a wrong lift would run a command.
+  "omp--approval-bash.txt",
+  "omp--approval-write--deny.txt",
+  "omp--approval-write.txt",
 ]);
 
 // Nothing is up-levelled, so there is no own cohort. `describeAdapterConformance` registers a todo for
 // each leg that needs one rather than passing vacuously, and still runs the leg that matters here:
-// raw-only on all 22 omp captures and all 38 claude ones.
+// raw-only on all 28 omp captures and every foreign harness capture.
 const ownFixtures: string[] = [];
 const neutralFixtures = allOmpFixtures.filter((f) => DECLINED.has(f));
 
 describeAdapterConformance(ompAdapter, {
   ownFixtures,
-  foreignFixtures: [...allClaudeFixtures, ...allCodexFixtures, ...allGrokFixtures],
+  foreignFixtures: allForeignFixtures,
   neutralFixtures,
 });
 
@@ -97,6 +119,9 @@ describeAdapterConformance(ompAdapter, {
 // this test before it can quietly widen or narrow the gate above.
 describe("the omp corpus", () => {
   const PINNED = [
+    "omp--approval-bash.txt",
+    "omp--approval-write--deny.txt",
+    "omp--approval-write.txt",
     "omp--done--tool-result.txt",
     "omp--done.txt",
     "omp--draft-ghost-suggestion-busy.txt",
@@ -118,14 +143,17 @@ describe("the omp corpus", () => {
     "omp--select-multi.txt",
     "omp--slash-palette--filtered.txt",
     "omp--slash-palette.txt",
+    "omp--v18-rule-draft.txt",
+    "omp--v18-rule-idle.txt",
+    "omp--v18-rule-wrapped.txt",
     "omp--working.txt",
   ];
 
-  it("is exactly the 22 captures this adapter was developed against", () => {
+  it("is exactly the 28 captures this adapter was developed against", () => {
     expect(allOmpFixtures).toEqual(PINNED);
   });
 
-  it("declines all twenty-two — nothing is up-levelled", () => {
+  it("declines all twenty-eight — nothing is up-levelled", () => {
     expect(neutralFixtures).toEqual(PINNED);
     expect(ownFixtures).toEqual([]);
   });
@@ -154,6 +182,8 @@ describe("ompBuildBlocks emits nothing but raw", () => {
         "buildBlocks", // raw-only, asserted above
         "composerPrompt", // the row a destructive write BINDS to; it sends nothing itself
         "composerReady", // the pre-flight's refusal
+        "replyChunks", // lossless transport plan, not a dialog action
+        "draftIsOpaque", // never take over an opaque paste chip as literal text
         "extractInputDraft", // the stranded-draft preview + the type-then-verify half
         "extractStatusLines", // the statusline the strip peels off the mirror
       ].toSorted(),
@@ -177,6 +207,9 @@ const COMPOSER_FIXTURES = [
   "omp--slash-palette--filtered.txt",
   "omp--slash-palette.txt",
   "omp--working.txt",
+  "omp--v18-rule-draft.txt",
+  "omp--v18-rule-idle.txt",
+  "omp--v18-rule-wrapped.txt",
 ];
 
 describe("composerReady — the gate the reply path pre-flights on", () => {
@@ -189,6 +222,90 @@ describe("composerReady — the gate the reply path pre-flights on", () => {
 
   it.each(COMPOSER_FIXTURES)("%s: the composer is on screen ⇒ true", (name) => {
     expect(ompAdapter.composerReady!(fixtureLines(name))).toBe(true);
+  });
+});
+
+describe("OMP 18 rule composer", () => {
+  it("recognizes an empty rule composer through the adapter", () => {
+    const lines = fixtureLines("omp--v18-rule-idle.txt");
+
+    expect(ompAdapter.composerReady!(lines)).toBe(true);
+    expect(ompAdapter.extractInputDraft(lines)).toBeNull();
+    expect(ompAdapter.composerPrompt!(lines)).toBe("❯");
+
+    const status = ompAdapter.extractStatusLines(lines);
+    expect(status).toHaveLength(1);
+    expect(status[0]).toBe(lines.at(-1));
+    expect(status[0]!.segments.length).toBeGreaterThan(1);
+
+    const blocks = ompAdapter.buildBlocks(lines);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]!.kind).toBe("raw");
+    if (blocks[0]!.kind === "raw") {
+      const rawText = blocks[0]!.lines.map(lineText).join("\n");
+      expect(rawText).not.toContain("❯");
+      expect(rawText).not.toContain(lineText(status[0]!));
+    }
+  });
+
+  it("extracts a single-line rule draft for guarded reply verification", () => {
+    const lines = fixtureLines("omp--v18-rule-draft.txt");
+
+    expect(ompAdapter.composerReady!(lines)).toBe(true);
+    expect(ompAdapter.extractInputDraft(lines)).toBe("COLLIE_RULE_DRAFT");
+    expect(ompAdapter.composerPrompt!(lines)).toBe("❯ COLLIE_RULE_DRAFT");
+  });
+
+  it("folds wrapped rule rows and excludes the styled inline suggestion", () => {
+    const lines = fixtureLines("omp--v18-rule-wrapped.txt");
+    const draft =
+      "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho " +
+      "sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota " +
+      "kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+
+    expect(ompAdapter.composerReady!(lines)).toBe(true);
+    expect(ompAdapter.extractInputDraft(lines)).toBe(draft);
+    expect(ompAdapter.composerPrompt!(lines)).toBe(
+      [
+        "❯ alpha beta gamma delta epsilon zeta eta theta iota kappa",
+        "  lambda mu nu xi omicron pi rho sigma tau upsilon phi chi",
+        "  psi omega alpha beta gamma delta epsilon zeta eta theta",
+        "  iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon",
+        "  phi chi psi omegas",
+      ].join("\n"),
+    );
+  });
+
+  it("declines once any ordinary output appears below the captured tail", () => {
+    const scrolled = [
+      ...fixtureLines("omp--v18-rule-draft.txt"),
+      ...splitLines(parseAnsi("ordinary output after the composer")),
+    ];
+    expect(locateRuleComposer(scrolled)).toBeNull();
+  });
+
+  it("accepts at most 100 continuation rows", () => {
+    const prefix = ["transcript", "────", "❯ head"];
+    const continuationRows = Array.from({ length: 100 }, (_, index) => `  row-${index}`);
+    const suffix = ["", " π · status"];
+    const atCap = splitLines(parseAnsi([...prefix, ...continuationRows, ...suffix].join("\n")));
+    const overCap = splitLines(
+      parseAnsi([...prefix, ...continuationRows, "  row-100", ...suffix].join("\n")),
+    );
+
+    expect(locateRuleComposer(atCap)).not.toBeNull();
+    expect(locateRuleComposer(overCap)).toBeNull();
+  });
+
+  it.each(allOmpModalFixtures)(
+    "%s: the rule scanner rejects an OMP modal fixture",
+    (name) => {
+      expect(locateRuleComposer(fixtureLines(name))).toBeNull();
+    },
+  );
+
+  it.each(allForeignFixtures)("%s: the rule scanner rejects a foreign fixture", (name) => {
+    expect(locateRuleComposer(fixtureLines(name))).toBeNull();
   });
 });
 
@@ -260,3 +377,44 @@ function footerText(name: string, row: number): string {
   const boxed = BOXED_FOOTER.exec(text);
   return (boxed === null ? text : boxed[1]!).trim();
 }
+
+describe("omp mobile display cleanup", () => {
+  it("marks light fills and leaves dark diffs alone", () => {
+    const esc = String.fromCharCode(27);
+    const light = `${esc}[48;2;250;250;250mlight card${esc}[0m`;
+    const dark = `${esc}[48;2;15;18;22mdark body${esc}[0m`;
+    const diff = `${esc}[48;2;33;58;43m+ semantic diff${esc}[0m`;
+    const [lightLine, darkLine, diffLine] = decorateOmpDisplay(
+      splitLines(parseAnsi(`${light}\n${dark}\n${diff}`)),
+    );
+
+    expect(lightLine!.segments[0]!.mobileTransparentBg).toBe(true);
+    expect(darkLine!.segments[0]!.bg).toBe("rgb(15,18,22)");
+    expect(darkLine!.segments[0]!.mobileTransparentBg).toBeUndefined();
+    expect(diffLine!.segments[0]!.bg).toBe("rgb(33,58,43)");
+    expect(diffLine!.segments[0]!.mobileTransparentBg).toBeUndefined();
+  });
+
+  it("does not change visible text", () => {
+    const esc = String.fromCharCode(27);
+    const lines = splitLines(parseAnsi(`${esc}[48;2;250;250;250mcard${esc}[0m`));
+    expect(decorateOmpDisplay(lines).map(lineText)).toEqual(lines.map(lineText));
+  });
+
+  it("returns the same array when nothing is light", () => {
+    const lines = splitLines(parseAnsi("plain text"));
+    expect(decorateOmpDisplay(lines)).toBe(lines);
+  });
+
+  it("ompBuildBlocks marks the fill on the raw block", () => {
+    const esc = String.fromCharCode(27);
+    const [block] = ompAdapter.buildBlocks(
+      splitLines(parseAnsi(`${esc}[48;2;250;250;250mlight card${esc}[0m`)),
+    );
+    expect(block!.kind).toBe("raw");
+    if (block!.kind !== "raw") return;
+    expect(block.lines.some((line) => line.segments.some((segment) => segment.mobileTransparentBg))).toBe(
+      true,
+    );
+  });
+});

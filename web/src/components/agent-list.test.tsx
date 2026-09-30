@@ -129,7 +129,7 @@ describe("AgentList — sections", () => {
     const user = userEvent.setup();
     const onOpen = vi.fn();
     // The whole PANE, not just its id: `w1:p1` names a different terminal on every machine in a
-    // pack, and this list is one herd across all of them.
+    // crew, and this list is one herd across all of them.
     const pane = agent("p1", "blocked");
     render(<AgentList agents={[pane]} onOpen={onOpen} />);
     await user.click(row(/p1/));

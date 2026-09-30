@@ -89,7 +89,10 @@
     "majorAvailable": null,
     "majorUrl": null,
     "installKind": "detached-checkout",
+    "dismissedVersion": null,
+    "dismissedCrewVersion": null,
     "bridgeStale": false,
+    "restartNeeded": false,
     "checkedAt": null
   },
   "ts": 1754000000000

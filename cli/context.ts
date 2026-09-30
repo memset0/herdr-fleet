@@ -4,10 +4,19 @@ import { join } from "node:path";
 
 import { DEFAULT_PORT, defaultSocketPath, resolveStateDir } from "../bridge/config.ts";
 import { pluginRoot } from "../bridge/root.ts";
-import { instanceSuffixOf, managedHandlerPath, type ServeMode } from "../bridge/front-door.ts";
+import {
+  herdrActionCommand,
+  instanceSuffixOf,
+  managedHandlerPath,
+  PLUGIN_ID,
+  pluginIdFor,
+  type ServeMode,
+} from "../bridge/front-door.ts";
 import { findTool } from "./tools.ts";
 
-export const PLUGIN_ID = "herdr.collie";
+// The plugin id and the two spellings built from it live in `bridge/front-door.ts`, beside the
+// instance suffix they share — the bridge prints them too. Re-exported here, where every verb reads.
+export { herdrActionCommand, PLUGIN_ID, pluginIdFor };
 
 /**
  * Everything a verb needs about *where things are*, resolved exactly once and passed down. No verb
@@ -46,7 +55,7 @@ export interface CliContext {
   handlerFile: string;
   /**
    * Runtime state — the same directory the bridge resolves (`bridge/config.ts`'s `resolveStateDir`),
-   * so the pack trust store a verb writes is the one the running service reads.
+   * so the crew trust store a verb writes is the one the running service reads.
    */
   stateDir: string;
 }
@@ -272,7 +281,7 @@ export function resolveConfigDir(deps: ConfigDirDeps): ConfigDirResult {
 // ── Version ──────────────────────────────────────────────────────────────────
 
 // Re-exported, not defined here. The resolver moved to `bridge/version.ts` when `hello` had to
-// answer with this machine's version (PACK_PROTOCOL.md §7.1): the bridge cannot import from `cli/`,
+// answer with this machine's version (CREW_PROTOCOL.md §7.1): the bridge cannot import from `cli/`,
 // and two implementations that agree today are not the guarantee the spec asks for. Every existing
 // caller keeps importing it from here.
 export { collieVersion, collieVersionBare, collieVersionFrom } from "../bridge/version.ts";
@@ -382,8 +391,8 @@ export function effectiveServePort(env: Environment): number {
 // instance, `resolveConfigDir` looks for `<conventional>/herdr.collie-<instance>/.env` — a directory
 // the operator created — and, finding none, refuses the run instead of resolving anywhere else. It
 // never asks herdr (herdr only knows the unsuffixed plugin's dir) and never falls back to the
-// unsuffixed or legacy dir. The incident: `COLLIE_INSTANCE=v1 collie pack add` without an injected
-// HERDR_PLUGIN_CONFIG_DIR resolved the DEFAULT instance's config and state dirs, so a pack verb read
+// unsuffixed or legacy dir. The incident: `COLLIE_INSTANCE=v1 collie crew add` without an injected
+// HERDR_PLUGIN_CONFIG_DIR resolved the DEFAULT instance's config and state dirs, so a crew verb read
 // the wrong trust store and then minted a fresh self identity into the live stable instance's.
 
 /** The accepted shape of `COLLIE_INSTANCE`: it becomes a unit name, a filename and a launchd label. */

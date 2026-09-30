@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Four independent guards. Install with: scripts/install-hooks.sh (sets core.hooksPath).
+# Five independent guards. Install with: scripts/install-hooks.sh (sets core.hooksPath).
 #
 # A) Versioning guard — override with: SKIP_VERSION_CHECK=1 git commit …
 #    1) versions must be consistent (check-version.sh)
 #    2) if functional code changed and the canonical version did NOT move, the commit must add at
 #       least one bullet under `## [Unreleased]` in CHANGELOG.md (the ordinary functional commit).
+#       A staged CHANGELOG is also checked for SHAPE, whatever else the commit touches: every
+#       bullet under `## [Unreleased]` sits below one of `### Added`, `### Changed`, `### Fixed`,
+#       `### Packaging` or `### Docs`, and opens with a bold lead sentence. The page is built from those
+#       leads (scripts/release-notes.ts), so a bullet without one is a bullet the page cannot
+#       print. A `### ` heading is not a bullet and records nothing on its own.
 #       Tests (`*.test.ts`, `*.test.tsx`, `*.test.sh`) and the hooks themselves
 #       (`scripts/git-hooks/`) are not functional — they ship nothing, so a commit that only
 #       touches them records nothing, exactly as a doc-only one does not.
@@ -16,21 +21,26 @@
 #    full-tree runs (CI and `collie build`) define "passing". Both shell out to the same
 #    `.oxlintrc.json` at the repo root — no surface passes its own rule flags.
 #
-# C) Pack-wire guard — override with: SKIP_PACK_WIRE_CHECK=1 git commit …
-#    A staged change to the pack wire surface must record a protocol decision (check-pack-wire.sh).
+# C) Crew-wire guard — override with: SKIP_CREW_WIRE_CHECK=1 git commit …
+#    A staged change to the crew wire surface must record a protocol decision (check-crew-wire.sh).
 #
-# D) Private-fact guard — override with: SKIP_PRIVACY_CHECK=1 git commit …
+# D) flake.lock guard — override with: SKIP_FLAKE_LOCK_CHECK=1 git commit …
+#    `flake.lock` pins the toolchain a published binary was built with, so it moves only in a
+#    release commit — staged together with the three version files (check-flake-lock.sh). A first
+#    arrival or a removal of the lock passes on its own; only a change needs the release commit.
+#
+# E) Private-fact guard — override with: SKIP_PRIVACY_CHECK=1 git commit …
 #    This product is developed against its operator's own production environment, so a real host,
 #    address or path is one paste away from a fixture. The check refuses one in the tree we own
 #    (check-private-facts.ts). It matches SHAPES, never a list of forbidden values — a deny-list has
 #    to name what it forbids, which is the leak it exists to prevent.
 #
-# The four are skippable independently: SKIP_VERSION_CHECK=1 does not disarm the lint guard.
+# The five are skippable independently: SKIP_VERSION_CHECK=1 does not disarm the lint guard.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 
-# The one staged-file list, shared by all four guards.
+# The one staged-file list, shared by all five guards.
 staged="$(git diff --cached --name-only --diff-filter=ACMR)"
 
 # ---- (A) versioning ---------------------------------------------------------------------------
@@ -51,18 +61,75 @@ else
   # filter, and the line is about the source.
   functional="$(echo "$staged" | grep -vE '(\.test\.(ts|tsx|sh)$|^scripts/git-hooks/)' || true)"
 
+  # Bullets under `## [Unreleased]` in the CHANGELOG on stdin. The section runs from that heading
+  # to the next `## ` heading. A `### Added` line starts with `#`, never `- `, so a group heading
+  # is not a bullet and adding one records nothing on its own. Portable awk + grep only, this
+  # hook also runs on macOS.
+  unreleased_bullets() {
+    awk '/^## \[Unreleased\]/{p=1;next} /^## /{p=0} p' \
+      | grep -cE '^- ' || true
+  }
+
+  # The shape of those bullets. Since 1.6.0 the release page is BUILT from them
+  # (`scripts/release-notes.ts`): it prints each bullet's bold lead under its group heading, so a
+  # bullet with no lead, or one above every group heading, is a bullet the release page cannot
+  # print. This says so at commit time rather than at tag time. Prints the offending line, or
+  # nothing when the section is well shaped.
+  unreleased_shape() {
+    awk '
+      /^## \[Unreleased\]/ { p = 1; group = 0; next }
+      /^## /               { p = 0 }
+      !p                   { next }
+      /^### / {
+        name = substr($0, 5)
+        sub(/[ \t]+$/, "", name)
+        if (name !~ /^(Added|Changed|Fixed|Packaging|Docs)$/) { print "bad-group\t" $0; next }
+        group = 1
+        next
+      }
+      /^- / {
+        if (!group)                        { print "no-group\t" $0; next }
+        if ($0 !~ /^- \*\*[^*]+\*\*/)  { print "no-lead\t" $0 }
+      }
+    '
+  }
+
+  # Shape, whenever the CHANGELOG is staged at all: a bullet the release page cannot print is
+  # refused before the count below is even read, and the message names the shape rather than the
+  # arithmetic. This runs for a doc-only commit too, because a malformed bullet reaches the release
+  # either way.
+  if echo "$staged" | grep -qx 'CHANGELOG.md'; then
+    bad="$(git show :CHANGELOG.md | unreleased_shape || true)"
+    if [ -n "$bad" ]; then
+      {
+        echo "✗ pre-commit: a bullet under \`## [Unreleased]\` is not shaped for the release page."
+        echo "$bad" | while IFS="$(printf '\t')" read -r why line; do
+          case "$why" in
+            no-lead)   echo "  no bold lead:   $line" ;;
+            no-group)  echo "  above a group:  $line" ;;
+            bad-group) echo "  unknown group:  $line" ;;
+          esac
+        done
+        echo
+        echo "  Every bullet sits under one of \`### Added\`, \`### Changed\`, \`### Fixed\`,"
+        echo "  \`### Packaging\`, \`### Docs\`, and opens with a bold lead sentence:"
+        echo
+        echo "    ### Fixed"
+        echo
+        echo "    - **The lead sentence, about ten words.** The detail follows here. (#147)"
+        echo
+        echo "  \`scripts/release-notes.ts\` prints that lead on the GitHub Release page."
+        echo "  (Override once with SKIP_VERSION_CHECK=1 git commit.)"
+      } >&2
+      exit 1
+    fi
+  fi
+
   # (2)/(3) changelog-on-change — any functional path in this set must land a CHANGELOG line.
   if echo "$functional" | grep -qE '^(bridge/|cli/|web/src/|web/public/|web/vite\.config\.ts|web/index\.html|web/package\.json|scripts/|systemd/|package\.json|herdr-plugin\.toml)'; then
     read_ver() { sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -1; }
     cur="$(read_ver < "$ROOT/herdr-plugin.toml")"
     prev="$(git show HEAD:herdr-plugin.toml 2>/dev/null | read_ver || true)"
-
-    # Bullets under `## [Unreleased]` in the CHANGELOG on stdin. The section runs from that heading
-    # to the next `## ` heading. Portable awk + grep only — this hook also runs on macOS.
-    unreleased_bullets() {
-      awk '/^## \[Unreleased\]/{p=1;next} /^## /{p=0} p' \
-        | grep -cE '^[[:space:]]*-[[:space:]]' || true
-    }
 
     if [ -n "${prev:-}" ]; then
       if [ "$cur" = "$prev" ]; then
@@ -76,8 +143,10 @@ else
         if [ "$now" -le "$before" ]; then
           cat >&2 <<EOF
 ✗ pre-commit: functional code changed but nothing was recorded.
-  Add one line under \`## [Unreleased]\` in CHANGELOG.md, in the same commit
-  (### Added / ### Changed / ### Fixed; end with (#issue) where one exists, no commit hash),
+  Add one line under \`## [Unreleased]\` in CHANGELOG.md, in the same commit,
+  below one of \`### Added\` / \`### Changed\` / \`### Fixed\` / \`### Packaging\` / \`### Docs\`,
+  opening with a bold lead sentence (\`- **The lead sentence.** detail …\`); end with (#issue) where one
+  exists, and no commit hash;
   or bump the version in herdr-plugin.toml, package.json and web/package.json for a release commit.
   (Doc-only and test-only changes need neither. Override once with SKIP_VERSION_CHECK=1 git commit.)
 EOF
@@ -108,12 +177,17 @@ EOF
   fi
 fi
 
-# ---- (C) pack wire ----------------------------------------------------------------------------
+# ---- (C) crew wire ----------------------------------------------------------------------------
 # The script owns the file list and the message; it reads the staged list we already computed.
-STAGED_FILES="$staged" "$ROOT/scripts/check-pack-wire.sh" >/dev/null
+STAGED_FILES="$staged" "$ROOT/scripts/check-crew-wire.sh" >/dev/null
+
+# ---- (D) flake.lock ---------------------------------------------------------------------------
+# Same shape as (C): the script owns the file list and the message, and reads the staged list we
+# already computed.
+STAGED_FILES="$staged" "$ROOT/scripts/check-flake-lock.sh" >/dev/null
 
 # ---- (B) lint ---------------------------------------------------------------------------------
-# Skipping empties the file set rather than exiting: guard D runs after this one, and an early exit
+# Skipping empties the file set rather than exiting: guard E runs after this one, and an early exit
 # here would disarm it — the hatches are independent.
 if [ "${SKIP_LINT_CHECK:-}" = "1" ]; then
   echo "pre-commit: SKIP_LINT_CHECK=1 — skipping lint guard" >&2
@@ -142,7 +216,7 @@ fi
   fi
 }
 
-# ---- (D) private facts ------------------------------------------------------------------------
+# ---- (E) private facts ------------------------------------------------------------------------
 if [ "${SKIP_PRIVACY_CHECK:-}" = "1" ]; then
   echo "pre-commit: SKIP_PRIVACY_CHECK=1 — skipping private-fact guard" >&2
 else

@@ -18,8 +18,13 @@ interface AddressTagProps {
   name: string;
   /** `sm` (10px) is the row tag; `md` (11px) heads a write surface, where it is a pill among pills. */
   size?: "sm" | "md";
-  /** `alert` is the degraded reading — dashed, in the blocked colour. The caller owns the condition. */
-  tone?: "quiet" | "alert";
+  /**
+   * `alert` is the loud degraded reading — dashed, in the blocked colour. `waiting` is the quiet one:
+   * dashed the same way, in the amber that means "look at this" rather than "this is broken", for a
+   * fault the far side is already fixing by itself (CREW_PROTOCOL.md §10.2's Reconnecting). The
+   * caller owns the condition.
+   */
+  tone?: "quiet" | "waiting" | "alert";
   /**
    * The identity tint, 0-9, from `lib/hosts.ts` `hostSlot`. `null` or absent = no tint, and the tag
    * renders exactly as it always has — which is what a solo install gets, and what a session tag
@@ -46,7 +51,7 @@ interface AddressTagProps {
 // they look different, and they say so.
 //
 // The HIDE RULE lives in the CALLER, not here: whether a dimension is worth naming at all is a fact
-// about the snapshot (is this a pack? is this row's session the primary one?), and each caller owns
+// about the snapshot (is this a crew? is this row's session the primary one?), and each caller owns
 // its own answer. This component renders what it is given.
 export function AddressTag({
   "aria-label": ariaLabel,
@@ -58,8 +63,8 @@ export function AddressTag({
   slot,
   className,
 }: AddressTagProps) {
-  // Alert wins over identity (see `slot`'s doc above): the glyph carries the host tint only on the
-  // quiet reading, never the alert one.
+  // A degraded reading wins over identity (see `slot`'s doc above): the glyph carries the host tint
+  // only on the quiet reading, never on `waiting` or `alert`.
   const glyphTint = tone === "quiet" ? glyphTintClass(slot) : undefined;
   return (
     <span
@@ -71,13 +76,19 @@ export function AddressTag({
         "inline-flex max-w-[8rem] shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 font-medium",
         size === "md" ? "text-[11px]" : "text-[10px]",
         tone === "alert"
-          ? // Unreachable is a STATE, not a disappearance (PACK_PROTOCOL.md §10.2) — it stays
+          ? // Unreachable is a STATE, not a disappearance (CREW_PROTOCOL.md §10.2) — it stays
             // legible, dashed rather than dimmed, so a blocked agent on a down machine is never
             // greyed away.
             "border-dashed border-status-blocked/50 bg-status-blocked/10 text-status-blocked"
-          : // The tag itself never tints — only the glyph does (see `glyphTintClass`). This is the
-            // one literal, untinted reading of the box, on every quiet tag regardless of host.
-            "border-border bg-muted/60 text-muted-foreground",
+          : tone === "waiting"
+            ? // The DASH is the same, because the fault is the same shape: this tag is not taking
+              // writes. Only the hue differs, and it differs down rather than up — `status-working`
+              // is this app's "look at this", and red for a condition the lead clears on its own
+              // poll teaches the operator to ignore red.
+              "border-dashed border-status-working/50 bg-status-working/10 text-status-working"
+            : // The tag itself never tints — only the glyph does (see `glyphTintClass`). This is the
+              // one literal, untinted reading of the box, on every quiet tag regardless of host.
+              "border-border bg-muted/60 text-muted-foreground",
         className,
       )}
     >

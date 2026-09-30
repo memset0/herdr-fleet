@@ -8,6 +8,7 @@ import {
   healthFor,
   hostHealth,
   hostHealthMap,
+  linkPresentation,
   PRESENTED_STALE_MAX_MS,
   staleThresholdMs,
   writeRefusal,
@@ -39,7 +40,7 @@ function member(over: Partial<ServerSummary> = {}): ServerSummary {
 
 const HOT = { at: LEAD_NOW, pollMs: 1500 };
 
-describe("staleThresholdMs — PACK_PROTOCOL.md §10.2", () => {
+describe("staleThresholdMs — CREW_PROTOCOL.md §10.2", () => {
   it("is 3 × pollMs at the hot cadence", () => {
     expect(staleThresholdMs(1500)).toBe(4500);
   });
@@ -147,11 +148,11 @@ describe("writable vs state — refusal is not smoothed", () => {
 
   it("refuses an incompatible member with the peer's reason verbatim", () => {
     const h = hostHealth(
-      member({ protocol: "incompatible", protocolDetail: "pack protocol 2 (this collie speaks 1)" }),
+      member({ protocol: "incompatible", protocolDetail: "crew protocol 2 (this collie speaks 1)" }),
       HOT,
     );
     expect(writeRefusal(h)).toBe(
-      "workshop is running an incompatible Collie — pack protocol 2 (this collie speaks 1)",
+      "workshop is running an incompatible Collie — crew protocol 2 (this collie speaks 1)",
     );
   });
 
@@ -249,9 +250,58 @@ describe("tier 1 stays single — connection-health.ts gains no host dimension",
   });
 
   it("mentions neither `host` nor `reachable` anywhere in its source", () => {
-    // The invariant the spec pins by grep: tier 1 knows nothing about pack members.
+    // The invariant the spec pins by grep: tier 1 knows nothing about crew members.
     const src = stripComments(readFileSync(join(__dirname, "connection-health.ts"), "utf8"));
     expect(src).not.toMatch(/\breachable\b/);
     expect(src).not.toMatch(/\bhosts?\b/i);
+  });
+});
+
+// ── §10.2's presentation split (M22/05) ─────────────────────────────────────
+
+describe("linkPresentation — one value, so a chip's styling and its label cannot drift", () => {
+  it("says nothing about a link that is fine", () => {
+    expect(linkPresentation(false, undefined)).toBe("ok");
+    // Even with a split in hand: `ok` is decided by the caller's condition, not by this field.
+    expect(linkPresentation(false, "attention")).toBe("ok");
+  });
+
+  it("carries the lead's own two readings through unchanged", () => {
+    expect(linkPresentation(true, "reconnecting")).toBe("reconnecting");
+    expect(linkPresentation(true, "attention")).toBe("attention");
+  });
+
+  it("an ABSENT split is today's word, never an invented Reconnecting", () => {
+    // The compatibility rule, in one assertion: a lead older than the field says nothing, and a
+    // phone that guessed "reconnecting" here would tell the operator to wait for a wrong secret.
+    expect(linkPresentation(true, undefined)).toBe("unreachable");
+  });
+});
+
+describe("hostHealth — the split is copied off the snapshot, never derived here", () => {
+  it("carries a member's linkState onto its health", () => {
+    const h = hostHealth(member({ reachable: false, lastSeenAt: 1, linkState: "attention" }), {
+      at: LEAD_NOW,
+      pollMs: 1_500,
+    });
+    expect(h.linkState).toBe("attention");
+    // And the plain boolean it rides beside is untouched — refusal still gates on `writable` alone.
+    expect(h.writable).toBe(false);
+  });
+
+  it("leaves it absent when the lead sent none, on every branch including the lead's own row", () => {
+    expect(hostHealth(member({ isLead: true }), { at: LEAD_NOW, pollMs: 1_500 }).linkState).toBeUndefined();
+    expect(hostHealth(member({ reachable: true }), { at: LEAD_NOW, pollMs: 1_500 }).linkState).toBeUndefined();
+    // A member the roster no longer lists has no reachability fact at all, so it claims none.
+    expect(departedHealth("gone").linkState).toBeUndefined();
+  });
+
+  it("an incompatible member keeps its own verbatim refusal beside the split", () => {
+    const h = hostHealth(
+      member({ reachable: false, protocol: "incompatible", protocolDetail: "speaks 2", lastSeenAt: 1, linkState: "attention" }),
+      { at: LEAD_NOW, pollMs: 1_500 },
+    );
+    expect(h.linkState).toBe("attention");
+    expect(writeRefusal(h)).toContain("speaks 2");
   });
 });

@@ -1,4 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { loadConfig } from "./config.ts";
 
 import {
   type ApiTag,
@@ -13,14 +18,18 @@ import {
   majorOf,
   parsePrereleaseTag,
   parseReleaseManifest,
+  parseReleaseReading,
   parseSemverTag,
   parseTagsResponse,
+  releaseReadingUrl,
+  restartCommandFor,
   shouldNotify,
   stampOf,
   updateDigestBody,
   updatesNewerThan,
   UpdateMonitor,
   type UpdateMonitorDeps,
+  UpdateStateStore,
   type UpdateStore,
 } from "./update.ts";
 
@@ -290,21 +299,44 @@ describe("stampOf", () => {
 function fakeStore(
   initial: string | null = null,
   pushedAt: string | null = null,
-): UpdateStore & { saved: string[]; pushes: string[] } {
+): UpdateStore & { saved: string[]; pushes: string[]; closed: string[]; writes: number } {
   let last = initial;
   let stamp = pushedAt;
+  let dismissed: string | null = null;
+  let dismissedCrew: string | null = null;
   const saved: string[] = [];
   const pushes: string[] = [];
+  const closed: string[] = [];
+  const counter = { writes: 0 };
   return {
     saved,
     pushes,
+    closed,
+    get writes() {
+      return counter.writes;
+    },
     lastNotified: () => last,
     lastPushedAt: () => stamp,
     setLastNotified: async (v, at) => {
+      counter.writes += 1;
       last = v;
       stamp = at;
       saved.push(v);
       pushes.push(at);
+    },
+    dismissedVersion: () => dismissed,
+    dismissedCrewVersion: () => dismissedCrew,
+    setDismissed: async (scope, v, notified) => {
+      counter.writes += 1;
+      if (scope === "offer") dismissed = v;
+      else dismissedCrew = v;
+      closed.push(`${scope}:${v}`);
+      if (notified !== undefined) {
+        last = notified.version;
+        stamp = notified.pushedAt;
+        saved.push(notified.version);
+        pushes.push(notified.pushedAt);
+      }
     },
   };
 }
@@ -327,9 +359,94 @@ describe("the update run record on the snapshot", () => {
     expect(monitor.status().run).toEqual(run);
   });
 
+  it("names the package command only where the host resolved one", () => {
+    // Assigned, never spread as `undefined`: an install with none must carry NO key. The phone's
+    // fallback to the preflight remedy depends on the difference between absent and empty.
+    expect("packageCommand" in makeMonitor().monitor.status()).toBe(false);
+    const packaged = makeMonitor({ installKind: "packaged", packageCommand: "sudo pacman -Syu collie-bin" });
+    expect(packaged.monitor.status().packageCommand).toBe("sudo pacman -Syu collie-bin");
+  });
+
   it("an install that has never updated carries no run key at all", () => {
     const { monitor } = makeMonitor();
     expect("run" in monitor.status()).toBe(false);
+  });
+});
+
+describe("restart needed — the files moved under a running process", () => {
+  it("is quiet while disk still names the version this process runs", () => {
+    const status = makeMonitor().monitor.status();
+    expect(status.restartNeeded).toBe(false);
+    // Nothing to restart, nothing to name: the command key is absent, not empty.
+    expect("restartCommand" in status).toBe(false);
+  });
+
+  it("is raised the moment a live read disagrees with the version captured at boot", () => {
+    // Exactly what `pacman -Syu` does: the files become 1.6.0 while this process is still 1.5.0.
+    let onDisk = "1.5.0";
+    const { monitor, tick } = makeMonitor({
+      current: "1.5.0",
+      bootVersion: "1.5.0",
+      liveVersion: () => onDisk,
+    });
+    expect(monitor.status().restartNeeded).toBe(false);
+    onDisk = "1.6.0";
+    tick(10_000); // past the throttle the read shares with `bridgeStale`
+    expect(monitor.status().restartNeeded).toBe(true);
+
+    // Not latched: a package manager that puts the old files back leaves a process that matches disk
+    // again, and asking for a restart nobody needs is worse than saying nothing.
+    onDisk = "1.5.0";
+    tick(10_000);
+    expect(monitor.status().restartNeeded).toBe(false);
+  });
+
+  it("is raised when the EXECUTABLE moved and no version string did — the same-version rebuild", () => {
+    // `pacman -U` of a new pkgrel: the files on disk still name 1.5.0, the process still runs 1.5.0,
+    // and the binary behind it is a different file. Version-only detection is blind to this.
+    let replaced = false;
+    const { monitor, tick } = makeMonitor({
+      current: "1.5.0",
+      installKind: "packaged",
+      bootVersion: "1.5.0",
+      liveVersion: () => "1.5.0",
+      exeReplaced: () => replaced,
+    });
+    expect(monitor.status().restartNeeded).toBe(false);
+    replaced = true;
+    tick(10_000); // the same throttle the version read is behind
+    const status = monitor.status();
+    expect(status.restartNeeded).toBe(true);
+    expect(status.restartCommand).toBe("collie restart");
+
+    // Not latched, exactly as the version half is not.
+    replaced = false;
+    tick(10_000);
+    expect(monitor.status().restartNeeded).toBe(false);
+  });
+
+  it("restart command for the install kind, never a hard-coded string", () => {
+    // Two spellings, and the kind is the whole of what picks one (M14/01 §5.3).
+    expect(restartCommandFor("detached-checkout", null)).toBe("herdr plugin action invoke restart --plugin herdr.collie");
+    // A named instance is registered with Herdr under its own suffixed plugin id, and the bare id is
+    // the host's FIRST Collie — so printing it would restart a service this one does not own.
+    expect(restartCommandFor("detached-checkout", "next")).toBe(
+      "herdr plugin action invoke restart --plugin herdr.collie-next",
+    );
+    // A PACKAGED install takes the `collie` verb like any other non-Herdr kind. Our package ships no
+    // unit file at all — `collie start` writes the operator's own `--user` unit — so the system-unit
+    // spelling would name a unit that does not exist and ask for a password to restart it.
+    for (const kind of ["packaged", "linked-clone", "binary", "unknown"] as const) {
+      expect(restartCommandFor(kind, "next")).toBe("collie restart");
+    }
+    expect(restartCommandFor("packaged", null)).not.toContain("sudo");
+
+    // And the snapshot names the one this machine takes, off the same function.
+    const swapped = { bootVersion: "1.5.0", liveVersion: () => "1.6.0" };
+    for (const kind of ["packaged", "detached-checkout", "binary"] as const) {
+      const status = makeMonitor({ installKind: kind, ...swapped }).monitor.status();
+      expect(status.restartCommand).toBe(restartCommandFor(kind, null));
+    }
   });
 });
 
@@ -339,6 +456,8 @@ const apiTags = (...names: string[]): ApiTag[] => names.map((name) => ({ name, s
 
 function makeMonitor(over: Partial<UpdateMonitorDeps> = {}) {
   const notified: string[] = [];
+  /** Every push, with the link change it carried — the digest body is built from the pair. */
+  const pushes: { versions: string[]; linkChange: { from: number; to: number } | null }[] = [];
   const store = fakeStore();
   // 10:00 on a fixed LOCAL day: past the digest's earliest hour, so these tests exercise the monitor
   // rather than the clock. `tick` moves it forward within the same morning unless a test says otherwise.
@@ -347,18 +466,32 @@ function makeMonitor(over: Partial<UpdateMonitorDeps> = {}) {
     repo: "AltanS/collie",
     current: "0.11.0",
     installKind: "detached-checkout",
+    instance: null,
+    packageCommand: null,
+    bootVersion: "0.11.0",
+    liveVersion: () => "0.11.0",
+    // The executable is where it was unless a case moves it — the ordinary machine.
+    exeReplaced: () => false,
     startupStamp: "STAMP@boot",
     fetchTags: async () => apiTags("v0.12.0"),
+    // A CREW, and a release that says nothing about the wire — the shape of every release before
+    // 1.8.0, and the default every case that is not about the link inherits (M27/06).
+    crewProtocol: 2,
+    crewMode: () => "lead",
+    fetchReleaseReading: async () => null,
     bridgeStamp: () => "STAMP@boot",
     store,
     // No run on disk unless a case says so — the shape every install that has never updated has.
     runState: () => null,
     now: () => clock,
     updatesEnabled: () => true,
-    notify: (versions) => notified.push(...versions),
+    notify: (versions, linkChange) => {
+      notified.push(...versions);
+      pushes.push({ versions, linkChange });
+    },
     ...over,
   });
-  return { monitor, notified, store, tick: (ms: number) => (clock += ms) };
+  return { monitor, notified, pushes, store, tick: (ms: number) => (clock += ms) };
 }
 
 describe("UpdateMonitor", () => {
@@ -471,6 +604,9 @@ describe("UpdateMonitor", () => {
     const wrapped: UpdateStore = {
       lastNotified: store.lastNotified,
       lastPushedAt: store.lastPushedAt,
+      dismissedVersion: store.dismissedVersion,
+      dismissedCrewVersion: store.dismissedCrewVersion,
+      setDismissed: store.setDismissed,
       setLastNotified: async (v, at) => {
         order.push(`persist:${v}`);
         await store.setLastNotified(v, at);
@@ -676,5 +812,252 @@ describe("parseReleaseManifest", () => {
     expect(v.ok).toBe(true);
     if (!v.ok) return;
     expect(v.manifest.artifacts).toHaveLength(1);
+  });
+});
+
+// ── The band's dismissal (M17/08) ─────────────────────────────────────────────
+//
+// A dismissal is a decision about THIS MACHINE's update, so it is kept here rather than in one
+// browser's storage — and it is one act, not two: the version is recorded and the digest is snoozed
+// in the same call, because closing the band and then being pushed the same version tomorrow is the
+// app arguing with a decision already made.
+
+const dismissDirs: string[] = [];
+async function tempCfg() {
+  const stateDir = await mkdtemp(join(tmpdir(), "collie-update-dismiss-"));
+  dismissDirs.push(stateDir);
+  return { ...loadConfig(), stateDir };
+}
+
+afterAll(async () => {
+  await Promise.all(dismissDirs.map((d) => rm(d, { recursive: true, force: true })));
+});
+
+describe("the dismissed version", () => {
+  it("round-trips both scopes through the store, in one file beside the push record", async () => {
+    const cfg = await tempCfg();
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedVersion()).toBeNull(); // nothing saved yet reads as nothing dismissed
+    expect(store.dismissedCrewVersion()).toBeNull();
+
+    await store.setDismissed("offer", "1.6.0", { version: "1.6.0", pushedAt: "2026-09-07T09:00:00.000Z" });
+    await store.setDismissed("crew", "1.5.0");
+
+    const reloaded = new UpdateStateStore(cfg);
+    await reloaded.load();
+    expect(reloaded.dismissedVersion()).toBe("1.6.0");
+    // Two decisions, two fields: the crew notice was put down at a DIFFERENT version and neither
+    // overwrote the other.
+    expect(reloaded.dismissedCrewVersion()).toBe("1.5.0");
+    // The offer's dismissal folded the snooze into the same write — a crash between two writes
+    // cannot leave a band closed with the push still armed for it.
+    expect(reloaded.lastNotified()).toBe("1.6.0");
+    expect(reloaded.lastPushedAt()).toBe("2026-09-07T09:00:00.000Z");
+  });
+
+  it("reads a record that carries neither key as nothing dismissed", async () => {
+    const cfg = await tempCfg();
+    await Bun.write(
+      join(cfg.stateDir, "update-state.json"),
+      JSON.stringify({ lastNotified: "1.5.0", lastPushedAt: "2026-09-06T09:00:00.000Z" }),
+    );
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedVersion()).toBeNull();
+    expect(store.dismissedCrewVersion()).toBeNull();
+    expect(store.lastNotified()).toBe("1.5.0"); // and the record beside them is still believed
+  });
+
+  // REMOVE_IN_1_9_0: `dismissedPackVersion` is 1.7.0's name for `dismissedCrewVersion`, so a record
+  // written by that build has to be read once under the old key. Three records, one per shape a
+  // real state dir can hold during the roll: the old key alone, the new key alone, and both.
+  it("reads 1.7.0's `dismissedPackVersion` when the crew key is absent", async () => {
+    const cfg = await tempCfg();
+    await Bun.write(
+      join(cfg.stateDir, "update-state.json"),
+      JSON.stringify({ dismissedVersion: "1.6.0", dismissedPackVersion: "1.5.0" }),
+    );
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedCrewVersion()).toBe("1.5.0");
+    expect(store.dismissedVersion()).toBe("1.6.0");
+    // And the next dismissal writes the record back under the NEW key alone.
+    await store.setDismissed("crew", "1.7.0");
+    const back = await Bun.file(join(cfg.stateDir, "update-state.json")).text();
+    expect(back).toContain('"dismissedCrewVersion": "1.7.0"');
+    expect(back).not.toContain("dismissedPackVersion");
+  });
+
+  it("reads the crew key on its own", async () => {
+    const cfg = await tempCfg();
+    await Bun.write(join(cfg.stateDir, "update-state.json"), JSON.stringify({ dismissedCrewVersion: "1.5.0" }));
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedCrewVersion()).toBe("1.5.0");
+  });
+
+  it("prefers the crew key when a record carries both", async () => {
+    const cfg = await tempCfg();
+    await Bun.write(
+      join(cfg.stateDir, "update-state.json"),
+      JSON.stringify({ dismissedCrewVersion: "1.5.0", dismissedPackVersion: "1.4.0" }),
+    );
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedCrewVersion()).toBe("1.5.0");
+  });
+
+  it("a dismissed offer for the release upstream names also snoozes the digest, in one write", async () => {
+    const { monitor, store } = makeMonitor();
+    await monitor.checkRelease();
+    expect(store.saved).toEqual(["0.12.0"]); // the first push announced it
+    const before = store.writes;
+
+    await monitor.dismiss("0.12.0");
+    expect(store.closed).toEqual(["offer:0.12.0"]);
+    expect(store.lastNotified()).toBe("0.12.0");
+    expect(store.writes - before).toBe(1); // one act, one write
+    expect(monitor.status().dismissedVersion).toBe("0.12.0");
+  });
+
+  it("a dismiss with scope crew hides a notice and leaves lastNotified alone", async () => {
+    const { monitor, store } = makeMonitor();
+    await monitor.checkRelease();
+    const notified = store.lastNotified();
+
+    await monitor.dismiss("0.12.0", "crew");
+    expect(store.closed).toEqual(["crew:0.12.0"]);
+    // The push is about THIS machine; the notice was about another one. Hiding it silences nothing.
+    expect(store.lastNotified()).toBe(notified);
+    expect(monitor.status().dismissedCrewVersion).toBe("0.12.0");
+    expect(monitor.status().dismissedVersion).toBeNull(); // and the offer is untouched
+  });
+
+  it("a dismissed offer for a version that is not latest leaves lastNotified alone", async () => {
+    const { monitor, store } = makeMonitor();
+    await monitor.checkRelease();
+    const notified = store.lastNotified();
+
+    // Closing a band about 0.11.9 says nothing about the 0.12.0 the digest would push, and moving
+    // the record there would swallow the version upstream is actually naming.
+    await monitor.dismiss("0.11.9");
+    expect(monitor.status().dismissedVersion).toBe("0.11.9");
+    expect(store.lastNotified()).toBe(notified);
+  });
+
+  it("a dismiss is not a mute — a newer release is a different version and raises the band", async () => {
+    const { monitor } = makeMonitor();
+    await monitor.checkRelease();
+    await monitor.dismiss("0.12.0");
+    expect(monitor.status()).toMatchObject({ latest: "0.12.0", dismissedVersion: "0.12.0" });
+    // The snapshot keeps saying a release is available; only the BAND reads the two together, and it
+    // reads them as different facts the moment upstream moves on.
+    expect(monitor.status().releaseAvailable).toBe(true);
+  });
+});
+
+// ── The release reading and the link change (M27/06) ─────────────────────────
+
+describe("the release reading", () => {
+  it("names the asset under the release's own tag, constructed from repo and version", () => {
+    expect(releaseReadingUrl("AltanS/collie", "1.8.0")).toBe(
+      "https://github.com/AltanS/collie/releases/download/v1.8.0/collie-release.json",
+    );
+  });
+
+  it("parses the document, and refuses anything that is not one", () => {
+    expect(parseReleaseReading({ version: "1.8.0", crewProtocol: 2 })).toEqual({
+      version: "1.8.0",
+      crewProtocol: 2,
+    });
+    // Unknown fields are ignored — a later release may add to it.
+    expect(parseReleaseReading({ version: "1.8.0", crewProtocol: 2, extra: "x" })).toEqual({
+      version: "1.8.0",
+      crewProtocol: 2,
+    });
+    // MALFORMED, every way it can be: not an object, no version, no number, a fractional number.
+    expect(parseReleaseReading(null)).toBeNull();
+    expect(parseReleaseReading([1, 2])).toBeNull();
+    expect(parseReleaseReading({ crewProtocol: 2 })).toBeNull();
+    expect(parseReleaseReading({ version: "1.8.0" })).toBeNull();
+    expect(parseReleaseReading({ version: "1.8.0", crewProtocol: "2" })).toBeNull();
+    expect(parseReleaseReading({ version: "1.8.0", crewProtocol: 2.5 })).toBeNull();
+  });
+});
+
+describe("UpdateMonitor — the link change", () => {
+  const asset = (crewProtocol: number) => async (version: string) => ({ version, crewProtocol });
+
+  it("is set when the release speaks a DIFFERENT wire, and rides the push", async () => {
+    const { monitor, pushes } = makeMonitor({
+      current: "1.7.0",
+      crewProtocol: 1,
+      crewMode: () => "lead",
+      fetchTags: async () => apiTags("v1.8.0"),
+      fetchReleaseReading: asset(2),
+    });
+    await monitor.checkRelease();
+    expect(monitor.status().linkChange).toEqual({ from: 1, to: 2 });
+    // The push says it too, appended to a body that is otherwise what it always was.
+    expect(pushes).toEqual([{ versions: ["1.8.0"], linkChange: { from: 1, to: 2 } }]);
+    expect(updateDigestBody("1.7.0", ["1.8.0"], { from: 1, to: 2 })).toBe(
+      "Collie 1.8.0 is available. Changes the crew link. Update the lead first, members follow.",
+    );
+  });
+
+  it("is absent when the release speaks the wire this install already speaks", async () => {
+    const { monitor, pushes } = makeMonitor({
+      current: "1.8.0",
+      crewProtocol: 2,
+      crewMode: () => "peer",
+      fetchTags: async () => apiTags("v1.8.1"),
+      fetchReleaseReading: asset(2),
+    });
+    await monitor.checkRelease();
+    expect(monitor.status().linkChange).toBeUndefined();
+    expect(pushes[0]?.linkChange).toBeNull();
+    // And the body is byte-identical to the one every release before this always produced.
+    expect(updateDigestBody("1.8.0", ["1.8.1"], null)).toBe("Collie 1.8.1 is available");
+  });
+
+  it("is absent when the release published no asset at all — every release before 1.8.0", async () => {
+    // A 404 is what the fetcher answers with null, and null is "the release says nothing".
+    const { monitor } = makeMonitor({
+      current: "1.6.0",
+      crewProtocol: 2,
+      crewMode: () => "lead",
+      fetchTags: async () => apiTags("v1.7.0"),
+      fetchReleaseReading: async () => null,
+    });
+    await monitor.checkRelease();
+    expect(monitor.status().linkChange).toBeUndefined();
+  });
+
+  it("is absent when the asset is MALFORMED, and the check still answers", async () => {
+    // The fetcher parses before it returns, so a truncated or foreign document reaches the monitor
+    // as null. What matters here is that the rest of the check is untouched by it.
+    const { monitor } = makeMonitor({
+      current: "1.7.0",
+      crewProtocol: 1,
+      crewMode: () => "lead",
+      fetchTags: async () => apiTags("v1.8.0"),
+      fetchReleaseReading: async () => parseReleaseReading({ version: "1.8.0", crewProtocol: "two" }),
+    });
+    await monitor.checkRelease();
+    expect(monitor.status()).toMatchObject({ latest: "1.8.0", releaseAvailable: true });
+    expect(monitor.status().linkChange).toBeUndefined();
+  });
+
+  it("is absent on a SOLO install — there is no link to change", async () => {
+    const { monitor } = makeMonitor({
+      current: "1.7.0",
+      crewProtocol: 1,
+      crewMode: () => "solo",
+      fetchTags: async () => apiTags("v1.8.0"),
+      fetchReleaseReading: asset(2),
+    });
+    await monitor.checkRelease();
+    expect(monitor.status().linkChange).toBeUndefined();
   });
 });

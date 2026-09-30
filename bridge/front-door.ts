@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
-import type { PackMode } from "./types.ts";
+import type { CrewMode } from "./types.ts";
 import { findTool } from "./tools.ts";
 
 // The ONE managed front door's ownership record, and the only code that takes it down. ADR 0001 is
@@ -115,6 +115,27 @@ export const instanceSuffixOf = (instance: string | null | undefined): string =>
   const raw = (instance ?? "").trim();
   return raw === "" ? "" : `-${raw}`;
 };
+
+/** The Herdr plugin id of the host's FIRST Collie — the unsuffixed one. `cli/context.ts` re-exports it. */
+export const PLUGIN_ID = "herdr.collie";
+
+/**
+ * The Herdr plugin id THIS Collie is registered under — `herdr.collie`, or `herdr.collie-next` for
+ * `COLLIE_INSTANCE=next`. The same join as the plugin config dir, from the same suffix.
+ *
+ * Here, beside {@link instanceSuffixOf}, for the reason that lives there: the bridge prints this id
+ * too, and a second copy of the join is a second instance telling the operator to restart the first.
+ */
+export const pluginIdFor = (instance: string | null): string => `${PLUGIN_ID}${instanceSuffixOf(instance)}`;
+
+/**
+ * The Herdr command that invokes one action on THIS Collie. The one place it is spelled.
+ *
+ * Every operator-facing "run this to restart/update me" line goes through here. A named instance
+ * that printed the bare `--plugin herdr.collie` would be naming another service on the same host.
+ */
+export const herdrActionCommand = (action: string, instance: string | null): string =>
+  `herdr plugin action invoke ${action} --plugin ${pluginIdFor(instance)}`;
 
 /** Where the ownership record for one instance lives. The one place this path is written. */
 export const managedHandlerPath = (configDir: string, suffix: string): string =>
@@ -326,7 +347,7 @@ function readFingerprint(deps: FrontDoorDeps, record: OwnershipRecord): string |
 // ── Should this process take its own front door down? ────────────────────────
 
 /**
- * The whole decision, as data (PACK_PROTOCOL.md §3: a peer publishes nothing; ADR 0013).
+ * The whole decision, as data (CREW_PROTOCOL.md §3: a peer publishes nothing; ADR 0013).
  *
  * | mode   | deposed | a record of ours | verdict |
  * |--------|---------|------------------|---------|
@@ -337,15 +358,15 @@ function readFingerprint(deps: FrontDoorDeps, record: OwnershipRecord): string |
  * | any    | –       | no               | keep    |
  *
  * `deposed` covers the machine whose demotion did NOT complete — a parked ex-lead still holds a
- * front door for a pack that has moved on, and its own health check now fails behind it, so the
- * mapping is doing nothing but black-holing the pack's hostname.
+ * front door for a crew that has moved on, and its own health check now fails behind it, so the
+ * mapping is doing nothing but black-holing the crew's hostname.
  *
  * **A missing record is `keep`, not "look around".** An unrecorded mapping is by definition not
  * ours (ADR 0001), and a boot that went hunting for one would be exactly the behaviour this file
  * exists to make impossible.
  */
 export function shouldReleaseFrontDoor(input: {
-  mode: PackMode;
+  mode: CrewMode;
   deposed: boolean;
   hasRecord: boolean;
 }): boolean {

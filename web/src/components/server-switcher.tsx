@@ -5,9 +5,9 @@ import { Check, Crown, Network, Server } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { BottomSheet } from "@/components/ui/sheet";
-import { homePath, packPath } from "@/lib/nav";
-import { hostHealth } from "@/lib/host-health";
-import { usePack } from "@/components/pack-provider";
+import { crewPath, homePath } from "@/lib/nav";
+import { hostHealth, linkPresentation, type HostHealth } from "@/lib/host-health";
+import { useCrew } from "@/components/crew-provider";
 import { HOST_TEXT_CLASSES, countsFor, hostCounts, hostSlot } from "@/lib/hosts";
 import type { Scope } from "@/lib/scope";
 import type { AgentView, ServerSummary } from "@/lib/types";
@@ -15,7 +15,7 @@ import { t, tn } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
 interface ServerSwitcherProps {
-  /** The snapshot's pack roster, lead first. Empty/one-entry on a solo install — the trigger hides. */
+  /** The snapshot's crew roster, lead first. Empty/one-entry on a solo install — the trigger hides. */
   servers: ServerSummary[];
   /** The scope currently being viewed. Only its host changes here; the session rides through. */
   scope: Scope;
@@ -51,7 +51,7 @@ interface ServerSwitcherProps {
 // degraded to say what you will find there.
 //
 // ── AND WHAT IT IS NOT ───────────────────────────────────────────────────────
-// Not pack administration. It lists members and lets you go to one; join / leave / promote / rotate
+// Not crew administration. It lists members and lets you go to one; join / leave / promote / rotate
 // are CLI verbs, and an unreachable row gets no "reconnect" button — the lead is already retrying on
 // its own poll, and a button that only looks like it helps is worse than none.
 // A module-level empty list, not a `= []` default in the parameter list: a fresh array literal on
@@ -67,7 +67,7 @@ export function ServerSwitcher({ servers, scope, agents = NO_PANES }: ServerSwit
   // `lastSeenAt` is comparable to — lib/host-health.ts). Mounted outside a provider (this component's
   // own unit tests), the fallback re-derives with no clock at all, which skips §10.2's tolerance and
   // presents the lead's plain boolean — the same answer this sheet gave before the threshold existed.
-  const { health } = usePack();
+  const { health } = useCrew();
 
   const reachableCount = servers.filter((s) => s.reachable).length;
   const onPeer = current !== undefined;
@@ -148,7 +148,7 @@ export function ServerSwitcher({ servers, scope, agents = NO_PANES }: ServerSwit
                             {t("connection.host.lead")}
                           </span>
                         )}
-                        {/* Listed, never hidden (PACK_PROTOCOL.md §10.2): a member that is down or
+                        {/* Listed, never hidden (CREW_PROTOCOL.md §10.2): a member that is down or
                             speaking another protocol keeps its row, its counts and an honest reason.
                             A vanished machine reads as "I have no agents there", which is a lie. */}
                         {h.incompatible ? (
@@ -168,9 +168,7 @@ export function ServerSwitcher({ servers, scope, agents = NO_PANES }: ServerSwit
                                   receipt beside `reachable: true` is an old receipt, not a down
                                   machine, and this row spelled it "unreachable" beside a peer whose
                                   every request was landing. See host-stale-banner.tsx's table. */}
-                              {h.writable
-                                ? h.lastSeenLabel
-                                : t("connection.host.unreachableSuffix", { label: h.lastSeenLabel })}
+                              {h.writable ? h.lastSeenLabel : degradedLabel(h)}
                             </span>
                           )
                         )}
@@ -205,7 +203,7 @@ export function ServerSwitcher({ servers, scope, agents = NO_PANES }: ServerSwit
           </ul>
 
           {/* The way OUT of the switcher and into the whole picture. The sheet answers "which
-              machine do I want", one row at a time; the census answers "is my pack well" — secret
+              machine do I want", one row at a time; the census answers "is my crew well" — secret
               generation, deputy, version skew, a second lead — which is more than a row can hold and
               less than a sheet should try. Still not administration: it goes to a page that reports
               and nothing more. */}
@@ -213,16 +211,30 @@ export function ServerSwitcher({ servers, scope, agents = NO_PANES }: ServerSwit
             type="button"
             onClick={() => {
               setOpen(false);
-              navigate(packPath(scope));
+              navigate(crewPath(scope));
             }}
             className="mt-1 flex w-full items-center gap-2.5 rounded-lg border-t border-rule px-3 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent active:bg-accent"
           >
             <Network className="size-4 shrink-0" />
-            {t("pack.entry.title")}
+            {t("crew.entry.title")}
           </button>
         </BottomSheet>,
         document.body,
       )}
     </>
   );
+}
+
+/**
+ * The word beside a member this lead cannot write to, with its receipt age — §10.2's presentation
+ * split, in the same three readings the host chip gives (lib/host-health.ts `linkPresentation`).
+ *
+ * `reconnecting` keeps the row plain on purpose: the lead is retrying inside its budget, the row is
+ * still listed with its counts, and there is nothing here for the operator to do.
+ */
+function degradedLabel(h: HostHealth): string {
+  const link = linkPresentation(true, h.linkState);
+  if (link === "reconnecting") return t("connection.host.reconnectingSuffix", { label: h.lastSeenLabel });
+  if (link === "attention") return t("connection.host.attentionSuffix", { label: h.lastSeenLabel });
+  return t("connection.host.unreachableSuffix", { label: h.lastSeenLabel });
 }

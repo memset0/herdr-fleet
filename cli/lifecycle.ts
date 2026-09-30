@@ -5,7 +5,7 @@ import { collieVersion, type CliContext, type Environment, type EnvVars } from "
 import { EXIT, type Io } from "./io.ts";
 import { ensureMuxChosen } from "./mux.ts";
 import type { StatusView, Ui } from "./render.ts";
-import { cmdUnserve, packModeOnDisk, type ServeDeps } from "./serve.ts";
+import { cmdUnserve, crewModeOnDisk, type ServeDeps } from "./serve.ts";
 import type { Exec, Files } from "./sys.ts";
 import {
   bridgeUrl,
@@ -55,7 +55,7 @@ export interface LifecycleDeps extends ServeDeps {
    * (the pre-shim collie-ctl.sh), which has nothing to say about serve-status fixtures.
    * `uninstall`, whose relationship to `unserve` is the opposite — it aborts — calls it directly.
    *
-   * The optional `io` mirrors `restart`'s: on the rich `pack add` path this whole call happens
+   * The optional `io` mirrors `restart`'s: on the rich `crew add` path this whole call happens
    * INSIDE the restart bracket (`cmdRestart` → `cmdStart` → here), so the teardown/republish lines
    * `cmdServe` prints must land on the same held-chatter `Io` as the rest of that restart, not on
    * whatever `Io` this seam was originally built with. `start` passes its own `deps.io` — a no-op
@@ -79,11 +79,49 @@ export type Tier = "systemd" | "launchd" | "unsupervised";
 
 const TIERS: readonly Tier[] = ["systemd", "launchd", "unsupervised"];
 
+/** `/run/user/<uid>`, and its bus socket when `withBus`. See {@link systemdUserReachable}. */
+function derivedSessionEnv(uid: number, withBus: boolean): EnvVars {
+  const runtimeDir: EnvVars = { XDG_RUNTIME_DIR: `/run/user/${uid}` };
+  if (!withBus) return runtimeDir;
+  return { ...runtimeDir, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus` };
+}
+
 /**
- * Which supervisor runs the bridge. `systemctl --user show-environment` succeeding — not merely
- * `systemctl` existing — is the gate, because a container or a machine with no user instance has
- * the binary and no bus (the pre-shim collie-ctl.sh). launchd is gated on Darwin too: the
- * `gui/<uid>` domain is Darwin-only.
+ * Whether the systemd user manager is actually reachable — `systemctl --user show-environment`
+ * succeeding, not merely `systemctl`/`systemd-run` existing on disk. A container commonly ships
+ * the systemd package (so the binaries are on `PATH`) without ever running a user instance or
+ * session bus, and `capture` fails distinctly from "not found": found, nonzero, `$DBUS_SESSION_BUS_
+ * ADDRESS` unset. Exported so every caller that needs "can I actually ask systemd to do something"
+ * — not just "is a binary present" — asks the same question the same way; `cli/update.ts`'s
+ * `handOff` learned the difference the hard way, retrying a doomed `systemd-run` forever.
+ *
+ * `systemctl --user` locates the manager through `XDG_RUNTIME_DIR` (or `DBUS_SESSION_BUS_ADDRESS`)
+ * in `env`. A Herdr plugin action injects neither (`HERDR_SOCKET_PATH` / `HERDR_PLUGIN_CONFIG_DIR`
+ * and nothing else — no login shell), so a healthy host would fail this probe and read as
+ * "unsupervised" on that spawn path alone (#194). When `env` lacks `XDG_RUNTIME_DIR`, a failed
+ * first probe is retried once with a derived default (`/run/user/<uid>`, plus a derived
+ * `DBUS_SESSION_BUS_ADDRESS` when that is ALSO unset) layered under the probe's own env via
+ * {@link Exec.capture}'s `envAdd` — never into `process.env`, and never overriding a name `env`
+ * already carries, so an operator's own value (or the `.env` workaround) still wins. The container
+ * case is preserved: with no user manager at all, the retry fails too, and this still reports false.
+ */
+export function systemdUserReachable(exec: Exec, env: Environment = {}): boolean {
+  const probe = exec.capture("systemctl", ["--user", "show-environment"]);
+  if (probe.found && probe.code === 0) return true;
+  if (env.XDG_RUNTIME_DIR !== undefined) return false;
+  const uid = process.getuid?.() ?? 0;
+  const envAdd =
+    env.DBUS_SESSION_BUS_ADDRESS === undefined
+      ? derivedSessionEnv(uid, true)
+      : derivedSessionEnv(uid, false);
+  const retried = exec.capture("systemctl", ["--user", "show-environment"], undefined, envAdd);
+  return retried.found && retried.code === 0;
+}
+
+/**
+ * Which supervisor runs the bridge. {@link systemdUserReachable} is the gate, because a container
+ * or a machine with no user instance has the binary and no bus (the pre-shim collie-ctl.sh).
+ * launchd is gated on Darwin too: the `gui/<uid>` domain is Darwin-only.
  *
  * `COLLIE_SUPERVISOR` pins the answer. The shell had no such knob because its tests could redefine
  * `have_launchd` in a heredoc; a compiled binary cannot be monkey-patched, so without this the
@@ -99,8 +137,7 @@ export function supervisionTier(
   const pinned = env.COLLIE_SUPERVISOR?.trim();
   const named = TIERS.find((tier) => tier === pinned);
   if (named !== undefined) return named;
-  const probe = exec.capture("systemctl", ["--user", "show-environment"]);
-  if (probe.found && probe.code === 0) return "systemd";
+  if (systemdUserReachable(exec, env)) return "systemd";
   if (platform === "darwin" && exec.which("launchctl") !== null) return "launchd";
   return "unsupervised";
 }
@@ -120,6 +157,18 @@ export const logFilePath = (configDir: string, instance: string | null = null): 
 // ── The pidfile guard ────────────────────────────────────────────────────────
 
 /**
+ * A binary install's own path names the version directory it runs from
+ * (`<installRoot>/versions/<version>/bin/collie`), and that segment is exactly what a restart
+ * changes: `pluginRoot()` resolves `ctx.root` from `process.execPath`, so the process carrying out
+ * a post-flip restart names ITS OWN (new) version, never the prior one it needs to recognise as its
+ * own bridge in order to stop it. Collapsing the version segment answers "same install" without
+ * caring which version either side is — a checkout's binary has no such segment and is untouched.
+ */
+function collapseVersionDir(path: string): string {
+  return path.replace(/\/versions\/[^/\s]+\//, "/");
+}
+
+/**
  * Is `commandLine` one of our own bridges? The pidfile outlives its process (SIGKILL, a panic, a
  * reboot) and pids get recycled, so a kill has to be justified by the process table — and this also
  * runs on `start`, where a wrong guess kills a bystander (the pre-shim collie-ctl.sh).
@@ -127,6 +176,13 @@ export const logFilePath = (configDir: string, instance: string | null = null): 
  * The shell matched `bridge/index.ts`, the tail of its `ExecStart`. That string does not appear in
  * the compiled binary's command line, so the predicate moves in lockstep with `ExecStart`: the
  * program we launch, plus the role argument that distinguishes the daemon from a CLI invocation.
+ *
+ * The comparison runs on both sides with their version directory collapsed (see
+ * {@link collapseVersionDir}), so a binary install's post-flip restart recognises the bridge it is
+ * about to replace even though that bridge names a different version than this process does — the
+ * one case `process.execPath`-derived paths never agree on, and a self-update wedges forever if this
+ * predicate cannot see past it. Everything outside that one segment still has to match exactly, so a
+ * bystander under a different install root is refused exactly as before.
  *
  * And, since two instances can run out of ONE checkout, plus the instance marker `bridgeCommand`
  * puts there. It is checked in both directions: a suffixed instance demands its own `--instance
@@ -138,7 +194,12 @@ export function isOurBridge(
   binary: string,
   instance: string | null = null,
 ): boolean {
-  if (!commandLine.includes(binary) || !commandLine.includes("_exec-bridge")) return false;
+  if (
+    !collapseVersionDir(commandLine).includes(collapseVersionDir(binary)) ||
+    !commandLine.includes("_exec-bridge")
+  ) {
+    return false;
+  }
   return instance === null
     ? !/--instance(\s|=)/.test(commandLine)
     : new RegExp(`--instance(\\s+|=)${instance}(\\s|$)`).test(commandLine);
@@ -572,10 +633,10 @@ export async function statusView(deps: LifecycleDeps): Promise<StatusView> {
   // none (ADR 0013) — `cmdServe` refuses the publish and says so — so a `tailnet` row here was a row
   // about a door that is not there, offering a loopback URL that is not even a peer's bind (the
   // `local` row above says what is). Asked of the same function that takes the publish decision, so
-  // the banner and the refusal can never disagree. The pack's door is named instead, because "where
+  // the banner and the refusal can never disagree. The crew's door is named instead, because "where
   // do I point my phone?" still has an answer on a peer: the lead's (F24).
-  if (packModeOnDisk(deps) === "peer") {
-    rows.push({ label: "pack", value: "peer — no front door here; the lead's door serves the pack (ADR 0013)" });
+  if (crewModeOnDisk(deps) === "peer") {
+    rows.push({ label: "crew", value: "peer — no front door here; the lead's door serves the crew (ADR 0013)" });
   } else if (deps.ctx.env.COLLIE_SKIP_SERVE === "1") {
     const url = configuredPublicUrl(deps.ctx.env);
     rows.push({

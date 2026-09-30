@@ -1,4 +1,4 @@
-import { type OpsRecord, PackOpsStore } from "../bridge/pack/ops-store.ts";
+import { type OpsRecord, CrewOpsStore } from "../bridge/crew/ops-store.ts";
 import type { CliContext, Environment } from "./context.ts";
 import { effectiveServePort, instanceSuffix } from "./context.ts";
 import type { Io } from "./io.ts";
@@ -23,11 +23,17 @@ export interface FakeExec extends Exec {
   /**
    * `<tool> <args…>` for every call, in order. A {@link Exec.runIn} call is recorded with its
    * working directory prefixed — `<cwd>$ <tool> <args…>` — because for the build steps the cwd IS
-   * the difference between installing the root tree and installing `web/`.
+   * the difference between installing the root tree and installing `web/`. A `pathPrefix` is
+   * recorded the way a shell would write it: `<cwd>$ PATH=<dir>:$PATH <tool> <args…>`.
    */
   calls: string[];
   killed: number[];
   spawned: { command: string[]; env: Record<string, string>; logPath: string }[];
+  /**
+   * Every {@link Exec.runLogged} call — the command, its log path and the bound it was given. The
+   * bound is recorded because the handoff's whole guarantee is that this call is bounded at all.
+   */
+  ran: { command: string[]; cwd: string; env: Record<string, string>; logPath: string; timeoutMs: number }[];
   /** Every {@link Exec.capture} call that named a timeout — the call line and the bound it passed. */
   timeouts: { call: string; ms: number }[];
 }
@@ -36,9 +42,13 @@ export interface FakeExec extends Exec {
  * An answer that varies with how many times its prefix has matched — `n` is 1 on the first match.
  * Wrapped in an object rather than left as a bare function so the two forms are told apart by the
  * property they carry, not by what `typeof` says about them.
+ *
+ * `env` is that {@link Exec.capture} call's `envAdd`, when it passed one — undefined otherwise. It
+ * lets a scripted answer depend on what a caller like `systemdUserReachable` retried WITH, without
+ * a second, env-matching answer table.
  */
 export interface PerCallAnswer {
-  perCall: (n: number) => Partial<ExecResult>;
+  perCall: (n: number, env?: Readonly<Record<string, string>>) => Partial<ExecResult>;
 }
 
 export interface Scripted {
@@ -50,6 +60,17 @@ export interface Scripted {
   ps?: Record<number, string>;
   /** pid handed back by a detached spawn. */
   spawnPid?: number | null;
+  /**
+   * What a {@link Exec.runLogged} client answers, by `<tool> <args…>` prefix; the first match wins.
+   * `hang: true` is the wedged manager — the call spends the caller's whole bound and comes back as
+   * a timeout, which is the branch no exit code can state.
+   */
+  logged?: [prefix: string, answer: { code?: number; stdout?: string; stderr?: string; hang?: true }][];
+  /**
+   * Where a {@link Exec.runLogged} call's output goes. Wire it to the suite's own {@link fakeFiles}
+   * so a test can read the runner log the operator is told to read; unset, the output is dropped.
+   */
+  logSink?: (path: string, text: string) => void;
 }
 
 export function fakeExec(scripted: Scripted = {}): FakeExec {
@@ -57,17 +78,33 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
   const killed: number[] = [];
   const timeouts: { call: string; ms: number }[] = [];
   const spawned: { command: string[]; env: Record<string, string>; logPath: string }[] = [];
+  const ran: {
+    command: string[];
+    cwd: string;
+    env: Record<string, string>;
+    logPath: string;
+    timeoutMs: number;
+  }[] = [];
   const absent = new Set(scripted.absent ?? []);
   const seen = new Map<string, number>();
-  const answer = (tool: string, args: readonly string[], cwd?: string): ExecResult => {
-    const line = (cwd === undefined ? "" : `${cwd}$ `) + [tool, ...args].join(" ");
+  const answer = (
+    tool: string,
+    args: readonly string[],
+    cwd?: string,
+    pathPrefix?: string,
+    envAdd?: Readonly<Record<string, string>>,
+  ): ExecResult => {
+    const line =
+      (cwd === undefined ? "" : `${cwd}$ `) +
+      (pathPrefix === undefined ? "" : `PATH=${pathPrefix}:$PATH `) +
+      [tool, ...args].join(" ");
     calls.push(line);
     if (absent.has(tool)) return { code: 127, stdout: "", stderr: "", found: false };
     for (const [prefix, a] of scripted.answers ?? []) {
       if (!line.startsWith(prefix)) continue;
       const n = (seen.get(prefix) ?? 0) + 1;
       seen.set(prefix, n);
-      const resolved = "perCall" in a ? a.perCall(n) : a;
+      const resolved = "perCall" in a ? a.perCall(n, envAdd) : a;
       return { code: 0, stdout: "", stderr: "", found: true, ...resolved };
     }
     return { code: 0, stdout: "", stderr: "", found: true };
@@ -76,15 +113,32 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
     calls,
     killed,
     spawned,
+    ran,
     timeouts,
     which: (tool) => (absent.has(tool) ? null : `/fake/${tool}`),
-    capture: (tool, args, timeoutMs) => {
-      const r = answer(tool, args);
+    capture: (tool, args, timeoutMs, envAdd) => {
+      const r = answer(tool, args, undefined, undefined, envAdd);
       if (timeoutMs !== undefined) timeouts.push({ call: [tool, ...args].join(" "), ms: timeoutMs });
       return r;
     },
     inherit: (tool, args) => answer(tool, args),
-    runIn: (tool, args, cwd) => answer(tool, args, cwd),
+    runIn: (tool, args, cwd, pathPrefix) => answer(tool, args, cwd, pathPrefix),
+    runLogged(command, opts) {
+      const line = command.join(" ");
+      calls.push(line);
+      ran.push({
+        command: [...command],
+        cwd: opts.cwd,
+        env: opts.env,
+        logPath: opts.logPath,
+        timeoutMs: opts.timeoutMs,
+      });
+      const scriptedAnswer = (scripted.logged ?? []).find(([prefix]) => line.startsWith(prefix))?.[1] ?? {};
+      const timedOut = scriptedAnswer.hang === true;
+      const text = `${scriptedAnswer.stdout ?? ""}${scriptedAnswer.stderr ?? ""}`;
+      if (text !== "") scripted.logSink?.(opts.logPath, text);
+      return { code: timedOut ? 124 : (scriptedAnswer.code ?? 0), timedOut, stderr: scriptedAnswer.stderr ?? "" };
+    },
     spawnDetached(command, opts) {
       spawned.push({ command: [...command], env: opts.env, logPath: opts.logPath });
       return scripted.spawnPid === undefined ? 4242 : scripted.spawnPid;
@@ -103,6 +157,24 @@ export interface FakeFiles extends Files {
   entries: Map<string, { text: string; mode?: number }>;
   /** Paths `remove` refuses to delete — the `rm -f` failures teardown must survive. */
   undeletable: Set<string>;
+  /** Paths owned by uid 0 — how a test states a package-manager-owned tree. Everything else reads as uid 1000. */
+  rootOwned: Set<string>;
+  /** Paths this process may not write — how a test states a read-only root. Everything else is writable. */
+  readOnly: Set<string>;
+  /**
+   * Paths that exist but carry no execute bit — how a test states the shell's `[ -x ]` saying no.
+   * Everything seeded is executable by default, because almost every seeded path is a data file no
+   * test ever runs, and the one lookup that asks ({@link resolveTool}) only ever asks about tools.
+   */
+  notExecutable: Set<string>;
+  /**
+   * Inode and mtime per path — how a test states that the running executable and the file at its
+   * path are two different files. Anything not named here reads as one shared inode and mtime 0,
+   * which is a machine whose process and files agree.
+   */
+  stats: Map<string, { inode: number; mtimeMs: number }>;
+  /** Symlink targets by path — `/proc/<pid>/exe` above all. */
+  links: Map<string, string>;
   /** Destructive filesystem operations in order: `rm -rf <p>` / `mv <from> <to>`. Ordering is the assertion `build` lives or dies by. */
   ops: string[];
 }
@@ -111,6 +183,11 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
   const entries = new Map<string, { text: string; mode?: number }>();
   for (const [p, text] of Object.entries(seed)) entries.set(p, { text });
   const undeletable = new Set<string>();
+  const rootOwned = new Set<string>();
+  const readOnly = new Set<string>();
+  const notExecutable = new Set<string>();
+  const stats = new Map<string, { inode: number; mtimeMs: number }>();
+  const links = new Map<string, string>();
   const ops: string[] = [];
   // Paths are a flat set, so a "directory" is whatever entries sit under it — enough to model the
   // staging swap, whose whole content is `web/dist/**`.
@@ -119,8 +196,16 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
   return {
     entries,
     undeletable,
+    rootOwned,
+    readOnly,
+    notExecutable,
+    stats,
+    links,
     ops,
+    ownerUid: (p) => (rootOwned.has(p) ? 0 : 1000),
+    writable: (p) => !readOnly.has(p),
     exists: (p) => under(p).length > 0,
+    executable: (p) => under(p).length > 0 && !notExecutable.has(p),
     read: (p) => entries.get(p)?.text ?? null,
     list: (p) => [
       ...new Set(
@@ -139,6 +224,8 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
       ops.push(`rm -rf ${p}`);
       for (const k of under(p)) if (!undeletable.has(k)) entries.delete(k);
     },
+    stat: (p) => stats.get(p) ?? (under(p).length > 0 ? { inode: 1, mtimeMs: 0 } : null),
+    readlink: (p) => links.get(p) ?? null,
     rename: (from, to) => {
       ops.push(`mv ${from} ${to}`);
       for (const k of under(from)) {
@@ -193,10 +280,10 @@ export type SeededOps = Readonly<Record<string, OpsRecord>>;
  * The ops store over an in-memory file — how the operator reached each member, with no disk. Kept
  * here rather than in one suite because three of them need it and none of them may write a real one.
  */
-export function fakeOps(seed: SeededOps = {}): PackOpsStore & { contents: () => string | null } {
+export function fakeOps(seed: SeededOps = {}): CrewOpsStore & { contents: () => string | null } {
   let contents: string | null =
     Object.keys(seed).length === 0 ? null : `${JSON.stringify({ version: 1, members: seed }, null, 2)}\n`;
-  const store = new PackOpsStore("/state", {
+  const store = new CrewOpsStore("/state", {
     read: async () => contents,
     write: async (_p, data) => {
       contents = data;

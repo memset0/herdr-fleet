@@ -1,10 +1,11 @@
-import { Fragment, memo, useEffect, useMemo, useRef } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import { parseAnsi, type AnsiSegment } from "@/lib/ansi";
+import { parseAnsi } from "@/lib/ansi";
 import { buildBlocks } from "@/lib/harness";
 import {
+  dropLeadingLines,
   lineText,
   splitLines,
   type Block,
@@ -16,7 +17,16 @@ import {
   type WizardModel,
 } from "@/lib/blocks";
 import { tableRuns, type TableRun } from "@/lib/table-run";
-import { MIRROR_SPACE, MIRROR_INVERT, styleFor } from "@/components/mirror-space";
+import {
+  alignImagesFromEnd,
+  blankPlaceholders,
+  imageClusters,
+  isPlaceholderOnlyLine,
+  type ImageCluster,
+} from "@/lib/mirror-images";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/hooks/use-locale";
+import { MIRROR_SPACE, MIRROR_INVERT, segmentStyle } from "@/components/mirror-space";
 import { findMatches, splitSegment, type FindMatch } from "@/lib/find";
 import { findLinks } from "@/lib/links";
 import { PromptSelectBlock, type PromptBlockAction } from "@/components/prompt-select-block";
@@ -64,6 +74,21 @@ export interface AnsiOutputProps {
    *  registered adapter contributes its own: claude lifts dialogs and strips chrome, omp strips chrome
    *  only. An absent/unregistered agent renders pure raw output. */
   agent?: string;
+  /**
+   * The pane's journal images, oldest-first, for the terminal-graphics placeholders on screen.
+   *
+   * NOT fetched here and not carried by the pane read — the caller reads one page of the history
+   * route when this component reports a placeholder it cannot account for
+   * (`hooks/use-mirror-images.ts`). Matched to the clusters by ORDER, from the end, which is an
+   * approximation: the Kitty diacritics encode an image id no journal can map to a blob
+   * (`lib/mirror-images.ts` § "why the match is by order").
+   */
+  images?: readonly string[];
+  /**
+   * Reports how many placeholder clusters the mirror is showing (drives the caller's fetch). Zero
+   * on an ordinary screen, so the common case reports zero once and asks for nothing.
+   */
+  onImageClusterCount?: (count: number) => void;
   /** Injected handler for a prompt-select tap (the race guard lives in AgentChat). Absent (or with a
    *  disabled block) means the buttons render but don't act — AnsiOutput never touches the network. */
   onPromptAction?: (
@@ -84,6 +109,16 @@ export interface AnsiOutputProps {
   onMenuAction?: (action: MenuBlockAction, menu: MenuModel) => void | Promise<void>;
   /** Disable the prompt-select/wizard/preview/multi-select/menu buttons (read-only / gone pane). */
   promptDisabled?: boolean;
+  /**
+   * Hide this many screen rows off the TOP of the mirror. Default 0.
+   *
+   * Purely presentational and applied AFTER the grammars have run over the whole screen, so no
+   * detection, guard or draft probe can see it. Its one caller (AgentChat) uses it to drop the rows a
+   * clipped reply occupies while the full message is rendered from the journal directly above them —
+   * printing both was the same text twice. Find offsets are recomputed over what is left, which is
+   * why AgentChat sets this to 0 whenever the find bar is open.
+   */
+  hideLeadingLines?: number;
 }
 
 // Stable empty result so the "not searching" path keeps the same `matches` reference across polls
@@ -93,6 +128,13 @@ const NO_MATCHES: FindMatch[] = [];
  *  `NO_BLOCK_RUNS` is the wrap-off answer for EVERY block at once: that path computes nothing, and
  *  the lookup below falls through to NO_RUNS for each block it asks about. */
 const NO_RUNS = tableRuns([]);
+/** Stable empty set of failed image URLs, so "nothing has failed" is one identity. */
+const NO_FAILED: ReadonlySet<string> = new Set();
+
+/** Stable empty image list, so "this pane has no journal images" is one identity across polls. */
+const NO_IMAGES: readonly string[] = Object.freeze([]);
+/** The frozen empty cluster list, for a block the grammar produced no clusters for. */
+const NO_CLUSTERS: readonly ImageCluster[] = Object.freeze([]);
 const NO_BLOCK_RUNS: readonly (readonly TableRun[])[] = Object.freeze([]);
 
 // The mirror's dark colour space and its light-theme inversion live in mirror-space.ts — the
@@ -117,21 +159,6 @@ const NO_BLOCK_RUNS: readonly (readonly TableRun[])[] = Object.freeze([]);
 // Don't convert it to a px value, and don't "fix" it to fit the line box — that would undo (1).
 const LINK_CLASS =
   "underline decoration-1 underline-offset-2 break-all cursor-pointer py-[0.35em]";
-
-// A segment marked `mobileTransparentBg` hands its ANSI fill to a custom property instead of the
-// inline `background-color`, and `.terminal-mobile-transparent-bg` in index.css paints it: on a
-// desktop from the property, on a phone not at all. Inline styles beat a class, so the alternative
-// spelling is `!important` in the stylesheet. Every other segment takes the plain inline style, and
-// the other mirror surface (the statusline strip) calls styleFor directly and is unaffected.
-function segmentStyle(s: AnsiSegment): CSSProperties {
-  const style = styleFor(s);
-  if (!s.mobileTransparentBg) return style;
-  const { backgroundColor, ...rest } = style;
-  // SAFETY: a CSS custom property is a valid style key at runtime; React passes any `--*` key
-  // straight to the CSSOM. CSSProperties has no index signature for it, so the cast is the only
-  // spelling. The value is the backgroundColor just removed from the same object.
-  return { ...rest, "--terminal-seg-bg": backgroundColor } as CSSProperties;
-}
 
 function preClass(wrap: boolean, className?: string): string {
   return cn(
@@ -202,6 +229,61 @@ const TABLE_RUN_CLASS =
 // as does the link scan; React.memo prevents re-renders when props are unchanged — critical for the
 // polling cadence on mobile. With no query and no links the render skips splitSegment entirely and
 // emits the segment's own string, exactly as the pre-find flat renderer did.
+
+// One terminal-graphics image: the picture when the caller has one for this cluster, and the
+// "[Image]" badge when it does not. The badge is not a failure state — a cluster the ordering
+// could not match, or a journal read that has not answered yet, still has to say "a picture is
+// here", which is the whole difference from the black box this replaces.
+//
+// The card is an ANCHOR to the blob, so it is keyboard reachable and long-pressable, and the href
+// is a URL `imageSrc` already vetted (`lib/api.ts`) — a blob path on the owning host, or inline
+// bytes. Never a URL the agent's log supplied.
+const renderImageCluster = (
+  url: string | null,
+  key: string,
+  onImageError: (url: string) => void,
+): ReactNode =>
+  url === null ? (
+    <span
+      key={key}
+      className="my-1 inline-flex items-center gap-1.5 rounded border border-border/40 bg-muted/30 px-2 py-1 text-xs"
+    >
+      {t("mirror.imageBadge")}
+    </span>
+  ) : (
+    <span
+      key={key}
+      className="my-2 block select-none overflow-hidden rounded-md border border-border/40 bg-black/20 text-center"
+    >
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        // The same sentence as the caption, as the anchor's tooltip: a pointer that hovers the
+        // picture asks about the picture, and the caption may be scrolled out of the tap target.
+        title={t("mirror.imageMatchedByOrder")}
+        className="inline-block cursor-zoom-in"
+      >
+        <img
+          src={url}
+          alt={t("mirror.imageAlt")}
+          className="mx-auto max-h-80 w-auto max-w-full rounded object-contain"
+          loading="lazy"
+          // A load that fails falls back to the badge (see FAILED IMAGES in the component). The
+          // handler reports the URL, not the cluster: the same blob can sit under two clusters.
+          onError={() => onImageError(url)}
+        />
+      </a>
+      {/* THE CARD SAYS IT IS A GUESS. The placeholder carries a Kitty image id no journal maps to a
+          blob, so the picture is matched by ORDER (`lib/mirror-images.ts` § "why the match is by
+          order"). The operator is told that here, on the card itself, and pointed at History, which
+          reads the journal turn by turn and is exact. */}
+      <span className="block px-2 pb-1 text-xs text-muted-foreground">
+        {t("mirror.imageMatchedByOrder")}
+      </span>
+    </span>
+  );
+
 export const AnsiOutput = memo(function AnsiOutput({
   text,
   className,
@@ -217,13 +299,23 @@ export const AnsiOutput = memo(function AnsiOutput({
   onMultiSelectAction,
   onMenuAction,
   promptDisabled,
+  hideLeadingLines = 0,
+  images,
+  onImageClusterCount,
 }: AnsiOutputProps) {
+  // The mirror is agent output and is not translated — but the two strings the image cluster
+  // renders are Collie's own words, so this subscribes for the same reason every t() caller does.
+  useLocale();
   const segments = useMemo(() => parseAnsi(text), [text]);
   const blocks = useMemo(() => buildBlocks(splitLines(segments), { agent }), [segments, agent]);
 
   const rawBlocks = useMemo(
-    () => blocks.filter((b): b is RawBlock => b.kind === "raw"),
-    [blocks],
+    () =>
+      dropLeadingLines(
+        blocks.filter((b): b is RawBlock => b.kind === "raw"),
+        hideLeadingLines,
+      ),
+    [blocks, hideLeadingLines],
   );
   const promptBlock = useMemo(
     () => blocks.find((b): b is PromptBlock => b.kind === "prompt-select") ?? null,
@@ -258,6 +350,35 @@ export const AnsiOutput = memo(function AnsiOutput({
     [rawBlocks, wrap],
   );
 
+  // The terminal-graphics placeholder clusters of each raw block, by block index — one cluster per
+  // image, however many cells it covers. Computed here rather than inside the render loop because
+  // the TOTAL is what the caller needs before a single node is emitted.
+  const clustersByBlock = useMemo(() => rawBlocks.map((b) => imageClusters(b.lines)), [rawBlocks]);
+  const clusterCount = useMemo(
+    () => clustersByBlock.reduce((sum, c) => sum + c.length, 0),
+    [clustersByBlock],
+  );
+  // ── FAILED IMAGES ARE BADGES ────────────────────────────────────────────────
+  // A blob read can answer 404: the machine that owns the bytes may be a peer running a build that
+  // has no `blobs/<hash>` route, and that route is additive-optional by design (CREW_PROTOCOL.md
+  // §9.1 — a lead or a peer without it answers 404). A file can also be gone. Either way the
+  // operator must not be shown a broken-image glyph, so the URL that failed is remembered and the
+  // cluster falls back to the "[Image]" badge it would have had with no image at all.
+  const [failedImages, setFailedImages] = useState<ReadonlySet<string>>(NO_FAILED);
+  const onImageError = useCallback((url: string) => {
+    setFailedImages((prev) => (prev.has(url) ? prev : new Set(prev).add(url)));
+  }, []);
+
+  // Which image each cluster gets, aligned from the END — see the prop's doc and mirror-images.ts.
+  // A URL whose load already failed counts as no image, so the badge takes its place.
+  const clusterImages = useMemo(
+    () =>
+      alignImagesFromEnd(clusterCount, images ?? NO_IMAGES).map((url) =>
+        url !== null && failedImages.has(url) ? null : url,
+      ),
+    [clusterCount, images, failedImages],
+  );
+
   // Find offsets live over the *raw* mirror text (raw blocks joined by "\n", lines joined by "\n").
   // The join only runs while actually searching, so the idle polling path pays nothing.
   const haystack = useMemo(
@@ -276,6 +397,10 @@ export const AnsiOutput = memo(function AnsiOutput({
   useEffect(() => {
     onMatchCount?.(matches.length);
   }, [matches, onMatchCount]);
+
+  useEffect(() => {
+    onImageClusterCount?.(clusterCount);
+  }, [clusterCount, onImageClusterCount]);
 
   const currentRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
@@ -431,13 +556,40 @@ export const AnsiOutput = memo(function AnsiOutput({
       </Fragment>
     );
   };
-
+  // The running index into `clusterImages`, across every block — the alignment is over the whole
+  // screen, not per block.
+  let clusterIndex = 0;
   const renderBlock = (block: RawBlock, bi: number) => {
     if (bi > 0) offset += 1; // the "\n" separating this block from the previous
     const runs = runsByBlock[bi] ?? NO_RUNS;
+    const clusters = clustersByBlock[bi] ?? NO_CLUSTERS;
     const nodes: ReactNode[] = [];
     let ri = 0;
+    let ci = 0;
     for (let li = 0; li < block.lines.length; ) {
+      const cluster: ImageCluster | undefined = clusters[ci];
+      if (cluster && cluster.start === li) {
+        ci++;
+        const url = clusterImages[clusterIndex] ?? null;
+        clusterIndex++;
+        for (let k = cluster.start; k <= cluster.end; k++) {
+          const line = block.lines[k]!;
+          if (isPlaceholderOnlyLine(line)) {
+            // NOT rendered — the card below stands in for it — but its characters still EXIST in
+            // the find/link coordinate space, so the shared offset walks over them. Skipping that
+            // was the bug: every match and every autolink below an image landed a screenful early.
+            if (k > 0) offset += 1; // the "\n" separating this line from the previous
+            offset += lineText(line).length;
+            continue;
+          }
+          // A row carrying an image AND text keeps its text. The placeholder cells are blanked to
+          // spaces of the same character count, so the row reads as written and no offset moves.
+          nodes.push(renderLine(blankPlaceholders(line), k, true, false));
+        }
+        nodes.push(renderImageCluster(url, `image:${bi}:${cluster.start}`, onImageError));
+        li = cluster.end + 1;
+        continue;
+      }
       const run: TableRun | undefined = runs[ri];
       if (!run || run.start !== li) {
         nodes.push(renderLine(block.lines[li]!, li, true, false));

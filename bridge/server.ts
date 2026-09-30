@@ -8,7 +8,7 @@ import { isLoopbackBindHost, type Config } from "./config.ts";
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { MuxAdapter, MuxAck, MuxGrid } from "./mux/types.ts";
-import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
+import { computeEtag, gzipJsonResponse, notModified, wantsGzip } from "./http-cache.ts";
 import { pluginRoot } from "./root.ts";
 import type { NotifyPrefs, NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorCommands } from "./operator-commands.ts";
@@ -23,10 +23,11 @@ import {
 } from "./prompt-binding.ts";
 import type { Push, PushSubscription } from "./push.ts";
 import { RefreshCoalescer } from "./refresh.ts";
-import { herdTagFor, type SessionRegistry, type SessionRuntime, widenedPanes } from "./sessions.ts";
+import { herdTagFor, selectView, type SessionRegistry, type SessionRuntime, widenedPanes } from "./sessions.ts";
 import type { Snooze } from "./snooze.ts";
-import { imageExtFromBytes, SNIFF_BYTES } from "./uploads.ts";
+import { IMAGE_EXTS, TEXT_EXTS, TEXT_SNIFF_BYTES, uploadExt } from "./uploads.ts";
 import type { UpdateMonitor } from "./update.ts";
+import { readStagingLog } from "./staging-log.ts";
 import {
   parseUpdateStartRequest,
   updateStartVerdict,
@@ -36,6 +37,8 @@ import type { StateEngine } from "./state-engine.ts";
 import { adapterFor, buildJournalRegistry } from "./journal/registry.ts";
 import { TranscriptStore } from "./journal/store.ts";
 import type { JournalAdapter } from "./journal/types.ts";
+import { isBlobHash, resolveBlobPath } from "./journal/pi.ts";
+import { statFile } from "./journal/files.ts";
 import {
   bearerToken,
   normalizeLabel,
@@ -43,16 +46,17 @@ import {
   type ClaimFailure,
   type PairingStore,
 } from "./pairing.ts";
-import { modeForWire } from "./pack/mode.ts";
-import type { PackRuntime } from "./pack/config.ts";
-import type { PackLead } from "./pack/lead.ts";
-import { packDeviceOf, packGate } from "./pack/peer-gate.ts";
-import { selectHostFrom, type HostSelector } from "./pack/registry.ts";
-import type { PackHandler, PackSurface } from "./pack/router.ts";
-import type { PackTlsOptions } from "./pack/transport.ts";
-import { createSttAdmission, sttCapability, transcribeRequest } from "./stt/http.ts";
+import { modeForWire } from "./crew/mode.ts";
+import type { CrewRuntime } from "./crew/config.ts";
+import type { CrewLead } from "./crew/lead.ts";
+import { crewDeviceOf, crewGate } from "./crew/peer-gate.ts";
+import { snapshotPlan } from "./crew/merge.ts";
+import { selectHostFrom, type HostSelector } from "./crew/registry.ts";
+import type { CrewHandler, CrewSurface } from "./crew/router.ts";
+import type { CrewTlsOptions } from "./crew/transport.ts";
+import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeRequest } from "./stt/http.ts";
 import type { SttProvider } from "./stt/provider.ts";
-import { MAX_UPLOAD_BYTES, uploadTooLarge } from "./uploads.ts";
+import { uploadTooLarge } from "./uploads.ts";
 import { MUX_LOGO_PATH, OPERATOR_FONTS_PATH, journalAgentOf, toPaneWire } from "./types.ts";
 import type {
   ActionResponse,
@@ -67,7 +71,7 @@ import type {
   OperatorKeyRow,
   OperatorFontRow,
   OperatorQuickReplyRow,
-  PackStatusResponse,
+  CrewStatusResponse,
   Launcher,
   LaunchersResponse,
   PaneHistoryResponse,
@@ -75,14 +79,31 @@ import type {
   PaneWire,
   SnapshotResponse,
   SttCapability,
+  UpdateStatus,
+  UploadCapability,
   UploadResponse,
 } from "./types.ts";
 import type { ManualPaneFitAction } from "../fleet/manual-pane-fit/action.ts";
 
-// Hard cap the runtime enforces on ANY request body (Bun.serve maxRequestBodySize). Bigger than the
-// upload cap + overhead so the handler's own 413 fires first for honest clients; this cuts off a
-// chunked or lying client that never sends an accurate Content-Length.
-const MAX_REQUEST_BODY_BYTES = 12 * 1024 * 1024; // 12 MB
+// Headroom the runtime's own body cap (Bun.serve maxRequestBodySize) keeps above the operator's
+// upload cap. It has to sit above cap + multipart overhead so the handler's own 413 fires first for
+// honest clients; the rest of it is what cuts off a chunked or lying client that never sends an
+// accurate Content-Length. Derived from the cap rather than fixed, because the cap is now the
+// operator's number (`COLLIE_MAX_UPLOAD_MB`) and a constant here would silently veto a larger one.
+const REQUEST_BODY_HEADROOM = 2 * 1024 * 1024; // 2 MB, well clear of uploads.ts's multipart overhead
+
+/**
+ * The runtime's body cap for EVERY route, not just `/upload` — Bun applies it to the whole listener.
+ * So it is the largest body any handler is willing to read, plus the headroom above.
+ *
+ * The max is what makes an operator's small `COLLIE_MAX_UPLOAD_MB` safe: at the floor of 1 MB a
+ * fixed `cfg.maxUploadBytes + headroom` would be 3 MB, and a 5 MB voice note would be cut off by
+ * the runtime before `/api/stt` could answer its own `stt.too_large`. Each handler still enforces
+ * its own precise number; this only decides where the runtime stops reading.
+ */
+export function requestBodyCap(cfg: Config): number {
+  return Math.max(cfg.maxUploadBytes, MAX_STT_AUDIO_BYTES) + REQUEST_BODY_HEADROOM;
+}
 // Upper bound on the pane-read `lines` param — don't trust the client (or Herdr) to cap it.
 const MAX_READ_LINES = 10_000;
 const MAX_EXPECTED_PROMPT_CHARS = 8192;
@@ -92,7 +113,7 @@ const PROMPT_BINDING_BLANK_LINE_HEADROOM = 6;
 // first-poll delay, so the bridge never probes the network mid-boot) and never again once a check has
 // landed either way.
 const UPDATE_ON_DEMAND_POLL_TIMEOUT_MS = 5_000;
-// Image type is sniffed from magic bytes in uploadPane — never from the client-supplied MIME.
+// An image's type is sniffed from magic bytes in uploadPane — never from the client-supplied MIME.
 
 // The built PWA lives in web/dist (Vite output). If it's missing, the bridge still runs the API
 // — only the static UI 503s with a hint to build. Anchored on the resolved checkout root, NOT on
@@ -198,6 +219,17 @@ const MAX_HISTORY_LIMIT = 5000;
 const TAB_ACTION_ROUTE = /^\/api\/tab\/([^/]+)\/(rename|close)$/;
 
 /**
+ * `GET /api/blobs/<hash>` — one content-addressed image out of a pi/omp journal's blob store.
+ *
+ * The hash is matched as an opaque segment here and validated by {@link isBlobHash} in the handler,
+ * exactly as `PANE_ROUTE` matches a pane id and `decodeURIComponent` interprets it: a route grammar
+ * says where a request goes, never whether its argument is well formed. `bridge/crew/forward.ts`
+ * mirrors this shape one-for-one (`forward.test.ts` pins the correspondence), because a blob lives
+ * on the machine whose journal named it and is therefore a forwarded READ.
+ */
+const BLOB_ROUTE = /^\/api\/blobs\/([^/]+)$/;
+
+/**
  * Worktree routes, all hung off the SPACE that asked (ADR 0032).
  *
  * The space is the repo context — its `repoRoot` comes off the snapshot Herdr already sends — so no
@@ -241,7 +273,7 @@ export function marksPaneSeen(req: Request, action: string | undefined): boolean
  * The `/api/config` body. Pure, and exported for that reason: the handler lives inside `Bun.serve`,
  * which `bun test` cannot stand up (CLAUDE.md), so the shape is asserted here instead.
  *
- * `mode` is present only when this collie is in a pack — see {@link modeForWire}. A solo instance's
+ * `mode` is present only when this collie is in a crew — see {@link modeForWire}. A solo instance's
  * body is byte-identical to the pre-federation one, which is the whole zero-tax point; a client
  * reads the mode as `mode ?? "solo"`.
  */
@@ -249,7 +281,7 @@ export function marksPaneSeen(req: Request, action: string | undefined): boolean
  * Who is asking for a session-scoped route, and everything that differs between them.
  *
  * There are exactly two implementations and there must never be a third: the browser at this
- * collie's front door, and a lead over an admitted pack link (PACK_PROTOCOL.md §5). Each route
+ * collie's front door, and a lead over an admitted crew link (CREW_PROTOCOL.md §5). Each route
  * handler below is written once and consumes this — so the answer to "does a peer run the same code
  * my phone does?" is structural rather than a promise.
  */
@@ -257,14 +289,14 @@ interface RouteCaller {
   /**
    * `(host, session)` → the runtime to act on, or the Response refusing/answering it. For a browser
    * this may resolve to *another machine*, in which case the request is forwarded and the peer's own
-   * response comes back here (§9.1). For a pack caller it is always local.
+   * response comes back here (§9.1). For a crew caller it is always local.
    */
   resolve(): Promise<SessionRuntime | Response>;
   /** The caller's own authorisation at this level, or `null` to proceed. */
   gate(level: "read" | "write"): Response | null;
   /** The device a write is attributed to. */
   device(): string | null;
-  /** Where a write's audit line lands — the peer's is pre-stamped `via:"pack"` + originator (§12). */
+  /** Where a write's audit line lands — the peer's is pre-stamped `via:"crew"` + originator (§12). */
   readonly audit: AuditLog;
 }
 
@@ -384,17 +416,106 @@ export function operatorFontResponse(
   return secure(new Response(bytes, { headers }));
 }
 
+/**
+ * The ceiling on one blob the bridge will serve: 16 MiB.
+ *
+ * A blob is a screenshot an agent took, and a phone on a cellular link is the reader — so the number
+ * is the point at which sending it costs more than it is worth, not a disk limit. It is also a bound
+ * on what a single request can pull off this machine: the store is content-addressed, so a caller
+ * who has a hash can ask for those bytes, and nothing else caps the size of a file an agent wrote
+ * there. Above it the answer is a 413, which says "too big" rather than timing out mid-stream.
+ */
+export const BLOB_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Magic bytes → content type, as a table.
+ *
+ * **`Bun.file(path).type` is useless here and that is not a Bun fault:** a blob's name IS its
+ * sha-256 digest, so the file has no extension, and every extension-driven guess lands on
+ * `application/octet-stream`. The bytes are the only evidence there is, so they are what is read.
+ *
+ * `offset` exists for the one format whose marker is not at the start: WebP writes `RIFF` at 0 and
+ * `WEBP` at 8. An unmatched header stays `application/octet-stream` — the browser then declines to
+ * render it, which is the right answer for a file that is not a picture.
+ */
+const BLOB_MAGIC: readonly { readonly type: string; readonly offset: number; readonly bytes: readonly number[] }[] = [
+  { type: "image/png", offset: 0, bytes: [0x89, 0x50, 0x4e, 0x47] },
+  { type: "image/jpeg", offset: 0, bytes: [0xff, 0xd8, 0xff] },
+  { type: "image/gif", offset: 0, bytes: [0x47, 0x49, 0x46] },
+  { type: "image/webp", offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] },
+  { type: "image/webp", offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] },
+];
+
+/** How many leading bytes {@link sniffBlobType} needs — the longest marker's end. */
+const BLOB_SNIFF_BYTES = 12;
+
+/** The content type of a blob, read off its leading bytes. Pure + exported so the table is tested. */
+export function sniffBlobType(head: Uint8Array): string {
+  const matches = (m: { offset: number; bytes: readonly number[] }): boolean =>
+    m.bytes.every((b, i) => head[m.offset + i] === b);
+  // WebP needs BOTH of its rows, so it is asked for as a pair rather than by the first row alone.
+  if (BLOB_MAGIC.filter((m) => m.type === "image/webp").every(matches)) return "image/webp";
+  const hit = BLOB_MAGIC.find((m) => m.type !== "image/webp" && matches(m));
+  return hit?.type ?? "application/octet-stream";
+}
+
+/**
+ * `GET /api/blobs/<hash>` — the bytes a pi/omp journal named, served back to the phone.
+ *
+ * Exported and taking its roots as an argument so every branch below is exercised under `bun test`
+ * without standing up Bun.serve (CLAUDE.md): a refused hash, a hash nothing holds, a file over the
+ * cap, and the content type of a png and a jpeg.
+ *
+ * **The ETag IS the hash.** The store is content-addressed, so the name of the file already is a
+ * strong validator of its bytes; re-hashing them with `computeEtag` would read the whole file to
+ * learn something the URL said. That is also why the body is `Bun.file(real)` rather than
+ * `await file.bytes()` — the runtime streams it, and a 16 MiB screenshot is never held whole in this
+ * process.
+ */
+export async function blobRoute(
+  hash: string,
+  sessionRoots: readonly string[],
+  ifNoneMatch: string | null,
+): Promise<Response> {
+  if (!isBlobHash(hash)) return text("invalid blob hash", 400);
+  const real = await resolveBlobPath(hash, sessionRoots);
+  if (real === null) return text("blob not found", 404);
+  const meta = await statFile(real);
+  if (meta === null) return text("blob not found", 404); // vanished between resolve and stat
+  if (meta.size > BLOB_MAX_BYTES) {
+    return text(`blob too large (max ${String(Math.round(BLOB_MAX_BYTES / (1024 * 1024)))} MB)`, 413);
+  }
+  const etag = `"${hash}"`;
+  const headers = {
+    "content-type": "application/octet-stream",
+    "cache-control": "public, max-age=31536000, immutable",
+    etag,
+  };
+  if (notModified(ifNoneMatch, etag)) return secure(new Response(null, { status: 304, headers }));
+  const file = Bun.file(real);
+  headers["content-type"] = sniffBlobType(new Uint8Array(await file.slice(0, BLOB_SNIFF_BYTES).arrayBuffer()));
+  return secure(new Response(file, { headers }));
+}
+
 export function bridgeConfigBody(opts: {
   push: boolean;
   vapidPublicKey: string;
   build: string;
-  mode: PackRuntime["mode"];
+  mode: CrewRuntime["mode"];
   /**
-   * The active adapter, when there is one. Optional so the pack-mode assertions below (and any
-   * caller that has no session registry) stay about the pack and nothing else; the real handler
+   * The active adapter, when there is one. Optional so the crew-mode assertions below (and any
+   * caller that has no session registry) stay about the crew and nothing else; the real handler
    * always passes it.
    */
   mux?: MuxPublication;
+  /**
+   * A MEMBER's own block, already in wire shape, for `/api/config?host=<member>` (M22/03).
+   *
+   * When present it REPLACES what `mux` would have produced, in the same position, so a member's
+   * answer differs from the lead's in the block's contents and in nothing else. Absent means "answer
+   * for this host", which is both the solo body and the lead's own answer with no `host=` on it.
+   */
+  muxWire?: MuxConfig;
   /**
    * The operator's own palette rows. Omitted entirely when there are none, so an operator who never
    * wrote a `commands.toml` ships the same payload as before — the same reasoning `mode` follows.
@@ -415,6 +536,12 @@ export function bridgeConfigBody(opts: {
    * configured none ships the same payload as before, the same rule `mode` follows.
    */
   stt?: SttCapability;
+  /**
+   * What this host accepts as an attachment. Optional here for the reason `mux` is — the crew-mode
+   * assertions build this body by hand and are about the crew — and always passed by the real
+   * handler, so an absent key on the wire means an older bridge and nothing else.
+   */
+  upload?: UploadCapability;
 }): BridgeConfig {
   const mode = modeForWire(opts.mode);
   const mine = opts.operatorCommands ?? [];
@@ -427,7 +554,7 @@ export function bridgeConfigBody(opts: {
     build: opts.build,
   };
   // Assigned, never conditionally spread: a solo instance's body must carry NEITHER key, byte for
-  // byte as before the pack existed (PACK_PROTOCOL.md §11).
+  // byte as before the crew existed (CREW_PROTOCOL.md §11).
   if (mode !== undefined) wire.mode = mode;
   if (mine.length > 0) wire.operatorCommands = [...mine];
   if (myKeys.length > 0) wire.operatorKeys = [...myKeys];
@@ -437,10 +564,14 @@ export function bridgeConfigBody(opts: {
   // omit-when-default. There is no default to omit — "no mux key" already means something on the
   // phone (an older bridge, read as fully capable), so a Herdr bridge staying silent here would be
   // indistinguishable from one that cannot answer.
-  if (opts.mux !== undefined) wire.mux = muxConfigBody(opts.mux);
+  if (opts.muxWire !== undefined) wire.mux = opts.muxWire;
+  else if (opts.mux !== undefined) wire.mux = muxConfigBody(opts.mux);
   // Appended after the mux block, and omit-when-absent for the reason `mode` is: no key means no
   // microphone, which is precisely true of a collie with no provider configured.
   if (opts.stt !== undefined) wire.stt = opts.stt;
+  // Same omit-when-absent rule, and the same reading on the other end: no key is an older bridge,
+  // which the phone falls back to the pre-attachment contract for (images, 10 MB).
+  if (opts.upload !== undefined) wire.upload = opts.upload;
   return wire;
 }
 
@@ -464,10 +595,10 @@ export interface UpdateActionDeps {
    */
   newRunId: () => string;
   /**
-   * Tell the pack a run has begun, so the lead starts granting turns and fires the first of §20's
+   * Tell the crew a run has begun, so the lead starts granting turns and fires the first of §20's
    * three immediate sweeps. A no-op on a solo install and on a peer.
    */
-  beginPackRun?: (a: { runId: string; to: string }) => void;
+  beginCrewRun?: (a: { runId: string; to: string }) => void;
 }
 
 export function startServer(opts: {
@@ -491,68 +622,68 @@ export function startServer(opts: {
   /**
    * The BARE version string this process answers with (`bridge/version.ts`'s `collieVersionBare`) —
    * `<semver>` or `<semver>+<short sha>`. Resolved once in index.ts, never re-read here: it is the
-   * same string `/pack/v1/hello` carries, so one machine can never report two different versions.
+   * same string `/crew/v1/hello` carries, so one machine can never report two different versions.
    */
   version: string;
   audit: AuditLog;
   activity: ActivityLedger;
   /** Resolved once at startup in index.ts, before anything is wired. Solo is `SOLO_RUNTIME`. */
-  pack: PackRuntime;
+  crew: CrewRuntime;
   /**
    * The federated surface, supplied by index.ts **only** when a trust store exists. Undefined on
-   * every solo instance, and the paths it owns are declared in `bridge/pack/router.ts` rather than
-   * here — deliberately, so this file names no pack route and `solo-baseline.test.ts` can prove by
-   * grep that solo registers nothing (PACK_PROTOCOL.md §11, "`/pack/v1/*`: not routed at all").
+   * every solo instance, and the paths it owns are declared in `bridge/crew/router.ts` rather than
+   * here — deliberately, so this file names no crew route and `solo-baseline.test.ts` can prove by
+   * grep that solo registers nothing (CREW_PROTOCOL.md §11, "`/crew/v1/*`: not routed at all").
    *
-   * A **factory**, not a handler, for one reason: a peer's `/pack/v1/*` must answer exactly what its
-   * own `/api/*` would, and the only way to guarantee that is to hand the pack router the very
+   * A **factory**, not a handler, for one reason: a peer's `/crew/v1/*` must answer exactly what its
+   * own `/api/*` would, and the only way to guarantee that is to hand the crew router the very
    * closures this file serves browsers from — the snapshot body, and the session-scoped route block.
    * Two assemblies that "agree" would be two assemblies that drift.
    */
-  packRouter?: (surface: PackSurface) => PackHandler;
+  crewRouter?: (surface: CrewSurface) => CrewHandler;
   /**
-   * The **deposed** answer, when this collie has learned the crown has moved (PACK_PROTOCOL.md
+   * The **deposed** answer, when this collie has learned the crown has moved (CREW_PROTOCOL.md
    * §18.12). Returns a `Response` for every request it should swallow and `null` otherwise — so an
    * instance that has not been deposed passes `undefined` and this file's dispatch is byte-identical
    * to today's.
    *
-   * A closure rather than a route, for the reason `packRouter` is one: the paths it owns are declared
-   * in `bridge/pack/deposed.ts`, so this file names none of them and `solo-baseline.test.ts` can keep
+   * A closure rather than a route, for the reason `crewRouter` is one: the paths it owns are declared
+   * in `bridge/crew/deposed.ts`, so this file names none of them and `solo-baseline.test.ts` can keep
    * proving by grep that the route table here is exactly today's.
    */
   deposed?: (req: Request, url: URL) => Response | null;
   /**
    * The peer listener's pinned-mTLS options, supplied **only** by a peer that could build them
-   * (`bridge/pack/transport.ts`). Absent on solo and on a lead, so this file's `Bun.serve` call is
+   * (`bridge/crew/transport.ts`). Absent on solo and on a lead, so this file's `Bun.serve` call is
    * byte-identical to today's for every instance that is not a peer (§11).
    */
-  tls?: PackTlsOptions;
+  tls?: CrewTlsOptions;
   /**
-   * The lead runtime, supplied **only** when this collie leads a pack with at least one enrolled
+   * The lead runtime, supplied **only** when this collie leads a crew with at least one enrolled
    * member. Its presence is exactly the condition under which `servers` goes on the wire and every
-   * session and pane gains a `host` (PACK_PROTOCOL.md §9.2, §11) — undefined here means the snapshot
+   * session and pane gains a `host` (CREW_PROTOCOL.md §9.2, §11) — undefined here means the snapshot
    * body that leaves this file is the object literal it has always been.
    */
-  packLead?: PackLead;
+  crewLead?: CrewLead;
   /**
-   * The Pack overview body (`GET /api/pack`), or `null` when this collie is not a lead with a pack.
+   * The Crew overview body (`GET /api/crew`), or `null` when this collie is not a lead with a crew.
    *
-   * A CLOSURE, and it is composed in index.ts rather than here, for the reason `packRouter` is one:
-   * this file may name no pack state. What it holds instead is a question it can ask on the request
-   * path — the answer is assembled by `bridge/pack/status-wire.ts` from the trust store this process
+   * A CLOSURE, and it is composed in index.ts rather than here, for the reason `crewRouter` is one:
+   * this file may name no crew state. What it holds instead is a question it can ask on the request
+   * path — the answer is assembled by `bridge/crew/status-wire.ts` from the trust store this process
    * already read and the per-peer beliefs the sweep already maintains, so asking it dials nobody and
-   * opens no file (PACK_PROTOCOL.md §10.1, §11).
+   * opens no file (CREW_PROTOCOL.md §10.1, §11).
    *
    * `undefined` on every solo instance and on every peer, `null` from the closure whenever the mode
    * says the same thing at request time — both are the route's 404, and a lead that has just lost its
    * last member stops answering without this file learning why.
    */
-  packStatus?: () => PackStatusResponse | null;
+  crewStatus?: () => CrewStatusResponse | null;
   /**
    * The lead's per-peer notification coordinators, supplied under the same condition as
-   * {@link startServer} `packLead`. The two notification-policy routes below fan across it exactly as
-   * they fan across `registry.all()` — snooze and prefs are one pack-wide setting the lead owns
-   * (PACK_PROTOCOL.md §5), and the lead being the only sender is what makes that fan complete.
+   * {@link startServer} `crewLead`. The two notification-policy routes below fan across it exactly as
+   * they fan across `registry.all()` — snooze and prefs are one crew-wide setting the lead owns
+   * (CREW_PROTOCOL.md §5), and the lead being the only sender is what makes that fan complete.
    * Structurally typed, not the class: this file needs "fan a pref change, list the live slots".
    */
   peerNotifier?: { applyPrefs(): void; tags(): string[] };
@@ -561,20 +692,20 @@ export function startServer(opts: {
    * flag: the store reads its own registry off disk, and an empty registry means "nothing paired",
    * which enforces nothing. Optional here only so the existing tests can build a server without it.
    *
-   * It is deliberately NOT threaded into the pack surface. `/pack/v1/*` is admitted by pinned mutual
-   * TLS plus the pack secret and shares nothing with a browser credential (PACK_PROTOCOL.md §6,
+   * It is deliberately NOT threaded into the crew surface. `/crew/v1/*` is admitted by pinned mutual
+   * TLS plus the crew secret and shares nothing with a browser credential (CREW_PROTOCOL.md §6,
    * ADR 0013) — a lead does not hold one of this collie's pairing tokens and must never need one.
    *
    * **ONE EXCEPTION, added 2026-08-20, and the rule above survives verbatim** (RFC §16, decision 5;
-   * PACK_PROTOCOL.md §18.14). `POST /pack/v1/pairing` carries a lead's registry — **hashes only** — to
+   * CREW_PROTOCOL.md §18.14). `POST /crew/v1/pairing` carries a lead's registry — **hashes only** — to
    * the one member it has named DEPUTY, so that member's standby door can check a phone's bearer
-   * credential when the lead is gone. What is unchanged: **no pack request is ever admitted by a
-   * pairing token**, and that route is admitted by the pack's own two factors plus a role check like
-   * every other one. What is new: a browser credential's hash rides a pack route and lands on a
+   * credential when the lead is gone. What is unchanged: **no crew request is ever admitted by a
+   * pairing token**, and that route is admitted by the crew's own two factors plus a role check like
+   * every other one. What is new: a browser credential's hash rides a crew route and lands on a
    * peer's disk — in `standby-devices.json`, its own file, **never** merged into
    * `paired-devices.json`, because `PairingStore.enforced()` is "the registry is non-empty" and a
    * merge would arm the deputy's own write gate for its own operator. The reasoning, at length, is in
-   * `bridge/pack/standby-devices.ts`.
+   * `bridge/crew/standby-devices.ts`.
    */
   pairing?: PairingStore;
   /**
@@ -590,7 +721,7 @@ export function startServer(opts: {
   /** Downstream-owned explicit Herdr Pane fit action and controller lifecycle. */
   manualPaneFit: ManualPaneFitAction;
 }) {
-  const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity, pack } = opts;
+  const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity, crew } = opts;
   const pairing = opts.pairing;
   const stt = opts.stt ?? (async () => null);
   // One gate per Bun server, not per request: two slow uploads and their two provider calls share
@@ -598,8 +729,8 @@ export function startServer(opts: {
   const sttAdmission = createSttAdmission();
   /** Who the requester is, across both device gates — see {@link requestDevice}. */
   const whois = (req: Request): DeviceAuth => requestDevice(req, cfg, pairing);
-  const packLead = opts.packLead;
-  const packStatus = opts.packStatus;
+  const crewLead = opts.crewLead;
+  const crewStatus = opts.crewStatus;
   const peerNotifier = opts.peerNotifier;
   const manualPaneFit = opts.manualPaneFit;
   // One journal registry + store for the process. The store's cache is keyed by absolute path, so
@@ -645,8 +776,8 @@ export function startServer(opts: {
   };
 
   /**
-   * This collie's own snapshot body — the whole of what `/api/snapshot` answered before packs
-   * existed, and (with `device` omitted) exactly what a peer serves its lead on `/pack/v1/snapshot`.
+   * This collie's own snapshot body — the whole of what `/api/snapshot` answered before crews
+   * existed, and (with `device` omitted) exactly what a peer serves its lead on `/crew/v1/snapshot`.
    *
    * `undefined` means the session name is unknown, which every caller turns into the same 404 it
    * always did. Nothing federated happens in here: the host tag and the `servers` array are added
@@ -683,12 +814,12 @@ export function startServer(opts: {
     // came from so the phone can address it (types.ts states why ALL of them are tagged, never just
     // the non-primary ones).
     //
-    // NOTHING ELSE IN THE BODY WIDENS, and that is the same shape the pack merge already has rather
+    // NOTHING ELSE IN THE BODY WIDENS, and that is the same shape the crew merge already has rather
     // than a shortcut: a peer contributes its `agents` and `shellPanes` and nothing more
-    // (pack/merge.ts `PeerSnapshotBody`), because `workspaces`, `tabs` and `bridge` are statements
+    // (crew/merge.ts `PeerSnapshotBody`), because `workspaces`, `tabs` and `bridge` are statements
     // about one link the phone reads one at a time. `bridge`, `workspaces` and `tabs` here stay the
     // AMBIENT session's — the one `?s=` named — exactly as they are today. So the triage lists
-    // widen and the navigation tree does not, one dimension down from a pack, where the same is
+    // widen and the navigation tree does not, one dimension down from a crew, where the same is
     // already true of every peer.
     //
     // The ORDER is the registry's own — primary first, then alphabetical — so it matches the
@@ -722,8 +853,8 @@ export function startServer(opts: {
 
   /**
    * This collie's own `(session)` resolution: the identical `registry.get` call the bridge made
-   * before packs existed, plus the 404 it always answered. Named once so that BOTH the browser's host
-   * gate and the peer's pack dispatch reach a local runtime through the same expression — two
+   * before crews existed, plus the 404 it always answered. Named once so that BOTH the browser's host
+   * gate and the peer's crew dispatch reach a local runtime through the same expression — two
    * spellings of "the primary session, or 404" would be two chances to disagree about what `?session=`
    * means, and §5 says a peer resolves it with today's exact semantics.
    */
@@ -736,16 +867,16 @@ export function startServer(opts: {
    *
    * ── ONE BLOCK, TWO CALLERS, NO SECOND HANDLER SET ────────────────────────────
    * A browser reaches it through `Bun.serve`'s dispatch below; a LEAD reaches it through this
-   * collie's `/pack/v1/*` surface, which hands over this very closure (PACK_PROTOCOL.md §5: "a 1:1
+   * collie's `/crew/v1/*` surface, which hands over this very closure (CREW_PROTOCOL.md §5: "a 1:1
    * re-exposure of the routes the phone already calls, dispatched into the same handlers"). Not a
-   * copy that agrees — the same code, so `reply` cannot acquire a pack-only behaviour and `history`
+   * copy that agrees — the same code, so `reply` cannot acquire a crew-only behaviour and `history`
    * cannot acquire a host parameter.
    *
    * What differs between the two callers is *only* who is asking, which is exactly the
    * {@link RouteCaller} it takes: how the caller's request resolves to a runtime (a browser's may
    * resolve to another machine and be forwarded), how the caller is authorised (a browser by
-   * `guard()`, a lead by the pack link plus the peer's own device policy — §12), and which audit log
-   * the write lands in (the peer's is stamped `via:"pack"`).
+   * `guard()`, a lead by the crew link plus the peer's own device policy — §12), and which audit log
+   * the write lands in (the peer's is stamped `via:"crew"`).
    *
    * `null` ⇒ not a session-scoped path; the caller carries on with its own routing.
    */
@@ -789,7 +920,7 @@ export function startServer(opts: {
     }
     // A launch is a `/api/workspace` create the operator pre-declared: the client names a row in
     // `launchers.toml` and the bridge, never the client, supplies the command line. It sits here
-    // rather than beside it in the browser dispatch so a pack lead reaches the same handler (§5).
+    // rather than beside it in the browser dispatch so a crew lead reaches the same handler (§5).
     if (pathname === "/api/launch" && req.method === "POST") {
       const denied = caller.gate("write");
       if (denied) return denied;
@@ -808,6 +939,26 @@ export function startServer(opts: {
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       return launchersRoute(operatorLaunchers, req.headers.get("accept-encoding"));
+    }
+    // ── Blobs: the bytes a pi/omp journal named (`resolveImageUrl` in journal/pi.ts) ──
+    //
+    // A READ, and gated as one: it hands back a picture an agent already put in its own log, so a
+    // read-only or unpaired-but-permitted device may see it exactly as it may see the pane text
+    // that mentions it. It is session-scoped so `caller.resolve()` forwards a `?host=` call to the
+    // member whose disk holds the file — the lead has no copy of a peer's blob (§9.1).
+    const blobMatch = pathname.match(BLOB_ROUTE);
+    if (blobMatch && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      let hash: string;
+      try {
+        hash = decodeURIComponent(blobMatch[1]!);
+      } catch {
+        return text("malformed URL", 400);
+      }
+      return blobRoute(hash, cfg.journalRoots.pi, req.headers.get("if-none-match"));
     }
 
     // ── Worktrees: list / create / open / remove, all scoped to a space (ADR 0032) ──
@@ -873,7 +1024,7 @@ export function startServer(opts: {
       //
       // ── AND IT IS RECORDED EXACTLY ONCE, ON THE OWNING HOST ────────────────
       // A pane on a peer never reaches this line on the LEAD: `caller.resolve()` returned the peer's
-      // forwarded response above. It reaches it on the PEER, through the pack dispatch, against the
+      // forwarded response above. It reaches it on the PEER, through the crew dispatch, against the
       // peer's own ledger — which is what makes "seen" one shared fact (.adr/0003) rather than two
       // machines' guesses, and why the `x-collie-seen` header is forwarded verbatim.
       const routed = isRead ? req.method === "GET" : req.method === "POST";
@@ -906,36 +1057,45 @@ export function startServer(opts: {
     return null;
   };
 
-  // A peer answers its lead with its OWN view and never a merged one — a pack link never forwards a
+  // A peer answers its lead with its OWN view and never a merged one — a crew link never forwards a
   // `host=` because a peer has no peers (§4). Hence `localSnapshot`, not the merged body below.
   //
   // The second closure is the per-pane half of the same idea (§5): the lead's request is dispatched
-  // into the block above, authorised by the PEER's own gate (bridge/pack/peer-gate.ts) and audited in
-  // the PEER's own log with `via:"pack"` and the originating member (§12). The lead's verdict is not
+  // into the block above, authorised by the PEER's own gate (bridge/crew/peer-gate.ts) and audited in
+  // the PEER's own log with `via:"crew"` and the originating member (§12). The lead's verdict is not
   // an input — it never crosses the wire.
-  const packHandler = opts.packRouter?.({
-    // Never widened, and stated rather than defaulted: a peer answers its lead with the session the
-    // lead asked for, and no lead asks for more than one yet. Turning this on is a PACK_PROTOCOL
-    // change (§7.1, additive-optional) and belongs in the commit that also teaches the sweep to ask
-    // and `merge.ts` to carry the tag — not to a default argument that quietly widens a wire the
-    // spec has not been amended for.
-    snapshot: (session) => localSnapshot(session, null, false),
+  const crewHandler = opts.crewRouter?.({
+    // The view comes off the LEAD's request (`bridge/crew/router.ts` reads it with the same
+    // `selectView` the browser route uses), never from a literal here: this line used to hard-code a
+    // narrow answer, which made a member's second session unreachable no matter what the phone asked
+    // (M22/06). `?sessions=all` is additive and optional under §7.1, so CREW_PROTOCOL_VERSION does
+    // not move, and a lead that does not send it still gets the primary session. A crew request may
+    // still not name a host — widening is a second dimension of ONE machine, and a peer has no
+    // peers (§4).
+    snapshot: (view) => localSnapshot(view.session, null, view.widen),
+    // M22/03: this collie's own capability declaration, for `hello`. The SAME expression the
+    // `/api/config` route below publishes to a browser — the primary session's adapter — so a peer
+    // cannot report capabilities that differ from the ones it serves its own operator.
+    mux: () => {
+      const active = registry.get();
+      return active === undefined ? null : muxConfigBody(active.herdr);
+    },
     dispatch: async (req, url, from) => {
       const session = url.searchParams.get("session") ?? undefined;
-      const device = packDeviceOf(req);
+      const device = crewDeviceOf(req);
       const routed = await serveSessionRoute(req, url, {
         resolve: async () => localRuntime(session, null),
         gate: (level) => {
-          const verdict = packGate(level, cfg, device);
+          const verdict = crewGate(level, cfg, device);
           return verdict.ok ? null : text(verdict.reason, 403);
         },
         device: () => device,
-        audit: audit.scoped({ via: "pack", from }),
+        audit: audit.scoped({ via: "crew", from }),
       });
-      // Deliberately UNCODED. This is the pack link's own 404, answered to a LEAD and never to a
-      // browser, and `/pack/v1/*` is a separately-versioned surface (PACK_PROTOCOL.md, ADR 0025) —
+      // Deliberately UNCODED. This is the crew link's own 404, answered to a LEAD and never to a
+      // browser, and `/crew/v1/*` is a separately-versioned surface (CREW_PROTOCOL.md, ADR 0025) —
       // it keeps today's body in this release. Error codes are the phone's vocabulary, not the
-      // pack's.
+      // crew's.
       return routed ?? jsonError({ error: "not found" }, 404, null);
     },
   });
@@ -961,10 +1121,55 @@ export function startServer(opts: {
    * bridge with no run in flight send precisely today's object.
    */
   function updateStatusWithPeers() {
-    const status = updateMonitor.status();
-    const legs = opts.packLead?.updatePeers() ?? [];
-    if (status.run === undefined || status.run === null || legs.length === 0) return status;
-    return { ...status, run: { ...status.run, peers: legs } };
+    const status = withStagingTail(updateMonitor.status());
+    const legs = opts.crewLead?.updatePeers() ?? [];
+    if (legs.length === 0) return status;
+    // §20's one clock (M20/01). Omitted while the run is still moving, so "absent" keeps meaning
+    // "not settled" on a phone talking to a bridge that predates the field.
+    const settledAt = opts.crewLead?.updateSettledAt() ?? null;
+    const crewState = settledAt === null ? { peers: legs } : { peers: legs, settledAt };
+    // A PEERS-ONLY RUN IS STILL A RUN (M20/09). "Retry crew update" never calls the updater on this
+    // machine — it begins the turn queue and re-sweeps — so nothing is written to `update.json` and
+    // `status.run` is null for the whole run. The old guard dropped the live legs on exactly that
+    // path, and the phone then had no way to learn the run had started, let alone finished.
+    //
+    // The legs ride the RUN when there is one and the STATUS when there is not. Two positions, one
+    // reader: `peerLegsOf` in `web/src/lib/update-ribbon.ts` is where both surfaces ask. Sending
+    // them at the top level unconditionally would be a second copy of a field already shipped on
+    // `run`, and a phone older than this change would then have two places to disagree about.
+    if (status.run === undefined || status.run === null) return { ...status, ...crewState };
+    // AND THEY RIDE THEIR OWN RUN, NEVER THE NEXT ONE. The legs outlive the run that made them, so
+    // the outcome stays on the screen the operator confirmed on — which means a later run would
+    // otherwise carry the previous run's peer rows, and its failures, as if they were its own.
+    //
+    // They are not DROPPED when they belong to a different run, they fall to the top level, which is
+    // the position for legs this machine's record does not own. Dropping them was the first shape of
+    // this guard and it re-opened spec 09 on the commonest path there is: a local update leaves a
+    // `done` record behind, the operator then taps "Retry crew update", and that peers-only run has
+    // a different run id and no record of its own. The legs would be discarded for the whole run and
+    // the phone would learn nothing, which is the very bug this composer exists to fix.
+    if (opts.crewLead?.updateLegsRun() !== status.run.runId) return { ...status, ...crewState };
+    return { ...status, run: { ...status.run, ...crewState } };
+  }
+
+  /**
+   * The staging progress file, folded into the run record it belongs to (M20/10).
+   *
+   * ONE OBJECT ON THE WIRE. The client is given no second channel to poll and no route to tail: a
+   * second client-visible source about one run is a second thing that can disagree with the run
+   * record, which is the fault the composer above was written to avoid. So the tail rides `logTail`,
+   * the field the card already renders under "Log tail".
+   *
+   * Only while STAGING, and only when the run carries no tail of its own. A failure's tail is the
+   * service log, which is the more useful document at that point and must not be overwritten by the
+   * build output that preceded it.
+   */
+  function withStagingTail(status: UpdateStatus): UpdateStatus {
+    const run = status.run;
+    if (run === undefined || run.state !== "staging" || run.logTail !== undefined) return status;
+    if (run.runId === undefined) return status;
+    const tail = readStagingLog(cfg.stateDir, run.runId);
+    return tail === null ? status : { ...status, run: { ...run, logTail: tail } };
   }
 
   const server = Bun.serve({
@@ -972,7 +1177,7 @@ export function startServer(opts: {
     port: cfg.port,
     // Runtime cap on any request body — a chunked/lying client is cut off here even if its
     // Content-Length is absent or false. The upload handler still does its own precise check.
-    maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+    maxRequestBodySize: requestBodyCap(cfg),
     // When TLS is present the handshake itself is the first factor: an unpinned or absent client
     // certificate never reaches `fetch` at all, so nothing below has to defend against it.
     tls: listenerTls,
@@ -983,11 +1188,11 @@ export function startServer(opts: {
 
       // The federated surface, before anything else. It answers only the prefix it owns and returns
       // null otherwise, so this is not a branch a browser request can take. Its admission is two
-      // independent factors and shares nothing with `checkAccess()` below — a pack credential never
-      // admits an `/api/*` request and a browser credential never admits a pack one
-      // (PACK_PROTOCOL.md §6, ADR 0013).
-      if (packHandler) {
-        const packed = await packHandler(req, url);
+      // independent factors and shares nothing with `checkAccess()` below — a crew credential never
+      // admits an `/api/*` request and a browser credential never admits a crew one
+      // (CREW_PROTOCOL.md §6, ADR 0013).
+      if (crewHandler) {
+        const packed = await crewHandler(req, url);
         if (packed) return secure(packed);
       }
 
@@ -997,9 +1202,9 @@ export function startServer(opts: {
       //
       // Everything below trusts headers a client writes (`Tailscale-User-Login`,
       // COLLIE_DEVICE_HEADER, Origin/Host), which are only untamperable while the sole client is the
-      // local front door. A pack request is not that, and does not need to be: it was already
-      // admitted by pinned mutual TLS plus the pack secret and answered above (PACK_PROTOCOL.md §6,
-      // ADR 0013). A pack path the handler DECLINED falls through to here and is refused like any
+      // local front door. A crew request is not that, and does not need to be: it was already
+      // admitted by pinned mutual TLS plus the crew secret and answered above (CREW_PROTOCOL.md §6,
+      // ADR 0013). A crew path the handler DECLINED falls through to here and is refused like any
       // other remote caller. `COLLIE_ALLOW_NON_LOOPBACK_BIND=1` turns the check off wholesale, which
       // is what that flag has always meant.
       if (!cfg.allowNonLoopbackBind && !isLoopbackPeer(server.requestIP(req)?.address)) {
@@ -1008,7 +1213,7 @@ export function startServer(opts: {
 
       // A DEPOSED collie serves one page and fails its health check (§18.12). It sits AFTER the
       // federated surface on purpose: the machine that just deposed this one must still be able to
-      // reach `/pack/v1/*` here — that is how it was told, and how it will be told again — while the
+      // reach `/crew/v1/*` here — that is how it was told, and how it will be told again — while the
       // app, the PWA and `/api/*` are gone. Everything below this line is the front door, and a
       // deposed collie has none.
       const deposedAnswer = opts.deposed?.(req, url);
@@ -1028,11 +1233,11 @@ export function startServer(opts: {
       // reads no session.
       //
       // It sits AFTER the deposed answer on purpose: a DEPOSED collie must FAIL this check
-      // (`bridge/pack/deposed.ts`), and it does so by answering its one page here instead. That is
+      // (`bridge/crew/deposed.ts`), and it does so by answering its one page here instead. That is
       // why a deposed peer can never be mistaken for a successful update.
       if (pathname === "/api/health") {
         if (req.method !== "GET" && req.method !== "HEAD") return text("method not allowed", 405);
-        return json(healthBody(opts.version, pack.mode), req.headers.get("accept-encoding"));
+        return json(healthBody(opts.version, crew.mode), req.headers.get("accept-encoding"));
       }
 
       // Session-scoped routes accept an optional `?session=<name>`; absent → the primary session
@@ -1048,10 +1253,10 @@ export function startServer(opts: {
 
       // The host dimension of the `(host, session, paneId)` address (§4), read exactly where the
       // session name is and by the same rule: a client-supplied value that is ONLY ever a registry
-      // key. Parsed only when this collie has a trust store — the same predicate the pack surface
+      // key. Parsed only when this collie has a trust store — the same predicate the crew surface
       // mounts on — so a solo instance never applies the grammar to a URL and `?h=` stays a
       // parameter that provably does not exist there (§11).
-      const host = packHandler ? selectHostFrom(url) : LOCAL_HOST;
+      const host = crewHandler ? selectHostFrom(url) : LOCAL_HOST;
 
       /**
        * The `(host, session)` target of a session-scoped route, or the Response refusing it.
@@ -1067,7 +1272,7 @@ export function startServer(opts: {
        */
       const target = async (): Promise<SessionRuntime | Response> => {
         if (host.kind !== "local") {
-          const resolved = packLead?.resolve(host, sessionName);
+          const resolved = crewLead?.resolve(host, sessionName);
           if (resolved === undefined) {
             return jsonError(
               apiError("host.unknown", { host: host.kind === "member" ? host.id : host.raw }),
@@ -1080,7 +1285,7 @@ export function startServer(opts: {
             // write, plus the target host — two independent logs of one event, neither depending on
             // the other machine's disk.
             return secure(
-              await packLead!.forward(req, url, resolved, {
+              await crewLead!.forward(req, url, resolved, {
                 device: whois(req).device,
                 audit: (entry) => {
                   // Assigned, never conditionally spread: an entry without a pane or session must
@@ -1110,33 +1315,41 @@ export function startServer(opts: {
         const device = whois(req);
         // A BROWSER poll is a phone looking; the lead's own sweep of a peer is not, which is why
         // this stamp sits here rather than inside `localSnapshot` (that closure also serves
-        // `/pack/v1/snapshot`, and a lead sweeps on its own clock whether or not anybody is reading
-        // it — stamping there would pin every peer at `watched` for the life of the pack).
+        // `/crew/v1/snapshot`, and a lead sweeps on its own clock whether or not anybody is reading
+        // it — stamping there would pin every peer at `watched` for the life of the crew).
         registry.get(sessionName)?.engine.noteAttention();
-        // `?sessions=all` WIDENS the pane lists to every local session (see localSnapshot). One
-        // exact spelling and nothing else is accepted: the parameter is a switch, not a list, and a
-        // typo must read as "no" rather than as some third behaviour. It does NOT replace `?session=`
-        // — the ambient session still decides `bridge`, `workspaces`, `tabs` and the 404 below, so a
-        // widened view of an unknown session is still an unknown session.
-        const widen = url.searchParams.get("sessions") === "all";
-        const body = localSnapshot(sessionName, device.enforced ? device : null, widen);
+        // `?sessions=all` WIDENS the pane lists to every session on ONE machine (see localSnapshot).
+        // One exact spelling and nothing else is accepted: the parameter is a switch, not a list, and
+        // a typo must read as "no" rather than as some third behaviour. It does NOT replace
+        // `?session=` — the named session still decides `bridge`, `workspaces`, `tabs` and the 404
+        // below, so a widened view of an unknown session is still an unknown session.
+        //
+        // WHICH MACHINE is the other half, and the two compose (M22/06). `?host=` was resolved above
+        // for every session-scoped route; this route is the one that answers from the lead's own
+        // registry plus its CACHE of every member, so it never forwards and it reads the host here
+        // rather than through the gate. No host, or the lead, and the view lands on this collie's own
+        // registry exactly as it always has — which is the only body a solo install can get, because
+        // it cannot emit the parameter at all (§11). A member, and the view lands on that member's
+        // cached body at the merge instead, where `narrowPeerBody` applies it.
+        const plan = snapshotPlan(host.kind === "member" ? host.id : null, selectView(url));
+        const body = localSnapshot(plan.local.session, device.enforced ? device : null, plan.local.widen);
         if (!body) return unknownSession();
-        // The ONE place the lead re-serialises (§9.2). With no pack this is the identity function's
+        // The ONE place the lead re-serialises (§9.2). With no crew this is the identity function's
         // absence: `body` goes out as assembled, same keys, same order, same bytes, same ETag.
         // The merged body's ETag is then the lead's own assertion about its own merged view — a
         // peer's ETag is never recomputed here, because no peer body is re-hashed on this path.
         // Tag every snapshot poll with the on-disk build id so an open client notices a live rebuild
         // between polls — the no-service-worker self-update path (web/src/lib/self-update.ts).
         return withBuildHeader(
-          json(packLead ? packLead.merge(body) : body, req.headers.get("accept-encoding")),
+          json(crewLead ? crewLead.merge(body, plan) : body, req.headers.get("accept-encoding")),
           await buildId(),
         );
       }
 
       // ── Session-scoped routes: the pane family, tabs, workspaces ─────────
-      // The block itself lives above, shared with the pack surface (§5). What a browser supplies is
+      // The block itself lives above, shared with the crew surface (§5). What a browser supplies is
       // its own gate (`guard`), its own device attribution, this collie's audit log, and the host
-      // gate — which is the one thing a pack caller never has, because a peer has no peers (§4).
+      // gate — which is the one thing a crew caller never has, because a peer has no peers (§4).
       //
       // ── ONE GATE EXPRESSION, SHARED BY NAME ──────────────────────────────
       // `browserGate` is the browser's whole authorisation story: `checkAccess` (host allowlist,
@@ -1179,22 +1392,55 @@ export function startServer(opts: {
         // is not a choice. `?.` only because `get()` is total over a Map — the primary is created
         // eagerly in the constructor and never disposed.
         const activeMux = registry.get();
+        // ── `?host=<member>`: THIS MEMBER's capability declaration (M22/03) ──────────────────
+        //
+        // Answered from what the lead already holds, and never forwarded: `config` is on
+        // `bridge/crew/forward.ts`'s not-forwarded list and must stay there, because a config read
+        // is the request every page load makes and it must not be able to make the lead dial a
+        // machine. The lead learned the block from that member's last `hello`.
+        //
+        // The host selector is the one `target()` above already resolved, so an unknown or
+        // ill-formed member id gets the same 404 every host-scoped route gives it. It is never
+        // silently rewritten to the lead: quietly answering for a different machine is the exact
+        // failure the host dimension exists to prevent.
+        const scoped = host.kind === "local" ? undefined : crewLead?.resolve(host);
+        if (host.kind !== "local" && scoped === undefined) {
+          return jsonError(
+            apiError("host.unknown", { host: host.kind === "member" ? host.id : host.raw }),
+            404,
+            req.headers.get("accept-encoding"),
+          );
+        }
+        // A member that has published nothing answers with the LEAD's block, because absent means
+        // "use the lead's" — which is byte for byte the reading the phone gives every pane today.
+        // The lead's own entry resolves `local`, so it takes its own branch and its own adapter.
+        const memberMux = scoped?.kind === "peer" ? crewLead?.muxFor(scoped.link.memberId) : null;
         // Re-resolved per request for the same reason `commands.toml` is: `collie stt setup` is
         // live, and this is where the phone learns whether to draw a microphone at all. `?? undefined`
-        // because "no provider" must OMIT the key, never send a null one (PACK_PROTOCOL.md §11).
+        // because "no provider" must OMIT the key, never send a null one (CREW_PROTOCOL.md §11).
         const sttWire = (await sttCapability(await stt())) ?? undefined;
         return json(
           bridgeConfigBody({
             push: push.enabled,
             vapidPublicKey: push.publicKey,
             build: await buildId(),
-            mode: pack.mode,
+            mode: crew.mode,
             operatorCommands: mine,
             operatorKeys: myKeys,
             operatorQuickReplies: myReplies,
             operatorFonts: myFonts,
             mux: activeMux?.herdr,
+            // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
+            // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
+            muxWire: memberMux ?? undefined,
             stt: sttWire,
+            // This host's own limits, read from cfg on every request like everything else here.
+            // A crew member answers with ITS number, which is the number that will judge the bytes.
+            upload: {
+              maxBytes: cfg.maxUploadBytes,
+              imageTypes: [...IMAGE_EXTS],
+              textTypes: [...TEXT_EXTS, ...cfg.uploadExtraTypes],
+            },
           }),
           req.headers.get("accept-encoding"),
         );
@@ -1339,6 +1585,43 @@ export function startServer(opts: {
         await updateMonitor.snoozeDigest();
         return json(updateMonitor.status(), req.headers.get("accept-encoding"));
       }
+      if (pathname === "/api/update/dismiss" && req.method === "POST") {
+        // The update band was closed, for the version it named, in the scope it was closed in. The
+        // version is recorded on the bridge rather than in the browser that closed it, so the band
+        // stays down wherever it is read next (M17/08). Closing THIS host's offer also snoozes the
+        // digest, in the monitor's one write — hiding a notice about another machine does not.
+        //
+        // Read-level, exactly like the snooze beside it: declining a notification about your own
+        // machine isn't terminal-driving. Not a mute either — `updatesEnabled()` stays the only off
+        // switch, and a NEWER release raises the band again.
+        const denied = guard(req, cfg, "read", pairing);
+        if (denied) return denied;
+        let body: JsonValue;
+        try {
+          // SAFETY: `Request.json()` output IS a JsonValue by construction; the version is checked
+          // for being a non-empty string below before anything is written.
+          body = (await req.json()) as JsonValue;
+        } catch {
+          return text("bad request", 400);
+        }
+        const record = body !== null && typeof body === "object" && !Array.isArray(body) ? body : null;
+        const version = record === null ? undefined : record.version;
+        if (typeof version !== "string" || version.trim() === "") return text("bad version", 400);
+        // WHICH band, because they are two decisions: the offer this host was given, and the quiet
+        // notice about a machine a package manager owns. Absent reads as the offer, which is what
+        // every client before the crew states could close.
+        //
+        // REMOVE_IN_1_9_0: `"pack"` is 1.7.0's name for the `"crew"` scope, and a phone still
+        // running the 1.7.0 bundle sends it. Accepted here and folded into `"crew"` before anything
+        // is written, so the record on disk only ever carries the new name.
+        const asked = record === null ? undefined : record.scope;
+        if (asked !== undefined && asked !== "offer" && asked !== "crew" && asked !== "pack") {
+          return text("bad scope", 400);
+        }
+        const scope = asked === "pack" ? "crew" : asked;
+        await updateMonitor.dismiss(version, scope ?? "offer");
+        return json(updateMonitor.status(), req.headers.get("accept-encoding"));
+      }
       if (pathname === "/api/update/check" && req.method === "GET") {
         // The card's own read: everything `POST /api/update/check` answers, plus the PREFLIGHT that
         // decides whether the update button is live and what it says when it is not (M15/05).
@@ -1366,17 +1649,17 @@ export function startServer(opts: {
             new Promise<void>((resolve) => setTimeout(resolve, UPDATE_ON_DEMAND_POLL_TIMEOUT_MS)),
           ]);
         }
-        // ── THE PACK'S HALF (M16/03) ────────────────────────────────────────
+        // ── THE CREW'S HALF (M16/03) ────────────────────────────────────────
         // The same on-demand shape, one line lower: six hours is the right cadence for a background
         // fact and the wrong one for a page the operator is looking at, so this read fires ONE
-        // immediate sweep carrying `X-Pack-Preflight: fresh` and waits the same bounded moment for
+        // immediate sweep carrying `X-Crew-Preflight: fresh` and waits the same bounded moment for
         // it. Past the bound the answer is what the lead already has — a stale `asOf`, never a
         // fabricated green — and a peer that ignores the header is a correct peer.
         //
         // The peer's own `PREFLIGHT_TTL_MS` is what keeps this cheap: the header is honoured at most
         // once a minute per member, so a phone sitting on the page cannot make a peer shell out to
         // git and `doctor` on every poll.
-        const freshSweep = opts.packLead?.sweep({ freshPreflight: true });
+        const freshSweep = opts.crewLead?.sweep({ freshPreflight: true });
         if (freshSweep !== undefined) {
           await Promise.race([
             freshSweep,
@@ -1385,12 +1668,12 @@ export function startServer(opts: {
         }
         const report = opts.updateAction ? await opts.updateAction.preflight() : null;
         // `preflight: null` is a fact the card renders ("could not be checked"), not an omission —
-        // the key is always present so the phone can tell "not checked" from "old bridge". `pack`
+        // the key is always present so the phone can tell "not checked" from "old bridge". `crew`
         // follows the same rule: `[]` on a solo instance and on a peer, never absent. It is composed
-        // from what the sweep BANKED (`PackLead.updateRows`) and dials nobody — `status-wire.ts`'s
+        // from what the sweep BANKED (`CrewLead.updateRows`) and dials nobody — `status-wire.ts`'s
         // purity argument, one route over.
         return json(
-          { ...updateStatusWithPeers(), preflight: report, pack: opts.packLead?.updateRows() ?? [] },
+          { ...updateStatusWithPeers(), preflight: report, crew: opts.crewLead?.updateRows() ?? [] },
           req.headers.get("accept-encoding"),
         );
       }
@@ -1427,12 +1710,15 @@ export function startServer(opts: {
           run: status.run ?? null,
           lockHeld: action.lockHeld(),
           preflight: report,
-          // One confirm covers the pack (M16/03): the members' banked verdicts gate this start the
+          // The one gate a green preflight cannot express: a package manager owns this folder, so there is
+          // nothing here Collie may replace (ADR 0035).
+          installKind: status.installKind,
+          // One confirm covers the crew (M16/03): the members' banked verdicts gate this start the
           // same way the lead's own does. Read, never fetched — the sweep is the only thing that
           // talks to a member.
-          pack: opts.packLead?.updateRows() ?? [],
-          // And the legs of the last run, which is what "Retry pack update" is about (M16/04).
-          peers: opts.packLead?.updatePeers() ?? [],
+          crew: opts.crewLead?.updateRows() ?? [],
+          // And the legs of the last run, which is what "Retry crew update" is about (M16/04).
+          peers: opts.crewLead?.updatePeers() ?? [],
         });
         if (verdict.kind === "refuse") {
           return jsonError(verdict.body, verdict.status, req.headers.get("accept-encoding"));
@@ -1446,7 +1732,7 @@ export function startServer(opts: {
         // it opens a run whose only legs are the peers, and the first of §20's three immediate
         // sweeps carries the first turn out.
         if (verdict.kind === "peers") {
-          action.beginPackRun?.({ runId, to: verdict.to });
+          action.beginCrewRun?.({ runId, to: verdict.to });
           audit.record({
             action: "update",
             device: whois(req).device,
@@ -1464,8 +1750,8 @@ export function startServer(opts: {
         }
         // The peers ride the SAME confirm and the same id. Their turns are granted once this lead's
         // own health gate settles — a lead that announced a version it has not finished taking would
-        // send its whole pack after a release it may itself roll back from (§20).
-        action.beginPackRun?.({ runId, to: verdict.to });
+        // send its whole crew after a release it may itself roll back from (§20).
+        action.beginCrewRun?.({ runId, to: verdict.to });
         audit.record({
           action: "update",
           device: whois(req).device,
@@ -1543,18 +1829,25 @@ export function startServer(opts: {
         // The ONLY time this token exists outside the requesting device. Nothing stores it here.
         return json({ token: claimed.token, label: parsed.label }, req.headers.get("accept-encoding"));
       }
+      // REMOVE_IN_1_9_0: `/api/pack` is 1.7.0's name for the route below. A 308 keeps the method,
+      // so a phone still serving the 1.7.0 bundle out of its service worker cache follows it and
+      // reads the same census. The query string rides along rather than being dropped.
       if (pathname === "/api/pack" && req.method === "GET") {
+        const moved = `/api/crew${url.search}`;
+        return new Response(null, { status: 308, headers: { location: moved } });
+      }
+      if (pathname === "/api/crew" && req.method === "GET") {
         // Read-level, exactly like `/api/devices` and `/api/config`: this is a report about machines
         // the operator already owns, and it drives nothing. Every field is a fact this process was
         // already holding — the route reads no disk, dials no member, and cannot start a call.
         const denied = guard(req, cfg, "read", pairing);
         if (denied) return denied;
         // 404 for a solo instance AND for a peer, from one closure. A peer is not a front door
-        // (ADR 0013), and a solo instance has no pack to describe — the phone's move is the same in
+        // (ADR 0013), and a solo instance has no crew to describe — the phone's move is the same in
         // both cases, so the refusal is too. Not a 403: nothing was withheld, there is nothing here.
-        const body = packStatus?.() ?? null;
+        const body = crewStatus?.() ?? null;
         if (body === null) {
-          return jsonError(apiError("pack.not_lead"), 404, req.headers.get("accept-encoding"));
+          return jsonError(apiError("crew.not_lead"), 404, req.headers.get("accept-encoding"));
         }
         return json(body, req.headers.get("accept-encoding"));
       }
@@ -1611,7 +1904,7 @@ export function startServer(opts: {
       if (isReservedAuthPath(pathname)) return reservedAuthPlaceholder();
 
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
-      return serveStatic(pathname);
+      return serveStatic(pathname, req.headers.get("accept-encoding"));
     },
   });
 
@@ -2905,9 +3198,23 @@ export async function launch(
   );
 }
 
-// Save an uploaded image to a host file and return its absolute path. The client then references
-// that path in a message; Claude Code / Codex read images by path (the terminal can't take a
-// pasted image over the socket). Validated by MIME and size; the filename is server-generated.
+/**
+ * The two numbers an oversize refusal carries: the exact byte cap for a client that computes, and
+ * the whole megabytes the sentence itself is written in. Both come off THIS host's config, so a
+ * phone talking to a crew reads each member's own limit rather than the lead's.
+ */
+function uploadLimitDetail(cfg: Config) {
+  return {
+    maxBytes: cfg.maxUploadBytes,
+    maxMb: Math.round(cfg.maxUploadBytes / (1024 * 1024)),
+  } satisfies ApiErrorDetail;
+}
+
+// Save an uploaded attachment to a host file and return its absolute path. The client then
+// references that path in a message; Claude Code / Codex read images and text files by path (the
+// terminal can't take a pasted file over the socket). What may be written is `uploadExt`'s decision
+// — bytes for an image, name plus a binary veto for a text file — and the filename is
+// server-generated, so nothing the client sent becomes a path component.
 async function uploadPane(
   cfg: Config,
   paneId: string,
@@ -2920,12 +3227,12 @@ async function uploadPane(
   // Reject an oversize upload by its declared Content-Length BEFORE buffering — req.formData()
   // reads the whole body into memory first, so a 100 MB "image" would be materialised just to fail
   // the size check below. Multipart adds a boundary + part headers, so allow a small slack.
-  if (uploadTooLarge(req.headers.get("content-length"))) {
+  if (uploadTooLarge(req.headers.get("content-length"), cfg.maxUploadBytes)) {
     return secure(
       new Response(
         JSON.stringify({
           ok: false,
-          ...apiError("upload.too_large", { maxBytes: MAX_UPLOAD_BYTES }),
+          ...apiError("upload.too_large", uploadLimitDetail(cfg)),
         } satisfies UploadResponse),
         { status: 413, headers: { "content-type": "application/json; charset=utf-8" } },
       ),
@@ -2941,8 +3248,8 @@ async function uploadPane(
   if (!(file instanceof File)) {
     return json({ ok: false, ...apiError("upload.no_file") } satisfies UploadResponse, ae);
   }
-  const head = new Uint8Array(await file.slice(0, SNIFF_BYTES).arrayBuffer());
-  const ext = imageExtFromBytes(head);
+  const head = new Uint8Array(await file.slice(0, TEXT_SNIFF_BYTES).arrayBuffer());
+  const ext = uploadExt(file.name, head, cfg.uploadExtraTypes);
   if (!ext) {
     // The client's own Content-Type rides along as the DETAIL only — it names what the operator
     // thought they sent, and the decision above never consulted it.
@@ -2951,9 +3258,9 @@ async function uploadPane(
       ae,
     );
   }
-  if (file.size > MAX_UPLOAD_BYTES) {
+  if (file.size > cfg.maxUploadBytes) {
     return json(
-      { ok: false, ...apiError("upload.too_large", { maxBytes: MAX_UPLOAD_BYTES }) } satisfies UploadResponse,
+      { ok: false, ...apiError("upload.too_large", uploadLimitDetail(cfg)) } satisfies UploadResponse,
       ae,
     );
   }
@@ -3183,7 +3490,7 @@ function json<TBody>(data: TBody, acceptEncoding: string | null, status = 200): 
  *
  * It takes a BODY rather than a message so a caller must have gone through {@link apiError} to get
  * one — which is what keeps a refusal's English and its code in the catalogue together. The bare
- * `{ error }` shape stays legal for the one caller that must not carry a code: the pack link's 404.
+ * `{ error }` shape stays legal for the one caller that must not carry a code: the crew link's 404.
  */
 function jsonError(
   body: ApiErrorBody | { error: string },
@@ -3317,7 +3624,7 @@ function supersededEndpoint(body: JsonValue | undefined): string | undefined {
 // Surfaced via the X-Collie-Build header and /api/config so a stale, service-worker-cached client
 // can tell it's behind. Cached by file mtime so a frontend rebuild (live, no restart) is picked up.
 // Exported since M15/05 for the STANDBY listener, which reports the same fact on its own port
-// (`bridge/pack/standby.ts`) — one answer to "which bundle is on disk", never a second reader that
+// (`bridge/crew/standby.ts`) — one answer to "which bundle is on disk", never a second reader that
 // caches it differently.
 let buildCache: { id: string; mtime: number } | null = null;
 export async function buildId(): Promise<string> {
@@ -3360,10 +3667,10 @@ export interface HealthBody {
   readonly version: string;
   /** Always false here — see {@link healthBody}. */
   readonly deposed: false;
-  readonly mode: PackRuntime["mode"];
+  readonly mode: CrewRuntime["mode"];
 }
 
-export function healthBody(version: string, mode: PackRuntime["mode"]): HealthBody {
+export function healthBody(version: string, mode: CrewRuntime["mode"]): HealthBody {
   return { ok: true, version, deposed: false, mode };
 }
 
@@ -3442,8 +3749,12 @@ behind your own reverse proxy</em> in the README.</p>
   );
 }
 
-async function serveStatic(pathname: string): Promise<Response> {
-  const resolved = resolveStaticPath(pathname);
+export async function serveStatic(
+  pathname: string,
+  acceptEncoding: string | null,
+  webDir: string = WEB_DIR,
+): Promise<Response> {
+  const resolved = resolveStaticPath(pathname, webDir);
   if (!resolved) return text("forbidden", 403);
   let { rel, full } = resolved;
 
@@ -3452,7 +3763,7 @@ async function serveStatic(pathname: string): Promise<Response> {
     // SPA fallback: extension-less paths fall back to index.html; missing assets 404.
     if (extname(rel) === "") {
       rel = "index.html";
-      full = join(WEB_DIR, "index.html");
+      full = join(webDir, "index.html");
       file = Bun.file(full);
       if (!(await file.exists())) {
         return text("frontend not built — run `bun run build` in web/", 503);
@@ -3470,7 +3781,107 @@ async function serveStatic(pathname: string): Promise<Response> {
   };
   if (ext === ".html") headers["content-security-policy"] = CSP;
   if (rel === "sw.js") headers["service-worker-allowed"] = "/";
-  return secure(new Response(file, { headers }));
+
+  const gz = await gzippedStatic(file, full, ext, acceptEncoding);
+  if (gz === null) return secure(new Response(file, { headers }));
+  headers["content-encoding"] = "gzip";
+  headers["vary"] = "accept-encoding";
+  // Stated rather than left to the runtime, because the length a client must read is the
+  // COMPRESSED one; a length copied from the file on disk would hang the download.
+  headers["content-length"] = String(gz.byteLength);
+  return secure(new Response(gz, { headers }));
+}
+
+/**
+ * Extensions whose bytes are text and therefore worth gzipping. Images, fonts and anything unlisted
+ * are already compressed, so a second pass spends CPU to grow the body by its gzip framing.
+ */
+const COMPRESSIBLE_EXT = new Set([
+  ".js",
+  ".mjs",
+  ".css",
+  ".html",
+  ".svg",
+  ".json",
+  ".webmanifest",
+  ".txt",
+  ".map",
+]);
+
+/**
+ * Below this many bytes a static file goes out raw: gzip's own header and trailer, plus the extra
+ * response headers, eat the saving. Higher than the JSON floor in http-cache.ts because a static
+ * file is usually served once per release and cached, while a JSON body is served every poll.
+ */
+const STATIC_GZIP_MIN_BYTES = 1024;
+
+/** At most this many compressed bodies are held, and at most this many bytes across all of them. */
+const GZIP_CACHE_MAX_ENTRIES = 64;
+const GZIP_CACHE_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The compressed bodies of the static files served so far, keyed by absolute path + mtime + size —
+ * so a rebuild never serves the old bytes under the new file's name, and nothing has to be
+ * invalidated by hand. A `Map` iterates in insertion order, which makes "evict the oldest" the
+ * first key it yields. Every served extension is cached the same way, hashed asset or not: an
+ * `index.html` is small, and one code path is worth more here than a second policy.
+ */
+const gzipCache = new Map<string, Uint8Array<ArrayBuffer>>();
+let gzipCacheBytes = 0;
+let gzipCacheHits = 0;
+let gzipCacheMisses = 0;
+
+/** What the cache has done so far. Exported so a test can observe a hit without a spy. */
+export function staticGzipStats() {
+  return {
+    entries: gzipCache.size,
+    bytes: gzipCacheBytes,
+    hits: gzipCacheHits,
+    misses: gzipCacheMisses,
+  };
+}
+
+/** Empty the cache and its counters. For tests; the server never needs it. */
+export function resetStaticGzipCache(): void {
+  gzipCache.clear();
+  gzipCacheBytes = 0;
+  gzipCacheHits = 0;
+  gzipCacheMisses = 0;
+}
+
+/**
+ * The gzipped bytes of a static file, or null when this file must go out raw. Asks the three cheap
+ * questions — did the client offer gzip, is the type text, is it big enough — before reading
+ * anything off disk, so an image or a favicon costs exactly what it costs today.
+ */
+async function gzippedStatic(
+  file: ReturnType<typeof Bun.file>,
+  full: string,
+  ext: string,
+  acceptEncoding: string | null,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!COMPRESSIBLE_EXT.has(ext)) return null;
+  const size = file.size;
+  if (!wantsGzip(acceptEncoding, size, STATIC_GZIP_MIN_BYTES)) return null;
+
+  const key = `${full} ${file.lastModified} ${size}`;
+  const cached = gzipCache.get(key);
+  if (cached !== undefined) {
+    gzipCacheHits += 1;
+    return cached;
+  }
+
+  gzipCacheMisses += 1;
+  const compressed = Bun.gzipSync(new Uint8Array(await file.arrayBuffer()));
+  gzipCache.set(key, compressed);
+  gzipCacheBytes += compressed.byteLength;
+  while (gzipCache.size > GZIP_CACHE_MAX_ENTRIES || gzipCacheBytes > GZIP_CACHE_MAX_BYTES) {
+    const oldest = gzipCache.keys().next();
+    if (oldest.done === true) break;
+    gzipCacheBytes -= gzipCache.get(oldest.value)?.byteLength ?? 0;
+    gzipCache.delete(oldest.value);
+  }
+  return compressed;
 }
 
 /**

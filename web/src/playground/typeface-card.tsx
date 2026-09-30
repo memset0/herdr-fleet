@@ -29,7 +29,7 @@
 //
 // THE SWITCHER IS NOW THE PAGE'S OWN. The choice lives in ./prefs.ts and dresses the ENTIRE
 // playground — every real component on the page inherits the face, which is the honest way to feel
-// a candidate's impact. This card keeps the side-by-side specimen and the commentary; the sidebar's
+// a candidate's impact. This card keeps the side-by-side specimen and the commentary; the top bar's
 // Typeface control is the same store with the words left out.
 import { CollieMark } from "@/components/collie-mark";
 import { cn } from "@/lib/utils";
@@ -40,7 +40,7 @@ import { FACE_OPTIONS, FACES, setFace, useFace, type FaceId } from "./prefs";
 /** The dashboard's own shape: a name, a state, and two counts that have to line up down the column. */
 const ROWS = [
   {
-    name: "bluefin",
+    name: "lodge",
     tone: "blocked",
     state: "Needs you",
     age: "14m",
@@ -117,7 +117,7 @@ function Specimen({ face }: { face: FaceId }) {
           <span className="truncate text-base">on the mux</span>
         </div>
         <span className="ml-auto rounded-sm bg-muted px-2 py-1 text-[11px] font-medium">
-          bluefin
+          lodge
         </span>
       </div>
 
@@ -196,12 +196,13 @@ export function TypefaceCard() {
   const face = useFace();
   return (
     <Card
-      label="the ui typeface — live switcher, page-wide"
+      state="ui-typeface-switcher"
+      label="ui typeface, live switcher, page-wide"
       reach="Settings → Typeface, on the device — the app face is a per-device preference now (ADR 0033), not the maker's choice it used to be. So this card is not where the choice is made any more; it is where a CANDIDATE is auditioned before it joins the shipped list, which costs a subset, a computed twin, an index.css @font-face, a UI_FONT_URLS entry and a note in six dictionaries."
       note="APPROXIMATION: a rebuild of the app's chrome at the app's real sizes, not the real components — the faces cannot all be mounted at once. The four self-hosted faces come from public/fonts/ with metric-matched fallbacks, so the swap you see for them is the swap the app does; two of them (Space Grotesk, Aldrich) are the shipped list and render the same bytes the app renders. The three techno candidates at the end load from the Google CDN with no fallback twin — a playground-only allowance, disqualifying in the shipped app."
     >
       <div className="space-y-2">
-        <Segmented value={face} options={FACE_OPTIONS} onChange={setFace} />
+        <Segmented name="ui typeface" value={face} options={FACE_OPTIONS} onChange={setFace} />
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           {FACES[face].note}
         </p>

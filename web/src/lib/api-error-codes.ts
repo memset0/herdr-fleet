@@ -68,7 +68,7 @@ export const API_ERROR_CODES = [
   "worktree.branch_required",
   "worktree.not_a_repo",
 
-  // Image upload — POST /api/pane/:id/upload
+  // Attachment upload — POST /api/pane/:id/upload
   "upload.too_large",
   "upload.no_file",
   "upload.bad_type",
@@ -96,8 +96,8 @@ export const API_ERROR_CODES = [
   "session.unknown",
   "host.unknown",
 
-  // The pack overview — this collie is not a lead with a pack (solo, or a peer)
-  "pack.not_lead",
+  // The crew overview — this collie is not a lead with a crew (solo, or a peer)
+  "crew.not_lead",
 
   // Starting an update from the phone — POST /api/update (M15/05)
   "update.confirm_required",
@@ -107,6 +107,7 @@ export const API_ERROR_CODES = [
   "update.major_confirm_required",
   "update.target_mismatch",
   "update.none_available",
+  "update.packaged",
   "update.start_failed",
 ] as const;
 

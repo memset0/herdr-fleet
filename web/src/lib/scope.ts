@@ -4,19 +4,20 @@
 // Two dimensions, same shape, one level apart:
 //   - session — Herdr can run several named sessions on one machine (each its own server/socket).
 //     Travels as `?s=<name>` in the browser URL, `session=<name>` on the wire.
-//   - host    — a pack can span several machines; the phone talks only to the lead, which merges its
+//   - host    — a crew can span several machines; the phone talks only to the lead, which merges its
 //     peers. Travels as `?h=<member-id>` in the browser URL, `host=<member-id>` on the wire.
 //
 // **Absent means "today".** A blank/absent `s` is the primary session; a blank/absent `h` is the lead
-// — the collie the phone is actually connected to. So a pack of one machine (solo, i.e. every install
+// — the collie the phone is actually connected to. So a crew of one machine (solo, i.e. every install
 // that exists today) emits NO `?h=` anywhere: every bookmark, deep link, notification payload and
 // service-worker-cached navigation keeps resolving byte-identically. That is the whole
 // backward-compatibility story, and it is achieved by normalisation, not by branching.
 //
 // **This module is deliberately react-free.** lib/session.ts owns the hooks (and therefore the
 // react-router import) and re-exports everything here; the service worker (src/sw.ts) cannot import
-// anything that pulls in react, and it needs to build these exact strings — see its hand-inlined
-// sessionSearchParam(), which this module exists to eventually replace.
+// anything that pulls in react, and it needs to build these exact strings. It no longer builds them
+// by hand: it reaches them through lib/push-decision's notificationPath, so the URL it compares is
+// byte-identical to the one the router produces for the same scope.
 //
 // A client-supplied host is only ever a REGISTRY KEY on the lead — it selects among members the
 // trust store already holds. It never becomes a path, and never an address the lead dials. Same rule
@@ -32,10 +33,15 @@ export const HOST_PARAM = "h";
  * The browser URL query key that WIDENS the home view to every Herdr session on ONE machine
  * (`?all=1`). Absent, and anything other than `1`, means "no".
  *
- * WHICH machine, precisely: today it is the collie the phone is connected to, NOT the machine `?h=`
- * names. `/api/snapshot` resolves `session=` against the lead's own registry and does not read
- * `host=` at all — a pre-existing gap, and the one the pack half of this feature closes. Until then
- * a widened view on `?h=peer` widens the lead. Do not write code that assumes otherwise.
+ * WHICH machine: the one `?h=` names, and the lead when it names none. The two params compose —
+ * `?h=` says which machine and this says how much of that machine. `/api/snapshot` reads the
+ * resolved host together with `sessions=all`: no host widens the lead's own registry, and a member
+ * widens that member's rows out of the lead's cache, which the lead's sweep keeps widened for
+ * exactly this (`bridge/crew/merge.ts` narrows it back for every request that did not ask).
+ *
+ * A machine that is not in the crew widens nothing. A widened view is a statement about panes only:
+ * the space and tab navigators stay the addressed session's, one dimension down from a crew, where
+ * the same is already true of every peer.
  *
  * IT IS DELIBERATELY NOT PART OF {@link Scope}, and that is the load-bearing decision in this
  * feature. A scope is an ADDRESS — it says which pane a read or a write lands on, and it is threaded
@@ -54,7 +60,7 @@ export const ALL_PARAM = "all";
  * today's behaviour and today's bytes.
  */
 export interface Scope {
-  /** The pack member id, or undefined for the lead (the collie the phone is connected to). */
+  /** The crew member id, or undefined for the lead (the collie the phone is connected to). */
   host?: string;
   /** The named Herdr session, or undefined for that host's primary session. */
   session?: string;
@@ -67,7 +73,7 @@ export function normalizeSession(raw: string | null | undefined): string | undef
 }
 
 /**
- * Normalise a raw `h` value to a host (pack member) id, or `undefined` for the lead. Blank and
+ * Normalise a raw `h` value to a host (crew member) id, or `undefined` for the lead. Blank and
  * whitespace-only normalise to the lead, mirroring {@link normalizeSession}.
  *
  * Deliberately NOT grammar-validated here. The lead is the authority on which member ids exist — an
@@ -163,7 +169,7 @@ export function scopeFromUrl(url: string | undefined): Scope {
 // ── Cache keys ───────────────────────────────────────────────────────────────
 //
 // A pane id (`w1:p1`) is unique only within one session on one machine: every session is a separate
-// Herdr server, and every pack member is a separate machine again. So every composite client-side
+// Herdr server, and every crew member is a separate machine again. So every composite client-side
 // cache key carries the full (host, session, paneId) triple, NUL-joined so the fields stay
 // unambiguous. Without the host component, the same `w1:p1` on two machines would 304 one host's
 // mirror into the other's — the identical bug the session component was added to prevent, one

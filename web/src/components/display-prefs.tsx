@@ -26,6 +26,7 @@ interface DisplayPrefsContentProps {
   stepFontSize: (delta: number) => void;
   setRawTerminal: (raw: boolean) => void;
   setTapToFocus: (tapToFocus: boolean) => void;
+  setExpandClippedReply: (expandClippedReply: boolean) => void;
   afterTextSize?: ReactNode;
 }
 
@@ -61,6 +62,7 @@ export function DisplayPrefsContent({
   stepFontSize,
   setRawTerminal,
   setTapToFocus,
+  setExpandClippedReply,
   afterTextSize,
 }: DisplayPrefsContentProps) {
   useLocale();
@@ -89,6 +91,19 @@ export function DisplayPrefsContent({
             checked={prefs.tapToFocus}
             onCheckedChange={setTapToFocus}
             aria-label={t("settings.display.tapToType.label")}
+          />
+        }
+      />
+      <Row
+        label={t("settings.display.fullReply.label")}
+        hint={t("settings.display.fullReply.hint")}
+        htmlFor="pref-expand-clipped-reply"
+        control={
+          <Switch
+            id="pref-expand-clipped-reply"
+            checked={prefs.expandClippedReply}
+            onCheckedChange={setExpandClippedReply}
+            aria-label={t("settings.display.fullReply.label")}
           />
         }
       />

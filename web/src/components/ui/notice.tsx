@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useId } from "react";
 import { X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -60,9 +61,9 @@ export type NoticeProps = {
    * `"alert"` emits `role="alert"` and nothing else; `"status"` emits `role="status"` and nothing
    * else; `"none"` emits neither. There is deliberately no way to ask for a role AND an
    * `aria-live` — that pair is a contradiction (a role carries its own implicit liveness, so
-   * `role="alert"` with `aria-live="polite"` asks for assertive and polite at once) and it is live
-   * today at connection-banner.tsx:236-237. Making it inexpressible is half of why this file
-   * exists. Default `"none"`: a notice that never changes must not claim a live region.
+   * `role="alert"` with `aria-live="polite"` asks for assertive and polite at once) and it was live
+   * in both of connection-banner.tsx's rows until they converted. Making it inexpressible is half of
+   * why this file exists. Default `"none"`: a notice that never changes must not claim a live region.
    */
   announce?: NoticeAnnounce;
   /** Decorative, and treated as such — the copy beside it says the same thing in words. */
@@ -222,18 +223,32 @@ export function Notice({
   // stripping its button semantics from the accessibility tree. A live region announces its
   // subtree's changes wherever it is nested, so nothing is lost by moving it one element in — and
   // the announced text is then exactly the text that changed.
+  //
+  // That placement has a cost when `onActivate` is set: accessible-name-from-content skips a child
+  // whose own role isn't a name-from-content role, and `status`/`alert` aren't, so a button whose
+  // only content is this body would be nameless. `bodyId` + `aria-labelledby` on the button (below)
+  // names it from the same text explicitly, without moving the live region off the body.
   const role = announce === "none" ? undefined : announce;
+  const bodyId = useId();
 
   const body = strip ? (
     // ONE truncating, flex-1 span. This is the whole "strips never wrap" contract, and it is a
     // single element so there is nowhere for a second line to come from.
-    <span role={role} className="min-w-0 flex-1 truncate font-medium">
+    <span
+      role={role}
+      id={onActivate ? bodyId : undefined}
+      className="min-w-0 flex-1 truncate font-medium"
+    >
       {children}
     </span>
   ) : (
     // min-h-6 + centred: the 24px first-line slot the box's floor is derived from. One line centres
     // in it; two or more lines simply outgrow it and the box grows with them.
-    <div role={role} className="flex min-h-6 min-w-0 flex-1 flex-col justify-center">
+    <div
+      role={role}
+      id={onActivate ? bodyId : undefined}
+      className="flex min-h-6 min-w-0 flex-1 flex-col justify-center"
+    >
       {children}
     </div>
   );
@@ -286,13 +301,27 @@ export function Notice({
   // 390×33 row passes the 44px floor on area the way a 28px text row never did, and it is one
   // element, so there is no second thing on the row to mis-hit. `text-left` because a <button>
   // centres its text by default and this one is a sentence, not a label.
+  // `data-slot` and not a test id: it is the house handle for addressing a primitive's own element
+  // (`ui/collapse.tsx`, `ui/strip-host.tsx` and the header row all carry one), and DESIGN.md §9
+  // names it as the way to scope a query inside a tree that holds a StripHost — where `role="status"`
+  // matches the band's two permanent empty live regions as readily as the notice you meant.
   if (onActivate) {
     return (
-      <button type="button" onClick={onActivate} className={cn(box, "text-left")}>
+      <button
+        type="button"
+        data-slot="notice"
+        onClick={onActivate}
+        aria-labelledby={bodyId}
+        className={cn(box, "text-left")}
+      >
         {inner}
       </button>
     );
   }
 
-  return <div className={box}>{inner}</div>;
+  return (
+    <div data-slot="notice" className={box}>
+      {inner}
+    </div>
+  );
 }

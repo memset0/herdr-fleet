@@ -1,15 +1,21 @@
 import { spawn } from "node:child_process";
 import {
+  accessSync,
+  closeSync,
+  constants,
   existsSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { connect } from "node:net";
 
 import type { Environment } from "./context.ts";
@@ -34,6 +40,16 @@ export interface ExecResult {
 
 const NOT_FOUND: ExecResult = { code: 127, stdout: "", stderr: "", found: false };
 
+/** What a bounded, logged client call answered. See {@link Exec.runLogged}. */
+export interface LoggedResult {
+  /** Exit code, or 124 on expiry — the coreutils `timeout` convention {@link Exec.capture} keeps. */
+  code: number;
+  /** True when the bound expired and the child was killed: a fact no exit code can carry. */
+  timedOut: boolean;
+  /** stderr as well as logged, because the caller has to say WHY in one line of a run record. */
+  stderr: string;
+}
+
 export interface Exec {
   /** Absolute path of `tool`, or null when it isn't installed. */
   which(tool: string): string | null;
@@ -41,19 +57,59 @@ export interface Exec {
    * Run `tool`, capturing both streams. `timeoutMs` bounds the wall clock: on expiry the child is
    * killed and the result reads as an ordinary failure (code 124, the coreutils `timeout`
    * convention) — a caller probing a binary it does not yet trust must never hang with it.
+   *
+   * `envAdd` layers UNDER this `Exec`'s own environment — a name already set there is never
+   * overridden — and applies to this one call only; the process's real environment is never
+   * touched. It exists for a probe that needs a plausible default for a name the caller's env may
+   * simply lack (`systemdUserReachable` in `cli/lifecycle.ts`, `XDG_RUNTIME_DIR`), not for a caller
+   * that wants to force a value — that belongs in `Exec`'s own env instead.
    */
-  capture(tool: string, args: readonly string[], timeoutMs?: number): ExecResult;
+  capture(
+    tool: string,
+    args: readonly string[],
+    timeoutMs?: number,
+    envAdd?: Readonly<Record<string, string>>,
+  ): ExecResult;
   /** Run `tool` with our own stdio — for `journalctl`, whose output IS the result. */
   inherit(tool: string, args: readonly string[]): ExecResult;
   /**
    * Run `tool` in `cwd` with our own stdio — the build steps, whose output IS the operator's
    * progress report and whose working directory is load-bearing (the shell's `( cd … && bun … )`:
    * the root and `web/` trees are installed, typechecked and built separately).
+   *
+   * `pathPrefix`, when given, is prepended to the CHILD's `PATH`. A tool resolved to an absolute
+   * path off this PATH ({@link resolveTool}) still has children that look it up by NAME — `bun
+   * cli/main.ts build` spawns `bun install` and Vite — so running the absolute path alone would
+   * hand the grandchild the very lookup failure the resolution just repaired. `scripts/collie-ctl.sh`
+   * carries the same prepend for the same reason. Already-present directories are not re-added.
    */
-  runIn(tool: string, args: readonly string[], cwd: string): ExecResult;
+  runIn(tool: string, args: readonly string[], cwd: string, pathPrefix?: string): ExecResult;
+  /**
+   * Run `command` in `cwd` synchronously with a bound, appending both streams to `logPath`.
+   *
+   * For a client that ANSWERS. `systemd-run` without `--wait` returns as soon as the user manager
+   * has accepted the job and started the unit, so its exit code IS the manager's answer to "does
+   * the runner exist yet" — the question {@link Exec.spawnDetached} cannot ask, and the reason the
+   * handoff in `cli/update.ts` waits for this tier instead of firing and hoping.
+   *
+   * Neither existing seam does this job: {@link Exec.capture} takes no `cwd` and no `env` and
+   * writes no log, and {@link Exec.inherit} would put the client's complaint on a terminal nobody
+   * is watching instead of in the file the operator is told to read.
+   */
+  runLogged(
+    command: readonly string[],
+    opts: { cwd: string; env: Record<string, string>; logPath: string; timeoutMs: number },
+  ): LoggedResult;
   /**
    * Start the unsupervised bridge: detached, both streams appended to `logPath`, and unref'd so
    * this process can exit while it keeps running. Returns its pid, or null if it never started.
+   *
+   * `detached: true` gives the child a new SESSION, not a new cgroup. So a caller that is the main
+   * process of a `.service` takes this child down with it the moment it exits: the default
+   * `KillMode=control-group` kills whatever is left in the unit's cgroup, the child included, and
+   * any client the child was in the middle of running. A caller that needs the child to outlive it
+   * has to escape that cgroup through a manager ({@link Exec.runLogged}), or not be a service's
+   * main process.
    */
   spawnDetached(
     command: readonly string[],
@@ -66,6 +122,19 @@ export interface Exec {
 
 export interface Files {
   exists(p: string): boolean;
+  /**
+   * May this process EXECUTE `p` — an `access(p, X_OK)` probe that a directory never passes.
+   *
+   * Separate from {@link Files.exists} because the two shell copies of the tool lookup ask `[ -x ]`,
+   * and `[ -e ]` would answer yes for things that cannot be run: a half-written download, a
+   * `~/.bun/bin/bun` left behind as an empty file, a directory that happens to carry the name.
+   * {@link resolveTool} must reject those exactly where the shim rejects them, or the preflight and
+   * the update would name a Bun that dies with EACCES.
+   *
+   * The directory case is explicit because search permission on a directory IS `X_OK`: without the
+   * `stat(2)`, a directory named `bun` would resolve as the tool.
+   */
+  executable(p: string): boolean;
   /** File contents, or null when missing/unreadable. */
   read(p: string): string | null;
   /**
@@ -87,6 +156,37 @@ export interface Files {
    * how `build` can replace `bin/collie` while a supervised process is executing the old one.
    */
   rename(from: string, to: string): void;
+  /**
+   * Who OWNS `p` — the uid off `stat(2)`, or null when it cannot be read at all.
+   *
+   * One of the three facts a packaged install is recognised by, and the one that catches a tree
+   * unpacked as root inside `$HOME`. It is ownership, never writability: `access(p, W_OK)` is always
+   * true for uid 0, so a bridge running as root would otherwise see a package-manager-owned tree as its own.
+   */
+  ownerUid(p: string): number | null;
+  /**
+   * May this process write into `p` — an `access(p, W_OK)` probe, or null when it cannot be answered.
+   *
+   * Null is not "no". A path that cannot be stat'ed at all says nothing about who may write it, and
+   * {@link Files.ownerUid} is the fact that answers such a tree. The caller turns null into the open
+   * direction (not read-only), because claiming a read-only root from a failed probe would refuse
+   * updates on an install nobody could describe.
+   */
+  writable(p: string): boolean | null;
+  /**
+   * `stat(2)`'s two facts about `p` — the inode and the last modification, in epoch ms — or null
+   * when it cannot be read at all. Symlinks are FOLLOWED, which is what makes it answer about
+   * `/proc/<pid>/exe`: the inode it reports there is the executable the process is running, even
+   * after the file behind it has been unlinked.
+   *
+   * Added for the restart-pending check (`cli/doctor.ts`). A package manager replaces `bin/collie`
+   * and restarts nothing, so the running process and the installed file are two different inodes at
+   * one path — and on a rebuild of the same version, the inode is the only thing that says so.
+   */
+  stat(p: string): { inode: number; mtimeMs: number } | null;
+  /** Where a symlink points, unresolved, or null when `p` is not one. `/proc/<pid>/exe` answers with
+   *  a path carrying ` (deleted)` when the executable behind it is gone — the whole signal. */
+  readlink(p: string): string | null;
 }
 
 /**
@@ -194,14 +294,36 @@ export const realNet: Net = {
   },
 };
 
+/**
+ * `env` with `dir` at the FRONT of `PATH`, or `env` unchanged when there is nothing to add.
+ *
+ * The front, not the back: the directory is being added because it holds the tool this process
+ * already resolved, so it has to outrank anything else on the PATH that answers the same name.
+ *
+ * Mirrors the shim's `case ":${PATH}:" in *":${BUN_DIR}:"*) ;;` — a directory already on the PATH is
+ * left where it is rather than duplicated onto the front.
+ *
+ * Exported for `cli/sys.test.ts` only. A `runIn` runs its child with inherited stdio, so the env it
+ * built is not observable from the outside, and this is the half worth pinning.
+ */
+export function withPathPrefix(env: Environment, dir: string | undefined): Environment {
+  if (dir === undefined || dir === "") return env;
+  const path = env.PATH ?? "";
+  if (path.split(":").includes(dir)) return env;
+  return { ...env, PATH: path === "" ? dir : `${dir}:${path}` };
+}
+
 export function realExec(env: Environment, home: string): Exec {
   const resolve = (tool: string): string | null => findTool(tool, env, home);
   return {
     which: resolve,
-    capture(tool, args, timeoutMs) {
+    capture(tool, args, timeoutMs, envAdd) {
       const bin = resolve(tool);
       if (bin === null) return NOT_FOUND;
-      const r = Bun.spawnSync([bin, ...args], { env, timeout: timeoutMs });
+      // `env` (this Exec's own) is spread LAST so a name it already carries always wins over the
+      // caller-supplied default — see the seam's doc comment.
+      const spawnEnv = envAdd === undefined ? env : { ...envAdd, ...env };
+      const r = Bun.spawnSync([bin, ...args], { env: spawnEnv, timeout: timeoutMs });
       return {
         // A timed-out child has no exit code — it was killed. 124 keeps the seam's "number" contract.
         code: r.exitCode ?? 124,
@@ -220,16 +342,39 @@ export function realExec(env: Environment, home: string): Exec {
       });
       return { code: r.exitCode, stdout: "", stderr: "", found: true };
     },
-    runIn(tool, args, cwd) {
+    runIn(tool, args, cwd, pathPrefix) {
       const bin = resolve(tool);
       if (bin === null) return NOT_FOUND;
       const r = Bun.spawnSync([bin, ...args], {
         cwd,
-        env,
+        env: withPathPrefix(env, pathPrefix),
         stdout: "inherit",
         stderr: "inherit",
       });
       return { code: r.exitCode, stdout: "", stderr: "", found: true };
+    },
+    runLogged(command, opts) {
+      const [tool, ...args] = command;
+      const bin = tool === undefined ? null : resolve(tool);
+      if (bin === null) return { code: 127, timedOut: false, stderr: "" };
+      const r = Bun.spawnSync([bin, ...args], {
+        cwd: opts.cwd,
+        env: opts.env,
+        timeout: opts.timeoutMs,
+      });
+      const stderr = r.stderr.toString();
+      // Append, never truncate, and open the same way the detached runner opens it: this is the one
+      // file the operator is pointed at, and on a refused handoff it is the only thing written.
+      mkdirSync(dirname(opts.logPath), { recursive: true });
+      const fd = openSync(opts.logPath, "a");
+      try {
+        writeSync(fd, r.stdout.toString());
+        writeSync(fd, stderr);
+      } finally {
+        closeSync(fd);
+      }
+      const timedOut = r.exitedDueToTimeout === true;
+      return { code: timedOut ? 124 : r.exitCode, timedOut, stderr };
     },
     spawnDetached(command, opts) {
       const [program, ...args] = command;
@@ -273,6 +418,15 @@ export function realExec(env: Environment, home: string): Exec {
 
 export const realFiles: Files = {
   exists: (p) => existsSync(p),
+  executable(p) {
+    try {
+      if (statSync(p).isDirectory()) return false;
+      accessSync(p, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
   read(p) {
     try {
       return readFileSync(p, "utf8");
@@ -303,7 +457,126 @@ export const realFiles: Files = {
   rename(from, to) {
     renameSync(from, to);
   },
+  ownerUid(p) {
+    // Windows has no POSIX uid, and Node/Bun report a constant 0 there regardless of who owns the
+    // file — that is not "owned by root", it is "this platform does not have the concept", and the
+    // two must not collide: on win32 every non-checkout, non-versions/ install would answer uid 0
+    // and `collie update` would refuse forever. `null` reads as "nothing to claim about the owner"
+    // exactly like a failed `stat`, which is what the caller already treats it as.
+    if (process.platform === "win32") return null;
+    try {
+      return statSync(p).uid;
+    } catch {
+      // ENOENT, EACCES on a parent — nothing readable, so nothing to claim about the owner.
+      return null;
+    }
+  },
+  writable(p) {
+    try {
+      accessSync(p, constants.W_OK);
+      return true;
+    } catch (e) {
+      // EACCES / EPERM / EROFS are an ANSWER: this process may not write here. Anything else —
+      // ENOENT above all — is the probe failing to reach the question, which is `null`.
+      //
+      // SAFETY: the assertion asserts NOTHING. `catch` binds `unknown`, every Node errno error
+      // carries a string `code`, and anything that does not read `undefined` here and falls to
+      // `null` — the same answer an unrecognised code gets. Nothing is called on the value.
+      const code = (e as { code?: string }).code;
+      return code === "EACCES" || code === "EPERM" || code === "EROFS" ? false : null;
+    }
+  },
+  stat(p) {
+    try {
+      const s = statSync(p);
+      return { inode: Number(s.ino), mtimeMs: s.mtimeMs };
+    } catch {
+      // ENOENT on a path nothing sits at, EACCES on another user's `/proc` entry — both are
+      // "no fact", which is what the decision treats null as.
+      return null;
+    }
+  },
+  readlink(p) {
+    try {
+      return readlinkSync(p);
+    } catch {
+      return null;
+    }
+  },
 };
+
+// ── One tool lookup list, spelled once ───────────────────────────────────────
+//
+// Three places used to look for Bun and no two of them looked in the same order: the shim's six
+// candidates (`scripts/collie-ctl.sh`), the remote probe's nine (`cli/remote.ts`), and the
+// preflight's bare `which`. An operator whose Bun sits in a directory their login shell exports and
+// a plugin action does not therefore got a RED preflight blocking an update the shim would have
+// built without complaint (#169).
+//
+// So the list lives here, once, and the two shell copies spell it in the same order because they
+// run where TypeScript cannot: `resolve_bun` bootstraps the binary Bun compiles, and `collie_tool`
+// is shipped down an ssh pipe. `cli/sys.test.ts` parses both files and fails on a drift.
+//
+// The PREDICATE matches too, not just the order: both shells ask `[ -x "$candidate" ]`, so this side
+// asks {@link Files.executable} rather than {@link Files.exists}. A candidate that is present but
+// not runnable is not the tool, and all three copies have to agree on that or they resolve to
+// different paths on the same host.
+//
+// This is NOT `bridge/tools.ts`'s `findTool`, and it does not replace it. That one searches PATH
+// plus a generic fallback set for a system tool; this one is the Bun installer's own locations, it
+// honours `$BUN_INSTALL`, and it is a fixed ordered list on purpose — a shell can spell it.
+
+/**
+ * The absolute candidate paths for `tool`, in the canonical order. PURE: it reads nothing.
+ *
+ * `$BUN_INSTALL` is the operator's explicit choice, so it outranks the default `~/.bun`. An EMPTY
+ * value counts as unset, exactly as the shell's `${BUN_INSTALL:-…}` reads it.
+ */
+export function toolCandidates(env: Environment, home: string, tool: string): string[] {
+  const declared = env.BUN_INSTALL;
+  const bunRoot = declared === undefined || declared === "" ? join(home, ".bun") : declared;
+  return [
+    join(bunRoot, "bin", tool),
+    join(home, ".bun", "bin", tool),
+    join(home, ".local", "bin", tool),
+    `/usr/local/bin/${tool}`,
+    `/opt/homebrew/bin/${tool}`,
+    `/usr/bin/${tool}`,
+    `/bin/${tool}`,
+    `/usr/sbin/${tool}`,
+    `/sbin/${tool}`,
+  ];
+}
+
+/** Where a tool was found, and whether PATH is what named it. */
+export interface ResolvedTool {
+  readonly path: string;
+  /** True when PATH answered. False when it took a candidate this PATH does not name. */
+  readonly onPath: boolean;
+}
+
+/**
+ * Walk {@link toolCandidates} for `tool`: PATH first, then each candidate that is EXECUTABLE — the
+ * shells' `[ -x ]`, never a bare "is there a file here".
+ *
+ * PATH's answer is taken ONLY when it is absolute. `command -v` reports a shell function or an
+ * alias as a bare word, and a bare word is not a path — it is whatever the caller's cwd and PATH
+ * make of it later. The shim and the remote probe both carry the same guard, for the same reason.
+ */
+export function resolveTool(
+  exec: Pick<Exec, "which">,
+  files: Pick<Files, "executable">,
+  env: Environment,
+  home: string,
+  tool: string,
+): ResolvedTool | null {
+  const onPath = exec.which(tool);
+  if (onPath !== null && isAbsolute(onPath)) return { path: onPath, onPath: true };
+  for (const candidate of toolCandidates(env, home, tool)) {
+    if (files.executable(candidate)) return { path: candidate, onPath: false };
+  }
+  return null;
+}
 
 // ── Readiness ────────────────────────────────────────────────────────────────
 // "Is the bridge up?" is a TCP connect to the loopback port, never a `systemctl is-active` reading:

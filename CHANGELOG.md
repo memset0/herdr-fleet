@@ -19,6 +19,10 @@ Work that has landed but is not released yet collects under `## [Unreleased]
 
 - Show each Host's full reported Fleet build with compatible, outdated, manual-major, development, last-reported, stale, or unavailable evidence, and show this page's build below the shared Collie/TTYD selector.
 
+### Changed
+
+- Adopt Collie 1.8.2: the crew rename with protocol version 2 and its one-release `/pack/v1/*` overlap, per-host multiplexer capabilities, and upstream's fixes.
+
 ### Fixed
 
 - Share terminal startup across concurrent browsers, clean up interrupted acquisitions, and take over external Herdr attachments on lead and peer without displacing another Fleet browser.

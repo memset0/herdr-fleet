@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, CSSProperties, ReactNode } from "react";
 import { useRevalidator } from "react-router";
-import { Check, ImagePlus, Keyboard, Loader2, Mic, Send, Settings2, Slash, Square, Terminal, X, Zap } from "lucide-react";
+import { Check, FileText, Image, Keyboard, Loader2, Mic, Paperclip, Send, Settings2, Slash, Square, Terminal, X, Zap } from "lucide-react";
 
 import { applyDraftFontSize, fontStack, inputFocusZoomsPage } from "@/hooks/use-display-prefs";
 import type { DisplayPrefs } from "@/hooks/use-display-prefs";
@@ -14,6 +14,7 @@ import { decideMicCommand, type MicCommand, type MicRefusal } from "../../../fle
 import { useLocale } from "@/hooks/use-locale";
 import { t as translate, tn as translatePlural } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
+import { buzz } from "@/lib/haptics";
 import { stampSend } from "@/lib/poll-intent";
 import { useBusyWhile } from "@/lib/busy";
 import { cn } from "@/lib/utils";
@@ -25,16 +26,19 @@ import { QuickActionsContent } from "@/components/quick-actions";
 import { DisplayPrefsContent } from "@/components/display-prefs";
 import { SectionLabel } from "@/components/ui/section-label";
 import { Collapse } from "@/components/ui/collapse";
+import { ActionRow } from "@/components/action-sheet-rows";
+import { AnchoredMenu } from "@/components/ui/anchored-menu";
 import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { commandsFor } from "@/lib/agent-commands";
 import { useMuxCapability, useMuxUnsupportedKeys } from "@/lib/mux-capability";
-import { useOperatorCommands, useOperatorKeys } from "@/lib/operator-config";
+import { useOperatorCommands, useOperatorKeys, useUploadCapability } from "@/lib/operator-config";
+import { acceptAttribute, limitMb, offersFiles, PHOTO_ACCEPT, rejectAttachment, uploadLimits } from "@/lib/attachments";
 import { ctrlPresetsFor } from "@/lib/operator-keys";
 import { isDestructiveInput } from "@/lib/destructive";
 import { HostChip } from "@/components/host-chip";
 import { StatusWordSlot } from "@/components/status-badge";
-import { useAmbientHost, useHostLabel } from "@/components/pack-provider";
+import { useAmbientHost, useHostLabel } from "@/components/crew-provider";
 import { clearDraft, fitsDraftStore, loadDraft, saveDraft } from "@/lib/drafts";
 import { useHoldReload } from "@/lib/reload-guard";
 import { isSelfEcho, normalizeDraft } from "@/hooks/use-terminal-draft";
@@ -99,7 +103,7 @@ interface ComposerProps {
   readOnly: boolean;
   /**
    * The pane's MACHINE is not reachable from the lead, so a write would be refused before it left
-   * the lead (PACK_PROTOCOL.md §10.3) — the refusal text, naming the host, or undefined when writes
+   * the lead (CREW_PROTOCOL.md §10.3) — the refusal text, naming the host, or undefined when writes
    * may proceed. Always undefined on a solo install, so nothing here changes for one machine.
    *
    * Locks the composer exactly as `readOnly` does. It is NOT folded into `readOnly` by the caller
@@ -138,6 +142,7 @@ interface ComposerProps {
   stepFontSize: (delta: number) => void;
   setRawTerminal: (raw: boolean) => void;
   setTapToFocus: (tapToFocus: boolean) => void;
+  setExpandClippedReply: (expandClippedReply: boolean) => void;
   /** Optional native Display row exposed for downstream extensions. */
   displayPrefsAfterTextSize?: ReactNode;
   /** Snap the mirror to the live tail (follow + revalidate + scroll) after a successful send. */
@@ -146,7 +151,7 @@ interface ComposerProps {
 
 // The composer cluster at the bottom of the pane view — everything a phone keyboard can't do on its
 // own: quick actions, an agent-aware slash-command palette, an inline key tray (via
-// `pane.send_keys`), image upload, display prefs, and the reply Send (with a destructive-command
+// `pane.send_keys`), attachment upload, display prefs, and the reply Send (with a destructive-command
 // two-tap guard). Its state (draft, sending, upload, pending preview, its own Keys/Quick/Agent
 // sheets) is entirely local; it reaches AgentChat only through `onSent` (to re-follow the tail) and
 // exposes `focusInput` so the mirror tap can bring up the keyboard.
@@ -267,8 +272,12 @@ const MIC_REFUSAL_MESSAGES = {
   "not-recording": "fleet.command.mic.notRecording",
 } as const satisfies Record<MicRefusal, string>;
 
+/** How long the attach button holds its pressed tone, in ms. Just under the sheet's own 240ms
+ *  entrance, so the flash hands over to the sheet rather than lingering behind it. */
+const ATTACH_PRESS_MS = 220;
+
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, status, stale, showStatusWord = true, showHost = true, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, displayPrefsAfterTextSize, onSent },
+  { paneId, scope, agent, isShell, status, stale, showStatusWord = true, showHost = true, gone, readOnly, hostBlock, composing, dialogPresent, text, terminalDraft, rawTerminalDraft, prefs, setWrap, stepFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply, displayPrefsAfterTextSize, onSent },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -298,8 +307,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // Two capabilities, one lock: a reply is `typeText` then `sendKeys` (bridge/mux/capabilities.ts),
   // and half a reply is not a feature. `typeText`'s reason is preferred when both are missing —
   // it is the half that fails first.
-  const canType = useMuxCapability("typeText");
-  const canSendKeys = useMuxCapability("sendKeys");
+  // Asked of the machine this row is on (M22/03) — the ambient scope IS the target here, exactly as
+  // `writeHost` below says of the write itself.
+  const canType = useMuxCapability("typeText", scope);
+  const canSendKeys = useMuxCapability("sendKeys", scope);
   const missingSend = !canType.capable ? canType : !canSendKeys.capable ? canSendKeys : null;
   const locked = gone || readOnly || hostBlock !== undefined || missingSend !== null;
   // The machine every write on this row lands on. The pane view addresses one host (the pane's own,
@@ -310,7 +321,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // still owes the strip a word or a solo install's strip would be empty; a GONE pane has nothing
   // left to describe, and the strip stands empty rather than reporting a stale state as current.
   const statusWord: AgentStatus | "shell" | undefined = isShell ? "shell" : status;
-  // Its display name, or undefined when there is no pack — the copy-level half of the hide rule.
+  // Its display name, or undefined when there is no crew — the copy-level half of the hide rule.
   const writeHostLabel = useHostLabel(scope?.host);
   // …and a ref alongside it, for the ONE caller that reads it after an await. `send()` checks
   // `locked` once, up front, but its pre-clear sweep goes out on the far side of the pre-flight's
@@ -470,6 +481,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // The camera-roll half of the picker. See the two inputs below.
+  const photoRef = useRef<HTMLInputElement>(null);
   const direct = useDirectTyping({
     paneKey: `${scopeId}\0${paneId}`,
     inputRef,
@@ -523,7 +536,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // Three intervals, declared where the state already lives, so the Collie mark in the header spins
   // for exactly as long as the work does and not a frame longer. `sending` spans the whole guarded
   // send (type → settle → verify → submit), which is the interval the operator is actually waiting
-  // through; `uploading` spans the image POST; the recorder's `transcribing` phase spans the trip to
+  // through; `uploading` spans the attachment POST; the recorder's `transcribing` phase spans the trip to
   // the provider. Each is a boolean this component already renders from, so nothing new is tracked —
   // the mark just reads what the composer already knows.
   //
@@ -748,6 +761,46 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // visibility test here and the palette's own list below (same call, same arguments).
   const operatorCommands = useOperatorCommands();
   const commands = commandsFor(agent, operatorCommands);
+  // What this collie takes as an attachment, off the same one-shot /api/config read. On a bridge
+  // that publishes nothing (older than the field, or the read has not landed) `uploadLimits` answers
+  // with the contract that shipped before attachments — images, 10 MB — so the button is never
+  // dead and never offers what this host would refuse.
+  const limits = uploadLimits(useUploadCapability());
+  const accept = acceptAttribute(limits);
+  // Whether the attach button ASKS. On a host that takes images and nothing else there is one
+  // answer, so it opens the camera roll and no sheet is drawn.
+  const asksWhich = offersFiles(limits);
+  const [picking, setPicking] = useState(false);
+  /**
+   * THE ATTACH BUTTON'S OWN PRESS ECHO.
+   *
+   * Every other control on this row acknowledges a tap by changing what is on screen at once: Send
+   * empties the box, the mic starts counting, a key press flips its row accent. Attach hands the
+   * tap to something that is NOT on screen yet — a sheet 240ms away, or a native picker whose delay
+   * belongs to the phone and not to this app — so for that beat the tap looked lost.
+   *
+   * Two channels, deliberately, and the buzz is the one that matters: it lands under the thumb
+   * before any pixel can (`lib/haptics.ts`'s whole argument). The accent tone is the same "your
+   * press landed" language `quick-actions.tsx` and the dialog option rows already speak, so this
+   * adds no new vocabulary — only a control that was missing it.
+   *
+   * NOT `useActionEcho`: that hook's phases are about a bridge accepting an action, and there is no
+   * bridge here. Opening a picker is fire-and-forget, so the echo is a timer and nothing else.
+   */
+  const [pressed, setPressed] = useState(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (pressTimer.current !== null) clearTimeout(pressTimer.current);
+    };
+  }, []);
+
+  function echoAttachPress() {
+    buzz();
+    setPressed(true);
+    if (pressTimer.current !== null) clearTimeout(pressTimer.current);
+    pressTimer.current = setTimeout(() => setPressed(false), ATTACH_PRESS_MS);
+  }
   // The Keys tray's preset row, resolved the same way from the same one-shot read of /api/config.
   const keyPresets = ctrlPresetsFor(agent, useOperatorKeys());
   // Empty on every adapter that refuses nothing, and empty for Herdr's six as far as this tray is
@@ -947,7 +1000,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
     const reason = isDestructiveInput(input);
     if (reason && !sendConfirm.confirm("send")) {
-      // On a pack the confirm names the machine as well as the pattern: "rm -r" is a different
+      // On a crew the confirm names the machine as well as the pattern: "rm -r" is a different
       // sentence depending on whose disk it runs on, and this line is the last thing read before the
       // second tap. Solo copy is unchanged, byte for byte.
       setStatus(
@@ -1019,13 +1072,27 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     focusInputEnd();
   }
 
-  // Upload an image; on success append its host path to the composer so the user can add context.
-  // Shared by the file picker and clipboard paste.
-  async function uploadImage(file: File) {
+  // Upload an attachment; on success append its host path to the composer so the user can add
+  // context. Shared by the file picker and clipboard paste.
+  //
+  // The two local refusals below are an ECONOMY, never a gate: the bridge asks the same two
+  // questions again on arrival, and its answer is the one that counts (it can read the bytes, which
+  // is the only way to catch a binary wearing a `.md` name). Spending a phone's uplink on 40 MB to
+  // be told 10 is the limit is the thing worth not doing.
+  async function uploadFile(file: File) {
     if (locked) return;
+    const refusal = rejectAttachment(file, limits);
+    if (refusal === "tooLarge") {
+      setStatus(translate("composer.upload.tooLarge", { max: limitMb(limits) }), "error");
+      return;
+    }
+    if (refusal === "badType") {
+      setStatus(translate("composer.upload.badType", { name: file.name }), "error");
+      return;
+    }
     setUploading(true);
     try {
-      const res = await api.uploadImage(paneId, file, scope);
+      const res = await api.uploadFile(paneId, file, scope);
       if (res.ok) {
         const path = res.path;
         direct.deactivateSilently();
@@ -1042,29 +1109,31 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }
 
-  async function onPickImage(e: ChangeEvent<HTMLInputElement>) {
+  async function onPickFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-picking the same file
     if (!file) return;
-    await uploadImage(file);
+    await uploadFile(file);
   }
 
-  // Paste an image straight from the clipboard (e.g. a screenshot) the same way the picker does.
-  // Only intercepts when the clipboard actually carries an image file — a plain text paste (the
-  // common case) falls through untouched.
-  function onPasteImage(e: ClipboardEvent<HTMLTextAreaElement>) {
+  // Paste a file straight from the clipboard (e.g. a screenshot) the same way the picker does.
+  //
+  // A PLAIN TEXT PASTE STILL FALLS THROUGH UNTOUCHED, and that stays true now that text files are
+  // attachable: the branch turns on `item.kind === "file"`, so pasted PROSE is prose and only a
+  // pasted FILE becomes an upload. Copying a `.md` in a file manager produces the second; selecting
+  // its contents in an editor produces the first, and neither has become the other.
+  function onPasteFile(e: ClipboardEvent<HTMLTextAreaElement>) {
     if (locked || direct.active) return;
     const items = e.clipboardData.items;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (item.kind === "file" && item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) {
-          e.preventDefault();
-          void uploadImage(file);
-          return;
-        }
-      }
+      if (item.kind !== "file") continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      if (rejectAttachment(file, limits) === "badType") continue;
+      e.preventDefault();
+      void uploadFile(file);
+      return;
     }
   }
 
@@ -1103,10 +1172,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </Collapse>
 
         {/* File input stays mounted here (not inside the keyboard-only key row) so the picker
-            callback survives the keyboard collapsing. Attach-image fires it from the reply-input row
+            callback survives the keyboard collapsing. Attach fires it from the reply-input row
             below (always visible, not gated behind the keyboard-open quick keys); structural commands
             (New tab/space, Kill) and Stop (Esc, in the Keys dock) live elsewhere. */}
-        <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickImage} />
+        {/* TWO inputs, because a phone's picker cannot be asked both questions at once. The
+            camera roll is offered only when EVERY entry in `accept` maps to a gallery, so the
+            extension list that makes a `.md` pickable is the very thing that hid the gallery on
+            both Android and iOS — the attach button opened the file browser and nothing else.
+            `PHOTO_ACCEPT` is the first input's whole answer; the second keeps the full list. Which
+            one fires is the sheet's question, and both land in the same `onPickFile`. */}
+        <input ref={photoRef} data-testid="attach-photos" type="file" accept={PHOTO_ACCEPT} hidden onChange={onPickFile} />
+        <input ref={fileRef} data-testid="attach-files" type="file" accept={accept} hidden onChange={onPickFile} />
+
         {/* Keys / Quick / Display dock — a single in-flow site ABOVE the Controls row (so the toggle
             you tapped stays put and the panel grows over the mirror, not the input). Whichever of the
             mutually exclusive drawers is active renders here via the shared ComposerDock chrome. Keys
@@ -1150,6 +1227,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               stepFontSize={stepFontSize}
               setRawTerminal={setRawTerminal}
               setTapToFocus={setTapToFocus}
+              setExpandClippedReply={setExpandClippedReply}
               afterTextSize={displayPrefsAfterTextSize}
             />
           </ComposerDock>
@@ -1189,7 +1267,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             one utility — tailwind-merge deletes an earlier `leading-*` when a later `text-<size>`
             follows it in the same cn()). `h-[14px]` then STATES the band's height rather than
             letting it be the sum of whatever stands in it, so a solo install (where HostChip renders
-            null, its hide rule unchanged, leaving the word alone), a pack, and a gone pane (no word
+            null, its hide rule unchanged, leaving the word alone), a crew, and a gone pane (no word
             at all) are identical BY CONSTRUCTION and not by three occupants happening to agree.
             `text-[10px]/3` is stated on the BAND as
             well as on both runs, and that is load-bearing rather than decorative: a block layer
@@ -1257,7 +1335,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             clears both rules instead of touching one.
 
             Nothing about the reserve changes: the slot still stacks every word (§2), and the height
-            is the same 14px solo, on a pack, and on a gone pane.
+            is the same 14px solo, on a crew, and on a gone pane.
 
             FULL-BLEED, and the content still at 10px. `-mx-3` cancels the dock's `px-3` so both
             rules run edge to edge — one that stopped short would not separate the regions it
@@ -1488,7 +1566,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               long line can never run underneath the icon.
 
               The machine this write lands on is NOT in here. It was, for one round, docked at the
-              field's right edge — and it cost 60px of typing width on a pack, out of the widest part
+              field's right edge — and it cost 60px of typing width on a crew, out of the widest part
               of the composer. It answers the same question from the controls row above (the status
               strip there), which is equally at the write surface and costs the draft nothing. */}
           <div className="relative min-w-0 flex-1">
@@ -1512,13 +1590,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     }
                   }
             }
-            onPaste={onPasteImage}
+            onPaste={onPasteFile}
             placeholder={
               gone
                 ? translate("composer.placeholder.gone")
                 : readOnly
                   ? translate("composer.placeholder.readOnly")
-                  : // Names the machine, because on a pack "why can't I type?" has two possible
+                  : // Names the machine, because on a crew "why can't I type?" has two possible
                     // answers and only one of them is about this device.
                     hostBlock
                     ? hostBlock
@@ -1542,8 +1620,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               //
               // ONE `pr-*` here, unconditionally, and it is the attach button's alone. MEASURED in
               // the playground at a true 390px content width: the field is 310px, so the typing area
-              // is 254px — on a pack and on a solo install alike. At 320px it is 184px, again both.
-              // For one round a pack paid 60px of that to a chip docked at the field's right edge
+              // is 254px — on a crew and on a solo install alike. At 320px it is 184px, again both.
+              // For one round a crew paid 60px of that to a chip docked at the field's right edge
               // (194px and 124px); the host answers the same question from the status strip above
               // now, and the width came back. A second, conditional `pr-*` in this same cn() would
               // not stack — tailwind-merge keeps only the last padding-right (DESIGN.md §7) — which
@@ -1569,6 +1647,33 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             disabled={locked}
             rows={1}
           />
+            {/* The picker, anchored to the field so it opens ABOVE the button rather than over it
+                (ui/anchored-menu.tsx carries the measurement). Two rows, no confirm — each one
+                opens a native picker, which is its own decision point. The menu closes BEFORE the
+                click so it is not left standing behind the system UI, and the click still counts as
+                the user gesture the browser requires because both happen in this one handler. */}
+            <AnchoredMenu
+              open={picking}
+              onClose={() => setPicking(false)}
+              label={translate("composer.attach.title")}
+            >
+              <ActionRow
+                icon={<Image aria-hidden="true" className="size-4 shrink-0" />}
+                label={translate("composer.attach.photos")}
+                onClick={() => {
+                  setPicking(false);
+                  photoRef.current?.click();
+                }}
+              />
+              <ActionRow
+                icon={<FileText aria-hidden="true" className="size-4 shrink-0" />}
+                label={translate("composer.attach.files")}
+                onClick={() => {
+                  setPicking(false);
+                  fileRef.current?.click();
+                }}
+              />
+            </AnchoredMenu>
             <Button
               type="button"
               variant="ghost"
@@ -1576,16 +1681,39 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               // bottom-1, not centred: the field grows upward as the draft wraps, and a vertically
               // centred button would drift up with it, away from the thumb and away from the send
               // button it pairs with. Pinned to the bottom it stays put at any height.
-              className="absolute bottom-1 right-1 size-9 rounded-full text-muted-foreground"
+              className={cn(
+                "absolute bottom-1 right-1 size-9 rounded-full text-muted-foreground",
+                // The press echo, in the tone this app already uses for "your press landed" —
+                // `variant="default"`, which is what a tapped quick reply and a busy dialog option
+                // both flip to. It was `bg-accent` first, and that was a token chosen by name
+                // rather than by looking: in the dark theme `accent` resolves to oklch(0.269),
+                // which is the SAME value as `muted` and sits 0.06 of lightness above the card it
+                // is drawn on. Measured through a real tap, it faded in over 180ms, held for 40,
+                // and faded out — a flash nobody could see on a phone. `primary` is oklch(0.922).
+                //
+                // `duration-0` on the way IN, and the base duration on the way out. A press has to
+                // answer immediately or it is not answering the press; the release is the part that
+                // wants easing. Removing both classes in one commit is what lets the exit animate.
+                // Lit for the press, and then for as long as the menu it opened is standing: the
+                // menu is anchored above rather than over the button precisely so this can be seen,
+                // and a trigger that went dark under its own open menu would waste that.
+                (pressed || picking) && "scale-95 bg-primary text-primary-foreground duration-0",
+              )}
               disabled={uploading || locked || direct.active}
               onPointerDown={(e) => e.preventDefault()}
-              onClick={() => fileRef.current?.click()}
+              onClick={() => {
+                echoAttachPress();
+                if (asksWhich) setPicking(true);
+                else photoRef.current?.click();
+              }}
               aria-label={translate("composer.attach.aria")}
+              aria-haspopup="dialog"
+              aria-expanded={asksWhich ? picking : undefined}
             >
               {uploading ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
-                <ImagePlus className="size-4" />
+                <Paperclip className="size-4" />
               )}
             </Button>
           </div>

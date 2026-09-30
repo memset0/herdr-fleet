@@ -9,6 +9,7 @@ import type {
   OperatorKeyRow,
   OperatorQuickReplyRow,
   SttCapability,
+  UploadCapability,
 } from "@/lib/types";
 
 // The startup-resolved half of /api/config, read ONCE and held in module state: the operator's own
@@ -55,6 +56,10 @@ let currentMux: MuxConfig | null = null;
 // are the same value on purpose, because both mean "there is no microphone here" (ADR 0029). Absent
 // is the feature being off, so nothing has to distinguish them.
 let currentStt: SttCapability | null = null;
+// `null` until a read succeeds AND on every bridge older than the field. The two are the same value
+// on purpose: both mean "nothing said otherwise", and lib/attachments.ts answers both with the
+// contract that shipped before attachments existed — 10 MB, images only.
+let currentUpload: UploadCapability | null = null;
 let inflight: Promise<void> | null = null;
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -81,6 +86,7 @@ export function loadOperatorCommands(): Promise<void> {
       applyOperatorFonts(currentFonts, designPrefs().font);
       currentMux = cfg.mux ?? null;
       currentStt = cfg.stt ?? null;
+      currentUpload = cfg.upload ?? null;
       loaded = true;
       emit();
     } catch {
@@ -122,6 +128,60 @@ export function getMuxConfig(): MuxConfig | null {
   return currentMux;
 }
 
+// ── ONE MEMBER's OWN BLOCK (M22/03) ─────────────────────────────────────────────────────────────
+//
+// The store above is the LEAD's answer, read once and held for the page. A crew member runs its own
+// multiplexer, so a control on that member's pane has to ask that member's declaration, and the lead
+// answers it on `/api/config?host=<member>` from what the member's last `hello` taught it.
+//
+// A SECOND MAP RATHER THAN A SECOND STORE, and it stays out of the one-shot read's way:
+//
+//  • **Cached per host id, for the life of the page**, exactly as the lead's read is cached. The
+//    block cannot change without that member's bridge restarting, which the phone cannot miss.
+//  • **Issued ONLY when a scope names a non-lead host.** A solo install has no `?h=` to emit, so it
+//    never reaches this map and never makes a second request — the zero-tax rule, client side.
+//  • **A miss is `null`, and `null` means "use the lead's".** So the read in flight, the failed read
+//    and the member that publishes no block all render the answer the phone gives today.
+//  • **A failed read is not cached**, on the same terms the lead's read is not, so a later mount
+//    tries again.
+
+const hostMux = new Map<string, MuxConfig | null>();
+const hostMuxInflight = new Map<string, Promise<void>>();
+
+/**
+ * Read one member's own mux block, once per host id per page load. Concurrent callers share the one
+ * in-flight request.
+ */
+export function loadHostMuxConfig(host: string): Promise<void> {
+  if (hostMux.has(host)) return Promise.resolve();
+  const running = hostMuxInflight.get(host);
+  if (running) return running;
+  const started = (async () => {
+    try {
+      // The HOST alone. No session rides along: `/api/config` is not session-scoped, and sending a
+      // session name would put a parameter on the wire that the route does not read.
+      const cfg = await fetchConfig({ host });
+      hostMux.set(host, cfg.mux ?? null);
+      emit();
+    } catch {
+      // Additive feature — see the header. Nothing is cached, so a later mount asks again.
+    } finally {
+      hostMuxInflight.delete(host);
+    }
+  })();
+  hostMuxInflight.set(host, started);
+  return started;
+}
+
+/**
+ * One member's own mux block, or `null` when nothing has said otherwise: no read yet, a failed read,
+ * or a member the lead has no declaration for. All three mean "use the lead's answer", which is what
+ * lib/mux-capability.ts turns them into.
+ */
+export function getHostMuxConfig(host: string): MuxConfig | null {
+  return hostMux.get(host) ?? null;
+}
+
 /**
  * The speech-to-text block, or `null` when nothing said otherwise (no read yet, a failed read, or a
  * bridge with no provider configured). Consumers go through lib/stt.ts, which owns the rule that
@@ -129,6 +189,15 @@ export function getMuxConfig(): MuxConfig | null {
  */
 export function getSttCapability(): SttCapability | null {
   return currentStt;
+}
+
+/**
+ * What this collie accepts as an attachment, or `null` when nothing has said otherwise (no read yet,
+ * a failed read, or a bridge older than the field). Consumers go through lib/attachments.ts, which
+ * is where `null` becomes an answer.
+ */
+export function getUploadCapability(): UploadCapability | null {
+  return currentUpload;
 }
 
 /**
@@ -189,6 +258,14 @@ export function useOperatorFonts(): readonly OperatorFontFace[] {
   return useSyncExternalStore(subscribeOperatorConfig, getOperatorFonts, getOperatorFonts);
 }
 
+/** Reactive read of the attachment limits. Same one-shot fetch, same contract. */
+export function useUploadCapability(): UploadCapability | null {
+  useEffect(() => {
+    void loadOperatorCommands();
+  }, []);
+  return useSyncExternalStore(subscribeOperatorConfig, getUploadCapability, getUploadCapability);
+}
+
 /** Reactive read of the Quick-dock groups. Same one-shot fetch, same contract. */
 export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
   useEffect(() => {
@@ -203,12 +280,15 @@ export function useOperatorQuickReplies(): readonly OperatorQuickReplyRow[] {
 
 /** Test helper — reset module state between cases. */
 export function __resetOperatorCommands(): void {
+  hostMux.clear();
+  hostMuxInflight.clear();
   current = [];
   currentKeys = [];
   currentReplies = [];
   currentFonts = [];
   currentMux = null;
   currentStt = null;
+  currentUpload = null;
   inflight = null;
   loaded = false;
   listeners.clear();

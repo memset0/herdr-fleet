@@ -33,7 +33,7 @@
 //   • Plain-text refusals (`text("bad body", 400)`, a 403 gate reason, a 405). They are not JSON, so
 //     there is no field to add one to — coding them would mean changing the response shape, which is
 //     exactly what this change promised not to do.
-//   • Pack-link errors (`bridge/pack/`). That surface is versioned separately (PACK_PROTOCOL.md) and
+//   • Crew-link errors (`bridge/crew/`). That surface is versioned separately (CREW_PROTOCOL.md) and
 //     is guarded at commit time (ADR 0025); it keeps today's bodies in this release.
 //   • Push/OS notification text (`bridge/notifications.ts`). Different surface, different follow-up.
 
@@ -109,12 +109,16 @@ export const ERROR_CODES = {
   /** This space is not in a Git work tree, so it has no worktrees to show. */
   "worktree.not_a_repo": "{reason}",
 
-  // ── Image upload: POST /api/pane/:id/upload → UploadResponse ───────────────────────
-  /** Refused on the declared Content-Length (413) or on the decoded size (200 + ok:false). */
-  "upload.too_large": "image too large (max 10 MB)",
+  // ── Attachment upload: POST /api/pane/:id/upload → UploadResponse ──────────────────
+  /**
+   * Refused on the declared Content-Length (413) or on the decoded size (200 + ok:false). The
+   * number is the HOST's own `COLLIE_MAX_UPLOAD_MB`, so it is interpolated rather than written:
+   * two members of one crew may answer this with two different sentences, both true.
+   */
+  "upload.too_large": "file too large (max {maxMb} MB)",
   /** The multipart body carried no `file` part. */
   "upload.no_file": "no file",
-  /** A content type Collie has no extension for — it will not write bytes it cannot name. */
+  /** Not an image Collie recognises and not a text type it accepts — it will not write bytes it cannot name. */
   "upload.bad_type": "unsupported type: {type}",
   /** The bytes arrived but the host write failed (disk full, permissions). */
   "upload.write_failed": "{reason}",
@@ -148,13 +152,13 @@ export const ERROR_CODES = {
   "session.unknown": "unknown session: {session}",
   "host.unknown": "unknown host: {host}",
 
-  // ── The pack overview: GET /api/pack ───────────────────────────────────────────────
+  // ── The crew overview: GET /api/crew ───────────────────────────────────────────────
   /**
-   * This collie is not a lead with a pack, so it has no pack to report. Both refusals are this one
+   * This collie is not a lead with a crew, so it has no crew to report. Both refusals are this one
    * code on purpose: a solo instance and a peer differ in what they ARE, not in what the phone can
    * do about it — a peer is not a front door (ADR 0013), so neither has an overview to show.
    */
-  "pack.not_lead": "this collie is not the lead of a pack",
+  "crew.not_lead": "this collie is not the lead of a crew",
 
   // ── Starting an update from the phone: POST /api/update (M15/05) ───────────────────
   /** The body carried no confirm. One tap plus one confirm is the contract; nothing moved. */
@@ -171,6 +175,12 @@ export const ERROR_CODES = {
   "update.target_mismatch": "this device asked for {asked}, but this collie would install {would}",
   /** Nothing newer to take. */
   "update.none_available": "there is no newer release to take",
+  /**
+   * A package manager owns this install's folder (ADR 0035). Its own preflight is GREEN, so nothing
+   * else on this gate would stop the start — which is exactly why this refusal exists here and not
+   * only in the client, whose disabled button this file's own contract calls a courtesy.
+   */
+  "update.packaged": "updates come from this machine's package manager — Collie does not replace its files",
   /** The handoff itself failed — nothing was staged and nothing restarted. */
   "update.start_failed": "the update could not be started: {reason}",
 } as const;
