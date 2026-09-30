@@ -17,18 +17,18 @@ Work that has landed but is not released yet collects under `## [Unreleased]
 
 ### Added
 
-- Show each Host's full reported Fleet build with compatible, outdated, manual-major, development, last-reported, stale, or unavailable evidence, and show this page's build below the shared Collie/TTYD selector.
+- **Show each Host's full Fleet build and this page's build.** Each Host carries compatible, outdated, manual-major, development, last-reported, stale, or unavailable evidence, and this page's build sits below the shared Collie/TTYD selector.
 
 ### Changed
 
-- Adopt Collie 1.8.2: the crew rename with protocol version 2 and its one-release `/pack/v1/*` overlap, per-host multiplexer capabilities, and upstream's fixes.
+- **Adopt Collie 1.8.2.** The crew rename with protocol version 2 and its one-release `/pack/v1/*` overlap, per-host multiplexer capabilities, and upstream's fixes.
 
 ### Fixed
 
-- Share terminal startup across concurrent browsers, clean up interrupted acquisitions, and take over external Herdr attachments on lead and peer without displacing another Fleet browser.
-- Keep the native Pane AppBar and actions in terminal mode, match the mirror's horizontal gutter, and ignore fit reports without a current drawable host.
-- Reserve the native scrollbar gutter in terminal fit to match an overflowing Collie mirror.
-- Count both sides of an upstream rename in the adoption preflight and name each moved port's destination, whatever Git's rename setting.
+- **Share terminal startup across concurrent browsers.** Interrupted acquisitions are cleaned up, and external Herdr attachments are taken over on lead and peer without displacing another Fleet browser.
+- **Keep the native Pane AppBar and actions in terminal mode.** The terminal matches the mirror's horizontal gutter and ignores fit reports without a current drawable host.
+- **Reserve the native scrollbar gutter in terminal fit.** It now matches an overflowing Collie mirror.
+- **Count both sides of an upstream rename in the adoption preflight.** Each moved port's destination is named, whatever Git's rename setting.
 
 ## [3.3.0] - 2026-09-07
 

@@ -249,6 +249,20 @@ be proven on the members before `v1.9.0`. The change is archived after the opera
 member running 3.4.0 through the new link, so a defect a member exposes is answered by the next minor
 while the decision record is still open.
 
+### 11. Changelog entries take upstream's bold-lead shape (coordinator decision, 2026-09-30)
+
+Upstream's `v1.8` pre-commit hook refuses any `## [Unreleased]` bullet that does not open with a bold
+lead sentence, because upstream's `scripts/release-notes.ts` prints those leads on a GitHub Release
+page. This product publishes no GitHub Releases, and every Unreleased line it carried failed the
+check. Decision: **adopt the shape, leave the hook as upstream ships it.** `AGENTS.md`'s changelog rule
+now requires each entry to open with a short bold lead sentence — still one entry per line, still Keep
+a Changelog, now with upstream's `### Packaging` and `### Docs` groups allowed — and every existing
+Unreleased entry was reshaped in its own doc-only commit before any functional commit of this change.
+
+Alternative rejected: porting the hook to drop the shape check. It would add a declared change to the
+`private-fact-guard-port` entry's hook for a rule that costs this product nothing to follow, and every
+later adoption would have to re-apply it.
+
 ## Risks / Trade-offs
 
 - [Rollback across the state rename] → a previous release started after 3.4.0's Collie has run finds
@@ -280,14 +294,10 @@ Recorded here, not fixed by this change unless the fix turns out to be trivial:
   private-fact guard is re-lettered **E** in the hook, its suite and the fork's privacy test; the
   `AGENTS.md` lines that still call it guard D (and the hatch table) are corrected with task 6.7, and
   the `private-fact-guard-port` reason with task 7.2.
-- Upstream's `v1.8` hook also refuses any `## [Unreleased]` bullet without a bold lead sentence,
-  because `scripts/release-notes.ts` prints those leads on a GitHub Release page. This product
-  publishes no GitHub Releases and its `AGENTS.md` asks for one crisp line per change, so every
-  existing Unreleased line fails that shape check. The merge commit was made with
-  `SKIP_VERSION_CHECK=1` after version consistency (`scripts/check-version.sh`) and the added
-  Unreleased line were verified by hand. **An owner decision is needed before the next functional
-  commit:** either port the hook to drop the shape check here (a declared change to the hook's
-  entry), or adopt bold-lead bullets in `AGENTS.md` and reshape the Unreleased lines.
+- Upstream's `v1.8` hook also refuses any `## [Unreleased]` bullet without a bold lead sentence.
+  The merge commit was made with `SKIP_VERSION_CHECK=1` after version consistency and the added
+  Unreleased line were verified by hand; the shape is now adopted (decision 11), so no later commit
+  needs that hatch.
 - Renaming this fork's own pack vocabulary (`[pack]` configuration section, `[[invasive]]`/`[[owned]]`
   entry ids, `fleet-pack-*` capability names) is left to a later change by owner decision; it is kept
   unchanged here.

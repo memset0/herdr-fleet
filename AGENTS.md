@@ -90,8 +90,12 @@ version because you fixed something; the version moves once, when the release is
 **Before committing any functional change** (anything under `bridge/`, `cli/`, `web/src/`,
 `web/public/`, `scripts/`, `systemd/`, or the manifest / package files) you MUST, **in the same
 commit**, add **one line** to `CHANGELOG.md` under `## [Unreleased]`, beneath `### Added`,
-`### Changed` or `### Fixed` — create the sub-heading if it isn't there yet. **Style: super crisp
-and short** — one line per change, no prose paragraphs. End the line with the issue or PR it
+`### Changed`, `### Fixed`, `### Packaging` or `### Docs` — create the sub-heading if it isn't there
+yet. **Style: super crisp and short** — one line per change, no prose paragraphs, and **every line
+opens with a short bold lead sentence**: `- **Lead sentence, about ten words.** The detail follows.`
+That is the Keep a Changelog shape upstream's pre-commit hook checks; this product publishes no
+GitHub Release page for the leads to feed, but the hook's shape check is kept unmodified and the
+lines are written to it. End the line with the issue or PR it
 answers where one exists (`… (#147)`), and with **no commit hash**: the hash doesn't exist yet, and
 the release commit adds it. Do not touch the three version files.
 
