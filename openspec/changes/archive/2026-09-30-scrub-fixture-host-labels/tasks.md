@@ -18,4 +18,4 @@
 
 - [x] 4.1 Public-tree audit: the guard passes on the scrubbed tree, refuses a temporarily reintroduced name, and passes again after reverting; a tracked-tree grep outside the archive finds no machine identifier; list archived changes that still carry one, paths and counts only.
 - [x] 4.2 Boundary audit: `bun scripts/check-fork.ts` passes and `FORK.toml` is unchanged; `openspec validate --strict` passes.
-- [ ] 4.3 Commit the implementation with an explicit pathspec, archive the change, commit the archive, and push without tags.
+- [x] 4.3 Commit the implementation with an explicit pathspec, archive the change, commit the archive, and push without tags.
