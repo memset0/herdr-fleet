@@ -300,6 +300,107 @@ no path returned to upstream's version. `reviewed = "v1.8.2"` on all 21.
 | `fork-gate-in-ci` | keep | one step in upstream's CI beside its new e2e job |
 | `no-automatic-release-publication` | keep | upstream still publishes on tag push; this product publishes nothing |
 
+### 13. Phase C2 boundary decisions (coordinator decisions, 2026-09-30)
+
+Phase C's full suites on a designated member and the local browser tier found eight upstream-added
+test cases that meet declared fork ports (two `cli`, three web vitest, three Playwright) plus one
+real defect in a fork-owned component; a ninth (Playwright) surfaced once the serial group it sits
+in ran past the stuck-guard case. Each is settled at the boundary, not by weakening an upstream
+assertion about upstream's own surface:
+
+| finding | decision | where |
+| --- | --- | --- |
+| `cli/program.test.ts` "the `crew` alias is gone in 2.0.0" read this product's 3.x as Collie's major | the removal clock reads Collie's release | new entry `upstream-removal-clock` |
+| `cli/docs-embed.test.ts` expects every `docs/*.md` in the binary's registry | exclude the fork's own page from the test's disk listing | new entry `downstream-docs` |
+| `web/src/routes/root.test.tsx` ×2: four top-inset reservations instead of one | count the app's own column; the rails and the drawer are accounted for separately | `native-navigation-sidebars-port` |
+| (defect behind the count) the rails kept reserving the inset while the strip band was open | `Rail` reads `useStripBandOpen()` as the header does | fork-owned `native-navigation-shell.tsx` |
+| `web/src/playground/sections/motion.test.tsx`: `/ARCHITECTURE/` matched twice | look inside the route's `main` | `native-navigation-sidebars-port` |
+| `web/e2e/smoke.spec.ts` (phone, tablet): first `webapp` match is the hidden Herds rail | look inside the route's `main` | `native-navigation-sidebars-port` |
+| `web/e2e/service-worker.spec.ts` "the stuck guard reloads onto A" (phone) | skipped: network-first navigation by design | `authenticated-navigation-cache` |
+| `web/e2e/service-worker.spec.ts` "a manual reload during the install still comes back to a booted app" (phone; did not run in phase C, timed out once the case before it was skipped) | skipped for the same reason (extension of the coordinator's decision, same entry and reason) | `authenticated-navigation-cache` |
+| `scripts/release-notes.test.ts` (Unreleased/[3.3.0] bullets lack bold leads) | no action; the `3.4.0` section satisfies it after the bump | — |
+
+**Removal clock.** Upstream has no shared reading point: each of the two scheduled-removal tests
+reads `../package.json` itself (`program.test.ts` the major, for the `collie pack` alias at 2.0.0;
+`removal-schedule.test.ts` the minor, for the protocol version 1 overlap at 1.9.0). The smallest
+common port is therefore one imported name in each: a fork-owned `fleet/upstream-version.ts` reads
+`FORK.toml`'s `[upstream].tag` through the manifest's own validating parser
+(`scripts/fork-manifest.ts`) and returns `{ major, minor, patch }`, throwing on anything but a strict
+`vX.Y.Z` so an unreadable clock fails the suite rather than switching every check off. Both files
+import `upstreamVersion()` in place of their package.json read; every removal assertion and threshold
+stays upstream's. Anchors: `cli/program.test.ts#upstreamVersion()`,
+`bridge/removal-schedule.test.ts#upstreamVersion()`. This also retires the future misfire recorded
+below (removal-schedule reading a Fleet 3.9 as Collie 1.9): the clock now reads 1.8 until the
+adoption that crosses 1.9.0 moves the tag, which is exactly when upstream intends it to fire. The
+fork-owned `fleet/upstream-version.test.ts` pins the read (it equals the manifest's tag, it follows
+a moved tag in a copied manifest, it refuses malformed tags) and that both upstream clocks call it.
+Rejected: returning `package.json` to Collie's number (breaks this product's version rule) and
+skipping the two checks (loses upstream's removal reminders).
+
+**Docs registry.** Embedding `docs/herdr-fleet.md` would need an edit to `cli/docs-embed.ts` — a
+hand-written import list, not a glob, in an upstream file no entry declares — and would change what
+the `collie` binary prints (`collie docs`, and the table `collie skill` hands to agents) for a page
+about the Gateway and the Pane terminal surface, which that binary does not serve. The test-side
+exclusion costs the same single invasive path (`cli/docs-embed.test.ts#herdr-fleet.md`) and changes
+no shipped behavior, so it is the narrower port. It gets its own entry `downstream-docs` because
+`fleet-runtime` is an owned entry and cannot carry an anchored upstream path.
+
+**Rails and the notch.** The strip band sits above `NativeNavigationShell` and spans every column,
+and the header yields the top inset to it while it is open. The rails did not, so under an open band
+each rail's title stood an inset lower than the header beside it — the defect upstream's
+whole-layout count exposed. `Rail` now uses `useStripBandOpen()` with the header's 240ms padding
+transition; the drawer keeps its unconditional reservation because it is a `fixed inset-0` layer
+over the band, like upstream's sheet primitive. The fork-owned shell test asserts both states (band
+open: no rail reservation and the drawer's own; band empty: one per rail) and was mutation-checked
+against the old rule. Upstream's count in `routes/root.test.tsx` then counts only the app's column
+by excluding elements inside the shell's `aside` rails and `#fleet-hierarchy-overlay`
+(anchor `fleet-hierarchy-overlay`); its "exactly once" and "band, not header" assertions are
+unchanged.
+
+**Duplicate rows.** The Agents rail lists the same pane as the space route and the Herds rail names
+the same workspace as the dashboard, so upstream's text queries found the rail's copy first (hidden
+below the rail breakpoint in the browser; present in jsdom). `motion.test.tsx` and `e2e/smoke.spec.ts`
+look inside the route's `main` region instead (anchors `within(within(card).getByRole("main"))`,
+`page.getByRole("main").getByText`).
+
+**Stuck guard.** The case asserts the guard's reload lands on the precached build A and that only a
+second tap escapes it. `authenticated-navigation-cache` answers every document navigation
+network-first, so that reload reaches the server and lands on B; the wedge the case pins cannot form
+here. The case alone is skipped at its first line with the reason `network-first navigation by
+design` (anchor of the same text). Of the two cases after it that did not run in phase C, "a tap
+while build B is still installing never reloads onto build A" passes; "a manual reload during the
+install still comes back to a booted app" rests on the same premise — the reload is answered from
+the old worker's precache — and timed out: under network-first navigation the reload takes build B's
+shell from the server and then waits for B's 1.3 MB entry chunk through the case's 8 KB/s throttle,
+which the case releases only after the reload (about 160 s against a 120 s budget). No entry script
+404s; the page is waiting for the new build rather than showing the old one, which is the accepted
+cost of that entry (a reload during a slow install is as slow as the link). It is skipped with the
+same reason, under the same entry and anchor. The browser tier is new since `v1.5.2`, so neither
+case has a pre-merge baseline.
+
+**Release notes.** `scripts/release-notes.test.ts` fails today only because `CHANGELOG.md`'s newest
+numbered section (`[3.3.0]`) predates the bold-lead shape. The `3.4.0` release commit makes the
+Unreleased lines (all bold-lead, decision 11) the newest numbered section, so the release group must
+re-run this test after the bump and expect it to pass; it is not a boundary question.
+
+**Manifest.** Two new invasive entries (`upstream-removal-clock`, `downstream-docs`) and two
+extended ones (`native-navigation-sidebars-port`, `authenticated-navigation-cache`), all
+`reviewed = "v1.8.2"`, so the manifest now holds 23 invasive entries; `fleet/upstream-version.test.ts`
+joins `fleet-runtime`'s verify list (`fleet/**` already owns both new files).
+
+**Results (tasks 8.2 and 8.3).** On a designated member, re-run for the suites these edits touch:
+`bun test ./cli` 1405 pass / 0 fail, `bridge/removal-schedule.test.ts` 16 / 0, `bun test ./fleet`
+590 / 0, web vitest 216 files, 5885 pass / 30 todo / 0 fail; every other phase C suite was already
+green and is untouched. Locally the full web vitest matches that count, and the browser tier
+(`bun run e2e`) is 43 passed / 11 skipped / 0 failed: nine are upstream's own phone-only skip of the
+service-worker file on `app-tablet`, and two are the declared network-first skips above. The one
+remaining unit failure, `scripts/release-notes.test.ts`, clears with the `3.4.0` bump (above). The
+`bridge/stt/codex` and `openai` hangs stay with `fix-stt-test-exit`, unchanged by this adoption.
+
+**Follow-ups (out of scope here).** Device-name fixtures in `web/src/lib/fleet-roster.test.ts` and in
+archived changes are to be replaced with reserved example names in a separate change opened right
+after the 3.4.0 release; this change does not touch them.
+
 ## Risks / Trade-offs
 
 - [Rollback across the state rename] → a previous release started after 3.4.0's Collie has run finds
@@ -314,19 +415,21 @@ no path returned to upstream's version. `reviewed = "v1.8.2"` on all 21.
 - [Upstream's browser tier asserts upstream's layout] → cases may fail against the fork's shell. A
   failure inside a declared port is fixed in the port or reported; rewriting an upstream e2e case is
   a new invasive path and needs its own entry and reason.
-- [`bridge/removal-schedule.test.ts` reads the package minor] → it reads this product's version, not
-  Collie's: inert at 3.4, but it would misfire at a Fleet 3.9 before the `v1.9.0` adoption. Recorded
-  for that adoption, which removes the overlap it guards.
+- [`bridge/removal-schedule.test.ts` read the package minor] → it read this product's version, not
+  Collie's, and would have misfired at a Fleet 3.9 before the `v1.9.0` adoption. Resolved in phase
+  C2 (decision 13): both removal clocks read `FORK.toml`'s `[upstream].tag`.
 - [Fleet enrolment has no cross-version fallback] → enrol only after the lead runs 3.4.0.
 
 ## Known follow-ups
 
 Recorded here, not fixed by this change unless the fix turns out to be trivial:
 
-- Upstream's `bridge/removal-schedule.test.ts` reads this product's `package.json` minor as if it
-  were Collie's; it is inert at 3.4 and must be revisited by the adoption that crosses `v1.9.0`.
-- Upstream's Playwright browser tier may not fit the fork's shell; any case that fails inside a
-  declared port is reported per task 8.3, and rewriting an upstream case needs its own entry.
+- ~~Upstream's `bridge/removal-schedule.test.ts` reads this product's `package.json` minor as if it
+  were Collie's~~ — resolved in phase C2 by `upstream-removal-clock` (decision 13).
+- Upstream's Playwright browser tier met the fork's shell in two cases; both are now declared ports
+  (decision 13). A later adoption's new browser cases are triaged the same way.
+- Device-name fixtures in `web/src/lib/fleet-roster.test.ts` and in archived changes: a separate
+  change, opened right after the 3.4.0 release (decision 13).
 - Upstream's `v1.8` pre-commit hook added its own guard D (the `flake.lock` guard), so the fork's
   private-fact guard is re-lettered **E** in the hook, its suite and the fork's privacy test; the
   `AGENTS.md` lines that still call it guard D (and the hatch table) are corrected with task 6.7, and
