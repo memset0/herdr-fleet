@@ -28,7 +28,11 @@ test("the app shell renders on /", async ({ page }) => {
 
   // And the shell is showing FIXTURE data, so the stub was reached and `rootLoader` resolved. A
   // workspace label out of `fixtureSnapshot` is the shortest proof of that.
-  await expect(page.getByText(fixtureWorkspaces[0]!.label, { exact: false }).first()).toBeVisible();
+  // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Fleet Herds rail names the same
+  // workspace first and is hidden below its breakpoint, so the label is looked for in the route.
+  await expect(
+    page.getByRole("main").getByText(fixtureWorkspaces[0]!.label, { exact: false }).first(),
+  ).toBeVisible();
 });
 
 // The reason the service-worker cases can live in this tier at all. Recorded as a case rather than

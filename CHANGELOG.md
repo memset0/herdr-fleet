@@ -30,6 +30,7 @@ Work that has landed but is not released yet collects under `## [Unreleased]
 - **Keep the native Pane AppBar and actions in terminal mode.** The terminal matches the mirror's horizontal gutter and ignores fit reports without a current drawable host.
 - **Reserve the native scrollbar gutter in terminal fit.** It now matches an overflowing Collie mirror.
 - **Count both sides of an upstream rename in the adoption preflight.** Each moved port's destination is named, whatever Git's rename setting.
+- **Run Collie's scheduled-removal checks against the adopted Collie release.** They read `FORK.toml`'s upstream tag, not this product's version; Collie 1.8.2's new layout and browser tests account for the Fleet rails and network-first navigation.
 - **Stop the navigation rails reserving the notch under an open strip band.** Each rail hands the top safe-area inset to the band as the header does, so rail titles line up with the header.
 
 ## [3.3.0] - 2026-09-07

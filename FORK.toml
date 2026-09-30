@@ -158,6 +158,7 @@ verify = [
   "fleet/ui/version-evidence.test.ts",
   "web/src/components/native-navigation-tree.test.tsx",
   "web/src/components/native-navigation-shell.test.tsx",
+  "fleet/upstream-version.test.ts",
 ]
 
 [[invasive]]
@@ -337,9 +338,12 @@ intent = "Require a fresh Gateway decision before every document navigation."
 strategy = "adapt"
 review = "every-upstream-sync"
 reviewed = "v1.8.2"
-paths = ["web/src/sw.ts#Authenticated app-shell boundary"]
-verify = ["fleet/sw-boundary.test.ts", "web/src/lib/sw-routes.test.ts"]
-reason = "The upstream service worker owns the app-shell navigation order and is the only place an authenticated document cache can be bypassed. Reviewed against Collie 1.8.2 and kept: upstream still answers every navigation outside its NAVIGATION_NETWORK_ONLY denylist (API, `/auth`, proxy namespaces, `/crew/v1`, the one-release `/pack/v1`, `/standby`) from the precached app shell, so an expired session could still recover a cached authenticated shell. The fork's network-first route supersedes that whole denylist, including its REMOVE_IN_1_9_0 version 1 line, so nothing here changes when upstream drops it."
+paths = [
+  "web/src/sw.ts#Authenticated app-shell boundary",
+  "web/e2e/service-worker.spec.ts#network-first navigation by design"
+]
+verify = ["fleet/sw-boundary.test.ts", "web/src/lib/sw-routes.test.ts", "web/e2e/service-worker.spec.ts"]
+reason = "The upstream service worker owns the app-shell navigation order and is the only place an authenticated document cache can be bypassed. Reviewed against Collie 1.8.2 and kept: upstream still answers every navigation outside its NAVIGATION_NETWORK_ONLY denylist (API, `/auth`, proxy namespaces, `/crew/v1`, the one-release `/pack/v1`, `/standby`) from the precached app shell, so an expired session could still recover a cached authenticated shell. The fork's network-first route supersedes that whole denylist, including its REMOVE_IN_1_9_0 version 1 line, so nothing here changes when upstream drops it. Collie 1.8's browser tier brought two cases this route contradicts by design, both resting on the old worker answering a navigation from its precache. The stuck-guard case asserts the guard's reload lands on the PRECACHED build A and that only a second tap escapes it; under network-first navigation that reload asks the server and lands on B, so the wedge the case pins cannot form. The manual-reload case reloads during a throttled install and expects the old worker's precached shell to boot at once; here the reload takes build B's shell from the server and then waits for B's entry chunk through the throttle the case holds until afterwards — the accepted cost of this route (a reload during a slow install waits for the new build rather than showing the old one), and never a 404. Those two cases alone are skipped at their first line with the reason `network-first navigation by design`; every other case in the file runs unchanged."
 
 [[invasive]]
 id = "native-manual-pane-fit-port"
@@ -428,9 +432,15 @@ paths = [
   "web/src/components/native-navigation-tree.test.tsx#NativeNavigationTree",
   "web/src/components/native-agent-card.tsx#NativeAgentCard",
   "web/src/components/native-agent-rail.tsx#NativeAgentRail",
-  "web/src/components/native-agent-rail.test.tsx#NativeAgentRail"
+  "web/src/components/native-agent-rail.test.tsx#NativeAgentRail",
+  "web/src/routes/root.test.tsx#fleet-hierarchy-overlay",
+  "web/src/playground/sections/motion.test.tsx#within(within(card).getByRole(\"main\"))",
+  "web/e2e/smoke.spec.ts#page.getByRole(\"main\").getByText"
 ]
 verify = [
+  "web/src/routes/root.test.tsx",
+  "web/src/playground/sections/motion.test.tsx",
+  "web/e2e/smoke.spec.ts",
   "fleet/ui/native-navigation/model.test.ts",
   "fleet/ui/native-navigation/preferences.test.ts",
   "web/src/components/native-navigation-shell.test.tsx",
@@ -442,7 +452,7 @@ verify = [
   "web/src/components/agent-list.test.tsx",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). The Settings route takes one further port from drive-the-fleet-from-the-keyboard: the fork's own settings are gathered into one group at the HEAD of the page, which is the page's only heading and a deliberate exception to the flat-stack rule stated at that line — the boundary between what this fork adds and what Collie ships is the one thing a reader of that page cannot otherwise see, and the CJK card moves into the group while every Collie card keeps its position and its reasoning. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list. The rail's emphasis reads the dashboard's own exported set rather than copying it, because which sections mean a person is wanted here is one rule and two versions of it would drift; that export rides the native-agent-favorites-port declaration, since this manifest attributes web/src/components/agent-list.tsx to exactly one entry."
+reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus a breakpoint class on that entry, the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). The Settings route takes one further port from drive-the-fleet-from-the-keyboard: the fork's own settings are gathered into one group at the HEAD of the page, which is the page's only heading and a deliberate exception to the flat-stack rule stated at that line — the boundary between what this fork adds and what Collie ships is the one thing a reader of that page cannot otherwise see, and the CJK card moves into the group while every Collie card keeps its position and its reasoning. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-manual-pane-fit-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list. The rail's emphasis reads the dashboard's own exported set rather than copying it, because which sections mean a person is wanted here is one rule and two versions of it would drift; that export rides the native-agent-favorites-port declaration, since this manifest attributes web/src/components/agent-list.tsx to exactly one entry. Collie 1.8 added three tests that look at the whole layout and so meet the rails; each takes one scoping port and no assertion is weakened for the route column itself. The safe-area count in routes/root.test.tsx counts the app's own column: the two rails are columns beside it that yield the inset to the strip band exactly as the header does (asserted in the fork's shell test, after that count exposed the rails still reserving it under an open band), and the hierarchy drawer is a fixed layer over the whole viewport that clears the notch for itself as upstream's sheet primitive does. The playground walkthrough (motion.test.tsx) and the browser-tier smoke case (e2e/smoke.spec.ts) find a pane row or workspace label that the Agents or Herds rail also lists, so both look inside the route's own main region; the smoke case's first match was the rail's copy, hidden below the rail breakpoint."
 [[invasive]]
 id = "native-pane-chrome-port"
 intent = "Let the Pane screen say its state in a row it already spends, rank its controls as one, and decline the shared mark, without moving product logic into Collie-owned files."
@@ -540,3 +550,30 @@ verify = [
   "scripts/check-tag.test.sh"
 ]
 reason = "The trigger's ABSENCE is the change, which is the one kind of edit a sync restores without noticing: upstream's file runs on `push: tags: [\"v*.*.*\"]`, and taking that back reinstates automatic publication in a product that publishes nothing. Every job below the trigger is upstream's, verbatim — this decides when the workflow runs and never what it builds, and `workflow_dispatch` keeps it available to a person. Upstream's reasoning for publishing does not carry here: a Release exists so a user can install the version, and both readers of these assets — the in-app update banner and the binary updater — read AltanS/collie, because bridge/index.ts defaults the update repo there and nothing in this fork sets COLLIE_UPDATE_REPO. This deployment installs and updates as a Herdr plugin. The cost of the automation was collected once, on the 3.0.1 push, which swept five of upstream's own tags to this remote where a push trigger would have built a Release for a Collie version this product never shipped, under this product's name. The tag checker is here too and not in an entry of its own, because it says the same thing from the other side: it called a pushed tag PUBLISHED, and it printed `git push --follow-tags` as the remedy — the exact option that swept those five tags. It now calls a pushed tag MARKED, names the branch and tag on the push line, and says why the sweeping options are refused. Its own suite pins its behaviour and is unchanged."
+
+[[invasive]]
+id = "upstream-removal-clock"
+intent = "Run Collie's version-scheduled removal checks against the Collie release this tree carries, not against this product's own version line."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.8.2"
+paths = [
+  "cli/program.test.ts#upstreamVersion()",
+  "bridge/removal-schedule.test.ts#upstreamVersion()"
+]
+verify = [
+  "cli/program.test.ts",
+  "bridge/removal-schedule.test.ts",
+  "fleet/upstream-version.test.ts"
+]
+reason = "Collie schedules removals in its suite by reading its own version out of the root package.json: the `collie pack` alias must be gone at major 2 (cli/program.test.ts) and the protocol version 1 overlap at minor 9 (bridge/removal-schedule.test.ts). In this fork that file carries this product's own line (3.x), so the alias check fired two majors early against Collie 1.8.2 code, and the overlap check would have fired at a Fleet 3.9 while Collie was still 1.8. The Collie release is already recorded exactly once, in this manifest's [upstream].tag, and moves only with an adoption; the fork-owned fleet/upstream-version.ts reads it through the manifest's own validating parser, and each clock imports that one name in place of its package.json read. There is no shared reading point upstream — each test spells its own — so these two lines are the smallest common port; every removal assertion and its threshold stays upstream's, which is what lets the adoption that crosses 1.9.0 or 2.0.0 find its removals exactly as upstream intends. Rejected: moving package.json back to Collie's number (breaks this product's version rule and its three-file agreement) and skipping the two checks (loses the removal reminders)."
+
+[[invasive]]
+id = "downstream-docs"
+intent = "Keep the Fleet runtime's own manual page in docs/ without making it a `collie` binary page."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.8.2"
+paths = ["cli/docs-embed.test.ts#herdr-fleet.md"]
+verify = ["cli/docs-embed.test.ts"]
+reason = "Collie 1.8 embeds its operator manual in the binary from a hand-written list in cli/docs-embed.ts and its test requires every docs/*.md on disk to be in that list. docs/herdr-fleet.md is the fork-owned Fleet page (fleet-runtime): it documents the Gateway, the Pane terminal surface and Fleet's configuration, none of which the `collie` binary serves, so embedding it would add a page to `collie docs` and to the table `collie skill` prints for agents, and it would need an edit to the upstream registry module that nothing else declares. Excluding that one stem from the test's disk listing costs the same single invasive path and changes no shipped behavior, so it is the narrower port; the page stays where upstream's docs live because that is where an operator of this product looks."

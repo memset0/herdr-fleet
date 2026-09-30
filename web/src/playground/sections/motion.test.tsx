@@ -97,15 +97,18 @@ describe("Motion section", () => {
       // A tab chip filters the space in place, so the route must NOT move off the space.
       const tabs = await within(card).findByRole("navigation", { name: "Tabs" }, SLOW);
       fireEvent.click(within(tabs).getByRole("button", { name: /docs/i }));
+      // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Fleet Agents rail lists the
+      // same pane beside the route, so the row is looked for in the route's own main region.
+      const route = () => within(within(card).getByRole("main"));
       await waitFor(
-        () => expect(within(card).getByText(/ARCHITECTURE/)).toBeInTheDocument(),
+        () => expect(route().getByText(/ARCHITECTURE/)).toBeInTheDocument(),
         SLOW,
       );
       expect(routeLine()).toContain("route: /space/");
 
       // A pane row in the space opens that pane. It resolves in the snapshot, so the route STAYS on
       // the pane: an unresolvable pane is what used to bounce the walk back to the dashboard.
-      fireEvent.click(within(card).getByRole("button", { name: /ARCHITECTURE/ }));
+      fireEvent.click(route().getByRole("button", { name: /ARCHITECTURE/ }));
       await waitFor(() => expect(routeLine()).toContain("route: /pane/"), SLOW);
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(routeLine()).toContain("route: /pane/");

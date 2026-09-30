@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
+import { upstreamVersion } from "../fleet/upstream-version.ts";
+
 // ── WHAT THIS FILE IS ────────────────────────────────────────────────────────
 // One place that remembers what 1.9.0 has to delete.
 //
@@ -20,10 +22,9 @@ import { readFileSync } from "node:fs";
 
 /** The package minor this tree claims. The clock every assertion below reads. */
 function packageMinor(): number {
-  const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
-  const minor = Number.parseInt(/"version": *"\d+\.(\d+)\./.exec(pkg)?.[1] ?? "", 10);
-  expect(Number.isNaN(minor)).toBe(false);
-  return minor;
+  // DOWNSTREAM PORT (FORK.toml upstream-removal-clock): Collie's release from FORK.toml, because
+  // this product's package.json carries its own version line, not Collie's.
+  return upstreamVersion().minor;
 }
 
 /** True while the removal is not due yet. A test that reads this returns instead of asserting. */

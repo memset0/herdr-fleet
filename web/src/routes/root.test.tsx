@@ -182,7 +182,13 @@ describe("RootLayout — the safe-area inset is reserved exactly once", () => {
 
   /** Every element reserving the top inset, anywhere in the app's column. */
   function reservations(container: HTMLElement) {
-    return container.querySelectorAll("[class*='safe-area-inset-top']");
+    // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Fleet shell's two rails are
+    // columns BESIDE this one, each yielding to the band as the header does (asserted in
+    // native-navigation-shell.test.tsx), and its hierarchy drawer is a fixed layer over the whole
+    // viewport that clears the notch for itself, as the sheet primitive does. Neither is this column.
+    return [...container.querySelectorAll("[class*='safe-area-inset-top']")].filter(
+      (el) => el.closest("[data-slot='native-navigation-shell'] aside, #fleet-hierarchy-overlay") === null,
+    );
   }
 
   it("gives it to the band while a strip is showing, and not to the header as well", async () => {

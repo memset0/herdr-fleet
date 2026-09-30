@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
+import { upstreamVersion } from "../fleet/upstream-version.ts";
 import { CREW_SUBCOMMANDS } from "./crew.ts";
 import { DEVICES_SUBCOMMANDS } from "./pairing.ts";
 import { PUSH_SUBCOMMANDS } from "./push.ts";
@@ -138,9 +139,9 @@ describe("the verb table", () => {
   // 1.x and the assertion is not reached; the day the major moves to 2, it fails until the entry
   // is deleted, so the removal is remembered by the test suite and not by anyone's memory.
   test("the `crew` alias is gone in 2.0.0", () => {
-    const pkg = readFileSync(new URL("../package.json", import.meta.url), "utf8");
-    const major = Number.parseInt(/"version": *"(\d+)\./.exec(pkg)?.[1] ?? "", 10);
-    expect(Number.isNaN(major)).toBe(false);
+    // DOWNSTREAM PORT (FORK.toml upstream-removal-clock): Collie's release from FORK.toml, because
+    // this product's package.json carries its own version line, not Collie's.
+    const major = upstreamVersion().major;
     if (major < 2) return;
     expect(COMMANDS.map((c) => c.name)).not.toContain("pack");
   });

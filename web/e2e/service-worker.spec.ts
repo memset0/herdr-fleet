@@ -647,6 +647,10 @@ test("three taps on an installing worker produce exactly one reload and no secon
 test("the stuck guard reloads onto A, and the tap after it unregisters instead of repeating", async ({
   page,
 }) => {
+  // DOWNSTREAM PORT (FORK.toml authenticated-navigation-cache): this fork answers every document
+  // navigation network-first, so the guard's reload asks the server and lands on B, never on the
+  // precached A this case exists to escape. The wedge it pins cannot form here.
+  test.skip(true, "network-first navigation by design (FORK.toml authenticated-navigation-cache)");
   // 2026-09-09, the shape that cost three minutes. An install that cannot finish inside
   // STUCK_GUARD_MS leaves the guard to reload the page — served by the ACTIVE worker, so it lands on
   // the bundle the operator is trying to leave, and the next tap starts the identical cycle.
@@ -745,6 +749,10 @@ test("a tap while build B is still installing never reloads onto build A", async
 });
 
 test("a manual reload during the install still comes back to a booted app", async ({ page }) => {
+  // DOWNSTREAM PORT (FORK.toml authenticated-navigation-cache): the reload here is answered by the
+  // network, not by the old worker's precache this case relies on, so it takes build B's shell and
+  // then waits for B's entry chunk through the throttle the case holds until after the reload.
+  test.skip(true, "network-first navigation by design (FORK.toml authenticated-navigation-cache)");
   // The operator's own way out on the day: reload again. It must not be the way INTO the hang —
   // a navigation the old worker answers from its own precache is fine, as long as the chunk that
   // shell names is still there to serve. What must not happen is an entry script that 404s and a
