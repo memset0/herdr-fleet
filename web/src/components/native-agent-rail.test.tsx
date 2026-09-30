@@ -57,7 +57,7 @@ describe("NativeAgentRail", () => {
       <NativeAgentRail
         agents={[
           agent("p1", {
-            tabLabel: "mukai",
+            tabLabel: "workshop",
             sessionName: "SSHFS support check",
             lastSeenAt: Date.now(),
           }),
@@ -68,7 +68,7 @@ describe("NativeAgentRail", () => {
 
     const row = rows()[0]!;
     const project = within(row).getByText("Project");
-    const name = within(row).getByText("mukai");
+    const name = within(row).getByText("workshop");
     const doing = within(row).getByText("SSHFS support check");
     // Where first, what second — the order this rail reads in, and the reverse of the dashboard's.
     expect(project.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -83,12 +83,12 @@ describe("NativeAgentRail", () => {
     // stray "1" in this row could only be the multiplexer's label leaking into the name.
     render(
       <NativeAgentRail
-        agents={[agent("p0", { tabLabel: "first" }), agent("p1", { paneLabel: "1", tabLabel: "mukai" })]}
+        agents={[agent("p0", { tabLabel: "first" }), agent("p1", { paneLabel: "1", tabLabel: "workshop" })]}
         onOpen={vi.fn()}
       />,
     );
     const row = rows()[1]!;
-    expect(within(row).getByText("mukai")).toBeInTheDocument();
+    expect(within(row).getByText("workshop")).toBeInTheDocument();
     expect(within(row).queryByText("1")).toBeNull();
   });
 
@@ -126,13 +126,13 @@ describe("NativeAgentRail", () => {
   it("puts the age at the row's own trailing edge, under the favourite control", () => {
     render(
       <NativeAgentRail
-        agents={[agent("p1", { tabLabel: "mukai", lastSeenAt: Date.now() })]}
+        agents={[agent("p1", { tabLabel: "workshop", lastSeenAt: Date.now() })]}
         onOpen={vi.fn()}
       />,
     );
 
     const row = rows()[0]!;
-    const name = within(row).getByText("mukai");
+    const name = within(row).getByText("workshop");
     const age = within(row).getByText(/^(now|\d+[mhd])$/);
     // THE RESERVE FOR THE STAR IS ONE LINE'S, not the button's. Line 1 shares its row with the
     // control and clears it; line 2 runs to the row's own trailing edge, which is the corner the

@@ -11,9 +11,17 @@ number. The format follows [Keep a Changelog](https://keepachangelog.com/) and t
 [Semantic Versioning](https://semver.org/) on the axis stated in [`AGENTS.md`](./AGENTS.md) →
 *Versioning and releases*.
 
-Work that has landed but is not released yet collects under `## [Unreleased]
+Work that has landed but is not released yet collects under `## [Unreleased]`; the release commit
+renames that heading to `## [x.y.z] - YYYY-MM-DD`, appends each line's short commit hash, and opens
+an empty one above it. The newest *numbered* `## [x.y.z]` heading, which the Unreleased heading is
+not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json`
+(enforced by `scripts/check-version.sh`).
 
 ## [Unreleased]
+
+### Fixed
+
+- **Stop the roster and Agent rail fixtures naming real machines.** Their host, Tab and workspace labels were real machine and repository names; they now use upstream's synthetic outbuilding names, and each test pins the same distinction as before.
 
 ## [3.4.0] - 2026-09-30
 
