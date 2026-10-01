@@ -50,12 +50,12 @@
 
 ## 8. Verify
 
-- [ ] 8.1 Focused, locally: `bun run test:fork`, `bun test ./fleet`, the tests named in 4.x–6.x, `bash scripts/check-version.sh`, `bun scripts/check-private-facts.ts`, `bun run lint`, `bun run typecheck`, `cd web && bun run typecheck`; verify all pass
-- [ ] 8.2 Full suites on a designated member: bring its test tree to the merge commit, fetching this repository's branch and upstream's `v1.9.0`–`v1.14.2` tag objects from upstream's public repository; run `bun run test` at the root, `cd web && bun run test`, `bun test ./cli` and the `scripts/` shell suites; verify they pass, triaging any failure against the pre-merge baseline and the known exit/hang issues owned by other changes rather than skipping it
-- [ ] 8.3 Browser tier locally: `cd web && bun run e2e` (Chromium; WebKit with `COLLIE_E2E_WEBKIT=1` only where the host supports it); verify it passes, or report each failing case with the port it meets — including `update-screen.spec.ts` against network-first navigation and the new dashboard-footer, belt and composer-clear specs. Do not rewrite an upstream case without declaring it
-- [ ] 8.4 Upstream's crew suites (`bun test bridge/crew/`) and `scripts/release-notes.test.ts` (expected to clear only after the release bump); verify they pass or are triaged
-- [ ] 8.5 Public-tree audit: verify the staged diff and this change's artifacts carry no private host, address, path, credential, mesh name or parent-tooling name, and `FORK.toml` classifies every changed path
-- [ ] 8.6 Rollback probe in a scratch state directory: start a 3.4.0 Collie against a state directory a 3.5.0 Collie has written (trust store present); verify it starts in the same crew mode with no file rename needed, or stop and report it at 9.2
+- [x] 8.1 Focused, locally: `bun run test:fork`, `bun test ./fleet`, the tests named in 4.x–6.x, `bash scripts/check-version.sh`, `bun scripts/check-private-facts.ts`, `bun run lint`, `bun run typecheck`, `cd web && bun run typecheck`; verify all pass
+- [x] 8.2 Full suites on a designated member: bring its test tree to the merge commit, fetching this repository's branch and upstream's `v1.9.0`–`v1.14.2` tag objects from upstream's public repository; run `bun run test` at the root, `cd web && bun run test`, `bun test ./cli` and the `scripts/` shell suites; verify they pass, triaging any failure against the pre-merge baseline and the known exit/hang issues owned by other changes rather than skipping it
+- [x] 8.3 Browser tier locally: `cd web && bun run e2e` (Chromium; WebKit with `COLLIE_E2E_WEBKIT=1` only where the host supports it); verify it passes, or report each failing case with the port it meets — including `update-screen.spec.ts` against network-first navigation and the new dashboard-footer, belt and composer-clear specs. Do not rewrite an upstream case without declaring it
+- [x] 8.4 Upstream's crew suites (`bun test bridge/crew/`) and `scripts/release-notes.test.ts` (expected to clear only after the release bump); verify they pass or are triaged
+- [x] 8.5 Public-tree audit: verify the staged diff and this change's artifacts carry no private host, address, path, credential, mesh name or parent-tooling name, and `FORK.toml` classifies every changed path
+- [x] 8.6 Rollback probe in a scratch state directory: start a 3.4.0 Collie against a state directory a 3.5.0 Collie has written (trust store present); verify it starts in the same crew mode with no file rename needed, or stop and report it at 9.2
 
 ## 9. Release
 

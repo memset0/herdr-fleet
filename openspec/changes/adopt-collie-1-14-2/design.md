@@ -206,6 +206,83 @@ tables in decisions 2–4:
   settings, motion, detail, history, tab-strip) pass — `motion.test.tsx` runs again now that
   `paneName` resolves.
 
+#### Phase C record (2026-10-01, task group 8)
+
+Two commits on `main`: `cb531ffa` (`fix(web)`, a real defect) and `a92c90b1` (`fix(fork)`, test-side
+ports declared in `FORK.toml`, now 92 invasive paths). Nothing pushed, tagged or bumped.
+
+- **Local (8.1, 8.4).** `bun run test:fork`, `scripts/check-fork.ts`, `scripts/check-private-facts.ts`,
+  `scripts/check-version.sh`, `scripts/check-crew-wire.sh` (nothing staged), both typechecks and
+  `bun run lint` clean; the hook suites (`pre-commit`, `check-tag`, `check-flake-lock`,
+  `check-payload-links`) pass; `bun test ./fleet` 599 / 0; the 4.x–6.x bridge files pass; all 30
+  `bridge/crew/*.test.ts` files pass file by file; `cli/*.test.ts` file by file pass except
+  `cli/tools.test.ts` "the same shim is not matched on linux", which finds this host's own `herdr` in a
+  well-known directory (environmental; it passes on the designated member); full web vitest 301 files,
+  13500 pass and one failure, fixed below. `scripts/release-notes.test.ts` passes before the release
+  bump, once its two credit cases read Collie's changelog (below).
+- **Designated member (8.2).** Tree brought to the change's head by an incremental bundle (the
+  upstream tags were already present). With a private `TMPDIR` — the shared host's `/tmp` holds another
+  user's empty `.git` directory, which made two `bridge/changes.test.ts` discovery cases find `/tmp`
+  as a repository; both pass under a private temporary directory — `bun test ./bridge` file by file:
+  119 files, 3618 pass, 0 fail, 2 timed out (`bridge/stt/codex`, `bridge/stt/openai`, the known hangs
+  owned by `fix-stt-test-exit`); `bun test ./cli` file by file: 42 files, 1612 pass, 1 fail (below);
+  `bun test ./fleet` 599 / 0; `bun test ./scripts` 186 / 2 (below); `bun run test:crew` 63 / 0; all
+  nine shell suites, both typechecks and lint pass; web vitest 13500 pass / 1 fail (below). Re-run
+  after the fixes: `cli/update-check.test.ts` 78 / 0, `bun test ./scripts` 188 / 0, `bun test ./fleet`
+  599 / 0, web vitest 301 files, 13501 pass / 33 expected fail / 47 todo / 0 fail.
+- **Upstream cases that met a port, settled at the boundary** (`a92c90b1`; same treatment as 3.4.0's
+  phase C2 — scope a query, adapt a locator to the fork's surface, or skip where the premise is absent
+  by design, never weakening an assertion about upstream's own surface):
+
+  | case | met | settled |
+  | --- | --- | --- |
+  | `cli/update-check.test.ts` protocol floor reads `## [1.8.0]` from `CHANGELOG.md` | `downstream-version-line` | reads `COLLIE_CHANGELOG.md` |
+  | `scripts/release-notes.test.ts` 1.12.0 / 1.12.1 credits | `downstream-version-line` | read `COLLIE_CHANGELOG.md`; the newest-section and Unreleased checks still read `CHANGELOG.md` |
+  | `web/src/components/stable-order.test.tsx` dashboard order | `native-agent-favorites-port` | only row-slot buttons |
+  | `e2e/dashboard-footer` all-clear (phone) | `native-navigation-sidebars-port` | inside `main`; the Agents rail repeats the line |
+  | `e2e/pinned-panes` Changes A2 (phone) | `native-navigation-sidebars-port` | only row-slot buttons (favorite control beside each row) |
+  | `e2e/back-goes-up` A (phone) | `native-navigation-sidebars-port` | the switcher sheet holds the Agents rail: its dialog and codex row by logo |
+  | `e2e/pinned-panes` switcher (phone) | `native-navigation-sidebars-port` | skipped: the rail ignores dashboard pins (decision 6) |
+  | `e2e/back-goes-up` D and the slide case, `e2e/pane-glide` ×4 back-arrow cases (phone) | `native-navigation-sidebars-port` | skipped: the Pane route declines the Collie mark, which is their up control |
+  | `e2e/codex-padding` ×2 (tablet only) | `native-manual-pane-fit-port` (declined 768px column) | skipped on the tablet project: at the route column's full width the two agents' session notes wrap to 1 and 2 lines, a 16.5px gap difference; upstream's tree passes at 752px, and the phone project still runs the case |
+
+- **Defect fixed (`cb531ffa`).** Adapted to the fork's switcher, `back-goes-up` A still failed: the
+  native navigation shell pushed every pane it opened, so Back from a pane reached sideways returned
+  to the pane just left, against upstream's ADR 0067 (1.13). The shell now opens panes through
+  upstream's `useNav().open` (push from a dashboard or space, replace from a pane); the adapted case and
+  the shell, rail, command and Pane-page suites pass. One `CHANGELOG.md` line.
+- **Browser tier (8.3).** `cd web && bun run e2e` (Chromium; WebKit not run on this host): first run 158
+  passed / 12 failed / 90 skipped; after the ports and the fix 161 passed / 0 failed / 99 skipped. On
+  the phone project the skips are the two declared network-first `service-worker` cases (still
+  skipped with `network-first navigation by design`), the seven above, upstream's WebKit-only
+  `update-screen` variant and `filter-strip`'s own "every chip fits" skip; the rest are upstream's
+  phone-only cases on the tablet project plus the two Codex tablet skips. `update-screen.spec.ts`
+  passes in full, including "reloads once at step 6" under network-first navigation; the new
+  dashboard-footer, belt and composer-clear specs pass.
+- **UI check over CDP** (scratch build, synthetic MSW mock, 1366×900 and 390×844). A1: the
+  Panes/Focus/Changes tabs sit in the app column (desktop x 284–1042) between the two rails and clear
+  of the footer stamp; on the phone they span the width with the rails and drawer off screen; hiding a
+  machine and pinning a pane change the dashboard and leave both rails' rows identical. B1: box order
+  input → attach → record → Send at both sizes; the microphone stays with a draft; Send is disabled
+  empty and while recording, enabled with a draft; the belt shows Changes and clear, then Undo after a
+  clear; Switch shows on the phone and is absent at the rail breakpoint by design. C1:
+  `/pane/:id/changes` and `/space/:id/changes` render inside the shell; the surface switch turns the
+  Pane into the terminal surface and back; `/pack` lands on `/crew` through upstream's own client-side
+  redirect (no server redirect remains). D1: with the first-use tour open, the prefix chord followed
+  by `?` opens the command bar over it, and the direct chord opens it too; the footer reads
+  `v3.4.0-dev · <sha>` before the bump.
+- **Rollback probe (8.6) — pass.** In scratch directories, a 3.5.0 lead minted an invite and a peer
+  enrolled through Fleet's own enrolment against the running 3.5.0 lead, both written with 3.5.0
+  code; both came up as `lead` and `peer`. Then `v3.4.0`'s tree (from `git archive`) was started
+  against the same directories, through the variable 3.4.0 sets (`HERDR_PLUGIN_STATE_DIR`): `lead` and
+  `peer` again, the same crew id and member ids, the peer reachable from the lead across the two
+  versions; 3.4.0's and 3.5.0's `validatePackAuthority` both accept both directories. The trust stores
+  were byte-identical before and after the 3.4.0 run and no file was renamed (only `crew-runtime.json`
+  was refreshed). No deployed instance was touched.
+- **Public-tree audit (8.5).** The private-fact guard passes; the two commits and this change's
+  artifacts name no host, address, path, credential, mesh or parent tooling; `check-fork.ts` reports
+  no unclassified path.
+
 ### 2. The fork sheds what the overlap removal made dead
 
 | fork file | change |
@@ -424,6 +501,11 @@ step. Were it MAJOR, the parent repository's rule applies — a major must revie
 shed — and this change already sheds the overlap fallbacks, the `COLLIE_PACK_*` reset, the second
 removal clock and, under B1, the composer band switch, the duplicate host chip and the control-rank
 port.
+
+**Re-assessment inputs recorded at phase C (2026-10-01), for task 9.2:** the coordinator ruled that
+decision 4's config-file refusal breaks no existing workflow — no Fleet machine has a Collie
+`config.toml` — so 3.5.0 stays MINOR on that condition; the rollback probe (task 8.6) passed; and
+phase C found no operator step (its fixes are a browser-side navigation fix and test-side ports).
 
 ### 13. Archive waits for the members
 
