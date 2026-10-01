@@ -19,9 +19,17 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.5.3] - 2026-10-01
+
+**Frontend and Gateway only; no member is obliged to redeploy, and the lead alone levels.** Host rows
+now judge each member against the lead's own running version rather than this product's published
+tags, so the Gateway's `/fleet/api/version` route and its outbound tag lookup are gone, and with them
+the "Last checked" and "Freshness unavailable" wording. A member on the lead's major.minor reads as
+compatible whatever its patch.
+
 ### Changed
 
-- **Host rows compare each member with the lead, not with published tags.** The lead's own runtime version from the same `/api/crew` read is the reference: same major.minor is compatible, a lower minor is outdated, a higher lead major is a manual update; "Last checked" and "Freshness unavailable" are gone, and the Gateway's `/fleet/api/version` route and its outbound tag lookup are removed.
+- **Host rows compare each member with the lead, not with published tags.** The lead's own runtime version from the same `/api/crew` read is the reference: same major.minor is compatible, a lower minor is outdated, a higher lead major is a manual update; "Last checked" and "Freshness unavailable" are gone, and the Gateway's `/fleet/api/version` route and its outbound tag lookup are removed. ([f928a7f](https://github.com/memset0/herdr-fleet/commit/f928a7f))
 
 ## [3.5.2] - 2026-10-01
 
