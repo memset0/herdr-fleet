@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Claude's background-agent hint no longer reads as a dialog.** Claude Code 2.1.286's mode-line suffix `← N agents · ↓ to manage` (or its clipped `↓ to ma…`) left a working pane with no composer and an unreadable-dialog card; a temporary port reads it as the mode line until upstream does.
+
 ## [3.5.1] - 2026-10-01
 
 **No member is obliged to redeploy; the lead alone levels.** A member's start, and both enrolment

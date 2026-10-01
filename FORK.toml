@@ -161,6 +161,17 @@ verify = [
   "fleet/upstream-version.test.ts",
 ]
 
+[[owned]]
+id = "claude-mode-line-compat"
+intent = "Hold the temporary recogniser for Claude Code 2.1.286's background-work mode-line hint, with its synthetic fixtures and its suite."
+paths = [
+  "web/src/fixtures/fleet-panes/**",
+  "web/src/lib/fleet-claude-mode-line.ts",
+  "web/src/lib/harness/claude/fleet-manage-hint.test.ts"
+]
+contracts = ["the trailing `← N agent(s) · ↓ to manage` mode-line segment is not a dialog key hint, and nothing else changes reading"]
+verify = ["web/src/lib/harness/claude/fleet-manage-hint.test.ts"]
+
 [[invasive]]
 id = "native-row-actions-menu-port"
 intent = "Let a pointer's context gesture answer a row's actions with the fork's own context menu, while a touch keeps Collie's bottom sheet exactly as upstream wrote it."
@@ -587,3 +598,22 @@ reviewed = "v1.14.2"
 paths = ["cli/docs-embed.test.ts#herdr-fleet.md"]
 verify = ["cli/docs-embed.test.ts"]
 reason = "Collie 1.8 embeds its operator manual in the binary from a hand-written list in cli/docs-embed.ts and its test requires every docs/*.md on disk to be in that list; upstream's later pages join that list, and the one exclusion is unchanged. docs/herdr-fleet.md is the fork-owned Fleet page (fleet-runtime): it documents the Gateway, the Pane terminal surface and Fleet's configuration, none of which the `collie` binary serves, so embedding it would add a page to `collie docs` and to the table `collie skill` prints for agents, and it would need an edit to the upstream registry module that nothing else declares. Excluding that one stem from the test's disk listing costs the same single invasive path and changes no shipped behavior, so it is the narrower port; the page stays where upstream's docs live because that is where an operator of this product looks."
+
+[[invasive]]
+id = "claude-manage-hint-port"
+intent = "TEMPORARY compatibility port: keep Claude Code 2.1.286's background-work hint on the mode line from reading as a dialog key hint, until upstream reads it itself."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.14.2"
+paths = [
+  "web/src/lib/harness/claude/chrome.ts#namesAMenuKey(withoutClaudeManageHint(text))",
+  "web/src/lib/harness/claude/index.ts#namesAMenuKey(withoutClaudeManageHint(t))"
+]
+verify = [
+  "web/src/lib/harness/claude/fleet-manage-hint.test.ts",
+  "web/src/lib/harness/claude/chrome.test.ts",
+  "web/src/lib/harness/claude/input-box-frame.test.ts",
+  "web/src/lib/harness/unread-dialog.test.ts",
+  "web/src/lib/harness/conformance.test.ts"
+]
+reason = "Claude Code 2.1.286 mode line; upstream unaware as of v1.14.2. While background agents run Claude appends `· ← N agents · ↓ to manage` to its mode line (clipped to `↓ to ma…` in a narrow pane), and the Claude grammar's two statusline-tail checks — the input-box locator's no-menu-hint step and the adapter's modalOnScreen scan — read any `<key> to <verb>` segment with a sendable key as a dialog footer, and `↓` is sendable. So a healthy working screen lost its composer and wore the unread-dialog card. The decision lives in the fork-owned web/src/lib/fleet-claude-mode-line.ts, which removes only that trailing segment on the permission-mode line; each check passes its row through it, one call per site, and every other row and every other `↓` hint keeps upstream's reading. menu-hints.ts is shared by every harness and the generic menu, so teaching it was the wider port and was rejected. THIS PORT IS TEMPORARY: an upstream pull request will be opened from the owner's own fork of Collie, and at the first upstream sync that adopts a release carrying that fix, both call sites return to upstream's text and this entry, the helper, its suite, its fixtures and the claude-mode-line-compat owned entry are removed."

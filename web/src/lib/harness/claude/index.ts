@@ -11,6 +11,7 @@
 import { lineText, trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
 import { namesAMenuKey } from "../menu-hints";
+import { withoutClaudeManageHint } from "../../fleet-claude-mode-line";
 import { detectPreviewSelectRegion } from "./preview-select";
 import { detectWizardRegion } from "./wizard";
 import { detectMultiSelectRegion } from "./multi-select";
@@ -187,7 +188,9 @@ function tailNamesAKey(lines: StyledLine[]): boolean {
     const text = lineText(lines[i]!);
     if (text.trim() !== "") rows.push(text);
   }
-  return rows.some((t) => namesAMenuKey(t) || POINTED_OPTION_ROW.test(t) || PRESS_KEY_PROMPT.test(t));
+  return rows.some(
+    (t) => namesAMenuKey(withoutClaudeManageHint(t)) || POINTED_OPTION_ROW.test(t) || PRESS_KEY_PROMPT.test(t),
+  );
 }
 
 export const claudeAdapter: HarnessAdapter = {

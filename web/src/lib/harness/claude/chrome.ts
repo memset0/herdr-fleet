@@ -11,6 +11,7 @@
 
 import type { StyledLine } from "../../blocks";
 import { namesAMenuKey } from "../menu-hints";
+import { withoutClaudeManageHint } from "../../fleet-claude-mode-line";
 import { findAutocompleteRun, MAX_AUTOCOMPLETE_LINES } from "./autocomplete";
 import {
   classifyFooter,
@@ -489,7 +490,7 @@ function steppedMarksAreStatusline(
  *  walk (its footer split off by a blank, like the background-agents footer), and only these rows
  *  tell it apart. A popup tail is exempt, because its grammar named every row. */
 function tailNamesAMenu(text: string): boolean {
-  return NUMBERED_OPTION_ROW.test(text) || namesAMenuKey(text);
+  return NUMBERED_OPTION_ROW.test(text) || namesAMenuKey(withoutClaudeManageHint(text));
 }
 
 /**
