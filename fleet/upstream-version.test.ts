@@ -49,13 +49,13 @@ describe("the Collie removal clock", () => {
     expect(parseUpstreamTag("v1.8.2")).toEqual({ major: 1, minor: 8, patch: 2, text: "1.8.2" });
   });
 
-  // The port itself (FORK.toml `upstream-removal-clock`): both upstream clocks read this module and
-  // neither reads the root package.json for its version any more.
-  test("both upstream removal clocks read it", () => {
-    for (const file of ["../cli/program.test.ts", "../bridge/removal-schedule.test.ts"]) {
-      const text = source(file);
-      expect(text).toContain("upstreamVersion()");
-      expect(text).not.toContain('"../package.json"');
-    }
+  // The port itself (FORK.toml `upstream-removal-clock`): upstream's one remaining clock reads this
+  // module, not the root package.json. `bridge/removal-schedule.test.ts` became a tombstone with no
+  // clock in Collie 1.9.0 and is upstream's file again.
+  test("the upstream removal clock reads it", () => {
+    const text = source("../cli/program.test.ts");
+    expect(text).toContain("upstreamVersion()");
+    expect(text).not.toContain('"../package.json"');
+    expect(source("../bridge/removal-schedule.test.ts")).not.toContain("upstreamVersion");
   });
 });

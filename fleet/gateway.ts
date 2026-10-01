@@ -279,8 +279,8 @@ export function createGatewayHandler(options: GatewayOptions) {
       return redirect("/auth/login", { "set-cookie": clearSessionCookie() });
     }
     if (url.pathname === "/auth" || url.pathname.startsWith("/auth/")) return text("not found\n", 404);
-    // The machine-to-machine link is never proxied: `/crew/v1/*` is the adopted Collie's link and
-    // `/pack/v1/*` the previous prefix it still answers for one release. The `/crew` page and its
+    // The machine-to-machine link is never proxied: `/crew/v1/*` is the adopted Collie's link, and
+    // the retired `/pack/v1/*` stays denied although nothing answers it any more. The `/crew` page and its
     // `/pack` redirect are application routes and stay reachable.
     if (url.pathname.startsWith("/crew/") || url.pathname.startsWith("/pack/")) {
       return text("not found\n", 404);

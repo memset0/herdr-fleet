@@ -4,15 +4,21 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
-import { serializeTrustStore, TRUST_STORE_FILENAME, type TrustStoreData } from "../bridge/crew/trust-store.ts";
-import { validatePackAuthority } from "./pack-authority.ts";
+import {
+  legacyStateFileNotice,
+  serializeTrustStore,
+  TRUST_STORE_FILENAME,
+  TrustStore,
+  type TrustStoreData,
+} from "../bridge/crew/trust-store.ts";
+import { readOnlyTrustStoreIo, validatePackAuthority } from "./pack-authority.ts";
 import {
   fleetTestConfig,
   fleetTestPackLeadConfig,
   fleetTestPackPeerConfig,
 } from "./test-helpers.ts";
 
-/** The trust file's previous name, as the 1.7.0-era Collie wrote it. */
+/** The trust file's previous name, as the 1.7.0-era Collie wrote it. Collie keeps it private. */
 const LEGACY_TRUST_STORE_FILENAME = "pack-trust.json";
 
 /** A store as the previous Collie serialised it: `pack` for `crew`, `packId` for `crewId`. */
@@ -156,7 +162,7 @@ describe("Fleet native Pack authority", () => {
     }
   });
 
-  test("the first start after the upgrade validates from the previous name and leaves it in place", async () => {
+  test("a directory holding only the previous name is refused with Collie's notice and left alone", async () => {
     await withStateDir(async (root) => {
       expect(TRUST_STORE_FILENAME).not.toBe(LEGACY_TRUST_STORE_FILENAME);
       const legacy = join(root, LEGACY_TRUST_STORE_FILENAME);
@@ -164,13 +170,28 @@ describe("Fleet native Pack authority", () => {
         mode: 0o600,
       });
       const before = await readFile(legacy);
-      await validatePackAuthority(fleetTestPackLeadConfig(), root);
-      // The legacy file really decided: a role it does not hold is refused from it.
-      await expect(validatePackAuthority(fleetTestPackPeerConfig(), root)).rejects.toThrow(
-        "role peer does not match Collie Pack role lead",
-      );
+      const notice = legacyStateFileNotice(root);
+      expect(notice).not.toBeNull();
+      await expect(validatePackAuthority(fleetTestPackLeadConfig(), root)).rejects.toThrow(notice ?? "");
+      // Refused before any reader runs, even an injected one that would have accepted.
+      let reads = 0;
+      await expect(
+        validatePackAuthority(fleetTestPackLeadConfig(), root, async () => {
+          reads += 1;
+          return leadStore({ peers: [member({ memberId: "peer-a" })] });
+        }),
+      ).rejects.toThrow(notice ?? "");
+      expect(reads).toBe(0);
       expect(await readFile(legacy)).toEqual(before);
       expect(await readdir(root)).toEqual([LEGACY_TRUST_STORE_FILENAME]);
+    });
+  });
+
+  test("the validation io never writes, so a store opened through it cannot change the directory", async () => {
+    await withStateDir(async (root) => {
+      const store = new TrustStore(root, readOnlyTrustStoreIo());
+      await expect(store.update(() => ({ next: leadStore(), result: null }))).rejects.toThrow("Fleet never writes Collie trust state");
+      expect(await readdir(root)).toEqual([]);
     });
   });
 

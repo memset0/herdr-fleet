@@ -66,12 +66,13 @@ describe("Herdr-owned Fleet lifecycle", () => {
     const specs = childSpecs(fleetTestConfig(), paths, {
       PATH: "/usr/bin",
       COLLIE_TRUSTED_USER: "must-be-removed",
+      COLLIE_STATE_DIR: "/inherited/collie-state",
     });
     expect(specs.map((spec) => spec.name)).toEqual(["collie", "gateway"]);
     expect(specs[0]?.command).toEqual([`${root}/bin/collie`, "_exec-bridge"]);
     expect(specs[0]?.env).toMatchObject({
       COLLIE_SKIP_SERVE: "1",
-      HERDR_PLUGIN_STATE_DIR: "/private/state/collie",
+      COLLIE_STATE_DIR: "/private/state/collie",
     });
     expect(specs[0]?.env.COLLIE_TRUSTED_USER).toBeUndefined();
     expect(specs[0]?.env.HERDR_FLEET_CONFIG).toBeUndefined();
@@ -100,7 +101,7 @@ describe("Herdr-owned Fleet lifecycle", () => {
       COLLIE_HOST: "::1",
       COLLIE_PORT: "8787",
       COLLIE_SKIP_SERVE: "1",
-      HERDR_PLUGIN_STATE_DIR: "/private/state/collie",
+      COLLIE_STATE_DIR: "/private/state/collie",
     });
     expect(peer[0]?.env.HERDR_FLEET_SESSION_STATE).toBeUndefined();
     expect(peer[0]?.env.COLLIE_PUBLIC_URL).toBeUndefined();

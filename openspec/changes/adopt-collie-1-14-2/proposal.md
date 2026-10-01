@@ -80,6 +80,9 @@ None. An adoption imports upstream behavior, and upstream behavior is not specif
   Fleet-owned setting.
 - `fleet-manual-pane-fit`: the resize route rides the crew link on the one protocol the adopted Collie
   speaks; the overlap requirement and its two scenarios are retired.
+- `fleet-agent-favorites`: upstream replaced the dashboard's four triage sections with workspace groups
+  and a Pinned group; favorites now lead their own workspace group, the Pinned group is unaffected,
+  and the Agent rail keeps the triage buckets with favorites first inside each.
 - `fleet-upstream-sync`: an entry upstream rewrote in place under a heading it still carries is
   upstream's correction, not a dropped entry, and needs no seam.
 - Following the coordinator's decisions (A1, B1, C1, D1): `fleet-composer-voice` (the record control inside the

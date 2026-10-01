@@ -13,7 +13,8 @@ import {
 import { agentFavoriteStore } from "../../../fleet/ui/agent-favorites.ts";
 import { hostName, isMultiHost } from "@/lib/hosts";
 import type { TriageSection } from "@/lib/triage";
-import { paneDisplayName, type AgentView, type ServerSummary } from "@/lib/types";
+import { paneName } from "@/lib/pane-name";
+import type { AgentView, ServerSummary } from "@/lib/types";
 
 /** The same fields as {@link RosterEntry}, writable while one is assembled. */
 interface RosterEntryDraft {
@@ -41,7 +42,7 @@ export function toRosterEntry(pane: AgentView, servers?: readonly ServerSummary[
     paneId: pane.paneId,
     kind: pane.kind === "shell" ? "shell" : "agent",
     // The same name the rail and the hierarchy show, so a row is called one thing everywhere.
-    label: paneDisplayName(pane),
+    label: paneName(pane),
     context: pane.workspaceLabel,
     favorite: agentFavoriteStore.isFavorite(pane),
   };

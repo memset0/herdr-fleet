@@ -1,12 +1,12 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { deriveMode } from "../bridge/crew/mode.ts";
-import { crewStateFileMoves } from "../bridge/crew/state-migration.ts";
 import {
   enrollmentOf,
-  TRUST_STORE_FILENAME,
+  fsStateFilePresence,
+  legacyStateFileNotice,
   TrustStore,
+  type StateFilePresence,
   type TrustStoreData,
   type TrustStoreIo,
 } from "../bridge/crew/trust-store.ts";
@@ -14,46 +14,38 @@ import type { FleetConfig, FleetNativePackConfig, FleetSchema2LeadConfig } from 
 
 export type PackTrustReader = () => Promise<TrustStoreData | null>;
 
-/** Read a file, or `null` when it does not exist. Any other error propagates. */
-async function readIfPresent(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (err) {
-    if (err instanceof Error && "code" in err && err.code === "ENOENT") return null;
-    throw err;
-  }
-}
-
 /**
- * The trust file's previous name, taken from Collie's own move table rather than typed here.
+ * Refuse a state directory that holds only 1.7.0's trust-state name, with Collie's own notice.
  *
- * REMOVE_IN_1_9_0 — with Collie's own one-time move.
+ * The adopted Collie neither moves nor reads that name; started against such a directory it would
+ * print this same notice and run solo. Fleet says it first and starts nothing, and both the file and
+ * its name stay exactly as they are — the hand edits the notice names are the operator's.
  */
-function legacyTrustStoreFilename(): string | null {
-  return crewStateFileMoves().find((move) => move.current === TRUST_STORE_FILENAME)?.legacy ?? null;
+export function assertNoLegacyOnlyTrustState(
+  stateDir: string,
+  presence: StateFilePresence = fsStateFilePresence,
+): void {
+  const notice = legacyStateFileNotice(stateDir, presence);
+  if (notice !== null) throw new Error(notice);
 }
 
 /**
  * A read-only view of Collie's state directory for its own `TrustStore`.
  *
- * WHY NOT COLLIE'S DEFAULT IO. The adopted Collie's filesystem io runs its one-time `pack-*` → `crew-*`
- * rename before every read. Fleet validates authority before Collie has started, so reading through
- * that io would make this runtime the thing that renames the operator's trust state — which the
- * authority boundary forbids. This io never renames and never writes.
- *
- * WHY THE FALLBACK. On the first start after the upgrade only the previous name exists, because the
- * rename is Collie's own act at its own start. Refusing then would fail closed for ever: Collie would
- * never start to perform it. So while the current name is absent the previous one is read — through
- * the same reader and parser — and left exactly where and as it is. The current name wins when both
- * exist, as it does in Collie.
+ * Collie's default io no longer renames anything on read, but Fleet validates authority before Collie
+ * has started, and the guarantee that this runtime never writes trust state stays mechanical here
+ * rather than depending on upstream keeping `read()` side-effect free. It reads the current name only
+ * and refuses every write.
  */
-export function readOnlyTrustStoreIo(stateDir: string): TrustStoreIo {
-  const legacy = legacyTrustStoreFilename();
+export function readOnlyTrustStoreIo(): TrustStoreIo {
   return {
     async read(path) {
-      const current = await readIfPresent(path);
-      if (current !== null || legacy === null) return current;
-      return readIfPresent(join(stateDir, legacy));
+      try {
+        return await readFile(path, "utf8");
+      } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") return null;
+        throw err;
+      }
     },
     async write() {
       throw new Error("Fleet never writes Collie trust state");
@@ -62,7 +54,7 @@ export function readOnlyTrustStoreIo(stateDir: string): TrustStoreIo {
 }
 
 function productionReader(stateDir: string): PackTrustReader {
-  const store = new TrustStore(stateDir, readOnlyTrustStoreIo(stateDir));
+  const store = new TrustStore(stateDir, readOnlyTrustStoreIo());
   return () => store.load();
 }
 
@@ -76,6 +68,7 @@ export async function validatePackAuthority(
   readTrust: PackTrustReader = productionReader(collieStateDir),
 ): Promise<void> {
   if (!usesNativePack(config)) return;
+  assertNoLegacyOnlyTrustState(collieStateDir);
   let trust: TrustStoreData | null;
   try {
     trust = await readTrust();

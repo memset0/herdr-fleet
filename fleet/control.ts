@@ -2,11 +2,12 @@ import { spawn } from "node:child_process";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { assertCollieConfigFilesCede } from "./collie-env.ts";
 import { loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
 import { validatePackAuthority } from "./pack-authority.ts";
 import { assertLinkFiles } from "./pack-reachability.ts";
 import { isUnavailableControlError, sendControl, type ControlOperation, type ControlResponse } from "./protocol.ts";
-import { ensurePrivateRuntime, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
+import { collieSpecEnv, ensurePrivateRuntime, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
 
 const sleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
@@ -85,6 +86,7 @@ async function ensureSupervisor(): Promise<ControlResponse> {
   await ensurePrivateRuntime(paths);
   const config = await loadFleetConfig(paths.configPath);
   await validatePackAuthority(config, paths.collieStateDir);
+  assertCollieConfigFilesCede(collieSpecEnv(config, paths, sanitizedDaemonEnv(process.env)));
   if (config.schemaVersion === 2 && config.role === "peer") await assertLinkFiles(config.transport);
   const current = await query(paths.socketPath, "ensure", paths.generation);
   if (current?.status === "running" && current.generation === paths.generation) return current;

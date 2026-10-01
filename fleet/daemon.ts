@@ -2,12 +2,13 @@ import { appendFile, chmod, rm, stat, truncate } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
 
+import { assertCollieConfigFilesCede } from "./collie-env.ts";
 import { loadFleetConfig } from "./config.ts";
 import { ManagedChild } from "./managed-child.ts";
 import { validatePackAuthority } from "./pack-authority.ts";
 import { assertLinkFiles, probeEndpoint } from "./pack-reachability.ts";
 import { parseControlRequest, type ControlResponse } from "./protocol.ts";
-import { childSpecs, ensurePrivateRuntime, resolveRuntimePaths } from "./runtime.ts";
+import { childSpecs, collieSpecEnv, ensurePrivateRuntime, resolveRuntimePaths } from "./runtime.ts";
 
 const LOG_LIMIT_BYTES = 256 * 1024;
 const READY_TIMEOUT_MS = 10_000;
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   await ensurePrivateRuntime(paths);
   const config = await loadFleetConfig(paths.configPath);
   await validatePackAuthority(config, paths.collieStateDir);
+  assertCollieConfigFilesCede(collieSpecEnv(config, paths, process.env));
   if (config.schemaVersion === 2 && config.role === "peer") await assertLinkFiles(config.transport);
   const children = childSpecs(config, paths, process.env).map(
     (spec) =>

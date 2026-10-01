@@ -114,8 +114,8 @@ export function sanitizedDaemonEnv(inherited: NodeJS.ProcessEnv): NodeJS.Process
   return env;
 }
 
-export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: NodeJS.ProcessEnv): ChildSpec[] {
-  const shared = {
+function sharedChildEnv(paths: RuntimePaths, inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
     ...inherited,
     HERDR_FLEET_CONFIG: paths.configPath,
     HERDR_FLEET_GENERATION: paths.generation,
@@ -123,16 +123,24 @@ export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: 
     HERDR_PLUGIN_ROOT: paths.pluginRoot,
     HERDR_PLUGIN_STATE_DIR: paths.stateDir,
   };
-  const collieEnv = collieChildEnv(config, {
-    ...shared,
-    HERDR_PLUGIN_STATE_DIR: paths.collieStateDir,
-  });
+}
+
+/**
+ * The Collie child's environment. Collie reads its state directory only from `COLLIE_STATE_DIR`, so
+ * that — not the Herdr plugin state variable — is how it is told where Fleet keeps its state.
+ */
+export function collieSpecEnv(config: FleetConfig, paths: RuntimePaths, inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return collieChildEnv(config, paths.collieStateDir, sharedChildEnv(paths, inherited));
+}
+
+export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: NodeJS.ProcessEnv): ChildSpec[] {
+  const shared = sharedChildEnv(paths, inherited);
   const children: ChildSpec[] = [
     {
       name: "collie",
       command: [join(paths.pluginRoot, "bin", "collie"), "_exec-bridge"],
       cwd: paths.pluginRoot,
-      env: collieEnv,
+      env: collieSpecEnv(config, paths, inherited),
       logPath: join(paths.stateDir, "collie.log"),
     },
   ];

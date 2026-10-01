@@ -12,9 +12,9 @@ import {
   type MintedInvite,
 } from "../bridge/crew/enrollment.ts";
 import { CREW_ENROLL_PATH } from "../bridge/crew/router.ts";
-import { migrateCrewStateOnce } from "../bridge/crew/state-migration.ts";
 import { TrustStore, type TrustStoreData } from "../bridge/crew/trust-store.ts";
 import type { JsonValue } from "../bridge/json.ts";
+import { assertNoLegacyOnlyTrustState } from "./pack-authority.ts";
 
 // Membership changes, driven through Collie's OWN transitions.
 //
@@ -31,15 +31,14 @@ import type { JsonValue } from "../bridge/json.ts";
 // the Herdr plugin, which is the caller's act, not this module's.
 
 /**
- * Open the store this operator act will write, after Collie's own one-time state move.
+ * Open the store this operator act will write, refusing a directory that holds only 1.7.0's name.
  *
- * Enrolment is an explicit operator act that opens the state directory for writing — exactly where
- * Collie's own commands run the `pack-*` → `crew-*` move before they open it. Running it first means an
- * enrolment against a directory Collie has not started on yet cannot create a second trust store
- * beside the first. REMOVE_IN_1_9_0 — the move call, with Collie's own module.
+ * The adopted Collie no longer moves that name and never reads it. Opening such a directory for
+ * writing would mint a second, crew-named trust store beside the operator's real one, so enrolment
+ * refuses first, with Collie's own notice naming the hand edits, and writes nothing.
  */
 function openStoreForEnrolment(stateDir: string): TrustStore {
-  migrateCrewStateOnce(stateDir, (line) => console.warn(line));
+  assertNoLegacyOnlyTrustState(stateDir);
   return new TrustStore(stateDir);
 }
 

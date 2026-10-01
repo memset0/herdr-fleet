@@ -22,7 +22,7 @@ import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { t } from "@/lib/i18n";
 import { useMuxCapability, useMuxName } from "@/lib/mux-capability";
 import { setStatus } from "@/lib/status";
-import { paneDisplayName } from "@/lib/types";
+import { paneName } from "@/lib/pane-name";
 
 /**
  * WHICH SURFACE ANSWERS A ROW'S ACTIONS — decided here, at the invoke site, and nowhere else.
@@ -139,7 +139,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
 
   if (at === null) return <PaneActionsSheet {...props} />;
 
-  const name = pane ? paneDisplayName(pane) : t("paneActions.title.fallback");
+  const name = pane ? paneName(pane) : t("paneActions.title.fallback");
   const blocked = readOnly || hostBlock !== undefined;
 
   // FIRST activation, no arming — see FleetMenuDestructiveItem for why a menu does not ask again.

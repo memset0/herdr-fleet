@@ -9,7 +9,12 @@ import { material, T0 } from "../bridge/crew/fixtures.ts";
 import { CREW_PROTOCOL_VERSION, enrollPeer, mintInvite, type EnrollResponse } from "../bridge/crew/enrollment.ts";
 import { createTrustStore, selfIdentity } from "../bridge/crew/enrollment.ts";
 import { CREW_ENROLL_PATH } from "../bridge/crew/router.ts";
-import { serializeTrustStore, TRUST_STORE_FILENAME, TrustStore } from "../bridge/crew/trust-store.ts";
+import {
+  legacyStateFileNotice,
+  serializeTrustStore,
+  TRUST_STORE_FILENAME,
+  TrustStore,
+} from "../bridge/crew/trust-store.ts";
 import type { JsonValue } from "../bridge/json.ts";
 import { joinPack, mintPeerInvite } from "./pack-enrollment.ts";
 
@@ -139,10 +144,10 @@ describe("Fleet Pack enrolment", () => {
     }
   });
 
-  test("an enrolment against a legacy-named store moves it first and leaves one crew-named store", async () => {
+  test("an enrolment against a legacy-named store refuses with Collie's notice and writes nothing", async () => {
     const dir = await scratch();
     try {
-      // The store as the previous Collie left it: its file name and its `pack`/`packId` spelling.
+      // The store as the 1.7.0-era Collie left it: its file name and its `pack`/`packId` spelling.
       const lead = createTrustStore(selfIdentity("lead", material("lead"), T0));
       const invited = mintInvite(lead, { now: T0 }).next;
       const legacy = serializeTrustStore(invited)
@@ -150,22 +155,33 @@ describe("Fleet Pack enrolment", () => {
         .replace(/"crewId":/g, '"packId":');
       expect(legacy).toContain('"packId":');
       await writeFile(join(dir, "pack-trust.json"), legacy, { mode: 0o600 });
+      const before = await readFile(join(dir, "pack-trust.json"));
+      const notice = legacyStateFileNotice(dir);
+      expect(notice).not.toBeNull();
 
-      await mintPeerInvite({
-        collieStateDir: dir,
-        selfId: "lead",
-        now: T0 + 1_000,
-        // The existing identity must be the one acted on; a second one would be a second store.
-        identity: () => Promise.reject(new Error("identity was minted twice")),
-      });
+      await expect(
+        mintPeerInvite({
+          collieStateDir: dir,
+          selfId: "lead",
+          now: T0 + 1_000,
+          identity: () => Promise.reject(new Error("identity must not be minted")),
+        }),
+      ).rejects.toThrow(notice ?? "");
+      await expect(
+        joinPack({
+          collieStateDir: dir,
+          selfId: "peer",
+          leadOrigin: "http://127.0.0.1:19790",
+          address: "127.0.0.1:19791",
+          token: "an-invite-token",
+          now: T0,
+          identity: () => Promise.reject(new Error("identity must not be minted")),
+          transport: () => Promise.reject(new Error("the lead must not be dialled")),
+        }),
+      ).rejects.toThrow(notice ?? "");
 
-      expect(await readdir(dir)).toEqual([TRUST_STORE_FILENAME]);
-      const raw = await readFile(storePath(dir), "utf8");
-      expect(raw).not.toContain('"packId":');
-      const data = await new TrustStore(dir).load();
-      expect(data?.self.fingerprint).toBe(material("lead").fingerprint);
-      expect(data?.crew?.crewId).toBe(invited.crew?.crewId);
-      expect(data?.invites).toHaveLength(2);
+      expect(await readdir(dir)).toEqual(["pack-trust.json"]);
+      expect(await readFile(join(dir, "pack-trust.json"))).toEqual(before);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

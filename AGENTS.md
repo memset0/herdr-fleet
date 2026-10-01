@@ -518,9 +518,8 @@ is refused. **A collie in a crew is exempt from the bind refusal and `/crew/v1/*
 check** — a member is dialled across a machine boundary and that surface carries pinned mutual TLS
 plus the crew secret ([ADR 0013](./.adr/0013-a-peer-listens-without-becoming-a-front-door.md)). The
 exemption is granted by POSITION — the peer check sits after the federated dispatch in
-`bridge/server.ts` — so no crew path is ever spelled there. (For the one release of upstream's
-protocol overlap a node also answers the previous `/pack/v1/*` prefix through the same handlers;
-everything said here of `/crew/v1/*` holds for it too, and the Fleet Gateway refuses both.) The standby door is its own listener on
+`bridge/server.ts` — so no crew path is ever spelled there. (The Fleet Gateway refuses `/crew/` and
+also the retired `/pack/` prefix, which the adopted Collie no longer answers.) The standby door is its own listener on
 its own `COLLIE_STANDBY_HOST` and neither gate reaches it; don't route it through the front door's
 `fetch` to share them.
 
@@ -605,6 +604,14 @@ What the design settles, and what a later change must not quietly undo:
 - Fleet installs, enables and restarts no operating-system service anywhere, and never invokes
   Collie's own CLI verbs against a Fleet deployment. Lifecycle is the Herdr plugin's.
 - Enrolment is an explicit, ordered operator act driven through Collie's own transitions.
+
+**Fleet owns its Collie child's environment.** It states the child's state directory as
+`COLLIE_STATE_DIR` — the directory it validates trust in, since Collie ignores
+`HERDR_PLUGIN_STATE_DIR` — and resets every ingress, identity, base-path and crew-timing setting it
+decides. A Collie `config.toml`, machine or instance, that sets one of those refuses Fleet's start,
+and Fleet never writes either file; the list is in [`docs/herdr-fleet.md`](./docs/herdr-fleet.md).
+From 3.5.0 the 1.7/1.8 crew-wire overlap is gone: the lead and every member run 3.5.0 or later, and a
+state directory holding only 1.7.0's `pack-*.json` names is refused with Collie's own notice.
 
 Known rough edges, none of them settled: endpoint allocation and per-device configuration are
 hand-authored; the enrolment sequence needs a temporary projection and two restarts, and is not yet

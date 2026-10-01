@@ -198,10 +198,10 @@ the SSH link rather than on a network. `--address` is where the lead will dial t
 lead's point of view. The invite is single-use and short-lived; it is printed once, on standard
 output, and only its hash is stored. `pack-join` reads it from standard input (`-`) or an owner-only
 file (`@<path>`) and refuses it as an argument, because `/proc/<pid>/cmdline` is readable by every
-local uid. Both commands first run Collie's own one-time move of its previous `pack-*.json` state names
-to `crew-*.json`, exactly as Collie's own commands do before they open the state directory, so an
-enrolment never creates a second trust store beside the first. A peer posts protocol version 2 to
-`/crew/v1/enroll` and has no fallback of its own: enrol a peer only after the lead runs this release.
+local uid. Both commands refuse a state directory that holds only 1.7.0's `pack-trust.json` and no
+`crew-trust.json`, with Collie's own notice naming the hand edits, so an enrolment never creates a
+second trust store beside the first. A peer posts protocol version 2 to `/crew/v1/enroll` and has no
+fallback of its own: enrol a peer only after the lead runs this release.
 
 The lead's enrolment path does not exist until the running lead has read a trust store, which is why
 the first restart is part of the sequence rather than advice. A refused invite or an unreachable lead
@@ -286,8 +286,8 @@ Fleet never starts a second Pack listener or projects that loopback endpoint off
 Fleet browser authentication and native Pack machine admission are independent. The Fleet cookie,
 password material, session secret, and active session state are not placed in the Collie child
 environment or translated into Pack credentials. The public Gateway returns not found for every
-path on the machine-to-machine link before proxying — the crew prefix `/crew/*` and the previous
-`/pack/*` alike — including for an authenticated browser. The `/crew` page and its `/pack` redirect
+path on the machine-to-machine link before proxying — the crew prefix `/crew/*`, and the retired
+`/pack/*` that the adopted Collie no longer answers — including for an authenticated browser. The `/crew` page and its `/pack` redirect
 are ordinary application routes.
 
 Collie's `crew-trust.json`, pinned certificates, Pack secret/signatures, role derivation, membership
@@ -296,10 +296,36 @@ only Pack authority and implementation. Fleet reads that state only to confirm s
 agreement before startup. It adds no enrollment, rotation, sibling route, software-update authority,
 or fallback secret.
 
-Collie renames its state files from `pack-*.json` to `crew-*.json` once, on its own first start after
-the upgrade — and Fleet validates authority before that start. So while only `pack-trust.json`
-exists, Fleet reads it read-only through the same reader; when both names exist, `crew-trust.json`
-wins, as in Collie. Fleet never performs that rename itself and never writes either file.
+Fleet reads the trust state under `crew-trust.json` only, as the adopted Collie does. A state
+directory that still holds only 1.7.0's `pack-trust.json` fails startup with Collie's own notice,
+which names the renames to make by hand; Fleet never performs them and never writes either file.
+When both names exist, `crew-trust.json` decides and neither is touched.
+
+Members must all run 3.5.0 or later together with the lead: from that release (Collie 1.14.2) the
+1.7/1.8 crew-wire overlap is gone, and Collie reports a member below its protocol floor as
+incompatible. Fleet adds no fallback.
+
+### The Collie child's environment
+
+Fleet decides these Collie settings for its child and resets each of them before setting it, so an
+inherited value never decides one:
+
+- `COLLIE_STATE_DIR` — always set, to `<plugin state>/collie`: the directory Fleet validates trust in
+  and the one enrolment writes. The adopted Collie reads its state directory from this name alone
+  and ignores `HERDR_PLUGIN_STATE_DIR`.
+- `COLLIE_HOST`, `COLLIE_PORT`, `COLLIE_SKIP_SERVE` — always set; and on a lead `COLLIE_PUBLIC_HOSTS`,
+  `COLLIE_ALLOWED_ORIGINS`, `COLLIE_PUBLIC_URL`, plus `COLLIE_POLL_MS` and `COLLIE_CREW_TIMEOUT_MS`
+  when `[pack]` states them.
+- `COLLIE_ALLOW_ANY_HOST`, `COLLIE_ALLOW_NON_LOOPBACK_BIND`, `COLLIE_BASE_PATH`,
+  `COLLIE_DEVICE_ALLOWLIST`, `COLLIE_DEVICE_HEADER`, `COLLIE_SERVE_MODE`, `COLLIE_SERVE_PORT`,
+  `COLLIE_TAILSCALE_HOSTS`, `COLLIE_TRUSTED_USER`, `COLLIE_TRUSTED_USER_OPTIONAL` — always left unset,
+  so Collie keeps its defaults and serves at the root the Gateway proxies.
+
+Collie also reads two `config.toml` files beneath its environment: the machine's
+(`~/.collie/config.toml`, or `COLLIE_CONFIG`) and the instance's, beside Fleet's own configuration.
+Fleet reads both before starting, through Collie's own resolver and reader, and refuses to start when
+either sets one of the settings above; the error names the file and the key, never the value. Every
+other key is Collie's to apply. Fleet never writes either file.
 
 ## Native Web Push actions
 

@@ -75,7 +75,8 @@ import { homePath, panePath, settingsPath, spacePath } from "@/lib/nav";
 import { triage } from "@/lib/triage";
 import { usePairing } from "@/lib/pairing";
 import { useSpaceActions } from "@/hooks/use-spaces";
-import { isReadOnly, paneDisplayName, type AgentView } from "@/lib/types";
+import { paneName } from "@/lib/pane-name";
+import { isReadOnly, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -446,8 +447,8 @@ export function NativeNavigationShell({
           setRenaming({
             kind: "pane",
             paneId: currentPane.paneId,
-            // The operator's OWN name only. `paneDisplayName` falls back through a session name and
-            // an agent's name, and prefilling one of those would offer to rename a Pane to a label
+            // The operator's OWN name only. `paneName` falls back through a session name, a tab name
+            // and an agent's name, and prefilling one of those would offer to rename a Pane to a label
             // it never had.
             label: currentPane.paneLabel ?? "",
           }),
@@ -455,7 +456,7 @@ export function NativeNavigationShell({
           setClosing({
             kind: "pane",
             paneId: currentPane.paneId,
-            label: paneDisplayName(currentPane),
+            label: paneName(currentPane),
           }),
         "rename-tab": () =>
           setRenaming({
@@ -720,11 +721,11 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
     paneId: pane.paneId,
     workspaceId: pane.workspaceId,
     tabId: pane.tabId,
-    label: paneDisplayName(pane),
+    label: paneName(pane),
     agent: pane.agent,
   };
-  // The operator's own name for the Pane, and only that. `paneDisplayName` above already falls back
-  // through a session name, a terminal title and the Agent's own name; the model needs to know which
+  // The operator's own name for the Pane, and only that. `paneName` above already falls back
+  // through a session name, a sole tab's name, a terminal title and the Agent's own name; the model needs to know which
   // of the two values was chosen by a person, because an elided row is named by a person's choice.
   if (pane.paneLabel) result.ownLabel = pane.paneLabel;
   if (pane.status) result.status = pane.status;

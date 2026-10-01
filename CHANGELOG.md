@@ -22,6 +22,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Changed
 
 - **Adopt Collie 1.14.2.** The actions belt, the one-box composer with attachment chips, the Changes view, the dashboard footer tabs, layered configuration files, prompt-cache countdowns, pinning and hiding a machine, and upstream's fixes; the record control stays a control of its own beside Send inside the box.
+- **Fleet states its Collie child's state directory and owns its settings.** Collie is started with `COLLIE_STATE_DIR` set to the directory Fleet validates trust in, and a Collie `config.toml` that sets a Fleet-owned setting refuses Fleet's start, naming the file and the key; the 1.7/1.8 overlap fallbacks are gone, so the lead and every member run 3.5.0 or later and a state directory holding only `pack-*.json` names is refused with Collie's own notice.
 
 ### Fixed
 

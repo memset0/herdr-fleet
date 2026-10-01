@@ -6,6 +6,8 @@ import type { AgentView } from "@/lib/types";
 import { NativeAgentRail } from "./native-agent-rail";
 import { CrewProvider } from "@/components/crew-provider";
 import type { ServerSummary } from "@/lib/types";
+import { __resetHiddenMachines, currentHiddenMachines, setMachineHidden } from "@/lib/hidden-machines";
+import { __resetPins, currentPins, setPinned } from "@/lib/pins";
 
 function agent(paneId: string, overrides: Partial<AgentView> = {}): AgentView {
   return {
@@ -31,6 +33,8 @@ function rows() {
 beforeEach(() => {
   localStorage.clear();
   __resetAgentFavorites();
+  __resetHiddenMachines();
+  __resetPins();
 });
 
 describe("NativeAgentRail", () => {
@@ -165,5 +169,32 @@ describe("NativeAgentRail", () => {
     expect(screen.queryByText("north")).toBeNull();
     expect(screen.queryByText("attic")).toBeNull();
     expect(rows()).toHaveLength(2);
+  });
+
+  test("a machine hidden or a pane pinned on the dashboard changes nothing in the rail", () => {
+    const servers: ServerSummary[] = [
+      { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 2 },
+      { id: "peer-a", name: "attic", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 2 },
+    ];
+    const here = agent("here", { host: "lead" });
+    const there = agent("there", { host: "peer-a" });
+    const draw = () =>
+      render(
+        <CrewProvider servers={servers} sessions={[]}>
+          <NativeAgentRail agents={[here, there]} onOpen={() => undefined} />
+        </CrewProvider>,
+      );
+    const before = draw();
+    const order = rows().map((row) => row.textContent);
+    before.unmount();
+
+    // The dashboard's own device-local choices: the rails are the fleet's map, not that view.
+    setMachineHidden("peer-a", true, servers);
+    setPinned(there, true, [here, there]);
+    expect(currentHiddenMachines()).toEqual(["peer-a"]);
+    expect(currentPins()).toHaveLength(1);
+    draw();
+    expect(rows().map((row) => row.textContent)).toEqual(order);
+    expect(screen.getAllByText("attic")).not.toHaveLength(0);
   });
 });

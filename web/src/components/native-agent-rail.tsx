@@ -4,13 +4,12 @@ import { useSyncExternalStore } from "react";
 import { agentFavoriteStore } from "../../../fleet/ui/agent-favorites.ts";
 import { rosterEntryKey } from "../../../fleet/ui/pane-roster.ts";
 import { paneRosterFrom } from "@/lib/fleet-roster";
-import { ATTENTION } from "@/components/agent-list";
 import { NativeAgentCard } from "@/components/native-agent-card";
 import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
 import { clockTime } from "@/lib/format";
 import { paneRowKey } from "@/lib/hosts";
-import { sectionHeaderProps, triage, type TriageKey, type TriageSection } from "@/lib/triage";
+import { ATTENTION, triage, type TriageKey, type TriageSection } from "@/lib/triage";
 import type { AgentView, BridgeStatus } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -34,9 +33,10 @@ const AGE_BY_SECTION = new Map<TriageKey, "seen" | "active">([
 /**
  * The Agent surface, in the rail and — on a narrow viewport — in the Pane page's switcher sheet.
  *
- * WHAT IS COLLIE'S AND STAYS COLLIE'S: the order. `triage` decides the sections and their contents,
- * `sectionHeaderProps` names them, and `SectionHeader` draws them, so "what needs me" is answered
- * here exactly as it is on the dashboard. What the fork owns is the ROW — see NativeAgentCard for
+ * WHAT IS COLLIE'S AND STAYS COLLIE'S: the classification. `triage` decides the sections, their
+ * labels and their contents, and `SectionHeader` draws them, so "what needs me" is answered here by
+ * the same rule every Collie mark uses. (The dashboard and the switcher no longer lay rows out by
+ * bucket — upstream ADR 0063 — but this rail is the fleet's attention view and keeps the buckets.) What the fork owns is the ROW — see NativeAgentCard for
  * why a 320px rail beside the work reads its two lines in the other order from a full-width list.
  *
  * FAVOURITES ARE UNCHANGED: the same browser-local store, the same favourite-first ordering inside
@@ -145,7 +145,12 @@ export function NativeAgentRail({
           });
           return (
             <section key={section.key} className="flex flex-col gap-2">
-              <SectionHeader {...sectionHeaderProps(section)} />
+              <SectionHeader
+                label={section.label}
+                count={section.agents.length}
+                dot={section.dot}
+                accent={section.accent === true}
+              />
               <Body className={attention ? "flex flex-col gap-2" : undefined}>{rows}</Body>
             </section>
           );
