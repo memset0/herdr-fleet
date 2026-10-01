@@ -201,6 +201,18 @@ the status row and the hint row are byte-faithful, with the reporter's theme col
 |---|---|---|
 | `codex--reporter-294-busy-agents-hint.txt` | An echo `› herdr pane read …` band, `• Working (6s • esc to interrupt)`, the empty composer, `  GPT-6-Luna medium · ~/Code/project · Read recent pane output`, and `  ← for agents · ? for shortcuts` as the last row. `composerReady` must be TRUE, the lowest `›` row is the composer, no card | `working` |
 
+## Codex reporter capture (#317, 2026-09-28, macOS, Codex 0.158.0, Herdr 0.9.1, SCRUBBED)
+
+The reporter's `herdr pane read <pane-id> --source recent --lines 200 --format ansi`, taken from
+inside the Codex session while it worked, and redacted by the reporter (equal-display-width
+placeholders, published in a gist with the exact bytes as Base64). **Cut further here**: only the
+Working row and the composer band below it are kept, so none of the redacted chat is in the tree.
+The kept rows are byte-faithful to the reporter's file, theme colours included.
+
+| Fixture | State / what's in it | Herdr status |
+|---|---|---|
+| `codex--v0158-goal-notice.txt` | `• Working (5m 47s • esc to interrupt)`, the empty composer, and a status row whose third field carries the padding in its own purple before a right-aligned `Pursuing goal (17h 43m)` (a Codex `/goal`). `  ? for shortcuts` is the last row. Collie 1.14.x refused that row, so the pane had no composer: the unread-dialog card and every send refused. `composerReady` must be TRUE, no card | `working` |
+
 ## Codex mobile chrome (reconstructed 2026-09-03)
 
 **Not a capture.** This one file is RECONSTRUCTED from the two rows reported in
@@ -324,6 +336,7 @@ Grok's composer is a rounded box at the tail: `╭─…─╮` / `│ ❯ … �
 | `claude--select-multiselect-single.txt` | **Single-question multiSelect** AskUserQuestion: checkbox `[ ]` options under a `←  ☐ Toppings  ✔ Submit  →` stepper, "Enter to select · ↑/↓ · Esc" footer. Lifted to a `multi-select` block — the verified interaction is **DIGIT N toggles option N** (pointer-independent); the closed-loop Submit macro walks the pointer to Submit and confirms | `blocked` |
 | `claude--select-multiselect-checked.txt` | Same dialog **mid-selection**: some boxes `[✔]` (Mushrooms, Olives), the stepper's question chip flipped to `☒` (answered). Exercises the checked-glyph lift (`[✔]`/`[x]`/`[✓]` → `checked: true`; terminal is source of truth) | `blocked` |
 | `claude--select-multiselect-review.txt` | The multiSelect **review/confirm** screen: `←  ☐ Toppings  ✔ Submit  →` stepper, "Ready to submit your answers?" over `❯ 1. Submit answers / 2. Cancel`, with a `⚠ You have not answered all questions` line (`incomplete`). Lifts the `review` phase (submit = key `1`, cancel = key `2`) | `blocked` |
+| `claude--workflow-view.txt` | Claude Code 2.1.285's **dynamic-workflow view**, captured 2026-09-30 at 226 columns from a throwaway `/tmp` lab run, paused with `p`. A two-pane box: five phases on the left with a partial `3 Verify the classification 1/3`, the running agent on the right with its model and token count. The lid is TITLED (`╭ Phases ───┬ Read the corpus · 1 agent ───╮`), so the floor's `┴` is what anchors the table run. The screen of [discussion #301](https://github.com/AltanS/collie/discussions/301): before [ADR 0072](../../../../.adr/0072-a-two-pane-box-pans.md) every `│ … │` row of it was CLIPPED on a phone, which is why the report shows a band of stacked rules and a `· 74…` cut off the right edge. Nothing in it is this machine's: the workflow's name, phases and agent labels were all authored for the lab | `working` |
 
 ## In-flight send / self-race corpus (captured 2026-07-18, `collie-demo` sandbox pane)
 
@@ -1038,6 +1051,7 @@ wrap, Tab does nothing, Enter confirms, Escape declines, no digit).
 | `oc--fresh-idle.txt` | Splash logo, empty composer with an `Ask anything… "…"` placeholder, model row, rule, `tab agents  ctrl+p commands`, the cwd/version row at the foot | `idle` |
 | `oc--draft-single.txt` | One draft row on a two-space-gutter interior row | `idle` |
 | `oc--draft-wrapped.txt` | A long draft word-wrapped onto three interior rows | `idle` |
+| `oc--draft-tree-glyphs.txt` | A four-line draft holding a pasted `tree`: a line, `├── src`, `└── web`, a last line. Captured at 226 columns on opencode 1.18.32, 2026-09-30, for the panel-border rule: a junction alone must not end the draft run, or three of these four lines are lost | `done` |
 | `oc--draft-multiline.txt` | A six-line draft typed with hard breaks: a line, a blank line (a bare bar row inside the composer), an indented line, `❯ ls -la`, a `────` rule, a last line. The draft reads whole across the blank line | `done` |
 | `oc--draft-while-working.txt` | A draft typed while `sleep 10 && echo done` ran: the running command and its spinner sit in the transcript above, the status row reads `esc interrupt` | `working` |
 | `oc--working.txt` | The same run with an empty composer | `working` |

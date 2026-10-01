@@ -602,8 +602,10 @@ describe("solo zero-tax — routes", () => {
       // journal named the file (CREW_PROTOCOL.md §9.1).
       "/^\\/api\\/blobs\\/([^/]+)$/",
       // `changes` is the Changes view (ADR 0065): read-only git over the pane's folder, read-gated
-      // like `history` beside it and forwarded to the member that owns the pane.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|changes|focus))?$/",
+      // like `history` beside it and forwarded to the member that owns the pane. `chat` is the live
+      // half of `history` (journal/live.ts): the same log, asked "anything after this?" — a read, on
+      // the poll path, forwarded to the owning member and taxing a solo instance with nothing.
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|focus))?$/",
       "/^\\/api\\/pane\\/([^/]+)\\/resize$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       // The Changes view asked by workspace (ADR 0065): the same read as the pane route's `changes`,
@@ -1092,10 +1094,25 @@ describe("solo zero-tax — notifications", () => {
     const { makeNotifySink } = await import("./notifications.ts");
     const sent: PushMessage[] = [];
     const sink = makeNotifySink({ send: (m: PushMessage) => sent.push(m) }, { isMuted: () => false }, "collie:herd");
-    sink.render({ title: "claude needs you", body: "demo · /home/you", paneId: "p1", renotify: true });
+    sink.render({
+      title: "claude needs you",
+      titleCode: "agent.blocked",
+      titleDetail: { agent: "claude" },
+      body: "demo · /home/you",
+      paneId: "p1",
+      renotify: true,
+    });
     sink.clear();
     expect(sent).toEqual([
-      { title: "claude needs you", body: "demo · /home/you", tag: "collie:herd", paneId: "p1", renotify: true },
+      {
+        title: "claude needs you",
+        titleCode: "agent.blocked",
+        titleDetail: { agent: "claude" },
+        body: "demo · /home/you",
+        tag: "collie:herd",
+        paneId: "p1",
+        renotify: true,
+      },
       { type: "clear", tag: "collie:herd" },
     ]);
     expect(sent.every((m) => !("host" in m))).toBe(true);

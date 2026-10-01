@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { NO_CHANGE, noQueue, noUnknowns } from "./reduce.ts";
 import { pageEntries, TranscriptStore } from "./store.ts";
 import type { JournalAdapter, TranscriptEntry, TranscriptSource } from "./types.ts";
 
@@ -18,7 +19,7 @@ const entry = (uuid: string): TranscriptEntry => ({
 function fakeAdapter(lines: string[], opts: { complete?: boolean } = {}) {
   let text = lines.join("\n");
   let mtimeMs = 1000;
-  const calls = { resolve: 0, stat: 0, load: 0, parse: 0 };
+  const calls = { resolve: 0, stat: 0, load: 0, parse: 0, readSince: 0 };
   const source: TranscriptSource = {
     async resolve(ref) {
       calls.resolve++;
@@ -32,6 +33,13 @@ function fakeAdapter(lines: string[], opts: { complete?: boolean } = {}) {
       calls.load++;
       return { text, complete: opts.complete ?? true, size: text.length, mtimeMs };
     },
+    // Faithful, and counted: the store pages through `load`, and a paging read that reached for the
+    // LIVE read instead would be reading a delta to answer "show me this conversation". The test
+    // below pins that it never does.
+    async readSince(_key, cursor) {
+      calls.readSince++;
+      return { lines: text.split("\n"), cursor, reset: true, fromStart: true };
+    },
   };
   const adapter: JournalAdapter = {
     agent: "fake",
@@ -40,6 +48,17 @@ function fakeAdapter(lines: string[], opts: { complete?: boolean } = {}) {
       calls.parse++;
       return t.split("\n").filter(Boolean).map(entry);
     },
+    // The same grammar a row at a time, so the fake is honest about the one property the real
+    // adapters have: `parse` and `reducer` read a row the same way. The store never calls it — it
+    // answers a History page and pages through `parse` — and `calls` proves that above.
+    reducer: () => ({
+      push: (line) =>
+        line === "" ? NO_CHANGE : { added: [entry(line)], changed: NO_CHANGE.changed },
+      // This fake's grammar is "every non-empty line is a turn", so there is no type it could fail
+      // to recognise. The six real tallies are gated in `unknowns.test.ts`.
+      unknowns: noUnknowns,
+      queued: noQueue,
+    }),
   };
   return {
     adapter,
@@ -63,6 +82,20 @@ describe("TranscriptStore", () => {
     expect(page!.hasMore).toBe(true);
     expect(page!.total).toBe(3);
     expect(page!.fileTruncated).toBe(false);
+  });
+
+  // The History path and the live read answer two different questions. "Show me this conversation"
+  // is a whole window, and asking a source for a DELTA to answer it would give the store a page of
+  // whatever happened to have moved.
+  test("paging never reaches for the live read", async () => {
+    const { adapter, calls, append } = fakeAdapter(["u1", "u2"]);
+    const store = new TranscriptStore();
+    await store.page(adapter, REF, { limit: 2 });
+    append("u3");
+    await store.page(adapter, REF, { limit: 2 });
+    await store.page(adapter, REF, { limit: 1, before: "u3" });
+    expect(calls.readSince).toBe(0);
+    expect(calls.load).toBe(2);
   });
 
   test("an unresolvable ref is null, not an error", async () => {

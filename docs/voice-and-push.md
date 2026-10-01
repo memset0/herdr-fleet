@@ -172,7 +172,7 @@ optional dependency during the build:
 ```bash
 collie push-keys     # 1. generate + write the VAPID keys
 collie restart       # 2. Collie reads them at start
-#                      3. on your phone: Settings → notifications
+#                      3. on your phone: Settings → Alerts
 ```
 
 The `push-keys` command generates the keypair and writes `COLLIE_VAPID_PUBLIC` and
@@ -224,7 +224,7 @@ message in the body. Selecting the notification navigates directly to that agent
 
 ### Which alerts Collie sends
 
-Four kinds, each with its own switch under **Settings → Notify when**.
+Four kinds, each with its own switch under **Settings → Alerts → Notify when**.
 
 | Alert | Fires when | Default |
 | --- | --- | --- |
@@ -232,6 +232,9 @@ Four kinds, each with its own switch under **Settings → Notify when**.
 | Finished | an agent completes its task | off |
 | App updates | a newer Collie release is available | on |
 | Cache about to go cold | a pane's prompt cache expires in about five minutes | off |
+
+Each device shows an alert's title in its own [language](configure.md#language), and English on a
+device that has not opened Collie since it was updated. The body stays as the bridge wrote it.
 
 Every switch is bridge-wide. A push fans out to every subscribed device, so there is nothing
 per-device to set.

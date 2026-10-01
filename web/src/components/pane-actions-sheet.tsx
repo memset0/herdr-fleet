@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Maximize2, Monitor, Pencil, Pin, PinOff, ScrollText, Search, SlidersHorizontal, XCircle } from "lucide-react";
+import { Copy, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, SlidersHorizontal, SquareTerminal, XCircle } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -16,6 +16,7 @@ import { setStatus } from "@/lib/status";
 import { stampTopology } from "@/lib/poll-intent";
 import { paneName } from "@/lib/pane-name";
 import { dropPin, pinMatcher, setPinned, usePins } from "@/lib/pins";
+import type { PaneView } from "@/lib/pane-view";
 import type { AgentView } from "@/lib/types";
 import type { Scope } from "@/lib/scope";
 
@@ -48,12 +49,42 @@ interface PaneActionsSheetProps {
   onFind?: () => void;
   /** Open the agent's own transcript. */
   onHistory?: () => void;
+  /** Copy the pane's buffered terminal output to the clipboard. The sheet closes and a status toast
+   *  reports the result. Gated by the caller on there being output AND a usable clipboard (it is
+   *  absent over plain HTTP, a supported deploy), so an unusable row is HIDDEN — the same "a row is a
+   *  thing you can do" rule find/history/zen follow. */
+  onCopyOutput?: () => void;
   /** Open this pane's own settings — today one switch, the prompt-cache warning (ADR 0042).
    *
    *  The FOURTH read row, and it is a read in the sense the other three are: it changes a preference on
    *  this collie and types into nothing. Absence is the gate, as it is for find, history and zen — the
    *  pane strip passes no callback, so a strip pill opens the sheet it always did. */
   onSettings?: () => void;
+  /**
+   * WHICH BODY THE PANE DRAWS, and the one place that value is written (ADR 0071's shape).
+   *
+   * Absent is the gate, exactly as it is for find, history and zen: while `Settings → Experiments`
+   * has Chat off, the pane view passes nothing and this sheet is byte-identical to 1.14's.
+   *
+   * It lives here rather than in the header or on the belt for three reasons. ADR 0009 makes a
+   * generic menu the place a pane's actions live, and Find and History are already in it. 1.9.0
+   * spent a whole milestone clearing chrome, so the header names the workspace alone and the belt
+   * is already eight items on a small phone. And two taps is the right price for a choice made
+   * rarely, which ONE STANDING PER-DEVICE VALUE makes it: there is no per-pane override, so this is
+   * a thing you set, not a thing you flick.
+   */
+  paneView?: PaneView;
+  /** Write the standing choice. Required alongside {@link paneView}; both or neither. */
+  onPaneViewChange?: (view: PaneView) => void;
+  /**
+   * Why THIS pane keeps the terminal whatever the standing choice says — a pane with no session, a
+   * machine one release behind, a multiplexer that keeps no session log at all.
+   *
+   * The row never hides on it. A control that disappears on some panes is how an operator concludes
+   * the app is broken, and it would be worst for exactly the person whose standing mode is Chat:
+   * their pane would open on the terminal with nothing saying why.
+   */
+  paneViewNote?: string;
   /** Enter zen mode — hide every Collie surface and leave the mirror alone on the screen.
    *
    *  The THIRD read row, and it is gated twice through this one prop: `Settings → Zen mode` decides
@@ -101,8 +132,12 @@ export function PaneActionsSheet({
   onClosed,
   onFind,
   onHistory,
+  onCopyOutput,
   onSettings,
   onZen,
+  paneView,
+  onPaneViewChange,
+  paneViewNote,
   herd = NO_HERD,
   onPinChange,
 }: PaneActionsSheetProps) {
@@ -327,6 +362,42 @@ export function PaneActionsSheet({
               onClick={() => {
                 onClose();
                 onHistory();
+              }}
+            />
+          )}
+          {/* Copy the buffered terminal output. Same "act on the output you're looking at" family as
+              find and history, so it sits with them. Close-then-act like the rows above — the copy
+              fires inside this same tap, so the clipboard write still counts as user-initiated even as
+              the sheet unmounts. */}
+          {onCopyOutput && (
+            <ActionRow
+              icon={<Copy className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("chat.copyOutput.label")}
+              onClick={() => {
+                onClose();
+                onCopyOutput();
+              }}
+            />
+          )}
+          {/* THE BODY SWITCH, with find/history/copy above it: it is the same family — "look at this
+              pane differently" — and it is the most standing of them, so it sits after the three
+              you reach for inside one visit and before the two that take the screen over.
+              Close-then-act, for the reason the find row states. The label names WHERE IT TAKES
+              YOU, the way every row above it does. */}
+          {paneView !== undefined && onPaneViewChange && (
+            <ActionRow
+              icon={
+                paneView === "chat" ? (
+                  <SquareTerminal className="size-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <MessagesSquare className="size-4 shrink-0 text-muted-foreground" />
+                )
+              }
+              label={t(paneView === "chat" ? "chat.mode.terminal" : "chat.mode.chat")}
+              hint={paneViewNote}
+              onClick={() => {
+                onClose();
+                onPaneViewChange(paneView === "chat" ? "terminal" : "chat");
               }}
             />
           )}

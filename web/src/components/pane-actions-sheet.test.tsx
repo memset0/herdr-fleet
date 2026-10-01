@@ -265,6 +265,7 @@ describe("PaneActionsSheet — the read rows", () => {
     renderSheet();
     expect(screen.queryByRole("button", { name: "Find in output" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Conversation history" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy output" })).toBeNull();
   });
 
   it("shows only the row it was given a callback for", () => {
@@ -283,6 +284,25 @@ describe("PaneActionsSheet — the read rows", () => {
     // Order matters: the find bar takes over the header row, and the sheet must not still be over it.
     expect(vi.mocked(props.onClose).mock.invocationCallOrder[0]!).toBeLessThan(
       onFind.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("shows the Copy output row only when given onCopyOutput", () => {
+    const { rerender } = render(<PaneActionsSheet {...renderProps()} />);
+    expect(screen.queryByRole("button", { name: "Copy output" })).toBeNull();
+    rerender(<PaneActionsSheet {...renderProps({ onCopyOutput: vi.fn() })} />);
+    expect(screen.getByRole("button", { name: "Copy output" })).toBeInTheDocument();
+  });
+
+  it("closes the sheet BEFORE it copies, so the copy fires as the sheet unmounts", async () => {
+    const user = userEvent.setup();
+    const onCopyOutput = vi.fn();
+    const props = renderSheet({ onCopyOutput });
+    await user.click(screen.getByRole("button", { name: "Copy output" }));
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+    expect(onCopyOutput).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(props.onClose).mock.invocationCallOrder[0]!).toBeLessThan(
+      onCopyOutput.mock.invocationCallOrder[0]!,
     );
   });
 
@@ -315,8 +335,8 @@ describe("PaneActionsSheet — the read rows", () => {
   // slides up under the finger. Every row in here states the floor — `min-h-11` around a 20px
   // `text-sm` line, because `px-3 py-2.5` alone drew 40.
   it("gives every row a 44px hit box", () => {
-    renderSheet({ onFind: vi.fn(), onHistory: vi.fn() });
-    for (const name of ["Find in output", "Conversation history", "Rename", "Close pane"]) {
+    renderSheet({ onFind: vi.fn(), onHistory: vi.fn(), onCopyOutput: vi.fn() });
+    for (const name of ["Find in output", "Conversation history", "Copy output", "Rename", "Close pane"]) {
       expect(screen.getByRole("button", { name })).toHaveClass("min-h-11");
     }
   });
@@ -501,5 +521,50 @@ describe("PaneActionsSheet — pin", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Close pane" })).toBeEnabled());
     expect(props.onClosed).not.toHaveBeenCalled();
     expect(pinned()).toBe(true);
+  });
+});
+
+// ── THE BODY SWITCH (M41/11) ────────────────────────────────────────────────────────────────────
+//
+// The row is a ROW IN THIS SHEET, not the header and not the belt (ADR 0009: a generic menu is
+// where a pane's actions live, and Find and History are already here). It is gated by absence, the
+// way every read row here is, and it EXPLAINS rather than hides when the pane cannot honour it.
+describe("PaneActionsSheet — which body the pane draws", () => {
+  it("shows no switch at all until the device has opted in", () => {
+    renderSheet();
+    expect(screen.queryByRole("button", { name: /view$/ })).toBeNull();
+  });
+
+  it("offers the chat while the standing body is the terminal", () => {
+    renderSheet({ paneView: "terminal", onPaneViewChange: vi.fn() });
+    expect(screen.getByRole("button", { name: "Chat view" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Terminal view" })).toBeNull();
+  });
+
+  it("offers the terminal while the standing body is the chat", () => {
+    renderSheet({ paneView: "chat", onPaneViewChange: vi.fn() });
+    expect(screen.getByRole("button", { name: "Terminal view" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Chat view" })).toBeNull();
+  });
+
+  it("writes the other body and closes, so the pane is the only thing on screen when it lands", async () => {
+    const user = userEvent.setup();
+    const onPaneViewChange = vi.fn();
+    const props = renderSheet({ paneView: "terminal", onPaneViewChange });
+    await user.click(screen.getByRole("button", { name: "Chat view" }));
+    expect(onPaneViewChange).toHaveBeenCalledWith("chat");
+    expect(props.onClose).toHaveBeenCalledOnce();
+  });
+
+  // A control that disappears on some panes and not others is how an operator concludes the app is
+  // broken, and it would be worst for exactly the person whose standing mode is Chat.
+  it("keeps the row and carries the reason on a pane that cannot draw a chat", () => {
+    renderSheet({
+      paneView: "chat",
+      onPaneViewChange: vi.fn(),
+      paneViewNote: "This pane keeps the terminal: no session.",
+    });
+    expect(screen.getByRole("button", { name: /Terminal view/ })).toBeInTheDocument();
+    expect(screen.getByText("This pane keeps the terminal: no session.")).toBeInTheDocument();
   });
 });

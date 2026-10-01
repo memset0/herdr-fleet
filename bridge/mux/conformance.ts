@@ -37,6 +37,7 @@
 // structure change nobody announced).
 // Adding tmux (M10/04) or zellij (M10/05) is that fixture plus a registry entry — never a test file.
 
+import { isMuxAgentName } from "./agents.ts";
 import { MUX_CAPABILITIES, type MuxCapability } from "./capabilities.ts";
 import { checkIdentitySet, idsLostBetween, isValidMuxId } from "./identity.ts";
 import { canonicalMuxKey, MUX_NAMED_KEYS } from "./keys.ts";
@@ -120,7 +121,7 @@ export interface MuxConformanceWorld {
    */
   focusOutOfBand(paneId: string): Promise<void>;
   /**
-   * The herd's SHAPE changes and nothing announces it — the operator renamed a tab with their own
+   * The herd's SHAPE changes and nothing announces it — the operator changed it with their own
    * keyboard.
    *
    * The sibling of {@link pokeTopology} and its opposite: that one announces a change on a channel,
@@ -128,9 +129,11 @@ export interface MuxConformanceWorld {
    * change that was announced would have reached the watch by itself and proved nothing about
    * looking on demand.
    *
-   * A tab rename rather than a new pane, and deliberately: every multiplexer Collie drives has tabs
-   * with labels, so the perturbation is one every fixture can simulate honestly (this file asks for
-   * exactly that of a shared world knob).
+   * WHICH change is the fixture's to pick, as long as its multiplexer can really make it and
+   * {@link topologySignature} can see it: a renamed tab, a renamed space, or a pane opened or closed.
+   * A tab rename is the usual one. It is not required, because a multiplexer whose tabs have no
+   * names (an adapter that declines `renameTab`) cannot rename one, and a fixture that did would be
+   * simulating something its multiplexer never does. The check does not name the change it expects.
    */
   pokeTopologyOutOfBand(): Promise<void>;
   /**
@@ -534,16 +537,34 @@ const snapshotIsWellFormed: MuxReadCheck = {
     for (const pane of snapshot.panes) {
       if (!spaceIds.has(pane.spaceId)) problems.push(`pane "${pane.paneId}" names space "${pane.spaceId}", which is not in the snapshot`);
       if (!tabIds.has(pane.tabId)) problems.push(`pane "${pane.paneId}" names tab "${pane.tabId}", which is not in the snapshot`);
-      // The agent name keys the harness and journal registries. An empty or upper-cased one misses
-      // both lookups silently, so it is a contract violation rather than a cosmetic slip.
-      if (pane.agent.length === 0) problems.push(`pane "${pane.paneId}" reports an empty agent name`);
-      else if (pane.agent !== pane.agent.toLowerCase()) {
-        problems.push(`pane "${pane.paneId}" reports agent "${pane.agent}", which is not lower-cased`);
-      }
     }
+    problems.push(...agentNameProblems(snapshot.panes));
     return problems;
   },
 };
+
+/**
+ * The agent-name rule over one snapshot's panes (agents.ts). Exported so the rule is tested on its
+ * own, with a name no registered adapter reports.
+ *
+ * The agent name keys the harness and journal registries, and both look it up exactly. An empty or
+ * upper-cased name misses both, and so does a multiplexer's own id for a harness (`claude-code`),
+ * so each is a contract violation rather than a cosmetic slip.
+ */
+export function agentNameProblems(panes: readonly MuxPane[]): string[] {
+  const problems: string[] = [];
+  for (const pane of panes) {
+    if (pane.agent.length === 0) problems.push(`pane "${pane.paneId}" reports an empty agent name`);
+    else if (pane.agent !== pane.agent.toLowerCase()) {
+      problems.push(`pane "${pane.paneId}" reports agent "${pane.agent}", which is not lower-cased`);
+    } else if (!isMuxAgentName(pane.agent)) {
+      problems.push(
+        `pane "${pane.paneId}" reports agent "${pane.agent}", which is not a Collie harness name, so no screen reader or journal reader finds it (agents.ts)`,
+      );
+    }
+  }
+  return problems;
+}
 
 const idsDoNotChurn: MuxReadCheck = {
   name: "pane ids are the same across two consecutive reads",
@@ -734,7 +755,11 @@ async function inWorld(
   }
 }
 
-/** A snapshot's shape as one string — enough that any structural change is a different string. */
+/**
+ * A snapshot's shape as one string — enough that any structural change is a different string: a
+ * space or tab renamed, added or removed, and a pane added or removed. Tab labels are in it, and so
+ * is everything else, so a fixture whose multiplexer cannot rename a tab has other changes to make.
+ */
 function topologySignature(snapshot: MuxSnapshot): string {
   const spaces = snapshot.spaces.map((space) => `${space.spaceId}=${space.label}`).join("|");
   const tabs = snapshot.tabs.map((tab) => `${tab.tabId}=${tab.label}`).join("|");
@@ -754,12 +779,14 @@ const refreshSeesASilentChange: MuxWorldCheck = {
       await world.pokeTopologyOutOfBand();
       await adapter.refresh();
       const after = topologySignature(await adapter.snapshot());
-      return after === before
-        ? [
-            "the herd changed with nothing announcing it, refresh() resolved, and the next snapshot " +
-              "still showed the old shape — the contract's promise is that the very next read is current",
-          ]
-        : [];
+      if (after !== before) return [];
+      return [
+        "the herd changed with nothing announcing it, refresh() resolved, and the next snapshot " +
+          "still showed the old shape — the contract's promise is that the very next read is current" +
+          (declares(adapter, "renameTab")
+            ? ""
+            : ". This adapter declines renameTab, so its fixture must change the shape another way (open a pane)"),
+      ];
     });
   },
 };

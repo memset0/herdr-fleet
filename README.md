@@ -1,4 +1,4 @@
-# Collie
+# ColliePWA
 
 <p align="center">
   <!-- Baked by collie-brand's logo-ship.ts (collie-social-card-dark.png) and copied in whole, the
@@ -7,16 +7,20 @@
 </p>
 
 <p align="center">
-  <a href="https://colliepwa.dev/demo"><b>Try it in your browser — no install</b></a> ·
-  <a href="https://colliepwa.dev">colliepwa.dev</a><br>
+  <a href="https://colliepwa.dev/demo?utm_source=github&amp;utm_medium=readme&amp;utm_campaign=collie&amp;utm_content=hero"><b>Try it in your browser — no install</b></a> ·
+  <a href="https://colliepwa.dev/?utm_source=github&amp;utm_medium=readme&amp;utm_campaign=collie&amp;utm_content=hero">colliepwa.dev</a><br>
   <sub>A real Collie build running in the page against faked data.</sub>
 </p>
 
-Collie is an open-source (MIT), self-hosted mobile web app for driving terminal AI agents such as
-Claude Code, Codex and OpenCode from your phone. Each instance connects to one multiplexer:
-[Herdr](https://herdr.dev), [tmux](https://github.com/tmux/tmux), or [zellij](https://zellij.dev).
-It is served over Tailscale by default. Open the URL on an iPhone or Android phone to see which
-agent needs input and respond directly from your mobile keyboard.
+ColliePWA is an open-source (MIT) mobile client for [Herdr](https://herdr.dev), with experimental
+support for [tmux](https://github.com/tmux/tmux) and [zellij](https://zellij.dev). It is a
+self-hosted web app (PWA) for driving terminal AI agents such as Claude Code, Codex and OpenCode
+from your phone. Each instance connects to one multiplexer. It is served over Tailscale by default.
+Open the URL on an iPhone or Android phone to see which agent needs input and respond directly from
+your mobile keyboard.
+
+Using Herdr? Read about the
+[Herdr mobile client](https://colliepwa.dev/herdr-mobile-client?utm_source=github&utm_medium=readme&utm_campaign=collie&utm_content=herdr).
 
 The input box uses a standard text field compatible with system voice dictation. Collie also
 includes built-in [voice input](./docs/voice-and-push.md#voice-input-optional) that remains disabled
@@ -30,6 +34,7 @@ until explicitly configured.
 - **Quick actions and slash commands** configured per agent
 - **Keypad for terminal control keys**: `Esc`, `Ctrl+C`, arrows, and modifier combinations
 - **Output search** and full conversation history beyond standard terminal scrollback
+- **Changes view**: what an agent changed in its workspace's git repos, as diffs with syntax colour, and its last commit, read-only
 - **File attachments**: images from the camera roll, and markdown, text and code files
 - **Device pairing** as the write credential: once a device is paired, every write needs its token
 - **Crews**: several machines' Collies behind one URL, with operator-triggered failover
@@ -45,7 +50,7 @@ reflect names set via `/rename`. Hold a dashboard row or a pane pill, or right-c
 to pin that pane to the top of the dashboard and the switcher. Tap to answer an `AskUserQuestion`
 prompt, switch between herds, and receive push notifications when an agent blocks on input.
 
-The [interactive demo](https://colliepwa.dev/demo) runs the web client in your browser against mock
+The [interactive demo](https://colliepwa.dev/demo?utm_source=github&utm_medium=readme&utm_campaign=collie&utm_content=demo-section) runs the web client in your browser against mock
 data without installation.
 
 <table>
@@ -101,6 +106,9 @@ device gating before running the service.
 
 ## Quickstart
 
+New to Tailscale or Herdr? **[Install in five minutes](./docs/five-minute-install.md)** walks the
+whole setup, from an empty computer to Collie on your phone.
+
 Run this on the host, not your phone. It requires `curl`, `tar`, and a sha256 utility. It needs no
 compiler toolchain and does not ask for `sudo`:
 
@@ -112,20 +120,32 @@ The script downloads the latest release for your platform, verifies the sha256 c
 the files, and puts `collie` on your PATH. It then prints the remaining manual steps: seed a config,
 then run `collie start`. You do not need to specify a multiplexer ahead of time. On its first run,
 `collie start` detects Herdr, tmux, and zellij, then prompts for your choice. If you prefer to build
-from source, **[`docs/install.md`](./docs/install.md)** covers the manual build, Herdr routes, the
-requirements table, and what the initial run writes to the host.
+from source, **[`docs/install.md`](./docs/install.md)** covers manual builds, each system and
+package, Herdr routes, and adding Collie to the home screen of an iPhone or Android phone.
+
+ColliePWA is not in the App Store or Google Play. You add it to your home screen from the browser,
+and that is the only way to install it on a phone.
 
 ## Documentation
 
+### Guides
+
 | | |
 | --- | --- |
-| [**Install**](./docs/install.md) | Install, update and uninstall, each spelled for a Herdr plugin and for a standalone install; requirements, packages, first run, and opening it on your phone |
+| [**Install in five minutes**](./docs/five-minute-install.md) | The recommended setup, step by step: Tailscale, Herdr and Collie on your computer, then a paired phone with Collie on its home screen |
 | [**Claude Code in tmux or Herdr, on your phone**](./docs/claude-code-on-your-phone.md) | Keep Claude Code running in tmux or Herdr when SSH drops. Manage sessions, approve prompts, and send Esc or Ctrl from your phone with push alerts. |
+
+### Reference
+
+| | |
+| --- | --- |
+| [**Install**](./docs/install.md) | The front door you need, then the install for your system: Linux, Arch and Omarchy, Nix, macOS, Windows, or as a Herdr plugin. Covers first run, setup on an iPhone or Android phone, updates, and uninstallation |
 | [**Security**](./docs/security.md) | What a Collie exposes, the defenses, and pairing a device as the write credential |
 | [**Configure**](./docs/configure.md) | The `.env`, your own slash commands, keys, quick replies and typefaces; appearance, Zen mode, language |
+| [**Changes**](./docs/changes.md) | What an agent changed in its workspace: the changed files, their diffs and the last commit, from the pane or the dashboard. Read-only git, nested repos, and the two settings that decide how far it looks |
 | [**Deployment**](./docs/deployment.md) | Front doors other than the default: an identity-aware proxy, a reverse proxy with no Tailscale, an off-host ingress, several Collies on one host (one per user, or several instances for one user), and a crew's standby door |
 | [**Commands**](./docs/commands.md) | Every `collie` verb, putting `collie` on your PATH, and the Herdr actions that mirror the verbs on a Herdr-managed install |
-| [**Multiplexers**](./docs/multiplexers.md) | Pointing Collie at Herdr, tmux or zellij, what each backend can answer, and agent beacons. Experimental in 1.0 for tmux and zellij; bug reports wanted |
+| [**Multiplexers**](./docs/multiplexers.md) | Pointing Collie at Herdr, tmux, zellij or tuios, what each backend can answer, and agent beacons. Experimental for tmux, zellij and tuios; bug reports wanted |
 | [**Crews**](./docs/crew.md) | Several machines' Collies behind one URL: invite, join, deputy, failover |
 | [**Voice input and Web Push**](./docs/voice-and-push.md) | The microphone in the composer, and notifications when an agent is waiting on you |
 | [**Manage & update**](./docs/upgrading.md) | Update from the phone or the terminal, roll back, update a crew, cross a major, stop, uninstall, and upgrading a 0.x install to 1.0 |
@@ -310,4 +330,5 @@ integration is documented in [`HERDR_API.md`](./HERDR_API.md).
 - Verified Herdr socket API: [`HERDR_API.md`](./HERDR_API.md)
 - Operations, versioning, and project conventions: [`CLAUDE.md`](./CLAUDE.md)
 - Contribution guidelines: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+- Names, logo and forks: [`TRADEMARKS.md`](./TRADEMARKS.md)
 - Release history: [`CHANGELOG.md`](./CHANGELOG.md)

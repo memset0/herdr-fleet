@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { NO_CURSOR } from "./cursor.ts";
+import { FIRST_TAIL_ROWS } from "./files.ts";
 import {
   isOpencodeSessionId,
   OpencodeTranscriptSource,
@@ -198,6 +200,8 @@ describe("parseOpencodeTranscript", () => {
       kind: "tool",
       name: "read",
       summary: "/repo/sample.ts",
+      id: "call_1",
+      call: { kind: "read", path: "/repo/sample.ts" },
       result: { text: "export const x = 1\n" },
     });
   });
@@ -212,6 +216,8 @@ describe("parseOpencodeTranscript", () => {
       kind: "tool",
       name: "bash",
       summary: "false",
+      id: "call_1",
+      call: { kind: "execute", command: "false" },
       result: { text: "exit status 1", isError: true },
     });
   });
@@ -222,7 +228,13 @@ describe("parseOpencodeTranscript", () => {
         toolPart("bash", { status: "pending", input: { command: "sleep 5" } }),
       ]),
     );
-    expect(entries[0]!.parts[0]).toEqual({ kind: "tool", name: "bash", summary: "sleep 5" });
+    expect(entries[0]!.parts[0]).toEqual({
+      kind: "tool",
+      name: "bash",
+      summary: "sleep 5",
+      id: "call_1",
+      call: { kind: "execute", command: "sleep 5" },
+    });
   });
 
   // V2 tool parts spell the name `name` (V1 spells it `tool`) and hold the result as a `content`
@@ -250,6 +262,9 @@ describe("parseOpencodeTranscript", () => {
       kind: "tool",
       name: "skill",
       summary: "opencode",
+      id: "call_00_Ag99YRR4kyERibbscesO5674",
+      // `skill` is outside the nine kinds, so it is `other` — and still reads exactly as before.
+      call: { kind: "other", name: "skill", summary: "opencode" },
       result: { text: "skill loaded\nsecond line" },
     });
   });
@@ -273,6 +288,8 @@ describe("parseOpencodeTranscript", () => {
       kind: "tool",
       name: "bash",
       summary: "false",
+      id: "call_1",
+      call: { kind: "execute", command: "false" },
       result: { text: "exit status 1", isError: true },
     });
   });
@@ -298,6 +315,8 @@ describe("parseOpencodeTranscript", () => {
       kind: "tool",
       name: "bash",
       summary: "false",
+      id: "call_1",
+      call: { kind: "execute", command: "false" },
       result: { text: "command exited 1", isError: true },
     });
   });
@@ -313,7 +332,13 @@ describe("parseOpencodeTranscript", () => {
         },
       ]),
     );
-    expect(entries[0]!.parts[0]).toEqual({ kind: "tool", name: "bash", summary: "sleep 5" });
+    expect(entries[0]!.parts[0]).toEqual({
+      kind: "tool",
+      name: "bash",
+      summary: "sleep 5",
+      id: "call_1",
+      call: { kind: "execute", command: "sleep 5" },
+    });
   });
 
   // The error branch's precedence is old behavior the V2 refactor must not disturb: a `state.error`
@@ -329,6 +354,8 @@ describe("parseOpencodeTranscript", () => {
       kind: "tool",
       name: "bash",
       summary: "false",
+      id: "call_1",
+      call: { kind: "execute", command: "false" },
       result: { text: "", isError: true },
     });
   });
@@ -1150,5 +1177,728 @@ describe("opencodeResetsV2", () => {
     await rm(base, { recursive: true, force: true });
     expect(probe?.lastRequestAt).toBe(100);
     expect(probe?.cacheReadTokens).toBe(700);
+  });
+});
+
+// OpenCode records what a call actually DID in its `state`, and the two generations disagree about
+// where: V1 (1.18.9) keeps one unified-diff string in `state.metadata.diff`, V2 (2.0.12) keeps a
+// FileDiff list in `state.metadata.files` with its own counts. Both are on disk today, so both are
+// pinned. The V1 shapes below are the ones a real store holds, read read-only on 2026-09-29.
+describe("parseOpencodeTranscript: the structured tool call", () => {
+  const firstTool = (text: string) => {
+    const parts = parseOpencodeTranscript(text).flatMap((e) => e.parts);
+    const part = parts.find((p) => p.kind === "tool");
+    // SAFETY: `find` on the `kind === "tool"` predicate returns that branch or nothing; the throw
+    // rules out nothing, so the narrowing below is what the predicate already proved.
+    if (part === undefined || part.kind !== "tool") throw new Error("no tool part in the log");
+    return part;
+  };
+
+  const one = (part: JsonValue) => line("msg_b", assistantData(), [part]);
+
+  test("a V1 edit takes its diff from metadata.diff, past the Index/--- preamble", () => {
+    // The `---`/`+++` marker lines start with `-` and `+` and sit ABOVE the first `@@`, so a parser
+    // that read them as diff lines would count two changes that never happened.
+    const diff = [
+      "Index: /repo/a.css",
+      "===================================================================",
+      "--- /repo/a.css",
+      "+++ /repo/a.css",
+      "@@ -1,2 +1,2 @@",
+      " .a {",
+      "-  gap: 2rem;",
+      "+  gap: 3.5rem;",
+    ].join("\n");
+    expect(
+      firstTool(
+        one(
+          toolPart("edit", {
+            status: "completed",
+            input: { filePath: "/repo/a.css", oldString: "2rem", newString: "3.5rem" },
+            output: "done",
+            metadata: { diff },
+          }),
+        ),
+      ).call,
+    ).toEqual({
+      kind: "edit",
+      path: "/repo/a.css",
+      added: 1,
+      removed: 1,
+      diff: [{ header: "@@ -1,2 +1,2 @@", lines: [" .a {", "-  gap: 2rem;", "+  gap: 3.5rem;"] }],
+    });
+  });
+
+  test("a V1 apply_patch reads its file list, names each file's first hunk and counts the lines", () => {
+    // V1's rows carry no `additions`/`deletions`, so the patch itself is the count. `files` outranks
+    // the `diff` beside it, which is only the first file's patch.
+    expect(
+      firstTool(
+        one(
+          toolPart("apply_patch", {
+            status: "completed",
+            input: { patch: "…" },
+            output: "done",
+            metadata: {
+              diff: "@@ -1,1 +0,0 @@\n-gone\n",
+              files: [
+                {
+                  filePath: "/repo/a.ts",
+                  relativePath: "a.ts",
+                  type: "delete",
+                  patch: "--- /repo/a.ts\n+++ /repo/a.ts\n@@ -1,1 +0,0 @@\n-gone\n",
+                },
+                {
+                  filePath: "/repo/b.ts",
+                  relativePath: "b.ts",
+                  type: "add",
+                  patch: "@@ -0,0 +1,2 @@\n+new\n+lines\n",
+                },
+              ],
+            },
+          }),
+        ),
+      ).call,
+    ).toEqual({
+      kind: "edit",
+      path: "",
+      added: 2,
+      removed: 1,
+      diff: [
+        { header: "a.ts @@ -1,1 +0,0 @@", lines: ["-gone"] },
+        { header: "b.ts @@ -0,0 +1,2 @@", lines: ["+new", "+lines"] },
+      ],
+    });
+  });
+
+  test("a V1 write against nothing is marked created, which the input alone cannot say", () => {
+    expect(
+      firstTool(
+        one(
+          toolPart("write", {
+            status: "completed",
+            input: { filePath: "/repo/new.ts", content: "x" },
+            output: "done",
+            metadata: { exists: false, filepath: "/repo/new.ts" },
+          }),
+        ),
+      ).call,
+    ).toEqual({ kind: "edit", path: "/repo/new.ts", added: 0, removed: 0, created: true });
+  });
+
+  test("a write over an existing file is not created, and still counts nothing", () => {
+    // OpenCode keeps no copy of what was there before a write, so there is no diff to fold and
+    // `added`/`removed` stay 0 rather than being invented from the input's `content`.
+    expect(
+      firstTool(
+        one(
+          toolPart("write", {
+            status: "completed",
+            input: { filePath: "/repo/a.ts", content: "x\ny\n" },
+            output: "done",
+            metadata: { exists: true, filepath: "/repo/a.ts" },
+          }),
+        ),
+      ).call,
+    ).toEqual({ kind: "edit", path: "/repo/a.ts", added: 0, removed: 0 });
+  });
+
+  test("a command keeps its exit code, on a failure as well as a success", () => {
+    expect(
+      firstTool(
+        one(
+          toolPart("bash", {
+            status: "error",
+            input: { command: "false", description: "check" },
+            error: "exit status 1",
+            metadata: { exit: 1, output: "", truncated: false },
+          }),
+        ),
+      ).call,
+    ).toEqual({ kind: "execute", command: "false", description: "check", exitCode: 1 });
+  });
+
+  test("a grep keeps its match count and a glob its path count", () => {
+    expect(
+      firstTool(
+        one(
+          toolPart("grep", {
+            status: "completed",
+            input: { pattern: "TODO", path: "/repo" },
+            output: "…",
+            metadata: { matches: 7 },
+          }),
+        ),
+      ).call,
+    ).toEqual({ kind: "search", query: "TODO", where: "/repo", hits: 7 });
+
+    expect(
+      firstTool(
+        one(
+          toolPart("glob", {
+            status: "completed",
+            input: { pattern: "**/*.ts" },
+            output: "…",
+            metadata: { count: 12 },
+          }),
+        ),
+      ).call,
+    ).toEqual({ kind: "search", query: "**/*.ts", hits: 12 });
+  });
+
+  test("a V1 refusal is `denied`, and a real failure is not", () => {
+    // Both wear `status: "error"`, so the status alone would tell the reader their command crashed
+    // when in fact they said no to it themselves. These two sentences are from a real store.
+    expect(
+      firstTool(
+        one(
+          toolPart("bash", {
+            status: "error",
+            input: { command: "git push" },
+            error: "The user rejected permission to use this specific tool call.",
+          }),
+        ),
+      ).result,
+    ).toEqual({
+      text: "The user rejected permission to use this specific tool call.",
+      isError: true,
+      denied: true,
+    });
+
+    expect(
+      firstTool(
+        one(
+          toolPart("edit", {
+            status: "error",
+            input: { filePath: "/repo/a.ts" },
+            error: "Could not find oldString in the file. It must match exactly, including whitespace.",
+          }),
+        ),
+      ).result,
+    ).toEqual({
+      text: "Could not find oldString in the file. It must match exactly, including whitespace.",
+      isError: true,
+    });
+  });
+
+  test("a V1 call interrupted by the operator is `denied` on the metadata flag alone", () => {
+    expect(
+      firstTool(
+        one(
+          toolPart("bash", {
+            status: "error",
+            input: { command: "sleep 500" },
+            error: "stopped",
+            metadata: { interrupted: true },
+          }),
+        ),
+      ).result,
+    ).toEqual({ text: "stopped", isError: true, denied: true });
+  });
+
+  test("a V2 edit reads the FileDiff list, taking the counts it is given", () => {
+    // V2 states its own `additions`/`deletions`, so they are believed over the parsed lines: the
+    // harness counted against the file it wrote.
+    expect(
+      firstTool(
+        one({
+          type: "tool",
+          id: "call_9",
+          name: "edit",
+          state: {
+            status: "completed",
+            input: { path: "/repo/a.ts", oldString: "a", newString: "b" },
+            content: [{ type: "text", text: "done" }],
+            metadata: {
+              files: [
+                {
+                  file: "/repo/a.ts",
+                  status: "modified",
+                  additions: 1,
+                  deletions: 1,
+                  patch: "@@ -1,1 +1,1 @@\n-const a = 1\n+const b = 1\n",
+                },
+              ],
+            },
+          },
+        }),
+      ).call,
+    ).toEqual({
+      kind: "edit",
+      path: "/repo/a.ts",
+      added: 1,
+      removed: 1,
+      diff: [{ header: "@@ -1,1 +1,1 @@", lines: ["-const a = 1", "+const b = 1"] }],
+    });
+  });
+
+  test("a V2 FileDiff with status `added` marks the call created", () => {
+    expect(
+      firstTool(
+        one({
+          type: "tool",
+          id: "call_9",
+          name: "write",
+          state: {
+            status: "completed",
+            input: { path: "/repo/new.ts", content: "x" },
+            content: [{ type: "text", text: "done" }],
+            metadata: {
+              files: [{ file: "/repo/new.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1,1 @@\n+x\n" }],
+            },
+          },
+        }),
+      ).call,
+    ).toEqual({
+      kind: "edit",
+      path: "/repo/new.ts",
+      added: 1,
+      removed: 0,
+      diff: [{ header: "@@ -0,0 +1,1 @@", lines: ["+x"] }],
+      created: true,
+    });
+  });
+
+  test("a V2 error record naming a permission is `denied`; one naming the tool is not", () => {
+    // V2's `error` is `{type, message}` and the type is an enum, so it is matched rather than the
+    // prose. `tool.execution` is an ordinary failure and must stay one.
+    const v2Error = (error: JsonValue) =>
+      one({
+        type: "tool",
+        id: "call_9",
+        name: "shell",
+        state: { status: "error", input: { command: "git push" }, error },
+      });
+
+    expect(firstTool(v2Error({ type: "permission.rejected", message: "no" })).result).toEqual({
+      text: "no",
+      isError: true,
+      denied: true,
+    });
+    expect(firstTool(v2Error({ type: "tool.execution", message: "command exited 1" })).result).toEqual({
+      text: "command exited 1",
+      isError: true,
+    });
+  });
+
+  test("a running call already carries its structured form and its call id", () => {
+    // The tail window opens mid-turn all the time. A call whose result has not arrived is not a call
+    // the page can refuse to draw.
+    const part = firstTool(one(toolPart("read", { status: "running", input: { filePath: "/repo/a.ts" } })));
+    expect(part.call).toEqual({ kind: "read", path: "/repo/a.ts" });
+    expect(part.id).toBe("call_1");
+    expect(part.result).toBeUndefined();
+  });
+
+  test("a tool outside the nine kinds is `other` and reads exactly as its row did", () => {
+    const part = firstTool(one(toolPart("todowrite", { status: "completed", input: { todos: [] }, output: "ok" })));
+    expect(part.call).toEqual({ kind: "other", name: "todowrite", summary: part.summary });
+  });
+});
+
+// A patch tool names no file in its input, so the classified path arrives empty and the result is
+// the only place a path exists. Verified against a real 1.18.9 store: every `apply_patch` call there
+// classifies to an empty path.
+describe("parseOpencodeTranscript: a single-file patch takes its path from the result", () => {
+  const firstCall = (text: string) => {
+    const part = parseOpencodeTranscript(text).flatMap((e) => e.parts).find((p) => p.kind === "tool");
+    // SAFETY: `find` on the `kind === "tool"` predicate returns that branch or nothing; the throw
+    // rules out nothing, so the narrowing below is what the predicate already proved.
+    if (part === undefined || part.kind !== "tool") throw new Error("no tool part in the log");
+    return part.call;
+  };
+
+  test("one file in the list names the call", () => {
+    expect(
+      firstCall(
+        line("msg_b", assistantData(), [
+          toolPart("apply_patch", {
+            status: "completed",
+            input: { patch: "…" },
+            output: "done",
+            metadata: {
+              files: [{ filePath: "/repo/a.ts", relativePath: "a.ts", type: "update", patch: "@@ -1,1 +1,1 @@\n-a\n+b\n" }],
+            },
+          }),
+        ]),
+      ),
+    ).toEqual({
+      kind: "edit",
+      path: "/repo/a.ts",
+      added: 1,
+      removed: 1,
+      diff: [{ header: "@@ -1,1 +1,1 @@", lines: ["-a", "+b"] }],
+    });
+  });
+
+  test("several files keep the empty path, and their names ride on the hunk headers", () => {
+    expect(
+      firstCall(
+        line("msg_b", assistantData(), [
+          toolPart("apply_patch", {
+            status: "completed",
+            input: { patch: "…" },
+            output: "done",
+            metadata: {
+              files: [
+                { filePath: "/repo/a.ts", relativePath: "a.ts", type: "update", patch: "@@ -1,1 +1,1 @@\n-a\n+b\n" },
+                { filePath: "/repo/b.ts", relativePath: "b.ts", type: "update", patch: "@@ -2,1 +2,1 @@\n-c\n+d\n" },
+              ],
+            },
+          }),
+        ]),
+      ),
+    ).toEqual({
+      kind: "edit",
+      path: "",
+      added: 2,
+      removed: 2,
+      diff: [
+        { header: "a.ts @@ -1,1 +1,1 @@", lines: ["-a", "+b"] },
+        { header: "b.ts @@ -2,1 +2,1 @@", lines: ["-c", "+d"] },
+      ],
+    });
+  });
+
+  test("a path the input DID name is never overwritten by the result", () => {
+    expect(
+      firstCall(
+        line("msg_b", assistantData(), [
+          toolPart("edit", {
+            status: "completed",
+            input: { filePath: "/repo/asked.ts" },
+            output: "done",
+            metadata: { files: [{ file: "/repo/other.ts", status: "modified", additions: 1, deletions: 0, patch: "@@ -0,0 +1,1 @@\n+x\n" }] },
+          }),
+        ]),
+      ),
+    ).toEqual({
+      kind: "edit",
+      path: "/repo/asked.ts",
+      added: 1,
+      removed: 0,
+      diff: [{ header: "@@ -0,0 +1,1 @@", lines: ["+x"] }],
+    });
+  });
+});
+
+
+// The live read. OpenCode is the harness whose rows MOVE, so this is where the two facts that follow
+// from it are pinned: the cursor counts `time_updated` rather than a row id, and a read therefore
+// re-emits the turn it is standing on rather than dropping a row that shares a millisecond with it.
+describe("OpencodeTranscriptSource — readSince, V1", () => {
+  async function lab() {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-opencode-since-")));
+    const root = join(base, "data");
+    await mkdir(root, { recursive: true });
+    const db = openDb(join(root, "opencode.db"), V1_SCHEMA);
+    db.run("insert into session values (?, null, 'root session', 1, 100)", [SID]);
+    return {
+      base,
+      root,
+      db,
+      /** One message row and the one text part that makes it render. */
+      turn: (id: string, created: number, updated: number, text: string) => {
+        db.run("insert into message values (?, ?, ?, ?, ?)", [id, SID, created, updated, JSON.stringify(userData(created))]);
+        db.run("insert into part values (?, ?, ?, ?, ?, ?)", [
+          `prt_${id}`,
+          id,
+          SID,
+          created,
+          updated,
+          JSON.stringify(textPart(text)),
+        ]);
+      },
+      clean: async () => {
+        db.close();
+        await rm(base, { recursive: true, force: true });
+      },
+    };
+  }
+
+  const ids = (lines: readonly string[]) => lines.flatMap((row) => parseOpencodeTranscript(row).map((e) => e.uuid));
+
+  async function opened(root: string) {
+    const src = new OpencodeTranscriptSource(root);
+    const key = await src.resolve({ kind: "id", value: SID });
+    expect(key).not.toBeNull();
+    return { src, key: key! };
+  }
+
+  test("a first read takes the turns and says the answer replaces nothing", async () => {
+    const f = await lab();
+    f.turn("msg_a", 10, 10, "hello");
+    f.turn("msg_b", 20, 30, "and again");
+    const { src, key } = await opened(f.root);
+
+    const first = await src.readSince(key, NO_CURSOR);
+    expect(ids(first.lines)).toEqual(["msg_a", "msg_b"]);
+    expect(first.reset).toBe(true);
+
+    await f.clean();
+  });
+
+  // `msg_a` comes back with it, and that is the `>=` comparison being honest rather than a bug: the
+  // cursor stands ON the newest row it saw, because a row sharing that millisecond would otherwise be
+  // lost for good. One row of overlap per read, and the caller replaces by uuid.
+  test("a resume carries the turn that arrived since, and the one it was standing on", async () => {
+    const f = await lab();
+    f.turn("msg_a", 10, 10, "hello");
+    const { src, key } = await opened(f.root);
+    const first = await src.readSince(key, NO_CURSOR);
+
+    f.turn("msg_b", 20, 30, "and again");
+    const next = await src.readSince(key, first.cursor);
+    expect(ids(next.lines)).toEqual(["msg_a", "msg_b"]);
+    expect(next.reset).toBe(false);
+
+    await f.clean();
+  });
+
+  // Not a defect, and the reason `stat` stays the pre-check: two rows can share a millisecond, so the
+  // comparison has to be `>=`, and `>=` stands still on the row it last saw. The caller replaces that
+  // turn by uuid, which it must do anyway for a reply that is still streaming.
+  test("a read with nothing new re-emits the newest turn and nothing older", async () => {
+    const f = await lab();
+    f.turn("msg_a", 10, 10, "hello");
+    f.turn("msg_b", 20, 30, "and again");
+    const { src, key } = await opened(f.root);
+    const first = await src.readSince(key, NO_CURSOR);
+
+    const again = await src.readSince(key, first.cursor);
+    expect(ids(again.lines)).toEqual(["msg_b"]);
+    expect(again.reset).toBe(false);
+
+    await f.clean();
+  });
+
+  // The clock that moves while a reply streams is the PART's, and the message row above it may not
+  // move at all. A cursor that watched only the message row would freeze a streaming turn.
+  test("a part touched while streaming brings its whole message back", async () => {
+    const f = await lab();
+    f.turn("msg_a", 10, 10, "hello");
+    f.turn("msg_b", 20, 30, "and again");
+    const { src, key } = await opened(f.root);
+    const first = await src.readSince(key, NO_CURSOR);
+
+    f.db.run("update part set time_updated = 50 where id = 'prt_msg_a'");
+    const next = await src.readSince(key, first.cursor);
+    expect(ids(next.lines)).toEqual(["msg_a", "msg_b"]);
+
+    await f.clean();
+  });
+
+  test("a first read is bounded by rows, so a long session is not composed to be thrown away", async () => {
+    const f = await lab();
+    for (let n = 1; n <= FIRST_TAIL_ROWS + 5; n++) f.turn(`msg_${String(n).padStart(4, "0")}`, n, n, `turn ${n}`);
+    const { src, key } = await opened(f.root);
+
+    const first = await src.readSince(key, NO_CURSOR);
+    expect(first.lines).toHaveLength(FIRST_TAIL_ROWS);
+    expect(ids(first.lines).at(0)).toBe("msg_0006");
+    expect(ids(first.lines).at(-1)).toBe(`msg_${String(FIRST_TAIL_ROWS + 5).padStart(4, "0")}`);
+
+    await f.clean();
+  });
+
+  // `fromStart` needs BOTH bounds to have stood down: the row limit did not bite, and the byte clip
+  // dropped nothing. The live window turns it into "load older" (journal/live.ts § hasOlder), so a
+  // wrong reading either offers turns that do not exist or hides turns that do. Counted over ROWS
+  // READ and not lines composed, which is what a bookkeeping row the reader drops would break.
+  test("a short session's first read claims the start; a long one's does not", async () => {
+    const short = await lab();
+    short.turn("msg_0001", 1, 1, "only turn");
+    const one = await opened(short.root);
+    const shortRead = await one.src.readSince(one.key, NO_CURSOR);
+    expect(shortRead.reset).toBe(true);
+    expect(shortRead.fromStart).toBe(true);
+    // A resume never claims the start, whatever it carries — and this source always re-emits the row
+    // it stands on, so the answer is non-empty and the reading still has to be false.
+    const next = await one.src.readSince(one.key, shortRead.cursor);
+    expect(next.lines.length).toBeGreaterThan(0);
+    expect(next.fromStart).toBe(false);
+    await short.clean();
+
+    const long = await lab();
+    for (let n = 1; n <= FIRST_TAIL_ROWS + 5; n++) long.turn(`msg_${String(n).padStart(4, "0")}`, n, n, `turn ${n}`);
+    const two = await opened(long.root);
+    const longRead = await two.src.readSince(two.key, NO_CURSOR);
+    expect(longRead.reset).toBe(true);
+    expect(longRead.fromStart).toBe(false);
+    await long.clean();
+  });
+
+  test("a key it cannot split reports nothing new", async () => {
+    expect(await new OpencodeTranscriptSource("/nope").readSince("/not-a-key", NO_CURSOR)).toEqual({
+      lines: [],
+      cursor: NO_CURSOR,
+      reset: false,
+      fromStart: false,
+    });
+  });
+});
+
+describe("OpencodeTranscriptSource — readSince, V2", () => {
+  const V2_SID = "ses_f34fa06cfffepZ7TTIJqHH4SiU";
+
+  async function lab() {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-opencode-since-v2-")));
+    const root = join(base, "data");
+    await mkdir(root, { recursive: true });
+    const db = openDb(join(root, "opencode.db"), V2_SCHEMA);
+    db.run("insert into session_v2 values (?, null, 'session', 1, 100)", [V2_SID]);
+    return {
+      base,
+      root,
+      db,
+      row: (id: string, type: string, seq: number, updated: number, data: JsonValue) =>
+        db.run("insert into session_message values (?, ?, ?, ?, ?, ?, ?)", [
+          id,
+          V2_SID,
+          type,
+          seq,
+          seq,
+          updated,
+          JSON.stringify(data),
+        ]),
+      clean: async () => {
+        db.close();
+        await rm(base, { recursive: true, force: true });
+      },
+    };
+  }
+
+  const ids = (lines: readonly string[]) => lines.flatMap((row) => parseOpencodeTranscript(row).map((e) => e.uuid));
+
+  test("a first read takes the turns, and a resume carries the new one", async () => {
+    const f = await lab();
+    f.row("msg_a", "user", 1, 10, v2UserData("hi", 10));
+    const src = new OpencodeTranscriptSource(f.root);
+    const key = (await src.resolve({ kind: "id", value: V2_SID }))!;
+
+    const first = await src.readSince(key, NO_CURSOR);
+    expect(ids(first.lines)).toEqual(["msg_a"]);
+    expect(first.reset).toBe(true);
+
+    f.row("msg_b", "assistant", 2, 40, v2AssistantData(20));
+    // With the row the cursor stands on, exactly as in V1.
+    expect(ids((await src.readSince(key, first.cursor)).lines)).toEqual(["msg_a", "msg_b"]);
+
+    await f.clean();
+  });
+
+  // A `system` row is read and deliberately not shown. Its clock still has to count, or every later
+  // read fetches it again — and drags the composed rows around it along too.
+  test("a row that shows nothing still moves the cursor past itself", async () => {
+    const f = await lab();
+    f.row("msg_a", "user", 1, 10, v2UserData("hi", 10));
+    f.row("msg_sys", "system", 2, 40, v2UserData("plumbing", 20));
+    const src = new OpencodeTranscriptSource(f.root);
+    const key = (await src.resolve({ kind: "id", value: V2_SID }))!;
+
+    const first = await src.readSince(key, NO_CURSOR);
+    expect(ids(first.lines)).toEqual(["msg_a"]);
+
+    // Nothing was written in between, so the only row at or past the cursor is the invisible one.
+    expect((await src.readSince(key, first.cursor)).lines).toEqual([]);
+
+    await f.clean();
+  });
+
+  test("a first read is bounded by rows in this store too", async () => {
+    const f = await lab();
+    for (let n = 1; n <= FIRST_TAIL_ROWS + 5; n++) {
+      f.row(`msg_${String(n).padStart(4, "0")}`, "user", n, n, v2UserData(`turn ${n}`, n));
+    }
+    const src = new OpencodeTranscriptSource(f.root);
+    const key = (await src.resolve({ kind: "id", value: V2_SID }))!;
+
+    const first = await src.readSince(key, NO_CURSOR);
+    expect(first.lines).toHaveLength(FIRST_TAIL_ROWS);
+    expect(ids(first.lines).at(0)).toBe("msg_0006");
+
+    await f.clean();
+  });
+});
+
+// ── patch, file and the V1 compaction role (spec M41/12) ────────────────────
+//
+// Shapes measured 2026-10-01 against the local store, READ-ONLY: 34 `patch` parts of
+// `{ hash, files }`, 5 `file` parts of `{ mime, filename, url, source }` with a `data:` url, and one
+// `compaction` part that is a marker with no prose at all. Rows are built here; no store is a fixture.
+const patchPart = (files: string[]) => ({ type: "patch", hash: "29d778d84269551f32b6739a38f8124f", files });
+const filePart = (mime: string, url: string) => ({ type: "file", mime, filename: "shot.png", url, source: undefined });
+
+describe("parseOpencodeTranscript — patch and file parts", () => {
+  test("a patch reads as one edit naming every file it touched", () => {
+    const entries = parseOpencodeTranscript(
+      line("msg_a", assistantData(), [patchPart(["/repo/.tracker/00-INDEX.md", "/repo/src/a.ts"])]),
+    );
+    expect(entries).toHaveLength(1);
+    const part = entries[0]!.parts[0]!;
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.name).toBe("patch");
+    // The basenames, because a phone column cannot hold two absolute paths.
+    expect(part.summary).toBe("00-INDEX.md, a.ts");
+    // No hunks in the row, so no counts are invented.
+    expect(part.call).toEqual({ kind: "edit", path: "/repo/.tracker/00-INDEX.md", added: 0, removed: 0 });
+  });
+
+  test("a patch with no files renders nothing", () => {
+    const entries = parseOpencodeTranscript(line("msg_a", assistantData(), [patchPart([])]));
+    expect(entries).toHaveLength(0);
+  });
+
+  test("an attached image becomes an image part", () => {
+    const entries = parseOpencodeTranscript(
+      line("msg_a", userData(), [filePart("image/png", "data:image/png;base64,AAAA")]),
+    );
+    expect(entries[0]!.parts).toEqual([
+      { kind: "image", url: "data:image/png;base64,AAAA", mimeType: "image/png" },
+    ]);
+  });
+
+  test("an http url on the agent's word never becomes a fetch the phone makes", () => {
+    const entries = parseOpencodeTranscript(
+      line("msg_a", userData(), [filePart("image/png", "http://evil.example/x.png"), textPart("look")]),
+    );
+    expect(entries[0]!.parts).toEqual([{ kind: "text", text: "look" }]);
+  });
+
+  test("a non-image attachment contributes no part", () => {
+    const entries = parseOpencodeTranscript(
+      line("msg_a", userData(), [filePart("application/pdf", "data:application/pdf;base64,AAAA"), textPart("read it")]),
+    );
+    expect(entries[0]!.parts).toEqual([{ kind: "text", text: "read it" }]);
+  });
+});
+
+describe("parseOpencodeTranscript — V1 compaction is a summary, not speech", () => {
+  test("mode compaction reads as the summary role", () => {
+    const entries = parseOpencodeTranscript(
+      line("msg_a", { ...assistantData(), mode: "compaction", agent: "compaction", summary: true }, [
+        textPart("## Objective\nThe work so far."),
+      ]),
+    );
+    expect(entries[0]!.role).toBe("summary");
+  });
+
+  test("the older summary flag reads the same way", () => {
+    const entries = parseOpencodeTranscript(
+      line("msg_a", { ...assistantData(), summary: true }, [textPart("earlier history")]),
+    );
+    expect(entries[0]!.role).toBe("summary");
+  });
+
+  test("a user turn's summary OBJECT is not a compaction", () => {
+    // V1 writes `summary: { diffs: [] }` on an ordinary user message. Reading that as a compaction
+    // would set every human turn apart from speech.
+    const entries = parseOpencodeTranscript(line("msg_a", userData(), [textPart("hi")]));
+    expect(entries[0]!.role).toBe("user");
+  });
+
+  test("an ordinary assistant turn stays speech", () => {
+    const entries = parseOpencodeTranscript(line("msg_a", assistantData(), [textPart("on it")]));
+    expect(entries[0]!.role).toBe("assistant");
   });
 });

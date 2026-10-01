@@ -7,15 +7,16 @@ import { backspaceSweep, launchLine } from "./agents/profile";
 import { CANARY_AGENTS, parseArgs } from "./args";
 import { colorAnswers, unfinishedTail } from "./client";
 import { cleanEnv } from "./herdr";
-import { MESSAGES, NARROW_DRAFT_IDS, SEND_IDS, messageById } from "./messages";
+import { JOURNAL_MESSAGE, MESSAGES, README_TOKEN, NARROW_DRAFT_IDS, SEND_IDS, messageById } from "./messages";
 import { lastPointedRow } from "./dialogs";
+import { answeredBelow } from "./scenarios";
 import { DEFAULT_SCENARIOS } from "./verdict";
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
 
 describe("parseArgs", () => {
-  test("defaults run every agent and the five M37/02 scenarios at the pane's own width", () => {
+  test("defaults run every agent and the six default scenarios at the pane's own width", () => {
     const o = parseArgs([], "/repo");
     expect(o).not.toBe("help");
     if (o === "help") return;
@@ -46,7 +47,7 @@ describe("parseArgs", () => {
   test("--dialogs adds dialogs and busy once, after whatever --scenario chose", () => {
     const all = parseArgs(["--dialogs"], "/repo");
     if (all === "help") throw new Error("unexpected help");
-    expect(all.scenarios).toEqual(["idle", "drafts", "sends", "narrow", "start-exit", "dialogs", "busy"]);
+    expect(all.scenarios).toEqual(["idle", "drafts", "sends", "journal", "narrow", "start-exit", "dialogs", "busy"]);
     const some = parseArgs(["--scenario", "idle,busy", "--dialogs"], "/repo");
     if (some === "help") throw new Error("unexpected help");
     expect(some.scenarios).toEqual(["idle", "busy", "dialogs"]);
@@ -77,6 +78,10 @@ describe("startup answers", () => {
     expect(codex.startupAnswer(["› Ask Codex to do anything"])).toBeNull();
   });
 
+  test("Codex starts without its update prompt, which would answer Update now", () => {
+    expect(codex.launch(null)).toContain("-c check_for_update_on_startup=false");
+  });
+
   test("Codex is never cleared with Ctrl+C", () => {
     expect(codex.clearFallback).toBeNull();
     for (const m of MESSAGES) expect(codex.clearKeys(m.text)).not.toContain("ctrl+c");
@@ -95,15 +100,65 @@ describe("drafts and messages", () => {
     expect(launchLine(50, "claude")).toBe("clear; stty cols 50; claude");
   });
 
-  test("fifteen message kinds, including the pasted rule", () => {
+  // A deliberate inventory. `16-read` is NOT in it: the drafts sweep types every kind of message and
+  // that one is an ordinary single line, so it belongs to the sends and not to this list (M41/05).
+  test("fifteen draft kinds, including the pasted rule", () => {
     expect(MESSAGES).toHaveLength(15);
     expect(new Set(MESSAGES.map((m) => m.id)).size).toBe(15);
     expect(messageById("15-rule").text).toContain("────");
   });
 
-  test("three sends: plain, the rule and Chinese; each asks for only OK", () => {
-    expect(SEND_IDS).toEqual(["01-plain", "15-rule", "09-cjk"]);
-    for (const id of [...SEND_IDS, ...NARROW_DRAFT_IDS]) expect(messageById(id).text).toMatch(/only OK|只回复 OK/);
+  // The rule is a SHORT reply, so a send that lands costs one short model turn. "only OK" was its
+  // wording, not its point: 16-read asks for the README token instead, because a prompt answerable
+  // without opening the file lets an agent skip the tool call the journal scenario exists to see.
+  test("four sends: plain, the rule, Chinese and the read; each asks for a one-word reply", () => {
+    expect(SEND_IDS).toEqual(["01-plain", "15-rule", "09-cjk", "16-read"]);
+    for (const id of [...SEND_IDS, ...NARROW_DRAFT_IDS]) {
+      expect(messageById(id).text).toMatch(/only OK|只回复 OK|only the token it names/);
+    }
+  });
+
+  test("the journal send cannot be answered without opening the file", () => {
+    expect(JOURNAL_MESSAGE.text).not.toMatch(/only OK/);
+    expect(JOURNAL_MESSAGE.text).toContain("token");
+  });
+
+  // The `journal` scenario needs a tool item in the agent's own log, and a Bash command would park
+  // Claude on a permission dialog nobody is there to answer (messages.ts says so at the constant).
+  test("the journal send asks for a file READ, never a shell command", () => {
+    expect(JOURNAL_MESSAGE.id).toBe("16-read");
+    expect(JOURNAL_MESSAGE.text).toContain("Read the file README.md");
+    expect(JOURNAL_MESSAGE.text).not.toMatch(/\brun\b|`|echo/i);
+  });
+});
+
+describe("answeredBelow", () => {
+  const plain = messageById("01-plain");
+  const read = JOURNAL_MESSAGE;
+
+  test("the read send expects the token the README holds, and no other message declares an answer", () => {
+    expect(read.answer).toBe(README_TOKEN);
+    for (const m of MESSAGES) expect(m.answer).toBeUndefined();
+  });
+
+  test("the token below the read prompt counts, with a bullet, a period or neither", () => {
+    for (const row of [README_TOKEN, `• ${README_TOKEN}`, `⏺ ${README_TOKEN}.`, `  ${README_TOKEN}  `]) {
+      expect(answeredBelow([`› ${read.text}`, row], read.text, read.answer)).toBe(true);
+    }
+  });
+
+  test("an OK row still answers a message with no declared answer", () => {
+    for (const row of ["OK", "• OK", "⏺ OK."]) expect(answeredBelow([`› ${plain.text}`, row], plain.text)).toBe(true);
+  });
+
+  test("a token reply does not satisfy an OK message, and OK does not satisfy the read", () => {
+    expect(answeredBelow([`› ${plain.text}`, README_TOKEN], plain.text)).toBe(false);
+    expect(answeredBelow([`› ${read.text}`, "OK"], read.text, read.answer)).toBe(false);
+  });
+
+  test("prose that holds the token mid-sentence, or a token above the prompt, does not count", () => {
+    expect(answeredBelow([`› ${read.text}`, `The token is ${README_TOKEN}, as the file says.`], read.text, read.answer)).toBe(false);
+    expect(answeredBelow([README_TOKEN, `› ${read.text}`], read.text, read.answer)).toBe(false);
   });
 });
 

@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopt Collie 1.15.0.** Chat as an opt-in pane body, Settings as four sections, the pane switcher's Place, Activity and cache orders, Copy output in the pane menu, push titles in the device's language, tool calls folded in History, the experimental tuios backend and upstream's fixes, including the Codex goal-row reading (#317) beneath the fork's headless status-row port.
+
 ## [3.5.3] - 2026-10-01
 
 **Frontend and Gateway only; no member is obliged to redeploy, and the lead alone levels.** Host rows

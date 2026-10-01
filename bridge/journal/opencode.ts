@@ -66,14 +66,41 @@
 // in `v2Role`, exactly as V1's `step-start`/`step-finish` parts are: neither is speech.
 
 import { Database } from "bun:sqlite";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import type { ResetEvent } from "../cache/claims.ts";
 import type { CacheProbe } from "../cache/engine.ts";
 import type { JsonObject, JsonValue } from "../json.ts";
+import {
+  parseWith,
+  createUnknownCounter,
+  type KnownTypes,
+  NO_CHANGE,
+  noQueue,
+  notePartType,
+  type Reduction,
+  type RowReducer,
+} from "./reduce.ts";
 import { asRecord, asText, tokenCount } from "./cache-probe.ts";
-import { containedRealpath, MAX_TRANSCRIPT_BYTES, rootList } from "./files.ts";
-import { clamp, MAX_RESULT_CHARS, MAX_TEXT_CHARS, stripAnsi, summarizeToolInput } from "./text.ts";
+import {
+  type Cursor,
+  decodeCursor,
+  encodeCursor,
+  NO_CURSOR,
+  type ReadSince,
+} from "./cursor.ts";
+import {
+  containedRealpath,
+  FIRST_TAIL_BYTES,
+  FIRST_TAIL_ROWS,
+  MAX_TRANSCRIPT_BYTES,
+  rootList,
+} from "./files.ts";
+import { clamp, MAX_RESULT_CHARS, MAX_TEXT_CHARS, oneLine, stripAnsi, summarizeToolInput } from "./text.ts";
+import { parseUnifiedDiff } from "./diff.ts";
+// The shared guard on what an image block may become — see the note at claude.ts's own import.
+import { resolveImageUrl } from "./pi.ts";
+import { classifyToolCall, type Hunk, type ToolCall } from "./tool-call.ts";
 import type {
   AgentSessionRef,
   JournalAdapter,
@@ -238,12 +265,20 @@ function parseData(raw: string | null): JsonValue {
 interface MessageRow {
   id: string;
   time_created: number;
+  /**
+   * The clock the live cursor counts. Selected by every query here and composed into no line: this
+   * column is how a read says "since", and it is not something `parse()` has any business seeing.
+   * Nullable in the schema, so every comparison goes through `coalesce`.
+   */
+  time_updated: number | null;
   data: string | null;
 }
 
 interface PartRow {
   id: string;
   message_id: string;
+  /** A part's own clock, which is the one that moves while a reply streams. See {@link MessageRow}. */
+  time_updated: number | null;
   data: string | null;
 }
 
@@ -267,21 +302,18 @@ function composeLines(db: Database, sessionId: string, store: OpencodeStore): st
   return store === "v2" ? composeLinesV2(db, sessionId) : composeLinesV1(db, sessionId);
 }
 
-/** V1: one `message` row per turn, its `part` rows joined by message id. */
-function composeLinesV1(db: Database, sessionId: string): string[] {
-  const messages = db
-    .query<MessageRow, [string]>(
-      "select id, time_created, data from message where session_id = ? order by time_created, id",
-    )
-    .all(sessionId);
-  // Ids are time-ordered (verified lexicographically monotone), so ordering by id keeps a message's
-  // parts in the order the agent emitted them without trusting a nullable timestamp.
-  const parts = db
-    .query<PartRow, [string]>(
-      "select id, message_id, data from part where session_id = ? order by id",
-    )
-    .all(sessionId);
+/**
+ * The columns every read of this store selects, whole-session or live.
+ *
+ * ONE list rather than one per query, because the composed line must not depend on which read
+ * produced it: a live read and a History read of the same turn have to be the same text, or the two
+ * paths disagree about a conversation for no reason a reader could ever find.
+ */
+const V1_MESSAGE_COLUMNS = "id, time_created, time_updated, data";
+const V1_PART_COLUMNS = "id, message_id, time_updated, data";
 
+/** V1's rows as composed lines: one per message, its parts nested. */
+function linesV1(messages: readonly MessageRow[], parts: readonly PartRow[]): string[] {
   const byMessage = new Map<string, PartRow[]>();
   for (const p of parts) {
     const list = byMessage.get(p.message_id);
@@ -297,6 +329,24 @@ function composeLinesV1(db: Database, sessionId: string): string[] {
       parts: (byMessage.get(m.id) ?? []).map((p) => ({ id: p.id, data: parseData(p.data) })),
     }),
   );
+}
+
+/** V1: one `message` row per turn, its `part` rows joined by message id. */
+function composeLinesV1(db: Database, sessionId: string): string[] {
+  const messages = db
+    .query<MessageRow, [string]>(
+      `select ${V1_MESSAGE_COLUMNS} from message where session_id = ? order by time_created, id`,
+    )
+    .all(sessionId);
+  // Ids are time-ordered (verified lexicographically monotone), so ordering by id keeps a message's
+  // parts in the order the agent emitted them without trusting a nullable timestamp.
+  const parts = db
+    .query<PartRow, [string]>(
+      `select ${V1_PART_COLUMNS} from part where session_id = ? order by id`,
+    )
+    .all(sessionId);
+
+  return linesV1(messages, parts);
 }
 
 /** The role a V2 row's `type` column stands for, or null for a row that is plumbing, not speech. */
@@ -332,6 +382,9 @@ function v2ErrorText(record: JsonObject): string {
   return error !== null && typeof error.message === "string" ? error.message : "";
 }
 
+/** See {@link V1_MESSAGE_COLUMNS} for why there is one list and not one per query. */
+const V2_COLUMNS = "id, type, time_created, time_updated, data";
+
 /**
  * V2: one `session_message` row per turn, its parts inline.
  *
@@ -346,24 +399,24 @@ function composeLinesV2(db: Database, sessionId: string): string[] {
     .query<MessageRowV2, [string]>(
       // `seq` is V2's per-session order (unique index `session_message_session_seq_idx`), so it
       // orders the turns; unlike `time_created` two rows can never share it.
-      "select id, type, time_created, data from session_message where session_id = ? order by seq",
+      `select ${V2_COLUMNS} from session_message where session_id = ? order by seq`,
     )
     .all(sessionId);
-  const lines: string[] = [];
-  for (const row of rows) {
-    const role = v2Role(row.type);
-    if (role === null) continue;
-    const record = asRecord(parseData(row.data)) ?? {};
-    lines.push(
-      JSON.stringify({
-        id: row.id,
-        ts: row.time_created,
-        data: { role, time: record.time },
-        parts: v2Parts(record).map((part, index) => ({ id: `prt_${row.id}_${index}`, data: part })),
-      }),
-    );
-  }
-  return lines;
+  return rows.map(lineV2).filter((line): line is string => line !== null);
+}
+
+
+/** One V2 row as a composed line, or null for a row that is plumbing rather than speech. */
+function lineV2(row: MessageRowV2): string | null {
+  const role = v2Role(row.type);
+  if (role === null) return null;
+  const record = asRecord(parseData(row.data)) ?? {};
+  return JSON.stringify({
+    id: row.id,
+    ts: row.time_created,
+    data: { role, time: record.time },
+    parts: v2Parts(record).map((part, index) => ({ id: `prt_${row.id}_${index}`, data: part })),
+  });
 }
 
 /**
@@ -373,16 +426,143 @@ function composeLinesV2(db: Database, sessionId: string): string[] {
 type ClippedText = { text: string; complete: boolean };
 
 function clipToCap(lines: string[]): ClippedText {
-  let bytes = 0;
-  let start = 0;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    bytes += Buffer.byteLength(lines[i]!) + 1; // +1 for the joining newline
-    if (bytes > MAX_TRANSCRIPT_BYTES) {
-      start = i + 1;
-      break;
-    }
-  }
+  const start = clipStart(lines, MAX_TRANSCRIPT_BYTES);
   return { text: lines.slice(start).join("\n"), complete: start === 0 };
+}
+
+/**
+ * Index of the oldest line that still fits under `bytes`, counting from the newest back.
+ *
+ * Split out of {@link clipToCap} for the live read, which needs the same "keep the tail" policy at
+ * its own smaller bound and needs the LINES rather than one joined text.
+ */
+function clipStart(lines: readonly string[], bytes: number): number {
+  let total = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    total += Buffer.byteLength(lines[i]!) + 1; // +1 for the joining newline
+    if (total > bytes) return i + 1;
+  }
+  return 0;
+}
+
+// ── The live read ────────────────────────────────────────────────────────────
+//
+// WHAT THE CURSOR COUNTS HERE, AND WHY IT IS NOT A ROW ID. OpenCode MUTATES a row while a reply
+// streams — `part.time_updated` in V1, `session_message.time_updated` in V2, measured at +497 ms
+// over five streaming seconds on 2026-09-22 — so "what is new" is not "which rows were added". It is
+// "which rows were TOUCHED", and the only column that answers that is the clock. A row id cursor
+// would report a streaming reply once, at its first word, and never again.
+//
+// SO A LIVE READ RE-EMITS, BY DESIGN. The comparison is `>=`, not `>`: two rows can share a
+// millisecond, and `>` would drop a row written in the same millisecond as the cursor for good,
+// since nothing later would ever bring it back. `>=` re-emits the newest row instead, which costs
+// one row and is what the caller must handle anyway — it is holding a half-streamed reply under the
+// same id. The idle cost is nothing, because `stat` is the pre-check: a session whose count and
+// newest touch did not move is never read at all.
+
+/** What one live read got out of the database. */
+interface SinceRows {
+  lines: string[];
+  /** The newest `time_updated` among the rows READ, including any the role filter dropped. */
+  position: number;
+  /**
+   * How many rows the query returned, shown or not — the LIMIT's own verdict.
+   *
+   * It answers `fromStart` and nothing else: a reset that came back under its limit has reached the
+   * session's first message, so there is nothing older to offer. Rows rather than lines, because V2
+   * drops bookkeeping rows on the way to a line and a short line list would then claim a start the
+   * session does not have.
+   */
+  read: number;
+}
+
+/** The newest touch across some rows, or `fallback` when none of them carried one. */
+function newestTouch(rows: readonly { time_updated: number | null }[], fallback: number): number {
+  let newest = fallback;
+  for (const row of rows) if ((row.time_updated ?? 0) > newest) newest = row.time_updated ?? 0;
+  return newest;
+}
+
+/** V1's live read: the messages a cursor has not seen, or the newest `limit` when it holds none. */
+function composeSinceV1(db: Database, sessionId: string, at: number | null, limit: number): SinceRows {
+  const messages =
+    at === null
+      ? db
+          .query<MessageRow, [string, number]>(
+            `select ${V1_MESSAGE_COLUMNS} from message where session_id = ? order by time_created desc, id desc limit ?`,
+          )
+          .all(sessionId, limit)
+          .toReversed()
+      : db
+          .query<MessageRow, [string, number, string, number, number]>(
+            // EITHER end of a message may have moved: the message row's own clock, or one of its
+            // parts', which is the one that ticks while the reply streams. The whole message is
+            // re-composed with all its parts either way, because a caller replacing a turn by uuid
+            // needs the whole turn, not the piece that changed.
+            `select ${V1_MESSAGE_COLUMNS} from message where session_id = ?
+               and (coalesce(time_updated, 0) >= ?
+                    or id in (select message_id from part where session_id = ? and coalesce(time_updated, 0) >= ?))
+             order by time_created, id limit ?`,
+          )
+          .all(sessionId, at, sessionId, at, limit);
+
+  // The parts of exactly the messages selected above. A placeholder per id rather than a second copy
+  // of the selection: the ids are already in hand, the list is bounded by `limit`, and repeating the
+  // predicate is how the two halves of one read start disagreeing.
+  const ids = messages.map((m) => m.id);
+  const parts =
+    ids.length === 0
+      ? []
+      : db
+          .query<PartRow, string[]>(
+            `select ${V1_PART_COLUMNS} from part where session_id = ? and message_id in (${ids.map(() => "?").join(",")}) order by id`,
+          )
+          .all(sessionId, ...ids);
+
+  return {
+    lines: linesV1(messages, parts),
+    position: newestTouch(parts, newestTouch(messages, at ?? 0)),
+    read: messages.length,
+  };
+}
+
+/** V2's live read. Its parts are inline, so one row's own clock is the whole answer. */
+function composeSinceV2(db: Database, sessionId: string, at: number | null, limit: number): SinceRows {
+  const rows =
+    at === null
+      ? db
+          .query<MessageRowV2, [string, number]>(
+            `select ${V2_COLUMNS} from session_message where session_id = ? order by seq desc limit ?`,
+          )
+          .all(sessionId, limit)
+          .toReversed()
+      : db
+          .query<MessageRowV2, [string, number, number]>(
+            `select ${V2_COLUMNS} from session_message where session_id = ? and coalesce(time_updated, 0) >= ? order by seq limit ?`,
+          )
+          .all(sessionId, at, limit);
+
+  return {
+    lines: rows.map(lineV2).filter((line): line is string => line !== null),
+    // Over ALL rows read, not only the ones that composed a line. A `system` or `idle` row is read
+    // and deliberately not shown; leaving its clock out of the cursor would make every later read
+    // fetch it again for ever.
+    position: newestTouch(rows, at ?? 0),
+    read: rows.length,
+  };
+}
+
+/** Both generations' live read, behind the one store decision the rest of this module makes once. */
+function composeSince(
+  db: Database,
+  sessionId: string,
+  store: OpencodeStore,
+  at: number | null,
+  limit: number,
+): SinceRows {
+  return store === "v2"
+    ? composeSinceV2(db, sessionId, at, limit)
+    : composeSinceV1(db, sessionId, at, limit);
 }
 
 /**
@@ -413,6 +593,133 @@ function toolErrorText(state: JsonObject): string {
   return toolOutputText(state);
 }
 
+/**
+ * An errored call that is a REFUSAL, not a failure.
+ *
+ * OpenCode marks both with `status: "error"`, so the status alone cannot tell "the command exited 1"
+ * from "the person said no" — the same problem Claude's `is_error` has, and the text is again the
+ * only answer. The first two phrasings are the ones a real store holds (opencode 1.18.9, 398
+ * completed and 23 errored tool parts, read 2026-09-29); the rest are the ones the session-stream
+ * prototype met on 1.18.32 and 2.0.12. A phrasing this misses degrades to `isError`, the old
+ * behaviour, which is why the list may be short without being wrong.
+ */
+const REFUSED_TEXT =
+  /rejected permission|dismissed this question|specified a rule which prevents|execution aborted|permission denied|user declined/i;
+
+/**
+ * V2's `error.type` is an enum, not prose (`ToolStateError`, 2.0.12), so a substring match on it is
+ * safe where the same match on a message would claim "connection aborted" as somebody's refusal.
+ */
+const REFUSED_TYPE = /permission|abort|interrupt|declin|reject|dismiss/i;
+
+/** True when an errored call was stopped by a person rather than by the tool. */
+function isRefusal(state: JsonObject): boolean {
+  const metadata = asRecord(state.metadata);
+  if (metadata !== null && metadata.interrupted === true) return true;
+  // V1 writes the error as a STRING, so prose is all there is to read.
+  if (typeof state.error === "string") return REFUSED_TEXT.test(state.error);
+  // V2 writes `{type, message}`, and the type is the stronger signal of the two.
+  const error = asRecord(state.error);
+  if (error === null) return false;
+  if (typeof error.type === "string" && REFUSED_TYPE.test(error.type)) return true;
+  return typeof error.message === "string" && REFUSED_TEXT.test(error.message);
+}
+
+
+/**
+ * Fold a file-changing call's patch out of `state.metadata`, where the two generations DISAGREE.
+ *
+ * V1 (1.18.9) writes ONE unified-diff string in `diff` for an `edit`, and for an `apply_patch`
+ * writes that same string PLUS a `files` list of `{filePath, relativePath, type, patch}` with no
+ * counts of its own. V2 (2.0.12) writes a FileDiff list in `files` instead —
+ * `{file, patch, additions, deletions, status}` — so there the counts are given.
+ *
+ * `files` therefore outranks `diff`: it is the multi-file truth in both generations, while V1's
+ * `diff` beside it is only the first file's patch.
+ */
+function enrichEdit(call: Extract<ToolCall, { kind: "edit" }>, metadata: JsonObject): void {
+  const hunks: Hunk[] = [];
+  let added = 0;
+  let removed = 0;
+  let created = false;
+  const files = Array.isArray(metadata.files) ? metadata.files : null;
+  if (files !== null) {
+    for (const entry of files) {
+      const file = asRecord(entry);
+      if (file === null) continue;
+      const parsed = parseUnifiedDiff(typeof file.patch === "string" ? file.patch : "");
+      // With more than one file in one call the hunk headers no longer say which file they belong
+      // to, so the first hunk of each carries its name. V2 spells it `file`, V1 `relativePath`.
+      const name =
+        typeof file.file === "string"
+          ? file.file
+          : typeof file.relativePath === "string"
+            ? file.relativePath
+            : "";
+      const first = parsed.hunks[0];
+      if (files.length > 1 && first !== undefined && name !== "") first.header = `${name} ${first.header}`.trim();
+      hunks.push(...parsed.hunks);
+      added += typeof file.additions === "number" ? file.additions : parsed.added;
+      removed += typeof file.deletions === "number" ? file.deletions : parsed.removed;
+    }
+    // V2 spells a new file `status: "added"`, V1's apply_patch rows `type: "add"`. Only a single-file
+    // call can say it: a batch that created one file among five did not create the call's subject.
+    const only = files.length === 1 ? asRecord(files[0]) : null;
+    if (only !== null && (only.status === "added" || only.type === "add")) created = true;
+    // A patch tool names no file in its INPUT — verified on a real store, an `apply_patch` call's
+    // classified path is empty — so a single-file patch takes its path from the result. A patch over
+    // several files keeps the empty path and is named by its hunk headers instead, because the one
+    // sentence that would cover them is a phrase, and the bridge composes no user-facing prose.
+    if (call.path === "" && only !== null) {
+      const path = typeof only.file === "string" ? only.file : typeof only.filePath === "string" ? only.filePath : "";
+      if (path !== "") call.path = path;
+    }
+  } else if (typeof metadata.diff === "string") {
+    const parsed = parseUnifiedDiff(metadata.diff);
+    hunks.push(...parsed.hunks);
+    added = parsed.added;
+    removed = parsed.removed;
+  }
+  // A write against nothing is a NEW file, and V1 says so on the write itself (`exists: false`).
+  if (metadata.exists === false) created = true;
+  if (hunks.length > 0) call.diff = hunks;
+  if (hunks.length > 0 || added > 0 || removed > 0) {
+    call.added = added;
+    call.removed = removed;
+  }
+  if (created) call.created = true;
+  // NOT filled: the diff of a `write`, which OpenCode records nowhere — it keeps the new content in
+  // the INPUT and no copy of what was there before. Computing one from the input would be this
+  // module inventing a result rather than reading one, and `added`/`removed` staying 0 says honestly
+  // that the harness counted nothing.
+}
+
+/**
+ * Enrich a classified call from its `state`, which is where OpenCode records what the call actually
+ * DID rather than what it was asked to do.
+ *
+ * MUTATES `call`, the same in-place fold `claude.ts` does and for the same reason: the part it sits
+ * on is already built. Only the metadata keys verified on a real store are read — `exit`, `diff`,
+ * `files`, `exists`, `matches`, `count` — and both generations keep all but the patch in one place.
+ */
+function enrichCall(call: ToolCall, state: JsonObject): void {
+  const metadata = asRecord(state.metadata);
+  if (metadata === null) return;
+  if (call.kind === "edit") {
+    enrichEdit(call, metadata);
+  } else if (call.kind === "execute") {
+    const exit = metadata.exit;
+    if (typeof exit === "number" && Number.isFinite(exit)) call.exitCode = exit;
+  } else if (call.kind === "search") {
+    // `matches` is grep's count of matching lines; `count` is glob's count of paths.
+    const hits = typeof metadata.matches === "number" ? metadata.matches : metadata.count;
+    if (typeof hits === "number" && Number.isFinite(hits)) call.hits = hits;
+  }
+  // NOT filled: a read's range. V1's `metadata.display` names the lines the tool actually returned,
+  // which can be narrower than the ones asked for, and `classifyToolCall` has already set `range`
+  // from the input. Two answers to one field is worse than one answer, so the input's wins.
+}
+
 /** Map one part's `data` json onto a renderable part. Null for anything we don't model. */
 export function opencodePart(data: JsonValue | undefined): TranscriptPart | null {
   if (data === null || data === undefined || typeof data !== "object" || Array.isArray(data)) return null;
@@ -428,25 +735,68 @@ export function opencodePart(data: JsonValue | undefined): TranscriptPart | null
     return text.trim() === "" ? null : { kind: "thinking", ...clamp(text, MAX_TEXT_CHARS) };
   }
 
+  if (d.type === "patch") {
+    // What OpenCode records about an edit it made OUTSIDE a tool call: `{ hash, files }`, with
+    // ABSOLUTE paths and no diff at all (34 rows in the local store, every one of that shape). So it
+    // becomes an `edit` call with no counts, which is the same thing `classifyToolCall` produces for
+    // every harness's edit before its result row arrives. `added`/`removed` stay 0 because the row
+    // carries no hunks to count, and `hash` is not a diff — it is a snapshot id.
+    //
+    // ONE PART PER PATCH, not one per file, and the summary names them all. A patch is one action the
+    // agent took; splitting it into five rows would read as five edits.
+    const files = Array.isArray(d.files) ? d.files.filter((f): f is string => typeof f === "string") : [];
+    if (files.length === 0) return null;
+    const summary = oneLine(files.map((f) => basename(f)).join(", "));
+    const call: ToolCall = { kind: "edit", path: files[0] ?? "", added: 0, removed: 0 };
+    return { kind: "tool", name: "patch", summary, call };
+  }
+
+  if (d.type === "file") {
+    // An attachment: `{ mime, filename, url, source }`, and `url` is a `data:` payload (5 rows here,
+    // all png). The shared guard decides whether it may be drawn — an `http://` url on an agent's
+    // word never becomes a fetch the phone makes (journal/pi.ts § resolveImageUrl).
+    //
+    // A NON-IMAGE mime contributes nothing, and that is deliberate rather than pending: no such row
+    // exists in the store, and `TranscriptPart` has no attachment kind to put one in, so a rendering
+    // for it would be invented rather than read.
+    const mime = typeof d.mime === "string" ? d.mime : undefined;
+    const url = typeof d.url === "string" ? resolveImageUrl(d.url, mime) : null;
+    if (url === null) return null;
+    // Assigned, never conditionally spread: an unnamed mime type leaves the key OFF.
+    const part: Extract<TranscriptPart, { kind: "image" }> = { kind: "image", url };
+    if (mime !== undefined) part.mimeType = mime;
+    return part;
+  }
+
   if (d.type === "tool") {
     const rawState = d.state;
     const state: JsonObject =
       rawState !== null && rawState !== undefined && typeof rawState === "object" && !Array.isArray(rawState)
         ? rawState
         : {};
-    const part: Extract<TranscriptPart, { kind: "tool" }> = {
-      kind: "tool",
-      // V1 spells the tool `tool`; V2 spells it `name` (verified on 2.0.12).
-      name: typeof d.tool === "string" ? d.tool : typeof d.name === "string" ? d.name : "tool",
-      summary: summarizeToolInput(state.input),
-    };
+    // V1 spells the tool `tool`; V2 spells it `name` (verified on 2.0.12).
+    const name = typeof d.tool === "string" ? d.tool : typeof d.name === "string" ? d.name : "tool";
+    const summary = summarizeToolInput(state.input);
+    const call = classifyToolCall(name, state.input, summary);
+    const part: Extract<TranscriptPart, { kind: "tool" }> = { kind: "tool", name, summary, call };
+    // The CALL's own id, which is what a permission dialog names — V1 carries it as `callID` on the
+    // part (every tool part in a real 1.18.9 store has one), V2 as the content block's `id`. The
+    // part's own row id is deliberately not a fallback: it addresses the part, not the call.
+    const id = typeof d.callID === "string" ? d.callID : typeof d.id === "string" ? d.id : "";
+    if (id !== "") part.id = id;
     if (state.status === "completed") {
       const out = stripAnsi(toolOutputText(state));
       if (out !== "") part.result = clamp(out, MAX_RESULT_CHARS);
+      enrichCall(call, state);
     } else if (state.status === "error") {
       // The error text lives in `error`, falling back to whatever output also made it.
       const err = stripAnsi(toolErrorText(state));
       part.result = { ...clamp(err, MAX_RESULT_CHARS), isError: true };
+      // A refusal is not a failure. `isError` stays, so a view that only knows it reads as before,
+      // and `denied` is what tells the two apart.
+      if (isRefusal(state)) part.result.denied = true;
+      // An errored call still records what it got as far as doing: a non-zero exit, a partial patch.
+      enrichCall(call, state);
     }
     // pending/running: the call is on screen, its result simply hasn't happened yet.
     return part;
@@ -458,6 +808,32 @@ export function opencodePart(data: JsonValue | undefined): TranscriptPart | null
 }
 
 /**
+ * Every role and part type this adapter has MET, rendered or dropped (`reduce.ts` § "what a reducer
+ * reports about what it could not read"). Anything else is counted and named.
+ *
+ * Measured on 2026-09-30 over the local `opencode.db` (456 messages, 1,588 parts), which is the whole
+ * inventory it carries. `rows` is empty BY FORMAT: a composed line is `{id, ts, data, parts}` and has
+ * no row-kind field, so `data.role` is the only thing that says what a row is.
+ *
+ * `patch` and `file` are READ: a patch becomes an `edit` call naming the files it touched, and a file
+ * becomes an `image` part when its `url` survives the shared guard. Both were listed here while they
+ * were dropped, which is why the tally never counted them.
+ *
+ * `compaction` IS STILL DROPPED, on a reading rather than for want of work. Re-measured 2026-10-01:
+ * the one row in that store is `{ auto, tail_start_id }` — a MARKER with no prose, whose message is
+ * not in the store at all — so there is nothing in it to render. The compaction's actual summary is a
+ * different row, and it now reads as one: see the `isCompaction` line in the reducer. A divider drawn
+ * from this marker would be a shape `TranscriptPart` does not have, invented rather than read.
+ *
+ * `step-start` and `step-finish` are the turn bookkeeping `opencodePart` declines by name.
+ */
+const OPENCODE_KNOWN: KnownTypes = {
+  rows: [],
+  roles: ["user", "assistant", "summary"],
+  parts: ["text", "reasoning", "tool", "step-start", "step-finish", "patch", "file", "compaction"],
+};
+
+/**
  * Parse composed OpenCode JSONL into oldest-first turns. PURE — no fs, no clock.
  *
  * `uuid` is the MESSAGE ID: OpenCode gives every message a stable primary key, so unlike Codex there
@@ -465,21 +841,50 @@ export function opencodePart(data: JsonValue | undefined): TranscriptPart | null
  * adapter skips them — the byte cap clips the head line mid-object by construction.
  */
 export function parseOpencodeTranscript(text: string): TranscriptEntry[] {
-  const entries: TranscriptEntry[] = [];
+  return parseWith(createOpencodeReducer(), text);
+}
 
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
+/**
+ * The same reading, one row at a time (see `reduce.ts`).
+ *
+ * STATELESS BY FORMAT, so `changed` is always empty and there is no map to carry. A composed line
+ * holds a WHOLE message: V1 joins that message's `part` rows onto it (`composeLinesV1`), V2 has its
+ * parts inline in `data.content`, and a tool's RESULT sits on the call's own part — `state.output` in
+ * V1, `state.content` in V2 — never in a row of its own. So no row can fold anything into a turn this
+ * reducer already handed over, and `push` can never need to report a `changed` uuid. Claude and pi
+ * both need one; this format gives them nothing to attach to.
+ *
+ * WHAT MOVES INSTEAD — the fact a live window has to be designed against. OpenCode MUTATES a part row
+ * in place while a reply streams (`part.time_updated` / `session_message.time_updated` climb, see
+ * `sessionMeta`), and `composeLines` groups parts by message id. Within ONE composition each message
+ * id therefore appears exactly once — `message.id` and `session_message.id` are primary keys — but the
+ * NEXT composition of the same live session carries that same id again with more parts on it. A
+ * reducer fed those successive compositions emits the line twice, BOTH TIMES AS `added`, because it
+ * keeps no memory of what it has seen and could not tell the two apart if it did. A caller holding the
+ * first copy is holding a shorter version of a turn it is about to be handed again: it must replace by
+ * `uuid`, never append. Solving that is the cursor's and the live window's job, not this module's; the
+ * job here is to state it truthfully so the design above it is built on the truth.
+ */
+export function createOpencodeReducer(): RowReducer {
+  // The one piece of state this reducer keeps: what it met and had no branch for.
+  const unknown = createUnknownCounter(OPENCODE_KNOWN);
+
+  // A nested `function` rather than a method on the returned object: the body below is the old loop
+  // body at the indentation it always had, so this refactor is readable as the move it is.
+  function push(line: string): Reduction {
+    const entries: TranscriptEntry[] = [];
+    if (line.trim() === "") return NO_CHANGE;
     let parsed: JsonValue;
     try {
       // SAFETY: `JSON.parse` output IS a JsonValue by construction — and this line was composed by
       // `composeLines` above, so it is our own JSON.stringify round-tripping.
       parsed = JSON.parse(line) as JsonValue;
     } catch {
-      continue;
+      return NO_CHANGE; // a torn row, or the head line a byte cap clipped mid-object
     }
     // A line that parses to a scalar (or a bare `null`, which used to reach `.data` and THROW) has
     // no row shape — skip it exactly as an unparseable line is skipped.
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return NO_CHANGE;
     const row: OpencodeLine = parsed;
     const rawData = row.data;
     const data: JsonObject =
@@ -490,19 +895,33 @@ export function parseOpencodeTranscript(text: string): TranscriptEntry[] {
     // codex.ts's `developer` guard: an unmodelled role is plumbing, and rendering it as speech would
     // put words in the operator's mouth. `summary` is V2's compaction role (composeLinesV2), which the
     // transcript vocabulary renders set apart from speech.
-    if (data.role !== "user" && data.role !== "assistant" && data.role !== "summary") continue;
-    const role = data.role;
+    // At the READ, not in the branch that declined (`reduce.ts` § `createUnknownCounter`).
+    unknown.role(data.role);
+    if (data.role !== "user" && data.role !== "assistant" && data.role !== "summary") return NO_CHANGE;
+    // V1 HAS NO `summary` ROLE. It writes the compaction's own summary as an ASSISTANT message wearing
+    // `mode: "compaction"` (or the older `summary: true`), and its prose sits in an ordinary `text`
+    // part — so it already rendered, but as speech. V2 writes `type: "compaction"` and `v2Role`
+    // already reads that as `summary`. This is the same reading for the older store, so a compaction
+    // is set apart from speech on both (types.ts § TranscriptEntry).
+    const role = data.role === "assistant" && isCompaction(data) ? "summary" : data.role;
 
     const parts: TranscriptPart[] = [];
     if (Array.isArray(row.parts)) {
       for (const p of row.parts) {
+        // A `continue` over the BLOCK, not the row: the message's other parts still count.
         if (p === null || typeof p !== "object" || Array.isArray(p)) continue;
+        // Counted for EVERY part, before `opencodePart`'s answer: a null there means either a part
+        // type it declines by name or an empty one of a type it renders, and the known list is what
+        // tells those from a type nobody has looked at.
+        notePartType(unknown, p.data);
         const part = opencodePart(p.data);
         if (part !== null) parts.push(part);
       }
     }
-    // Every part was bookkeeping (a lone step-start/step-finish message) — nothing to render.
-    if (parts.length === 0) continue;
+    // Every part was bookkeeping (a lone step-start/step-finish message) — nothing to render. Here
+    // that is `NO_CHANGE` outright, where Claude's reducer must still answer with its `changed` set:
+    // this format folds nothing, so a row with nothing to show did nothing at all.
+    if (parts.length === 0) return NO_CHANGE;
 
     entries.push({
       uuid: typeof row.id === "string" ? row.id : "",
@@ -510,9 +929,14 @@ export function parseOpencodeTranscript(text: string): TranscriptEntry[] {
       role,
       parts,
     });
+    // Built directly rather than through `reduction()`: with `changed` always empty, both of that
+    // helper's rules — drop `""`, drop a uuid `added` already carries — have nothing to do, and
+    // `NO_CHANGE.changed` is the same frozen empty list every skip above hands back.
+    return { added: entries, changed: NO_CHANGE.changed };
   }
 
-  return entries;
+  // No queue in this format's log: see `RowReducer.queued`.
+  return { push, unknowns: unknown.tally, queued: noQueue };
 }
 
 /** ISO timestamp from `data.time.created`, falling back to the message row's `time_created`. */
@@ -587,6 +1011,54 @@ export class OpencodeTranscriptSource implements TranscriptSource {
       }) ?? empty
     );
   }
+
+  /**
+   * What is new in this session since `cursor` (see "the live read" above for what it counts).
+   *
+   * A read that cannot be resumed answers with the newest {@link FIRST_TAIL_ROWS} turns, clipped to
+   * {@link FIRST_TAIL_BYTES}, and `reset: true`. Two bounds rather than one because the query has to
+   * be bounded as well as its answer: composing ten thousand turns to throw nine thousand away is
+   * the cost this method exists to remove.
+   *
+   * An unreadable database or a session that vanished between resolve and read HOLDS the caller's
+   * cursor and reports nothing new, exactly as a file whose `stat` lost a race does. Blanking a
+   * screen over a locked database would be a worse answer than an unchanged one.
+   */
+  async readSince(key: string, cursor: Cursor): Promise<ReadSince> {
+    const held: ReadSince = { lines: [], cursor, reset: false, fromStart: false };
+    const parts = splitOpencodeKey(key);
+    if (parts === null) return { lines: [], cursor: NO_CURSOR, reset: false, fromStart: false };
+    const at = decodeCursor(cursor, "updated", key);
+    return (
+      withDb(parts.dbPath, (db) => {
+        // ONE store decision per read, like `load`: the rows and the position must come from the
+        // same generation.
+        const store = sessionStore(db, parts.sessionId);
+        if (store === null) return held;
+        const { lines, position, read } = composeSince(
+          db,
+          parts.sessionId,
+          store,
+          at,
+          FIRST_TAIL_ROWS,
+        );
+        const next = encodeCursor("updated", key, position);
+        // The clip only ever applies to a reset. Clipping an INCREMENTAL read would drop rows off the
+        // head of the delta while the cursor moved past them, which loses a turn for good; the
+        // incremental read is bounded by `limit` instead, and what does not fit arrives next tick.
+        if (at !== null) return { lines, cursor: next, reset: false, fromStart: false };
+        const start = clipStart(lines, FIRST_TAIL_BYTES);
+        // BOTH bounds have to have stood down for this to be the session's start: the row limit did
+        // not bite, and the byte clip dropped nothing. Either one biting means an older turn exists.
+        return {
+          lines: lines.slice(start),
+          cursor: next,
+          reset: true,
+          fromStart: start === 0 && read < FIRST_TAIL_ROWS,
+        };
+      }) ?? held
+    );
+  }
 }
 
 /** OpenCode's journal adapter. `agent` matches the Herdr snapshot's `agent` string. */
@@ -596,6 +1068,7 @@ export function opencodeJournal(roots: string | readonly string[]): JournalAdapt
     agent: "opencode",
     source,
     parse: parseOpencodeTranscript,
+    reducer: createOpencodeReducer,
     cacheProbe: (ref) => opencodeCacheProbe(source, ref),
   };
 }

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { ThreadSidebar } from "./agent-sidebar";
 import { paneRowKey } from "@/lib/hosts";
 import { currentPins, setPinned } from "@/lib/pins";
-import { fixtureAgents, fixtureCrewAgents, fixtureServers } from "@/test/handlers";
+import { fixtureAgents, fixtureCrewAgents, fixtureServers, fixtureShellPanes } from "@/test/handlers";
 import type { AgentView, Launcher } from "@/lib/types";
 
 const idleAgent: AgentView = {
@@ -591,5 +591,153 @@ describe("ThreadSidebar — pinned panes", () => {
     render(<ThreadSidebar agents={agents} currentPaneKey="" onSelect={vi.fn()} pins={pins} />);
     const heading = screen.getByRole("heading", { level: 3, name: "Pinned" });
     expect(within(heading).queryByRole("button")).toBeNull();
+  });
+});
+
+// ── PLACE OR ACTIVITY (ADR 0071) ────────────────────────────────────────────────────────────────
+// Place is the default and is the order every other case in this file already pins. What is pinned
+// here is the alternative and, above all, its freeze: ADR 0063 allows an order the operator asks for
+// ONLY while nothing moves under a thumb, so a poll that changes a clock must change no row.
+describe("ThreadSidebar: the order toggle", () => {
+  const timed = (pane: AgentView, lastActiveAt: number): AgentView => ({ ...pane, lastActiveAt });
+  // webapp oldest, collie newest, sandbox between them — so place order and activity order disagree
+  // on every row, and a passing case cannot be one that happens to match the arrival order.
+  const herd = [timed(fixtureAgents[0]!, 100), timed(fixtureAgents[1]!, 900), timed(idleAgent, 500)];
+  const names = () => [...document.querySelectorAll("button[id^='switch-row-']")].map((b) => b.textContent);
+  const headings = () =>
+    screen.getAllByRole("heading", { level: 3 }).map((h) => h.firstChild?.textContent ?? h.textContent);
+
+  it("draws no control when the caller cannot store the answer", () => {
+    render(<ThreadSidebar agents={herd} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(screen.queryByRole("radiogroup", { name: "Pane order" })).toBeNull();
+  });
+
+  it("offers Place, Activity and Cache, with Place selected by default", () => {
+    render(<ThreadSidebar agents={herd} currentPaneKey="" onSelect={vi.fn()} onOrderChange={vi.fn()} />);
+    const group = screen.getByRole("radiogroup", { name: "Pane order" });
+    expect(within(group).getByRole("radio", { name: "Place" })).toBeChecked();
+    expect(within(group).getByRole("radio", { name: "Activity" })).not.toBeChecked();
+    // Glyphs only on this surface, so the NAME has to come off the aria-label. Hiding a word from
+    // the eye must not hide it from a screen reader.
+    expect(within(group).getByRole("radio", { name: "Cache" })).not.toBeChecked();
+  });
+
+  // The sheet is a phone screen. The summary line and the order control shared two full rows plus a
+  // heading before the first pane, which was most of what the sheet had to give (2026-09-30).
+  it("keeps the alarm and the order control on one row", () => {
+    render(<ThreadSidebar agents={herd} currentPaneKey="" onSelect={vi.fn()} onOrderChange={vi.fn()} />);
+    const group = screen.getByRole("radiogroup", { name: "Pane order" });
+    const row = group.parentElement!;
+    // The alarm is the one button on that row that is not a segment of the control.
+    const summary = [...row.querySelectorAll("button")].find((b) => b.getAttribute("role") !== "radio");
+    expect(summary).toBeDefined();
+    expect(summary!.textContent).toMatch(/needs you/i);
+  });
+
+  it("puts the cache that dies soonest first, and names the order in the heading", () => {
+    const now = Date.now();
+    const cached = (pane: AgentView, msLeft: number | null): AgentView => ({
+      ...pane,
+      cache:
+        msLeft === null
+          ? undefined
+          : { state: "warm", ttlSeconds: 300, ruleId: "r", confidence: "documented", expiresAt: now + msLeft },
+    });
+    render(
+      <ThreadSidebar
+        agents={[cached(herd[0]!, 600_000), cached(herd[1]!, null), cached(herd[2]!, 60_000)]}
+        currentPaneKey=""
+        onSelect={vi.fn()}
+        order="cache"
+        onOrderChange={vi.fn()}
+      />,
+    );
+    // The heading is what the compact glyphs buy back: it says which order is on screen, in words.
+    expect(headings()).toEqual([expect.stringContaining("Going cold first")]);
+    expect(names()).toEqual([
+      expect.stringContaining("sandbox"),
+      expect.stringContaining("webapp"),
+      // No reading at all, so it ranks last rather than first.
+      expect.stringContaining("collie"),
+    ]);
+  });
+
+  it("reports a tap and changes nothing itself", async () => {
+    // The pref lives in the caller (use-dash-prefs), so the toggle asks and does not decide: this
+    // sheet and the Settings row write the one stored value.
+    const user = userEvent.setup();
+    const onOrderChange = vi.fn();
+    render(<ThreadSidebar agents={herd} currentPaneKey="" onSelect={vi.fn()} onOrderChange={onOrderChange} />);
+    await user.click(screen.getByRole("radio", { name: "Activity" }));
+    expect(onOrderChange).toHaveBeenCalledWith("activity");
+    expect(headings()).toEqual(["webapp", "collie", "sandbox"]);
+  });
+
+  it("keeps the workspace sections in place order", () => {
+    render(<ThreadSidebar agents={herd} currentPaneKey="" onSelect={vi.fn()} order="place" onOrderChange={vi.fn()} />);
+    expect(headings()).toEqual(["webapp", "collie", "sandbox"]);
+  });
+
+  it("folds the sections into one list, newest first, in activity order", () => {
+    render(
+      <ThreadSidebar
+        agents={herd}
+        shellPanes={fixtureShellPanes}
+        currentPaneKey=""
+        onSelect={vi.fn()}
+        order="activity"
+        onOrderChange={vi.fn()}
+      />,
+    );
+    // ONE heading, and the workspace ones are gone: a workspace heading cannot answer "when did
+    // anything last happen here".
+    // One heading, carrying the row count the way Shells and Launch carry theirs.
+    expect(headings()).toEqual([expect.stringContaining("Newest first")]);
+    expect(names()).toEqual([
+      expect.stringContaining("codex"),
+      expect.stringContaining("sandbox"),
+      expect.stringContaining("webapp"),
+      // The shell arrives with no clock at all, so it ranks last rather than nowhere.
+      expect.stringContaining("collie"),
+    ]);
+    // The Shells fold goes with the sections, and the tail it protected against is what now sinks.
+    expect(screen.queryByRole("heading", { level: 3, name: /Shells/ })).toBeNull();
+  });
+
+  it("holds its order while a pane's clock moves under it", () => {
+    // THE FREEZE. A poll that reports the oldest pane as the newest must repaint it and move nothing:
+    // on this sheet a row that shifts under a moving thumb opens another terminal.
+    const props = { currentPaneKey: "", onSelect: vi.fn(), order: "activity" as const, onOrderChange: vi.fn() };
+    const { rerender } = render(<ThreadSidebar {...props} agents={herd} />);
+    const before = names();
+    rerender(<ThreadSidebar {...props} agents={[timed(fixtureAgents[0]!, 9_000), herd[1]!, herd[2]!]} />);
+    expect(names()).toEqual(before);
+  });
+
+  it("re-reads the clock when the operator taps, and only then", () => {
+    const props = { currentPaneKey: "", onSelect: vi.fn(), onOrderChange: vi.fn() };
+    const { rerender } = render(<ThreadSidebar {...props} agents={herd} order="place" />);
+    rerender(<ThreadSidebar {...props} agents={herd} order="activity" />);
+    expect(names()[0]).toContain("codex");
+  });
+
+  it("still leads with Pinned in activity order", () => {
+    // ADR 0070 outranks the sort: a pin is a place the operator chose, and this sheet is often opened
+    // to reach exactly that row.
+    let now = 0;
+    setPinned(herd[0]!, true, herd, ++now);
+    render(
+      <ThreadSidebar
+        agents={herd}
+        currentPaneKey=""
+        onSelect={vi.fn()}
+        pins={currentPins()}
+        order="activity"
+        onOrderChange={vi.fn()}
+      />,
+    );
+    expect(headings()).toEqual(["Pinned", expect.stringContaining("Newest first")]);
+    // The oldest pane of the three, first on the sheet, because it is pinned.
+    expect(names()[0]).toContain("webapp");
   });
 });

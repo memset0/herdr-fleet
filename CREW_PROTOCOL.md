@@ -242,6 +242,7 @@ the same handlers. There is no second handler set, no second semantic, and no He
 | `GET` | `/crew/v1/snapshot` | `GET /api/snapshot` (`bridge/server.ts:177`) | **merged** — the only merged route |
 | `GET` | `/crew/v1/pane/:id` | `GET /api/pane/:id` (`:276`) | proxied byte-for-byte |
 | `GET` | `/crew/v1/pane/:id/history` | `GET …/history` (`:277`) | proxied byte-for-byte |
+| `GET` | `/crew/v1/pane/:id/chat` | `GET …/chat` | proxied byte-for-byte — additive-optional (§7.1), added 2026-09-30 (M41/08). The live half of `history`: the same session log on the member that owns the pane, asked "anything after this?" rather than "show me this". The query (`after`, `before`, `limit`) rides through untouched, and `if-none-match` is already forwarded (§6), so the peer answers its own 304 and the lead re-emits it. A read, so it is attempted against a stale member rather than refused (§10.3). A lead that predates it never calls it, and a peer that predates it answers **404** to a lead that does — which the phone must read as "update this member", never as an empty session |
 | `GET` | `/crew/v1/pane/:id/changes` | `GET …/changes` | proxied byte-for-byte — additive-optional (§7.1). Read-only git over the folder of the pane's WORKSPACE on the machine that owns it (ADR 0065); the query (`depth`, `nested`, `repo`, `path`, and `view=commit` for the repo's last commit) rides through untouched. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
 | `GET` | `/crew/v1/workspace/:id/changes` | `GET …/workspace/:id/changes` | proxied byte-for-byte — additive-optional (§7.1). The same list asked by workspace rather than by pane (ADR 0065), with the same query. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
 | `POST` | `/crew/v1/pane/:id/reply` | `POST …/reply` (`:279`) | forwarded |
@@ -280,7 +281,7 @@ peers (§4).
 answering build:
 
 ```json
-{ "protocol": 1,
+{ "protocol": 2,
   "member": "peer-7f3a2c",
   "version": "1.0.0-alpha.11",
   "warrantGeneration": 3,
@@ -424,7 +425,7 @@ Every request on a crew link, and every response:
 | `Authorization: Bearer <crew-secret>` | request | The crew-wide shared secret (§8). Required on every request including `hello`. |
 | `X-Crew-Protocol: 1` | both | Protocol version. Required on every request **and** every response (§7). |
 | `X-Crew-Member: <member-id>` | both | Who is speaking. On a request, the lead's id; on a response, the peer's. Informational — identity is proven by the pinned certificate, never by this header. |
-| `X-Crew-Device: <device-id>` | request | The operator's device identity, forwarded for the peer's audit trail (§12). Absent when the lead's device gate is off. |
+| `X-Crew-Device: <device-id>` | request | The operator's device identity, forwarded for the peer's audit trail (§12). Absent when the lead's device gate is off. Printable ASCII as itself, any other id in RFC 8187 form (§12). |
 | `X-Crew-Preflight: fresh` | request | **Optional**, added 2026-09-04 (§19). On `GET /crew/v1/snapshot` only: a REQUEST that the answering member re-run its own `collie update --check --local` before it answers. `fresh` is the only value with meaning; anything else reads as absent. A member that ignores it is a **correct member** — its answer is then simply older, and `asOf` says so. Honoured at most once per `PREFLIGHT_TTL_MS` per member. |
 | `X-Crew-Lead-Release: <x.y.z>` | request | **Optional**, added 2026-09-04 (§20). On `GET /crew/v1/snapshot` only: the bare version the LEAD is itself running, sent only while that version is a strict release and the lead's own health gate has settled it. Absent means the lead is on a dev or prerelease build, or is mid-run — and absent means the receiving member does nothing. It is a statement about the sender and carries no ref, no URL and no command. |
 | `X-Crew-Update-Turn: <member-name>;<run-id>` | request | **Optional**, added 2026-09-04 (§20). On `GET /crew/v1/snapshot` only: who may take that release now, and the id of the `UpdateRun` the operator confirmed on the lead. Sent to **at most one member at a time**. A member ignores a turn that does not name itself. Absent means it is not this member's turn. |
@@ -1450,7 +1451,7 @@ bound port count**, **the absence of a second timer / peer sweep at runtime**, a
 payload** for a primary-session alert. Those four are the integration harness's charter; everything
 else in the table is covered by the unit baseline today.
 
-> **Status 2026-08-07 — the harness landed (`bridge/crew/harness.test.ts`); three of the four rows
+> **Status 2026-08-07 — the harness landed (`integration/crew-harness.test.ts`, moved there 2026-10-01); three of the four rows
 > are now measured.**
 >
 > - **Status codes per route** — measured on a live solo instance: `/api/snapshot`, `/api/config` and
@@ -1477,6 +1478,14 @@ happened on the peer's terminals.
 - The lead forwards `X-Crew-Device: <device-id>` — the operator's device identity as the lead resolved
   it via `deviceAuth()` (`bridge/server.ts:1216-1223`). Absent when the lead's device gate is off,
   matching how the field is omitted rather than nulled today (`bridge/audit.ts:55-61`).
+- **The value's encoding** (#324). A device id of printable ASCII travels as itself, byte for byte.
+  Any other id (a pairing label like `폰`) travels in RFC 8187's ext-value form, `UTF-8''` followed
+  by the percent-encoded UTF-8, and the peer decodes it before its allowlist and its audit line see
+  it (`encodeDeviceHeader` / `decodeDeviceHeader`, `bridge/crew/admission.ts`). An ASCII id that
+  itself starts with `UTF-8''` is sent encoded, so the form never reads two ways. Additive inside
+  protocol version 2: no value that crossed the link before changes, and a peer that predates the
+  form reads it as an unknown device, the closed case. Before this, such an id never left the lead,
+  because a header value must be a ByteString.
 - **The header is trusted because the crew link authenticated it**, not because it was sent. It is
   meaningful only on an admitted crew request (§8.1) — exactly the trust basis `COLLIE_DEVICE_HEADER`
   already rests on for a co-located proxy (`bridge/server.ts:1216-1223`).

@@ -172,6 +172,107 @@ describe("parseCodexTranscript", () => {
     });
   });
 
+  // The structured `call`, which sits BESIDE `name`/`summary` and never replaces either. `arguments`
+  // is a JSON string, so the classifier gets it parsed while the summary keeps its own reading.
+  test("a shell call carries a structured execute call and its call_id", () => {
+    const entries = parseCodexTranscript(
+      item({
+        type: "function_call",
+        name: "shell",
+        arguments: JSON.stringify({ command: ["bash", "-lc", "ls -la"], workdir: "/repo" }),
+        call_id: "call_1",
+      }),
+    );
+    expect(entries[0]!.parts[0]).toEqual({
+      kind: "tool",
+      name: "shell",
+      summary: "bash -lc ls -la",
+      id: "call_1",
+      call: { kind: "execute", command: "bash -lc ls -la" },
+    });
+  });
+
+  test("a tool outside the nine kinds degrades to `other`, keeping its own line", () => {
+    const entries = parseCodexTranscript(
+      item({ type: "function_call", name: "update_plan", arguments: JSON.stringify({ plan: [] }), call_id: "c" }),
+    );
+    expect(entries[0]!.parts[0]).toMatchObject({
+      kind: "tool",
+      name: "update_plan",
+      call: { kind: "other", name: "update_plan" },
+    });
+  });
+
+  // Malformed arguments lose the structure and keep the sentence — the classifier reads an empty
+  // input rather than being handed the raw string.
+  test("malformed arguments still classify, on an empty input", () => {
+    const entries = parseCodexTranscript(
+      item({ type: "function_call", name: "shell", arguments: '{"command": ["bash"', call_id: "c" }),
+    );
+    expect(entries[0]!.parts[0]).toMatchObject({ call: { kind: "execute", command: "" } });
+  });
+
+  // `metadata.exit_code` is the ONE structured fact the output row holds (153 of the 296 rows on a
+  // real machine), and it rides in the raw `output` string that `codexToolOutput` unwraps away.
+  test("the output's metadata.exit_code folds onto the execute call", () => {
+    const entries = parseCodexTranscript(
+      [
+        item({ type: "function_call", name: "shell", arguments: '{"command":["bash","-lc","false"]}', call_id: "c" }),
+        item({
+          type: "function_call_output",
+          call_id: "c",
+          output: JSON.stringify({ output: "", metadata: { exit_code: 2, duration_seconds: 0.4 } }),
+        }),
+      ].join("\n"),
+    );
+    expect(entries[0]!.parts[0]).toMatchObject({ call: { kind: "execute", exitCode: 2 } });
+  });
+
+  test.each([
+    ["no metadata at all", JSON.stringify({ output: "total 0\n", metadata: {} })],
+    ["a bare non-JSON output", "Plan updated"],
+  ])("%s leaves the exit code absent rather than guessing one", (_label, output) => {
+    const entries = parseCodexTranscript(
+      [
+        item({ type: "function_call", name: "shell", arguments: '{"command":["bash"]}', call_id: "c" }),
+        item({ type: "function_call_output", call_id: "c", output }),
+      ].join("\n"),
+    );
+    const part = entries[0]!.parts[0]!;
+    // Absent, not `undefined`: a key holding `undefined` would survive this compare.
+    expect(part.kind === "tool" ? part.call : null).toEqual({ kind: "execute", command: "bash" });
+  });
+
+  // Codex records no error flag on an output row, so a failure and a success are the same shape and
+  // `isError` is never set. A refusal is different: Codex names it in the text.
+  test.each([
+    ["a rejected exec", "exec command rejected by user"],
+    ["a rejected patch", "patch rejected by user"],
+    ["an interrupted command", "aborted by user after 30.6s"],
+    ["a refusal by the operator's own rule", "writing outside of the project; rejected by user approval settings"],
+  ])("%s marks the result denied", (_label, output) => {
+    const entries = parseCodexTranscript(
+      [
+        item({ type: "function_call", name: "shell", arguments: '{"command":["bash"]}', call_id: "c" }),
+        item({ type: "function_call_output", call_id: "c", output }),
+      ].join("\n"),
+    );
+    expect(entries[0]!.parts[0]).toMatchObject({ result: { text: output, denied: true } });
+  });
+
+  // A sandbox block is an ordinary error: nobody was asked and nobody refused.
+  test("a sandbox block is not a refusal", () => {
+    const output = "failed in sandbox LinuxSeccomp with execution error: sandbox denied exec error, exit code: 2";
+    const entries = parseCodexTranscript(
+      [
+        item({ type: "function_call", name: "shell", arguments: '{"command":["bash"]}', call_id: "c" }),
+        item({ type: "function_call_output", call_id: "c", output }),
+      ].join("\n"),
+    );
+    const part = entries[0]!.parts[0]!;
+    expect(part.kind === "tool" ? part.result : null).toEqual({ text: output });
+  });
+
   test("an orphan output is kept unattached so the window never drops output", () => {
     const entries = parseCodexTranscript(
       item({ type: "function_call_output", call_id: "gone", output: '{"output":"stranded"}' }),
@@ -284,5 +385,116 @@ describe("CodexTranscriptSource — several sessions roots", () => {
       `${b}/2026/08/11/rollout-2026-08-11T10-00-00-${B}.jsonl`,
     );
     await rm(base, { recursive: true, force: true });
+  });
+});
+
+// ── custom_tool_call: the shape codex reaches for most (spec M41/12) ─────────
+//
+// Rows built here from the grammar measured on 2026-10-01 over 53 `custom_tool_call` and 52
+// `custom_tool_call_output` rows on one host. No recorded rollout is used as a fixture, ever: a real
+// one carries the contents of every file the agent read.
+const customCall = (callId: string, script: string) =>
+  item({ type: "custom_tool_call", id: "ct_1", status: "completed", call_id: callId, name: "exec", input: script });
+
+const customOut = (callId: string, output: JsonValue) =>
+  item({ type: "custom_tool_call_output", id: "cto_1", call_id: callId, output });
+
+const PREAMBLE = "Script completed\nWall time 0.1 seconds\nOutput:\n";
+
+describe("parseCodexTranscript — custom_tool_call", () => {
+  test("a custom call and its list output read as one structured execute", () => {
+    const entries = parseCodexTranscript(
+      [meta(), customCall("c1", "cat README.md"), customOut("c1", [
+        { type: "input_text", text: PREAMBLE },
+        { type: "input_text", text: "# canary\n" },
+        { type: "input_text", text: "exit_code=0" },
+      ])].join("\n"),
+    );
+    expect(entries).toHaveLength(1);
+    const part = entries[0]!.parts[0]!;
+    expect(part.kind).toBe("tool");
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.name).toBe("exec");
+    expect(part.summary).toBe("cat README.md");
+    // `exec` is not `execute`: without the name in tool-call.ts's table this classified as `other`,
+    // and the command never showed.
+    expect(part.call).toEqual({ kind: "execute", command: "cat README.md", exitCode: 0 });
+    // The preamble is dropped and the trailer is read, so the result is the output and nothing else.
+    expect(part.result?.text).toBe("# canary\n");
+  });
+
+  test("a non-zero trailer is the exit code", () => {
+    const entries = parseCodexTranscript(
+      [meta(), customCall("c1", "touch /x"), customOut("c1", [
+        { type: "input_text", text: PREAMBLE },
+        { type: "input_text", text: "touch: cannot touch '/x': Read-only file system\n" },
+        { type: "input_text", text: "1" },
+      ])].join("\n"),
+    );
+    const part = entries[0]!.parts[0]!;
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.call).toEqual({ kind: "execute", command: "touch /x", exitCode: 1 });
+    expect(part.result?.text).toBe("touch: cannot touch '/x': Read-only file system\n");
+  });
+
+  test("a two-block output is all output — a number there is not an exit code", () => {
+    const entries = parseCodexTranscript(
+      [meta(), customCall("c1", "echo 42"), customOut("c1", [
+        { type: "input_text", text: PREAMBLE },
+        { type: "input_text", text: "42" },
+      ])].join("\n"),
+    );
+    const part = entries[0]!.parts[0]!;
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.result?.text).toBe("42");
+    expect(part.call).toEqual({ kind: "execute", command: "echo 42" });
+  });
+
+  test("a bare string output still reads, and a refusal is a refusal", () => {
+    const entries = parseCodexTranscript(
+      [meta(), customCall("c1", "rm -rf /"), customOut("c1", "aborted by user after 8.5s")].join("\n"),
+    );
+    const part = entries[0]!.parts[0]!;
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.result?.text).toBe("aborted by user after 8.5s");
+    expect(part.result?.denied).toBe(true);
+  });
+
+  test("a preamble with nothing under it is kept — the script is still running", () => {
+    const entries = parseCodexTranscript(
+      [meta(), customCall("c1", "sleep 60"), customOut("c1", [
+        { type: "input_text", text: "Script running with cell ID 4\nWall time 31.0 seconds\nOutput:\n" },
+        { type: "input_text", text: "" },
+      ])].join("\n"),
+    );
+    const part = entries[0]!.parts[0]!;
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.result?.text).toContain("Script running with cell ID 4");
+  });
+
+  test("an unrecognised preamble leaves the text whole rather than losing a line of it", () => {
+    const entries = parseCodexTranscript(
+      [meta(), customCall("c1", "ls"), customOut("c1", [
+        { type: "input_text", text: "Some future header\n" },
+        { type: "input_text", text: "a.ts\n" },
+      ])].join("\n"),
+    );
+    const part = entries[0]!.parts[0]!;
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.result?.text).toBe("Some future header\n\na.ts\n");
+  });
+
+  test("a JSON-object input is still taken as itself", () => {
+    const entries = parseCodexTranscript(
+      [meta(), item({
+        type: "custom_tool_call",
+        call_id: "c1",
+        name: "read",
+        input: JSON.stringify({ path: "/repo/a.ts" }),
+      })].join("\n"),
+    );
+    const part = entries[0]!.parts[0]!;
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.call).toEqual({ kind: "read", path: "/repo/a.ts" });
   });
 });
