@@ -94,6 +94,38 @@ verbatim (decision 9). The merge commit records the merge and its conflict resol
 fork-side migration follows as its own commit, then the port review. The merge commit knowingly fails
 the root typecheck on one line (decision 2) until the migration commit.
 
+#### Phase A record (2026-10-01)
+
+- Baseline before the change: hooks active (`core.hooksPath` = `scripts/git-hooks`); `main` level with
+  `origin/main` at `16f04a11` (v3.5.3); `bun run test:fork` 20 pass and the boundary check clean
+  (653 owned, 95 invasive paths); `bun test ./fleet` 598 pass, 0 fail.
+- Planning commit `bfad2a1d`. Preflight `check-fork.ts --target v1.15.0 --allow-active-changes`
+  (authorization above), output kept in the session scratchpad: tag object
+  `1dba7de34afa9334a185f85e8f1d1947f4f723c3`, commit `ef01b0ed4d9271897413984075aa6d2060ffcf2a`, 19
+  disturbed, 6 untouched, no moved declared path, no owned path occupied, this change listed as
+  authorized. `merge-tree` and the opened merge both gave the 16 predicted paths.
+- Merge commit `da8bdeb4` (parents `bfad2a1d`, `ef01b0ed`), committed with every pre-commit guard
+  armed (no hatch was needed this time). `bun install` changed neither lockfile. Version files 3.5.3,
+  `check-version.sh` ✓, `COLLIE_CHANGELOG.md` `cmp`-clean against `v1.15.0`'s changelog, `CLAUDE.md`
+  the symlink. The merge's root typecheck fails only on the helper's nullable return (decision 2).
+
+#### Phase B record (2026-10-01)
+
+- Migration commit `f23db661` (`feat(web)`, one `CHANGELOG.md` line): the helper's non-null signature
+  and its new case, the Chat gate with two new fork cases (the terminal-surface case fails with the gate
+  removed, checked in the rehearsal), the Display sheet's Close control in the fork's manual-fit cases,
+  the uncapped section shell, the scoped index test, the 1.15.0 credit case and `tuios: false`,
+  `docs/herdr-fleet.md` (Resize in the terminal view's Display sheet; Settings → Alerts), and the
+  `FORK.toml` path and anchor moves.
+- Review commit `c638497d`: `[upstream]` → `v1.15.0`, 25 entries at `reviewed = "v1.15.0"`, the
+  `UPSTREAM.md` row. Its message says seven entries were adapted; the table in decision 12 is the
+  record, and it lists six (the commit is not amended).
+- Results: both typechecks clean; full-tree `oxlint` clean; `bun run test:fork` clean (661 owned, 96
+  invasive); `check-private-facts` ✓; `check-version.sh` ✓; every bun `verify` file across all entries
+  passes file by file (57 files), as do `scripts/check-tag.test.sh` and `scripts/pre-commit.test.sh`;
+  `bun test ./fleet` 598 / 0; web vitest over every entry's `verify` file plus the touched components
+  and the whole harness tree: 88 files, 10488 pass, 32 expected fail, 47 todo, 0 fail.
+
 Resolutions, by conflicted path:
 
 | path | resolution |
@@ -245,9 +277,44 @@ release is cut in phase C after the full gates; read the remote's newest tag fir
 As before: the push ends this repository's part, and the change is archived only after the operator
 reports the lead and the remaining member running 3.6.0, lead first.
 
-### 12. Entry review against `v1.15.0` (task group 7)
+### 12. Entry review against `v1.15.0` (task group 5)
 
-Filled in by the port review.
+Every entry's anchors were re-read in the merged tree against `v1.15.0` and its `verify` list run (the
+browser-tier files excepted, which stay with phase C). One path returned to upstream's version
+(`web/src/components/composer.test.tsx`), two joined (`web/src/components/settings-page.tsx`,
+`web/src/routes/settings.test.tsx`); no entry was dropped. `reviewed = "v1.15.0"` on all 25.
+
+| entry | decision | reason |
+| --- | --- | --- |
+| `native-row-actions-menu-port` | keep | strips untouched; the sheet's new header-only rows (Copy output, the Chat switch) are never offered on a strip pill |
+| `unnarrowed-pack-rows-port` | keep | loaders auto-merged beside upstream's chat-window additions |
+| `repository-guidance` | keep | symlink contract held; upstream's agreement changes not imported (decision 8) |
+| `fake-network-fleet-routes` | keep | Fleet's 404 beside upstream's new chat-window handlers |
+| `lint-parse-boundary` | keep | upstream's tuios client joined the same override; the fork's five files unchanged |
+| `plugin-identity` | keep | identity, actions and build steps still read only from the manifest |
+| `downstream-version-line` | adapt | the 1.15.0 credit case reads `COLLIE_CHANGELOG.md` (decision 6) |
+| `fleet-build-port` | keep | `./fleet` in the test script beside upstream's moved `test:crew` |
+| `native-agent-favorites-port` | keep | dictionaries carry upstream's new keys beside the fork's |
+| `pane-surface-route-port` | adapt | route wrap unchanged beside the new Settings routes; Chat gated off under the terminal surface (decision 4, carried on `agent-chat.tsx`) |
+| `native-pane-content-port` | keep | `renderContent` untouched; it now also replaces the Chat body |
+| `authenticated-navigation-cache` | adapt | push-title import beside the font import; network-first unchanged, both e2e skips stay pending phase C |
+| `native-manual-pane-fit-port` | adapt | `chat` joins the route union; Resize in the Display sheet's terminal rows (decision 3); composer port shrinks to its registrations and record control; composer test returns to upstream |
+| `declined-centred-history-column` | keep | history gained the abandoned-branch filter, no width claim |
+| `native-navigation-sidebars-port` | adapt | fork group heads the Settings index; section shell uncapped; index test scoped; switcher orders not followed by the rails (decisions 5, 7) |
+| `native-pane-chrome-port` | keep | `paper` port intact beside upstream's agent-start bloom |
+| `native-webfont-port` | keep | `maple` anchors intact beside Chat's own font size |
+| `private-fact-guard-port` | keep | upstream widened guard A's test-only filter; guard E and the lint skip line untouched |
+| `composer-voice-rank-port` | keep | the record-control cases auto-merged and pass; docs moved to Settings → Alerts upstream |
+| `fork-gate-in-ci` | keep | one step plus fetch depth beside upstream's new integration job |
+| `no-automatic-release-publication` | keep | `release.yml` untouched; still `workflow_dispatch` only |
+| `upstream-removal-clock` | keep | reads `v1.15.0` now; the `collie pack` alias stays until 2.0.0 |
+| `downstream-docs` | keep | upstream's two new docs pages join the registry; the one exclusion unchanged |
+| `claude-manage-hint-port` | keep | upstream verifies Claude Code 2.1.285 and does not read the 2.1.286 hint |
+| `codex-headless-status-row-port` | adapt | layered on `splitPaintedGaps` (decision 2); still temporary |
+
+Boundary check after the review: `bun scripts/check-fork.ts` reports 661 owned and 96 invasive paths,
+no unclassified path, no stale anchor, no lagging entry; the retention check passes and
+`COLLIE_CHANGELOG.md` is byte-identical to `v1.15.0`'s `CHANGELOG.md`.
 
 ## Risks / Trade-offs
 

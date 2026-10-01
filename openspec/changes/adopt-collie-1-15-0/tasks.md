@@ -1,37 +1,37 @@
 ## 1. Ground
 
-- [ ] 1.1 Verify the local hooks are installed (`core.hooksPath` = `scripts/git-hooks`), `main` is level with `origin/main`, and record the pre-change results of `bun run test:fork` and `bun test ./fleet`
-- [ ] 1.2 Commit this change's planning artifacts on their own (explicit paths, planning-only); verify `openspec validate adopt-collie-1-15-0 --strict` passes and `git status --porcelain --untracked-files=all` prints nothing
+- [x] 1.1 Verify the local hooks are installed (`core.hooksPath` = `scripts/git-hooks`), `main` is level with `origin/main`, and record the pre-change results of `bun run test:fork` and `bun test ./fleet`
+- [x] 1.2 Commit this change's planning artifacts on their own (explicit paths, planning-only); verify `openspec validate adopt-collie-1-15-0 --strict` passes and `git status --porcelain --untracked-files=all` prints nothing
 
 ## 2. Preflight
 
-- [ ] 2.1 With the owner's authorization recorded in design decision 1, run `bun scripts/check-fork.ts --target v1.15.0 --allow-active-changes` and save its output to the scratchpad; verify tag object `1dba7de34afa9334a185f85e8f1d1947f4f723c3`, commit `ef01b0ed4d9271897413984075aa6d2060ffcf2a`, 19 disturbed, 6 untouched, no moved declared path, no owned-path collision, this change listed
-- [ ] 2.2 Re-run `git merge-tree --write-tree --name-only HEAD v1.15.0`; verify the 16 conflicted paths match design.md's table, each attributed to its entry; stop and escalate any unattributed path
+- [x] 2.1 With the owner's authorization recorded in design decision 1, run `bun scripts/check-fork.ts --target v1.15.0 --allow-active-changes` and save its output to the scratchpad; verify tag object `1dba7de34afa9334a185f85e8f1d1947f4f723c3`, commit `ef01b0ed4d9271897413984075aa6d2060ffcf2a`, 19 disturbed, 6 untouched, no moved declared path, no owned-path collision, this change listed
+- [x] 2.2 Re-run `git merge-tree --write-tree --name-only HEAD v1.15.0`; verify the 16 conflicted paths match design.md's table, each attributed to its entry; stop and escalate any unattributed path
 
 ## 3. Merge
 
-- [ ] 3.1 `git merge --no-ff --no-commit 'v1.15.0^{commit}'`; verify `MERGE_HEAD` is `ef01b0ed4d9271897413984075aa6d2060ffcf2a` and every conflicted path is a predicted one
-- [ ] 3.2 Contract paths: `CLAUDE.md` stays the symlink (no `CLAUDE.md~…` left); `CHANGELOG.md` ours plus one bold-lead Unreleased line; `package.json`, `web/package.json`, `herdr-plugin.toml` keep `3.5.3` and this product's identity; `COLLIE_CHANGELOG.md` is `v1.15.0`'s changelog; verify `bash scripts/check-version.sh` prints `✓` and `cmp` against `git show v1.15.0:CHANGELOG.md` is clean
-- [ ] 3.3 Code paths per design decision 1's table (crew/server union with `chat`, composer and its test upstream's, Display slot and Resize row in the sheet, settings index with the fork group, worker imports, Codex normaliser on `splitPaintedGaps`); verify no conflict marker remains in any of the 16 paths
-- [ ] 3.4 `bun install` at the root and in `web/`; verify neither lockfile changes
-- [ ] 3.5 Commit the merge with `git commit -F` (no pathspec — the merge exception); verify `git log -1 --format=%P` names the previous `main` head and `ef01b0ed4d9271897413984075aa6d2060ffcf2a`
+- [x] 3.1 `git merge --no-ff --no-commit 'v1.15.0^{commit}'`; verify `MERGE_HEAD` is `ef01b0ed4d9271897413984075aa6d2060ffcf2a` and every conflicted path is a predicted one
+- [x] 3.2 Contract paths: `CLAUDE.md` stays the symlink (no `CLAUDE.md~…` left); `CHANGELOG.md` ours plus one bold-lead Unreleased line; `package.json`, `web/package.json`, `herdr-plugin.toml` keep `3.5.3` and this product's identity; `COLLIE_CHANGELOG.md` is `v1.15.0`'s changelog; verify `bash scripts/check-version.sh` prints `✓` and `cmp` against `git show v1.15.0:CHANGELOG.md` is clean
+- [x] 3.3 Code paths per design decision 1's table (crew/server union with `chat`, composer and its test upstream's, Display slot and Resize row in the sheet, settings index with the fork group, worker imports, Codex normaliser on `splitPaintedGaps`); verify no conflict marker remains in any of the 16 paths
+- [x] 3.4 `bun install` at the root and in `web/`; verify neither lockfile changes
+- [x] 3.5 Commit the merge with `git commit -F` (no pathspec — the merge exception); verify `git log -1 --format=%P` names the previous `main` head and `ef01b0ed4d9271897413984075aa6d2060ffcf2a`
 
 ## 4. Fork-side migration
 
-- [ ] 4.1 Codex helper (decision 2): non-null signature, suite updated with the upstream-cut pair case; verify `cd web && bunx vitest run src/lib/harness` passes and the root typecheck is clean again
-- [ ] 4.2 Chat gate (decision 4): `chatOffered` requires no content renderer; fork cases for the terminal surface with Chat chosen and for Resize absent from Chat's rows; the fork's manual-fit cases close the Display sheet by its Close control; verify `cd web && bunx vitest run src/components/agent-chat` passes and the terminal-surface case fails with the gate removed
-- [ ] 4.3 Settings (decision 5): `settings-page.tsx` loses its cap and header claim; upstream's index test counts only Collie's controls; verify `cd web && bunx vitest run src/routes/settings src/components/fleet-settings` passes
-- [ ] 4.4 Upstream-test collisions (decision 6): the 1.15.0 credit case reads `COLLIE_CHANGELOG.md`; the capability test expects `tuios: false`; verify `bun test scripts/release-notes.test.ts fleet/manual-pane-fit/capability.test.ts` passes
-- [ ] 4.5 Docs: `docs/herdr-fleet.md` places Resize in the terminal view's Display sheet and names Settings → Alerts; one `CHANGELOG.md` line; `FORK.toml` paths and anchors moved with the boundary (settings-page, settings test, composer anchor, composer test dropped, Codex anchor, release-notes reason); commit with an explicit pathspec
+- [x] 4.1 Codex helper (decision 2): non-null signature, suite updated with the upstream-cut pair case; verify `cd web && bunx vitest run src/lib/harness` passes and the root typecheck is clean again
+- [x] 4.2 Chat gate (decision 4): `chatOffered` requires no content renderer; fork cases for the terminal surface with Chat chosen and for Resize absent from Chat's rows; the fork's manual-fit cases close the Display sheet by its Close control; verify `cd web && bunx vitest run src/components/agent-chat` passes and the terminal-surface case fails with the gate removed
+- [x] 4.3 Settings (decision 5): `settings-page.tsx` loses its cap and header claim; upstream's index test counts only Collie's controls; verify `cd web && bunx vitest run src/routes/settings src/components/fleet-settings` passes
+- [x] 4.4 Upstream-test collisions (decision 6): the 1.15.0 credit case reads `COLLIE_CHANGELOG.md`; the capability test expects `tuios: false`; verify `bun test scripts/release-notes.test.ts fleet/manual-pane-fit/capability.test.ts` passes
+- [x] 4.5 Docs: `docs/herdr-fleet.md` places Resize in the terminal view's Display sheet and names Settings → Alerts; one `CHANGELOG.md` line; `FORK.toml` paths and anchors moved with the boundary (settings-page, settings test, composer anchor, composer test dropped, Codex anchor, release-notes reason); commit with an explicit pathspec
 
 ## 5. Review every entry and record the boundary
 
-- [ ] 5.1 Set `[upstream]` to `v1.15.0`, tag object `1dba7de34afa9334a185f85e8f1d1947f4f723c3`, commit `ef01b0ed4d9271897413984075aa6d2060ffcf2a`; verify `bun scripts/check-fork.ts` reports no unclassified path and no stale anchor
-- [ ] 5.2 Review the 19 disturbed entries one at a time — keep, adapt, replace or drop — and run each entry's `verify` list (browser-tier files excepted, which stay with phase C); verify every listed test passes
-- [ ] 5.3 Review the 6 untouched entries for a reason upstream made unnecessary; verify each is deliberately kept, adapted or dropped
-- [ ] 5.4 Advance `reviewed = "v1.15.0"` on every remaining entry and record the decisions table in design decision 12; verify the boundary check reports no lagging entry
-- [ ] 5.5 Add the `3.6.0` → `1.15.0` row to `UPSTREAM.md` and update its "currently corresponds to" lines; verify no version file moved
-- [ ] 5.6 Verify `bun run test:fork`, `bun scripts/check-private-facts.ts`, `bun run typecheck`, `cd web && bun run typecheck`, `bun run lint` and `bun test ./fleet` pass; commit `chore(fork): review every port against Collie v1.15.0` with an explicit pathspec
+- [x] 5.1 Set `[upstream]` to `v1.15.0`, tag object `1dba7de34afa9334a185f85e8f1d1947f4f723c3`, commit `ef01b0ed4d9271897413984075aa6d2060ffcf2a`; verify `bun scripts/check-fork.ts` reports no unclassified path and no stale anchor
+- [x] 5.2 Review the 19 disturbed entries one at a time — keep, adapt, replace or drop — and run each entry's `verify` list (browser-tier files excepted, which stay with phase C); verify every listed test passes
+- [x] 5.3 Review the 6 untouched entries for a reason upstream made unnecessary; verify each is deliberately kept, adapted or dropped
+- [x] 5.4 Advance `reviewed = "v1.15.0"` on every remaining entry and record the decisions table in design decision 12; verify the boundary check reports no lagging entry
+- [x] 5.5 Add the `3.6.0` → `1.15.0` row to `UPSTREAM.md` and update its "currently corresponds to" lines; verify no version file moved
+- [x] 5.6 Verify `bun run test:fork`, `bun scripts/check-private-facts.ts`, `bun run typecheck`, `cd web && bun run typecheck`, `bun run lint` and `bun test ./fleet` pass; commit `chore(fork): review every port against Collie v1.15.0` with an explicit pathspec
 
 ## 6. Verify (phase C)
 
