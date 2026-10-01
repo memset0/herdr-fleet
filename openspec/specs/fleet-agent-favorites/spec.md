@@ -2,104 +2,99 @@
 
 ## Purpose
 
-Restores browser-local Agent favorites directly in Collie's native dashboard while preserving its
-existing triage, routing, polling, and backend behavior.
+Makes the fork's star on native Agent rows a second entry point to Collie's own per-device pins, and
+migrates the retired browser-local favourites into them once, while preserving Collie's triage,
+routing, polling, and backend behavior.
 
 ## Requirements
 
 ### Requirement: Agent favorites use stable browser-local identity
-Herdr Fleet SHALL identify a favorite Agent from the exact optional Host, optional Herdr session,
-Pane id, and Agent implementation reported by the native Collie model. Favorite identity MUST
-survive changes to status, timestamps, reachability, labels, terminal title, cwd, focus, and cached
-or live presentation, but MUST NOT transfer to another Host, session, Pane, shell row, or Agent
-implementation. It MUST NOT depend on a coding-agent thread or conversation id.
+Herdr Fleet SHALL keep no favourite state of its own. A "favourite" is the adopted Collie's own
+per-device pin: the star a row carries reads and writes Collie's pin store, so pinning from the star
+and pinning from Collie's own hold or actions sheet are one mechanism with two entry points. Pin
+identity, bounds, dormancy and pruning are Collie's, unchanged.
 
-Favorites SHALL be a versioned browser-local presentation preference and SHALL NOT be sent to the
-Gateway, Collie bridge, Herdr, or another browser. The stored representation and in-memory fallback
-MUST have explicit size and entry-count bounds. Malformed, unsupported, oversized, unavailable, or
-unwritable browser storage MUST leave the Agent list usable without a recovery request or backend
-mutation.
+The star SHALL be pressed exactly when Collie would list the row in its Pinned group. Nothing Fleet
+does MAY send pin state to the Gateway, Collie bridge, Herdr, or another browser.
 
 #### Scenario: Agent presentation changes
-- **WHEN** a favorited Agent changes status, timestamps, labels, cwd, focus, reachability, or cache source while its Host/session/Pane/implementation identity remains equal
-- **THEN** the Agent remains favorited
+- **WHEN** a pinned Agent changes status, timestamps, labels, cwd, focus, reachability, or cache source while its row and workspace stay the same
+- **THEN** its star stays pressed, because the pin is Collie's and Collie's identity has not changed
 
 #### Scenario: Pane identity is reused by another implementation
-- **WHEN** the same Host/session/Pane later reports a different Agent implementation
-- **THEN** the new Agent is not treated as the previous favorite
+- **WHEN** the same Host/session/Pane later reports a different Agent implementation in the same workspace
+- **THEN** the star follows Collie's pin identity, which is the row and its workspace, and Fleet adds no identity rule of its own
 
 #### Scenario: The same pane id appears in another scope
 - **WHEN** two Agent rows share a Pane id but differ by Host or Herdr session
-- **THEN** each row has an independent favorite identity
-
-#### Scenario: Another browser opens Fleet
-- **WHEN** the same Fleet account is opened without the local favorite record
-- **THEN** no favorite is inferred from account, Gateway, Collie, or Herdr state
+- **THEN** each row's star reflects its own pin, because Collie's row identity includes Host and session
 
 #### Scenario: Browser storage cannot be used
-- **WHEN** the stored record is malformed, unsupported, oversized, over capacity, or browser storage throws on read or write
-- **THEN** Fleet continues with bounded in-memory favorite state and performs no network recovery
+- **WHEN** browser storage throws or holds an unreadable pin record
+- **THEN** the star still toggles Collie's in-memory pin state for the page and Fleet performs no network recovery
+
+#### Scenario: A pane is pinned from Collie's own sheet
+- **WHEN** the operator pins a pane from Collie's actions sheet
+- **THEN** that pane's star is pressed on the dashboard and on the Agent rail without any second store being written
+
+#### Scenario: A pane is pinned from the star
+- **WHEN** the operator presses an unpressed star
+- **THEN** Collie's pin store records the pin, and Collie's own sheet offers Unpin for that pane
+
+#### Scenario: Another browser opens Fleet
+- **WHEN** the same Fleet account is opened in a browser that holds no pins
+- **THEN** no star is pressed and no pin is inferred from account, Gateway, Collie, or Herdr state
 
 ### Requirement: Native Agent rows expose an independent favorite control
-Every native Agent row rendered by the shared Agent list SHALL expose a Collie-styled favorite
-control. Shell rows MUST NOT expose the control. Activating the control SHALL toggle `aria-pressed`,
-update the row's favorite presentation, and retain keyboard focus on the control.
+Every native Agent row rendered by the shared Agent list and by the Agent rail SHALL expose the star
+control, drawn as Collie's round icon button: a 36px circle with a 16px glyph, muted ink at rest at
+no less than 3:1 against the row's ground, a muted hover fill and a press scale. The row SHALL
+reserve the control's width at its trailing end so the row's text never runs under it. Shell rows
+MUST NOT expose the control. Activating it SHALL toggle `aria-pressed` and toggle the pane's pin.
 
-Favorite activation MUST NOT open or focus the Pane, change the current route, invoke the row's
+Because a pin moves its row into or out of the Pinned group, keyboard focus SHALL follow the control
+to the row's new place rather than falling to the document.
+
+Star activation MUST NOT open or focus the Pane, change the current route, invoke the row's
 navigation action, submit a terminal action, request a refresh, close a surrounding native
 surface, or mutate backend state. The row's existing open action and keyboard semantics MUST remain
-available independently from the favorite control.
+available independently from the control.
 
 #### Scenario: Operator favorites an Agent
-- **WHEN** the operator activates an unpressed favorite control
-- **THEN** it becomes pressed, focus remains on it, the preference updates locally, and no Pane navigation or request occurs
+- **WHEN** the operator activates an unpressed star
+- **THEN** it becomes pressed, the pane is pinned, the row is listed in the Pinned group, focus is on that row's star, and no Pane navigation or request occurs
 
 #### Scenario: Operator removes a favorite
-- **WHEN** the operator activates a pressed favorite control
-- **THEN** it becomes unpressed, the local identity is removed, focus remains on the control, and the Pane is untouched
+- **WHEN** the operator activates a pressed star
+- **THEN** it becomes unpressed, the pin is removed, the row returns to its own group, focus is on that row's star, and the Pane is untouched
 
 #### Scenario: Operator opens a favorited row
-- **WHEN** the operator activates the row outside its favorite control
+- **WHEN** the operator activates the row outside its star
 - **THEN** Collie's existing Pane-open behavior runs exactly once
 
 #### Scenario: A shell row is rendered
 - **WHEN** the native list contains a row whose kind is `shell`
-- **THEN** the row retains its existing presentation and has no favorite control
+- **THEN** the row retains its existing presentation and has no star
 
-### Requirement: Favorites sort first only inside their own group
-The adopted Collie lays its dashboard out as workspace groups in a fixed place order, led by a Pinned
-group of the panes pinned on this device; it no longer lays rows out by triage section. Inside each
-workspace group, favorited Agents SHALL appear first within the group, before every non-favorited
-row. Within both partitions the implementation MUST preserve the exact order the adopted Collie gives
-that group.
+### Requirement: Stored favourites become pins once
+A browser that still holds the retired Fleet favourite record SHALL have it migrated exactly once:
+each stored favourite whose Host, session, Pane and Agent implementation match a live Agent row in a
+fresh snapshot SHALL become a Collie pin for that row, and the retired record SHALL then be deleted.
+A stored favourite with no matching live row SHALL be dropped, because a pin needs the workspace the
+pane sits in and only a live row says that.
 
-The Pinned group SHALL be unaffected: it keeps Collie's own order whether or not its rows are
-favorites, and favoriting never pins, unpins, or moves a row into or out of it.
+The migration MUST NOT run against a stale or empty snapshot, MUST NOT unpin anything, and MUST NOT
+send anything to the Gateway, bridge, Herdr or another browser. A malformed, oversized or unreadable
+record SHALL be deleted without pinning anything.
 
-Favorites MUST NOT create a new group, move a row across groups, change group order or counts, change
-the dashboard tab, workspace filter or hidden machines, alter unseen/attention classification, change
-polling or notification behavior, or replace Collie's ordering.
+#### Scenario: A favourite's pane is live
+- **WHEN** the application loads a fresh snapshot in a browser holding a favourite whose pane is listed
+- **THEN** that pane is pinned and the retired record no longer exists
 
-The Agent rail keeps Collie's triage buckets (`Needs you`, `Ready · unseen`, `Working`, `Recent`) as
-the fleet's attention view; inside each bucket favorites likewise come first, in that bucket's own
-order, and no row crosses a bucket.
+#### Scenario: A favourite's pane is gone
+- **WHEN** the stored favourite matches no listed Agent
+- **THEN** nothing is pinned for it and the retired record is still deleted
 
-#### Scenario: A favorite is added inside a section
-- **WHEN** an Agent becomes favorited
-- **THEN** it moves above the non-favorites of its own workspace group while retaining its relative order among that group's favorites
-
-#### Scenario: A favorite is removed
-- **WHEN** a favorite is removed
-- **THEN** the Agent returns to the non-favorite partition of its group, in the group's own order
-
-#### Scenario: A favorited Agent is pinned
-- **WHEN** a favorited Agent is pinned on this device
-- **THEN** it is listed in the Pinned group in Collie's own order, ahead of no other pinned row because it is a favorite
-
-#### Scenario: A favorite changes triage status
-- **WHEN** a favorited Agent's status changes
-- **THEN** it keeps its place among its workspace group's favorites on the dashboard, and on the Agent rail it receives favorite priority only inside its new bucket
-
-#### Scenario: Recent order is oldest-first
-- **WHEN** this device's stored dashboard preference asks for oldest-first `Recent` order
-- **THEN** no row moves because of it: the dashboard draws no `Recent` section, favorites still lead their own workspace group, and the Agent rail's `Recent` bucket keeps its own order with favorites first
+#### Scenario: The snapshot is stale
+- **WHEN** the snapshot is an error render or lists no Agent
+- **THEN** the record is left in place for a later fresh snapshot and nothing is pinned
