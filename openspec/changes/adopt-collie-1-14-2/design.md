@@ -148,6 +148,64 @@ commit knowingly does not typecheck where fork code still imports the two delete
   imports `sectionHeaderProps`, which upstream removed (`bac490b4`), as well as `ATTENTION`. The
   playground walkthrough (`motion.test.tsx`) fails at runtime until `paneDisplayName` is replaced.
 
+#### Phase B record (2026-10-01, task group 6)
+
+Commit `6c6cd636` (`feat(fleet)!: …`, with a `BREAKING CHANGE:` footer worded by the coordinator:
+the 3.5.0 wire floor, the legacy-only refusal and the config-file refusal). What it did, beyond the
+tables in decisions 2–4:
+
+- **State directory (decision 3).** `collieChildEnv(config, collieStateDir, inherited)` resets and
+  sets `COLLIE_STATE_DIR`; `runtime.ts` exports `collieSpecEnv`, which `childSpecs` uses and which no
+  longer overrides `HERDR_PLUGIN_STATE_DIR`. `fleet/collie-env.test.ts` proves, through upstream's
+  own `resolveStateDir`, that the child env built by `collieSpecEnv` resolves to exactly
+  `paths.collieStateDir` — the value `daemon.ts` and `control.ts` hand `validatePackAuthority` — from
+  an environment carrying a foreign `COLLIE_STATE_DIR` and a foreign Herdr plugin state variable.
+- **Configuration files (decision 4).** `assertCollieConfigFilesCede(childEnv)` resolves both paths
+  with upstream's `configFilePaths(childEnv, home, resolveConfigDir(childEnv, home))` (home from the
+  child's `HOME`), reads them with `readConfigFilesSync`, and throws `<file> sets [<section>] <key>,
+  which Herdr Fleet owns; remove it from that file`. `daemon.ts` and `control.ts` call it right after
+  `validatePackAuthority`, so the operator sees the refusal from the start action. Refinement folded
+  in: a value Collie would reject for an owned key is refused too (it arrives as a `ConfigProblem`
+  naming the section and key, never as a layer value), because the operator meant to set it. The
+  owned set is exported as `FLEET_OWNED_COLLIE_SETTINGS` (19 names: the previous reset list without
+  `COLLIE_PACK_TIMEOUT_MS`, plus `COLLIE_STATE_DIR` and `COLLIE_BASE_PATH`); none is secret-kind, so
+  no owned key can be withheld as `file:blocked`. Tests: no file; only non-owned keys in both files;
+  an owned key in the machine file and in the instance file (file and key named, value absent);
+  a rejected owned value; `COLLIE_CONFIG` redirecting the machine file; an inherited base path
+  removed.
+- **Legacy state (decision 2).** Upstream kept `legacyStateFileNotice` (`bridge/crew/trust-store.ts`,
+  ADR 0045), so the fork reuses its text verbatim through `assertNoLegacyOnlyTrustState`: validation
+  refuses before any reader runs (an injected accepting reader is never called), and enrolment
+  refuses both mint and join before opening the store, leaving the directory byte-for-byte unchanged.
+  The read-only io lost its fallback and its state-dir argument; a new case opens a `TrustStore`
+  through it and requires `update` to reject with the directory still empty, and swapping in a
+  writing io was checked to fail that case.
+- **Removed overlaps.** The `COLLIE_PACK_TIMEOUT_MS` reset and every `LEGACY_CREW_TIMEOUT_ENV` use; the
+  `v1-overlap` import and both overlap cases in `fleet/manual-pane-fit/capability.test.ts` (the crew
+  route-table assertions stay, now with the crew-prefix dial and the member-side dispatch). That file
+  had not run since the merge because its import no longer resolved; once it did, its source
+  assertion on the Pane route's read classification met upstream's new `isPaneReadAction`, and it now
+  asserts that call and that `resize` is not a read.
+- **Renamed upstream symbols.** `ATTENTION` from `@/lib/triage`; `sectionHeaderProps` (removed by
+  `bac490b4`) is inlined as the four `SectionHeader` props in the fork-owned rail; `paneDisplayName`
+  (removed by `6e8eeafc`) becomes `paneName` in `fleet-row-actions.tsx`, `native-navigation-shell.tsx`
+  and `lib/fleet-roster.ts`. `paneName` also falls back to a named one-pane tab's label, so the rails,
+  the roster and the context menu now name such a pane as every upstream screen does.
+- **`/api/pack`.** No reference remains in `fleet/**`, `web/src/components/fleet-*`, `native-*` or
+  `web/src/lib/fleet-*`; the Gateway's deny of `/pack/` stays (decision 2) and its comment says it
+  denies a retired prefix.
+- **Docs.** `docs/herdr-fleet.md` gains "The Collie child's environment" (every owned setting, the
+  state-directory variable and the config-file rule) and states the 3.5.0 floor; `AGENTS.md`'s
+  overlap parenthetical is replaced and the multi-host section gains the environment rule and floor.
+- **Favorites.** The `fleet-agent-favorites` delta renames the requirement to "Favorites sort first
+  only inside their own group" and restates it for workspace groups with the Pinned group unaffected;
+  the Agent rail keeps the triage buckets. A new rail case pins that a machine hidden and a pane
+  pinned on the dashboard leave both rails' rows and order unchanged.
+- **Results.** Both typechecks clean; `bun run lint` clean; `bun test ./fleet` 599 pass / 0 fail
+  (590 before, plus the new cases); web vitest for the touched components and the 5.4 set (root,
+  settings, motion, detail, history, tab-strip) pass — `motion.test.tsx` runs again now that
+  `paneName` resolves.
+
 ### 2. The fork sheds what the overlap removal made dead
 
 | fork file | change |
@@ -372,33 +430,46 @@ port.
 As before: the push ends this repository's part, but the change is archived only after the operator
 reports the lead and the designated member running 3.5.0, lead first.
 
-### 14. Entry review against `v1.14.2` (expected decisions; confirmed in task group 7)
+### 14. Entry review against `v1.14.2` (task group 7)
 
-| entry | expected | why |
+Every entry's anchors were re-read in the merged tree against `v1.14.2` and its `verify` list run
+(the browser-tier files excepted, which stay with 8.3). One path returned to upstream's version
+(`bridge/removal-schedule.test.ts`); no entry was dropped. `reviewed = "v1.14.2"` on all 23.
+
+| entry | decision | reason |
 | --- | --- | --- |
-| `native-row-actions-menu-port` | keep | `tab-strip.tsx` gained a "+" and a hold press beside the fork's actions slot |
-| `unnarrowed-pack-rows-port` | keep | loaders auto-merge; reason drops the "previous path's redirect" wording |
-| `repository-guidance` | keep | symlink contract unchanged |
-| `fake-network-fleet-routes` | keep | upstream added handlers (changes, folders) beside the fork's |
-| `lint-parse-boundary` | keep | one override beside upstream's |
-| `plugin-identity` | keep | version line only |
-| `downstream-version-line` | keep | `sugar-high` enters `web/bun.lock` and `web/package.json` |
-| `fleet-build-port` | keep | upstream's `build:cli` script and new scripts beside `./fleet` |
-| `native-agent-favorites-port` | adapt | rows gained pin, hidden-machine and host/cache chips; the `ATTENTION` re-export leaves |
-| `pane-surface-route-port` | keep | wrap unchanged; Changes routes are siblings |
-| `native-pane-content-port` | keep | `renderContent` beside upstream's glide/view-transition work |
-| `authenticated-navigation-cache` | adapt | decision 8 |
-| `native-manual-pane-fit-port` | adapt | decision 5; composer and header per decision 7 |
+| `native-row-actions-menu-port` | keep | strips still change by one drop-in each; `tab-strip.tsx`'s "+" and hold press sit beside it |
+| `unnarrowed-pack-rows-port` | keep | loaders auto-merged; reason now says the previous path's redirect is gone since 1.9 |
+| `repository-guidance` | keep | symlink contract unchanged; the overlap sentence was corrected in group 6 |
+| `fake-network-fleet-routes` | keep | Fleet routes beside upstream's new handlers |
+| `lint-parse-boundary` | keep | one override class, no rule changed |
+| `plugin-identity` | keep | identity, actions and build steps still read only from the manifest |
+| `downstream-version-line` | keep | `sugar-high` is upstream's and adds no fork diff to `web/package.json` |
+| `fleet-build-port` | keep | `./fleet` in upstream's scripts beside `build:cli` |
+| `native-agent-favorites-port` | adapt | favorites lead workspace groups beside pins, hidden machines and chips; the `ATTENTION` re-export is gone |
+| `pane-surface-route-port` | keep | wrap unchanged; Changes routes are siblings; its fork-owned route test now reads the name and place from the identity block, since upstream overlays an empty button on it and line 2 is the place |
+| `native-pane-content-port` | keep | `renderContent` beside upstream's view-transition work |
+| `authenticated-navigation-cache` | adapt | decision 8; both e2e skips still meet the same premise in 1.14's suite (confirmation in 8.3) |
+| `native-manual-pane-fit-port` | adapt | decision 5 union with `changes`/`isPaneReadAction`; overlap wording removed; band, rank and host-chip parts retired; record control inside the box |
 | `declined-centred-history-column` | keep | owner decision stands |
-| `native-navigation-sidebars-port` | keep/adapt | decision 6; `settings.tsx` gains belt-size and Changes cards beside the fork group |
-| `native-pane-chrome-port` | adapt | decision 7 (strips badge kept; rank and band parts retired) |
-| `native-webfont-port` | keep | CSP origin re-applied beside `blob:` |
-| `private-fact-guard-port` | keep | hook untouched upstream |
-| `composer-voice-rank-port` | adapt | decision 7 |
-| `fork-gate-in-ci` | keep | CI gained WebKit; the fork step is unchanged |
-| `no-automatic-release-publication` | keep | `release.yml` auto-merged; verify no tag-push trigger came back |
-| `upstream-removal-clock` | adapt | decision 10 |
-| `downstream-docs` | keep | upstream added a docs page; exclusion unchanged |
+| `native-navigation-sidebars-port` | adapt | decision 6 (footer tabs coexist, rails ignore hide/pin/tab), belt handle at the rail breakpoint, `ATTENTION` from triage, inline section headers |
+| `native-pane-chrome-port` | adapt | decision 7: strips badge and mark ground kept; rank intent and band/dock parts retired |
+| `native-webfont-port` | keep | CSP origin beside upstream's `blob:` |
+| `private-fact-guard-port` | keep | the hook is untouched upstream between the two tags |
+| `composer-voice-rank-port` | adapt | decision 7; upstream's swap now counts attachments |
+| `fork-gate-in-ci` | keep | one step plus fetch-depth beside upstream's WebKit job |
+| `no-automatic-release-publication` | keep | `release.yml` still on `workflow_dispatch` only; no tag-push trigger came back |
+| `upstream-removal-clock` | adapt | decision 10: one clock, `cli/program.test.ts`; `removal-schedule.test.ts` is upstream's verbatim |
+| `downstream-docs` | keep | upstream's newer docs pages join the registry; the one exclusion is unchanged |
+
+Phase C2 re-review (task 7.4): the removal clock is one; the docs-registry exclusion still applies
+beside upstream's new page; the root-test, motion and smoke scopes still apply (the rails still list
+the rows those queries find) and their tests pass locally except the smoke spec (browser tier, 8.3);
+both network-first e2e skips stay, pending 8.3's run.
+
+Boundary check after the review: `bun scripts/check-fork.ts` reports 617 owned and 84 invasive paths,
+no unclassified path, no stale anchor, no lagging entry; the retention check passes and
+`COLLIE_CHANGELOG.md` is byte-identical to `v1.14.2`'s `CHANGELOG.md`.
 
 ## Risks / Trade-offs
 

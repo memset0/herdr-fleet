@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -63,8 +63,12 @@ describe("native Pane frame across surface changes", () => {
     await screen.findByText("fresh mirror output");
     const identity = screen.getByRole("button", { name: /Open .+ overview/ });
     const actions = screen.getByRole("button", { name: "Pane actions" });
-    expect(identity).toHaveTextContent("native-pane");
-    expect(identity).toHaveTextContent("/workspace/other");
+    // The adopted Collie lays the identity button over its block and paints the lines beside it, so
+    // the name and the place (line 2 is `space › tab` since upstream's one-name rule) are the
+    // block's text, not the button's.
+    const block = () => container.querySelector('[data-slot="pane-identity-block"]');
+    expect(block()).toHaveTextContent("native-pane");
+    expect(block()).toHaveTextContent(fixtureAgents[0]!.workspaceLabel);
     paneLoader.mockClear();
 
     await act(async () => { paneSurfaceStore.set("terminal"); });
@@ -82,7 +86,8 @@ describe("native Pane frame across surface changes", () => {
     await act(async () => { paneSurfaceStore.set("mirror"); });
     await screen.findByText("fresh mirror output");
     expect(container.querySelector('[data-slot="pane-identity"]')).toBe(identity);
-    expect(within(identity).getByText("native-pane")).toBeInTheDocument();
+    expect(block()?.contains(identity)).toBe(true);
+    expect(block()).toHaveTextContent("native-pane");
     await waitFor(() => expect(router.state.revalidation).toBe("idle"));
     router.dispose();
   });
@@ -91,7 +96,8 @@ describe("native Pane frame across surface changes", () => {
     paneSurfaceStore.set("terminal");
     const { container, router } = mount();
     await screen.findByTestId("terminal-surface");
-    expect(container.querySelector('[data-slot="pane-identity"]')).toHaveTextContent("native-pane");
+    expect(container.querySelector('[data-slot="pane-identity"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="pane-identity-block"]')).toHaveTextContent("native-pane");
     expect(screen.getByRole("button", { name: "Pane actions" })).toBeInTheDocument();
     expect(paneLoader).not.toHaveBeenCalled();
     router.dispose();
