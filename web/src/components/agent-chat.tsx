@@ -944,7 +944,9 @@ export function AgentChat({
   // has no session to stream either. A pane like that falls back to the terminal and the ⋮ row
   // carries the reason — it never hides, because a control that disappears on some panes is how an
   // operator concludes the app is broken.
-  const chatOffered = dash.prefs.chatExperiment;
+  // DOWNSTREAM PORT (FORK.toml native-manual-pane-fit-port, for pane-surface-route-port): the fork's
+  // terminal surface replaces whichever body this would draw, so Chat is not offered beneath it.
+  const chatOffered = renderContent === undefined && dash.prefs.chatExperiment;
   const chatChosen = chatOffered && dash.prefs.paneView === "chat";
   const chatBody = chatChosen && historyAvailable;
   // The live window, moved by the poll that already exists (ADR 0073). Disabled is free: no fetch,

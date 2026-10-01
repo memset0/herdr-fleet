@@ -498,7 +498,7 @@ describe("the repository's CHANGELOG.md", () => {
 	});
 
 	test("1.15.0 credits every contributor its wrapped bullets name", () => {
-		const handles = creditedHandles(parseSection(changelog, "1.15.0"));
+		const handles = creditedHandles(parseSection(collieChangelog, "1.15.0"));
 		expect(handles.map((h) => h.toLowerCase()).toSorted()).toEqual(
 			[
 				"AndiWandHerd",

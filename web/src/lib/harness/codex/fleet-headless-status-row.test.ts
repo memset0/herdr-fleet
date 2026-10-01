@@ -40,12 +40,12 @@ const seg = (text: string, paint: Paint = {}): AnsiSegment => ({ ...paint, text,
 
 describe("withFleetCodexStatusSegments", () => {
   it("splits an unpainted gap off the notice glyph glued to it", () => {
-    const out = withFleetCodexStatusSegments([seg("  "), seg("model", { fg: "a" }), seg("   ⚠ ")])!;
+    const out = withFleetCodexStatusSegments([seg("  "), seg("model", { fg: "a" }), seg("   ⚠ ")]);
     expect(out.map((s) => s.text)).toEqual(["  ", "model", "   ", "⚠ "]);
   });
 
   it("gives a coloured item's trailing space back to the `· ` after it", () => {
-    const out = withFleetCodexStatusSegments([seg("  "), seg("main ", { fg: "a" }), seg("· "), seg("x", { fg: "b" })])!;
+    const out = withFleetCodexStatusSegments([seg("  "), seg("main ", { fg: "a" }), seg("· "), seg("x", { fg: "b" })]);
     expect(out.map((s) => s.text)).toEqual(["  ", "main", " · ", "x"]);
     expect(out[1]!.fg).toBe("a");
     expect(out[2]!.fg).toBeUndefined();
@@ -66,11 +66,15 @@ describe("withFleetCodexStatusSegments", () => {
       seg("· "),
     ];
     expect(withFleetCodexStatusSegments(row)).toEqual(row);
-    expect(withFleetCodexStatusSegments([seg("  x")])!.map((s) => s.text)).toEqual(["  x"]);
+    expect(withFleetCodexStatusSegments([seg("  x")]).map((s) => s.text)).toEqual(["  x"]);
   });
 
-  it("passes null through and never modifies its input", () => {
-    expect(withFleetCodexStatusSegments(null)).toBeNull();
+  it("leaves the field-and-gap pair upstream's splitPaintedGaps cut from a goal notice's padding", () => {
+    const row = [seg("  "), seg("model", { fg: "a" }), seg(" · ", { fg: "m" }), seg("main", { fg: "b" }), seg("   "), seg("Pursuing goal", { fg: "m" })];
+    expect(withFleetCodexStatusSegments(row)).toEqual(row);
+  });
+
+  it("never modifies its input", () => {
     const input = [seg("  "), seg("main ", { fg: "a" }), seg("· "), seg("  ⚠ ")];
     const copy = structuredClone(input);
     withFleetCodexStatusSegments(input);

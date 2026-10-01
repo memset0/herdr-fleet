@@ -342,15 +342,16 @@ only implementation.
 
 The actions do not enable Push automatically. Generate initial keys only when intended, invoke the
 existing Fleet `restart` action so the running bridge reads them, then enable notifications in each
-browser through Collie's Settings. The fixed `push-keys` action cannot rotate existing keys; forced
+browser through Collie's Settings → Alerts. The fixed `push-keys` action cannot rotate existing keys; forced
 rotation and subscription list/forget operations remain terminal commands because they require
 explicit arguments or review. See [`voice-and-push.md`](voice-and-push.md#web-push-optional) for the
 native Collie workflow.
 
 ## Manual Pane fit
 
-On a writable Herdr Pane, native Display Settings includes a `Resize` row directly below
-`Text size`, marked `Custom`. A tap measures the current terminal mirror, converts its usable width
+On a writable Herdr Pane drawn as the terminal mirror, the belt's Display sheet includes a `Resize`
+row directly below `Text size`, marked `Custom`. Collie's Chat body has its own Display rows and no
+`Resize`, because the action fits the shared PTY to the mirror. A tap measures the current terminal mirror, converts its usable width
 to complete monospace cells, clamps the result to 20–500 columns, and preserves the trusted current
 viewport row count.
 

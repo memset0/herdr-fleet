@@ -12,7 +12,7 @@ describe("manual Pane fit capability and route port", () => {
     const claims = Object.fromEntries(
       MUX_ADAPTERS.map((factory) => [factory.mux, factory.create(target).capabilities.supports.resizePane]),
     );
-    expect(claims).toEqual({ herdr: true, tmux: false, zellij: false });
+    expect(claims).toEqual({ herdr: true, tmux: false, tuios: false, zellij: false });
   });
 
   test("the protected Pane route classifies resize as a write and dispatches the owned action", () => {

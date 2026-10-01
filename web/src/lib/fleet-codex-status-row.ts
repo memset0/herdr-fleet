@@ -16,6 +16,11 @@
  * `fleetReadsUnpaintedNotice` decides the third for upstream's notice check
  * (FORK.toml `codex-headless-status-row-port`). Every other rule stays upstream's.
  *
+ * It runs on what upstream's own `splitPaintedGaps` (Collie 1.15.0, #317) hands back: that pass cuts a
+ * painted field's run of two or more trailing spaces into the field and an unstyled gap, which is a
+ * different repaint (a goal notice's padding in the field's colour) and touches none of the three
+ * above — a single trailing space, and a gap already unpainted and glued to the glyph after it.
+ *
  * TEMPORARY. A compatibility port, removed at the first upstream sync that adopts a release in which
  * upstream reads headless multi-item status rows itself.
  */
@@ -42,10 +47,9 @@ function isUnpainted(segment: AnsiSegment): boolean {
  * more spaces glued to the text after it (never the row's first segment) is split into the gap and
  * the text, and a coloured item's single trailing space is given back to a directly following `· `,
  * which becomes ` · ` in its own paint. Every other segment is copied as it is. A new list; the input
- * is never modified. `null` (nothing survived folding) passes through.
+ * is never modified.
  */
-export function withFleetCodexStatusSegments(segments: AnsiSegment[] | null): AnsiSegment[] | null {
-  if (segments === null) return null;
+export function withFleetCodexStatusSegments(segments: AnsiSegment[]): AnsiSegment[] {
   const out: AnsiSegment[] = [];
   for (const segment of segments) {
     const glued = out.length > 0 && isUnpainted(segment) ? GLUED_GAP.exec(segment.text) : null;

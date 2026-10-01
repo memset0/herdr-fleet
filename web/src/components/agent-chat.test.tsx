@@ -157,7 +157,7 @@ describe("AgentChat — explicit manual Pane fit", () => {
     await user.click(screen.getByRole("button", { name: "Display settings" }));
     await user.click(screen.getByRole("button", { name: "Increase font size" }));
     window.dispatchEvent(new Event("resize"));
-    await user.click(screen.getByRole("button", { name: "Close Display" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Display" })).getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Display settings" }));
     expect(requests).toBe(0);
   });
@@ -179,6 +179,45 @@ describe("AgentChat — explicit manual Pane fit", () => {
     await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
     await user.click(screen.getByRole("button", { name: "Display settings" }));
     expect(screen.getByRole("button", { name: "Resize Pane to this view" })).toBeDisabled();
+  });
+
+  // Collie 1.15's Display sheet answers for the body on screen. Resize fits the PTY to the MIRROR, so
+  // it is one of the terminal body's rows and the Chat body, which draws no mirror, has none.
+  it("offers Resize among the terminal body's rows and not among Chat's", async () => {
+    const user = userEvent.setup();
+    server.use(http.get(/\/api\/config$/, () => manualPaneFitConfig(true)));
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ chatExperiment: true, paneView: "chat" }));
+    renderChat({ agent: { ...fixtureAgents[0]!, hasSession: true } });
+    await screen.findByText("what changed today?");
+    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
+    await user.click(screen.getByRole("button", { name: "Display settings" }));
+    expect(screen.queryByRole("button", { name: "Resize Pane to this view" })).toBeNull();
+    expect(screen.queryByText("Custom")).not.toBeInTheDocument();
+  });
+});
+
+// The fork's terminal surface (pane-surface-route-port) replaces the Pane's body whichever body
+// Collie would draw, so Collie's Chat switch is not offered under it and no live window is read.
+describe("AgentChat — the terminal surface and Collie's Chat body", () => {
+  it("draws the terminal surface and offers no Chat switch even when Chat is the standing body", async () => {
+    const user = userEvent.setup();
+    let chatReads = 0;
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/chat(?:\?.*)?$/, () => {
+        chatReads += 1;
+        return HttpResponse.json({ available: false });
+      }),
+    );
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ chatExperiment: true, paneView: "chat" }));
+    renderChat({
+      agent: { ...fixtureAgents[0]!, hasSession: true },
+      renderContent: () => <div data-testid="fleet-terminal-body" />,
+    });
+    expect(screen.getByTestId("fleet-terminal-body")).toBeInTheDocument();
+    await openPaneMenu(user);
+    expect(screen.queryByRole("button", { name: /view$/ })).toBeNull();
+    expect(screen.queryByText("what changed today?")).toBeNull();
+    expect(chatReads).toBe(0);
   });
 });
 

@@ -22,9 +22,8 @@ export function SettingsPage({ title, children }: { title: MessageKey; children:
   useLocale();
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-screen-sm flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       <RouteHeader
-        width="column"
         override={
           <>
             <Button
