@@ -59,13 +59,13 @@
 
 ## 9. Release
 
-- [ ] 9.1 Read the newest tag on the remote (`git ls-remote --tags origin`); verify it is still `v3.4.0` (else cut the MINOR after it)
-- [ ] 9.2 Re-assess the axis (design decision 12): if an operator step appeared, the coordinator ruled the config-file refusal breaking, or 8.6 failed, stop and report instead of cutting; otherwise confirm MINOR 3.4.0 → 3.5.0
+- [x] 9.1 Read the newest tag on the remote (`git ls-remote --tags origin`); verify it is still `v3.4.0` (else cut the MINOR after it)
+- [x] 9.2 Re-assess the axis (design decision 12): if an operator step appeared, the coordinator ruled the config-file refusal breaking, or 8.6 failed, stop and report instead of cutting; otherwise confirm MINOR 3.4.0 → 3.5.0
 - [x] 9.3 Commit the merge with both parents; verify `git log -1 --format=%P` names the previous `main` head and `887a37dbfc5582d08c7d7703deadd53146f654bb`
-- [ ] 9.4 Cut `chore(release): 3.5.0` — the three version files, `## [3.5.0] - <date>` with each line's short hash, a fresh empty Unreleased heading, notes stating every member redeploys lead first, no configuration edit, and the Fleet-owned Collie settings rule; verify `bash scripts/check-version.sh` prints `✓` and `scripts/release-notes.test.ts` passes
-- [ ] 9.5 `git tag -a v3.5.0 -m "Herdr Fleet 3.5.0"` and `git push origin main v3.5.0` (tag named on the push line; never `--follow-tags` or `--tags`; no GitHub Release); verify `git ls-remote --tags origin` shows `v3.5.0` and no upstream `v1.x` tag, and `bash scripts/check-tag.sh` is clean
+- [x] 9.4 Cut `chore(release): 3.5.0` — the three version files, `## [3.5.0] - <date>` with each line's short hash, a fresh empty Unreleased heading, notes stating every member redeploys lead first, no configuration edit, and the Fleet-owned Collie settings rule; verify `bash scripts/check-version.sh` prints `✓` and `scripts/release-notes.test.ts` passes
+- [x] 9.5 `git tag -a v3.5.0 -m "Herdr Fleet 3.5.0"` and `git push origin main v3.5.0` (tag named on the push line; never `--follow-tags` or `--tags`; no GitHub Release); verify `git ls-remote --tags origin` shows `v3.5.0` and no upstream `v1.x` tag, and `bash scripts/check-tag.sh` is clean
 
 ## 10. Hand-off
 
-- [ ] 10.1 Report the Migration Plan to the operator; verify the report states the push is not a completed adoption
+- [x] 10.1 Report the Migration Plan to the operator; verify the report states the push is not a completed adoption
 - [ ] 10.2 Archive only after the operator reports the lead and the designated member on 3.5.0, lead first, with Collie's crew mode and member id unchanged (design decision 13); verify `openspec validate adopt-collie-1-14-2 --strict` passes before archiving

@@ -587,7 +587,18 @@ For the operator's deployment side, which owns it (nothing here is done by this 
 
 ## Release
 
-Cut as `3.5.0` (MINOR, from `3.4.0`, subject to decision 12's re-assessment) in one
-`chore(release): 3.5.0` commit, tagged `v3.5.0` and pushed with the tag named on the push line; no
-GitHub Release. The changelog section says: redeploy every member, lead first; no configuration edit;
-Collie's own `config.toml` must not set Fleet-owned settings.
+Cut as `3.5.0` (MINOR, from `3.4.0`; the remote's newest tag was still `v3.4.0`) in one
+`chore(release): 3.5.0` commit, tagged `v3.5.0` and pushed with the tag named on the push line. No
+GitHub Release is published. Decision 12's re-assessment held: the coordinator ruled MINOR and that
+the config-file refusal breaks no existing workflow, the rollback probe (8.6) passed, and no operator
+step appeared. The `3.5.0` changelog section says, in the operator's words: the lead and every member
+run 3.5.0 or later, because Collie 1.9 removed the 1.7/1.8 wire overlaps; Collie's state directory is
+now projected as `COLLIE_STATE_DIR` and nothing moves on disk; a Collie `config.toml` setting a
+Fleet-owned key refuses start; a trust directory holding only `pack-*.json` is refused; `/api/pack` is
+gone and tooling reads `/api/crew`; no operator configuration changes are required.
+
+Hand-off: deploy the lead first, then each member, following the Migration Plan above. Rolling back
+to 3.4.0 is a plain redeploy, with no file renames — 8.6 proved a 3.4.0 Collie starts against state
+3.5.0 wrote. The push is not a completed adoption: this change stays active until the operator
+reports the lead and the designated member on 3.5.0, lead first (decision 13); task 10.2 archives it
+then.

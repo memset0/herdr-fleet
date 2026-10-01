@@ -19,15 +19,28 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.5.0] - 2026-10-01
+
+**Every member redeploys, lead first, and all of them must run 3.5.0 or later.** This release adopts
+Collie 1.14.2. Collie 1.9 removed the 1.7/1.8 wire overlaps, so the lead and every member must both
+run 3.5.0 or later: level the lead first, then each member right after it (a 3.4.0 member already
+speaks crew protocol 2, so the short gap between them is not a breakage window). Fleet now hands
+Collie its state directory as `COLLIE_STATE_DIR`, the same directory Fleet already validates trust
+in, so nothing moves on disk. A Collie `config.toml` that sets a Fleet-owned setting now refuses
+Fleet's start, naming the file and the key; no machine has such a file today. A trust directory
+holding only `pack-*.json` files is refused with Collie's own notice. `/api/pack` is gone; tooling
+that polls the lead's census reads `/api/crew`. No operator configuration changes are required, and
+rolling a machine back to 3.4.0 is a plain redeploy.
+
 ### Changed
 
-- **Adopt Collie 1.14.2.** The actions belt, the one-box composer with attachment chips, the Changes view, the dashboard footer tabs, layered configuration files, prompt-cache countdowns, pinning and hiding a machine, and upstream's fixes; the record control stays a control of its own beside Send inside the box.
-- **Fleet states its Collie child's state directory and owns its settings.** Collie is started with `COLLIE_STATE_DIR` set to the directory Fleet validates trust in, and a Collie `config.toml` that sets a Fleet-owned setting refuses Fleet's start, naming the file and the key; the 1.7/1.8 overlap fallbacks are gone, so the lead and every member run 3.5.0 or later and a state directory holding only `pack-*.json` names is refused with Collie's own notice.
+- **Adopt Collie 1.14.2.** The actions belt, the one-box composer with attachment chips, the Changes view, the dashboard footer tabs, layered configuration files, prompt-cache countdowns, pinning and hiding a machine, and upstream's fixes; the record control stays a control of its own beside Send inside the box. ([67a62f9](https://github.com/memset0/herdr-fleet/commit/67a62f9))
+- **Fleet states its Collie child's state directory and owns its settings.** Collie is started with `COLLIE_STATE_DIR` set to the directory Fleet validates trust in, and a Collie `config.toml` that sets a Fleet-owned setting refuses Fleet's start, naming the file and the key; the 1.7/1.8 overlap fallbacks are gone, so the lead and every member run 3.5.0 or later and a state directory holding only `pack-*.json` names is refused with Collie's own notice. ([6c6cd63](https://github.com/memset0/herdr-fleet/commit/6c6cd63))
 
 ### Fixed
 
-- **Back from a pane reached through a rail goes up a level.** The Herds and Agents rails, the phone's pane switcher and the pane commands now open a pane the way upstream does since 1.13 — a replace when switching from another pane — so Back no longer returns to the pane just left.
-- **Stop the roster and Agent rail fixtures naming real machines.** Their host, Tab and workspace labels were real machine and repository names; they now use upstream's synthetic outbuilding names, and each test pins the same distinction as before.
+- **Back from a pane reached through a rail goes up a level.** The Herds and Agents rails, the phone's pane switcher and the pane commands now open a pane the way upstream does since 1.13 — a replace when switching from another pane — so Back no longer returns to the pane just left. ([cb531ff](https://github.com/memset0/herdr-fleet/commit/cb531ff))
+- **Stop the roster and Agent rail fixtures naming real machines.** Their host, Tab and workspace labels were real machine and repository names; they now use upstream's synthetic outbuilding names, and each test pins the same distinction as before. ([aa84d81](https://github.com/memset0/herdr-fleet/commit/aa84d81))
 
 ## [3.4.0] - 2026-09-30
 
