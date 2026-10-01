@@ -215,7 +215,7 @@ The cookie is Secure, HttpOnly, SameSite=Strict, Path=/, and has no Domain attri
 the current server-side session before clearing the cookie.
 
 All Lead document navigations, `/api/*` requests, and `/fleet/api/*` requests require a current session before Collie is contacted.
-Only the authentication stylesheet and an exact set of PWA update assets are public. The service
+Only the authentication stylesheet and an exact set of PWA update and boot-splash assets are public. The service
 worker sends every document navigation to the network first, so an expired or logged-out session
 cannot recover an old authenticated app shell. The public Gateway never exposes `/crew/*` or `/pack/*`.
 

@@ -247,10 +247,14 @@ Upstream's switcher tests and its new `display-prefs`, `pane-actions-sheet`, `pa
   or set the multiplexer, which already accepted tmux and zellij. `tuios` is a new value of that key
   and `COLLIE_MUX_ENDPOINT_TUIOS` a new endpoint beside the existing ones; manual Pane fit stays
   Herdr-only because the tuios adapter advertises no `resizePane`.
-- **Boot splash.** `index.html` now draws `/collie-mark-header-{light,dark}.svg`. The Gateway's public
-  list keeps the retired sprite and does not gain the marks: the splash paints only inside an
-  authenticated document, and the public-file rule admits immutable or update-critical assets only.
-  Phase C checks the first paint on the lead.
+- **Boot splash.** `index.html` now draws `/collie-mark-header-{light,dark}.svg`. **Revised in phase C:**
+  the Gateway's public list gains both exact paths. The list already held the splash's artwork — the
+  gallop sprite, public since the Gateway was written because the splash paints it before the app has
+  asked for anything — and the marks take the sprite's place in the splash; behind the session they
+  were answered `no-store`, so every boot fetched them again. Both carry no protected data, the rule
+  stays an exact-path allowlist (no pattern, no source map), and the sprite stays listed because the
+  app still draws it. One fork-owned edit (`fleet/gateway.ts`), one test case, one `CHANGELOG.md` line;
+  the first paint is checked on the lead after deploy.
 
 ### 8. Repository guidance
 

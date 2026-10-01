@@ -156,12 +156,24 @@ describe("authenticated solo Gateway", () => {
     expect((await handler(request("/sw.js"), { peerAddress: "127.0.0.1" })).status).toBe(200);
     expect((await handler(request("/assets/app-ABC123.js"), { peerAddress: "127.0.0.1" })).status).toBe(200);
     expect(calls).toBe(2);
-    for (const path of ["/assets/app.js.map", "/assets/../secret", "/pane/p1?session=demo"]) {
+    for (const path of ["/collie-mark-header-light.svg", "/collie-mark-header-dark.svg"]) {
+      const response = await handler(request(path), { peerAddress: "127.0.0.1" });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("public, max-age=60");
+    }
+    expect(calls).toBe(4);
+    for (const path of [
+      "/assets/app.js.map",
+      "/assets/../secret",
+      "/pane/p1?session=demo",
+      "/collie-mark-header.svg",
+      "/collie-mark-header-light.svg.map",
+    ]) {
       const response = await handler(request(path), { peerAddress: "127.0.0.1" });
       expect(response.status).toBe(303);
       expect(response.headers.get("location")).toStartWith("/auth/login?next=");
     }
-    expect(calls).toBe(2);
+    expect(calls).toBe(4);
   });
 
   test("logs in, proxies without its cookie, and revokes the copied token on logout", async () => {
