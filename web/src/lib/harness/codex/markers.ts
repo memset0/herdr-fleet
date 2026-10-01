@@ -10,6 +10,7 @@
 
 import type { AnsiSegment } from "../../ansi";
 import { isBlank, lineText, type StyledLine } from "../../blocks";
+import { fleetReadsUnpaintedNotice, withFleetCodexStatusSegments } from "../../fleet-codex-status-row";
 
 // `lineText` / `isBlank` are properties of a StyledLine, not of any grammar, so they live in the
 // neutral core (lib/blocks.ts). Re-exported here so the Codex grammars keep their single import
@@ -225,13 +226,13 @@ function isSpinnerFrame(segment: AnsiSegment): boolean {
 // status row on its own, so it adds no way in for a row that was refused without it.
 const MAX_NOTICE_SEGMENTS = 12;
 
-function isRightNotice(segments: AnsiSegment[]): boolean {
+function isRightNotice(segments: AnsiSegment[], rowPaint: string | null): boolean {
   if (segments.length === 0 || segments.length > MAX_NOTICE_SEGMENTS) return false;
   if (segments[0]!.text.trimStart() !== segments[0]!.text) return false;
   let chars = 0;
   for (const segment of segments) {
     if (segment.bg !== undefined) return false;
-    if (segment.fg === undefined && segment.dim !== true) return false;
+    if (segment.fg === undefined && segment.dim !== true && !fleetReadsUnpaintedNotice(rowPaint)) return false;
     if (isGapSegment(segment)) return false;
     chars += codePointCount(segment.text);
   }
@@ -267,7 +268,7 @@ function isStyledStatusRow(text: string, line: StyledLine): boolean {
   if (hasControlChar(rowText)) return false;
   if (codePointCount(rowText) > MAX_STATUS_ROW_CHARS) return false;
 
-  const segments = foldTrailingPadding(line.segments);
+  const segments = withFleetCodexStatusSegments(foldTrailingPadding(line.segments));
   if (segments === null) return false;
   if (!isIndentSegment(segments[0]!)) return false;
 
@@ -287,7 +288,7 @@ function isStyledStatusRow(text: string, line: StyledLine): boolean {
 
     const next = segments[i]!;
     if (isGapSegment(next)) {
-      if (fields < MIN_STATUS_FIELDS || !isRightNotice(segments.slice(i + 1))) return false;
+      if (fields < MIN_STATUS_FIELDS || !isRightNotice(segments.slice(i + 1), paint)) return false;
       break;
     }
     const suffix = quietSuffixFieldPaint(next);

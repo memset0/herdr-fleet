@@ -165,12 +165,25 @@ verify = [
 id = "claude-mode-line-compat"
 intent = "Hold the temporary recogniser for Claude Code 2.1.286's background-work mode-line hint, with its synthetic fixtures and its suite."
 paths = [
-  "web/src/fixtures/fleet-panes/**",
+  "web/src/fixtures/fleet-panes/claude--manage-hint--w120.txt",
+  "web/src/fixtures/fleet-panes/claude--manage-hint--w73.txt",
   "web/src/lib/fleet-claude-mode-line.ts",
   "web/src/lib/harness/claude/fleet-manage-hint.test.ts"
 ]
 contracts = ["the trailing `← N agent(s) · ↓ to manage` mode-line segment is not a dialog key hint, and nothing else changes reading"]
 verify = ["web/src/lib/harness/claude/fleet-manage-hint.test.ts"]
+
+[[owned]]
+id = "codex-status-row-compat"
+intent = "Hold the temporary reader for Codex's headless multi-item status row, with its synthetic fixtures and its suite."
+paths = [
+  "web/src/fixtures/fleet-panes/codex--headless-status-5-items.txt",
+  "web/src/fixtures/fleet-panes/codex--headless-status-9-items.txt",
+  "web/src/lib/fleet-codex-status-row.ts",
+  "web/src/lib/harness/codex/fleet-headless-status-row.test.ts"
+]
+contracts = ["a headless Codex status row whose separators carry no paint reads as a status row with or without its right-aligned notice, and a coloured row keeps upstream's reading"]
+verify = ["web/src/lib/harness/codex/fleet-headless-status-row.test.ts"]
 
 [[invasive]]
 id = "native-row-actions-menu-port"
@@ -616,3 +629,22 @@ verify = [
   "web/src/lib/harness/conformance.test.ts"
 ]
 reason = "Claude Code 2.1.286 mode line; upstream unaware as of v1.14.2. While background agents run Claude appends `· ← N agents · ↓ to manage` to its mode line (clipped to `↓ to ma…` in a narrow pane), and the Claude grammar's two statusline-tail checks — the input-box locator's no-menu-hint step and the adapter's modalOnScreen scan — read any `<key> to <verb>` segment with a sendable key as a dialog footer, and `↓` is sendable. So a healthy working screen lost its composer and wore the unread-dialog card. The decision lives in the fork-owned web/src/lib/fleet-claude-mode-line.ts, which removes only that trailing segment on the permission-mode line; each check passes its row through it, one call per site, and every other row and every other `↓` hint keeps upstream's reading. menu-hints.ts is shared by every harness and the generic menu, so teaching it was the wider port and was rejected. THIS PORT IS TEMPORARY: an upstream pull request will be opened from the owner's own fork of Collie, and at the first upstream sync that adopts a release carrying that fix, both call sites return to upstream's text and this entry, the helper, its suite, its fixtures and the claude-mode-line-compat owned entry are removed."
+
+[[invasive]]
+id = "codex-headless-status-row-port"
+intent = "TEMPORARY compatibility port: read a headless Codex's multi-item status row, and its right-aligned notice, as the status row it is, until upstream reads it itself."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.14.2"
+paths = [
+  "web/src/lib/harness/codex/markers.ts#withFleetCodexStatusSegments(foldTrailingPadding(line.segments))",
+  "web/src/lib/harness/invariants.test.ts#DOWNSTREAM PORT (FORK.toml codex-headless-status-row-port)"
+]
+verify = [
+  "web/src/lib/harness/codex/fleet-headless-status-row.test.ts",
+  "web/src/lib/harness/codex.test.ts",
+  "web/src/lib/harness/invariants.test.ts",
+  "web/src/lib/harness/unread-dialog.test.ts",
+  "web/src/lib/harness/conformance.test.ts"
+]
+reason = "temporary until upstream reads headless multi-item status rows; retire at the sync adopting that release. Codex 0.156.1 with no colour answered and a user-configured multi-item status_line; upstream unaware as of v1.14.2, whose own notice rule says no headless notice was captured and whose paint-invariance suite pinned this repaint as a known gap. Three renderings broke isStyledStatusRow: from the fourth item the space before a separator is painted in the item's colour (`main␠` + `· `), the gap and the notice's `⚠ ` merge into one unpainted segment, and the notice's glue text and bold key carry no colour. So composerReady was false and, Codex declaring no modalOnScreen, an idle pane wore the unread-dialog card. The decision lives in the fork-owned web/src/lib/fleet-codex-status-row.ts: withFleetCodexStatusSegments repairs the two splits on the folded segments before upstream's loop runs, and fleetReadsUnpaintedNotice lets isRightNotice accept an uncoloured notice segment only when the row's separators are themselves plain. The markers.ts port is one import, the normalising call (the anchor), one parameter on isRightNotice, its one refusal line asking the helper, and the paint passed at its call site; re-implementing the notice check in the helper would duplicate upstream's bounds, and pre-marking segments dim would misstate the paint and loosen the inner-gap rule, so both were rejected. invariants.test.ts loses the known-gap entry the suite itself says to delete once the reader learns the paint (left in, its it.fails turns red); the anchor comment marks the spot. Every upstream fixture replays unchanged. THIS PORT IS TEMPORARY: an upstream issue and pull request will be opened from the owner's own fork of Collie, and at the first upstream sync that adopts a release carrying that fix, markers.ts and invariants.test.ts return to upstream's text and this entry, the helper, its suite, its fixtures and the codex-status-row-compat owned entry are removed."

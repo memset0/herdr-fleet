@@ -36,6 +36,8 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 - **Claude's background-agent hint no longer reads as a dialog.** Claude Code 2.1.286's mode-line suffix `← N agents · ↓ to manage` (or its clipped `↓ to ma…`) left a working pane with no composer and an unreadable-dialog card; a temporary port reads it as the mode line until upstream does.
 
+- **A headless Codex's multi-item status line reads as a status row (temporary).** With no colour answered, the glued `· ` separators, the gap merged into `⚠` and the uncoloured `⚠ 1 warning · f2 to view` notice no longer leave an idle pane composer-less under the unread-dialog card; a temporary port until upstream reads such rows.
+
 ## [3.5.1] - 2026-10-01
 
 **No member is obliged to redeploy; the lead alone levels.** A member's start, and both enrolment
