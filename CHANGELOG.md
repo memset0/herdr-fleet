@@ -21,6 +21,8 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Fixed
 
+- **CJK text in the default UI face now reaches the selected fallback.** Collie's unlayered splash mirror of the default stack shadowed the fork's `@layer theme` hole, so rail headings, tab labels and belt labels drew CJK in the system font; an unlayered default stack in `index.css` now carries `var(--font-cjk)`.
+
 - **Claude's background-agent hint no longer reads as a dialog.** Claude Code 2.1.286's mode-line suffix `← N agents · ↓ to manage` (or its clipped `↓ to ma…`) left a working pane with no composer and an unreadable-dialog card; a temporary port reads it as the mode line until upstream does.
 
 ## [3.5.1] - 2026-10-01

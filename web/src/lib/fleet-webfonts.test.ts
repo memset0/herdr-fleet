@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { CJK_FALLBACK_NONE, fleetWebfont } from "../../../fleet/ui/webfonts.ts";
 import { applyFleetWebfont, neededWebfont } from "./fleet-webfonts";
 
@@ -63,5 +66,33 @@ describe("what it writes into the document", () => {
     // Never empty: an empty value would put two commas together and invalidate every stack.
     expect(cjk().length).toBeGreaterThan(0);
     expect(cjk()).not.toContain(MAPLE.family);
+  });
+});
+
+// Collie's index.html re-declares the default stack in an UNLAYERED inline block for its boot splash,
+// and an unlayered declaration beats the @theme one, so the hole in the @theme stack never reached a
+// running page. The unlayered :root block in index.css has to carry it, after the face the operator
+// chose and before the system tail, and it must stay the same faces as the default it shadows.
+describe("the default UI stack a running page resolves", () => {
+  const css = readFileSync(resolve(__dirname, "../index.css"), "utf8");
+  const html = readFileSync(resolve(__dirname, "../../index.html"), "utf8");
+  const unlayered = /:root \{\s*--font-cjk:[^;]+;[\s\S]*?--font-sans:\s*([\s\S]*?);/.exec(css)?.[1] ?? "";
+  const families = (stack: string) => stack.split(",").map((part) => part.trim()).filter(Boolean);
+
+  it("carries the fallback position between the chosen face and the system tail", () => {
+    expect(families(unlayered).slice(0, 3)).toEqual(['"Aldrich"', '"Aldrich Fallback"', "var(--font-cjk)"]);
+  });
+
+  it("is Collie's own default stack with that one position added", () => {
+    const mirror = /:root \{\s*--font-sans:\s*([\s\S]*?);/.exec(html)?.[1] ?? "";
+    expect(mirror).not.toBe("");
+    expect(families(unlayered).filter((family) => family !== "var(--font-cjk)")).toEqual(families(mirror));
+  });
+
+  it("loads after the splash mirror it has to win against", () => {
+    // Equal specificity, both unlayered: order decides. Vite appends the stylesheet link after the
+    // inline <style> in <head>, and the entry is the only stylesheet the page names.
+    expect(html.indexOf("<style>")).toBeGreaterThan(-1);
+    expect(html).not.toMatch(/<link[^>]+rel="stylesheet"/);
   });
 });

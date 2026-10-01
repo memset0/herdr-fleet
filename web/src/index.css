@@ -781,6 +781,16 @@
  * onto the root when a face is chosen. */
 :root {
   --font-cjk: "Herdr Fleet CJK Unset";
+  /* THE DEFAULT FACE'S STACK, AGAIN, OUT HERE. Collie's index.html re-declares the default
+     --font-sans in an inline, UNLAYERED :root block (the boot splash's mirror), and an unlayered
+     declaration beats the @theme one above whatever its specificity, so the hole in the @theme stack
+     never reached a running page in the default face: CJK fell through to the system's CJK face.
+     This block is unlayered too and this stylesheet loads after that inline block, so it wins on
+     order. Every :root.font-* block below is (0,2,0) and still wins over it for its own choice.
+     Keep the faces in step with the @theme --font-sans above. */
+  --font-sans:
+    "Aldrich", "Aldrich Fallback", var(--font-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 :root.font-system {
