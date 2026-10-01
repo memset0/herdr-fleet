@@ -19,9 +19,17 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-10-01
+
+**No member is obliged to redeploy; the lead alone levels.** A member's start, and both enrolment
+commands, now refuse a `crew-trust.json` still in the pre-Collie-1.9 inner shape (a top-level `pack`
+key and no `crew`) instead of starting a member that cannot authenticate its lead. A member whose
+store is already in the current shape behaves exactly as on 3.5.0; one that is not must have its store
+rewritten by its previous release (3.4.x) before running 3.5.0 or later in any case.
+
 ### Fixed
 
-- **Refuse a trust store still in the pre-Collie-1.9 `pack` shape.** Start and both enrolment commands now fail closed on a `crew-trust.json` with a top-level `pack` key and no `crew`, naming the file and keys and changing nothing, instead of starting a member that cannot authenticate its lead; rewrite it with 3.4.x's trust-store no-op commit first.
+- **Refuse a trust store still in the pre-Collie-1.9 `pack` shape.** Start and both enrolment commands now fail closed on a `crew-trust.json` with a top-level `pack` key and no `crew`, naming the file and keys and changing nothing, instead of starting a member that cannot authenticate its lead; rewrite it with 3.4.x's trust-store no-op commit first. ([c5fcc9d](https://github.com/memset0/herdr-fleet/commit/c5fcc9d))
 
 ## [3.5.0] - 2026-10-01
 
