@@ -42,44 +42,118 @@ describe("NavTray", () => {
     expect(onSend.mock.calls).toEqual([[["1"]], [["5"]], [["9"]]]);
   });
 
-  it("the main pad reads as a single seven-column, two-row grid (physical-keyboard geometry)", () => {
+  it("the main grid is 7 cols + a 12px gap + Enter, 2 rows, Enter set apart and tinted (variant 4)", () => {
     render(<NavTray onSend={vi.fn()} />);
 
     const esc = screen.getByRole("button", { name: "Esc" });
     const tab = screen.getByRole("button", { name: "Tab" });
+    const shift = screen.getByRole("button", { name: "Shift" });
+    const ctrl = screen.getByRole("button", { name: "Ctrl" });
+    const alt = screen.getByRole("button", { name: "Alt" });
     const up = screen.getByRole("button", { name: "Up" });
-    const enter = screen.getByRole("button", { name: "Enter" });
     const ctrlC = screen.getByRole("button", { name: "Ctrl+C" });
     const space = screen.getByRole("button", { name: "Space" });
     const left = screen.getByRole("button", { name: "Left" });
     const down = screen.getByRole("button", { name: "Down" });
     const right = screen.getByRole("button", { name: "Right" });
+    const enter = screen.getByRole("button", { name: "Enter" });
 
     // a.compareDocumentPosition(b) & DOCUMENT_POSITION_FOLLOWING !== 0 means a comes before b.
     const isBefore = (a: HTMLElement, b: HTMLElement) =>
       (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 
-    // Row 1: Esc leads, Tab follows, Up and Enter close it out.
+    // Row 1, in order: Esc, Tab, Shift, Ctrl, Alt, Up, the quick Ctrl+C.
     expect(isBefore(esc, tab)).toBe(true);
-    expect(isBefore(tab, up)).toBe(true);
-    expect(isBefore(up, enter)).toBe(true);
+    expect(isBefore(tab, shift)).toBe(true);
+    expect(isBefore(shift, ctrl)).toBe(true);
+    expect(isBefore(ctrl, alt)).toBe(true);
+    expect(isBefore(alt, up)).toBe(true);
+    expect(isBefore(up, ctrlC)).toBe(true);
 
-    // Row 2 begins only after all of row 1 — Ctrl+C leads it, Space/Left/Down/Right follow in order.
-    expect(isBefore(enter, ctrlC)).toBe(true);
+    // Row 2 begins only after all of row 1: a 4-wide Space, then the inverted-T's Left, Down, Right.
     expect(isBefore(ctrlC, space)).toBe(true);
     expect(isBefore(space, left)).toBe(true);
     expect(isBefore(left, down)).toBe(true);
     expect(isBefore(down, right)).toBe(true);
+
+    // Enter sits apart from the arrows, last in the grid (issue #263), and spans both rows.
+    expect(isBefore(right, enter)).toBe(true);
+    expect(enter).toHaveClass("row-span-2");
+
+    // Space spans the first 4 columns; Up and Down share one column (the inverted T's stem), and
+    // that column is neither Left's nor Right's.
+    expect(space).toHaveClass("col-span-4");
+    const colOf = (el: HTMLElement) => [...el.classList].find((c) => c.startsWith("col-start-"));
+    expect(colOf(up)).toBe(colOf(down));
+    expect(colOf(up)).not.toBe(colOf(left));
+    expect(colOf(down)).not.toBe(colOf(right));
+
+    // Enter carries a low-opacity tint of the primary colour at rest — the commit-key read.
+    expect(enter).toHaveClass("bg-primary/15");
+    expect(enter).toHaveClass("border-primary/40");
   });
 
-  it("a quick Ctrl+C leads row 2 and fires ctrl+c immediately", async () => {
+  // jsdom lays out nothing, so what a real phone showed (Enter one row high, not two) can only be
+  // pinned by the CLASSES that produce it. A shared fixed-height class (`h-9`, the size every other
+  // key gets) wins over `row-span-2` via tailwind-merge unless Enter itself carries a stretch class
+  // listed after it — this test is what stops that regressing silently.
+  it("Enter has no fixed-height class and stretches to fill its two-row span; the grid pins explicit row heights", () => {
+    render(<NavTray onSend={vi.fn()} />);
+
+    const enter = screen.getByRole("button", { name: "Enter" });
+    for (const fixedHeight of ["h-9", "h-8", "h-10"]) {
+      expect(enter).not.toHaveClass(fixedHeight);
+    }
+    expect(enter).toHaveClass("h-auto");
+    expect(enter).toHaveClass("self-stretch");
+    expect(enter).toHaveClass("row-span-2");
+
+    // The grid itself: explicit 36px rows are what gives Enter's stretch a real 76px (36+4+36) to
+    // fill, rather than leaving both rows to size from their own single-row content.
+    const grid = screen.getByRole("button", { name: "Esc" }).parentElement;
+    expect(grid).toHaveClass("grid-rows-[36px_36px]");
+  });
+
+  it("the quick Ctrl+C key shows ^C (fits its 1/7 column) but keeps its chord and accessible name", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    render(<NavTray onSend={onSend} />);
+
+    const ctrlC = screen.getByRole("button", { name: "Ctrl+C" }); // aria-label unchanged
+    expect(ctrlC).toHaveTextContent("^C");
+    expect(ctrlC).toHaveAttribute("aria-label", "Ctrl+C");
+
+    await user.click(ctrlC);
+    expect(onSend).toHaveBeenCalledExactlyOnceWith(["ctrl+c"]);
+  });
+
+  it("no pad key can overflow its column — every key gets min-w-0 and overflow-hidden", () => {
+    render(<NavTray onSend={vi.fn()} />);
+    for (const name of ["Esc", "Tab", "Up", "Ctrl+C", "Space", "Left", "Down", "Right", "Enter"]) {
+      const btn = screen.getByRole("button", { name });
+      expect(btn).toHaveClass("min-w-0");
+      expect(btn).toHaveClass("overflow-hidden");
+    }
+  });
+
+  it("every icon key (Space, Shift, Tab, Enter, and the arrows) keeps its aria-label", () => {
+    render(<NavTray onSend={vi.fn()} />);
+
+    for (const name of ["Space", "Shift", "Tab", "Enter", "Up", "Down", "Left", "Right"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("aria-label", name);
+    }
+  });
+
+  it("a quick Ctrl+C closes row 1 and fires ctrl+c immediately", async () => {
     const user = userEvent.setup();
     const onSend = vi.fn();
     render(<NavTray onSend={onSend} />);
 
     const ctrlC = screen.getByRole("button", { name: "Ctrl+C" });
-    // Reads the same as the Ctrl C preset it duplicates — one chord, one spelling, and not tmux's.
-    expect(ctrlC).toHaveTextContent("Ctrl C");
+    // The visible label is "^C" — "Ctrl C" is wider than a 1/7 column on a 390px phone — but the
+    // chord it sends and its accessible name ("Ctrl+C", asserted via `getByRole` above) don't move.
+    expect(ctrlC).toHaveTextContent("^C");
+    expect(ctrlC).not.toHaveTextContent("Ctrl C");
 
     await user.click(ctrlC);
     expect(onSend).toHaveBeenCalledExactlyOnceWith(["ctrl+c"]);

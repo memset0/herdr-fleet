@@ -3,7 +3,6 @@ import {
   type AgentStatus,
   type AgentView,
   type BridgeStatus,
-  STATUS_RANK,
   type TabView,
   type WorkspaceView,
 } from "./types.ts";
@@ -106,6 +105,16 @@ export function terminalTitleIsStale(pane: MuxPane): boolean {
   if (command.length === 0 || !INTERACTIVE_SHELLS.has(command)) return false;
   // A shell that titles the pane after itself is describing the present, not the past.
   return title.toLowerCase() !== command;
+}
+
+/**
+ * A pane's or a tab's place in the multiplexer's own listing.
+ *
+ * An entry the listing does not hold (a poll caught mid-create) sorts LAST rather than first: an
+ * unplaced pane is never allowed to displace a placed one.
+ */
+function rankOf(order: ReadonlyMap<string, number>, key: string): number {
+  return order.get(key) ?? Number.MAX_SAFE_INTEGER;
 }
 
 /**
@@ -363,21 +372,35 @@ export class StateEngine {
     try {
       const { panes, spaces, tabs } = await this.mux.snapshot();
 
+      // ── ONE STABLE ORDER, AND IT IS THE MULTIPLEXER'S ─────────────────────
+      // Space, then tab, then pane, each read off the arrangement the mux reported: the tab's own
+      // index in `tabs`, and the pane's own index in `panes`. Nothing here sorts by pane id any
+      // more. A pane id is opaque (identity rule 1) and alphabetical order over opaque ids is an
+      // order nobody can see — `%10` before `%2`, `pN` before `pC` — so two panes side by side on
+      // the desk arrived at the phone in an order the desk never showed. Position is what the
+      // operator arranged, and position is what the phone now reads back.
+      const tabRank = new Map(tabs.map((t, i) => [t.tabId, i]));
+      const paneRank = new Map(panes.map((p, i) => [p.paneId, i]));
+      const byPlace = (a: AgentView, b: AgentView) =>
+        a.workspaceNumber - b.workspaceNumber ||
+        rankOf(tabRank, a.tabId) - rankOf(tabRank, b.tabId) ||
+        rankOf(paneRank, a.paneId) - rankOf(paneRank, b.paneId);
+
+      // PLACE ONLY, NEVER STATUS (ADR 0063). This list used to lead with STATUS_RANK, so every
+      // status flip re-sorted it and a pane jumped to the top when it blocked and back when it
+      // resumed. Every client surface kept that order (the pane strip, the space view, the
+      // switcher), so the pane the operator was aiming at moved under the thumb on each poll.
+      // Urgency is a mark the client paints; it is never a position.
       const agents: AgentView[] = panes
         .filter((p) => p.agent !== SHELL)
         .map((p) => toView(p, "agent"))
-        .toSorted(
-          (a, b) =>
-            STATUS_RANK[a.status] - STATUS_RANK[b.status] ||
-            a.workspaceNumber - b.workspaceNumber ||
-            a.paneId.localeCompare(b.paneId),
-        );
+        .toSorted(byPlace);
 
-      // Bare shell panes (no agent), ordered by space then pane so a space's panes read top-down.
+      // Bare shell panes (no agent), in the same place order so a space's panes read top-down.
       const shellPanes: AgentView[] = panes
         .filter((p) => p.agent === SHELL)
         .map((p) => toView(p, "shell"))
-        .toSorted((a, b) => a.workspaceNumber - b.workspaceNumber || a.paneId.localeCompare(b.paneId));
+        .toSorted(byPlace);
 
       const currentPaneIds = new Set(panes.map((pane) => pane.paneId));
       for (const paneId of this.knownPaneIds) {
@@ -404,6 +427,7 @@ export class StateEngine {
             view.repoRoot = s.repoRoot;
             view.isWorktree = s.isWorktree === true;
           }
+          if (s.folder !== undefined) view.folder = s.folder;
           return view;
         })
         .toSorted((a, b) => a.number - b.number);
@@ -416,6 +440,26 @@ export class StateEngine {
         focused: t.focused,
         paneCount: t.paneCount,
       }));
+
+      // Each pane learns its position in its tab and, when it is alone in a tab the operator named,
+      // that name (types.ts § soleTabName). Position is the pane's index in the mux listing among the
+      // panes of its tab, the same arrangement `byPlace` reads.
+      const tabPanes = new Map(tabs.map((t) => [t.tabId, t.paneCount]));
+      const source = new Map(panes.map((p) => [p.paneId, p]));
+      const position = new Map<string, number>();
+      const perTab = new Map<string, number>();
+      for (const p of panes) {
+        const i = perTab.get(p.tabId) ?? 0;
+        perTab.set(p.tabId, i + 1);
+        position.set(p.paneId, i);
+      }
+      for (const v of [...agents, ...shellPanes]) {
+        const pos = position.get(v.paneId);
+        if (pos !== undefined) v.tabPosition = pos;
+        const raw = source.get(v.paneId);
+        const label = raw?.tabLabel?.trim();
+        if (tabPanes.get(v.tabId) === 1 && raw?.tabNamed === true && label) v.soleTabName = label;
+      }
 
       // Detect transitions against the previous poll. First sighting of a pane never fires a
       // transition (so we don't notify for agents already blocked when the bridge starts).

@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, MessageSquarePlus } from "lucide-react";
 
-import type { PromptFamily, PromptFeedbackPurpose, PromptModel, PromptOption } from "@/lib/blocks";
+import type {
+  PromptFamily,
+  PromptFeedbackPurpose,
+  PromptModel,
+  PromptOption,
+  StyledLine,
+} from "@/lib/blocks";
 import { FEEDBACK_MAX_LENGTH } from "@/lib/prompt-action";
 import { OptionButton, OptionGroupCaption, PromptPanel } from "@/components/option-button";
 import { useLocale } from "@/hooks/use-locale";
@@ -15,6 +21,10 @@ export type PromptBlockAction =
 export interface PromptSelectBlockProps {
   /** The detected dialog: question (screen-reader label) + selectable options as buttons. */
   prompt: PromptModel;
+  /** The region this block replaced — passed through to PromptPanel as its way back (ADR 0056).
+   *  Absent in a handful of presentational tests that construct a `PromptModel` by hand; those
+   *  render with no Terminal control, which is the correct behaviour for a missing `raw`. */
+  lines?: StyledLine[];
   /**
    * Injected send handler (from AgentChat). Presentational contract: this component NEVER touches
    * the network — it just reflects the sending state while the handler runs the race guard and
@@ -41,6 +51,23 @@ function familyCaption(family: PromptFamily): string {
     case "plan":
       return t("prompt.family.plan");
   }
+}
+
+// The badge glyph for a key a model didn't already give its own `keyLabel` — the same glyph the
+// terminal itself draws for that key. Never the raw key NAME: a badge reading "Down" or "Up" tells
+// the reader nothing a terminal ever showed them (the resume picker's footer names only the pointer
+// and Esc; the folder-trust prompt's footer names only Enter and Esc — ADR 0055/0058). A digit falls
+// through unchanged, since the badge already mirrors the menu's own digit in that case.
+// Exported for its own unit test.
+export function keyBadgeFallback(key: string): string {
+  if (key === "Down") return "↓";
+  if (key === "Up") return "↑";
+  if (key === "Left") return "←";
+  if (key === "Right") return "→";
+  if (key === "Enter") return "⏎";
+  if (key === "Escape") return "Esc";
+  if (key === "Tab") return "Tab";
+  return key;
 }
 
 interface FeedbackCopy {
@@ -104,7 +131,7 @@ function feedbackCopyFor(purpose: PromptFeedbackPurpose): FeedbackCopy {
 //
 // Only the empty, unfocused state offers the composer, whose Send drives digit → focus → type →
 // Enter and lands as DENY-with-feedback (the agent re-plans) — which is what the button says.
-export function PromptSelectBlock({ prompt, onAction, disabled }: PromptSelectBlockProps) {
+export function PromptSelectBlock({ prompt, lines, onAction, disabled }: PromptSelectBlockProps) {
   useLocale();
   const [sending, setSending] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -150,8 +177,8 @@ export function PromptSelectBlock({ prompt, onAction, disabled }: PromptSelectBl
   );
 
   return (
-    <PromptPanel ariaLabel={prompt.question}>
-      <OptionGroupCaption>{familyCaption(prompt.family)}</OptionGroupCaption>
+    <PromptPanel ariaLabel={prompt.question} raw={lines}>
+      <OptionGroupCaption>{prompt.caption ?? familyCaption(prompt.family)}</OptionGroupCaption>
       <div className="flex flex-col gap-1">
         {prompt.options.map((option, index) => {
           const id = `opt-${index}`;
@@ -160,7 +187,7 @@ export function PromptSelectBlock({ prompt, onAction, disabled }: PromptSelectBl
             <OptionButton
               key={index}
               tone={busy ? "busy" : "default"}
-              keyLabel={option.keyLabel ?? option.keys[0]}
+              keyLabel={option.keyLabel ?? keyBadgeFallback(option.keys[0]!)}
               label={option.label}
               description={option.description}
               disabled={locked}

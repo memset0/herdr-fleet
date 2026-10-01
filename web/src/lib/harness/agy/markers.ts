@@ -35,6 +35,17 @@ export function isMultiStepHeader(text: string): boolean {
 
 export type { PromptFamily };
 
+// VERDICT 2026-09-21 (ADR 0053): agy is **not affected** by the bug that narrowed Claude's trust
+// arm, so this classifier is left as it is. The Claude fault was that `claude/menu.ts` reads any
+// family claim as "a specific grammar owns this screen" and stands the generic menu down. agy has no
+// generic menu grammar to silence: this directory holds chrome, index, markers and prompt-select
+// only, and neither adapter wires a menu arm. Its single consumer, `agy/prompt-select.ts`, bails
+// unless the family is non-null AND at least two numbered option rows sit within MAX_FOOTER_GAP of
+// the footer, so a slider-shaped screen lifts nothing here whatever the family says, and a misfiled
+// `trust` can never take the buttons off a screen. What it does change is narrower: on a screen that
+// IS numbered, `parseOptionRow(text, family === "trust")` parses option rows differently. That is a
+// recipe question on a dialog agy already claimed, not a silenced grammar. Revisit if agy ever grows
+// a generic menu.
 export function classifyFooter(text: string): PromptFamily | null {
   const t = text.toLowerCase();
   if (/\b(?:enter\s+confirm|enter\s+to\s+confirm)\b/.test(t)) return "trust";
@@ -45,9 +56,21 @@ export function classifyFooter(text: string): PromptFamily | null {
   return null;
 }
 
+// The name markers that say "this buffer belongs to another agent". Each one is a PHRASE Claude
+// paints itself, never the bare word: an agy pane whose conversation merely mentions Claude, with
+// neither "agy" nor "Antigravity" on the visible screen, must not be read as alien — its dialog
+// would stall.
+//
+// "tell Claude" is the phrase a permission dialog paints in its own option row ("No, and tell Claude
+// what to do differently"), and it is the only Claude name on a permission screen whose welcome
+// banner has scrolled off. The capture lab (2026-09-17) showed how thin that cover is: every older
+// Claude capture cleared this guard on the banner alone, and the lab's 82-column Edit-permission
+// screens name Claude NOWHERE — not in a banner, and not in an option row, because their third
+// option is a bare "No". agy's prompt-select lifts their numbered options, and no wider name list
+// fixes it. Those two captures are therefore not in fixtures/panes; see its README for the record.
 export function isAlienBuffer(texts: string[]): boolean {
   for (const text of texts) {
-    if (/Claude Code|\.claude\/|Claude Sonnet|Claude Opus|Claude Max|AskUserQuestion/i.test(text)) {
+    if (/Claude Code|\.claude\/|Claude Sonnet|Claude Opus|Claude Max|tell Claude|AskUserQuestion/i.test(text)) {
       const full = texts.join(" ");
       if (!/Antigravity CLI|\.antigravity|agy/i.test(full)) return true;
     }

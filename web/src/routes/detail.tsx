@@ -1,10 +1,13 @@
 import { useEffect, useRef } from "react";
-import { useLoaderData, useLocation, useNavigate, useParams } from "react-router";
+import { useLoaderData, useLocation, useParams } from "react-router";
 
 import { AgentChat, type PaneContentRenderer } from "@/components/agent-chat";
+import { useDashPrefs } from "@/hooks/use-dash-prefs";
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
+import { useNav } from "@/hooks/use-nav";
 import { type PaneData } from "@/lib/loaders";
-import { homePath, panePath } from "@/lib/nav";
+import { GLIDE_PAIRS, glideBack } from "@/lib/glide";
+import { canStepBack, homePath, panePath, readFrom, upTarget } from "@/lib/nav";
 import { paneScopeKey } from "@/lib/scope";
 import { findPane, paneScope } from "@/lib/hosts";
 import { setStatus } from "@/lib/status";
@@ -26,9 +29,10 @@ export function DetailRoute({ renderContent }: { renderContent?: PaneContentRend
   // The session this pane belongs to (undefined = primary), read from the pane loader so every
   // navigation and write below stays scoped to it.
   const scope = pane.scope;
-  const navigate = useNavigate();
+  const nav = useNav();
   const location = useLocation();
   const stalled = useLoadingStalled();
+  const dashView = useDashPrefs().prefs.dashView;
 
   // SAFETY: `location.state` is whatever the navigation that got here attached — `unknown` by
   // definition. The only shape Collie ever puts there is `{ freshPane }` (components/agent-list's
@@ -58,22 +62,39 @@ export function DetailRoute({ renderContent }: { renderContent?: PaneContentRend
     findPane(root.agents, paneId, scope, root.servers, root.sessions) ??
     findPane(root.shellPanes, paneId, scope, root.servers, root.sessions) ??
     (fresh && fresh.paneId === paneId && !seen ? fresh : undefined);
-  const tabLabel = root.tabs.find((t) => t.tabId === agent?.tabId)?.label;
   const gone = !agent;
 
-  // Recover from a closed pane: once a healthy snapshot no longer has it, bounce Home instead of
+  // Recover from a closed pane: once a healthy snapshot no longer has it, go up a level instead of
   // leaving you on a dead "agent gone" view. Guarded on a connected, non-stale snapshot so a
-  // transient poll failure or reconnect doesn't evict a still-valid pane.
+  // transient poll failure or reconnect doesn't evict a still-valid pane. Up, not a replace onto
+  // Home: the dead pane must not stay in history for the next swipe to land on (ADR 0067). Once per
+  // pane, because an up can be a step back, and a second one would climb a level too far.
+  const exited = useRef<string | null>(null);
   useEffect(() => {
-    if (gone && root.bridge === "connected" && !root.error) {
+    if (gone && root.bridge === "connected" && !root.error && exited.current !== paneId) {
+      exited.current = paneId;
       // The operator did not close this pane from this phone. It went away under them — from
       // another device, from the terminal itself, or because the agent exited — and a poll is what
       // noticed. The status (and the orbit round it turns) is what stops the eviction that follows
       // being the first thing they see.
       setStatus("Pane closed", "info");
-      navigate(homePath(scope), { replace: true });
+      nav.up(homePath(scope));
     }
-  }, [gone, root.bridge, root.error, navigate, scope]);
+  }, [gone, root.bridge, root.error, nav, scope, paneId]);
+
+  // Up one level: to the space or the dashboard the pane was opened from (ADR 0067).
+  const up = () => nav.up(homePath(scope));
+  // The back arrow glides the header's dot, tile and name back down into the row this pane was
+  // opened from (lib/glide.ts, the `pane` pair, rule 1), when the arrow lands where such a row can
+  // be: the dashboard's Panes or Focus list, or a space. Not the dashboard's Changes tab, which lists
+  // workspaces, so the arrow slides there as it always did. Where the row is gone or off screen, the
+  // engine crossfades. The landing is the same resolution `nav.up` runs (`upTarget`).
+  const backArrow = () => {
+    const lands = upTarget(location.pathname, readFrom(location.state), homePath(scope), canStepBack());
+    const rowsThere = GLIDE_PAIRS.pane.origin(lands) && (lands !== "/" || dashView !== "changes");
+    if (rowsThere) glideBack("pane", panePath(paneId, scope), up);
+    else up();
+  };
 
   return (
     <AgentChat
@@ -89,8 +110,9 @@ export function DetailRoute({ renderContent }: { renderContent?: PaneContentRend
       agents={root.agents}
       shellPanes={root.shellPanes}
       tabs={root.tabs}
-      tabLabel={tabLabel}
+      servers={root.servers}
       text={pane.text}
+      logicalText={pane.logicalText}
       requestedLines={pane.requestedLines}
       revision={pane.revision}
       device={root.device}
@@ -98,9 +120,11 @@ export function DetailRoute({ renderContent }: { renderContent?: PaneContentRend
       error={root.error}
       stalled={stalled}
       renderContent={renderContent}
-      onBack={() => navigate(homePath(scope))}
+      onBack={up}
+      onBackArrow={backArrow}
+      // Pane to pane is a sideways move: it replaces, and the pane's way up comes along.
       onSelect={(id) =>
-        navigate(
+        nav.side(
           panePath(
             id,
             paneScope(

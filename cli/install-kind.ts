@@ -44,9 +44,30 @@ export function isManagedCheckout(exec: Exec, root: string): boolean {
   return !r.found || r.code !== 0;
 }
 
+/**
+ * True when `root` is the top level of a git working tree — the repository OWNS this directory,
+ * rather than merely containing it.
+ *
+ * `--show-prefix`, NOT `--git-dir`. Git's discovery walks UP, so `--git-dir` answers "some
+ * repository contains this path" and exits 0 from any depth. That is not the shape this module
+ * promises: a binary install at `~/.local/share/collie/versions/1.10.0` reported `linked-clone`
+ * on every host whose `$HOME` is itself a repository — the ordinary dotfiles worktree — and
+ * `update` then read the DOTFILES remote, refused the release, and told the operator to set
+ * `COLLIE_UPDATE_REPO` to their own dotfiles (issue #243).
+ *
+ * `--show-prefix` prints the path of the working directory RELATIVE to the top level, so it is
+ * empty exactly at the top and non-empty at every depth below it. One call, and the comparison
+ * happens inside git with both sides already symlink-resolved — which keeps a checkout reached
+ * through a symlinked root (the dev lane's shape) a checkout.
+ *
+ * This question is only answerable because no child of Collie's inherits a variable that relocates
+ * a repository — `withoutGitRelocators` in `cli/sys.ts`, ADR 0049. An exported `GIT_DIR` otherwise
+ * answers every git question here about somebody else's repository, from any directory, and `-C`
+ * does not override it.
+ */
 export function isGitCheckout(exec: Exec, root: string): boolean {
-  const r = exec.capture("git", gitArgsOf(root, ["rev-parse", "--git-dir"]));
-  return r.found && r.code === 0;
+  const r = exec.capture("git", gitArgsOf(root, ["rev-parse", "--show-prefix"]));
+  return r.found && r.code === 0 && r.stdout.trim() === "";
 }
 
 // ── The pure core ────────────────────────────────────────────────────────────
@@ -56,6 +77,17 @@ export interface InstallProbe {
   readonly isGitCheckout: boolean;
   /** Only meaningful when {@link isGitCheckout} — a detached HEAD is the Herdr-managed shape. */
   readonly isDetached: boolean;
+  /**
+   * `<root>/.git` exists, as a directory OR as the file a linked worktree and a submodule use.
+   *
+   * The DISAGREEMENT DETECTOR, and it only ever matters when {@link isGitCheckout} is false. Git
+   * answers 128 both for "no repository here" and for "a repository here I cannot read" — a
+   * corrupt `HEAD`, an unreadable `.git`, a `.git` file pointing at a directory that is gone. Those
+   * are indistinguishable by exit code, and stderr is not a contract. So the shape on disk is
+   * asked instead: a `.git` that is present while git refuses to speak means a BROKEN checkout,
+   * never an install of another kind.
+   */
+  readonly hasGitEntry: boolean;
   /** `basename(dirname(root)) === "versions"`. */
   readonly parentIsVersions: boolean;
   readonly currentIsSymlink: boolean;
@@ -105,7 +137,10 @@ export type InstallKind =
    * root. Each of those three is on its own enough evidence; see {@link classifyInstall}.
    */
   | { readonly kind: "packaged" }
-  | { readonly kind: "unknown"; readonly why: "no-marker" | "orphan-layout" | "loose-binary" };
+  | {
+      readonly kind: "unknown";
+      readonly why: "no-marker" | "orphan-layout" | "loose-binary" | "broken-checkout";
+    };
 
 /**
  * The five kinds, decided from the probe alone — pure, so `bun test` covers the whole truth table
@@ -122,6 +157,16 @@ export function classifyInstall(p: InstallProbe): InstallKind {
   if (p.isGitCheckout) {
     return p.isDetached ? { kind: "detached-checkout", alsoLayout } : { kind: "linked-clone", alsoLayout };
   }
+  // A `.git` IS here and git would not confirm it. Stop, and say so — never fall through.
+  //
+  // Falling through is the one direction that destroys work. The next clause reads a `versions/`
+  // parent and a `current` symlink and answers `binary`, and the binary path renames the version
+  // directory into `.trash/`. A checkout whose `.git` went unreadable for a minute — a permission
+  // slip, a half-written `HEAD`, an interrupted `git gc` — would be a working tree, with
+  // uncommitted work in it, moved aside by a verb the operator ran to UPDATE it. "git wins" is
+  // supposed to protect exactly that tree, and an exit code cannot be trusted to notice it: git
+  // returns 128 for "no repository" and for "broken repository" alike.
+  if (p.hasGitEntry) return { kind: "unknown", why: "broken-checkout" };
   if (p.parentIsVersions) {
     if (p.currentIsSymlink && p.currentResolvesHere) return { kind: "binary" };
     // A half-finished manual copy: the layout is there and the one thing that makes it navigable is
@@ -225,6 +270,8 @@ export function probeInstall(
   return {
     isGitCheckout: git,
     isDetached: git && isManagedCheckout(deps.exec, root),
+    // `exists` answers for a directory and for the one-line file a worktree or submodule uses.
+    hasGitEntry: deps.files.exists(join(root, ".git")),
     parentIsVersions: basename(layout.versionsDir) === "versions",
     currentIsSymlink: probe.kind === "symlink",
     currentResolvesHere:

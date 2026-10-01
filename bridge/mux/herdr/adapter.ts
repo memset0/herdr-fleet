@@ -23,6 +23,7 @@
 // the list is that the NEXT adapter's is shorter.
 
 import { meaningfulTabLabel, meaningfulTerminalTitle } from "../../activity.ts";
+import { isUnnamedTab } from "../../pane-name.ts";
 import type { DialMode } from "../../dial.ts";
 import { declareCapabilities } from "../capabilities.ts";
 import { herdrMachineCandidates } from "./machine-list.ts";
@@ -315,6 +316,24 @@ export class HerdrMux implements MuxAdapter {
     }
   }
 
+  /**
+   * The same scrollback with soft wraps undone (`recent_unwrapped`), for URL repair.
+   *
+   * Read in the same escape-carrying form as `readGrid` on purpose: `ansi` is the format whose read
+   * was never observed to harvest an alt-screen pane, which is the property that keeps the mirror
+   * from scrolling somebody's terminal (HERDR_API.md → `pane.read`). Callers strip the styling;
+   * this read exists only for the URLs in it. On an agent pane the unwrapped rows equal the wrapped
+   * ones — the bridge asks for this only when a URL is actually split.
+   */
+  async readLogicalText(paneId: string, lines: number): Promise<MuxOutcome<string>> {
+    try {
+      const read = await this.client.readPane(paneId, "recent_unwrapped", lines, "ansi");
+      return muxOk(read.text);
+    } catch (err) {
+      return transportRefusal(err);
+    }
+  }
+
   async typeText(paneId: string, text: string): Promise<MuxAck> {
     return this.attempt(() => this.client.sendPaneText(paneId, text));
   }
@@ -531,8 +550,12 @@ function toMuxPane(
   // A user-set pane label (herdr pane.rename); omitted when unset.
   if (raw.label !== null && raw.label !== undefined && raw.label.length > 0) pane.paneLabel = raw.label;
   // The tab's label, dropped when it's Herdr's positional default in a single-tab space.
-  const tabLabel = meaningfulTabLabel(tabById.get(raw.tab_id)?.label, space?.tab_count ?? 0);
-  if (tabLabel) pane.tabLabel = tabLabel;
+  const tabLabel = meaningfulTabLabel(tabById.get(raw.tab_id)?.label);
+  if (tabLabel) {
+    pane.tabLabel = tabLabel;
+    // Herdr labels an unnamed tab by position, so any other label is one the operator gave it.
+    if (!isUnnamedTab(tabLabel)) pane.tabNamed = true;
+  }
   // What the pane says it is doing, dropped when it only repeats the agent name or the space label.
   const terminalTitle = meaningfulTerminalTitle(
     raw.terminal_title,
@@ -584,6 +607,10 @@ function toMuxSpace(raw: WireWorkspace): MuxSpace {
     // every worktree of it — probed 2026-08-28, and the pair is what lets a list nest one under the
     // other without a second call.
     space.isWorktree = raw.worktree.is_linked_worktree === true;
+    // The workspace's own folder: the checkout it sits in. Herdr's workspace record carries no cwd
+    // of its own (probed 2026-09-23 on herdr 0.9.0), so this is the only folder it names.
+    const folder = raw.worktree.checkout_path ?? raw.worktree.repo_root;
+    if (folder) space.folder = folder;
   }
   return space;
 }

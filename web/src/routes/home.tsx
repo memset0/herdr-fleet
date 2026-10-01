@@ -1,11 +1,13 @@
+import { CircleDot, GitCompare, Rows3 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import { useRevalidator } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
 import { SessionSwitcher } from "@/components/session-switcher";
 import { ServerSwitcher } from "@/components/server-switcher";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { AgentList } from "@/components/agent-list";
+import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { LaunchStrip } from "@/components/launch-strip";
 import { SpaceOverview } from "@/components/space-overview";
 import { NewSpaceSheet, type WorktreeRepo } from "@/components/new-space-sheet";
@@ -14,25 +16,85 @@ import { ToastViewport } from "@/components/ui/toast-viewport";
 import { BuildStamp } from "@/components/build-stamp";
 import { CrewFooterLink } from "@/components/crew-footer-link";
 import { UpdateBanner } from "@/components/update-banner";
+import { TabBar } from "@/components/ui/tab-bar";
+import { WorkspaceChangesList, type WorkspaceChangesRow } from "@/components/workspace-changes-list";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
+import { useLocale } from "@/hooks/use-locale";
+import { useWorkspaceChangeCounts } from "@/hooks/use-workspace-change-counts";
 import { useSpaceActions } from "@/hooks/use-spaces";
+import { useNav } from "@/hooks/use-nav";
+import { usePaneOpen } from "@/hooks/use-pane-open";
+import { useScrollMemory } from "@/hooks/use-scroll-memory";
 import { useMuxCapability } from "@/lib/mux-capability";
-import { ambientPanes, leadHost, paneScope, sessionsOnHost } from "@/lib/hosts";
-import { panePath, spacePath } from "@/lib/nav";
-import type { AgentView } from "@/lib/types";
+import { ambientHost, ambientPanes, isMultiHost, paneRowKey, paneScope, sessionsOnHost } from "@/lib/hosts";
+import { setMachineHidden, useHiddenMachines } from "@/lib/hidden-machines";
+import type { ChangesLookup } from "@/lib/api";
+import type { DashView } from "@/lib/dash-view";
+import { t, tn } from "@/lib/i18n";
+import { glideForward } from "@/lib/glide";
+import { spaceChangesPath, spacePath } from "@/lib/nav";
+import type { WorkspaceGroup } from "@/lib/pane-groups";
+import { scopeKey, type Scope } from "@/lib/scope";
+import { countBlocked, hasReady } from "@/lib/triage";
+import { usePairing } from "@/lib/pairing";
+import { usePins } from "@/lib/pins";
+import { isReadOnly, type AgentView, type ServerSummary, type SessionSummary } from "@/lib/types";
 import { useRootData } from "@/lib/route-data";
 
-// Dashboard home screen. Everything you might ACT on comes first — Needs you → Ready · unseen →
-// Working → Recent (see lib/triage.ts) — and the Spaces navigator sits last, under the thing it
-// navigates to. Recent and Spaces fold; fold both and the page is the triaged herd and nothing else.
+/**
+ * The Changes tab's body (ADR 0066). Mounted only while that tab is selected, so its 5-second
+ * refresh starts when the tab opens and stops when the operator leaves it. One row per workspace the
+ * strip leaves shown, each asked on the machine and session its panes live on.
+ */
+function ChangesTabBody({
+  groups,
+  scope,
+  servers,
+  sessions,
+  lookup,
+}: {
+  groups: readonly WorkspaceGroup[];
+  scope: Scope;
+  servers: readonly ServerSummary[] | undefined;
+  sessions: readonly SessionSummary[] | undefined;
+  lookup: ChangesLookup;
+}) {
+  const nav = useNav();
+  const rows = useMemo<WorkspaceChangesRow[]>(
+    () =>
+      groups.flatMap((g) => {
+        // A group is never empty (it exists because a pane is in it), and every pane of it shares
+        // one workspace, machine and session, so its first pane addresses the whole workspace.
+        const first = g.panes[0];
+        if (first === undefined) return [];
+        return [{ key: g.key, label: g.label, workspaceId: first.workspaceId, scope: paneScope(scope, first, servers, sessions) }];
+      }),
+    [groups, scope, servers, sessions],
+  );
+  const counts = useWorkspaceChangeCounts(rows, lookup, true);
+  return (
+    <WorkspaceChangesList
+      rows={rows}
+      counts={counts}
+      onOpen={(row, from) => {
+        const to = spaceChangesPath(row.workspaceId, row.scope);
+        glideForward("changes", to, () => nav.down(to), from);
+      }}
+    />
+  );
+}
+
+// Dashboard home screen. Everything you might ACT on comes first — Needs you → Ready · unseen (see
+// lib/triage.ts) — then every other pane under the `space › tab` it lives in (lib/pane-groups.ts),
+// and the Spaces navigator sits last, under the thing it navigates to.
 // Launchers sit directly above Spaces: they are one-tap act-on-able actions like the herd above
 // them, but they CREATE rather than triage, so they sit under the triaged herd and above the
 // navigator their new Space will appear in. Tapping an agent opens its pane; tapping a space
 // drills into /space/:id; tapping a launcher creates a throwaway Space and types its command.
 export function HomeRoute() {
   const data = useRootData();
-  const navigate = useNavigate();
-  const { newSpace, newWorktree, showWorktree, creatingSpace } = useSpaceActions();
+  const nav = useNav();
+  const { newSpace, newWorktree, showWorktree, creatingSpace, newTab, creatingTab } = useSpaceActions();
 
   // Which repos a worktree could be branched from: one entry per repo, taken from the space that
   // shows the repo ITSELF (a worktree's own space would branch from the same repo, so listing both
@@ -46,7 +108,19 @@ export function HomeRoute() {
         .map((w) => ({ workspaceId: w.workspaceId, repoRoot: w.repoRoot!, label: w.label }))
     : [];
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
-  const { prefs, setSpacesOpen, setLaunchOpen, setRecentOpen, setRecentDir } = useDashPrefs();
+  useLocale();
+  const { prefs, setSpacesOpen, setLaunchOpen, setIsolatedSpace, toggleHiddenSpace, setDashView } = useDashPrefs();
+  const view: DashView = prefs.dashView;
+  // Focus's corner mark (ADR 0066, renamed from Attention by ADR 0068): a red count of the panes
+  // blocked on you, or, when none is blocked, a quiet dot for finished panes you have not opened. A
+  // count means something waits on you; the dot only says there is something new. The list itself
+  // still holds both kinds.
+  const blockedCount = countBlocked(data.agents);
+  const readyUnseen = blockedCount === 0 && hasReady(data.agents);
+  const lookup = useMemo<ChangesLookup>(
+    () => ({ depth: prefs.changesDepth, nested: prefs.changesNested }),
+    [prefs.changesDepth, prefs.changesNested],
+  );
   // No stored choice yet? The space count decides — a two-space install shouldn't be handed a
   // mystery collapsed header, and a forty-space one shouldn't be handed a wall.
   const spacesOpen = openForCount(prefs.spacesOpen, data.workspaces.length);
@@ -58,16 +132,18 @@ export function HomeRoute() {
   // every machine (hosts are a label, not a split), so the row you tapped may well live somewhere
   // other than where the URL currently points. Resolving it here is what stops a reply landing on the
   // right pane name on the wrong terminal. Solo: every pane is untagged, so this is `data.scope`.
-  const open = (pane: AgentView) =>
-    navigate(panePath(pane.paneId, paneScope(data.scope, pane, data.servers, data.sessions)));
-  const drillInto = (id: string) => navigate(spacePath(id, data.scope));
-  // The space navigator is LEAD-LOCAL (the merge deliberately does not union peer workspaces — their
-  // ids are only unique per machine), so the spaces on screen belong to the lead and their panes must
-  // be looked up under the lead's host. Undefined when solo, which keys everything exactly as before.
-  const navHost = leadHost(data.servers);
+  // The tap glides the row into the pane header when the pane's read is in time (use-pane-open.ts).
+  const paneOpen = usePaneOpen(data.scope, data.servers, data.sessions);
+  const drillInto = (id: string) => nav.down(spacePath(id, data.scope));
+  // The space navigator shows the ADDRESSED machine's spaces — the loader's `ambientSpaces` has
+  // already narrowed `data.workspaces`/`data.tabs` to the host `?h=` names (or the lead, absent one;
+  // untagged rows, i.e. every solo snapshot, pass regardless). Their panes must be looked up under
+  // that same host, so the navigator and the loader agree on which machine is on screen. Undefined
+  // when solo, which keys everything exactly as before.
+  const navHost = ambientHost(data.servers, data.scope.host);
   // Sessions are a per-host registry, so the session switcher only ever lists this host's.
   const sessionsHere = sessionsOnHost(data.sessions ?? [], data.scope, data.servers);
-  // …AND LEAD-LOCAL IS ALSO SESSION-LOCAL, which is the half the widened view would otherwise break.
+  // …AND THE ADDRESSED HOST IS ALSO SESSION-LOCAL, which is the half the widened view would otherwise break.
   // Workspace ids collide across sessions exactly as they collide across machines, and the space
   // navigator keys by `(host, workspaceId)` with no session in it — so on a widened body another
   // session's `w1` panes would paint their blocked dot and their recency onto the AMBIENT `w1` row,
@@ -79,6 +155,29 @@ export function HomeRoute() {
     () => ambientPanes(data.agents, data.shellPanes, data.scope, data.servers, data.sessions),
     [data.agents, data.shellPanes, data.scope, data.servers, data.sessions],
   );
+
+  // THE ROW HOLD (ADR 0070): a hold on a dashboard row opens that pane's own actions sheet, Pin to
+  // top / Unpin first, then the writes. The sheet writes with the PANE's scope, for the reason a tap
+  // opens with it (`paneScope`). A pin or unpin moves the row right here, so the answer is the row
+  // itself, scrolled into view and focused in its new place (`reveal`), not a toast.
+  const pins = usePins();
+  const [held, setHeld] = useState<AgentView | null>(null);
+  const [reveal, setReveal] = useState<{ rowKey: string } | null>(null);
+  const revalidator = useRevalidator();
+  const { refused: notPaired } = usePairing();
+  const readOnly = isReadOnly(data.device) || notPaired;
+  const herd = useMemo(() => [...data.agents, ...data.shellPanes], [data.agents, data.shellPanes]);
+  // THE MACHINE FILTER (issue #288): the machines this device leaves off the list, as stored. The
+  // list itself keeps the addressed machine and drops ids off the roster (lib/hidden-machines.ts). A
+  // solo snapshot reads nothing. The stand-in chip's tap is the second place it is written, beside
+  // the Machines sheet's switch.
+  const hiddenMachines = useHiddenMachines(isMultiHost(data.servers));
+
+  // ScreenTransition remounts this whole route on every dashboard<->pane move (both directions), so
+  // the scroller below is a fresh DOM node with scrollTop 0 each time — the document itself never
+  // scrolls, so nothing else restores this. Keyed on the scope (host + session), so two herdr
+  // sessions — or two crew members — keep independent positions. See lib/scroll-memory.ts.
+  const scrollRef = useScrollMemory<HTMLDivElement>(`home:${scopeKey(data.scope)}`);
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -102,39 +201,80 @@ export function HomeRoute() {
           load-bearing: it makes this scroller the containing block for its absolutely-positioned
           descendants. Tailwind's `sr-only` is `position: absolute`, so every status label in the
           list would otherwise escape this scroller's clip and grow the document's own scrollbar. */}
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div ref={scrollRef} className="relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         {/* A notice BELOW the header is content, not viewport chrome: it is an inset box on the
             page gutter, not a full-bleed strip. Full-bleed it ran its left edge 16px outside the
             list it sat on top of — two left edges stacked, the loudest misalignment on the page. */}
         <ReadOnlyBanner device={data.device} />
 
         <main className="flex-1">
-          {/* One list, every section, in triage order. It used to be split in two so "Needs you"
-              could be hoisted above the spaces overview; with Spaces last there is nothing to
-              straddle. */}
+          {/* One list: what needs you first, then every other pane under the tab it lives in
+              (components/agent-list.tsx). Bare shells go in with the agents — grouped by place they
+              sit beside the work they belong to, which is what stopped them being a pen of their
+              own at the bottom of the sheet. */}
           <AgentList
             agents={data.agents}
+            shellPanes={data.shellPanes}
             bridge={data.bridge}
-            onOpen={open}
-            recentDir={prefs.recentDir}
-            onRecentDirChange={setRecentDir}
-            recentOpen={prefs.recentOpen}
-            onRecentOpenChange={setRecentOpen}
+            onOpen={paneOpen.open}
+            glideKeyOf={paneOpen.glideKeyOf}
+            onPress={paneOpen.press}
             error={data.error}
             lastSeenAt={data.lastSeenAt}
+            tabs={data.tabs}
+            servers={data.servers}
+            // Each workspace heading's "+" (M40/03): the list resolves each heading's own machine and
+            // session from these, the way a row's tap does, and sends the create there.
+            newTab={{
+              scope: data.scope,
+              sessions: data.sessions,
+              creating: creatingTab,
+              onNewTab: (workspaceId, at) => void newTab(workspaceId, at),
+            }}
+            isolated={prefs.isolatedSpace}
+            hidden={prefs.hiddenSpaces}
+            onIsolate={setIsolatedSpace}
+            onToggleHidden={toggleHiddenSpace}
+            hiddenMachines={hiddenMachines}
+            addressedHost={data.scope.host}
+            onShowMachine={(host) => setMachineHidden(host, false, data.servers)}
+            pins={pins}
+            onHold={setHeld}
+            reveal={reveal}
+            needsYouOnly={view === "focus"}
+            renderBody={
+              view === "changes"
+                ? (shown) => (
+                    <ChangesTabBody
+                      groups={shown}
+                      scope={data.scope}
+                      servers={data.servers}
+                      sessions={data.sessions}
+                      lookup={lookup}
+                    />
+                  )
+                : undefined
+            }
           />
-          <LaunchStrip open={launchOpen} onOpenChange={setLaunchOpen} scope={data.scope} />
-          <SpaceOverview
-            workspaces={data.workspaces}
-            agents={navPanes.agents}
-            shellPanes={navPanes.shellPanes}
-            host={navHost}
-            onOpen={drillInto}
-            onNewSpace={() => setNewSpaceOpen(true)}
-            creatingSpace={creatingSpace}
-            open={spacesOpen}
-            onOpenChange={setSpacesOpen}
-          />
+          {/* Launch and the Spaces navigator belong to the whole herd, so they sit under Panes only.
+              Focus and Changes are narrower lists, and a launcher under them would read as part
+              of that list. */}
+          {view === "panes" && (
+            <>
+              <LaunchStrip open={launchOpen} onOpenChange={setLaunchOpen} scope={data.scope} />
+              <SpaceOverview
+                workspaces={data.workspaces}
+                agents={navPanes.agents}
+                shellPanes={navPanes.shellPanes}
+                host={navHost}
+                onOpen={drillInto}
+                onNewSpace={() => setNewSpaceOpen(true)}
+                creatingSpace={creatingSpace}
+                open={spacesOpen}
+                onOpenChange={setSpacesOpen}
+              />
+            </>
+          )}
         </main>
 
         {/* The footer is the dashboard's meta zone, in widening order: the crew you're part of, an
@@ -142,8 +282,32 @@ export function HomeRoute() {
             with a stale-cache nudge). The crew line self-hides on a solo install. */}
         <CrewFooterLink scope={data.scope} className="px-4 pt-3" />
         <UpdateBanner className="px-4 pt-3" />
-        <BuildStamp className="px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]" />
+        {/* The footer below owns the safe area now, so the stamp only keeps its own air. */}
+        <BuildStamp className="px-4 pt-3 pb-2" />
       </div>
+
+      {/* The dashboard's footer (ADR 0066, ADR 0068): three lists, each named for what it holds. It sits
+          OUTSIDE the scroller, so the content scrolls above it and a switch moves neither it nor the
+          strip and summary line at the top of the list. At every width: the dashboard has no
+          sidebar on a wide screen (it is one centred column), so nothing else offers these views. */}
+      <TabBar<DashView>
+        label={t("home.tabs.aria")}
+        active={view}
+        onSelect={setDashView}
+        items={[
+          { value: "panes", label: t("home.tabs.panes"), icon: <Rows3 className="size-5" /> },
+          {
+            value: "focus",
+            label: t("home.tabs.focus"),
+            icon: <CircleDot className="size-5" />,
+            badge: blockedCount,
+            dot: readyUnseen,
+            badgeLabel: blockedCount > 0 ? tn("home.tabs.blocked", blockedCount) : t("home.tabs.unseen"),
+          },
+          // GitCompare is the one Changes icon: the pane belt's Changes pill and the Settings row wear it.
+          { value: "changes", label: t("changes.title"), icon: <GitCompare className="size-5" /> },
+        ]}
+      />
 
       {/* Status overlay, anchored to the bottom of the viewport (no input here) — same slim line,
           floating so it never shifts the list. Stays outside the scroller so it never scrolls away.
@@ -152,9 +316,25 @@ export function HomeRoute() {
           screen docks its own to the top for the opposite reason. The positioning — the portal, the
           z-rung, the safe-area inset — belongs to ToastViewport and is stated there once, which is
           what stopped it being three hand-rolled copies of the same four utilities. DESIGN.md §1. */}
-      <ToastViewport>
+      {/* Lifted by the footer's 56px row and its 1px rule, so a toast floats above the tabs. */}
+      <ToastViewport className="bottom-[calc(3.5rem+1px)]">
         <StatusArea />
       </ToastViewport>
+
+      {/* The pane menu a row's hold opens: the pane pill's sheet, with no read rows, so Pin to top
+          leads. Mounted at the route's root, a sibling of the other sheets, for the stacking reason
+          agent-chat.tsx gives for its own. */}
+      <PaneActionsSheet
+        open={held !== null}
+        onClose={() => setHeld(null)}
+        pane={held}
+        scope={held === null ? data.scope : paneScope(data.scope, held, data.servers, data.sessions)}
+        readOnly={readOnly}
+        onRenamed={() => revalidator.revalidate()}
+        onClosed={() => revalidator.revalidate()}
+        herd={herd}
+        onPinChange={(pane) => setReveal({ rowKey: paneRowKey(pane) })}
+      />
 
       <NewSpaceSheet
         open={newSpaceOpen}

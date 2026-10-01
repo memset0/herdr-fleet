@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   NAVIGATION_NETWORK_ONLY,
   PROXY_AUTH_PATH,
+  navigationNetworkOnlyUnder,
   isNetworkOnlyNavigation,
 } from "./sw-routes";
 
@@ -81,19 +82,12 @@ describe("service-worker navigation passthrough", () => {
     }
   });
 
-  // REMOVE_IN_1_9_0 — the version 1 prefix (CREW_PROTOCOL.md §0.1). A 1.8.0 lead answers `/pack/v1/*`
-  // for one release, and a service worker minted from that lead's origin must deny it too.
-  it("never answers the version 1 crew surface from the precache either", () => {
-    for (const path of ["/pack/v1/snapshot", "/pack/v1/hello", "/pack/v1", "/pack/v1?x=1"]) {
-      expect(isNetworkOnlyNavigation(path)).toBe(true);
-    }
-  });
-
   it("does not claim routes that merely start with the crew prefix", () => {
     expect(isNetworkOnlyNavigation("/crew")).toBe(false);
     expect(isNetworkOnlyNavigation("/packages")).toBe(false);
     expect(isNetworkOnlyNavigation("/crew/v10/snapshot")).toBe(false);
-    expect(isNetworkOnlyNavigation("/pack/v10/snapshot")).toBe(false);
+    // 1.7.0's prefix is an ordinary navigation again since 1.9.0 (ADR 0039).
+    expect(isNetworkOnlyNavigation(`/${"pack"}/v1/snapshot`)).toBe(false);
   });
 
   it("still owns every Collie route, so deep links keep resolving offline", () => {
@@ -127,8 +121,6 @@ describe("service-worker navigation passthrough", () => {
       String(/^\/outpost\.goauthentik\.io(?:[/?]|$)/),
       String(/^\/cdn-cgi\//),
       String(/^\/crew\/v1(?:[/?]|$)/),
-      // REMOVE_IN_1_9_0 — the version 1 overlap's line.
-      String(/^\/pack\/v1(?:[/?]|$)/),
       String(/^\/standby(?:[/?]|$)/),
     ]);
   });
@@ -142,5 +134,29 @@ describe("service-worker navigation passthrough", () => {
     }
     // A route that merely shares the prefix is Collie's, exactly as `/authors` is.
     expect(isNetworkOnlyNavigation("/standbyish")).toBe(false);
+  });
+});
+
+// ADR 0052: under a mount the worker sees `/collie/api/…`, so every anchor moves with it.
+describe("navigationNetworkOnlyUnder — the same denylist under a mount", () => {
+  const matches = (rules: RegExp[], path: string) => rules.some((re) => re.test(path));
+
+  it("is the list itself at the root", () => {
+    expect(navigationNetworkOnlyUnder("/").map(String)).toEqual(NAVIGATION_NETWORK_ONLY.map(String));
+  });
+
+  it("moves each anchor to the mount and keeps each rule's shape", () => {
+    const under = navigationNetworkOnlyUnder("/collie/");
+    for (const path of ["/collie/api/snapshot", "/collie/auth", "/collie/auth?rd=%2F", "/collie/crew/v1/hello", "/collie/standby/health"]) {
+      expect(matches(under, path)).toBe(true);
+    }
+    for (const path of ["/collie/", "/collie/settings", "/collie/pane/w1:p1", "/collie/authors", "/api/snapshot", "/auth"]) {
+      expect(matches(under, path)).toBe(false);
+    }
+  });
+
+  it("escapes a mount that carries a regex character", () => {
+    expect(matches(navigationNetworkOnlyUnder("/a.b/"), "/a.b/api/x")).toBe(true);
+    expect(matches(navigationNetworkOnlyUnder("/a.b/"), "/aXb/api/x")).toBe(false);
   });
 });

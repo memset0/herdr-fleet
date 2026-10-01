@@ -1,8 +1,10 @@
-import { useState, type ReactNode } from "react";
-import { useLocation } from "react-router";
+import { useEffect, useState, type ReactNode } from "react";
+import { useLocation, useNavigationType } from "react-router";
 
 import { cn } from "@/lib/utils";
+import { glideOwnsMove, noteGlideLocation } from "@/lib/glide";
 import { homePath, panePath } from "@/lib/nav";
+import { isInAppBack } from "@/lib/nav-entry";
 
 /**
  * The everyday move, animated: dashboard → pane slides in from the right, pane → dashboard slides
@@ -16,6 +18,14 @@ import { homePath, panePath } from "@/lib/nav";
  * This component reaches for none of it: it is one entrance animation on one wrapper, keyed on the
  * pathname, so a revalidation — which does not change the pathname — is invisible to it by
  * construction rather than by a suppression flag someone can get wrong.
+ *
+ * A GLIDE OWNS ITS MOVE. A glide pair (lib/glide.ts) starts one view transition by hand, never
+ * through the router's flag, so the router remembers nothing and a poll cannot replay it. While one
+ * runs, `glideOwnsMove` is true for the pathname it lands on, and this component classifies that
+ * navigation as `none`, both ways, so a move never gets the glide and the slide at once. Every other
+ * move keeps its slide, and so does a glide pair's move where the glide does not run (reduced motion,
+ * no API). This component also reports each location change to the engine
+ * (`noteGlideLocation`), which is how a glide in flight learns another navigation started.
  *
  * WHAT ANIMATES IS THE ARRIVING SCREEN, AND ONLY IT. There is no exit: the old screen is simply
  * gone the moment React commits the new route, because holding a leaving route mounted means
@@ -101,6 +111,12 @@ export function ScreenTransition({
   className?: string;
 }) {
   const { pathname, key } = useLocation();
+  // A POP is the phone's own back (the iOS edge swipe, Android's back, a browser button), and the
+  // phone draws its own animation for it; a slide of ours on top would play the move twice. The one
+  // POP that keeps the slide is the app's own back arrow stepping back (hooks/use-nav.ts), which
+  // marks the pathname it is about to land on (ADR 0067).
+  const navigationType = useNavigationType();
+  const pop = navigationType === "POP" && !isInAppBack(pathname);
   // The previous pathname, held as STATE and updated during render rather than through a ref or an
   // effect. A ref mutated in the render body is double-written under StrictMode's second pass, which
   // classifies every move as `none`; an effect runs after the commit, so the first frame of the new
@@ -122,7 +138,8 @@ export function ScreenTransition({
     mounts: number;
   }>(() => ({ pathname, key, move: "none", mounts: 0 }));
   if (seen.key !== key) {
-    const move = classifyMove(seen.pathname, pathname);
+    // A glide in flight owns this move, whichever way it runs: its own motion is the only one.
+    const move = pop || glideOwnsMove(pathname) ? "none" : classifyMove(seen.pathname, pathname);
     // A move that does not animate does not remount either. This is not an optimisation; it is the
     // difference between keying the outlet and breaking every screen that keeps state across a
     // navigation React Router would have reconciled: pane → pane through the pane strip, pane →
@@ -130,6 +147,12 @@ export function ScreenTransition({
     // they are exactly the two that have an entrance to replay.
     setSeen({ pathname, key, move, mounts: seen.mounts + (move === "none" ? 0 : 1) });
   }
+
+  // Once per location key, after the commit: the glide in flight learns whether this is its own
+  // landing or another navigation that skips it (lib/glide.ts, rule 6). A revalidation keeps the key.
+  useEffect(() => {
+    noteGlideLocation(pathname);
+  }, [key, pathname]);
 
   return (
     // KEYED ON THE REMOUNT COUNTER, so the arriving screen is a new element on the two moves that

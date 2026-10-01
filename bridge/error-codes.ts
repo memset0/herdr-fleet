@@ -88,6 +88,16 @@ export const ERROR_CODES = {
    */
   "launch.pane_unknown": "pane not found",
 
+  // ── The new-space folder list: POST /api/folders/star (#289, M40/02) ───────────────
+  /**
+   * The folder is in neither list. Only a folder a space already opened in can be starred, so this
+   * is a RACE GUARD: the sheet offers a star only on a row it read, and this is the tap that landed
+   * after that row aged out of Recent on another device's create. Nothing was stored.
+   */
+  "folders.unknown": "{folder} is not in Recent, so it cannot be starred",
+  /** Twelve favourites already. A star never drops one the operator chose, so nothing was stored. */
+  "folders.favourites_full": "favourites are full ({max}); remove one first",
+
   // ── Worktrees: /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032) ─────────────
   /** The list could not be read — the space is not in a Git work tree, or the mux refused. */
   "worktree.list_failed": "{reason}",
@@ -148,6 +158,19 @@ export const ERROR_CODES = {
   /** Revoke named a label no device holds. */
   "device.unknown": "unknown device",
 
+  // ── The prompt-cache watch list: /api/notifications/cache-watch (ADR 0042) ─────────
+  /**
+   * The `(host, session, paneId)` the request named is in no current snapshot — closed, renumbered,
+   * or on a member that has stopped answering. Nothing was stored.
+   */
+  "cache.pane_unknown": "pane not found",
+  /**
+   * The pane names no harness session, so there is nothing to key a watch by. A RACE GUARD: the read
+   * already answered `watchable: false` and the sheet already disabled its switch, so this is the tap
+   * that landed after the harness dropped its session.
+   */
+  "cache.no_session": "this pane's agent names no session",
+
   // ── Addressing: the `(host, session)` a request named does not exist ───────────────
   "session.unknown": "unknown session: {session}",
   "host.unknown": "unknown host: {host}",
@@ -175,6 +198,12 @@ export const ERROR_CODES = {
   "update.target_mismatch": "this device asked for {asked}, but this collie would install {would}",
   /** Nothing newer to take. */
   "update.none_available": "there is no newer release to take",
+  /**
+   * A peers-only start where the only member behind runs a packaged install (ADR 0035). Its own
+   * package manager owns it, so no run from here can move it — which is a different answer from
+   * "the crew is level", and the operator is owed the difference.
+   */
+  "update.peers_packaged": "{name} is a packaged install, so its updates come from its own package manager",
   /**
    * A package manager owns this install's folder (ADR 0035). Its own preflight is GREEN, so nothing
    * else on this gate would stop the start — which is exactly why this refusal exists here and not

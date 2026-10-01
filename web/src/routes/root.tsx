@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Outlet,
   useLoaderData,
@@ -14,6 +15,8 @@ import { useAgentTransitions } from "@/hooks/use-transitions";
 import { usePushSetup } from "@/hooks/use-push";
 import { useConnectionLost } from "@/hooks/use-connection-lost";
 import { UpdateRibbon } from "@/components/update-ribbon";
+import { UpdateRunStrip } from "@/components/update-run-strip";
+import { useOptionalUpdateScreen } from "@/components/update-screen-provider";
 import { ConnectionBanner } from "@/components/connection-banner";
 import { AppHeaderHost } from "@/components/app-header";
 import { StripHost } from "@/components/ui/strip-host";
@@ -22,9 +25,11 @@ import { CrewProvider } from "@/components/crew-provider";
 import { CollieMark } from "@/components/collie-mark";
 import { NativeHierarchyToggle } from "@/components/native-navigation-context";
 import { NativeNavigationShell } from "@/components/native-navigation-shell";
+import { TourHost } from "@/components/tour-sheet";
 import { describeThrownError } from "@/lib/api-error-message";
 import { homePath } from "@/lib/nav";
 import { scopeFromUrl } from "@/lib/session";
+import { noteLeadName, noteSnapshotCrew, noteSnapshotRun } from "@/lib/update-run-store";
 import { PANE_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -57,6 +62,9 @@ export function RootLayout() {
   // pairs with it — returns `HomeData`. React Router types `useLoaderData()` as `unknown` in data
   // mode; the element does not mount until its own loader has resolved.
   const data = useLoaderData() as HomeData;
+  // The update reading, owned above the router (`components/update-screen-provider.tsx`). Read here
+  // rather than inside the strip so the band's children stay a plain list of facts.
+  const updateScreen = useOptionalUpdateScreen();
   // useParams accumulates params from matched child routes, so `paneId` is set when the
   // `/pane/:paneId` child is active. useAgentTransitions uses it to suppress a notification for the
   // pane you're already looking at.
@@ -83,7 +91,35 @@ export function RootLayout() {
   // the common one — say nothing at all.
   useBusyWhile(useNavigation().state !== "idle");
   useAgentTransitions(data.agents, paneId ?? null);
-  usePushSetup();
+  // THE PUSH RACE. `usePushSetup` can raise the browser's permission prompt on its own, behind the
+  // tour's backdrop, so it waits until the tour has decided it is not showing. "pending" is what
+  // makes this correct rather than racy: a child's effect runs before the parent's, but the state it
+  // sets is not visible to the parent's effect in the same commit, so a `paused` that started false
+  // would fire the prompt before `TourHost` had decided anything.
+  const [tourDecision, setTourDecision] = useState<"pending" | "open" | "closed">("pending");
+  usePushSetup(tourDecision !== "closed");
+
+  // TWO FACTS PUBLISHED OUT OF THIS ROUTER, and nothing mounted (M28/01). The update screen lives in
+  // `App.tsx`, beside the wrapper it makes inert, so it has no loader data and no `CrewProvider` — and
+  // it needs the snapshot's run record and this machine's own name. Both go into
+  // `lib/update-run-store.ts`, which is the one place the run is reconciled. A component rendered here
+  // would be a descendant of the node the sheet makes inert, which is the arrangement the sheet exists
+  // to avoid.
+  const leadName = data.servers?.find((server) => server.isLead)?.name ?? null;
+  useEffect(() => {
+    noteLeadName(leadName);
+  }, [leadName]);
+  const snapshotRun = data.update?.run;
+  useEffect(() => {
+    noteSnapshotRun(snapshotRun);
+  }, [snapshotRun]);
+  // And a THIRD, since M32: the legs that ride the status. A peers-only run writes no record, so the
+  // run above says nothing about it, and the screen learns of it from these. The store stamps each
+  // one on receipt and tells its readers only when what the crew says has changed.
+  const snapshotUpdate = data.update;
+  useEffect(() => {
+    noteSnapshotCrew(snapshotUpdate);
+  }, [snapshotUpdate]);
 
   // A viewport-height flex column: the top banners (when shown) are in-flow rows at the top and the
   // active route fills the rest (each route root is `min-h-0 flex-1`). This is what keeps a banner
@@ -99,6 +135,13 @@ export function RootLayout() {
     // second derivation of it, so the tolerance can never be computed against a cadence we aren't
     // using. That mattered more once the cadence gained inputs beyond the snapshot (#156).
     <CrewProvider servers={data.servers} sessions={data.sessions} ts={data.ts} pollMs={pollMs}>
+      {/* The first-launch tour, and the one component on this shelf that usually renders nothing. It
+          is the GATE as well as the sheet: it reads the per-device store, opens once on the first
+          real snapshot, marks itself seen before the first slide paints, and reports what it decided
+          so the push setup above can hold its prompt back. It sits beside the band rather than
+          inside it because it is not a strip: it covers the screen, it does not share the top of
+          it. */}
+      <TourHost home={data} onDecision={setTourDecision} />
       <div className="flex h-[100dvh] flex-col overflow-hidden">
         {/* THE BAND, and the rule that there is only ever one strip in it. Four facts can be true at
             once above the header — the auth refusal, a lost connection, a degraded one, an update on
@@ -117,6 +160,13 @@ export function RootLayout() {
               controller runs (and can auto-update) for the app's lifetime; it registers no slot when
               it has nothing to say. */}
           <UpdateRibbon />
+          {/* A RUN THIS DEVICE DID NOT ASK FOR, as one line. The sheet that takes the screen is
+              mounted in `App.tsx`, outside the router; only its collapsed form belongs in the band,
+              and `useOptionalUpdateScreen` is how the one reading reaches across that boundary. It
+              was a bar pinned to the bottom of the viewport until 2026-09-20, which on a pane screen
+              is where the composer's input row is. `null` here is a tree with no App above it — a
+              unit test, or the playground — and that renders no strip, which is correct. */}
+          {updateScreen !== null && <UpdateRunStrip screen={updateScreen} />}
           {/* The app's ONE connection surface: a thin bar that stays hidden while healthy, appears
               amber "reconnecting…" only after ≥4s of sustained trouble (the flicker fix), escalates to a
               red "not connected" cause + Retry/Reload at ≥15s, and flashes green on recovery. Reads the

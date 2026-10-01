@@ -58,6 +58,10 @@ export const API_ERROR_CODES = [
   "launch.not_allowlisted",
   "launch.pane_unknown",
 
+  // The new-space folder list — POST /api/folders/star (#289)
+  "folders.unknown",
+  "folders.favourites_full",
+
   // Worktrees — /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032)
   "worktree.list_failed",
   "worktree.create_failed",
@@ -83,6 +87,10 @@ export const API_ERROR_CODES = [
   "stt.empty",
   "stt.provider_failed",
 
+  // The prompt-cache watch list — /api/notifications/cache-watch (ADR 0042)
+  "cache.pane_unknown",
+  "cache.no_session",
+
   // Device pairing — POST /api/pair, POST /api/devices/revoke
   "pairing.bad_request",
   "pairing.no_pending",
@@ -107,6 +115,7 @@ export const API_ERROR_CODES = [
   "update.major_confirm_required",
   "update.target_mismatch",
   "update.none_available",
+  "update.peers_packaged",
   "update.packaged",
   "update.start_failed",
 ] as const;

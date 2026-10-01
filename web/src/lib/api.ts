@@ -9,14 +9,23 @@ import { asJsonString, parseJsonObject } from "./json";
 import { authHeader, clearNotPaired, markNotPaired, NOT_PAIRED_BODY } from "./pairing";
 import { isLead, normalizeScope, paneScopeKey, type Scope } from "./scope";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
+import { mounted } from "./base-path";
 import type {
   ActionResponse,
   BridgeConfig,
   CreateResponse,
   DismissScope,
   DevicesResponse,
+  CacheRulesResponse,
+  CacheWatchListResponse,
+  CacheWatchState,
+  FoldersResponse,
   LaunchersResponse,
   NotifyPrefs,
+  ChangeCommitDiffResponse,
+  ChangeCommitResponse,
+  ChangeDiffResponse,
+  ChangesResponse,
   PaneHistoryResponse,
   FleetReleaseObservation,
   CrewStatusResponse,
@@ -227,8 +236,9 @@ function normaliseProxyRedirect(res: Response): Response {
   });
 }
 
-async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return normaliseProxyRedirect(await fetch(input, { ...init, redirect: "manual" }));
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  // Every caller spells a root-absolute `/api/…`; the mount is applied here, once (ADR 0052).
+  return normaliseProxyRedirect(await fetch(mounted(path), { ...init, redirect: "manual" }));
 }
 
 /**
@@ -375,11 +385,16 @@ const paneCache = new Map<string, PaneCacheEntry>();
 // pane's last body). 20 comfortably covers any panes in flight on a phone.
 const PANE_CACHE_MAX = 20;
 
+/**
+ * Read one pane's mirror. `seen: false` leaves the pane's unseen mark alone: the read a finger
+ * starts on `pointerdown` (lib/pane-prefetch.ts) may be the start of a scroll, not an open.
+ */
 export async function fetchPane(
   paneId: string,
   lines?: number,
   scope?: Scope,
   signal?: AbortSignal,
+  { seen = true }: { seen?: boolean } = {},
 ): Promise<PaneReadResponse> {
   const q = lines ? `?lines=${lines}` : "";
   const url = withScope(`/api/pane/${encodeURIComponent(paneId)}${q}`, scope);
@@ -394,12 +409,12 @@ export async function fetchPane(
   // seen. A cross-site no-cors GET can't set a custom header, so it can't clear your alerts by
   // guessing pane ids (bridge/server.ts → marksPaneSeen).
   const headers = new Headers({
-    "x-collie-seen": "1",
     [XHR_HEADER]: XHR_HEADER_VALUE,
     // A read needs no token, but the bridge stamps `lastSeenAt` off whatever it resolves — so a
     // paired device's polls are what keep its "last seen" honest. Same injection point as `doReq`.
     ...authHeader(),
   });
+  if (seen) headers.set("x-collie-seen", "1");
   if (cached) headers.set("if-none-match", cached.etag);
 
   const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
@@ -461,6 +476,87 @@ export function fetchHistory(
     signal,
     headers: { "x-collie-seen": "1" },
   });
+}
+
+/** How far the Changes view looks for repos below the workspace folder (Settings → Changes). */
+export interface ChangesLookup {
+  depth: number;
+  nested: boolean;
+}
+
+function changesQuery(lookup: ChangesLookup, file?: { repo: string; path: string }): string {
+  const q = new URLSearchParams({ depth: String(lookup.depth), nested: lookup.nested ? "1" : "0" });
+  if (file) {
+    q.set("repo", file.repo);
+    q.set("path", file.path);
+  }
+  return q.toString();
+}
+
+/**
+ * Whose Changes list: a pane's (the bridge resolves the pane's workspace) or a workspace asked
+ * directly. Both answer the same shape (ADR 0065).
+ */
+export type ChangesTarget = { kind: "pane"; paneId: string } | { kind: "space"; spaceId: string };
+
+function changesBase(target: ChangesTarget): string {
+  return target.kind === "pane"
+    ? `/api/pane/${encodeURIComponent(target.paneId)}/changes`
+    : `/api/workspace/${encodeURIComponent(target.spaceId)}/changes`;
+}
+
+/**
+ * The uncommitted changes under a workspace's folder, read-only (ADR 0065). Fetched on open and on
+ * the view's refresh button, never on the poll loop. No seen header: a git view of the folder is
+ * not the pane's conversation, so it does not mark the pane seen.
+ */
+export function fetchChanges(
+  target: ChangesTarget,
+  lookup: ChangesLookup,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<ChangesResponse> {
+  const path = `${changesBase(target)}?${changesQuery(lookup)}`;
+  return req<ChangesResponse>(withScope(path, scope), { signal });
+}
+
+/** One changed file's diff. The bridge serves only a repo and path its own list names. */
+export function fetchChangeDiff(
+  target: ChangesTarget,
+  lookup: ChangesLookup,
+  file: { repo: string; path: string },
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<ChangeDiffResponse> {
+  const path = `${changesBase(target)}?${changesQuery(lookup, file)}`;
+  return req<ChangeDiffResponse>(withScope(path, scope), { signal });
+}
+
+/** The last commit of one repo in the workspace (ADR 0065, the commit view). HEAD only. */
+export function fetchChangeCommit(
+  target: ChangesTarget,
+  lookup: ChangesLookup,
+  repo: string,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<ChangeCommitResponse> {
+  const q = new URLSearchParams(changesQuery(lookup));
+  q.set("view", "commit");
+  q.set("repo", repo);
+  return req<ChangeCommitResponse>(withScope(`${changesBase(target)}?${q.toString()}`, scope), { signal });
+}
+
+/** One file of that commit. The bridge serves only a path the same read of HEAD listed. */
+export function fetchChangeCommitDiff(
+  target: ChangesTarget,
+  lookup: ChangesLookup,
+  file: { repo: string; path: string },
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<ChangeCommitDiffResponse> {
+  const q = new URLSearchParams(changesQuery(lookup, file));
+  q.set("view", "commit");
+  return req<ChangeCommitDiffResponse>(withScope(`${changesBase(target)}?${q.toString()}`, scope), { signal });
 }
 
 export function sendReply(
@@ -648,6 +744,48 @@ export function fetchLaunchers(scope?: Scope): Promise<LaunchersResponse> {
   return req<LaunchersResponse>(withScope("/api/launchers", scope));
 }
 
+/**
+ * GET /api/folders — THIS scope's own host's folder list for the new-space sheet (#289), off that
+ * machine's `folders.json`. Session-scoped only so `?host=` reaches the machine whose folders they
+ * are; the list itself is one per machine. Read when the sheet opens and when its chosen machine
+ * changes (lib/folders.ts), never polled and never part of the snapshot.
+ */
+export function fetchFolders(scope?: Scope): Promise<FoldersResponse> {
+  return req<FoldersResponse>(withScope("/api/folders", scope));
+}
+
+/** POST /api/folders/star body — a named contract so `starFolder` infers against it. */
+interface StarFolderBody {
+  folder: string;
+  starred: boolean;
+}
+
+/**
+ * POST /api/folders/star — star (`true`) or unstar (`false`) one folder on THIS scope's host. The
+ * bridge refuses a folder that is not already in its lists, so the sheet only ever sends one it read.
+ * Answers the whole new list, so the sheet redraws from the bridge's word rather than guessing.
+ */
+export function starFolder(folder: string, starred: boolean, scope?: Scope): Promise<FoldersResponse> {
+  const body: StarFolderBody = { folder, starred };
+  return req<FoldersResponse>(withScope("/api/folders/star", scope), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * GET /api/cache-rules — the catalog behind every cache chip on THIS host, plus its applied overrides.
+ *
+ * Fetched once per boot, lazily, the first time a cache sheet is opened: the catalog only moves on a
+ * release or a `cache-rules.toml` edit, and the route is ETagged, so a re-ask costs a 304. NOT scoped
+ * and deliberately not forwarded across the crew link — a peer may hold its own override, so quoting
+ * this catalog for a peer's number would cite a page that peer never read. The sheet on a peer's pane
+ * says where the number was read instead.
+ */
+export function fetchCacheRules(): Promise<CacheRulesResponse> {
+  return req<CacheRulesResponse>("/api/cache-rules");
+}
+
 /** The worktrees of the repo a space sits in. Empty-handed when the space is not in one. */
 export function listWorktrees(workspaceId: string, scope?: Scope): Promise<WorktreeListResponse> {
   return req<WorktreeListResponse>(
@@ -728,6 +866,43 @@ export function setNotifyPrefs(patch: Partial<NotifyPrefs>): Promise<NotifyPrefs
   return req<NotifyPrefs>("/api/notifications/prefs", {
     method: "POST",
     body: JSON.stringify(patch),
+  });
+}
+
+/**
+ * One pane's place in the prompt-cache watch list (ADR 0042).
+ *
+ * The scope names the machine the PANE lives on; the preference itself always lands on the collie this
+ * phone is talking to, because that is the only machine holding a push subscription. So this call is
+ * never forwarded, and `?host=` here is an argument rather than an address.
+ */
+export function getCacheWatch(paneId: string, scope?: Scope): Promise<CacheWatchState> {
+  return req<CacheWatchState>(withScope(`/api/notifications/cache-watch?pane=${encodeURIComponent(paneId)}`, scope));
+}
+
+/** Switch this pane's warning on or off. Returns the same body the read returns, after the write. */
+export function setCacheWatch(paneId: string, on: boolean, scope?: Scope): Promise<CacheWatchState> {
+  return req<CacheWatchState>(
+    withScope(`/api/notifications/cache-watch?pane=${encodeURIComponent(paneId)}`, scope),
+    { method: "POST", body: JSON.stringify({ on }) },
+  );
+}
+
+/** The whole bridge's watch list, for the Settings card. Not one pane's, and not scoped. */
+export function getCacheWatchList(): Promise<CacheWatchListResponse> {
+  return req<CacheWatchListResponse>("/api/notifications/cache-watch/list");
+}
+
+/**
+ * Drop one entry by its opaque id, and get the list back.
+ *
+ * The id is the only address removal has: an entry whose pane is gone cannot be un-watched by the
+ * per-pane call, which needs a live `(host, session, paneId)`.
+ */
+export function forgetCacheWatch(id: string): Promise<CacheWatchListResponse> {
+  return req<CacheWatchListResponse>("/api/notifications/cache-watch/forget", {
+    method: "POST",
+    body: JSON.stringify({ id }),
   });
 }
 

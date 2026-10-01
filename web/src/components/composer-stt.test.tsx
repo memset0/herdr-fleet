@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ComponentProps } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -93,6 +93,8 @@ function baseProps(
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
+    mirrorNative: false,
+    setMirrorNative: vi.fn(),
     setExpandClippedReply: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
@@ -164,8 +166,10 @@ describe("Composer — the record button is drawn only when there is a microphon
     renderComposer();
     await waitFor(() => expect(reads).toBe(1));
     expect(screen.queryByRole("button", { name: /record a voice message/i })).toBeNull();
-    // …and the field keeps the narrow padding, so a collie without one loses no width to it.
-    expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-11");
+    // …and the field reserves no strip at all, so a collie without one loses no width to it. It
+    // was `pr-11` while the attach button stood in the field's corner; the button is the field's
+    // sibling on the box's one row now (ADR 0057) and nothing inside the field reserves width.
+    expect(screen.getByPlaceholderText(/type a reply/i).className).not.toMatch(/(?:^|\s)pr-/);
   });
 
   it("renders no microphone in an insecure context, even with a provider configured", async () => {
@@ -206,9 +210,9 @@ describe("Composer — the record control stands beside Send, not instead of it"
 
     expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /^send$/i })).toBeInTheDocument();
-    // The second control sits BESIDE the field, so the field's own reserved strip is the attach
-    // button's alone — the same one a collie with no microphone at all draws.
-    expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-11");
+    // Same field as a collie with no microphone at all: it pays nothing for the feature, and
+    // since the buttons became the field's siblings it reserves no horizontal strip for anything.
+    expect(screen.getByPlaceholderText(/type a reply/i).className).not.toMatch(/(?:^|\s)pr-/);
   });
 
   it("keeps both once there is a draft, so a clause can be dictated into what you typed", async () => {
@@ -222,6 +226,40 @@ describe("Composer — the record control stands beside Send, not instead of it"
     // The one thing the old shared slot could not do.
     expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled();
+  });
+
+  // ADR 0060: a chip is something to send. DOWNSTREAM PORT (FORK.toml composer-voice-rank-port):
+  // the record control is its own control, so a box holding only chips keeps BOTH, and both accept.
+  it("a box holding only chips keeps both controls, and both accept", async () => {
+    server.use(
+      configHandler(CONFIG_WITH_STT),
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/a.png" })),
+    );
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type a reply/i);
+    await screen.findByRole("button", { name: /record a voice message/i });
+
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const photos = screen.getByTestId("attach-photos") as HTMLInputElement;
+    fireEvent.change(photos, { target: { files: [new File(["x"], "a.png", { type: "image/png" })] } });
+    await waitFor(() => expect(box).toHaveValue("[Image #1] "));
+    fireEvent.change(box, { target: { value: "" } });
+
+    expect(screen.getByRole("button", { name: /record a voice message/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled();
+  });
+
+  it("whitespace alone is not text — Send refuses it, and the microphone still accepts", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type a reply/i);
+    await screen.findByRole("button", { name: /record a voice message/i });
+
+    await user.type(box, "   ");
+    // `send` refuses a blank value, and the button says so rather than accepting a tap that does nothing.
+    expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeDisabled();
   });
 
   it("keeps one control for the whole clip, so the same button starts and stops it", async () => {

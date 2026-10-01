@@ -42,63 +42,36 @@ Three readings keep the body below correct as it stands:
 - **Where the body says "v1" for the design line**, it means the line this document has described
   since 1.0, not the version integer.
 
-### 0.1 One release of overlap
+### 0.1 Version 2 is the only version, and 1.8.0 is the floor
 
-A crew is updated lead first (§20), so a 1.8.0 lead has to keep a 1.7.0 member following it for the
-length of the roll. Two mechanisms carry that, and both are removed in **1.9.0**.
+**A build speaks version 2 and nothing else.** §7's window is exact: a version talks only to its own
+version, so there is no negotiation and nothing in between two machines.
 
-- **A 1.8.0 lead answers `/pack/v1/*` as well as `/crew/v1/*`.** The old prefix serves the version 1
-  shapes: version 1 headers, version 1 field names, version 1 error codes, `protocol: 1` on `hello`,
-  `expected: 1` on §7's refusal, and the version 1 dial context. A 1.7.0 member therefore enrols,
-  answers hello and self-levels over the link it already has, exactly as it did before the update.
-- **A 1.8.0 member dials `/crew/v1/*` first.** Against a lead that is still 1.7.0 it falls back to
-  `/pack/v1/*` once, and it writes one journal line saying it did. The fallback is per dial and it is
-  never cached, so a member stops using it the moment its lead is updated.
+**1.8.0 is the oldest build that speaks version 2.** That is where the number first shipped, and it is
+a named constant on the operator's side too: `PROTOCOL_FLOOR_VERSION` in `cli/update-check.ts`, tied to
+`CREW_PROTOCOL_VERSION` by a test so the two move together
+([ADR 0045](./.adr/0045-a-build-below-the-protocol-floor-is-a-red-preflight.md)).
 
-**The prefix decides the version, and version 2 must state it.** A request on `/crew/v1/*` carries
-`X-Crew-Protocol: 2`; an absent header is a refusal and never a default (§7). A request on
-`/pack/v1/*` carries `X-Pack-Protocol: 1`. The two vocabularies do not mix: a version 1 header on the
-version 2 prefix is read as no version at all, and is refused.
+**A member below the floor lands on §7's exact-match window, and it is told twice.** On the link, its
+answers carry no crew protocol header, so the headerless ladder calls it `unreachable` for the first
+minute and `incompatible` after that, with a reason that states the version this build speaks. On the
+operator's own path, the lead's `collie update --check` walk reds the `version` check, naming both
+versions and the remedy, which is to level that machine from its own terminal. The red blocks the crew
+update rather than starting a roll that cannot finish (§7.1, ADR 0045).
 
-**A member learns its lead is still 1.7.0 from an answer, never from a guess.** Two things say it. The
-first is a crew header naming version 1. The second is an answer that carries **no crew protocol
-header and is not JSON either** — because a crew answer is always both (§6), so such an answer is a
-build routing the path to something else.
+**The overlap that carried the 1.7.0 roll was removed in 1.9.0.** 1.8.0 answered the old path prefix as
+well as `/crew/v1/*`, fell back to it once as a member, read a crew id under either spelling, read two
+`COLLIE_PACK_*` budget keys, renamed three state files on its first start and redirected the old census
+route. All of it is gone. That was the plan ADR 0039 recorded when the rename shipped, and
+`bridge/removal-schedule.test.ts` is now the tombstone that keeps those names out.
 
-On a real 1.7.0 collie that answer is **`200 OK` with `Content-Type: text/html`** and the PWA's app
-shell: the SPA catch-all owns every unrouted path so a deep link works, and a path the build has never
-heard of is a deep link as far as that fallthrough is concerned. **It is never a `404`.** Verified in
-the VM lab on 2026-09-09 against 1.7.0+35b60df, which also answered `x-collie-build: 1.7.0+35b60df`
-and about 9 KB of `<!doctype html>`. Two narrower shapes count for the same reason and are kept: a
-peer serving no web bundle answers `404`, and a loopback-strict one answers `403`. The `403` never
-fires on a crew machine, because those all set `COLLIE_ALLOW_NON_LOOPBACK_BIND=1`.
+**A state directory that never saw 1.8.x is named, never adopted.** The one-time state-file rename went
+with the overlap, so a collie that finds 1.7.0's `pack-trust.json` without `crew-trust.json` says so at
+start, prints both hand edits, and stays solo. The canonical signed strings did not move, so a warrant
+any 1.8.x lead minted still verifies (§18).
 
-A `5xx` is excluded, whatever it serves: that is a proxy or a peer mid-restart, not a version, and a
-second dial there would double what every poll spends on a machine that is not answering. The
-fallback therefore costs one extra round trip against a lead that has not updated, and nothing at all
-against one that has.
-
-**The warrant's context moves on verify only.** A warrant is one signature, minted by the lead and
-stored on every member's disk, so a machine that updates from 1.7.0 comes up holding one signed under
-the old context. A 1.8.0 build therefore **signs `collie-crew-warrant-v2` and accepts either form**;
-refusing its own stored warrant would disarm the standby door on the update instead of on the
-operator's decision (§18). Nothing signs the old form. The consequence during the roll is small and
-named: a warrant a 1.8.0 lead mints is refused by a member that is still on 1.7.0. That member keeps
-reporting the generation it holds, so the lead keeps pushing, and the push lands the moment the
-member has levelled.
-
-**A crew id in a body is written `crewId` and read either way.** 1.7.0 spelled it `packId` in the
-warrant, in the standby-device sync and in the enroll answer. Every 1.8.0 writer emits `crewId`; every 1.8.0 reader takes
-`crewId` and falls back to `packId`. That is what covers both skews without the overlap translating a
-body: a 1.8.0 lead's version 1 listener reads a 1.7.0 member's body at the same parser, and so does a
-1.8.0 member under a 1.7.0 lead. The direction 1.8.0 lead to 1.7.0 member needs nothing, because a
-warrant a 1.8.0 lead mints is already refused there on the signing context above, and the push lands
-after that member levels. **The canonical signed string does not move**: it is positional and
-LF-separated, so it hashes the crew id's VALUE at a fixed field and never the key.
-
-Both sides carry a `REMOVE_IN_1_9_0` marker in the code, and `bridge/removal-schedule.test.ts` fails
-at package minor 9 so the removal cannot be forgotten. From 1.9.0 a member older than 1.8.0 does not
-talk to a lead newer than 1.8.0, which is §7's exact window doing its usual job.
+The rename table in §0 stays as the history of what moved. Everything below this section describes
+version 2 and only version 2.
 
 ---
 
@@ -269,6 +242,8 @@ the same handlers. There is no second handler set, no second semantic, and no He
 | `GET` | `/crew/v1/snapshot` | `GET /api/snapshot` (`bridge/server.ts:177`) | **merged** — the only merged route |
 | `GET` | `/crew/v1/pane/:id` | `GET /api/pane/:id` (`:276`) | proxied byte-for-byte |
 | `GET` | `/crew/v1/pane/:id/history` | `GET …/history` (`:277`) | proxied byte-for-byte |
+| `GET` | `/crew/v1/pane/:id/changes` | `GET …/changes` | proxied byte-for-byte — additive-optional (§7.1). Read-only git over the folder of the pane's WORKSPACE on the machine that owns it (ADR 0065); the query (`depth`, `nested`, `repo`, `path`, and `view=commit` for the repo's last commit) rides through untouched. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
+| `GET` | `/crew/v1/workspace/:id/changes` | `GET …/workspace/:id/changes` | proxied byte-for-byte — additive-optional (§7.1). The same list asked by workspace rather than by pane (ADR 0065), with the same query. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
 | `POST` | `/crew/v1/pane/:id/reply` | `POST …/reply` (`:279`) | forwarded |
 | `POST` | `/crew/v1/pane/:id/keys` | `POST …/keys` (`:280`) | forwarded |
 | `POST` | `/crew/v1/pane/:id/upload` | `POST …/upload` (`:281`) | forwarded (§13) |
@@ -281,6 +256,8 @@ the same handlers. There is no second handler set, no second semantic, and no He
 | `POST` | `/crew/v1/workspace` | `POST /api/workspace` (`:225`) | forwarded |
 | `POST` | `/crew/v1/launch` | `POST /api/launch` | forwarded — additive-optional (§7.1). Runs an allowlisted `launchers.toml` row **on the peer**, from that peer's own rows; a lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
 | `GET` | `/crew/v1/launchers` | `GET /api/launchers` | forwarded — additive-optional (§7.1), same pairing as above. Rows must come from the host that runs them, so this is a READ crossing the link rather than a second copy of `config`'s `launchers` field, which is why that field was retired from `/api/config` in the same change |
+| `GET` | `/crew/v1/folders` | `GET /api/folders` | forwarded — additive-optional (§7.1), added 2026-09-27 (M40/02, #289). That member's own new-space folder list, `{ recent, favourites, home }` off its own `folders.json`: a folder exists on one machine, so the list is read where the folder is and the lead keeps no copy. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does, which the phone reads as "no list" and never as an error |
+| `POST` | `/crew/v1/folders/star` | `POST /api/folders/star` | forwarded — additive-optional (§7.1), same pairing as above. A WRITE on that member's own `folders.json`, `{ folder, starred }`, refused before it is attempted when the member is not taking writes (§10.3) and by the member's own device gate (§12). Not audited on either side: it is a preference, like `notifications/prefs`, and touches no terminal |
 | `GET` | `/crew/v1/blobs/:hash` | `GET /api/blobs/:hash` | proxied byte-for-byte — additive-optional (§7.1). The image an agent's own journal named, off the disk that holds it; a lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
 | `GET` | `/crew/v1/config` | `GET /api/config` (`:288`) | consumed by the lead, not proxied |
 | `GET` | `/crew/v1/hello` | — (new) | consumed by the lead: liveness + version + member id |
@@ -533,6 +510,15 @@ updated machines, so build skew is the steady state (§7), and this section is t
   A crew that goes dark because two machines disagree on an alpha number has traded an annoyance for
   an outage.
 
+  **One surface reads a build version as a refusal, and it is not the wire.** The lead's own
+  preflight (`collie update --check`, which walks the members over the operator's ssh) reds the
+  `version` check when a member's build is below the protocol floor, the oldest build that speaks
+  this document's `CREW_PROTOCOL_VERSION` (`PROTOCOL_FLOOR_VERSION` in `cli/update-check.ts`,
+  [ADR 0045](./.adr/0045-a-build-below-the-protocol-floor-is-a-red-preflight.md)). That is a
+  judgement about whether a crew update can finish, made before anything is started, and it changes
+  no route, no response and no code path on the link. On the wire the rule above still stands whole:
+  a build-version difference refuses nothing.
+
   The fork worth naming, because it will be re-proposed: *shouldn't a skewed member be refused, to be
   safe?* No. Refusing is only the safe move when the alternative is a **wrong answer**, and inside one
   protocol version there is no wrong answer to prevent — which is true only because of the next rule,
@@ -576,6 +562,33 @@ updated machines, so build skew is the steady state (§7), and this section is t
   other unknown state, which is safe because the value is only ever **read**, never branched on to
   take an action: the action it stands for is "do nothing to that machine". `CREW_PROTOCOL_VERSION`
   stays `1`, no new route, no new verb and no new header.
+
+- **A pane gained an optional `cache`** (added 2026-09-13, M28 spec 02). It carries a prompt-cache
+  reading for that pane: a state word, the expiry, the TTL in seconds, the rule id, a confidence word
+  and two timestamps. Additive-optional with the closed reading this section requires: **absent means
+  nothing has been measured**, which the phone renders as nothing at all. A 1.8.x peer simply omits
+  it, and a lead that predates it ignores it, so neither side refuses the other over it. Nothing in
+  `bridge/crew/merge.ts` changes: `isPaneWire` checks `paneId`, `status` and `workspaceNumber`, and
+  `untagPane` strips `host` with a rest spread and keeps every other key, so the field rides a peer's
+  contribution for free.
+
+  The number is **computed on the machine the pane lives on, with that machine's own rules**, which is
+  why the chip is true where it is rendered even though a peer may hold its own `cache-rules.toml`
+  override. The rule CATALOG behind it (`GET /api/cache-rules`) is deliberately **not** forwarded:
+  quoting the lead's catalog for a peer's number would cite a page that peer never read, so the pane
+  sheet says where the number was read instead. Forwarding it is a follow-up spec, not a bullet on
+  this one. `CREW_PROTOCOL_VERSION` stays `1`, no new route, no new verb and no new header.
+
+- **A pane's `cache` gained two optional keys, `coldReason` and `reset`** (added 2026-09-19, issue
+  #236). `coldReason` is `observed`, `expired` or `reset`, and `reset` is `{ruleId, label, at}`: the
+  action that dropped the cached prefix, pending or the cause of the last cold turn. Both ride a
+  `cold` reading only. Additive-optional with the closed reading this section requires: **absent means
+  no reason was named**, which renders the plain cold chip every build already draws. A pending reset
+  is carried as `state: "cold"` rather than as a new state word, so a lead or a phone older than the
+  keys shows it as cold and never as warm, and the cache watch, which warns only a `warm` or
+  `expiring` pane, stays quiet on it on either side of the link. The label rides whole because the
+  rule catalog is not forwarded (the bullet above). `CREW_PROTOCOL_VERSION` stays `1`, no new route,
+  no new verb and no new header.
 
 - **An addition a lead has no reader for is INERT, not merely tolerated — measured, not assumed**
   (2026-09-08, §16's version-skew leg). This section's promise used to rest on a unit test with a
@@ -876,7 +889,7 @@ the concrete failure recorded in [ADR 0001](./.adr/0001-one-managed-front-door.m
   literal form warns.
 - At rest, crew material follows the discipline `push-subscriptions.json` already uses: atomic
   temp-file-then-rename, **file 0600, directory 0700** (`bridge/push.ts:187-192`), under `stateDir`
-  (`bridge/config.ts:200-203`: `HERDR_PLUGIN_STATE_DIR` ?? `COLLIE_STATE_DIR` ?? the user state dir).
+  (`bridge/config.ts` `resolveStateDir`: `COLLIE_STATE_DIR` ?? the user state dir).
 
 ### 8.4 Rotation — `collie crew rotate`
 
@@ -1149,6 +1162,13 @@ prevents (`web/src/lib/api.ts:201-203`).
   wire shape gains `host: string`, so the phone can address what it renders. Absent on a solo
   snapshot (§11).
 
+**The merged `agents` and `shellPanes` run in place order, never by status.** The lead's panes come
+first, then each peer's in member-id order. Inside one machine the order is workspace number, then
+the tab's index in the merged `tabs` list, then `tabPosition`, then the pane id. A status change
+therefore never moves a row. *(added 2026-09-23,
+[ADR 0063](./.adr/0063-a-pane-keeps-its-place-when-its-state-changes.md); the merge used to sort by
+status first.)*
+
 Merging is the *only* place the lead re-serialises. Its ETag over the merged body is **the lead's
 assertion about its own merged view**, not any peer's — it necessarily changes when any peer's
 contribution changes, and it says nothing about whether a given peer's snapshot changed.
@@ -1401,7 +1421,7 @@ federation code exists to break it.
 | Push payload | unchanged — no `host` field, mirroring how `session` is stamped only for non-primary | `bridge/push.ts:124-131` |
 | Poll cadence | unchanged — **no second timer, no peer sweep**, same idle relaxation | `bridge/event-poker.ts`, `bridge/config.ts:212-213` |
 | Audit line bytes | unchanged — `host` is omitted, not null, exactly as `session`/`device` are today | `bridge/audit.ts:55-61` |
-| Files written | **exactly today's set**: `uploads/`, `audit.log`, `push-subscriptions.json`, `snooze.json`, `notify-prefs.json`, `activity.json`, `update-state.json`. **No key, no certificate, no trust store, no roster.** | `bridge/server.ts:1075`, `bridge/audit.ts:65`, `bridge/push.ts:86`, `bridge/snooze.ts:19`, `bridge/notify-prefs.ts:45`, `bridge/activity.ts:100`, `bridge/update.ts:147` |
+| Files written | **exactly today's set**: `uploads/`, `audit.log`, `push-subscriptions.json`, `snooze.json`, `notify-prefs.json`, `activity.json`, `update-state.json`. **No key, no certificate, no trust store, no roster.** Amended on purpose 2026-09-27 (M40/02, #289): `folders.json` joins the set as a file written **only after the first space created with a folder or the first star** — an instance that never does either writes nothing new, and it names no crew state | `bridge/server.ts:1075`, `bridge/audit.ts:65`, `bridge/push.ts:86`, `bridge/snooze.ts:19`, `bridge/notify-prefs.ts:45`, `bridge/activity.ts:100`, `bridge/update.ts:147`, `bridge/folders.ts` |
 | Ports opened | exactly one, loopback, as today. The standby door's second listener (§18.15) is bound only when `COLLIE_STANDBY_PORT` is set **and** a trust store exists, which a solo instance has neither of | `bridge/config.ts:210-211`, `bridge/crew/standby.ts` |
 
 **Why `servers` is optional-and-absent rather than always-present.** An always-present field — even a
@@ -2888,6 +2908,11 @@ whatever the headers say. It is not a tuning knob — it is the guard against a 
 cycling a member through restarts, and the clock is that member's own run record, so it survives the
 member's restart.
 
+*(Amended 2026-09-23, ADR 0062.)* One step is not a new attempt: when the member's last run
+finished `done` **in the run the turn names**, at a version below the one the lead now states, the
+member takes the next step inside the hour. Each such step needs a strictly higher version than the
+last one that succeeded, and a rolled-back step never qualifies, so a lead cannot go round.
+
 Artifact verification is **inherited, not invented**: the release manifest plus this platform's
 `sha256` on a binary install, an explicit `refs/tags/<tag>` fetch on a checkout. No new mechanism.
 
@@ -2896,6 +2921,28 @@ Artifact verification is **inherited, not invented**: the release manifest plus 
 The lead holds an **in-memory** ordered queue of members that are behind, eligible and
 preflight-clean, sorted by `TrustedMember.enrolledAt` — enrolment order, stated so it is stable and
 explainable rather than incidental. It grants one turn at a time.
+
+*(Amended 2026-09-23, ADR 0062.)* **A turn is granted only while the lead states the run's target**
+in `X-Crew-Lead-Release`. The turn carries no version, so the header is the only target a member can
+read, and a full run opens its queue on the confirm, while the lead still runs its old release. A
+lead that granted then sent a member one release behind to the lead's OLD version under the run's id.
+
+The lead also reads each waiting member's hourly limit off its `updateRun` report: an attempt whose
+`updatedAt` is inside the hour. Such a member is not granted the turn, its leg carries the reason
+`rate-limited, retries in about N min`, and its wall clock starts when the limit lifts. The report
+carries `updatedAt`, not `startedAt`, so the time is an upper bound. That stamp is the member's
+clock, so the lead caps the limit's end at `FOLLOW_ATTEMPT_INTERVAL_MS` plus two minutes after it
+first read that stamp, on its own clock. The reason states a span, never a clock time: the lead's
+time zone is not the phone's. No field and no header changed.
+
+Every run ends. The lead reads its own run record on each sweep. If this run's record ends
+`rolled-back`, `stuck` or `interrupted`, every `waiting` leg closes on that sweep as `unreachable`,
+reason `not started: the lead's update rolled back` (or `ended stuck`, `ended interrupted`). If the
+lead is not in flight and still does not state the target after `LEG_WALL_CLOCK_MS`, the legs close
+with `not started: the lead states <x>, not <target>`. While the lead's own run is in flight, a
+queued leg does not expire. No run stays open past `CREW_RUN_TTL_MS` (2 hours); its open legs close
+with `the run did not finish within 2 hours`. A second confirm while a run is open is refused with
+`update.in_progress`, state `levelling the crew`.
 
 A turn is released on exactly three things: the member reports the new version; the member reports
 `rolled-back`; or the member misses **three consecutive sweeps**, after which it reads `unreachable`

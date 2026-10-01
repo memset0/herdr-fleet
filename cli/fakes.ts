@@ -1,9 +1,11 @@
+import { normaliseBasePath } from "../bridge/config.ts";
 import { type OpsRecord, CrewOpsStore } from "../bridge/crew/ops-store.ts";
+import { emptyConfigLayer } from "../bridge/config-source.ts";
 import type { CliContext, Environment } from "./context.ts";
 import { effectiveServePort, instanceSuffix } from "./context.ts";
 import type { Io } from "./io.ts";
 import type { LinkProbe, LinkWriter } from "./link.ts";
-import type { Exec, ExecResult, Files } from "./sys.ts";
+import type { EnvOverride, Exec, ExecResult, Files } from "./sys.ts";
 
 // Fakes for the two seams every verb reaches the world through (cli/sys.ts), shared by the verb
 // suites. TEST-ONLY: nothing under `cli/` that ships imports this, so it never reaches the compiled
@@ -36,6 +38,12 @@ export interface FakeExec extends Exec {
   ran: { command: string[]; cwd: string; env: Record<string, string>; logPath: string; timeoutMs: number }[];
   /** Every {@link Exec.capture} call that named a timeout — the call line and the bound it passed. */
   timeouts: { call: string; ms: number }[];
+  /**
+   * Every {@link Exec.capture} or {@link Exec.runIn} call that passed an `envOverride`: the call line
+   * as {@link FakeExec.calls} spells it, and the override. A call without one is not recorded, so a
+   * test can tell "passed nothing" from "passed an empty override" only by its absence here.
+   */
+  overrides: { call: string; env: EnvOverride }[];
 }
 
 /**
@@ -109,20 +117,30 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
     }
     return { code: 0, stdout: "", stderr: "", found: true };
   };
+  const overrides: { call: string; env: EnvOverride }[] = [];
+  const noteOverride = (env: EnvOverride | undefined): void => {
+    if (env !== undefined) overrides.push({ call: calls.at(-1) ?? "", env });
+  };
   return {
     calls,
     killed,
     spawned,
     ran,
     timeouts,
+    overrides,
     which: (tool) => (absent.has(tool) ? null : `/fake/${tool}`),
-    capture: (tool, args, timeoutMs, envAdd) => {
+    capture: (tool, args, timeoutMs, envAdd, envOverride) => {
       const r = answer(tool, args, undefined, undefined, envAdd);
+      noteOverride(envOverride);
       if (timeoutMs !== undefined) timeouts.push({ call: [tool, ...args].join(" "), ms: timeoutMs });
       return r;
     },
     inherit: (tool, args) => answer(tool, args),
-    runIn: (tool, args, cwd, pathPrefix) => answer(tool, args, cwd, pathPrefix),
+    runIn: (tool, args, cwd, pathPrefix, envOverride) => {
+      const r = answer(tool, args, cwd, pathPrefix);
+      noteOverride(envOverride);
+      return r;
+    },
     runLogged(command, opts) {
       const line = command.join(" ");
       calls.push(line);
@@ -175,6 +193,14 @@ export interface FakeFiles extends Files {
   stats: Map<string, { inode: number; mtimeMs: number }>;
   /** Symlink targets by path — `/proc/<pid>/exe` above all. */
   links: Map<string, string>;
+  /** Explicit non-file entry types, for safety checks that must not follow a symlink. */
+  entryTypes: Map<string, "directory" | "symlink" | "other">;
+  /** Canonical paths for entries whose realpath differs from their lexical path. */
+  realPaths: Map<string, string>;
+  /** Directories a strict listing cannot read. */
+  unlistable: Set<string>;
+  /** Rename destinations or sources that fail, for publication failure paths. */
+  unrenamable: Set<string>;
   /** Destructive filesystem operations in order: `rm -rf <p>` / `mv <from> <to>`. Ordering is the assertion `build` lives or dies by. */
   ops: string[];
 }
@@ -188,11 +214,16 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
   const notExecutable = new Set<string>();
   const stats = new Map<string, { inode: number; mtimeMs: number }>();
   const links = new Map<string, string>();
+  const entryTypes = new Map<string, "directory" | "symlink" | "other">();
+  const realPaths = new Map<string, string>();
+  const unlistable = new Set<string>();
+  const unrenamable = new Set<string>();
   const ops: string[] = [];
+  let tempDirs = 0;
   // Paths are a flat set, so a "directory" is whatever entries sit under it — enough to model the
   // staging swap, whose whole content is `web/dist/**`.
   const under = (p: string): string[] =>
-    [...entries.keys()].filter((k) => k === p || k.startsWith(`${p}/`));
+    [...new Set([...entries.keys(), ...entryTypes.keys()])].filter((k) => k === p || k.startsWith(`${p}/`));
   return {
     entries,
     undeletable,
@@ -201,37 +232,68 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
     notExecutable,
     stats,
     links,
+    entryTypes,
+    realPaths,
+    unlistable,
+    unrenamable,
     ops,
     ownerUid: (p) => (rootOwned.has(p) ? 0 : 1000),
     writable: (p) => !readOnly.has(p),
     exists: (p) => under(p).length > 0,
     executable: (p) => under(p).length > 0 && !notExecutable.has(p),
     read: (p) => entries.get(p)?.text ?? null,
+    entryType: (p) =>
+      entryTypes.get(p) ?? (entries.has(p) ? "file" : under(p).some((k) => k !== p) ? "directory" : null),
     list: (p) => [
       ...new Set(
-        [...entries.keys()]
+        [...entries.keys(), ...entryTypes.keys()]
           .filter((k) => k.startsWith(`${p}/`))
           .map((k) => k.slice(p.length + 1).split("/")[0]!),
       ),
     ],
+    listStrict(p) {
+      if (unlistable.has(p)) throw new Error(`EACCES: cannot read ${p}`);
+      return [
+        ...new Set(
+          [...entries.keys(), ...entryTypes.keys()]
+            .filter((k) => k.startsWith(`${p}/`))
+            .map((k) => k.slice(p.length + 1).split("/")[0]!),
+        ),
+      ];
+    },
+    realpath: (p) => realPaths.get(p) ?? (under(p).length > 0 ? p : null),
+    mkdtemp(prefix) {
+      const p = `${prefix}${++tempDirs}`;
+      entryTypes.set(p, "directory");
+      return p;
+    },
     write: (p, text, mode) => void entries.set(p, { text, mode }),
-    mkdirp: () => {},
+    mkdirp: (p) => void entryTypes.set(p, "directory"),
     remove: (p) => {
       if (undeletable.has(p)) return;
       entries.delete(p);
+      entryTypes.delete(p);
     },
     removeTree: (p) => {
       ops.push(`rm -rf ${p}`);
-      for (const k of under(p)) if (!undeletable.has(k)) entries.delete(k);
+      for (const k of under(p)) {
+        if (undeletable.has(k)) continue;
+        entries.delete(k);
+        entryTypes.delete(k);
+      }
     },
     stat: (p) => stats.get(p) ?? (under(p).length > 0 ? { inode: 1, mtimeMs: 0 } : null),
     readlink: (p) => links.get(p) ?? null,
     rename: (from, to) => {
       ops.push(`mv ${from} ${to}`);
+      if (unrenamable.has(from) || unrenamable.has(to)) throw new Error("EACCES: rename refused");
       for (const k of under(from)) {
-        const value = entries.get(k)!;
+        const value = entries.get(k);
+        const type = entryTypes.get(k);
         entries.delete(k);
-        entries.set(to + k.slice(from.length), value);
+        entryTypes.delete(k);
+        if (value !== undefined) entries.set(to + k.slice(from.length), value);
+        if (type !== undefined) entryTypes.set(to + k.slice(from.length), type);
       }
     },
   };
@@ -312,11 +374,14 @@ export function context(
     configDir: CONFIG,
     home: HOME,
     env,
+    // No config file: a fixture that wanted one passes its own layer through `over`.
+    configLayer: emptyConfigLayer(),
     port: 8787,
     serveMode: "https",
     // Derived from the fixture env rather than pinned, exactly as `loadContext` derives it: a test
     // that sets COLLIE_SERVE_PORT would otherwise get a context disagreeing with its own env.
     servePort: effectiveServePort(env),
+    basePath: normaliseBasePath(env.COLLIE_BASE_PATH),
     socket: "/home/pat/.config/herdr/herdr.sock",
     handlerFile: `${CONFIG}/tailscale-managed-handler${instanceSuffix(instance)}`,
     stateDir: STATE,

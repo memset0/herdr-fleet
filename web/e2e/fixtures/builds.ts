@@ -89,11 +89,13 @@ export interface FailDirective {
 
 /** Fail every matching request until {@link clearFail}, or until `times` is used up. */
 export function setFail(directive: FailDirective): void {
+  requireSwapServer("setFail");
   writeFileSync(FAIL, JSON.stringify(directive));
 }
 
 /** Let the failing path answer normally again. */
 export function clearFail(): void {
+  requireSwapServer("clearFail");
   rmSync(FAIL, { force: true });
 }
 
@@ -108,10 +110,15 @@ export function readFail(): FailDirective | undefined {
   }
 }
 
-/** The server's own write-back, one request spent. */
+/**
+ * The server's own write-back, one request spent.
+ *
+ * Unguarded on purpose: the server is a process of its own and never holds the lock. It writes on
+ * behalf of the case that does, which set the directive in the first place.
+ */
 export function spendFail(directive: FailDirective): void {
-  if (directive.times <= 1) clearFail();
-  else setFail({ ...directive, times: directive.times - 1 });
+  if (directive.times <= 1) rmSync(FAIL, { force: true });
+  else writeFileSync(FAIL, JSON.stringify({ ...directive, times: directive.times - 1 }));
 }
 
 /**
@@ -135,11 +142,13 @@ export interface ThrottleDirective {
 
 /** Serve every matching response at `bytesPerSecond` until {@link clearThrottle}. */
 export function setThrottle(directive: ThrottleDirective): void {
+  requireSwapServer("setThrottle");
   writeFileSync(THROTTLE, JSON.stringify(directive));
 }
 
 /** Let the throttled path run at full speed again, INCLUDING a response already mid-flight. */
 export function clearThrottle(): void {
+  requireSwapServer("clearThrottle");
   rmSync(THROTTLE, { force: true });
 }
 
@@ -152,6 +161,115 @@ export function readThrottle(): ThrottleDirective | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * ONE CASE AT A TIME ON THE SWAP SERVER, ACROSS FILES, PROJECTS AND WORKERS.
+ *
+ * The pointer and the three directives above are one piece of state for the whole server, and two
+ * files move them: `service-worker.spec.ts` and `update-screen.spec.ts`. `mode: "serial"` keeps the
+ * cases of ONE file in ONE project in order, and nothing more. The two files, and the same file in
+ * `app-phone` and `app-phone-webkit`, are separate groups that Playwright hands to separate workers
+ * (two in CI). On 2026-09-23 that is what failed CI run 35924287410: update mode's WebKit walk ran
+ * its `clearThrottle()` and `serveBuild("a")` while the service-worker case "a tap while build B is
+ * still installing" held build B's entry chunk on a slow link. The throttle went, B installed inside
+ * the eight-second window, and the page reloaded where the case says it must not.
+ *
+ * So a case takes this lock before its first write and gives it back after its last. `mkdir` is
+ * atomic, so two workers cannot both win it. The owner's pid sits inside, so a lock left by a worker
+ * that died is taken over instead of waited on forever. The caller lifts its timeout for the wait
+ * and sets it again from the returned wait: time spent queued is not time the case spent failing.
+ *
+ * AND ONLY THE HOLDER WRITES. The lock alone did not end the flake: CI runs 35975889869 and
+ * 35979542725 (2026-09-24) failed the same case with the lock in place. Playwright runs `afterEach`
+ * for a case that `test.skip()` stopped in `beforeEach`, and both files skip every case outside
+ * their project there, BEFORE taking the lock. Their `afterEach` cleared all three directives anyway,
+ * so each `app-tablet` and `app-phone-webkit` case skipping in the other worker took the throttle
+ * off build B's entry chunk (or the hold off `sw.js`) mid-case. Reproduced locally 3 of 3 by running
+ * the case next to a loop of the `app-tablet` skips. So every case-facing write below goes through
+ * {@link requireSwapServer} and throws without the lock, and the directives are cleared by
+ * {@link releaseSwapServer}, which only the holder gets past.
+ */
+const LOCK = join(BUILDS_DIR, "lock");
+const LOCK_OWNER = join(LOCK, "pid");
+/** How often a waiting case looks again. Short next to any case, long next to a `mkdir`. */
+const LOCK_POLL_MS = 100;
+/**
+ * The longest a case waits in the queue. The caller lifts its own timeout for the wait (a local run
+ * with default workers queues every repetition of both files behind one another), so this is the
+ * bound instead: far past any queue a real run builds, short of a CI job's own limit.
+ */
+const LOCK_WAIT_MAX_MS = 15 * 60_000;
+
+function lockOwner(): number | undefined {
+  try {
+    const pid = Number.parseInt(readFileSync(LOCK_OWNER, "utf8"), 10);
+    return Number.isNaN(pid) ? undefined : pid;
+  } catch {
+    return undefined;
+  }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists and belongs to someone else. Only ESRCH means it is gone.
+    // SAFETY: `process.kill` throws only system errors, and every Node system error carries `code`.
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+/** Wait for the swap server to be free and take it. Resolves to the milliseconds spent waiting. */
+export async function holdSwapServer(): Promise<number> {
+  const started = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(LOCK);
+      writeFileSync(LOCK_OWNER, String(process.pid));
+      return Date.now() - started;
+    } catch (error) {
+      // SAFETY: `mkdirSync` and `writeFileSync` throw only system errors, which always carry `code`.
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    // The pid is written a moment after the directory, so a missing one is a lock being taken right
+    // now, not an abandoned one. Only a pid that names a dead process frees the lock.
+    const owner = lockOwner();
+    if (owner === process.pid) return Date.now() - started;
+    if (owner !== undefined && !isAlive(owner)) {
+      rmSync(LOCK, { recursive: true, force: true });
+      continue;
+    }
+    if (Date.now() - started > LOCK_WAIT_MAX_MS) {
+      throw new Error(`e2e: the swap server stayed held by pid ${owner ?? "?"} for ${LOCK_WAIT_MAX_MS} ms`);
+    }
+    await new Promise((done) => setTimeout(done, LOCK_POLL_MS));
+  }
+}
+
+/**
+ * Throw unless this worker holds the swap server. A write from anywhere else lands in the middle of
+ * the case that does hold it, which is the flake the lock exists to stop.
+ */
+function requireSwapServer(write: string): void {
+  if (lockOwner() === process.pid) return;
+  throw new Error(`e2e: ${write}() without the swap server's lock. Call holdSwapServer() first.`);
+}
+
+/** Remove all three directives, unguarded. For the server's start and the holder's release. */
+function clearDirectives(): void {
+  for (const directive of [DELAY, FAIL, THROTTLE]) rmSync(directive, { force: true });
+}
+
+/**
+ * Give the swap server back, directives cleared first so the next holder starts clean. A no-op for a
+ * case that never took it, e.g. one that skipped: that case must not touch what another one holds.
+ */
+export function releaseSwapServer(): void {
+  if (lockOwner() !== process.pid) return;
+  clearDirectives();
+  rmSync(LOCK, { recursive: true, force: true });
 }
 
 export interface BuildStamp {
@@ -189,6 +307,7 @@ export function readEntryScript(name: BuildName): string {
 
 /** Serve this build from now on. One write; the server reads the pointer per request. */
 export function serveBuild(name: BuildName): void {
+  requireSwapServer("serveBuild");
   writeFileSync(POINTER, `${name}\n`);
 }
 
@@ -199,11 +318,13 @@ export function servedBuild(): BuildName {
 
 /** Hold every matching response back by `ms`, until {@link clearDelay}. */
 export function setDelay(directive: DelayDirective): void {
+  requireSwapServer("setDelay");
   writeFileSync(DELAY, JSON.stringify(directive));
 }
 
 /** Let the held responses through again. */
 export function clearDelay(): void {
+  requireSwapServer("clearDelay");
   rmSync(DELAY, { force: true });
 }
 
@@ -242,9 +363,8 @@ function waitOutTheSecond(): void {
 
 export function buildBoth(): void {
   mkdirSync(BUILDS_DIR, { recursive: true });
-  clearDelay();
-  clearFail();
-  clearThrottle();
+  // The server's own start, before any case can run: unguarded, like `spendFail`.
+  clearDirectives();
   for (const name of BUILD_NAMES) {
     if (name !== BUILD_NAMES[0]) waitOutTheSecond();
     execFileSync("bunx", ["vite", "build", "--outDir", join("e2e", ".builds", name), "--emptyOutDir"], {
@@ -262,7 +382,7 @@ export function buildBoth(): void {
       `e2e: build A and build B share the id ${a.id}. Two builds must differ; see vite.config.ts:63-68.`,
     );
   }
-  serveBuild("a");
+  writeFileSync(POINTER, "a\n");
 }
 
 /** True when both directories are present and stamped. Used by the server's reuse path. */

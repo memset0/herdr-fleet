@@ -213,6 +213,57 @@ describe("sendGuardedReply", () => {
     ]);
   });
 
+  // The canary's busy send (M37/03): while Codex streams its first reply, the status row ends in a
+  // spinner frame. That row used to hide the composer, so the pre-flight refused the send as
+  // `blocked`, where Codex queues it. The pane holds the busy screen until the text is typed, then
+  // the same pane with the draft in the box and the queue hint under it.
+  it("types, verifies, and submits to a Codex that is still working", async () => {
+    const text = "a draft typed while codex works";
+    const calls = harness(() =>
+      fixtureText(calls.length === 0 ? "codex--v0156-busy-streaming.txt" : "codex--v0156-busy-draft.txt"),
+    );
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text, agent: "codex", ...instant });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text, submit: false },
+      { text: "", submit: true, expected_prompt: `› ${text}` },
+    ]);
+  });
+
+  // The 82-column stall: Claude's slash popup clipped a command name to "…ugin:…", the box went
+  // undetected, and the guard typed the text and withheld Enter. The same screen now verifies.
+  it("verifies a slash command under a popup with a clipped command name, then submits", async () => {
+    const calls = harness(() => fixtureText("claude--autocomplete-slash-clipped.txt"));
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text: "/model", agent: "claude", ...instant });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text: "/model", submit: false },
+      { text: "", submit: true },
+    ]);
+  });
+
+  // A stale box echoed above a live dialog must never read as the composer: nothing is typed, and no
+  // submit key can answer the dialog.
+  it("refuses a dialog screen with a stale box triple above it, and never sends Enter", async () => {
+    const dialog = fixtureText("claude--permission-bash.txt");
+    const calls = harness(() => `● earlier\n${BOX_RULE}\n❯ please run the migration\n${BOX_RULE}\n\n${dialog}`);
+
+    const out = await sendGuardedReply({
+      paneId: "w1:p1",
+      text: "please run the migration",
+      agent: "claude",
+      ...instant,
+    });
+
+    expect(out.status).toBe("blocked");
+    expect(calls.some((c) => c.submit)).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
   it("types, verifies the text on the input line, then submits", async () => {
     const calls = harness(() => paneWithDraft("ship it please"));
 

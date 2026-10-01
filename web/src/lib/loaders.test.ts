@@ -93,6 +93,36 @@ describe("rootLoader", () => {
     expect(stale.agents[0]!.paneId).toBe(fixtureAgents[0]!.paneId);
   });
 
+  // ── THE CACHE COUNTDOWN DOES NOT BLINK BETWEEN POLLS ────────────────────────
+  // The reading is a MEASUREMENT, not a field of the pane, and the bridge drops one for a poll on
+  // several ordinary paths (bridge/cache/tracker.ts: a failed `stat`, a harness session id that has
+  // not resolved yet, another Herdr session's poll reaping the entry). Each of those arrived here as
+  // `cache` going from defined to undefined and back, and the chip unmounted for a frame: "cache is
+  // blinking". The rule is lib/cache-hold.ts; this is the proof that the loader applies it.
+  it("holds a pane's cache reading across a poll that arrived without one", async () => {
+    const warm = {
+      state: "warm",
+      expiresAt: Date.now() + 12 * 60_000,
+      ttlSeconds: 3600,
+      ruleId: "claude.subscription",
+      confidence: "documented",
+      lastRequestAt: Date.now() - 48 * 60_000,
+    } as const;
+    const withReading = {
+      ...fixtureSnapshot,
+      agents: fixtureSnapshot.agents.map((a, i) => (i === 0 ? { ...a, cache: warm } : a)),
+    };
+    server.use(http.get("/api/snapshot", () => HttpResponse.json(withReading)));
+    const { rootLoader } = await import("./loaders");
+    expect((await rootLoader()).agents[0]!.cache).toEqual(warm);
+
+    // The very same snapshot, minus the measurement — which is exactly what the bridge sends on the
+    // polls named above. Without the hold this pane's chip would render nothing at all.
+    server.use(http.get("/api/snapshot", () => HttpResponse.json(fixtureSnapshot)));
+    expect(fixtureSnapshot.agents[0]!.cache).toBeUndefined();
+    expect((await rootLoader()).agents[0]!.cache).toEqual(warm);
+  });
+
   it("does not mark a network error as an auth error", async () => {
     const { rootLoader } = await import("./loaders");
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network failed"));
@@ -144,6 +174,54 @@ describe("rootLoader", () => {
     const { rootLoader } = await import("./loaders");
     const data = await rootLoader();
     expect(data.update).toBeUndefined();
+  });
+});
+
+describe("paneLoader and the read a row started (lib/pane-prefetch.ts)", () => {
+  /** Every pane read the page makes, with whether it asked to mark the pane seen. */
+  function recordPaneReads(): { seen: boolean }[] {
+    const reads: { seen: boolean }[] = [];
+    server.use(
+      http.get(/\/api\/pane\/[^/]+$/, ({ request }) => {
+        reads.push({ seen: request.headers.has("x-collie-seen") });
+        return HttpResponse.json({ paneId: "w1:p1", text: "from the bridge", truncated: false, revision: 3 });
+      }),
+    );
+    return reads;
+  }
+  const open = (paneId: string) =>
+    new Request(`http://localhost/pane/${encodeURIComponent(paneId)}`);
+
+  it("takes the prefetched read on the navigation, then marks the pane seen after it", async () => {
+    const reads = recordPaneReads();
+    const { paneLoader, prefetchPaneData } = await import("./loaders");
+    await prefetchPaneData("w1:p1", undefined);
+    expect(reads).toEqual([{ seen: false }]);
+
+    const data = await paneLoader({ params: { paneId: "w1:p1" }, request: open("w1:p1") });
+    expect(data.text).toBe("from the bridge");
+    expect(data.error).toBe(false);
+    // The loader waited on no read of its own; the one that follows is the seen mark.
+    await vi.waitFor(() => expect(reads).toEqual([{ seen: false }, { seen: true }]));
+  });
+
+  it("takes it once: the next poll reads the bridge itself", async () => {
+    const reads = recordPaneReads();
+    const { paneLoader, prefetchPaneData } = await import("./loaders");
+    await prefetchPaneData("w1:p1", undefined);
+    await paneLoader({ params: { paneId: "w1:p1" }, request: open("w1:p1") });
+    await vi.waitFor(() => expect(reads).toHaveLength(2));
+    await paneLoader({ params: { paneId: "w1:p1" }, request: open("w1:p1") });
+    expect(reads).toHaveLength(3);
+    expect(reads[2]).toEqual({ seen: true });
+  });
+
+  it("does not hand one pane's read to another pane", async () => {
+    const reads = recordPaneReads();
+    const { paneLoader, prefetchPaneData } = await import("./loaders");
+    await prefetchPaneData("w1:p1", undefined);
+    await paneLoader({ params: { paneId: "w2:p1" }, request: open("w2:p1") });
+    expect(reads).toEqual([{ seen: false }, { seen: true }]);
   });
 });
 

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
 import { leadStore, member, CREW, peerStore, T0 } from "../bridge/crew/fixtures.ts";
@@ -8,6 +9,7 @@ import { fakeBeaconReader, FAKE_BEACON_NOW, type FakeBeacon } from "../bridge/be
 import { BEACON_SCHEMA_VERSION } from "../bridge/beacon/types.ts";
 import type { JsonObject } from "../bridge/json.ts";
 import { BEACON_HOOKS } from "./beacon.ts";
+import type { CliContext } from "./context.ts";
 import { cmdDoctor, type DoctorDeps, type Finding } from "./doctor.ts";
 import { HOOK_MARKER, HOOK_MARKER_PREFIX } from "./hooks.ts";
 import type { LinkProbe } from "./link.ts";
@@ -26,6 +28,12 @@ import {
   STATE,
 } from "./fakes.ts";
 import { EXIT } from "./io.ts";
+import {
+  configFilePaths,
+  readConfigFilesSync,
+  type ConfigFileLayer,
+  type ConfigFileReader,
+} from "../bridge/config-source.ts";
 
 // `collie doctor`, against fakes for every seam. Like cli/crew.test.ts, NOTHING here reaches a
 // service manager, a tailnet, a real trust store or a network — and unlike it, there is nothing to
@@ -120,6 +128,8 @@ interface Harness {
   io: ReturnType<typeof capture>;
   files: ReturnType<typeof fakeFiles>;
   requests: string[];
+  /** Every request with the headers it carried — the identity `doctor` shows its own bridge (#238). */
+  sent: { url: string; headers: Record<string, string> }[];
   /** Every `<tool> <args…>` this run spawned — how the mux probe's ONE invocation is pinned. */
   calls: string[];
 }
@@ -150,6 +160,17 @@ function fakeUi(): FakeUi {
   };
 }
 
+/** The context overrides this harness passes through, built one property at a time. */
+function contextOver(over: {
+  root?: string;
+  configLayer?: ConfigFileLayer;
+}): Partial<CliContext> {
+  const out: Partial<CliContext> = { socket: SOCKET };
+  if (over.root !== undefined) out.root = over.root;
+  if (over.configLayer !== undefined) out.configLayer = over.configLayer;
+  return out;
+}
+
 function harness(
   initial: TrustStoreData | null,
   replies: (Response | Error)[] = [],
@@ -164,6 +185,8 @@ function harness(
     beacons?: FakeBeacon[];
     /** The plugin root this Collie resolved — a staged checkout's is a worktree under `versions/`. */
     root?: string;
+    /** The two `config.toml` files this run read. No file at all is the default. */
+    configLayer?: ConfigFileLayer;
   } = {},
 ): Harness {
   const contents = initial === null ? null : serializeTrustStore(initial);
@@ -177,22 +200,21 @@ function harness(
   const files = fakeFiles(over.files ?? healthyFiles());
   const exec = fakeExec({ answers: over.answers ?? HEALTHY_ANSWERS, absent: over.absent });
   const requests: string[] = [];
+  const sent: { url: string; headers: Record<string, string> }[] = [];
   let n = 0;
   return {
     deps: {
       // As in cli/crew.test.ts: the peer client races the fake fetch against a REAL timer, so the
       // budget is set far above anything this process could stall for.
-      ctx: context(
-        { COLLIE_CREW_TIMEOUT_MS: "60000", ...over.env },
-        over.root === undefined ? { socket: SOCKET } : { socket: SOCKET, root: over.root },
-      ),
+      ctx: context({ COLLIE_CREW_TIMEOUT_MS: "60000", ...over.env }, contextOver(over)),
       io: out,
       exec,
       files,
       link: fakeLinkFs(over.link),
       store: new TrustStore(STATE, io),
-      fetch: async (url) => {
+      fetch: async (url, init) => {
         requests.push(url);
+        sent.push({ url, headers: Object.fromEntries(new Headers(init?.headers)) });
         const reply = replies[n++];
         if (reply === undefined) return hello();
         if (reply instanceof Error) throw reply;
@@ -206,6 +228,7 @@ function harness(
     io: out,
     files,
     requests,
+    sent,
     calls: exec.calls,
   };
 }
@@ -273,6 +296,7 @@ describe("collie doctor — the contract", () => {
     expect(code).toBe(EXIT.OK);
     expect([...byCheck.keys()]).toEqual([
       "collie",
+      "config-file",
       "web-dist",
       "path-link",
       "install",
@@ -296,6 +320,9 @@ describe("collie doctor — the contract", () => {
       "hook-python3",
       "agent-sessions",
       "journal-roots",
+      "cache-claims",
+      "cache-rules",
+      "cache-env",
       "restart-pending",
       "clock",
     ]);
@@ -372,7 +399,11 @@ describe("collie doctor — the contract", () => {
     const parsed = JSON.parse(h.io.stdout.join("\n")) as Finding[];
     expect(Array.isArray(parsed)).toBe(true);
     for (const f of parsed) {
-      expect(Object.keys(f).toSorted()).toEqual(["check", "detail", "remedy", "status"]);
+      // Four keys on every finding, plus `scope` on a crew one and ONLY on a crew one (ADR 0050).
+      // Absent is the local answer, so a script written before the field keeps reading correctly.
+      const keys = Object.keys(f).toSorted();
+      expect(keys.filter((k) => k !== "scope")).toEqual(["check", "detail", "remedy", "status"]);
+      if (keys.includes("scope")) expect(f.scope).toBe("crew");
       expect(["ok", "warn", "error", "skipped"]).toContain(f.status);
     }
   });
@@ -413,6 +444,56 @@ describe("collie doctor — the section sets", () => {
     );
     expect(asPeer.byCheck.has("lead-reach")).toBe(true);
     expect(asPeer.byCheck.has("member-reach")).toBe(false);
+  });
+
+  // ── ADR 0050 ──────────────────────────────────────────────────────────────
+  // The renderer has always drawn these as two sections; the stamp is what lets a READER make the
+  // same split. `collie update --check` is the reader that needs it: a fault on another machine is
+  // not an answer to "can this machine take a new version".
+  test("every crew finding is stamped `scope: crew`, and every local one is not", async () => {
+    const lead = await findings(harness(LEAD, [hello()], { files: { ...healthyFiles(), ...markerFile(LEAD) } }));
+    const scopeOf = (check: string) => lead.byCheck.get(check)?.scope;
+    for (const check of ["member-reach", "secret-generation", "member-versions"]) {
+      if (lead.byCheck.has(check)) expect(scopeOf(check), check).toBe("crew");
+    }
+    // Absent, not `"local"`: absent is what every check answered before the field existed, and a
+    // reader that does not know the field must keep reading those as this machine's.
+    expect(scopeOf("collie")).toBeUndefined();
+    expect(scopeOf("web-dist")).toBeUndefined();
+  });
+
+  // ADR 0050 rests on a claim about which crew checks can be errors AT ALL, and a claim that only a
+  // comment holds is a claim that rots. This reads the source and fails the moment one of the two
+  // warn-only checks grows a `bad(` — which is the point where ADR 0050 asks for a fresh argument,
+  // not a silent downgrade to amber. The positive half keeps it from passing by extracting nothing.
+  test("`secret-generation` and `member-versions` cannot return an error", async () => {
+    const source = await Bun.file(new URL("./doctor.ts", import.meta.url)).text();
+    const bodyOf = (name: string): string => {
+      const start = source.indexOf(`function ${name}(`);
+      expect(start, `${name} not found`).toBeGreaterThan(-1);
+      const end = source.indexOf("\n}\n", start);
+      expect(end, `${name} body not closed`).toBeGreaterThan(start);
+      return source.slice(start, end);
+    };
+    for (const name of ["secretGeneration", "memberVersions"]) {
+      const body = bodyOf(name);
+      expect(body, `${name} may not raise an error`).not.toContain("bad(");
+      expect(body, `${name} may not raise an error`).not.toContain('status: "error"');
+    }
+    // The control: the two that CAN be errors still are, so the extraction above is reading bodies.
+    for (const name of ["storeDrift", "reach"]) {
+      expect(bodyOf(name), `${name} should still be able to raise an error`).toContain("bad(");
+    }
+  });
+
+  // `store-drift` is RENDERED in the crew section and is NOT a crew fact. It compares this machine's
+  // running bridge to this machine's own trust store, needs no answer from anywhere else, and its
+  // remedy is `collie restart` here. Stamping it `crew` would make the preflight amber on a fault
+  // that is entirely local, and would print "the crew reports: store-drift" when nothing did.
+  test("`store-drift` is rendered with the crew and is not stamped as one", async () => {
+    const lead = await findings(harness(LEAD, [hello()], { files: { ...healthyFiles(), ...markerFile(LEAD) } }));
+    expect(lead.byCheck.has("store-drift")).toBe(true);
+    expect(lead.byCheck.get("store-drift")?.scope).toBeUndefined();
   });
 });
 
@@ -585,6 +666,42 @@ describe("collie doctor — the local checks", () => {
     expect(stolen.byCheck.get("front-door")?.status).toBe("warn");
   });
 
+  // ADR 0052: the door and the app must name one mount.
+  test("front-door: a door at the root while COLLIE_BASE_PATH mounts the app elsewhere warns", async () => {
+    const { byCheck } = await findings(harness(null, [], { env: { COLLIE_BASE_PATH: "/collie" } }));
+    expect(byCheck.get("front-door")?.status).toBe("warn");
+    expect(byCheck.get("front-door")?.detail).toContain("COLLIE_BASE_PATH");
+    expect(byCheck.get("front-door")?.remedy).toContain("collie serve");
+  });
+
+  test("front-door: a door published at the mount the app is served under passes, and names it", async () => {
+    const files = healthyFiles();
+    const handler = Object.keys(files).find((p) => p.endsWith("tailscale-managed-handler"));
+    expect(handler).toBeDefined();
+    const mountedFiles = { ...files, [handler ?? ""]: `https:443|${HOSTPORT}|http://127.0.0.1:8787|/collie/\n` };
+    const { byCheck } = await findings(
+      harness(null, [], {
+        env: { COLLIE_BASE_PATH: "/collie" },
+        files: mountedFiles,
+        answers: [
+          ["tailscale status --json", { stdout: CERTS_ONLY }],
+          [
+            "tailscale serve status --json",
+            {
+              stdout: JSON.stringify({
+                TCP: { "443": { HTTPS: true } },
+                Web: { [HOSTPORT]: { Handlers: { "/collie/": { Proxy: "http://127.0.0.1:8787" } } } },
+              }),
+            },
+          ],
+          ...netmapAnswers(NETMAP_OPEN),
+        ],
+      }),
+    );
+    expect(byCheck.get("front-door")?.status).toBe("ok");
+    expect(byCheck.get("front-door")?.detail).toContain("at /collie/");
+  });
+
   test("front-door: a tailnet with no HTTPS certificates warns with the console pointer (#172)", async () => {
     const { byCheck } = await findings(
       harness(null, [], {
@@ -670,7 +787,7 @@ describe("collie doctor — the local checks", () => {
 
   test("install: an install it cannot name warns and points at the docs", async () => {
     const h = harness(null, [], {
-      answers: [...HEALTHY_ANSWERS, [`git -C ${ROOT} rev-parse --git-dir`, { code: 128 }]],
+      answers: [...HEALTHY_ANSWERS, [`git -C ${ROOT} rev-parse --show-prefix`, { code: 128 }]],
     });
     const { byCheck, code } = await findings(h);
     expect(byCheck.get("install")?.status).toBe("warn");
@@ -824,6 +941,10 @@ describe("collie doctor — the clock (§8.6's ±5m window)", () => {
       expect(byCheck.get("clock")?.status).toBe("error");
       expect(byCheck.get("clock")?.detail).toContain("401");
       expect(code).toBe(EXIT.FAIL);
+      // And it is stamped `crew` (ADR 0050), because the machine at fault may be the far one: this
+      // check's own remedy says "whichever machine is off". A laptop waking six minutes out before
+      // NTP resyncs must not turn this machine's update button off.
+      expect(byCheck.get("clock")?.scope).toBe("crew");
     }
   });
 
@@ -831,6 +952,12 @@ describe("collie doctor — the clock (§8.6's ±5m window)", () => {
     const h = harness(LEAD, [hello({ date: null })], { files: { ...healthyFiles(), ...markerFile(LEAD) } });
     const { byCheck } = await findings(h);
     expect(byCheck.get("clock")?.status).toBe("skipped");
+  });
+
+  test("solo, it is skipped and about nobody, so it carries no crew stamp", async () => {
+    const { byCheck } = await findings(harness(null));
+    expect(byCheck.get("clock")?.status).toBe("skipped");
+    expect(byCheck.get("clock")?.scope).toBeUndefined();
   });
 });
 
@@ -924,6 +1051,33 @@ describe("collie doctor — the crew checks", () => {
       // The history section's one GET of THIS bridge's own snapshot (issue #137), on the same seam.
       "http://127.0.0.1:8787/api/snapshot",
     ]);
+  });
+
+  // Issue #238: with `tailscale serve` in front, `checkAccess` fails closed on a read that carries no
+  // `Tailscale-User-Login`, so this verb could not read its OWN snapshot and called a healthy bridge
+  // one that had not answered. It shows the login it is configured with; the header is an identity
+  // rather than a secret, and the bridge already takes it from any caller that reaches the port.
+  test("the bridge's own snapshot is read with the configured tailnet login", async () => {
+    const h = harness(LEAD, [hello(), hello()], {
+      env: { COLLIE_TRUSTED_USER: "pat@example.com" },
+      files: { ...healthyFiles(), ...markerFile(LEAD) },
+    });
+    await findings(h);
+    const own = h.sent.filter((r) => r.url === "http://127.0.0.1:8787/api/snapshot");
+    expect(own).toHaveLength(1);
+    // `Headers` lower-cases what it is given; the wire name is case-insensitive either way.
+    expect(own[0]?.headers["tailscale-user-login"]).toBe("pat@example.com");
+    // And never on a crew leg: those go to another machine, where this login is not ours to claim.
+    for (const r of h.sent.filter((x) => x.url.startsWith("https://"))) {
+      expect(r.headers["tailscale-user-login"]).toBeUndefined();
+    }
+  });
+
+  test("no configured login means no invented header, and the refusal reads as a refusal", async () => {
+    const h = harness(LEAD, [hello(), hello()], { files: { ...healthyFiles(), ...markerFile(LEAD) } });
+    await findings(h);
+    const own = h.sent.find((r) => r.url === "http://127.0.0.1:8787/api/snapshot");
+    expect(own?.headers["tailscale-user-login"]).toBeUndefined();
   });
 
   test("member-versions: skew WARNS naming both versions — §7.1 refuses nothing, so nor does this", async () => {
@@ -1175,6 +1329,7 @@ describe("the finding set is scoped by the chosen multiplexer", () => {
     // The whole set, so a Herdr-flavoured check added later cannot slip in unnoticed.
     expect([...byCheck.keys()]).toEqual([
       "collie",
+      "config-file",
       "web-dist",
       "path-link",
       "install",
@@ -1189,6 +1344,9 @@ describe("the finding set is scoped by the chosen multiplexer", () => {
       "beacons",
       "agent-sessions",
       "journal-roots",
+      "cache-claims",
+      "cache-rules",
+      "cache-env",
       "restart-pending",
       "clock",
     ]);
@@ -1422,10 +1580,14 @@ async function plainFindings(): Promise<Finding[]> {
 
 describe("collie doctor — a packaged install", () => {
   /** A Collie with a manifest, no `.git`, in a folder a package manager owns. */
-  function systemOwned(link: Record<string, LinkProbe> = {}, answers: Scripted["answers"] = []) {
-    const h = harness(null, [], {
+  function systemOwned(
+    link: Record<string, LinkProbe> = {},
+    answers: Scripted["answers"] = [],
+    replies: (Response | Error)[] = [],
+  ) {
+    const h = harness(null, replies, {
       link,
-      answers: [...answers, [`git -C ${ROOT} rev-parse --git-dir`, { code: 128 }], ...(HEALTHY_ANSWERS ?? [])],
+      answers: [...answers, [`git -C ${ROOT} rev-parse --show-prefix`, { code: 128 }], ...(HEALTHY_ANSWERS ?? [])],
       // The manifest is what makes this a Collie at all — `hasMarker` is asked before ownership, so
       // without it the tree classifies `no-marker` and none of these findings would be exercised.
       files: { ...healthyFiles(), [`${ROOT}/herdr-plugin.toml`]: 'id = "herdr.collie"\nversion = "1.5.2"\n' },
@@ -1519,10 +1681,152 @@ describe("collie doctor — a packaged install", () => {
     expect(f?.remedy).toContain("collie restart");
   });
 
+  // ── The bridge's own verdict comes first (issue #238, second half) ─────────
+  // On a Mac under launchd there is no systemd `MainPID`, no pidfile (that tier never writes one),
+  // no crew marker on a solo install, and no `/proc` even with a pid. Every tier above declines,
+  // and the check said "no pid" against a bridge that was up and already knew the answer: it
+  // reports `update.restartNeeded` on every snapshot. So that is read first, off the one snapshot
+  // request `doctor` already makes, and the process is read from outside only when it is silent.
+
+  /** A solo bridge's own `/api/snapshot`, carrying its verdict and nothing else this section reads. */
+  const ownSnapshot = (update: { restartNeeded: boolean; restartCommand?: string }) =>
+    new Response(JSON.stringify({ agents: [], update }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+  test("`restart-pending` takes the bridge's own word that it was replaced, with the command it spells", async () => {
+    const h = systemOwned({}, [], [ownSnapshot({ restartNeeded: true, restartCommand: "systemctl --user restart collie" })]);
+    const f = (await findings(h)).byCheck.get("restart-pending");
+    expect(f?.status).toBe("warn");
+    expect(f?.detail ?? "").toContain(BINARY);
+    expect(f?.detail ?? "").toContain("nothing restarted it");
+    expect(f?.remedy).toBe("`systemctl --user restart collie`");
+    // No pid was ever asked for: the bridge answered, so the process was not read from outside.
+    expect(h.calls.some((c) => c.includes("MainPID"))).toBe(false);
+  });
+
+  test("`restart-pending` passes on the bridge's own word, and says how much of it was checked", async () => {
+    const h = systemOwned({}, [], [ownSnapshot({ restartNeeded: false })]);
+    const f = (await findings(h)).byCheck.get("restart-pending");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail ?? "").toContain("the running bridge reports it is executing");
+    if (process.platform === "linux") expect(f?.detail ?? "").not.toContain("version alone");
+    else expect(f?.detail ?? "").toContain("version alone");
+    expect(f?.remedy).toBeNull();
+  });
+
+  test("a refused snapshot falls back to the process, and the skip says the bridge refused", async () => {
+    // The reporter's machine before the first half of #238 shipped: identity required, no pid.
+    const h = systemOwned({}, [], [new Response("identity required", { status: 403 })]);
+    const f = (await findings(h)).byCheck.get("restart-pending");
+    expect(f?.status).toBe("skipped");
+    expect(f?.detail ?? "").toContain("refused");
+    expect(f?.detail ?? "").toContain("403");
+    expect(f?.detail ?? "").toContain("no pid");
+  });
+
+  test("the bridge's verdict does not outrank the process when the process can be read", async () => {
+    // Belt and braces are not the design: the bridge answers first when it answers at all, so a
+    // supervised Linux install with a healthy inode and a bridge saying `restartNeeded: true` reports
+    // the bridge's warning. On Linux the bridge's two witnesses are a superset of this one; elsewhere
+    // this one cannot run at all, so there is no second opinion to weigh.
+    const h = systemOwned({}, [[MAIN_PID, { stdout: `${String(PID)}\n` }]], [ownSnapshot({ restartNeeded: true })]);
+    h.files.links.set(EXE, BINARY);
+    h.files.stats.set(EXE, { inode: 111, mtimeMs: 0 });
+    h.files.stats.set(BINARY, { inode: 111, mtimeMs: 0 });
+    const f = (await findings(h)).byCheck.get("restart-pending");
+    expect(f?.status).toBe("warn");
+    expect(f?.remedy).toBe("`collie restart`");
+  });
+
+  test("a checkout ignores the bridge's verdict: there `bridgeStale` is the answer, and this stays skipped", async () => {
+    const f = (await findings(harness(null, [ownSnapshot({ restartNeeded: true })]))).byCheck.get("restart-pending");
+    expect(f?.status).toBe("skipped");
+    expect(f?.detail).toContain("records no version");
+  });
+
   test("a linked clone still gets every one of those answers the old way", async () => {
     // The control. All four assertions above must fail on a checkout, or they are pinning nothing.
     const run = await findings(harness(null));
     expect(run.byCheck.get("update-source")?.detail ?? "").toContain("github.com");
     expect(run.byCheck.get("versions")?.status).not.toBe("skipped");
+  });
+});
+
+// ── The config file (ADR 0040) ───────────────────────────────────────────────
+
+describe("the config-file finding", () => {
+  const HOME_FILE = join(HOME, ".collie", "config.toml");
+  const INSTANCE_FILE = join(CONFIG, "config.toml");
+
+  /** A layer over seeded text, optionally with a file the process cannot make owner-only. */
+  function layer(seed: Record<string, string>, tightenable = true): ConfigFileLayer {
+    const entries = new Map(Object.entries(seed));
+    const reader: ConfigFileReader = {
+      read: (p) => ({ text: entries.get(p) ?? null, error: null }),
+    };
+    return readConfigFilesSync(reader, configFilePaths({}, HOME, CONFIG), () => {}, {
+      home: HOME,
+      perms: { mode: () => 0o644, tighten: () => tightenable },
+    });
+  }
+
+  test("config-file names BOTH paths and their presence, even with no file at all", async () => {
+    const { byCheck } = await findings(harness(null));
+    const f = byCheck.get("config-file")!;
+    expect(f.status).toBe("skipped");
+    expect(f.detail).toContain(HOME_FILE);
+    expect(f.detail).toContain(INSTANCE_FILE);
+    expect(f.detail).toContain("absent");
+    expect(f.remedy).toBe("`collie config init`");
+  });
+
+  test("config-file is ok when a file parsed clean", async () => {
+    const { byCheck } = await findings(
+      harness(null, [], { configLayer: layer({ [HOME_FILE]: "[network]\nport = 8800\n" }) }),
+    );
+    const f = byCheck.get("config-file")!;
+    expect(f.status).toBe("ok");
+    expect(f.detail).toContain("parsed clean");
+  });
+
+  test("config-file warns with the count and the remedy when a file had problems", async () => {
+    const { byCheck } = await findings(
+      harness(null, [], { configLayer: layer({ [HOME_FILE]: "[bridge]\npoll_mss = 1\n" }) }),
+    );
+    const f = byCheck.get("config-file")!;
+    expect(f.status).toBe("warn");
+    expect(f.detail).toContain("1 problem");
+    expect(f.remedy).toBe("`collie config check`");
+  });
+
+  test("config-file is bad when a secret was dropped for permissions", async () => {
+    const { code, byCheck } = await findings(
+      harness(null, [], {
+        configLayer: layer({ [HOME_FILE]: '[push]\nvapid_private = "x"\n' }, false),
+      }),
+    );
+    const f = byCheck.get("config-file")!;
+    expect(f.status).toBe("error");
+    expect(f.detail).toContain("COLLIE_VAPID_PRIVATE");
+    expect(f.detail).not.toContain('"x"');
+    expect(f.remedy).toContain("chmod 600");
+    // A dropped secret is a real failure, so the verb's exit code says so.
+    expect(code).not.toBe(EXIT.OK);
+  });
+
+  test("a typo'd COLLIE_CONFIG shows as an absent path rather than as silence", async () => {
+    const reader: ConfigFileReader = { read: () => ({ text: null, error: null }) };
+    const typo = readConfigFilesSync(
+      reader,
+      configFilePaths({ COLLIE_CONFIG: "/etc/collie-tpyo.toml" }, HOME, CONFIG),
+      () => {},
+      { home: HOME },
+    );
+    const { byCheck } = await findings(
+      harness(null, [], { configLayer: typo, env: { COLLIE_CONFIG: "/etc/collie-tpyo.toml" } }),
+    );
+    expect(byCheck.get("config-file")!.detail).toContain("/etc/collie-tpyo.toml (absent)");
   });
 });

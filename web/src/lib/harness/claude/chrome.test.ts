@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parseAnsi } from "../../ansi";
 import { splitLines, type StyledLine } from "../../blocks";
 import { draftCarriesSend } from "../../reply-action";
-import { extractInputDraft, extractStatusLines, hasInputBox, stripChrome } from "./chrome";
+import { extractAgentsFooter, extractInputDraft, extractStatusLines, hasInputBox, stripChrome } from "./chrome";
 import { lineText } from "./markers";
 
 /** The statusline run as plain text. extractStatusLines returns STYLED lines — a statusline tells
@@ -270,6 +270,44 @@ describe("extractStatusLines — recovers the stripped statusline run", () => {
 // extractInputDraft recovers a user draft stranded on the "❯" prompt line (a queued-then-recalled
 // message that stripChrome would otherwise hide) — the marker + separator stripped, trimmed; null
 // for an empty box, a TUI placeholder, or no box at the tail.
+// Issue #242: the footer used to be peeled off the mirror and surfaced nowhere. Every row the strip
+// takes off the tail now has a home, and this one is its own chrome element.
+describe("extractAgentsFooter — the background-agents block under the statusline", () => {
+  const footerText = (lines: StyledLine[]) => extractAgentsFooter(lines).map((l) => lineText(l).trim());
+
+  it.each(["claude--draft-footer-empty.txt", "claude--draft-footer-single.txt", "claude--draft-footer-wrapped.txt"])(
+    "%s: returns the header and the agent row, and nothing from the statusline",
+    (name) => {
+      const rows = footerText(fixtureLines(name));
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toBe("● main");
+      expect(rows[1]).toContain("worker:scout");
+      expect(rows[1]).toContain("Reviewing the test suite");
+      expect(rows.join("\n")).not.toContain("ctx:33%");
+      expect(rows.join("\n")).not.toContain("bypass permissions");
+    },
+  );
+
+  it("keeps each row styled, as the pane painted it", () => {
+    const [header] = extractAgentsFooter(fixtureLines("claude--draft-footer-single.txt"));
+    expect(header!.segments.some((s) => s.bold)).toBe(true);
+  });
+
+  it("is empty when the statusline has no footer under it", () => {
+    const lines = boxWithStatusRows("❯\u00A0", ["  [Opus] ~/repo on main", "  ⏵⏵ bypass permissions on"]);
+    expect(extractAgentsFooter(lines)).toEqual([]);
+  });
+
+  it("is empty when the rows under the blank are a statusline's own, not Claude's agent block", () => {
+    const lines = boxWithStatusRows("❯\u00A0", ["  [Opus] ~/repo on main", "", "  second part of my statusline"]);
+    expect(extractAgentsFooter(lines)).toEqual([]);
+  });
+
+  it("is empty when there is no input box at the tail", () => {
+    expect(extractAgentsFooter(splitLines(parseAnsi("hello\nworld")))).toEqual([]);
+  });
+});
+
 describe("extractInputDraft — recovers a stranded prompt-line draft", () => {
   it("draft-footer-single: returns the draft left in the input box (the text stripChrome hides)", () => {
     // A fixture whose draft stripChrome removes as chrome — here we surface it instead. Not
@@ -646,11 +684,15 @@ describe("the statusline run — as tall as a real statusline", () => {
     expect(stripChrome(lines)).not.toBe(lines);
   });
 
-  it.each([9, 10])("falls back to the raw mirror at %i rows, the deliberate ceiling", (rows) => {
+  it.each([9, 10])("at %i rows the run is no longer stripped as a statusline, but the box is still found", (rows) => {
+    // ADR 0048 amends ADR 0004: the ceiling bounds what the VIEW strips, not whether the box exists.
+    // A run taller than the ceiling is an `unknown` tail: it stays on the mirror under the transcript,
+    // is not re-surfaced as a statusline, and the send path still sees the box and its draft.
     const lines = boxWithStatusRows(`❯ ${DRAFT}`, statusRows(rows));
-    expect(extractInputDraft(lines)).toBeNull();
+    expect(extractInputDraft(lines)).toBe(DRAFT);
+    expect(hasInputBox(lines)).toBe(true);
     expect(extractStatusLines(lines)).toEqual([]);
-    expect(stripChrome(lines)).toBe(lines);
+    expect(stripChrome(lines).map(lineText)).toEqual(["earlier output", ...statusRows(rows)]);
   });
 });
 
@@ -675,6 +717,7 @@ describe("dialogs are refused by the border and blank checks — not by the row 
     "claude--select-preview-note-input.txt",
     "claude--select-preview.txt",
     "claude--trust-prompt.txt",
+    "claude--trust-prompt-unnumbered.txt",
     "claude--wizard-preview-note-attached.txt",
     "claude--wizard-preview-q1.txt",
     "claude--wizard-q1-revisit.txt",
@@ -702,14 +745,16 @@ describe("dialogs are refused by the border and blank checks — not by the row 
   });
 });
 
-describe("the row bound only catches a run taller than any plausible statusline", () => {
+describe("the row bound only decides what is stripped as a statusline", () => {
   const outputRows = (n: number) => Array.from({ length: n }, (_, i) => `tool output ${i}`);
 
-  it("refuses a complete box above an 8-row blank-free run", () => {
+  it("a complete box above an 8-row blank-free run is found, and the run stays on the mirror", () => {
+    // Before ADR 0048 this screen was refused by the row count alone. The count never guarded the
+    // send (ADR 0004); the box's own frame and the modal checks do, and neither objects here.
     const lines = boxWithBlankFreeRunBelow(outputRows(8));
     expect(extractStatusLines(lines)).toEqual([]);
-    expect(extractInputDraft(lines)).toBeNull();
-    expect(stripChrome(lines)).toBe(lines);
+    expect(extractInputDraft(lines)).toBe("do the earlier thing");
+    expect(stripChrome(lines).map(lineText)).toEqual(["old statusline", ...outputRows(8)]);
   });
 
   it("known limitation: a complete box above a 7-row blank-free run reads as live", () => {
@@ -722,12 +767,16 @@ describe("the row bound only catches a run taller than any plausible statusline"
 describe("scrollback echo — a known limitation, pinned on purpose", () => {
   const SENT = "please run the database migration now";
 
-  it.each([3, 8])("reads an echo of our own send back as a draft at %i dialog rows", (rows) => {
-    expect(extractInputDraft(echoedSendAboveDialog(SENT, rows))).toBe(SENT);
+  it.each([3, 8, 9])("refuses an echo above a dialog of %i numbered rows and a key hint", (rows) => {
+    // Until ADR 0048's statusline check, 3 and 8 rows fit the statusline walk and read as a draft.
+    // A statusline tail is now checked for numbered options and key hints too.
+    expect(extractInputDraft(echoedSendAboveDialog(SENT, rows))).toBeNull();
   });
 
-  it("stops reading the echo once the run passes the bound", () => {
-    expect(extractInputDraft(echoedSendAboveDialog(SENT, 9))).toBeNull();
+  it("still reads an echo as a draft when the rows under it name no menu", () => {
+    const rule = "─".repeat(40);
+    const lines = splitLines(parseAnsi(["earlier output", rule, `❯ ${SENT}`, rule, "  some row", "  another row"].join("\n")));
+    expect(extractInputDraft(lines)).toBe(SENT);
   });
 
   it.each(["claude--select-menu.txt", "claude--select-multi.txt"])(
@@ -754,6 +803,9 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     // undetectable behind them, so draft was null and stripped was 0.
     { fixture: "autocomplete-slash-long", statusRows: 0, draft: "/model", stripped: 27 },
     { fixture: "autocomplete-slash-short", statusRows: 0, draft: "/re", stripped: 7 },
+    // Hand-built from a live 82-column observation: a clipped "…ugin:…" command name inside the popup.
+    // Before the box was found by its own frame, the clipped row hid the box: draft null, stripped 1.
+    { fixture: "autocomplete-slash-clipped", statusRows: 0, draft: "/model", stripped: 32 },
     { fixture: "done", statusRows: 2, draft: null, stripped: 28 },
     { fixture: "ghost-suggestion", statusRows: 4, draft: null, stripped: 21 },
     { fixture: "ghost-typed-over", statusRows: 4, draft: "hello real draft text", stripped: 21 },
@@ -770,9 +822,45 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "permission-bash", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "permission-edit", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "plan-approval", statusRows: 0, draft: null, stripped: 0 },
+    // `/model sonnet` accepted: the acknowledgement row sits in the transcript, the box is empty, and
+    // the statusline below it is three rows (a LIMITS row, the model/cwd row, the mode row).
+    { fixture: "model-alias", statusRows: 3, draft: null, stripped: 55 },
     { fixture: "menu-model-picker", statusRows: 0, draft: null, stripped: 1 },
     { fixture: "menu-model-picker-dismissed", statusRows: 3, draft: null, stripped: 7 },
     { fixture: "menu-model-picker-moved", statusRows: 0, draft: null, stripped: 1 },
+    // The /effort slider: a modal with no input box and no statusline under it, so the walk finds
+    // nothing to re-surface and nothing to peel.
+    { fixture: "menu-effort-slider", statusRows: 0, draft: null, stripped: 0 },
+    // The same slider at 120 columns, the second capture width the Effort grammar is proven against.
+    // Same reading: a modal, no box, nothing under it to re-surface or peel.
+    { fixture: "menu-effort-slider--w120", statusRows: 0, draft: null, stripped: 0 },
+    // The same slider at 132 columns, cropped to the dialog. Same reading again: a modal, no box.
+    { fixture: "menu-effort-slider--w132", statusRows: 0, draft: null, stripped: 0 },
+    // The three narrow captures (2026-09-22). At 40 and 60 columns Claude wraps the dialog — the
+    // labels break onto a second row and the footer onto two or three — and the walk still reads a
+    // modal with no box, so nothing here moves with the width.
+    { fixture: "menu-effort-slider--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-effort-slider--w60", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-effort-slider--w80", statusRows: 0, draft: null, stripped: 0 },
+    // Six more real captures (2026-09-22): `low` and `ultracode` selected at 40, 60 and 80 columns.
+    // Three lift as the Effort grammar and three decline (a soft-wrapped footer at 60/ultracode, no
+    // marker glyph at 40/low, a render glitch at 40/ultracode) — the walk reads the same either way,
+    // a modal with no box and nothing under it.
+    { fixture: "menu-effort-slider--w60-low", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-effort-slider--w80-low", statusRows: 0, draft: null, stripped: 0 },
+    // The /resume session picker (2026-09-22, Claude Code 2.1.278) at 60, 80 and 120 columns, a typed
+    // search, and the all-projects view (sanitized). Measured: a modal with no box and nothing under
+    // it, at every width and in every state.
+    { fixture: "menu-resume-picker--w120-first", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-resume-picker--w120-third", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-resume-picker--w120-search", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-resume-picker--w60-first", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-resume-picker--w80-second", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-resume-picker--w120-all-sanitized", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-effort-slider--w80-ultracode", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-effort-slider--w60-ultracode", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-effort-slider--w40-low", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "menu-effort-slider--w40-ultracode", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "plan-approval--numbered-body", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "plan-approval--feedback-focused", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "plan-approval--feedback-typed", statusRows: 0, draft: null, stripped: 0 },
@@ -791,6 +879,70 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "select-preview-note-input", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "send-inflight", statusRows: 2, draft: "/rename", stripped: 5 },
     { fixture: "trust-prompt", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "trust-prompt-unnumbered", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-ask-long-question--w50", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-ask-two-line-question", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-ask-type-something-focused", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-ask-type-something-typed-off-row", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-ask-type-something-typed-two-lines", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-multiselect-type-something-focused", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-permission-amend-focused", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-permission-amend-no-off-row", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-permission-amend-typed", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-shell-after-exit", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-shell-before-first-frame", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-trust--w50", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-wizard-two-line-question", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-draft-prompt", statusRows: 2, draft: "my shell said: ❯ ls -la and then nothing", stripped: 7 },
+    {
+      fixture: "v2283-draft-rule",
+      statusRows: 3,
+      draft: "see this output: ──────────────────── some text ──────────────────── end",
+      stripped: 10,
+    },
+    { fixture: "v2283-slash-effort", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-slash-export", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-slash-hooks", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-slash-mcp", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-slash-usage", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplace-detail--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplace-detail--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplace-detail--w82", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "v2283-fullscreen-plugin-marketplace-detail-short--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplace-detail-short--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplace-detail-short--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-changed--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-changed--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-add--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-add--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-add--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-pending--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-pending--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-pending--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-pointed--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-pointed--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-pointed--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-updated--w120", statusRows: 1, draft: null, stripped: 28 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-updated--w40", statusRows: 1, draft: null, stripped: 25 },
+    { fixture: "v2283-fullscreen-plugin-marketplaces-updated--w82", statusRows: 1, draft: null, stripped: 25 },
+    { fixture: "v2283-plugin-marketplace-detail--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplace-detail--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplace-detail--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplace-detail-remove--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplace-detail-updated--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-add--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-add--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-add--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-add-form--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-pending--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-pending--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-pending--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-pointed--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-pointed--w40", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-pointed--w82", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2283-plugin-marketplaces-updated--w120", statusRows: 1, draft: null, stripped: 5 },
+    { fixture: "v2283-plugin-marketplaces-updated--w40", statusRows: 1, draft: null, stripped: 5 },
+    { fixture: "v2283-plugin-marketplaces-updated--w82", statusRows: 1, draft: null, stripped: 5 },
     { fixture: "wizard-multiselect-checked", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-final", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-pointer-next", statusRows: 0, draft: null, stripped: 0 },

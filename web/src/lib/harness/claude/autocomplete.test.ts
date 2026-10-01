@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parseAnsi } from "../../ansi";
 import { splitLines, type StyledLine } from "../../blocks";
 import { detectAutocompleteRegion } from "./autocomplete";
-import { extractInputDraft, extractStatusLines, hasInputBox } from "./chrome";
+import { extractInputDraft, extractStatusLines, hasInputBox, inputBoxTail, stripChrome } from "./chrome";
 import { claudeBuildBlocks } from "./index";
 
 // The slash-autocomplete grammar and, more importantly, what it must NOT cost: the input box under
@@ -25,6 +25,9 @@ function lines(text: string): StyledLine[] {
 const RULE = "─".repeat(40);
 const LONG = "claude--autocomplete-slash-long.txt";
 const SHORT = "claude--autocomplete-slash-short.txt";
+// Hand-built from a live 82-column observation (fixtures/panes/README.md): Claude clipped a plugin
+// command's name from the left, and the "…"-led row used to end the popup run early and hide the box.
+const CLIPPED = "claude--autocomplete-slash-clipped.txt";
 
 /** A screen with `entries` popup rows under a complete input box holding `draft`. */
 function screen(draft: string, rows: string[]): StyledLine[] {
@@ -104,6 +107,108 @@ describe("detectAutocompleteRegion", () => {
   });
 });
 
+describe("a command name Claude clipped with a leading ellipsis", () => {
+  it("reads the 82-column capture: every entry, the clipped one included", () => {
+    const region = detectAutocompleteRegion(load(CLIPPED));
+    expect(region).not.toBeNull();
+    expect(region!.startLine).toBe(7); // directly under the box's bottom border
+    const entries = region!.model.entries;
+    expect(entries).toHaveLength(19);
+    expect(entries[0]).toEqual({
+      name: "/model",
+      description: "Set the AI model for Claude Code (currently Opus 5 (1M context))",
+    });
+    expect(entries.find((e) => e.name.startsWith("\u2026"))).toEqual({
+      name: "\u2026ugin:refactor-dependencies",
+      description:
+        "(plugin) Applies dependency injection and inversion patterns to improve testability and modularity.",
+    });
+    expect(entries.at(-1)!.name).toBe("/init");
+  });
+
+  it("finds the input box and the /model draft under it", () => {
+    expect(hasInputBox(load(CLIPPED))).toBe(true);
+    expect(inputBoxTail(load(CLIPPED))).toBe("autocomplete");
+    expect(extractInputDraft(load(CLIPPED))).toBe("/model");
+    expect(extractStatusLines(load(CLIPPED))).toEqual([]);
+  });
+
+  it("accepts a clipped bare entry, and still needs the clipped row on the description column", () => {
+    expect(detectAutocompleteRegion(screen("/re", ["  /rename      Rename it", "  \u2026ugin:rename"]))).not.toBeNull();
+    expect(detectAutocompleteRegion(screen("/re", ["  /rename      Rename it", "  \u2026ugin:rename   Rename"]))).toBeNull();
+  });
+
+  // The capture lab (Claude Code 2.1.274, 2026-09-17) found the clip landing on a hyphen. The cut is
+  // by column, not by token, so the character after the "\u2026" is whatever was at that column.
+  // `entry` pads every name to the same description column, exactly as Claude lays the popup out.
+  const COLUMN = 34;
+  const entry = (name: string, description: string) => `  ${name.padEnd(COLUMN - 2)}${description}`;
+
+  it("reads a name clipped onto a hyphen", () => {
+    const rows = [
+      entry("/refactor-module-boundaries", "Move code between modules"),
+      entry("\u2026-dependencies-across-packages", "Refactor shared dependencies"),
+    ];
+    const region = detectAutocompleteRegion(screen("/refactor", rows));
+    expect(region).not.toBeNull();
+    expect(region!.model.entries.map((e) => e.name)).toEqual([
+      "/refactor-module-boundaries",
+      "\u2026-dependencies-across-packages",
+    ]);
+    expect(inputBoxTail(screen("/refactor", rows))).toBe("autocomplete");
+  });
+
+  it("a clipped name may open on an underscore or a colon, a real /command may not", () => {
+    const pair = (name: string) => [entry("/model", "Set the model"), entry(name, "Does the thing")];
+    for (const name of ["\u2026_private-helper", "\u2026:deps:refactor-one"]) {
+      expect(detectAutocompleteRegion(screen("/m", pair(name))), name).not.toBeNull();
+    }
+    // A "/" name still has to start with a letter or a digit, so a hyphen-led row stays out.
+    expect(detectAutocompleteRegion(screen("/m", pair("/-not-a-command")))).toBeNull();
+  });
+});
+
+describe("a name column carrying a parenthesised alias", () => {
+  // Also from the capture lab: a skill that declares a short name prints both. The single space
+  // before the bracket sits INSIDE the name column, so it must not be read as the column gap.
+  const COLUMN = 34;
+  const entry = (name: string, description: string) => `  ${name.padEnd(COLUMN - 2)}${description}`;
+
+  it("keeps the alias with the name and still reads the description", () => {
+    const rows = [
+      entry("/model", "Set the AI model"),
+      entry("\u2026opic-skills:morning (morning)", "Render the morning brief"),
+    ];
+    const region = detectAutocompleteRegion(screen("/mo", rows));
+    expect(region).not.toBeNull();
+    expect(region!.model.entries).toEqual([
+      { name: "/model", description: "Set the AI model" },
+      { name: "\u2026opic-skills:morning (morning)", description: "Render the morning brief" },
+    ]);
+  });
+
+  it("an unclipped command with an alias reads too", () => {
+    const rows = [entry("/morning (mo)", "Render the brief"), entry("/model", "Set the model")];
+    expect(detectAutocompleteRegion(screen("/m", rows))!.model.entries.map((e) => e.name)).toEqual([
+      "/morning (mo)",
+      "/model",
+    ]);
+  });
+
+  it("the column rule is untouched: two rows that disagree are not a popup", () => {
+    const rows = [entry("/morning (mo)", "Render the brief"), `  ${"/model".padEnd(40)}Set the model`];
+    expect(detectAutocompleteRegion(screen("/m", rows))).toBeNull();
+  });
+
+  it("the bracket has to look like an alias, not like prose", () => {
+    // "(a long note)" carries a space, so it is not an alias, and "/morning" alone is then followed
+    // by a single space rather than the two-space column gap. The row matches nothing and the run
+    // is refused — the alias arm buys no extra looseness.
+    const rows = [entry("/model", "Set the AI model"), entry("/morning (a long note)", "Render the brief")];
+    expect(detectAutocompleteRegion(screen("/m", rows))).toBeNull();
+  });
+});
+
 describe("the input box survives the popup", () => {
   it("hasInputBox is true for both captures, at 23 rows and at 3", () => {
     expect(hasInputBox(load(LONG))).toBe(true);
@@ -132,15 +237,21 @@ describe("the input box survives the popup", () => {
 
   it("only peels a popup off a box whose draft is a slash command", () => {
     // The gate that keeps the peel honest. Rows shaped like entries under a box holding ordinary
-    // prose are not a completion popup, so the walk runs unchanged and finds no box behind 12 rows.
+    // prose are not a completion popup: they are an `unknown` tail. The box is still found by its own
+    // frame (ADR 0048), but the rows are neither lifted into a popup block nor stripped.
     const rows = Array.from({ length: 12 }, (_, i) => `  ${`/cmd${i}`.padEnd(16)}Does the thing`);
-    expect(hasInputBox(screen("write the tests", rows))).toBe(false);
+    const prose = screen("write the tests", rows);
+    expect(hasInputBox(prose)).toBe(true);
+    expect(inputBoxTail(prose)).toBe("unknown");
+    expect(claudeBuildBlocks(prose).map((b) => b.kind)).toEqual(["raw"]);
+    expect(stripChrome(prose).length).toBe(1 + rows.length);
+    expect(inputBoxTail(screen("/c", rows))).toBe("autocomplete");
   });
 });
 
 describe("claudeBuildBlocks", () => {
   it("yields the transcript plus an autocomplete block — never the raw fallback", () => {
-    for (const name of [LONG, SHORT]) {
+    for (const name of [LONG, SHORT, CLIPPED]) {
       const blocks = claudeBuildBlocks(load(name));
       expect(blocks.map((b) => b.kind), name).toEqual(["raw", "autocomplete"]);
       // The raw block is the transcript ABOVE the box: the box, the popup and the whole 220-column

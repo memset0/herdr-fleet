@@ -1,12 +1,16 @@
+import { legStillFailed } from "./crew-level";
+import { asJsonBoolean, asJsonNumber, asJsonString, parseJsonObject } from "./json";
 import { t, tn } from "./i18n";
 import type {
   DismissScope,
+  UpdateCrewMember,
   UpdateInfo,
   UpdateLinkChange,
   UpdatePeerLeg,
   UpdatePeerLegState,
   UpdateRun,
   UpdateRunState,
+  UpdateUrgent,
 } from "./types";
 
 /** What a close sends: the scope it was closed in, and the version it was keyed to. */
@@ -22,14 +26,21 @@ export interface Dismissal {
 // snapshot plus two client facts (this tab just posted a confirm; the bundle on screen is stale), so
 // the precedence is pinned by unit tests instead of by pulling a DOM apart.
 //
-// ── THE PRECEDENCE, AND WHY IT IS THIS ORDER ─────────────────────────────────
-// A run outranks an offer, a finished run outranks both, peers trail, and an offer is last:
+// ── THE RUN STATES BELONG TO THE SCREEN, NOT TO THE BAND (M28/01) ────────────
+// This band used to carry the whole run as well: (s) the confirm just tapped, (b) the run in flight,
+// (c) the run finished, (d) the peers trailing it. A running update now owns the screen — one sheet
+// with a row per machine and a row for this device's own download (`lib/update-screen.ts`) — and a
+// forty-character row counting "Restarting" beside a sheet saying the same thing in full was two
+// surfaces about one fact, reconciled twice. So the band keeps only what is NOT a run:
 //
-//   (s) starting     the confirm was tapped and the status object has not spoken yet
-//   (b) updating     the polled run is in flight
-//   (c) updated      the run finished and this bundle is behind the bridge
-//   (d) peers        the lead finished and a peer is still moving, or one rolled back
-//   (a) available    a newer release exists upstream
+//   (f) peer-failed        a terminal leg, after the run is over, with its own reason
+//   (i) bundle-installing  THIS document's worker is fetching a new bundle
+//   (c) bundle             this bundle is behind the bridge and the page may reload onto it
+//   (a) available          a newer release exists upstream
+//
+// The two download states stay here because they are about the PWA and not about a run: with no run
+// to be about, the sheet shows nothing and this row is the whole story (2026-09-12). The sheet shows
+// this device's download only as part of a run.
 //
 // ── THE BUNDLE AND COLLIE ARE TWO DIFFERENT UPDATES ──────────────────────────
 // `lib/self-update.ts` updates the BUNDLE; the update card updates COLLIE. The band renders both,
@@ -85,25 +96,11 @@ export const DONE_WINDOW_MS = 10 * 60_000;
 /** How much of a peer's own prose fits the band. The page carries the rest. */
 export const REASON_BUDGET = 40;
 
-/** The three words state (b) counts through, mapped off the run state below. */
-export type RibbonPhase = "fetching" | "building" | "restarting";
-
 /** What the band is currently about. `silent` renders nothing (the component returns null). */
 export type RibbonView =
   | { kind: "silent" }
-  | { kind: "starting" }
-  | { kind: "updating"; phase: RibbonPhase; version: string }
-  | { kind: "updated"; version: string }
   | { kind: "bundle" }
   | { kind: "bundle-installing" }
-  | {
-      kind: "peers";
-      names: string[];
-      target: string | null;
-      /** How long the slowest moving leg has been at it, or null before the patience window. */
-      elapsedMs: number | null;
-    }
-  | { kind: "package-managed"; names: string[]; target: string | null }
   | {
       kind: "peer-failed";
       name: string;
@@ -115,12 +112,10 @@ export type RibbonView =
   | { kind: "available"; version: string }
   | { kind: "available-packaged"; version: string; manager: string | null };
 
-/** Everything the reading needs. Two of the four are client facts; the other two are the poll. */
+/** Everything the reading needs. Two are client facts; the rest are the poll. */
 export interface RibbonInput {
   /** The snapshot's update block. Absent on an older bridge, which reads as "nothing to say". */
   update: UpdateInfo | undefined;
-  /** When THIS tab posted the confirm, or null if it has not. State (s) is nothing but this. */
-  startedAt: number | null;
   /** `useSelfUpdate()`'s banner flag — see the header. Never re-derived here. */
   bundleStale: boolean;
   /**
@@ -145,20 +140,13 @@ export interface RibbonInput {
   /** The version whose quiet CREW notice was closed (`update.dismissedCrewVersion`). A separate
    *  decision, so a separate input — see {@link DismissScope}. */
   dismissedCrewVersion: string | null;
+  /**
+   * The crew census (`GET /api/update/check`'s `crew`, held by `lib/update-run-store.ts`). Read for
+   * ONE thing: a failed leg whose member the census now shows level stops being named here (see
+   * {@link readRun}). Absent reads as no census, and every failed leg then counts, as before.
+   */
+  crew?: readonly UpdateCrewMember[];
   now: number;
-}
-
-/**
- * `preflight` is the fetch, `staging` is the build, `restarting`/`verifying` is the restart.
- *
- * Three words need three sources and the run reports four states. The spec names "staging
- * completing" for *Building*, which the wire does not report as a state of its own; this is the
- * nearest reading that still counts through all three words rather than skipping one.
- */
-function phaseOf(state: UpdateRunState): RibbonPhase {
-  if (state === "preflight") return "fetching";
-  if (state === "staging") return "building";
-  return "restarting";
 }
 
 /** The leg states that are OVER. `package-managed` joins `done` here: a package manager owns that
@@ -231,9 +219,23 @@ export function crewSettledAt(update: UpdateInfo | undefined, run?: UpdateRun): 
  * same way `isMoving` does: a leg state this client has never heard of counts as moving.
  */
 export function crewMoving(update: UpdateInfo | undefined, run?: UpdateRun): boolean {
-  const legs = peerLegsOf(update, run);
+  return legsStillMoving(peerLegsOf(update, run), crewSettledAt(update, run));
+}
+
+/**
+ * The same question asked of legs already in hand, rather than of an `UpdateInfo` to read them from.
+ *
+ * `lib/update-run-store.ts` holds the crew's legs RECONCILED from two readings and has no
+ * `UpdateInfo` to hand back, so without this it could only ask about the lead's own run — which is
+ * exactly the half that is already over while the crew is still moving. Both callers land here, so
+ * "is the crew still moving" stays one answer (M20/04) rather than becoming two.
+ */
+export function legsStillMoving(
+  legs: readonly UpdatePeerLeg[],
+  settledAt: number | null,
+): boolean {
   if (legs.length === 0) return false;
-  if (crewSettledAt(update, run) !== null) return false;
+  if (settledAt !== null) return false;
   return legs.some(isMoving);
 }
 
@@ -267,7 +269,12 @@ export interface RunReading {
   readonly moving: boolean;
   /** The legs still moving, in the order the lead reported them. */
   readonly movingLegs: readonly UpdatePeerLeg[];
-  /** The first leg that went wrong, or null. `rolled-back` and its siblings. */
+  /**
+   * The first leg that went wrong, or null. `rolled-back` and its siblings — minus a leg whose member
+   * the census now shows at or above this machine's version. The legs outlive their run, so a member
+   * that rolled back and then levelled itself would otherwise be named as failed until the next run.
+   * The rule is `legStillFailed` in `lib/crew-level.ts`, the same one the button count reads.
+   */
   readonly failed: UpdatePeerLeg | null;
   /** The legs a package manager owns. Terminal, and never a failure (ADR 0035). */
   readonly managed: readonly UpdatePeerLeg[];
@@ -289,8 +296,14 @@ export function legElapsedMs(leg: UpdatePeerLeg, now: number): number | null {
   return since < 0 ? 0 : since;
 }
 
-/** Read one run, once. The ONLY place a run record is interpreted for the UI (M20/04). */
-export function readRun(input: { update: UpdateInfo | undefined; run?: UpdateRun; now: number }): RunReading {
+/** Read one run, once. The ONLY place a run record is interpreted for the UI (M20/04). `crew` is
+ *  the census, read only to retire a failed leg its member has since outgrown. */
+export function readRun(input: {
+  update: UpdateInfo | undefined;
+  run?: UpdateRun;
+  crew?: readonly UpdateCrewMember[];
+  now: number;
+}): RunReading {
   const legs = peerLegsOf(input.update, input.run);
   const settledAt = crewSettledAt(input.update, input.run);
   const moving = crewMoving(input.update, input.run);
@@ -303,7 +316,7 @@ export function readRun(input: { update: UpdateInfo | undefined; run?: UpdateRun
     settledAt,
     moving,
     movingLegs,
-    failed: legs.find((leg) => PEER_FAILED.has(leg.state)) ?? null,
+    failed: legs.find((leg) => legStillFailed(leg, input.crew ?? [], input.update?.current ?? "")) ?? null,
     managed: legs.filter((leg) => leg.state === "package-managed"),
     elapsedMs,
     slow: elapsedMs !== null && elapsedMs >= CREW_PATIENCE_MS,
@@ -358,9 +371,6 @@ export function dismissTarget(view: RibbonView): Dismissal | null {
     case "available":
     case "available-packaged":
       return { scope: "offer", version: view.version };
-    case "peers":
-    case "package-managed":
-      return view.target === null ? null : { scope: "crew", version: view.target };
     // A FAILED LEG IS CLOSABLE, and by this rule's own logic (M20/04). The rule is whether the state
     // describes something that ends on its own. A failed leg is the one crew state that does not:
     // it is terminal, the run is over, and the sentence would otherwise stand until another run
@@ -390,9 +400,9 @@ export function dismissesLocally(view: RibbonView): boolean {
   return view.kind === "bundle-installing";
 }
 
-/** The version the quiet crew states are keyed by: what the run is heading for when a record names
- *  it, else the release upstream is offering. Null when neither exists — nothing to key a dismissal
- *  to, so the band stays. */
+/** The version a failed leg's close is keyed by: what the run was heading for when a record names it,
+ *  else the release upstream is offering. Null when neither exists — nothing to key a dismissal to,
+ *  so the band stays. */
 function targetOf(input: RibbonInput, to: string | null): string | null {
   return to ?? input.update?.latest ?? null;
 }
@@ -400,79 +410,34 @@ function targetOf(input: RibbonInput, to: string | null): string | null {
 /** The whole band, decided once. See the precedence in this file's header. */
 export function ribbonView(input: RibbonInput): RibbonView {
   const run = input.update?.run;
-  // "The status object has spoken": a record exists and it is about a run, not the idle placeholder.
-  const spoke = run !== undefined && run.state !== "idle";
 
-  // (s) — the gap between the 202 and the first status the detached process writes.
-  if (input.startedAt !== null && !spoke) return { kind: "starting" };
-
-  // (b) — a run in flight. A failed poll during `restarting` simply leaves the last record in place,
-  // so this branch keeps saying "Restarting" rather than becoming an error.
-  if (run !== undefined && RUN_IN_FLIGHT.has(run.state)) {
-    return {
-      kind: "updating",
-      phase: phaseOf(run.state),
-      version: run.to ?? input.update?.latest ?? "",
-    };
-  }
-
-  // THE DOWNLOAD OUTRANKS BOTH BUNDLE STATES (2026-09-12). It is the same row about the same fact,
-  // one step further on: this bundle is behind, and the new one is on its way in. Above (c) as well
-  // as (c)'s other half, because "Updated to 1.8.1. Tap to reload." after the tap was taken is the
-  // sentence that made the operator tap again.
+  // THE DOWNLOAD OUTRANKS THE OFFER IT IS THE ANSWER TO (2026-09-12). Same row, same fact, one step
+  // further on: this bundle is behind, and the new one is on its way in.
   if (input.bundleStale && input.bundleInstalling) return { kind: "bundle-installing" };
 
-  const finished =
-    run !== undefined && run.state === "done" && input.now - run.updatedAt < DONE_WINDOW_MS;
-
-  // (c) — the bridge answers with the new version and this bundle is behind it.
-  if (finished && input.bundleStale && run.to !== null) return { kind: "updated", version: run.to };
-
-  // (c)'s other half: a stale bundle with no Collie update behind it is the PWA row exactly as it
-  // has always been, with its own words. Above (d) and (a) because it is the same slot.
-  if (input.bundleStale) return { kind: "bundle" };
-
-  // (d) — the crew is not done. NO TIME WINDOW, and no `finished` gate (M20/04).
+  // (f) — a terminal leg, named with its reason. No time window and no `finished` gate (M20/04): what
+  // ends this branch is `settledAt`, the lead's own answer, stamped when the last leg went terminal.
+  // A leg still MOVING is the update screen's business now, and no longer this row's.
   //
-  // It used to hang off `finished`, so a moving peer inherited (c)'s ten-minute window and the band
-  // fell silent at ten minutes over a card that was still counting. It also required a `done` record
-  // on THIS machine, so a peers-only run — which writes none — was invisible to the band entirely
-  // (M20/09). Both gates are gone. What ends this branch is `settledAt`, the lead's own answer,
-  // stamped once when the last leg went terminal.
+  // ONLY WHILE THE MEMBER IS STILL BEHIND. A leg's member that the census now shows level, typically
+  // because it levelled itself after the run gave up on it, is not a machine the operator can do
+  // anything about, so the sentence goes when the census says so (`readRun`'s `failed`).
   {
-    const reading = readRun({ update: input.update, now: input.now });
-    const target = targetOf(input, run?.to ?? null);
+    const reading = readRun({ update: input.update, crew: input.crew, now: input.now });
     if (reading.failed !== null) {
       const reason = reading.failed.reason ?? t("settings.updateCard.peer.unknownReason");
       return {
         kind: "peer-failed",
         name: reading.failed.name,
         reason: truncateWords(reason, REASON_BUDGET),
-        target,
+        target: targetOf(input, run?.to ?? null),
       };
     }
-    const quiet = target !== null && target === input.dismissedCrewVersion;
-    // A moving peer is undismissable, so its target is null however the crew was closed before: the
-    // operator must be able to see the end of a run somebody is still driving.
-    if (reading.movingLegs.length > 0) {
-      return {
-        kind: "peers",
-        names: reading.movingLegs.map((leg) => leg.name),
-        target: null,
-        // Past the patience window the band stops assuming the operator will simply wait: it says
-        // how long, and it says nobody has to do anything. Before it, the words are unchanged.
-        elapsedMs: reading.slow ? reading.elapsedMs : null,
-      };
-    }
-    // Below the moving peers, never among them: the band's peers line is about what the run is
-    // waiting on, and it is waiting on nothing here. Named anyway, so the operator learns why that
-    // machine did not move without opening the page to find out — and closable, because a machine
-    // a package manager owns can stand behind for weeks and a band nobody can put down is a nag.
-    // Still gated on `finished`: it is a QUIET standing fact, not a run in progress, and raising it
-    // about a run nobody started would be a nag with no run behind it.
-    const managed = reading.managed.map((leg) => leg.name);
-    if (finished && managed.length > 0 && !quiet) return { kind: "package-managed", names: managed, target };
   }
+
+  // (c) — a stale bundle is the PWA row exactly as it has always been. Above (a) because it is the
+  // same slot, and the tap reloads THIS PAGE onto a bundle that already exists.
+  if (input.bundleStale) return { kind: "bundle" };
 
   // (a) — an offer, and only an offer. The tap navigates; nothing here starts anything.
   const latest = input.update?.latest ?? null;
@@ -515,54 +480,43 @@ export function linkChangeBandNote(linkChange: UpdateLinkChange | null | undefin
 }
 
 /**
+ * THE BAND'S URGENT LABEL, or null when no release in the delta asked for it (ADR 0046).
+ *
+ * The LABEL only. The release's own sentence is unbounded prose, and the band is one truncating row
+ * held to forty characters, so the row says that there is a reason and the tap lands on the Updates
+ * card, which prints the sentence whole. Same split the crew-link note takes, for the same reason.
+ */
+export function urgentBandNote(urgent: UpdateUrgent | null | undefined): string | null {
+  return urgent === null || urgent === undefined ? null : t("updateRibbon.urgent");
+}
+
+/**
  * The band's one line. Separate from the component so the phrasing is testable without a DOM.
  *
- * `linkChange` adds ONE sentence, and only to the offer states: those are the two the operator
- * reads before they confirm, which is the only moment the sentence can change what they do. A run
- * already in flight is past being told.
+ * `linkChange` and `urgent` each add ONE short note, and only to the offer states: those are the two
+ * the operator reads before they confirm, which is the only moment a note can change what they do. A
+ * run already in flight is past being told. Urgent goes first, because it is the reason to read the
+ * row at all.
  */
-export function ribbonText(view: RibbonView, linkChange: UpdateLinkChange | null = null): string {
+export function ribbonText(
+  view: RibbonView,
+  linkChange: UpdateLinkChange | null = null,
+  urgent: UpdateUrgent | null = null,
+): string {
   const line = ribbonLine(view);
   if (view.kind !== "available" && view.kind !== "available-packaged") return line;
-  const note = linkChangeBandNote(linkChange);
-  return note === null ? line : `${line} ${note}`;
+  const notes = [urgentBandNote(urgent), linkChangeBandNote(linkChange)].filter((n) => n !== null);
+  return notes.length === 0 ? line : `${line} ${notes.join(" ")}`;
 }
 
 function ribbonLine(view: RibbonView): string {
   switch (view.kind) {
     case "silent":
       return "";
-    case "starting":
-      return t("updateRibbon.starting");
-    case "updating":
-      if (view.phase === "fetching") return t("updateRibbon.fetching", { version: view.version });
-      if (view.phase === "building") return t("updateRibbon.building", { version: view.version });
-      return t("updateRibbon.restarting", { version: view.version });
-    case "updated":
-      return t("updateRibbon.updated", { version: view.version });
     case "bundle":
       return t("pwa.updateAvailable");
     case "bundle-installing":
       return t("pwa.updateInstalling");
-    case "peers": {
-      const line = tn("updateRibbon.peers", view.names.length, { names: view.names.join(", ") });
-      // PAST THE PATIENCE WINDOW THE BAND NAMES THE TIME (M20/04). Before it, the words are exactly
-      // what they were. After it, the one fact the operator does not have is how long this has been
-      // going, and on 2026-09-07 not having it is what turned a wait into a dozen taps.
-      //
-      // The reassurance sentence that goes with it — "No action needed, this finishes on its own" —
-      // lives on the Updates CARD and not here. This band is one truncating row about forty
-      // characters wide (`i18n/update-ribbon-budget.test.ts` enforces it over all seven locales), and
-      // a sentence that long would be a sentence nobody reads the end of. A tap lands on the card,
-      // which is where there is room to say it.
-      if (view.elapsedMs === null) return line;
-      return tn("updateRibbon.peersSlow", view.names.length, {
-        names: view.names.join(", "),
-        elapsed: minutesWord(view.elapsedMs),
-      });
-    }
-    case "package-managed":
-      return tn("updateRibbon.packageManaged", view.names.length, { names: view.names.join(", ") });
     case "peer-failed":
       // ONE SENTENCE FOR ALL FOUR FAILED STATES (M20/04). It used to say "rolled back" about every
       // one of them, which is a specific and often false claim: an `unreachable` peer did not roll
@@ -582,37 +536,166 @@ function ribbonLine(view: RibbonView): string {
   }
 }
 
-// ── "THIS TAB JUST POSTED" ──────────────────────────────────────────────────────────────────────
+// ── "THIS DEVICE STARTED IT" ────────────────────────────────────────────────────────────────────
 //
-// `POST /api/update` returns immediately and hands off to a detached process, so there is a window
-// between the confirm and the first status the run record reports. An empty band there says "nothing
-// happened" about the thing the operator just consented to. The card stamps this store on the way
-// out of its own POST; the band reads it, and the moment the status object speaks the reading above
-// stops using it. Module-scoped for the same reason every other cross-surface flag in this app is:
-// the band is mounted at the root and the card is a route away.
+// One fact, and it is the one that decides whether the app is locked. The update screen stamps this
+// store on the way out of its own `POST /api/update`; it reads it back, takes the screen, and locks
+// the app behind it for as long as the run is in flight.
+//
+// IT LIVES FOR THE LENGTH OF THE RUN, NOT FOR THE GAP BEFORE IT SPEAKS (M28/01), and since update
+// mode (ADR 0064) it outlives the PAGE as well. The phone's own reload is the last step of an update:
+// the page that tapped reloads onto the new app, and the document that boots must reopen the screen
+// before its first paint, at the step it had reached. A module variable died with the document that
+// set it, so the new one met a finished run it had never asked for, and the Done screen never came.
+// So the claim is written to `sessionStorage` (this tab only: a second tab is a second device as far
+// as this feature is concerned) and read back when this module loads, which is before React renders.
+//
+// It is spent in one place: the operator's "Back to the app" on the screen's last step
+// (`hooks/use-update-screen.ts`), or at once by a failed POST, because nothing was started. A claim
+// older than {@link CLAIM_MAX_AGE_MS} is thrown away on load rather than reopening a screen about a
+// run nobody is watching.
 
-let startedAt: number | null = null;
+/** Where the claim lives. Versioned, so a later shape can ignore this one rather than misread it. */
+export const CLAIM_KEY = "collie:update-mode:v1";
+
+/**
+ * How old a claim may be when a document loads it. Longer than any run, crew and rate limit included
+ * (ADR 0062 puts the worst at about 80 minutes), and short enough that a tab left open overnight
+ * does not greet the operator with yesterday's update.
+ */
+export const CLAIM_MAX_AGE_MS = 3 * 60 * 60_000;
+
+/** What this device asked for, as the screen needs it after a reload. */
+export interface UpdateClaim {
+  /** When the confirm was accepted, on this phone's clock. The screen's clock counts from here. */
+  readonly startedAt: number;
+  /** The 202's own run id, when the bridge sent one (M16/04). */
+  readonly runId: string | null;
+  /** The version the run goes to, or null when the ask did not name one. */
+  readonly target: string | null;
+  /** A run that moves only the members (M32). */
+  readonly peersOnly: boolean;
+  /** The build id of the bundle that tapped. A document with a different one has reloaded onto the
+   *  new app, which is how the phone's own step knows it is done. */
+  readonly bundleAtStart: string | null;
+  /** Members the operator chose to stop waiting for ("Skip <name>"). */
+  readonly skipped: readonly string[];
+  /** This machine's name, and its members', as they were at the start. A document that boots with
+   *  the claim draws the same rows before its first read answers, so the panel does not grow. */
+  readonly lead: string | null;
+  readonly members: readonly string[];
+  /** The last step the screen showed, so a document that boots mid-run opens on it. */
+  readonly lastPhase: string | null;
+}
+
+let claim: UpdateClaim | null = loadClaim();
 const listeners = new Set<() => void>();
 
-function emit(): void {
+function loadClaim(): UpdateClaim | null {
+  try {
+    const raw = sessionStorage.getItem(CLAIM_KEY);
+    if (raw === null) return null;
+    // Parsed at the boundary: this key is written only by `saveClaim` below, but a hand-edited or
+    // truncated value must read as no claim rather than as half of one.
+    const parsed = parseJsonObject(raw);
+    const startedAt = asJsonNumber(parsed?.startedAt);
+    if (parsed === undefined || startedAt === undefined) return null;
+    if (Date.now() - startedAt > CLAIM_MAX_AGE_MS) {
+      sessionStorage.removeItem(CLAIM_KEY);
+      return null;
+    }
+    const skipped = parsed.skipped;
+    return {
+      startedAt,
+      runId: asJsonString(parsed.runId) ?? null,
+      target: asJsonString(parsed.target) ?? null,
+      peersOnly: asJsonBoolean(parsed.peersOnly) === true,
+      bundleAtStart: asJsonString(parsed.bundleAtStart) ?? null,
+      skipped: Array.isArray(skipped) ? skipped.flatMap((name) => asJsonString(name) ?? []) : [],
+      lead: asJsonString(parsed.lead) ?? null,
+      members: Array.isArray(parsed.members) ? parsed.members.flatMap((name) => asJsonString(name) ?? []) : [],
+      lastPhase: asJsonString(parsed.lastPhase) ?? null,
+    };
+  } catch {
+    // No storage (private mode, a locked-down embed): the claim lives for this document only, which
+    // is what it did before update mode.
+    return null;
+  }
+}
+
+function saveClaim(next: UpdateClaim | null): void {
+  claim = next;
+  try {
+    if (next === null) sessionStorage.removeItem(CLAIM_KEY);
+    else sessionStorage.setItem(CLAIM_KEY, JSON.stringify(next));
+  } catch {
+    /* see loadClaim: the in-memory claim still holds for this document */
+  }
   for (const listener of listeners) listener();
 }
 
-/** The confirm was tapped and the POST was accepted. Safe to call on every attempt. */
-export function noteUpdateStarted(at: number = Date.now()): void {
-  startedAt = at;
-  emit();
+/**
+ * The confirm was tapped and the POST was accepted. Safe to call on every attempt.
+ *
+ * `runId` is the 202's own run id when the bridge sent one (M16/04). It lets a later reading tell this
+ * device's run from somebody else's newer one.
+ */
+export function noteUpdateStarted(
+  at: number = Date.now(),
+  runId: string | null = null,
+  extra: {
+    target?: string | null;
+    peersOnly?: boolean;
+    bundleAtStart?: string | null;
+    lead?: string | null;
+    members?: readonly string[];
+  } = {},
+): void {
+  saveClaim({
+    startedAt: at,
+    runId,
+    target: extra.target ?? null,
+    peersOnly: extra.peersOnly ?? false,
+    bundleAtStart: extra.bundleAtStart ?? null,
+    skipped: [],
+    lead: extra.lead ?? null,
+    members: extra.members ?? [],
+    lastPhase: null,
+  });
 }
 
-/** The POST failed, or the status object has spoken — either way (s) is over. */
+/** The step the screen is on, kept with the claim for the next document. Written only on a change. */
+export function noteClaimPhase(phase: string): void {
+  if (claim === null || claim.lastPhase === phase) return;
+  saveClaim({ ...claim, lastPhase: phase });
+}
+
+/** The operator chose "Skip <name>": stop waiting for that member. Kept with the claim, so a reload
+ *  does not ask again. */
+export function noteMemberSkipped(name: string): void {
+  if (claim === null || claim.skipped.includes(name)) return;
+  saveClaim({ ...claim, skipped: [...claim.skipped, name] });
+}
+
+/** The POST failed, or the operator left the screen's last step. Either way the claim is spent. */
 export function clearUpdateStarted(): void {
-  if (startedAt === null) return;
-  startedAt = null;
-  emit();
+  if (claim === null) return;
+  saveClaim(null);
 }
 
+/** When this device started the run it is watching, or null. */
 export function getUpdateStarted(): number | null {
-  return startedAt;
+  return claim?.startedAt ?? null;
+}
+
+/** The whole claim, or null. The same object until it changes, so it is safe as a store snapshot. */
+export function getUpdateClaim(): UpdateClaim | null {
+  return claim;
+}
+
+/** The run id this device consented to, when the 202 named one. */
+export function getUpdateStartedRun(): string | null {
+  return claim?.runId ?? null;
 }
 
 export function subscribeUpdateStarted(listener: () => void): () => void {

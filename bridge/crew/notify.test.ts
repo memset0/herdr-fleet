@@ -41,7 +41,7 @@ class RecordingPush {
   }
 }
 
-function pane(paneId: string, status: AgentStatus, agent = "claude"): PaneWire {
+function pane(paneId: string, status: AgentStatus, agent = "claude", extra: Partial<PaneWire> = {}): PaneWire {
   return {
     paneId,
     workspaceId: "w1",
@@ -53,6 +53,7 @@ function pane(paneId: string, status: AgentStatus, agent = "claude"): PaneWire {
     cwd: "/home/you/collie",
     focused: false,
     kind: "agent",
+    ...extra,
   };
 }
 
@@ -127,7 +128,7 @@ describe("PeerNotifier — a peer's alerts on the lead's phone", () => {
     expect(push.sent).toHaveLength(1);
     expect(push.sent[0]).toEqual({
       title: "claude needs you",
-      body: "laptop · collie · /home/you/collie",
+      body: "laptop · collie",
       tag: "collie:herd@laptop",
       paneId: "p1",
       renotify: true,
@@ -163,15 +164,20 @@ describe("PeerNotifier — a peer's alerts on the lead's phone", () => {
     peer.observe("laptop", body([pane("p1", "working"), pane("p2", "working"), pane("p3", "working")]));
     peer.observe(
       "laptop",
-      body([pane("p1", "blocked"), pane("p2", "blocked", "codex"), pane("p3", "blocked", "pi")]),
+      body([
+        pane("p1", "blocked", "claude", { terminalTitle: "api" }),
+        pane("p2", "blocked", "codex", { terminalTitle: "web" }),
+        pane("p3", "blocked", "pi", { terminalTitle: "worker" }),
+      ]),
     );
     clock.fireAll();
 
     // One slot, and its final state is the digest — the existing "one summary, not three races".
+    // Named by the one name rule (bridge/pane-name.ts), not by agent kind — three panes, three words.
     expect(new Set(push.tags)).toEqual(new Set(["collie:herd@laptop"]));
     expect(push.sent.at(-1)).toMatchObject({
       title: "3 agents need you",
-      body: "laptop · claude, codex, pi",
+      body: "laptop · api, web, worker",
     });
   });
 

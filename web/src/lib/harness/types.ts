@@ -28,6 +28,11 @@ export interface HarnessAdapter {
    *  readable at a glance. Empty = no box at the tail (a menu is up, or a foreign/torn buffer), so
    *  nothing to surface. */
   extractStatusLines(lines: StyledLine[]): StyledLine[];
+  /** Re-surface a block of rows the harness paints UNDER its statusline about work running beside
+   *  the main session (Claude's background-agents footer: "● main" plus one row per agent). Stripped
+   *  off the mirror with the rest of the tail, so this is its only surface. STYLED rows, top to
+   *  bottom, verbatim. OPTIONAL: a harness without such a block omits it, and `[]` means none now. */
+  extractAgentsFooter?(lines: StyledLine[]): StyledLine[];
   /** Re-surface a user draft stranded on the input box's prompt line (null = no box / empty / a
    *  known placeholder). */
   extractInputDraft(lines: StyledLine[]): string | null;
@@ -41,6 +46,38 @@ export interface HarnessAdapter {
    * withheld either way; the pre-flight just avoids depositing the text in a menu first.
    */
   composerReady?(lines: StyledLine[]): boolean;
+  /**
+   * The key THIS harness's own modals print as the way OUT of them — a Herdr key token ("Escape",
+   * "ctrl+c"), declared here and read from nowhere else.
+   *
+   * It is the one control the unread-dialog card offers (harness/index.ts `withUnreadDialog`,
+   * .adr/0053): when every grammar declined, `composerReady` answered a definite `false` and the
+   * screen is not blank, the operator gets this key over the raw mirror instead of a locked composer
+   * and no buttons at all. Declare it from the harness's OWN captures or notes, and say in a comment
+   * which file it was read from — a declaration is reviewed once, a footer parse is fooled by a
+   * phrase.
+   *
+   * OPTIONAL, and its absence means "this adapter declares no way out": the pass emits no card for
+   * that agent, per adapter, by construction. That is a supported answer with a visible cost, and it
+   * is the right one while an adapter's `composerReady` has a total false-negative mode (omp).
+   *
+   * Not every harness spells it the same way: grok's footers give Escape to the scrollback view and
+   * name `Ctrl+c:cancel` instead. That single divergence is why the key is declared rather than
+   * assumed.
+   */
+  cancelKey?: string;
+  /**
+   * Positive evidence that one of THIS harness's modals is on screen, asked by the unread-dialog pass
+   * before it offers `cancelKey` (.adr/0053, addendum 2026-09-26). `composerReady` answering `false`
+   * says only that no input box is there, and that is also true of a plain shell: herdr reports the
+   * agent a moment before its first frame paints and a moment after it exits, and the card used to
+   * flash over the shell prompt in both windows.
+   *
+   * OPTIONAL. Absent keeps the four original conditions unchanged for that adapter. Declared, the
+   * card needs it to answer `true` as well; a throw counts as `false`. Read from the harness's own
+   * captures, and pinned by the card's allow-list test.
+   */
+  modalOnScreen?(lines: StyledLine[]): boolean;
   /**
    * Literal on-screen text from the composer's prompt/draft tail — the region a DESTRUCTIVE write
    * aimed at that composer may be bound to. Null = no composer at the tail (the same screens

@@ -1,5 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { vi } from "vitest";
 
@@ -10,6 +11,8 @@ import {
   fixtureCrewAgents,
   fixtureCrewSessions,
   fixtureCrewShellPanes,
+  fixtureCrewTabs,
+  fixtureCrewWorkspaces,
   fixtureServers,
   fixtureSessions,
   fixtureShellPanes,
@@ -18,6 +21,7 @@ import {
 } from "@/test/handlers";
 import type { SnapshotResponse } from "@/lib/types";
 import { withHeaderHost } from "@/test/header-host";
+import { server } from "@/test/setup";
 import { HomeRoute } from "./home";
 
 // The dashboard, one machine and several. The point of the pair is that the FIRST one is unchanged:
@@ -63,6 +67,7 @@ function renderHome(data: HomeData, initialPath?: string) {
         ),
       },
       { path: "/pane/:paneId", element: <div data-testid="pane" /> },
+      { path: "/space/:spaceId/changes", element: <div data-testid="space-changes" /> },
       { path: "/crew", element: <div data-testid="crew" /> },
     ],
     { initialEntries: [initialPath ?? (data.scope.host ? `/?h=${data.scope.host}` : "/")] },
@@ -71,20 +76,26 @@ function renderHome(data: HomeData, initialPath?: string) {
   return router;
 }
 
-/** Wait for the herd list to be on screen. "needs you" alone is ambiguous — it is also the blocked
- *  status label on every row — so key off the section HEADING. */
-const settled = () =>
-  waitFor(() =>
-    expect(
-      screen.getAllByRole("heading").some((h) => /needs you/i.test(h.textContent ?? "")),
-    ).toBe(true),
-  );
+/** Wait for the herd list to be on screen. The Spaces filter strip (components/agent-list.tsx) is
+ *  the one landmark every render with at least one pane produces — there is no "Needs you" heading
+ *  to wait on any more, since a pane no longer moves to a section of its own. */
+const settled = () => screen.findByRole("navigation", { name: /spaces/i });
+
+/** The `<section>` a workspace heading owns, scoped away from the Spaces strip's own chips, which
+ *  now carry the same workspace name a heading does (agent-list.tsx). */
+const groupSection = (label: string) => screen.getByRole("heading", { name: label }).closest("section")!;
+
+/** DOWNSTREAM PORT (FORK.toml native-agent-favorites-port): an agent row carries a favorite control
+ *  beside it, a pressed/unpressed toggle in the same list; a row is never that control. */
+const agentRows = (buttons: HTMLElement[]) => buttons.filter((b) => !b.hasAttribute("aria-pressed"));
+
+/** A workspace group's pane rows: the buttons in its list, never the "+" at the end of its heading
+ *  (M40/03), which is a button of the same section. */
+const rowsOf = (section: HTMLElement) =>
+  agentRows(within(section.querySelector<HTMLElement>('[data-slot="list-group"]')!).getAllByRole("button"));
 
 const url = (router: ReturnType<typeof renderHome>) =>
   router.state.location.pathname + router.state.location.search;
-
-const agentRows = (root: ParentNode = document) =>
-  Array.from(root.querySelectorAll<HTMLButtonElement>('[data-slot="agent-row"]'));
 
 const solo = () =>
   homeData({
@@ -112,9 +123,10 @@ describe("the dashboard on ONE machine is untouched", () => {
   it("opens a pane at today's bare URL — no `?h=` is ever produced", async () => {
     const router = renderHome(solo());
     await settled();
-    const target = agentRows().find((row) => /webapp/i.test(row.textContent ?? ""));
-    if (target === undefined) throw new Error("the webapp Agent row did not render");
-    await userEvent.click(target);
+    // The row's own text is just its name and its tab now — "webapp" only names the workspace
+    // heading (and its Spaces chip), so the row is found through its group instead.
+    const [row] = rowsOf(groupSection("webapp"));
+    await userEvent.click(row!);
     await waitFor(() => expect(url(router)).toBe("/pane/w1%3Ap1"));
   });
 });
@@ -150,17 +162,51 @@ describe("the dashboard across machines", () => {
     // the merged list shows both. Tapping the peer's must not open the lead's identically-named pane.
     const router = renderHome(packed());
     await settled();
-    const peerRow = screen.getAllByRole("button", { name: /moonward/i })[0]!;
-    await userEvent.click(peerRow);
+    const [peerRow] = rowsOf(groupSection("moonward"));
+    await userEvent.click(peerRow!);
     await waitFor(() => expect(url(router)).toBe("/pane/w1%3Ap1?h=workshop"));
   });
 
   it("opens the LEAD's row with no host param — absent still means the lead", async () => {
     const router = renderHome(packed());
     await settled();
-    const leadRow = screen.getAllByRole("button", { name: /webapp/i })[0]!;
-    await userEvent.click(leadRow);
+    const [leadRow] = rowsOf(groupSection("webapp"));
+    await userEvent.click(leadRow!);
     await waitFor(() => expect(url(router)).toBe("/pane/w1%3Ap1"));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The space navigator, addressed at a peer (#209). The loader's `ambientSpaces` narrows
+// `workspaces`/`tabs` to the host `?h=` names before HomeRoute ever sees them — this fixture mirrors
+// that narrowing by hand — so the row on screen is the addressed host's own "moonward", and the
+// navigator must key it by that SAME host, not the lead's, to find its blocked agent.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("the space navigator on a crew, addressed at a peer (#209)", () => {
+  it("gives the peer's own space its recency and blocked dot on ?h=<peer>", async () => {
+    const peerWorkspace = fixtureCrewWorkspaces.find((w) => w.host === "workshop")!;
+    const peerTabs = fixtureCrewTabs.filter((t) => t.host === "workshop");
+    renderHome(
+      homeData(
+        {
+          agents: fixtureCrewAgents,
+          shellPanes: fixtureCrewShellPanes,
+          workspaces: [peerWorkspace],
+          tabs: peerTabs,
+          sessions: fixtureCrewSessions,
+          servers: fixtureServers,
+        },
+        { host: "workshop" },
+      ),
+    );
+    await settled();
+    const spacesBody = document.getElementById("spaces-body");
+    if (!spacesBody) throw new Error("the Spaces section did not render");
+    const spaceRow = within(spacesBody).getByRole("button", { name: /moonward/i });
+    // Keyed on the LEAD instead, this row's status lookup misses entirely and shows no dot at all —
+    // the bug this test pins.
+    expect(within(spaceRow).getByText(/needs you/i)).toBeInTheDocument();
   });
 });
 
@@ -188,13 +234,17 @@ const packedWithQuietPeer = () =>
   });
 
 describe("a machine going quiet does not hide what is on it", () => {
-  it("keeps the unreachable host's blocked agent in NEEDS YOU, labelled — never dropped or demoted", async () => {
+  it("keeps the unreachable host's blocked pane in its workspace group, labelled — never dropped or demoted", async () => {
     renderHome(packedWithQuietPeer());
     await settled();
-    // `triage()` sorts on status and age and knows nothing about hosts — verified here as behaviour
-    // rather than rebuilt: the peer's blocked row is present, and still carries its host label.
-    expect(screen.getAllByRole("button", { name: /moonward/i }).length).toBeGreaterThan(0);
-    expect(screen.getAllByLabelText(/Host: workshop \(unreachable\)/i).length).toBeGreaterThan(0);
+    // The peer's blocked row is present in its own workspace group, still carries its host label,
+    // and the group heading still lights up for it — never silently demoted.
+    const section = groupSection("moonward");
+    const rows = rowsOf(section);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(within(rows[0]!).getByLabelText(/Host: workshop \(unreachable\)/i)).toBeInTheDocument();
+    // The heading's own count, not the row's sr-only status word (which reads the same "needs you").
+    expect(within(section).getByLabelText("1 needs you")).toBeInTheDocument();
   });
 
   it("raises no app-wide connection chrome — the lead answered, so the phone is not offline", async () => {
@@ -258,12 +308,13 @@ describe("the dashboard across sessions", () => {
       ],
       sessions,
     });
-  /** The rows in the NEEDS YOU section — scoped, because the space navigator below also names
-   *  `webapp` and this test is about how many TERMINALS are listed, not how many spaces. */
+  /** The colliding rows. Two sessions, each numbering its own workspaces from 1, means TWO "webapp"
+   *  groups now — one per (host, session, workspaceId) — rather than one shared section, so this
+   *  gathers the rows out of both. Scoped away from the space navigator below, which also names
+   *  `webapp`, because this test is about how many TERMINALS are listed, not how many spaces. */
   const rows = () => {
-    const body = document.getElementById("agent-section-needs");
-    if (!body) throw new Error("the Needs you section did not render");
-    return agentRows(body).filter((row) => /webapp/i.test(row.textContent ?? ""));
+    const sections = screen.getAllByRole("heading", { name: "webapp" }).map((h) => h.closest("section")!);
+    return sections.flatMap((s) => rowsOf(s));
   };
 
   it("renders BOTH colliding rows, not one recycled row", async () => {
@@ -316,12 +367,112 @@ describe("the dashboard fills the route column", () => {
     // its own content — the two halves are removed together, here and in the route's header claim.
     renderHome(homeData({ agents: fixtureAgents, workspaces: fixtureWorkspaces, tabs: fixtureTabs }));
     await settled();
-    const heading = screen
-      .getAllByRole("heading")
-      .find((h) => /needs you/i.test(h.textContent ?? ""));
+    const heading = screen.getAllByRole("heading", { name: "webapp" })[0];
     expect(heading?.closest(".max-w-screen-sm")).toBeNull();
     expect(document.querySelector("header")?.className).not.toContain("max-w-screen-sm");
     expect(document.querySelector("header")?.className).not.toContain("mx-auto");
   });
 });
 
+describe("the dashboard's footer (ADR 0066)", () => {
+  const footer = () => screen.getByRole("navigation", { name: "Dashboard views" });
+  const tab = (name: RegExp) => within(footer()).getByRole("button", { name });
+
+  it("opens on Panes, with every workspace listed", async () => {
+    renderHome(solo());
+    await settled();
+    expect(tab(/^Panes$/)).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "collie" })).toBeInTheDocument();
+  });
+
+  it("opens on Focus when a device's stored dashView pre-dates the rename (ADR 0068)", async () => {
+    // "needs" is what the tab's internal name was before ADR 0068 renamed the label to Focus;
+    // "attention" is handled the same way in case any build ever wrote the label instead.
+    for (const stored of ["needs", "attention"]) {
+      localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ dashView: stored }));
+      renderHome(solo());
+      await settled();
+      expect(tab(/^Focus/)).toHaveAttribute("aria-current", "page");
+      cleanup();
+    }
+  });
+
+  it("badges Focus with the count of blocked panes, and only that tab", async () => {
+    renderHome(solo());
+    await settled();
+    expect(tab(/^Focus/)).toHaveAccessibleName("Focus, 1 blocked");
+    expect(tab(/^Focus/).querySelector('[data-slot="tab-badge"]')).toHaveTextContent("1");
+    expect(tab(/^Panes$/)).toHaveTextContent(/^Panes$/);
+    expect(tab(/^Changes$/)).toHaveTextContent(/^Changes$/);
+  });
+
+  // The red count means something waits on you. A finished pane you have not opened is news, not a
+  // demand, so it gets the quiet dot and no number (ADR 0066).
+  const withAgents = (agents: SnapshotResponse["agents"]) =>
+    homeData({ agents, shellPanes: fixtureShellPanes, sessions: fixtureSessions });
+  const unseen = { ...fixtureAgents[1]!, status: "done" as const, lastActiveAt: 2, lastSeenAt: 1 };
+  const quiet = fixtureAgents.map((a) => ({ ...a, status: "working" as const }));
+
+  it("counts only the blocked panes when finished-unseen ones are there too", async () => {
+    renderHome(withAgents([fixtureAgents[0]!, unseen]));
+    await settled();
+    expect(tab(/^Focus/)).toHaveAccessibleName("Focus, 1 blocked");
+    expect(tab(/^Focus/).querySelector('[data-slot="tab-dot"]')).toBeNull();
+  });
+
+  it("shows the quiet dot and no number when only finished-unseen panes wait", async () => {
+    renderHome(withAgents([quiet[0]!, unseen]));
+    await settled();
+    expect(tab(/^Focus/)).toHaveAccessibleName("Focus, finished panes unseen");
+    expect(tab(/^Focus/).querySelector('[data-slot="tab-dot"]')).not.toBeNull();
+    expect(tab(/^Focus/).querySelector('[data-slot="tab-badge"]')).toBeNull();
+  });
+
+  it("marks nothing when no pane is blocked or unseen", async () => {
+    renderHome(withAgents(quiet));
+    await settled();
+    expect(tab(/^Focus/)).toHaveAccessibleName("Focus");
+    expect(tab(/^Focus/).querySelector('[data-slot="tab-dot"], [data-slot="tab-badge"]')).toBeNull();
+  });
+
+  it("Focus drops the quiet workspace, keeps the heading's full counts, and is remembered", async () => {
+    renderHome(solo());
+    await settled();
+    await userEvent.click(tab(/^Focus/));
+    expect(tab(/^Focus/)).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
+    // The strip still offers every workspace: the filter removes rows, never places.
+    const strip = screen.getByRole("navigation", { name: /spaces/i });
+    expect(within(strip).getByRole("button", { name: /collie/ })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("collie:dash-prefs:v1")!).dashView).toBe("focus");
+  });
+
+  it("Focus with nothing urgent shows the all-clear line and no list", async () => {
+    const calm = fixtureAgents.map((a) => Object.assign(structuredClone(a), { status: "working" as const }));
+    renderHome(homeData({ agents: calm, shellPanes: fixtureShellPanes, sessions: fixtureSessions }));
+    await settled();
+    await userEvent.click(tab(/^Focus/));
+    expect(screen.getByText("Nothing needs you")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "webapp" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
+  });
+
+  it("Changes lists each workspace with its counts, says No folder, and opens the workspace's Changes", async () => {
+    server.use(
+      http.get(/\/api\/workspace\/w2\/changes/, () => HttpResponse.json({ workspaceId: "w2", available: false, reason: "no-folder" })),
+    );
+    const router = renderHome(solo());
+    await settled();
+    await userEvent.click(tab(/^Changes$/));
+    const list = await screen.findByRole("list", { name: "Changes by workspace" });
+    // fixtureChanges: 3 files in webapp's root repo and 2 in packages/api, +10 −2 over all five.
+    await within(list).findByText("5 files");
+    await within(list).findByText("No folder");
+    const rows = within(list).getAllByRole("button");
+    expect(rows.map((r) => r.textContent)).toEqual(["webapp5 files+10 −2", "collieNo folder"]);
+    await userEvent.click(rows[0]!);
+    await waitFor(() => expect(url(router)).toBe("/space/w1/changes"));
+  });
+});

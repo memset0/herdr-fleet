@@ -195,16 +195,14 @@ describe("detectPromptSelect — the plan-approval feedback row is an INPUT, in 
     expect(model!.feedback).toBeUndefined();
   });
 
-  it("AskUserQuestion's free-text row is DROPPED but never modelled", () => {
-    // "Type something." is a free-text row too, and it has always been dropped — but nothing about
-    // its focus or typed-in behaviour has been measured, and it carries no static description
-    // sub-line to identify it once typed into. Modelling it would hand the plan flow's copy ("Sends
-    // the plan back…") and its keystroke plan to a dialog where Enter means something else. Only the
-    // plan row's verified marker earns a model.
+  it("AskUserQuestion's free-text row is modelled as a field Collie never types into", () => {
+    // "Type something." is never a button. Measured on Claude Code 2.1.283: with the pointer on it a
+    // digit is typed into the field, so it is modelled with the `free-text` purpose, which locks the
+    // other buttons while focused and never offers the plan flow's editor or keystroke plan.
     const model = detectPromptSelect(fixtureLines("claude--select-menu.txt"))!;
     expect(model.family).toBe("select");
     expect(model.options.map((o) => o.label)).not.toContain("Type something.");
-    expect(model.feedback).toBeUndefined();
+    expect(model.feedback).toEqual({ key: expect.any(String), focused: false, text: "", purpose: "free-text" });
   });
 
   it("coreSignature survives the flow's OWN first keystroke, where signature must not", () => {
@@ -346,5 +344,115 @@ describe("detectPromptSelectRegion — render boundary", () => {
     expect(lineText(lines[region!.startLine]!).trim()).toMatch(/^❯?\s*1\.\s+Red$/);
     expect(lineText(lines[region!.startLine - 1]!).trim()).toBe("");
     expect(region!.model).toEqual(detectPromptSelect(lines));
+  });
+});
+
+// ── The POINTED, unnumbered folder-trust prompt (ADR 0055) ───────────────────────────────────────
+// Claude Code 2.1.278 dropped the numbers from the trust prompt's rows and parks the pointer on
+// "No, exit", which QUITS Claude. There is no digit on screen, so none may be synthesised (ADR
+// 0009): a tap is the arrow walk the pointer implies plus the Enter the footer named.
+describe("detectPromptSelect — the unnumbered folder-trust prompt", () => {
+  // A synthetic pointed screen, used for the variants the corpus cannot hold (the pointer on the
+  // other row, the dialog's own words taken away). The real capture is asserted on first.
+  function pointedScreen(rows: string[], question = "Is this a project you created or one you trust?"): StyledLine[] {
+    return splitLines(
+      parseAnsi(
+        [
+          " Accessing workspace:",
+          "",
+          " /tmp/m34-lab-untrusted",
+          "",
+          ` Quick safety check: ${question} (Like your own code).`,
+          "",
+          " Claude Code'll be able to read, edit, and execute files here.",
+          "",
+          " Security guide",
+          "",
+          ...rows,
+          "",
+          " Enter to confirm · Esc to cancel",
+        ].join("\n"),
+      ),
+    );
+  }
+
+  it("lifts both rows in SCREEN order, walked with the arrows and confirmed with Enter", () => {
+    const model = detectPromptSelect(fixtureLines("claude--trust-prompt-unnumbered.txt"));
+    expect(model).not.toBeNull();
+    expect(model!.family).toBe("trust");
+    expect(model!.question).toContain("Is this a project you created or one you trust?");
+    // Screen order, not the old numbered order: the pointer parks on the QUIT row, which is first.
+    expect(model!.options.map((o) => o.label)).toEqual(["No, exit", "Yes, I trust this folder"]);
+    expect(model!.options.map((o) => o.keys)).toEqual([["Enter"], ["Down", "Enter"]]);
+  });
+
+  it("marks the pointed row, so the card shows which option a bare Enter would take", () => {
+    const model = detectPromptSelect(fixtureLines("claude--trust-prompt-unnumbered.txt"));
+    // `PromptOption` has no highlighted/default flag, so the badge carries it: the pointed row shows
+    // the terminal's own glyph, every other row shows the arrow its tap starts with.
+    expect(model!.options.map((o) => o.keyLabel)).toEqual(["❯", undefined]);
+  });
+
+  it("synthesises no digit anywhere (ADR 0009 — the screen printed none)", () => {
+    const model = detectPromptSelect(fixtureLines("claude--trust-prompt-unnumbered.txt"));
+    for (const key of model!.options.flatMap((o) => o.keys)) expect(/\d/.test(key)).toBe(false);
+  });
+
+  it("Escape stays the way out (the footer's own cancel, unchanged by this shape)", () => {
+    const texts = fixtureLines("claude--trust-prompt-unnumbered.txt").map(lineText);
+    expect(texts.findLast((t) => t.trim() !== "")).toContain("Esc to cancel");
+  });
+
+  it("walks UPWARD when the pointer sits on the second row", () => {
+    const model = detectPromptSelect(
+      pointedScreen(["   No, exit", " ❯ Yes, I trust this folder"]),
+    );
+    expect(model).not.toBeNull();
+    expect(model!.options.map((o) => o.label)).toEqual(["No, exit", "Yes, I trust this folder"]);
+    expect(model!.options.map((o) => o.keys)).toEqual([["Up", "Enter"], ["Enter"]]);
+    expect(model!.options.map((o) => o.keyLabel)).toEqual([undefined, "❯"]);
+  });
+
+  it("stays raw when the dialog's own words are gone (fail closed)", () => {
+    // `namesTrustDialog` finds neither the safety question nor the trust option, so `classifyFooter`
+    // refuses the family and nothing is lifted — "Enter to confirm" alone is never enough (ADR 0053).
+    const lines = pointedScreen(["   No, exit", " ❯ Yes, continue"], "is this folder OK?");
+    expect(detectPromptSelect(lines)).toBeNull();
+  });
+
+  it("declines a block with no pointer, and one with two", () => {
+    expect(detectPromptSelect(pointedScreen(["   No, exit", "   Yes, I trust this folder"]))).toBeNull();
+    expect(
+      detectPromptSelect(pointedScreen([" ❯ No, exit", " ❯ Yes, I trust this folder"])),
+    ).toBeNull();
+  });
+
+  it("declines a lone pointed row (a list needs two rows to walk)", () => {
+    expect(detectPromptSelect(pointedScreen([" ❯ Yes, I trust this folder"]))).toBeNull();
+  });
+
+  it("does not match once the dialog has scrolled off the tail", () => {
+    const withTail =
+      fixtureText("claude--trust-prompt-unnumbered.txt") + "\n● Wrote the file\n  ⎿  done\n";
+    expect(detectPromptSelect(splitLines(parseAnsi(withTail)))).toBeNull();
+  });
+
+  it("the OLD numbered shape is untouched by this arm", () => {
+    const model = detectPromptSelect(fixtureLines("claude--trust-prompt.txt"));
+    expect(model!.options.map((o) => o.label)).toEqual(["Yes, I trust this folder", "No, exit"]);
+    expect(model!.options.map((o) => o.keys)).toEqual([["1"], ["2"]]);
+    expect(model!.options.map((o) => o.keyLabel)).toEqual([undefined, undefined]);
+  });
+
+  it("a moved pointer is neither the same visible state nor the same dialog", () => {
+    // The arrow COUNT is measured from where the pointer was, so a pointer that moved between the
+    // render and the tap must refuse the tap. `signature` is byte-faithful and carries the `❯`
+    // column, which is what `promptsEqual` (the COMMITTING comparison) checks; and the walk is baked
+    // into every option's `keys`, which `promptsSameIdentity` compares too.
+    const here = detectPromptSelect(pointedScreen([" ❯ No, exit", "   Yes, I trust this folder"]))!;
+    const moved = detectPromptSelect(pointedScreen(["   No, exit", " ❯ Yes, I trust this folder"]))!;
+    expect(promptsEqual(here, moved)).toBe(false);
+    expect(promptsSameIdentity(here, moved)).toBe(false);
+    expect(promptsEqual(here, here)).toBe(true);
   });
 });

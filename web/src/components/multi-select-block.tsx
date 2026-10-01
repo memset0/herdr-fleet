@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AlertTriangle, Check, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import type { MultiSelectModel } from "@/lib/blocks";
+import type { MultiSelectModel, StyledLine } from "@/lib/blocks";
 import type { MultiSelectIntent } from "@/lib/multi-select-action";
 import { KeyBadge, optionSurface, PromptPanel, QuestionHeading } from "@/components/option-button";
 import { WizardStepper } from "@/components/wizard-stepper";
@@ -13,11 +13,16 @@ import { useLocale } from "@/hooks/use-locale";
 export interface MultiSelectBlockProps {
   /** The detected multi-select dialog (checkbox screen or review screen). */
   multi: MultiSelectModel;
+  /** The region this block replaced — passed through to the CHECKBOX phase's PromptPanel as its
+   *  way back (ADR 0056). This component renders one of two PromptPanel instances (checkbox or
+   *  review); the checkbox phase is the primary one and carries the control, the review phase
+   *  (a short confirm screen over answers already shown) does not get a second one. */
+  lines?: StyledLine[];
   /**
    * Injected send handler (from AgentChat). Presentational contract: this component NEVER touches
    * the network — it maps taps to intents while the handler runs the race-guarded choreography
-   * (toggle = one digit; submit = the closed-loop Down→Up→verify→Enter macro). Returning/throwing
-   * simply clears the busy state.
+   * (toggle = one digit, or digit-jump + verified Enter in pointer mode; submit = the closed-loop
+   * Down→Up→verify→Enter macro). Returning/throwing simply clears the busy state.
    */
   onAction: (action: MultiSelectIntent) => void | Promise<void>;
   /** Read-only device or a gone pane: everything renders (for context) but can't be pressed. */
@@ -30,7 +35,7 @@ export interface MultiSelectBlockProps {
 // round-trip re-derives the fresh state. That per-tap lock is an acknowledged v1 limitation (you
 // can't queue toggles). Every visible string (labels, descriptions) is a React text node — the XSS
 // boundary is unchanged.
-export function MultiSelectBlock({ multi, onAction, disabled }: MultiSelectBlockProps) {
+export function MultiSelectBlock({ multi, lines, onAction, disabled }: MultiSelectBlockProps) {
   useLocale();
   const [sending, setSending] = useState<string | null>(null);
   const locked = disabled || sending !== null;
@@ -46,9 +51,17 @@ export function MultiSelectBlock({ multi, onAction, disabled }: MultiSelectBlock
   }
 
   if (multi.phase === "review") {
-    return <ReviewPhase incomplete={multi.incomplete} locked={locked} sending={sending} onPress={press} />;
+    return (
+      <ReviewPhase
+        incomplete={multi.incomplete}
+        cancelLabel={multi.cancelLabel}
+        locked={locked}
+        sending={sending}
+        onPress={press}
+      />
+    );
   }
-  return <CheckboxPhase multi={multi} locked={locked} sending={sending} onPress={press} />;
+  return <CheckboxPhase multi={multi} lines={lines} locked={locked} sending={sending} onPress={press} />;
 }
 
 function SpinnerSm() {
@@ -60,17 +73,19 @@ function SpinnerMd() {
 
 function CheckboxPhase({
   multi,
+  lines,
   locked,
   sending,
   onPress,
 }: {
   multi: Extract<MultiSelectModel, { phase: "checkbox" }>;
+  lines?: StyledLine[];
   locked: boolean;
   sending: string | null;
   onPress: (id: string, action: MultiSelectIntent) => void;
 }) {
   return (
-    <PromptPanel ariaLabel={multi.question}>
+    <PromptPanel ariaLabel={multi.question} raw={lines}>
       {multi.steps && (
         <WizardStepper
           steps={multi.steps}
@@ -164,11 +179,14 @@ function CheckboxPhase({
 
 function ReviewPhase({
   incomplete,
+  cancelLabel,
   locked,
   sending,
   onPress,
 }: {
   incomplete: boolean;
+  /** The terminal's own cancel-row label (Muse: `Interrupt turn`); absent ⇒ "Cancel". */
+  cancelLabel: string | undefined;
   locked: boolean;
   sending: string | null;
   onPress: (id: string, action: MultiSelectIntent) => void;
@@ -202,7 +220,7 @@ function ReviewPhase({
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-border/70 px-3 py-1.5 text-xs text-muted-foreground transition-colors active:bg-muted disabled:opacity-60"
         >
           {sending === "cancel" ? <SpinnerSm /> : null}
-          {t("dialog.cancel")}
+          {cancelLabel ?? t("dialog.cancel")}
         </button>
       </div>
     </PromptPanel>

@@ -103,6 +103,16 @@ export function isBoxBorder(text: string): boolean {
   return !RULE_OR_SPACE_ONLY.test(m[1]!); // label must hold a real (non-rule, non-blank) character
 }
 
+/**
+ * True when the line is a BARE input-box border: U+2500 only, no label, at least BARE_BORDER_MIN
+ * display cells. Claude splices a session label into the TOP border only, so this is the test for
+ * the BOTTOM border — the anchor `locateInputBox` (chrome.ts) looks for first.
+ */
+export function isBareBoxBorder(text: string): boolean {
+  const trimmed = text.trim();
+  return displayWidth(trimmed) >= BARE_BORDER_MIN && BARE_BORDER.test(trimmed);
+}
+
 // The LOOSER labelled-border shape a Claude input-box TOP border can actually take, per the bundled
 // renderer's own label-placement math (traced from the shipped binary): it picks a left offset `a`
 // clamped `Math.max(1, Math.min(a, borderWidth - labelWidth - 1))` and draws `a` rule glyphs, the
@@ -170,25 +180,114 @@ export function isMultiStepHeader(text: string): boolean {
 // `classifyFooter`, the Claude-specific act of reading a footer, is what produces one.
 export type { PromptFamily };
 
+// The folder-trust dialog's own words, read off `fixtures/panes/claude--trust-prompt.txt`: the
+// safety question it asks, and the option row it offers. Either one identifies THAT dialog; the
+// footer phrase "Enter to confirm" identifies nothing, because any screen may print it.
+const TRUST_QUESTION = /is this a project you created or one you trust/i;
+const TRUST_OPTION = /yes,\s*i trust this folder/i;
+
+/**
+ * True when the folder-trust dialog's own title or option row is somewhere on screen. This is the
+ * evidence `classifyFooter` requires before it may claim the `trust` family — a family claim is a
+ * statement about a whole dialog, so it must be answerable from that dialog.
+ */
+export function namesTrustDialog(texts: string[]): boolean {
+  return texts.some((t) => TRUST_QUESTION.test(t) || TRUST_OPTION.test(t));
+}
+
+// A tool-permission dialog's own words, read off Claude Code 2.1.283 (`claude--v2283-permission-*`):
+// a "Do you want to …?" question over a numbered menu that opens on "Yes" and closes on "No". The
+// footer is NOT that evidence. "Tab to amend" is there only while the pointer sits on the Yes or the
+// No row, so an arrow press drops the footer to a bare "Esc to cancel", and the WebFetch dialog
+// prints no footer at all. Both used to fall to the unread-dialog card.
+const PERMISSION_QUESTION_START = /^\s*Do you want to\b/;
+const PERMISSION_FIRST_ROW = /^\s*(?:❯\s*)?1\.\s+Yes\b/;
+const PERMISSION_LAST_ROW = /^\s*(?:❯\s*)?[2-9]\.\s+No\b/;
+// The question, the menu and a wrapped row or two all sit in the last rows of the screen.
+const PERMISSION_SCAN_ROWS = 18;
+// A question wrapped at a narrow width reaches its "?" within a couple of rows.
+const PERMISSION_QUESTION_ROWS = 3;
+
+/**
+ * True when the screen's last rows are a permission dialog by its own words: a question that opens
+ * "Do you want to" and ends in "?" (it may wrap), then a `1. Yes…` row, then a `N. No…` row. The
+ * evidence `classifyFooter` and the footerless prompt-select path need before either may claim the
+ * `permission` family without the "Tab to amend" hint (ADR 0053: a family claim is answered from the
+ * dialog, never from one phrase any screen may print).
+ */
+export function namesPermissionDialog(texts: string[]): boolean {
+  let end = texts.length - 1;
+  while (end >= 0 && isBlank(texts[end]!)) end--;
+  const from = Math.max(0, end - PERMISSION_SCAN_ROWS);
+  let question = -1;
+  for (let i = from; i <= end; i++) {
+    if (!PERMISSION_QUESTION_START.test(texts[i]!)) continue;
+    for (let j = i; j <= Math.min(end, i + PERMISSION_QUESTION_ROWS - 1); j++) {
+      if (isBlank(texts[j]!)) break;
+      if (texts[j]!.trimEnd().endsWith("?")) question = j;
+    }
+  }
+  if (question < 0) return false;
+  let yes = -1;
+  for (let i = question + 1; i <= end; i++) {
+    if (yes < 0 && PERMISSION_FIRST_ROW.test(texts[i]!)) yes = i;
+    else if (yes >= 0 && PERMISSION_LAST_ROW.test(texts[i]!)) return true;
+  }
+  return false;
+}
+
+// The gutter Claude Code 2.1.283 paints down the left of a question that spans more than one row
+// ("│ Which fruit do you want?" / "│ Pick the one you like best."). It is chrome, not question text.
+const QUESTION_GUTTER = /^\s*│\s?/;
+
+/** A question row with its `│` gutter and outer whitespace removed. */
+export function questionRowText(text: string): string {
+  return text.replace(QUESTION_GUTTER, "").trim();
+}
+
 /**
  * Classify a candidate footer line — the hint bar at the very bottom of a Claude dialog — into a
  * dialog family, or null when it isn't a recognised menu footer. The footer is the single most
- * stable discriminator: Claude Code generates it (unlike the user-configured statusline), and the
- * confirm phrase pins the keystroke recipe:
+ * stable discriminator for three of the four families: Claude Code generates it (unlike the
+ * user-configured statusline), and the confirm phrase pins the keystroke recipe:
  *
  *   - "Enter to select …"  → select     (AskUserQuestion: the digit THEN Enter)
- *   - "Enter to confirm …" → trust      (folder-trust prompt: the digit alone)
  *   - "… Tab to amend …"   → permission (edit/bash "Do you want to proceed?": the digit alone)
+ *   - a bare "Esc to cancel" → permission, but only when `namesPermissionDialog` finds the dialog's
+ *     own question and Yes/No rows (the hint bar a permission dialog shows off its Yes/No rows)
  *   - "ctrl+g to edit …" or a "~/.claude/plans/…" path → plan (ExitPlanMode: the digit alone)
+ *
+ * The fourth, `trust` (folder-trust prompt: the digit alone), needs MORE than its footer. Its phrase
+ * "Enter to confirm" is ordinary Claude wording that other screens print — the /effort slider prints
+ * it — and `menu.ts` reads any family claim as "a specific grammar owns this screen", so a wrong
+ * `trust` takes every button off a screen nobody owns (ADR 0053). So the trust arm fires only when
+ * `namesTrustDialog(texts)` finds that dialog's own words. Without them the phrase classifies as
+ * nothing at all.
+ *
+ * `texts` is the pane's line texts, and it is REQUIRED: a caller that cannot see the screen cannot
+ * be told the trust family, and making it required turns that into a compile error rather than a
+ * family that quietly stops being reported.
  *
  * Case-insensitive and anchored only on the confirm phrase, so per-install extra hints
  * (ctrl+e to explain, ↑/↓ to navigate, …) don't disturb the classification.
  */
-export function classifyFooter(text: string): PromptFamily | null {
+// A plan file's path on a row of its own: `<config dir>/plans/<slug>.md`.
+const PLAN_FILE_ROW = /^\s*\S*\/plans\/[\w.-]+\.md\s*$/;
+
+export function classifyFooter(text: string, texts: string[]): PromptFamily | null {
   const t = text.toLowerCase();
   if (/\benter to select\b/.test(t)) return "select";
-  if (/\benter to confirm\b/.test(t)) return "trust";
+  if (/\benter to confirm\b/.test(t)) {
+    return namesTrustDialog(texts) ? "trust" : null;
+  }
   if (/ctrl\+g to edit\b/.test(t) || /\.claude\/plans\//.test(t)) return "plan";
+  // The plan file lives under CLAUDE_CONFIG_DIR, which need not be `.claude`, and a long path wraps
+  // the footer so the path is alone on the last row. Claimed only beside the footer's own
+  // "ctrl+g to edit …·" row, so a stray path to some plans/*.md file claims nothing.
+  if (PLAN_FILE_ROW.test(t) && texts.some((row) => /ctrl\+g to edit\b.*·\s*$/i.test(row))) return "plan";
   if (/\btab to amend\b/.test(t)) return "permission";
+  // The same dialog with its pointer off the Yes and No rows, or with an amend note open: the hint
+  // bar shrinks to "Esc to cancel". The phrase alone proves nothing, so the dialog's words must.
+  if (/^esc to cancel$/.test(t.trim()) && namesPermissionDialog(texts)) return "permission";
   return null;
 }

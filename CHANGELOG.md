@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopt Collie 1.14.2.** The actions belt, the one-box composer with attachment chips, the Changes view, the dashboard footer tabs, layered configuration files, prompt-cache countdowns, pinning and hiding a machine, and upstream's fixes; the record control stays a control of its own beside Send inside the box.
+
 ### Fixed
 
 - **Stop the roster and Agent rail fixtures naming real machines.** Their host, Tab and workspace labels were real machine and repository names; they now use upstream's synthetic outbuilding names, and each test pins the same distinction as before.

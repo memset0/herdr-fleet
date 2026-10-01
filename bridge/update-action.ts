@@ -1,5 +1,9 @@
+import { closeSync, existsSync, openSync, renameSync, writeSync } from "node:fs";
+import { join } from "node:path";
+
 import type { JsonObject, JsonValue } from "./json.ts";
 import type { UpdateStatus } from "./types.ts";
+import type { PeerHealth } from "./crew/registry.ts";
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { compareSemver } from "./update.ts";
 import { inFlight, type UpdateRun, type UpdateRunState } from "./update-run.ts";
@@ -163,10 +167,7 @@ export function parsePreflightReport(stdout: string): PreflightReport | null {
   // SAFETY: `verdict` was checked against `VERDICTS` above, which holds exactly the three members of
   // the union, and the guard there returned for every string that is not one of them.
   const printed = verdict as "green" | "amber" | "red";
-  // REMOVE_IN_1_9_0: `pack` is 1.7.0's name for `crew`. The document read here is printed by a
-  // SEPARATE process — `collie update --check --json` — which may be the older binary mid-swap, so
-  // both names are accepted. Only `crew` is ever written.
-  const members = rec.crew ?? rec.pack;
+  const members = rec.crew;
   const topLevel = members === undefined ? printed : worstVerdict(checks.map((c) => c.verdict));
   const kind = readInstallKind(rec.installKind);
   // Assigned, never conditionally spread: a report that named no kind must carry NO such key.
@@ -418,6 +419,15 @@ export interface CrewUpdateRow {
    * the phone is a nag, and the tap it would send them to refuses on that machine (ADR 0035).
    */
   readonly installKind?: UpdateStatus["installKind"];
+  /**
+   * The lead's own health for this member, when it has one (`bridge/crew/registry.ts`). Absent on a
+   * row built by anything that does not track health, and absent counts as "no idea why".
+   *
+   * It exists so that {@link mergedUpdateVerdict} can tell an `unknown` member that is ABSENT from
+   * one that is merely uninspected. ADR 0050's rule is that absence does not block, and without this
+   * field every `unknown` reads the same and the rule cannot be applied.
+   */
+  readonly health?: PeerHealth;
 }
 
 /** What the lead knows about one member when it composes a row. All of it banked by the sweep. */
@@ -425,6 +435,8 @@ export interface CrewMemberFacts {
   readonly name: string;
   readonly version: string | null;
   readonly preflight: PeerPreflight | null;
+  /** The lead's own health for this member, when it has one. See {@link CrewUpdateRow.health}. */
+  readonly health?: PeerHealth;
 }
 
 /** The reason strings a report contributes: its non-green checks, worst first. */
@@ -449,7 +461,14 @@ export function unknownReason(name: string): string {
 export function crewUpdateRows(members: readonly CrewMemberFacts[]): CrewUpdateRow[] {
   return members.map((m) => {
     if (m.preflight === null) {
-      return { name: m.name, version: m.version, verdict: "unknown", reasons: [unknownReason(m.name)], asOf: null };
+      const row: CrewUpdateRow = {
+        name: m.name,
+        version: m.version,
+        verdict: "unknown",
+        reasons: [unknownReason(m.name)],
+        asOf: null,
+      };
+      return m.health === undefined ? row : { ...row, health: m.health };
     }
     const reasons = reasonsOf(m.preflight.checks);
     const row: CrewUpdateRow = {
@@ -480,9 +499,7 @@ const CREW_VERDICTS: ReadonlySet<string> = new Set(["green", "amber", "red", "un
 export function parseCrewRows(doc: JsonValue): CrewUpdateRow[] {
   const rec = asRecord(doc);
   if (rec === null) return [];
-  // REMOVE_IN_1_9_0: `pack` is 1.7.0's name for `crew`, and the answer read here comes from a
-  // bridge that may still be the older build. Both names are accepted; only `crew` is written.
-  const rows = rec.crew ?? rec.pack;
+  const rows = rec.crew;
   if (!Array.isArray(rows)) return [];
   const out: CrewUpdateRow[] = [];
   for (const raw of rows) {
@@ -525,12 +542,23 @@ export interface MergedUpdateVerdict {
  * without a member beside it is a dead end for the operator holding the phone.
  *
  * `unknown` is decided AFTER red and BEFORE amber. A member nobody could check is not a reason to
- * hide a member that is actually red, and it is not a shade of amber either — it blocks.
+ * hide a member that is actually red, and it is not a shade of amber either.
+ *
+ * WHETHER AN UNKNOWN MEMBER BLOCKS DEPENDS ON WHAT IS BEING ASKED (ADR 0050). `tolerateAbsent` is
+ * set by the LEAD'S OWN START, and it says: a member whose health is `unreachable` is ABSENT, not
+ * uninspected, and absence does not block this machine's own move. It is left false for a
+ * PEERS-ONLY run, where the members are the whole point of the request.
+ *
+ * Without it the ADR's rule holds only until the lead's next restart, WHICH THE UPDATE ITSELF
+ * PERFORMS: the banked peer reports live in memory (`bridge/crew/registry.ts`), so a restart leaves
+ * every enrolled member `unknown`, and the card's button, which reads only the lead's own red, goes
+ * live over a tap that then returns 412. A live button that refuses is worse than a disabled one.
  */
 export function mergedUpdateVerdict(
   lead: PreflightReport | null,
   crew: readonly CrewUpdateRow[],
   selfName = "this collie",
+  opts: { readonly tolerateAbsent?: boolean } = {},
 ): MergedUpdateVerdict {
   const leadRow: CrewUpdateRow =
     lead === null
@@ -541,7 +569,24 @@ export function mergedUpdateVerdict(
   if (red !== undefined) return { verdict: "red", member: red.name, reason: red.reasons[0] ?? null, blocks: true };
   const unknown = rows.find((r) => r.verdict === "unknown");
   if (unknown !== undefined) {
-    return { verdict: "unknown", member: unknown.name, reason: unknown.reasons[0] ?? null, blocks: true };
+    // EXACT EQUALITY AGAINST ONE STATE, deliberately, never `!== "reachable"`. `incompatible`,
+    // `refused` and `conflicted` all mean the member ANSWERED and said something, which is not
+    // absence and must keep blocking. The lead's own row carries no health at all, so a lead with no
+    // report of its own blocks too.
+    //
+    // One thing this cannot see: `unreachable` also covers a bare 401, a rotated secret or a dropped
+    // pin (`peer-client.ts`'s `authRefused`), which is a present refusal rather than a machine that
+    // is away. §10.2 keeps calling it `unreachable` on the wire and the row carries only that word,
+    // so it is tolerated here as well. That is the same answer `secret-generation` already gets: the
+    // member is stranded already, and this lead taking a release neither causes nor deepens it.
+    const absent = (r: CrewUpdateRow): boolean => opts.tolerateAbsent === true && r.health === "unreachable";
+    const blocking = rows.find((r) => r.verdict === "unknown" && !absent(r));
+    if (blocking !== undefined) {
+      return { verdict: "unknown", member: blocking.name, reason: blocking.reasons[0] ?? null, blocks: true };
+    }
+    // Every unknown left is a member the lead knows it cannot reach. The verdict still SAYS unknown,
+    // so the card can name the machine and say it will be skipped; it just stops refusing the tap.
+    return { verdict: "unknown", member: unknown.name, reason: unknown.reasons[0] ?? null, blocks: false };
   }
   // Everything left is green or amber, which is exactly `worstVerdict`'s domain.
   const verdict = worstVerdict(rows.map((r) => (r.verdict === "amber" ? "amber" : "green")));
@@ -743,6 +788,12 @@ export interface UpdateStartState {
    * a member behind the lead's own version, or one that rolled back.
    */
   readonly peers?: readonly { readonly name: string; readonly state: string }[];
+  /**
+   * Whether this lead's crew run is still open (`UpdateTurns.open`). Absent ⇒ no run. A second
+   * confirm while one is open is refused: it would replace the run's legs while a member may still
+   * be building under the first run's id (A5).
+   */
+  readonly crewRunOpen?: boolean;
 }
 
 /**
@@ -770,6 +821,10 @@ export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartSt
   if (running || state.lockHeld) {
     return refuse(409, "update.in_progress", { state: state.run?.state ?? "staging" });
   }
+  // One confirm at a time for the CREW too (A5). The same code and sentence an older phone already
+  // renders: "An update is already running (levelling the crew). Nothing was started." The run is
+  // bounded (`CREW_RUN_TTL_MS`), so this refusal is too.
+  if (state.crewRunOpen === true) return refuse(409, "update.in_progress", { state: "levelling the crew" });
 
   // ── THE PEERS-ONLY RUN (M16/04) ─────────────────────────────────────────────
   // Decided here, above the preflight, because the gates below are about THIS machine's own move and
@@ -785,7 +840,13 @@ export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartSt
         reason: blocked.reason ?? "the crew preflight could not be read",
       });
     }
-    return peersNeedLevelling(state) ? { kind: "peers", to: state.current } : refuse(409, "update.none_available");
+    if (peersNeedLevelling(state)) return { kind: "peers", to: state.current };
+    // "Nothing to do" and "nothing THIS route may do" are different answers, and only one of them is
+    // true when the member behind is packaged: `memberBehind` leaves it out (ADR 0035), so without
+    // this line the operator is told there is no release to take while one is sitting there.
+    const held = (state.crew ?? []).find((m) => packagedAndBehind(m, state.current));
+    if (held !== undefined) return refuse(409, "update.peers_packaged", { name: held.name });
+    return refuse(409, "update.none_available");
   }
 
   // ── A PACKAGED INSTALL MOVES NOTHING OF ITS OWN (ADR 0035) ─────────────────
@@ -814,7 +875,9 @@ export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartSt
   // read (M16/03). The lead's own red is refused above and names its CHECK; a member's is named by
   // MACHINE, because that is the only handle the operator holding a phone has on it. An unknown
   // member blocks here too — "we could not check attic" is not "attic is fine".
-  const merged = mergedUpdateVerdict(state.preflight, state.crew ?? []);
+  // `tolerateAbsent` here and NOT at the peers-only gate above: this request is this machine's own
+  // move, and a member the lead cannot reach levels itself when it comes back (ADR 0016/0050).
+  const merged = mergedUpdateVerdict(state.preflight, state.crew ?? [], undefined, { tolerateAbsent: true });
   if (merged.blocks) {
     return refuse(412, "update.preflight_red", {
       check: merged.member ?? "the crew",
@@ -837,17 +900,76 @@ export function updateStartVerdict(req: UpdateStartRequest, state: UpdateStartSt
   return { kind: "start", to: would, major: req.major };
 }
 
+// ── IS THERE ANYTHING FOR A CREW RUN TO DO? THE ONE RULE ─────────────────────
+// The phone decides whether to OFFER "Update crew" / "Retry crew update" and this bridge decides
+// whether to ACCEPT the peers-only start that button sends. Two answers to one question is how the
+// button stayed up over a crew that was already level, so both sides read ONE rule, written twice
+// because the two trees cannot import one another. The twin of each function below is the function
+// of the same name in `web/src/lib/crew-level.ts`, and `crew-level-contract.test.ts` runs one list of
+// cases through both, so a change to one side alone fails there.
+
+/** The leg states that are a leg having gone wrong. This bridge's own legs only reach the first two;
+ *  the other two are what a bridge from before the leg states split sent. Same set as the phone's. */
+export const LEG_FAILED: ReadonlySet<string> = new Set(["rolled-back", "unreachable", "stuck", "interrupted"]);
+
+type LevelMember = Pick<CrewUpdateRow, "name" | "version" | "installKind">;
+type LevelLeg = { readonly name: string; readonly state: string };
+
 /**
- * Is there anything for a retry to do — a member behind this lead's own version, or one that fell
- * back?
+ * Is this member a version BEHIND the lead? Known, strictly lower by semver, and not packaged.
  *
- * A member whose version nobody could learn is NOT counted behind: an unknown is reported as unknown
- * on its own row, and starting a run over it would send the operator to an action that cannot help.
+ * Unknown is not behind: "we could not learn its version" is reported on its own row, and a run over
+ * it would send the operator to an action that cannot help. Ahead is not behind either: no run can
+ * move a member past its lead downwards (`legOf` in `crew/follow.ts` answers `done` for it). A
+ * packaged member waits for its package manager, and a turn it receives is refused there (ADR 0035).
  */
+export function memberBehind(member: LevelMember, current: string): boolean {
+  if (current === "" || member.version === null) return false;
+  if (member.installKind === "packaged") return false;
+  return compareSemver(member.version, current) < 0;
+}
+
+/**
+ * Does this leg still count as a member the last run failed? Only a failed leg can, and it stops the
+ * moment the census shows that member at or above the lead's version.
+ *
+ * The legs outlive their run (`UpdateTurns.end` keeps them), so a member that rolled back and then
+ * levelled itself on its own follow kept counting until the next run replaced the legs. An UNKNOWN
+ * version keeps the leg counting: "we could not learn it" is not "it is level".
+ */
+export function legStillFailed(leg: LevelLeg, crew: readonly LevelMember[], current: string): boolean {
+  if (!LEG_FAILED.has(leg.state)) return false;
+  const member = crew.find((candidate) => candidate.name === leg.name);
+  // A packaged member is never a reason to start a run, and its leg is no exception (ADR 0035): a
+  // packaged member that has gone quiet reads `unreachable` rather than `package-managed` (`legOf`,
+  // crew/follow.ts), and no run from here can ever clear that leg. Twin of the phone's rule.
+  if (member?.installKind === "packaged") return false;
+  if (current === "") return true;
+  const version = member?.version ?? null;
+  if (version === null) return true;
+  return compareSemver(version, current) < 0;
+}
+
+/**
+ * A member a run from here can never move: package-managed, and a version below this lead's. The
+ * twin of nothing on the phone — the phone never offers the button for it, and this names it in the
+ * refusal when a stale card, a second tab or a plain POST asks anyway.
+ */
+function packagedAndBehind(member: LevelMember, current: string): boolean {
+  if (current === "" || member.version === null || member.installKind !== "packaged") return false;
+  return compareSemver(member.version, current) < 0;
+}
+
+/**
+ * Is there anything for a retry to do — a member behind this lead's own version, or one the last run
+ * failed that has not levelled since? The twin of `crewNeedsLevelling` on the phone.
+ */
+export function crewNeedsLevelling(crew: readonly LevelMember[], legs: readonly LevelLeg[], current: string): boolean {
+  return crew.some((member) => memberBehind(member, current)) || legs.some((leg) => legStillFailed(leg, crew, current));
+}
+
 function peersNeedLevelling(state: UpdateStartState): boolean {
-  const behind = (state.crew ?? []).some((m) => m.version !== null && compareSemver(m.version, state.current) < 0);
-  const fellBack = (state.peers ?? []).some((leg) => leg.state === "rolled-back" || leg.state === "unreachable");
-  return behind || fellBack;
+  return crewNeedsLevelling(state.crew ?? [], state.peers ?? [], state.current);
 }
 
 // ── The handoff ──────────────────────────────────────────────────────────────
@@ -870,7 +992,19 @@ function peersNeedLevelling(state: UpdateStartState): boolean {
  * a host with neither. That ladder is deliberately the same three tiers as `cli/update-run.ts`'s
  * `launchPlan`, for the same reasons written there — it is restated rather than imported because
  * nothing in `bridge/` may import from `cli/`.
+ *
+ * **`detach` is the spawn's own `setsid()`, and it is on for every tier but `systemd-run`** (#213).
+ * macOS has neither `systemd-run` nor a `setsid` binary, so the bare tier used to leave the runner in
+ * the launchd job's process group; `collie update` then boots that job out to restart it, launchd
+ * kills the whole group, and the `bootstrap` that should follow never runs. The systemd-run tier
+ * stays attached on purpose: its client must stay a member of this cgroup until the manager answers
+ * (ADR 0037), and systemd kills by cgroup, not by process group, so a new session would buy nothing.
  */
+export interface UpdateStartPlan {
+  readonly command: string[];
+  readonly detach: boolean;
+}
+
 export function updateStartCommand(a: {
   readonly platform: string;
   readonly binary: string;
@@ -888,13 +1022,113 @@ export function updateStartCommand(a: {
    * (M16/04). Absent on the lead's own button, which takes what an update would take.
    */
   readonly toTag?: string | null;
-}): string[] {
+}): UpdateStartPlan {
   const verb = a.major ? ["update", "--major"] : ["update"];
   if (a.toTag !== undefined && a.toTag !== null) verb.push("--to-tag", a.toTag);
   if (a.runId !== undefined && a.runId !== null) verb.push("--run-id", a.runId);
   if (a.platform === "linux" && a.hasSystemdRun) {
-    return ["systemd-run", "--user", "--collect", "--unit", `collie-api-update-${a.stamp}`, a.binary, ...verb];
+    return {
+      command: ["systemd-run", "--user", "--collect", "--unit", `collie-api-update-${a.stamp}`, a.binary, ...verb],
+      detach: false,
+    };
   }
-  if (a.hasSetsid) return ["setsid", a.binary, ...verb];
-  return [a.binary, ...verb];
+  if (a.hasSetsid) return { command: ["setsid", a.binary, ...verb], detach: true };
+  return { command: [a.binary, ...verb], detach: true };
+}
+
+/**
+ * The options the runner is spawned with. stdin is ignored; stdout and stderr go to the runner log
+ * ({@link openRunnerLog}) when it could be opened, and are ignored when it could not. A file
+ * descriptor ties nothing to the bridge: the child holds its own copy, and the bridge closes its
+ * one the moment the spawn returns.
+ */
+export interface UpdateRunnerSpawnOptions {
+  readonly cwd: string;
+  readonly stdin: "ignore";
+  readonly stdout: "ignore" | number;
+  readonly stderr: "ignore" | number;
+  readonly detached: boolean;
+}
+
+/** `<state dir>/update-runner.log`: the detached runner's own two streams, for one launch (#283). */
+export const updateRunnerLogPath = (stateDir: string): string => join(stateDir, "update-runner.log");
+
+/** An opened runner log: the descriptor the child writes to, and the bridge's own close of it. */
+export interface RunnerLog {
+  readonly fd: number;
+  close(): void;
+}
+
+/**
+ * Open the runner log for one launch, or null when it cannot be opened (the launch then goes ahead
+ * with both streams ignored, exactly as before this file existed).
+ *
+ * WHY IT EXISTS (#283). The runner used to start with every stream ignored, so a runner that died
+ * before it wrote a run record left nothing at all: a macOS operator pressed Update three times and
+ * the only trace was the last line of a staging log. Whatever the runner prints now lands here, and
+ * on the `setsid` and bare tiers that is `collie update`'s whole transcript. On the `systemd-run`
+ * tier it is only the client's one line; the runner's own output is in that unit's journal.
+ *
+ * BOUNDED BY RUNS, NOT BY BYTES. Each launch keeps the previous run's file as `update-runner.log.1`
+ * and starts this one empty, so the directory holds at most two runs. A byte cap cannot be applied
+ * to a descriptor another process writes to; one run of `collie update` prints a transcript, and a
+ * staged build's output is the longest of those.
+ */
+export function openRunnerLog(stateDir: string, header: string): RunnerLog | null {
+  const path = updateRunnerLogPath(stateDir);
+  try {
+    if (existsSync(path)) renameSync(path, `${path}.1`);
+    const fd = openSync(path, "w", 0o600);
+    try {
+      writeSync(fd, `${header}\n`);
+    } catch {
+      /* a header nobody could write is not a reason to lose the run's own output */
+    }
+    return {
+      fd,
+      close: () => {
+        try {
+          closeSync(fd);
+        } catch {
+          /* already closed */
+        }
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** `Bun.spawn` in the bridge; a recorder in a test. */
+export type UpdateRunnerSpawn = (command: string[], options: UpdateRunnerSpawnOptions) => { unref(): void };
+
+/**
+ * Spawn the plan {@link updateStartCommand} chose. **The one place the runner is spawned**: the
+ * phone's button and a peer's own follow both reach it through `startDetachedUpdate` in `index.ts`.
+ *
+ * Never waited on, and never held open: `collie update` stages and then restarts this very process.
+ * The record on disk is how the phone follows it from here (M15/04).
+ */
+export function launchUpdateRunner(
+  plan: UpdateStartPlan,
+  a: { readonly cwd: string; readonly spawn: UpdateRunnerSpawn; readonly log?: RunnerLog | null },
+): { ok: true } | { ok: false; reason: string } {
+  const out = a.log?.fd ?? "ignore";
+  try {
+    const child = a.spawn(plan.command, {
+      cwd: a.cwd,
+      stdin: "ignore",
+      stdout: out,
+      stderr: out,
+      detached: plan.detach,
+    });
+    child.unref();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  } finally {
+    // The child has its own copy of the descriptor by now; this process's copy only holds the file
+    // open for nothing.
+    a.log?.close();
+  }
 }

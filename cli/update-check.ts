@@ -4,11 +4,12 @@ import type { JsonValue } from "../bridge/json.ts";
 import type { OpsRecord } from "../bridge/crew/ops-store.ts";
 import { CrewOpsStore } from "../bridge/crew/ops-store.ts";
 import { TrustStore, type TrustedMember, type TrustStoreData } from "../bridge/crew/trust-store.ts";
-import { compareSemver, githubTagsUrl, parseTagsResponse } from "../bridge/update.ts";
+import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
+import { compareSemver, githubCredential, githubTagsUrl, parseTagsResponse } from "../bridge/update.ts";
 import { collieVersionBare, manifestVersionFrom } from "../bridge/version.ts";
 import { loadContext, type CliContext } from "./context.ts";
 import { cmdDoctor, doctorDeps } from "./doctor.ts";
-import type { Finding } from "./finding.ts";
+import { isLocal, type Finding } from "./finding.ts";
 import {
   binaryLayout,
   classifyInstall,
@@ -32,7 +33,7 @@ import {
   shqPath,
   sshRunner,
 } from "./remote.ts";
-import { realExec, realFiles, realNet, resolveTool, type Exec, type Files, type Net } from "./sys.ts";
+import { realExec, realFiles, realNet, resolveRunnableBun, type Exec, type Files, type Net } from "./sys.ts";
 import { tagRemote } from "./update-remote.ts";
 import {
   majorAction,
@@ -269,13 +270,44 @@ export async function doctorCheck(deps: UpdateCheckDeps): Promise<PreflightCheck
   } catch (err) {
     return amber("doctor", `could not run doctor here (${String(err)})`, "collie doctor");
   }
-  const errors = findings.filter((f) => f.status === "error").map((f) => f.check);
-  if (errors.length > 0) {
+  // ── ONLY A LOCAL ERROR IS RED (ADR 0050) ──────────────────────────────────
+  // This check answers one question — can THIS machine take a new version — and a fault on another
+  // machine is not an answer to it. `cli/doctor.ts` already builds its findings as two lists and
+  // stamps the crew's; this reads that stamp rather than a list of check ids.
+  //
+  // Measured 2026-09-20: a laptop went to sleep, `member-reach` went red, and a healthy desktop with
+  // the disk, the bun and a clean tree could not take a release for the rest of the day. A crew of
+  // one desktop and one laptop had the button disabled most of every day. The crew is built for
+  // this: a member levels itself to its lead's release when it comes back (ADR 0016), and
+  // CREW_PROTOCOL.md §7.1 makes the skew in between harmless.
+  //
+  // ADR 0045's floor check is NOT here and is untouched — it is `skewCheck`, its own preflight check
+  // on the member walk. A member the update would strand still blocks the confirm.
+  const errors = findings.filter((f) => f.status === "error");
+  const local = errors.filter(isLocal).map((f) => f.check);
+  if (local.length > 0) {
     return red(
       "doctor",
-      `collie doctor reports ${errors.length} problem${errors.length === 1 ? "" : "s"}: ${errors.join(", ")}`,
+      `collie doctor reports ${local.length} problem${local.length === 1 ? "" : "s"}: ${local.join(", ")}`,
       "collie doctor — clear each error it names, then re-run this check",
     );
+  }
+  // ── A CREW ERROR IS AMBER, AND IS REPORTED BY CHECK ID ────────────────────
+  // By ID, never by the finding's `detail`. Every check's reason is rendered verbatim on the phone,
+  // in the update card's preflight list, and a red one also becomes the card's `blockedReason`. The
+  // detail is free prose written for a terminal: `reach` builds `minibuch at minibuch:8788 — <why>`,
+  // so a real host and port would ride this reason into the phone UI, a screenshot and a log. It is
+  // No preflight reason is translated, so the choice here is between an untranslated IDENTIFIER and
+  // an untranslated SENTENCE — and the card already prints check ids in monospace beside translated
+  // text. The id is what the local branch above already reports, its vocabulary is closed, and
+  // naming the MACHINES is the update card's job from the roster the phone holds (ADR 0050 point 3).
+  //
+  // Every crew error is listed. Two at once is an ordinary state — a member that is asleep is both
+  // unreachable and, once a rotation passes it, enrolled but inactive — and reporting one would hide
+  // the other behind a fault the operator then cannot see.
+  const crew = errors.filter((f) => !isLocal(f)).map((f) => f.check);
+  if (crew.length > 0) {
+    return amber("doctor", `this machine can still update; the crew reports: ${crew.join(", ")}`);
   }
   const warns = findings.filter((f) => f.status === "warn").map((f) => f.check);
   if (warns.length > 0) {
@@ -329,43 +361,34 @@ export function diskCheck(deps: UpdateCheckDeps, install: InstallKind): Prefligh
 }
 
 /**
- * `bun --version`'s first line, or null when it did not answer one.
- *
- * `bun` is the RESOLVED ABSOLUTE path, never the bare name: a bare name here would re-introduce the
- * PATH dependence one layer down, and answer for a different Bun than the one the update will run.
- */
-function bunVersion(exec: Exec, bun: string): string | null {
-  const r = exec.capture(bun, ["--version"]);
-  if (!r.found || r.code !== 0) return null;
-  const line = r.stdout.trim().split("\n")[0]?.trim();
-  return line === undefined || line === "" ? null : line;
-}
-
-/**
  * Bun's presence and version — asked ONLY of an install that rebuilds from source.
  *
- * Resolved through `cli/sys.ts`'s canonical candidate list, not through PATH alone. PATH alone is
- * what made this check red on hosts the shim builds on happily: the shim has always looked past
- * PATH, and a preflight that refuses an update the build would complete is worse than no preflight
- * (#169). A Bun found off PATH is GREEN and the reason names the absolute path, because the
- * operator should know which Bun runs — an interactive shell will not show them that one.
+ * Resolution and the bounded `--version` proof are shared with the updater: a red here must name
+ * the same Bun that would refuse before a managed checkout changes. A runnable older Bun remains
+ * advisory; this check only proves that the compiler can start.
  */
 export function bunCheck(deps: UpdateCheckDeps): PreflightCheck {
-  const bun = resolveTool(deps.exec, deps.files, deps.ctx.env, deps.ctx.home, "bun");
-  if (bun === null) {
+  const readiness = resolveRunnableBun(deps.exec, deps.files, deps.ctx.env, deps.ctx.home);
+  if (readiness.kind === "missing") {
     return red(
       "bun",
-      "bun is not installed, and this install rebuilds from source — the update would stop after the fetch",
+      "bun is not installed, and this install rebuilds from source — the update will not advance the checkout",
       "install Bun from https://bun.sh, then re-run this check",
     );
   }
-  const version = bunVersion(deps.exec, bun.path);
-  if (version === null) return amber("bun", "bun is installed but `bun --version` said nothing readable");
-  if (compareSemver(version, MIN_BUN) < 0) {
-    return amber("bun", `bun ${version} is older than the ${MIN_BUN} this build was measured on`);
+  if (readiness.kind === "unrunnable") {
+    return red(
+      "bun",
+      `bun at ${readiness.tool.path} is not runnable — \`bun --version\` did not return a readable version`,
+      "repair or reinstall Bun, then re-run this check",
+    );
   }
-  if (bun.onPath) return green("bun", `bun ${version}`);
-  return green("bun", `bun ${version} at ${bun.path} — off this PATH, and that is the one an update runs`);
+  const { bun } = readiness;
+  if (compareSemver(bun.version, MIN_BUN) < 0) {
+    return amber("bun", `bun ${bun.version} is older than the ${MIN_BUN} this build was measured on`);
+  }
+  if (bun.onPath) return green("bun", `bun ${bun.version}`);
+  return green("bun", `bun ${bun.version} at ${bun.path} — off this PATH, and that is the one an update runs`);
 }
 
 /**
@@ -555,16 +578,37 @@ async function listTags(deps: UpdateCheckDeps, install: InstallKind, repo: strin
     }
     return { ok: true, tags: parseRemoteTags(ls.stdout) };
   }
+  const credential = githubCredential(deps.ctx.env);
   const response = await deps.net.getJson(githubTagsUrl(repo));
   if (!response.ok) {
     const status = response.failure.status;
+    // The token is named by the variable it came from, never by value (#254). A 401 without one is
+    // not a credential problem and reads as the generic failure below.
+    if (status === 401 && credential !== null) {
+      return {
+        ok: false,
+        reason: `GitHub refused the token in ${credential.source} (HTTP 401)`,
+        remedy: `fix ${credential.source}, or unset it`,
+      };
+    }
+    if (status === 403 || status === 429) {
+      if (credential === null) {
+        return {
+          ok: false,
+          reason: `github.com rate-limited the release check (HTTP ${status})`,
+          remedy: "wait an hour, or set GH_TOKEN to a GitHub token with no scopes, then re-run this check",
+        };
+      }
+      return {
+        ok: false,
+        reason: `github.com rate-limited the release check (HTTP ${status}), even with the token in ${credential.source}`,
+        remedy: "wait an hour, then re-run this check",
+      };
+    }
     return {
       ok: false,
-      reason:
-        status === 403 || status === 429
-          ? `github.com rate-limited the release check (HTTP ${status})`
-          : `could not reach github.com for the release check (${response.failure.message})`,
-      remedy: status === 403 || status === 429 ? "wait an hour, then re-run this check" : "check this machine's network",
+      reason: `could not reach github.com for the release check (${response.failure.message})`,
+      remedy: "check this machine's network",
     };
   }
   // SAFETY: `Net.getJson` hands back what `Response.json()` produced, which IS a JsonValue by
@@ -666,16 +710,12 @@ export function parseReport(stdout: string): PreflightReport | null {
   const start = stdout.indexOf("{");
   const end = stdout.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
-  // REMOVE_IN_1_9_0: the `pack` arm. A member still on 1.7.0 spells the members `pack`, so the
-  // shape this document is READ as carries both names; see the read below.
-  let doc: (Partial<PreflightReport> & { pack?: readonly PreflightMember[] }) | null;
+  let doc: Partial<PreflightReport> | null;
   try {
     // SAFETY: the assertion asserts NOTHING about the document — every field it names is checked
     // below before it is used, and a value that is not an object at all reads every one of them as
     // `undefined` and fails the first check. It exists only to give `JSON.parse`'s `any` a name.
-    doc = JSON.parse(stdout.slice(start, end + 1)) as
-      | (Partial<PreflightReport> & { pack?: readonly PreflightMember[] })
-      | null;
+    doc = JSON.parse(stdout.slice(start, end + 1)) as Partial<PreflightReport> | null;
   } catch {
     return null;
   }
@@ -690,10 +730,7 @@ export function parseReport(stdout: string): PreflightReport | null {
     kind === undefined
       ? { schema: PREFLIGHT_SCHEMA, verdict, checks: doc.checks }
       : { schema: PREFLIGHT_SCHEMA, verdict, installKind: kind, checks: doc.checks };
-  // REMOVE_IN_1_9_0: `pack` is 1.7.0's name for `crew`. This document was printed by ANOTHER
-  // machine — a member the lead walked over ssh — which may still be on 1.7.0 during the roll, so
-  // both names are accepted on read. Only `crew` is ever written.
-  const members = doc.crew ?? doc.pack;
+  const members = doc.crew;
   return members === undefined ? report : { ...report, crew: members };
 }
 
@@ -779,11 +816,55 @@ async function memberChecks(
   }
 }
 
-/** CREW_PROTOCOL §7.1: skew inside a protocol version is tolerated by design, so it is never red. */
+/**
+ * The oldest build that speaks the crew protocol version this build speaks (ADR 0045).
+ *
+ * THIS CONSTANT AND `CREW_PROTOCOL_VERSION` ARE ONE FACT. `CREW_PROTOCOL_VERSION`
+ * (`bridge/crew/enrollment.ts`) is the number on the link; this is the release in which that number
+ * first shipped. Protocol 2 first shipped in 1.8.0, so the floor is `1.8.0`. Whoever moves the
+ * protocol number moves this string in the same commit, and `cli/update-check.test.ts` fails when
+ * the two drift apart.
+ */
+export const PROTOCOL_FLOOR_VERSION = "1.8.0";
+
+/** The lead's own version from which the floor is enforced: the release that dropped the overlap. */
+const FLOOR_ENFORCED_FROM = "1.9.0";
+
+/** A plain `X.Y.Z` release version, the only shape this check is willing to call old. */
+const RELEASE_VERSION = /^\d+\.\d+\.\d+$/;
+
+/**
+ * How a member's build version reads against this lead's.
+ *
+ * CREW_PROTOCOL §7.1: a build-version difference refuses nothing on the wire, so skew inside a
+ * protocol version is amber and never red. ADR 0045 carves out the one exception, and it is this
+ * one: a member below {@link PROTOCOL_FLOOR_VERSION} under a lead at {@link FLOOR_ENFORCED_FROM} or
+ * newer cannot speak the only protocol this lead has left, so the check is red and names the remedy.
+ *
+ * A version this lead cannot read stays amber. `""`, `unknown`, `1.8.2-rc1` and `1.9.0-dev` are all
+ * unreadable for this purpose: an unparsable version is not a known-old one, and a prerelease is a
+ * build the operator chose, which the lead has no business refusing on a suffix.
+ */
 export function skewCheck(theirs: string, ours: string): PreflightCheck {
   if (theirs === "") return amber("version", "that member did not report a version");
   if (theirs === ours) return green("version", `runs ${theirs}, the same build as this lead`);
-  return amber("version", `runs ${theirs} while this lead runs ${ours} — skew is tolerated, not a blocker`);
+  if (belowProtocolFloor(theirs, ours)) {
+    return red(
+      "version",
+      `runs ${theirs} while this lead runs ${ours}, and ${PROTOCOL_FLOOR_VERSION} is the oldest build ` +
+        `that speaks crew protocol ${CREW_PROTOCOL_VERSION}, which is the only version this lead speaks`,
+      `run \`collie update\` on that member's own machine to bring it to ${PROTOCOL_FLOOR_VERSION} or newer, ` +
+        `this lead can no longer reach it over the link`,
+    );
+  }
+  return amber("version", `runs ${theirs} while this lead runs ${ours}, skew is tolerated, not a blocker`);
+}
+
+/** True when both versions are plain releases, this lead is at 1.9.0 or newer, and the member is old. */
+function belowProtocolFloor(theirs: string, ours: string): boolean {
+  if (!RELEASE_VERSION.test(theirs) || !RELEASE_VERSION.test(ours)) return false;
+  if (compareSemver(ours, FLOOR_ENFORCED_FROM) < 0) return false;
+  return compareSemver(theirs, PROTOCOL_FLOOR_VERSION) < 0;
 }
 
 /** The member's own instance checks, asked of its own binary and merged in under the same ids. */
@@ -968,7 +1049,7 @@ export function updateCheckDeps(io: Io): UpdateCheckDeps {
     exec,
     files: realFiles,
     link: realLinkFs,
-    net: realNet,
+    net: realNet(githubCredential(ctx.env)),
     platform: process.platform,
     store: new TrustStore(ctx.stateDir),
     ops: new CrewOpsStore(ctx.stateDir),

@@ -59,6 +59,7 @@ import {
   MENU_RIGHT_KEYS,
   MENU_UP_KEYS,
   menuKeyFor,
+  readKeyHintFooter,
 } from "./menu-hints";
 
 // Anchored on this file's own directory (NOT `new URL(..., import.meta.url)`, which Vite statically
@@ -109,6 +110,13 @@ function lastMatchEnd(fresh: string[], expected: string[]): number {
 // dialog's footer no longer the last non-blank line, and every tail-anchored detector bails.
 function trailingOutput(): StyledLine[] {
   return [textLine("● Wrote the file"), textLine("  ⎿  done")];
+}
+
+/** The FIRST row of the tail's key-hint footer, which is the last non-blank row on a wide pane and
+ *  the top of the wrapped group on a narrow one. Falls back to the last non-blank row for a tail
+ *  that is not a key-hint footer at all. */
+function footerTop(lines: StyledLine[]): number {
+  return readKeyHintFooter(lines.map(lineText))?.startLine ?? lastNonBlank(lines);
 }
 
 /** The index of the last non-blank line — where every tail-anchored grammar's footer sits. */
@@ -277,7 +285,7 @@ const KEYLESS_FUTURE_KINDS = new Set<string>(["autocomplete"]);
  * needn't be validated. An interactive kind with no case here THROWS rather than returning null, so
  * the key-grammar invariant can never go silently vacuous when a new dialog kind ships.
  */
-function emittableKeys(block: Block): string[] | null {
+export function emittableKeys(block: Block): string[] | null {
   switch (block.kind) {
     case "raw":
       return null;
@@ -311,17 +319,20 @@ function emittableKeys(block: Block): string[] | null {
       return [...digits, ...controls];
     }
     case "multi-select":
-      // checkbox: a digit toggles each option (and the "Chat about this" escape), Up/Down move the
-      // pointer, Enter activates it. review: the confirm screen's `1. Submit answers / 2. Cancel`.
-      return block.multi.phase === "checkbox"
-        ? [
-            ...block.multi.options.map((o) => String(o.n)),
-            ...(block.multi.escape ? [String(block.multi.escape.n)] : []),
-            "Up",
-            "Down",
-            "Enter",
-          ]
-        : ["1", "2"];
+      // checkbox: a digit toggles each option (and the "Chat about this" escape) in digit mode, or
+      // jumps the pointer there in pointer mode — either way the digits ride plus Up/Down/Enter.
+      // review: the confirm screen's `1. Submit answers / 2. Cancel` in digit mode, or a pointer
+      // walk + Enter in pointer mode.
+      if (block.multi.phase === "checkbox") {
+        return [
+          ...block.multi.options.map((o) => String(o.n)),
+          ...(block.multi.escape ? [String(block.multi.escape.n)] : []),
+          "Up",
+          "Down",
+          "Enter",
+        ];
+      }
+      return block.multi.submit === "pointer" ? ["Up", "Down", "Enter"] : ["1", "2"];
     case "menu":
       // The generic grammar emits ONLY the keys the screen's own footer named, plus the arrows it
       // advertised. Walking `actions` here is what pins .adr/0009's ban in CI: a digit can only
@@ -333,6 +344,12 @@ function emittableKeys(block: Block): string[] | null {
         ...(block.menu.nav.upDown ? [...MENU_UP_KEYS, ...MENU_DOWN_KEYS] : []),
         ...(block.menu.nav.leftRight !== undefined ? [...MENU_LEFT_KEYS, ...MENU_RIGHT_KEYS] : []),
       ];
+    case "unread-dialog":
+      // The card's ONE control, and it is a DECLARATION (HarnessAdapter.cancelKey), not something
+      // read off the screen. No conformance fixture will ever produce one — the pass that emits this
+      // kind runs OUTSIDE the adapter and this suite calls `adapter.buildBlocks` directly — so the
+      // arm exists to keep the walk non-vacuous if that ever changes.
+      return [block.cancel.key];
     default: {
       // SAFETY: `block` is `never` here today — every kind is cased above — so widening it back to
       // `Block` cannot be wrong for any value that exists. The assertion is what names the offending
@@ -359,9 +376,19 @@ function emittableKeys(block: Block): string[] | null {
  */
 export function describeAdapterConformance(
   adapter: HarnessAdapter,
-  opts: { ownFixtures: string[]; foreignFixtures: string[]; neutralFixtures: string[] },
+  opts: {
+    ownFixtures: string[];
+    foreignFixtures: string[];
+    neutralFixtures: string[];
+    /** Captures where the composer is ready but no region can bind, because the harness repaints
+     *  the prompt rows between two reads (Codex Astra's starfield). Each one is a named exception
+     *  to "a region exists exactly when the composer is ready": the sweep goes out unbound there,
+     *  and the list says so in the test output rather than in a silent null. */
+    unboundComposerFixtures?: string[];
+  },
 ): void {
   const { ownFixtures, foreignFixtures, neutralFixtures } = opts;
+  const unbound = opts.unboundComposerFixtures ?? [];
 
   describe(`HarnessAdapter conformance — ${adapter.agent}`, () => {
     describe("conservative detection (fail-closed on foreign + neutral buffers)", () => {
@@ -407,6 +434,14 @@ export function describeAdapterConformance(
         const prompt = adapter.composerPrompt.bind(adapter);
         const ready = adapter.composerReady.bind(adapter);
         for (const name of all) {
+          if (unbound.includes(name)) {
+            it(`${name}: the composer is ready, and no region binds (animated prompt rows)`, () => {
+              const lines = loadLines(name);
+              expect(ready(lines)).toBe(true);
+              expect(prompt(lines)).toBeNull();
+            });
+            continue;
+          }
           it(`${name}: a region exists exactly when the composer is ready`, () => {
             const lines = loadLines(name);
             const region = prompt(lines);
@@ -492,9 +527,12 @@ export function describeAdapterConformance(
             expect(block.menu.title.length, `${name} lifts an untitled menu`).toBeGreaterThan(0);
           }
           // Perturb the region's text (a row inserted just ABOVE the footer, so the footer stays the
-          // last non-blank line and the menu still lifts): the signature must move with it.
+          // last thing on screen and the menu still lifts): the signature must move with it. ABOVE
+          // THE FOOTER GROUP, not above the last row: a narrow pane wraps a footer onto two or three
+          // rows (menu-hints.ts `readKeyHintFooter`), and a row spliced into the middle of one would
+          // be cutting the footer in half rather than adding a row above it.
           const perturbed = [...lines];
-          perturbed.splice(lastNonBlank(lines), 0, textLine("  ○ Something else entirely"));
+          perturbed.splice(footerTop(lines), 0, textLine("  ○ Something else entirely"));
           const after = menuSignatures(adapter.buildBlocks(perturbed));
           expect(after.length, `${name}: the perturbed capture stopped lifting a menu`).toBe(
             menuSignatures(adapter.buildBlocks(lines)).length,
@@ -551,6 +589,27 @@ export function describeAdapterConformance(
             for (const model of modelsOf(adapter, name, kind)) {
               expect(contract.signature(model).length, `${name} signs its ${kind} with ""`).toBeGreaterThan(0);
               expect(contract.region(model).length, `${name} binds its ${kind} to ""`).toBeGreaterThan(0);
+            }
+          });
+
+          it(`${name}: the ${kind} bound region ends inside the bridge's ${BRIDGE_PROMPT_TAIL_LINES}-row tail window`, () => {
+            // The first write of every choreography binds `region` as the bridge's expected prompt,
+            // and `verifyExpectedPrompt` (bridge/prompt-binding.ts) only accepts a match ENDING
+            // within the last 6 non-blank rows of the fresh read. A region ending higher 409s every
+            // tap on a screen that never moved — Muse's checkbox shipped exactly that (question →
+            // Submit left 6 rows below the match) until a live toggle caught it. Same normalisation
+            // as the composerPrompt leg above: trailing whitespace off, blanks dropped.
+            const lines = loadLines(name);
+            const fresh = normalizeRegion(lines.map(lineText).join("\n"));
+            for (const model of modelsOf(adapter, name, kind)) {
+              const expected = normalizeRegion(contract.region(model));
+              const matchEnd = lastMatchEnd(fresh, expected);
+              expect(matchEnd, `${name}: the ${kind} region is not on its own screen`).toBeGreaterThan(-1);
+              expect(
+                fresh.length - 1 - matchEnd,
+                `${name}: ${fresh.length - 1 - matchEnd} non-blank rows sit below the ${kind} region — ` +
+                  `the bridge can only bind within the last ${BRIDGE_PROMPT_TAIL_LINES}`,
+              ).toBeLessThan(BRIDGE_PROMPT_TAIL_LINES);
             }
           });
 

@@ -49,6 +49,7 @@ async function load(
       addEventListener: (type: string, fn: () => void) => {
         swEvents[type] = fn;
       },
+      register: async () => registration,
       getRegistrations: async () => [registration],
     },
   });
@@ -56,11 +57,10 @@ async function load(
   vi.stubGlobal("location", { reload });
   vi.stubGlobal("window", globalThis.window ?? {});
   Object.defineProperty(globalThis.window, "location", { value: { reload }, configurable: true });
-  vi.doMock("virtual:pwa-register", () => ({
-    registerSW: (o: { onRegisteredSW: (url: string, r: typeof registration) => void }) =>
-      o.onRegisteredSW("/sw.js", registration),
-  }));
   const mod = await import("./pwa");
+  // The module registers the worker on import and wires itself in the promise's `then`; let
+  // those microtasks run before a test looks.
+  for (let i = 0; i < 4; i += 1) await Promise.resolve();
   return { mod, reload, registration, regEvents, swEvents };
 }
 
@@ -70,7 +70,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  vi.doUnmock("virtual:pwa-register");
   // The stuck guard's note lives here (`GUARD_RELOAD_KEY`), and it is meant to survive a reload —
   // so it also survives a test unless a test clears it.
   sessionStorage.clear();
@@ -310,5 +309,57 @@ describe("the tap after the stuck guard's own reload", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(h.reload).toHaveBeenCalledTimes(1);
     expect(h.registration.unregister).not.toHaveBeenCalled();
+  });
+});
+
+// ── UPDATE MODE AND THE RELOAD HOLD (ADR 0064) ────────────────────────────────────────────────────
+//
+// The phone's own reload is the LAST step of an update. A controller swap used to reload at once,
+// whatever the page held, and the 60 s worker check could find the new worker in the middle of a run.
+
+describe("the controller swap waits for the reload hold", () => {
+  it("a swap while a hold is up reloads nothing, then reloads once when the last hold clears", async () => {
+    const h = await load({ controlled: true });
+    const guard = await import("./reload-guard");
+    guard.holdReload("composer");
+    guard.holdReload(guard.UPDATE_MODE_HOLD);
+    h.swEvents.controllerchange?.();
+    h.swEvents.controllerchange?.();
+    expect(h.reload).not.toHaveBeenCalled();
+    // The swap is still stamped: the update screen reads it as this device's download being over.
+    expect(h.mod.getControllerChangedAt()).not.toBeNull();
+
+    guard.releaseReload(guard.UPDATE_MODE_HOLD);
+    expect(h.reload).not.toHaveBeenCalled();
+    guard.releaseReload("composer");
+    expect(h.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no hold, the swap reloads at once, as before", async () => {
+    const h = await load({ controlled: true });
+    h.swEvents.controllerchange?.();
+    expect(h.reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the 60 s worker check pauses while update mode holds", () => {
+  it("asks nothing while held, and asks again once released", async () => {
+    const h = await load({ controlled: true });
+    const guard = await import("./reload-guard");
+    guard.holdReload(guard.UPDATE_MODE_HOLD);
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(h.registration.update).not.toHaveBeenCalled();
+
+    guard.releaseReload(guard.UPDATE_MODE_HOLD);
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(h.registration.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("any other hold does not pause it: a composer draft is not an update", async () => {
+    const h = await load({ controlled: true });
+    const guard = await import("./reload-guard");
+    guard.holdReload("composer");
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(h.registration.update).toHaveBeenCalledTimes(1);
   });
 });

@@ -42,6 +42,8 @@ import {
   cmdApplyUpdate,
   cmdUpdate,
   isManagedCheckout,
+  smoke,
+  smokeReason,
   majorVerdict,
   nextMajorRelease,
   parseApiTags,
@@ -155,7 +157,10 @@ function harness(
   > = {},
 ): Harness {
   const io = capture();
-  const exec = fakeExec({ ...over, answers: [...(over.answers ?? []), ...ORIGIN] });
+  const exec = fakeExec({
+    ...over,
+    answers: [...(over.answers ?? []), ["/fake/bun --version", { stdout: "1.4.0\n" }], ...ORIGIN],
+  });
   const seed: SeededFiles = { [`${DIST}/index.html`]: "OLD", [BINARY]: "OLD BINARY" };
   if (over.installed !== undefined) {
     seed[`${ROOT}/herdr-plugin.toml`] = `id = "herdr.collie"\nversion = "${over.installed}"\n`;
@@ -491,6 +496,24 @@ describe("updateCheckout", () => {
     expect(h.io.stdout.join("\n")).toContain("Collie 1.0.0 is out — a NEW MAJOR");
   });
 
+  test("a managed checkout proves Bun after target selection and before its first mutation", () => {
+    const h = managed();
+    expect(updateCheckout(h.deps).code).toBe(EXIT.OK);
+    const listed = h.exec.calls.indexOf(`${GIT} ls-remote --tags ${TAG_REMOTE}`);
+    const proved = h.exec.calls.indexOf("/fake/bun --version");
+    const fetched = h.exec.calls.findIndex((call) => call.startsWith(`${ROOT}$ ${GIT} fetch`));
+    expect(listed).toBeGreaterThanOrEqual(0);
+    expect(proved).toBeGreaterThan(listed);
+    expect(fetched).toBeGreaterThan(proved);
+  });
+
+  test("a managed checkout with an unrunnable Bun stays put after target selection", () => {
+    const h = managed([["/fake/bun --version", { code: 124 }]]);
+    expect(updateCheckout(h.deps).code).toBe(EXIT.FAIL);
+    expect(h.io.stderr.join("\n")).toContain("the checkout is unchanged");
+    expect(gitRuns(h.exec)).toEqual([]);
+  });
+
   test("a managed checkout already on the newest tag of its major moves nothing", () => {
     const h = harness({
       installed: "0.32.0",
@@ -650,7 +673,7 @@ describe("updateCheckout", () => {
   });
 
   test("a non-git checkout names the reinstall command and fails", () => {
-    const h = harness({ answers: [[`${GIT} rev-parse --git-dir`, { code: 128 }]] });
+    const h = harness({ answers: [[`${GIT} rev-parse --show-prefix`, { code: 128 }]] });
     expect(updateCheckout(h.deps).code).toBe(EXIT.FAIL);
     expect(h.io.stderr.join("\n")).toContain("herdr plugin install AltanS/collie --yes");
     expect(gitRuns(h.exec)).toEqual([]);
@@ -749,6 +772,7 @@ describe("update", () => {
       installed: "0.31.1",
       absent: ["bun"],
       answers: [
+        ["/opt/bun/bin/bun --version", { stdout: "1.4.0\n" }],
         ...MANAGED,
         [`${GIT} ls-remote --tags ${TAG_REMOTE}`, { stdout: LS_REMOTE }],
         [`${GIT} rev-parse HEAD`, { stdout: "a1a1a1a1\n" }],
@@ -758,6 +782,7 @@ describe("update", () => {
     h.files.entries.set("/opt/bun/bin/bun", { text: "" });
     h.deps.ctx.env.BUN_INSTALL = "/opt/bun";
     expect(await cmdUpdate(h.deps)).toBe(EXIT.OK);
+    expect(h.exec.calls).toContain("/opt/bun/bin/bun --version");
     expect(h.exec.calls).toContain(
       `${ROOT}$ PATH=/opt/bun/bin:$PATH /opt/bun/bin/bun ${ROOT}/cli/main.ts _apply-update`,
     );
@@ -830,12 +855,12 @@ describe("update", () => {
   });
 
   test("a checkout that would not advance never reaches the rebuild", async () => {
-    const h = harness({ answers: [[`${GIT} rev-parse --git-dir`, { code: 128 }]] });
+    const h = harness({ answers: [[`${GIT} rev-parse --show-prefix`, { code: 128 }]] });
     expect(await cmdUpdate(h.deps)).toBe(EXIT.FAIL);
     expect(h.exec.calls.some((c) => c.includes("_apply-update"))).toBe(false);
   });
 
-  test("no Bun: the checkout advanced, and the failure says exactly that", async () => {
+  test("no Bun: the managed checkout stays put, and the failure says exactly that", async () => {
     const h = harness({
       absent: ["bun"],
       installed: "0.31.1",
@@ -847,7 +872,8 @@ describe("update", () => {
       ],
     });
     expect(await cmdUpdate(h.deps)).toBe(EXIT.FAIL);
-    expect(h.io.stderr.join("\n")).toContain("the checkout advanced, but rebuilding needs Bun");
+    expect(h.io.stderr.join("\n")).toContain("the checkout is unchanged");
+    expect(gitRuns(h.exec)).toEqual([]);
   });
 
   // ── Nothing to take + an intact install ⇒ no build, no restart ────────────
@@ -880,6 +906,7 @@ describe("update", () => {
     expect(built(h)).toBe(false);
     expect(h.restarts).toBe(0);
     expect(h.io.stdout.join("\n")).toContain("already current");
+    expect(h.exec.calls.some((call) => call.endsWith("bun --version"))).toBe(false);
     // …and the transcript never claims otherwise.
     expect(h.io.stdout.join("\n")).not.toContain("update complete");
   });
@@ -1114,6 +1141,8 @@ interface BinaryOptions {
   downloadFailure?: { status: number | null; message: string };
   restart?: number;
   smoke?: { pre?: boolean; post?: boolean };
+  /** The laid candidate's whole answer to `version`, when a case needs more than a wrong word. */
+  smokeAnswer?: Partial<import("./sys.ts").ExecResult>;
   /** What `<root>/current/bin/collie version` answers — the post-flip check reads it. */
   currentSays?: string;
   env?: Record<string, string | undefined>;
@@ -1158,8 +1187,11 @@ function binaryHarness(over: BinaryOptions = {}): Harness {
   ];
   const answers: NonNullable<Scripted["answers"]> = [
     // Not a git checkout: the whole point of this shape.
-    [`git -C ${BROOT} rev-parse --git-dir`, { code: 1 }],
-    [`/inst/versions/${NEW}/bin/collie version`, { stdout: over.smoke?.pre === false ? "boom\n" : `${NEW}\n` }],
+    [`git -C ${BROOT} rev-parse --show-prefix`, { code: 1 }],
+    [
+      `/inst/versions/${NEW}/bin/collie version`,
+      over.smokeAnswer ?? { stdout: over.smoke?.pre === false ? "boom\n" : `${NEW}\n` },
+    ],
     [
       `${INST}/current/bin/collie version`,
       { stdout: over.smoke?.post === false ? "boom\n" : `${over.currentSays ?? NEW}\n` },
@@ -1333,7 +1365,39 @@ describe("collie update on a binary install", () => {
     const h = binaryHarness({ tagsFailure: { status: 403, message: "HTTP 403" } });
     expect(await cmdUpdate(h.deps)).toBe(EXIT.FAIL);
     expect(h.io.stderr.join("\n")).toContain("rate-limited");
+    expect(h.io.stderr.join("\n")).toContain("set GH_TOKEN");
     expect(h.link.ops).toEqual([]);
+  });
+
+  test("a rate limit despite a token names the variable it came from, and never the value (#254)", async () => {
+    const h = binaryHarness({
+      env: { GITHUB_TOKEN: "ghp_secret_value" },
+      tagsFailure: { status: 403, message: "HTTP 403" },
+    });
+    expect(await cmdUpdate(h.deps)).toBe(EXIT.FAIL);
+    const err = h.io.stderr.join("\n");
+    expect(err).toContain("even with the token in");
+    expect(err).toContain("GITHUB_TOKEN");
+    expect(err).not.toContain("set GH_TOKEN");
+    expect(err).not.toContain("ghp_secret_value");
+  });
+
+  test("a refused token is a 401 that names the variable — not a rate limit, not a network fault", async () => {
+    const h = binaryHarness({ env: { GH_TOKEN: "ghp_bad" }, tagsFailure: { status: 401, message: "HTTP 401" } });
+    expect(await cmdUpdate(h.deps)).toBe(EXIT.FAIL);
+    const err = h.io.stderr.join("\n");
+    expect(err).toContain("refused the token in GH_TOKEN");
+    expect(err).not.toContain("rate-limited");
+    expect(err).not.toContain("ghp_bad");
+    expect(h.link.ops).toEqual([]);
+  });
+
+  test("a 401 with no token in the env is the plain HTTP failure — there is no credential to blame", async () => {
+    const h = binaryHarness({ tagsFailure: { status: 401, message: "HTTP 401" } });
+    expect(await cmdUpdate(h.deps)).toBe(EXIT.FAIL);
+    const err = h.io.stderr.join("\n");
+    expect(err).toContain("the release check failed (HTTP 401)");
+    expect(err).not.toContain("token");
   });
 
   test("already current reads exactly as it does on a checkout — the paths are indistinguishable", async () => {
@@ -1659,7 +1723,10 @@ describe("the staged checkout path", () => {
     // #169's other half. The preflight already resolves Bun through the candidate list, so a Herdr
     // action with no login shell reports GREEN — and the verb has to run the SAME Bun, or the
     // operator is told the update can proceed by a check the update then contradicts.
-    const h = legacyClone({ absent: ["bun"] });
+    const h = legacyClone({
+      absent: ["bun"],
+      answers: [[`${HOME}/.bun/bin/bun --version`, { stdout: "1.4.0\n" }]],
+    });
     h.files.entries.set(`${HOME}/.bun/bin/bun`, { text: "" });
     expect(await cmdUpdate(h.deps)).toBe(EXIT.OK);
     // The directory rides along at the FRONT of the child's PATH, and that half is not decoration.
@@ -1677,8 +1744,8 @@ describe("the staged checkout path", () => {
     // a bare `which` that a candidate would have answered.
     const h = legacyClone({ absent: ["bun"] });
     expect(await cmdUpdate(h.deps)).toBe(EXIT.FAIL);
-    expect(h.io.stderr.join("\n")).toContain("bun not found");
-    expect(h.io.stderr.join("\n")).toContain("Nothing was changed.");
+    expect(h.io.stderr.join("\n")).toContain("bun is not installed");
+    expect(h.io.stderr.join("\n")).toContain("nothing was changed");
     expect(gitRuns(h.exec).join("\n")).not.toContain("worktree add");
   });
 
@@ -1703,6 +1770,27 @@ describe("the staged checkout path", () => {
     expect(h.io.stdout.join("\n")).toContain("already current");
     expect(h.exec.calls.join("\n")).not.toContain("worktree add");
     expect(h.link.ops).toEqual([]);
+  });
+
+  test("an update that finds its target already staged closes the record it opened", async () => {
+    // The `current` branch above is decided from the manifest of the version we are RUNNING. This
+    // one is reached when that manifest reads behind while `current` already points at the target —
+    // an operator running the old binary by hand right after the phone's update flipped `current`
+    // (2026-09-16, a 1.9.0 `bin/collie update` beside a live 1.9.1). `beginStaging` has already
+    // written `staging` by then, the branch returns EXIT.OK, and `withStagingRecord` only aborts
+    // on failure — so the record sat at `staging` with a pid that had exited, and the phone read
+    // "interrupted" about an install that was fine.
+    // Decided before the Bun probe and before the record opens: the harness answers no probe, and a
+    // probe that ran would fail this run.
+    const h = stagedHarness({ answers: [[`git -C ${WT("v1.0.0")} ls-remote --tags ${TAG_REMOTE}`, { stdout: LS_REMOTE }]] });
+    h.files.write(`${WT("v1.0.0")}/herdr-plugin.toml`, `id = "herdr.collie"\nversion = "0.32.0"\n`);
+    expect(await cmdUpdate(h.deps, ["--major"])).toBe(EXIT.OK);
+    expect(h.io.stdout.join("\n")).toContain("already current — v1.0.0 is staged");
+    // No record at all: nothing was staged, so there is nothing for a phone to read as failed or
+    // interrupted, and no Bun was asked for.
+    expect(h.files.read(RUN_FILE)).toBeNull();
+    expect(h.exec.calls.join("\n")).not.toContain("--version");
+    expect(h.exec.calls.join("\n")).not.toContain("worktree add");
   });
 
   test("retention keeps `current` plus the two newest previous versions", () => {
@@ -2250,7 +2338,7 @@ describe("the update run id", () => {
 describe("cmdUpdate — a folder a package manager owns", () => {
   /** A root with a marker, no `.git`, and outside `$HOME` — `/opt/collie`, the fake's own root. */
   function packaged() {
-    return harness({ answers: [[`${GIT} rev-parse --git-dir`, { code: 128 }]], installed: "1.5.2" });
+    return harness({ answers: [[`${GIT} rev-parse --show-prefix`, { code: 128 }]], installed: "1.5.2" });
   }
 
   test("it refuses, and never reaches git, bun or the network", async () => {
@@ -2280,7 +2368,7 @@ describe("cmdUpdate — a folder a package manager owns", () => {
     expect(h.io.stderr.join("\n")).toContain("Take the new version with: sudo pacman -Syu collie-bin");
 
     const nameless = "/srv/collie";
-    const u = harness({ answers: [[`git -C ${nameless} rev-parse --git-dir`, { code: 128 }]], installed: "1.5.2" });
+    const u = harness({ answers: [[`git -C ${nameless} rev-parse --show-prefix`, { code: 128 }]], installed: "1.5.2" });
     u.files.entries.set(`${nameless}/herdr-plugin.toml`, { text: 'version = "1.5.2"\n' });
     expect(await cmdUpdate({ ...u.deps, ctx: { ...u.deps.ctx, root: nameless } })).toBe(EXIT.FAIL);
     expect(u.io.stderr.join("\n")).toContain("updates come from your package manager");
@@ -2302,7 +2390,7 @@ describe("cmdUpdate — a folder a package manager owns", () => {
     // The near-miss the predicate must keep refusing to claim: all three of clause 4's disjuncts are
     // false here, so a tarball someone unpacked into their own home is still `loose-binary`.
     const inHome = `${HOME}/collie`;
-    const h = harness({ answers: [[`git -C ${inHome} rev-parse --git-dir`, { code: 128 }]] });
+    const h = harness({ answers: [[`git -C ${inHome} rev-parse --show-prefix`, { code: 128 }]] });
     h.files.entries.set(`${inHome}/herdr-plugin.toml`, { text: 'version = "1.5.2"\n' });
     const deps = { ...h.deps, ctx: { ...h.deps.ctx, root: inHome } };
     expect(await cmdUpdate(deps)).toBe(EXIT.FAIL);
@@ -2451,5 +2539,87 @@ describe("staging reports itself while it builds", () => {
     expect(await cmdUpdate(h.deps)).toBe(EXIT.OK);
     expect(h.files.ops.join("\n")).not.toContain("update-staging-");
     expect(JSON.parse(h.files.read(`${STATE}/update.json`) ?? "{}").state).toBe("staging");
+  });
+});
+
+describe("#283: another install's collie runs under its own root", () => {
+  // The updater a phone starts is a child of the service, and the service carries
+  // `COLLIE_PLUGIN_ROOT` (the LaunchAgent and the unit both inject it). Every child that is a
+  // DIFFERENT install's `collie` must start without it, or it takes this install's root for its own.
+  const RUN = "r-283";
+  const OWN_ROOT = { COLLIE_PLUGIN_ROOT: null };
+  const overrideOf = (exec: FakeExec, suffix: string) => exec.overrides.find((o) => o.call.endsWith(suffix))?.env;
+
+  test("the smoke of the laid candidate removes the inherited variable", async () => {
+    const h = binaryHarness({ env: { COLLIE_PLUGIN_ROOT: BROOT } });
+    expect(await cmdUpdate(h.deps, ["--run-id", RUN])).toBe(EXIT.OK);
+    expect(overrideOf(h.exec, `/inst/versions/${NEW}/bin/collie version`)).toEqual(OWN_ROOT);
+  });
+
+  test("a candidate that answers with the wrong version ends the run idle, with the reason on it", async () => {
+    const h = binaryHarness({ smoke: { pre: false } });
+    expect(await cmdUpdate(h.deps, ["--run-id", RUN])).toBe(EXIT.FAIL);
+    const run = parseUpdateRun(h.files.read(RUN_FILE));
+    expect(run?.state).toBe("idle");
+    expect(run?.runId).toBe(RUN);
+    expect(run?.reason).toBe("the new version did not start here (`collie version` answered boom, not 1.1.0)");
+    // The phone's progress lines carry the same sentence: the last thing the staging log says.
+    expect(h.files.read(stagingLogPath(STATE, RUN))).toContain("the new version did not start here");
+    expect(h.io.stderr.join("\n")).toContain("answered boom, not 1.1.0");
+  });
+
+  test("a candidate that exits non-zero keeps its exit code and its own last line", async () => {
+    const h = binaryHarness({
+      smokeAnswer: { code: 1, stderr: "dyld[123]: Library not loaded: /usr/lib/libfoo.dylib\n  Reason: tried: nothing\n" },
+    });
+    expect(await cmdUpdate(h.deps, ["--run-id", RUN])).toBe(EXIT.FAIL);
+    const run = parseUpdateRun(h.files.read(RUN_FILE));
+    expect(run?.state).toBe("idle");
+    expect(run?.reason).toBe("the new version did not start here (exit 1): dyld[123]: Library not loaded: /usr/lib/libfoo.dylib");
+    // The whole tail goes to the staging log and the terminal; the record keeps the one line.
+    expect(h.files.read(stagingLogPath(STATE, RUN))).toContain("dyld[123]: Library not loaded");
+    expect(h.io.stderr.join("\n")).toContain("| dyld[123]: Library not loaded");
+  });
+
+  test("the reason is capped, like every other abort the phone prints", () => {
+    const reason = smokeReason({ ok: false, why: "exit 1", headline: "x".repeat(400), tail: [] });
+    expect(reason.length).toBeLessThanOrEqual(161);
+    expect(reason.endsWith("…")).toBe(true);
+  });
+
+  test("a signal and a hang are named as such, not as an exit code", () => {
+    const killed = smoke(
+      { exec: fakeExec({ answers: [["/c/bin/collie version", { code: 124, signal: "SIGKILL" }]] }) },
+      "/c",
+      NEW,
+    );
+    expect(killed.ok || smokeReason(killed)).toBe("the new version did not start here (killed by SIGKILL)");
+    const hung = smoke({ exec: fakeExec({ answers: [["/c/bin/collie version", { code: 124 }]] }) }, "/c", NEW);
+    expect(hung.ok || smokeReason(hung)).toBe("the new version did not start here (no answer in 20s)");
+  });
+
+  test("the rollback's smoke removes it too", async () => {
+    const h = binaryHarness({ others: ["0.9.0"], currentSays: "0.9.0", env: { COLLIE_PLUGIN_ROOT: BROOT } });
+    expect(await cmdUpdate(h.deps, ["--rollback"])).toBe(EXIT.OK);
+    expect(overrideOf(h.exec, `${INST}/current/bin/collie version`)).toEqual(OWN_ROOT);
+  });
+
+  test("the runner's restart and hooks check through `current` remove it", async () => {
+    const h = binaryHarness({ env: { COLLIE_PLUGIN_ROOT: BROOT } });
+    expect(await runner(h, BINARY_APPLY)).toBe(EXIT.OK);
+    expect(overrideOf(h.exec, `${INST}/current/bin/collie hooks status --check`)).toEqual(OWN_ROOT);
+    const staged = legacyClone();
+    staged.files.write(`${WT("v0.32.0")}/.collie-build`, JSON.stringify({ version: "0.32.0", commit: "b2peeled" }));
+    staged.files.entries.set(`${CURRENT}/bin/collie`, { text: "NEW BINARY" });
+    expect(
+      await runner(staged, { to: "v0.32.0", from: null, version: "0.32.0", commit: "b2peeled", kind: "checkout" }),
+    ).toBe(EXIT.OK);
+    expect(overrideOf(staged.exec, `${CURRENT}/bin/collie restart`)).toEqual(OWN_ROOT);
+  });
+
+  test("the staged build of the new source removes it, or it would build the running tree", async () => {
+    const h = legacyClone();
+    expect(await cmdUpdate(h.deps)).toBe(EXIT.OK);
+    expect(overrideOf(h.exec, `${WT("v0.32.0")}/cli/main.ts build`)).toEqual(OWN_ROOT);
   });
 });

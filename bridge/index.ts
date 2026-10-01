@@ -8,12 +8,20 @@ import { realLinkFs } from "../cli/link.ts";
 import { packageCommand } from "../cli/package-command.ts";
 import { realExec, realFiles } from "../cli/sys.ts";
 import { ActivityLedger } from "./activity.ts";
+import { trackActivity } from "./activity-tracking.ts";
+import { CacheTracker } from "./cache/tracker.ts";
+import { CacheWarden } from "./cache/warden.ts";
+import { CacheWatchStore } from "./cache/watch.ts";
+import { localWatchPane, peerWatchPane } from "./cache/watch-key.ts";
+import { buildJournalRegistry } from "./journal/registry.ts";
+import { createCacheRulesReader } from "./operator-cache-rules.ts";
 import { AuditLog, fileAuditAppender } from "./audit.ts";
 import { beaconReader, hooksInstalledProbe } from "./beacon-io.ts";
 import { withAgentBeacons } from "./beacon/decorate.ts";
 import { withAgentHints } from "./beacon/hint.ts";
-import { loadConfig, nonLoopbackBindRefusal, resolveConfigDir, type Config } from "./config.ts";
-import type { CrewMode, CrewStatusResponse } from "./types.ts";
+import { loadConfig, loadConfigLayer, nonLoopbackBindRefusal, resolveConfigDir, type Config } from "./config.ts";
+import { applyConfigLayer } from "./config-source.ts";
+import type { AgentView, CrewMode, CrewStatusResponse } from "./types.ts";
 import { EventPoker } from "./event-poker.ts";
 import { exePathOf, exeReplaced } from "./exe-replaced.ts";
 import {
@@ -41,6 +49,7 @@ import type { MuxAdapter } from "./mux/types.ts";
 import { ZELLIJ_BINARY_OPTION } from "./mux/zellij/adapter.ts";
 import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./notifications.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
+import { FolderStore } from "./folders.ts";
 import { filePairingIo, PairingStore } from "./pairing.ts";
 import { createSttGate } from "./stt/index.ts";
 import { runBootGate } from "./crew/boot-gate.ts";
@@ -61,7 +70,6 @@ import { leadLabel } from "./crew/merge.ts";
 import { crewStatusBody } from "./crew/status-wire.ts";
 import { herdPushGate, PeerNotifier } from "./crew/notify.ts";
 import {
-  crewEnvFallbackWarning,
   crewHelloBudget,
   crewTimeoutBudget,
   crewTimeoutClampWarning,
@@ -105,7 +113,6 @@ import {
   syncedDevicesOf,
   type SyncedDevice,
 } from "./crew/standby-devices.ts";
-import { migrateCrewStateOnce } from "./crew/state-migration.ts";
 import {
   adoptLeadership,
   clearRePin,
@@ -117,7 +124,13 @@ import {
   TAKEOVER_RESTART_EXIT,
   type CommitOutcome,
 } from "./crew/takeover.ts";
-import { enrollmentOf, TrustStore, type TrustStoreData, type Warrant } from "./crew/trust-store.ts";
+import {
+  enrollmentOf,
+  legacyStateFileNotice,
+  TrustStore,
+  type TrustStoreData,
+  type Warrant,
+} from "./crew/trust-store.ts";
 import { currentWarrant, discardForeignWarrant, refreshWarrant, type WarrantPush } from "./crew/warrant.ts";
 import { Push } from "./push.ts";
 import { pluginRoot } from "./root.ts";
@@ -131,6 +144,7 @@ import { Snooze } from "./snooze.ts";
 import { StateEngine } from "./state-engine.ts";
 import {
   bridgeStampSync,
+  githubCredential,
   githubTagsFetcher,
   releaseReadingFetcher,
   UpdateMonitor,
@@ -141,6 +155,8 @@ import { SWEEP_INTERVAL_MS, sweepUploads } from "./uploads.ts";
 import { crewTurnStart, readUpdateRun, updateLockHeld } from "./update-run.ts";
 import {
   FreshPreflightGate,
+  launchUpdateRunner,
+  openRunnerLog,
   parsePreflightReport,
   peerPreflightWire,
   peerRunWire,
@@ -160,6 +176,16 @@ const UPDATE_FIRST_DELAY_MS = 90_000;
 const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 // Entry point: resolve config, wire the pieces, start polling and serving.
+//
+// The config files come FIRST, and they come in under the environment (ADR 0040): `~/.collie/config.toml`
+// then `<configDir>/config.toml`, applied to `process.env` only for names it does not already carry.
+// One read, one application point, so every module that resolves its own settings from the
+// environment — the crew budgets, the standby door, the update lane, speech-to-text — sees the file
+// without learning about it. A broken file warns and the bridge still starts; that is the whole
+// posture, and it is why nothing here can throw.
+const configLayer = await loadConfigLayer(process.env, undefined, (line) => console.warn(line));
+applyConfigLayer(configLayer);
+
 // loadConfig throws on config it cannot parse at all. Print the reason alone — a stack trace here
 // buries the one line the operator needs. (The bind refusal is NOT here; it needs the crew mode,
 // which is not known until the trust store below has been read.)
@@ -180,9 +206,11 @@ try {
 // is generated, no default is written back and no timer is armed. That is the zero-tax contract
 // (§11) holding at its startup seam — and `trustStore.load()` returning `null` is the same `null` a
 // solo instance will hand `resolveCrewRuntime` forever after.
-// REMOVE_IN_1_9_0: the 1.7.0 `pack-*.json` names are moved to their crew names here — before the
-// store is opened, and before the ops store or the runtime marker below is touched.
-migrateCrewStateOnce(cfg.stateDir, (line) => console.warn(line));
+// A state directory that still carries 1.7.0's names is NAMED, never adopted (ADR 0045). This is the
+// only caller: once per process, on the boot path, and never from `fsTrustStoreIo`, whose `read()`
+// and `write()` run on every trust-store access.
+const legacyNotice = legacyStateFileNotice(cfg.stateDir);
+if (legacyNotice !== null) console.warn(legacyNotice);
 
 const trustStore = new TrustStore(cfg.stateDir);
 const bootTrust = await trustStore.load();
@@ -285,23 +313,12 @@ function releaseFrontDoor(mode: CrewMode, isDeposed: boolean, why: string): void
 let pairingCollision: PairingCollision | null = null;
 
 /**
- * REMOVE_IN_1_9_0 — which members THIS PROCESS has already said speak version 1 (§0.1).
- *
- * One set for every client this file builds, because this file builds more than one per peer: the
- * boot gate's, the sweep's and the takeover's. A set per client wrote the same sentence once per
- * client; the journal wants it once per member.
- */
-const toldVersion1 = new Set<string>();
-
-/**
  * One crew client, built the same way for the boot gate and for the lead's sweep — because two would
  * be two places for a crew request to forget its budget, its pin or its secret.
  */
 function crewPeerClient(data: TrustStoreData): PeerClient {
   return new PeerClient({
     self: data.self.memberId,
-    // REMOVE_IN_1_9_0: the process-wide set, so the fallback's line is written once per member.
-    toldVersion1,
     // Read at call time so a rotation is picked up without a restart (§8.3, §8.4).
     secret: () => trustStore.current()?.crew?.secret ?? null,
     // Strictly below the lead's own poll interval, so a slow peer can never stall this snapshot
@@ -569,6 +586,42 @@ const stt = createSttGate({
 const activity = new ActivityLedger(cfg);
 await activity.load();
 
+// How long each pane's prompt cache stays warm (bridge/cache/tracker.ts). The registry is built HERE,
+// once, and handed to both the tracker and the server, so the probe and the history route share the
+// adapters' memoised path caches. Null when `COLLIE_TRANSCRIPT` is off: no journal means no probe, and
+// every pane then reads exactly as it did before this feature existed.
+const journals = cfg.transcript ? buildJournalRegistry(cfg.journalRoots) : null;
+const cacheRulesReader = createCacheRulesReader(cfg.cacheRulesFile);
+const paneCache =
+  journals === null
+    ? null
+    : new CacheTracker(journals, { overrides: () => cacheRulesReader() }, () => Date.now());
+
+// Which panes the operator asked to be warned about before their prompt cache goes cold, and the
+// deadlines already warned (bridge/cache/watch.ts). Loaded here beside the other two preference stores;
+// the file does not exist until an operator toggles something or a warning actually goes out.
+const cacheWatch = new CacheWatchStore(cfg);
+await cacheWatch.load();
+
+// The folders a new space was created in on THIS machine, and the ones the operator starred — the
+// new-space sheet's list (#289, bridge/folders.ts). One per machine, whatever the session. Loading
+// writes nothing: the file appears on the first create with a folder or the first star.
+const folders = new FolderStore(cfg);
+await folders.load();
+
+// The warden that judges them. A DEPS LITERAL WITH NO LOGIC IN IT, for the reason
+// `bridge/update.ts`'s monitor is built the same way: there is no `bridge/index.test.ts`, so every gate
+// is proved in `bridge/cache/warden.test.ts` instead and this line must hold nothing that could be
+// wrong. It owns no timer — `tick` is called from the poll below, and on a lead from the peer sweep.
+const cacheWarden = new CacheWarden({
+  now: () => Date.now(),
+  muted: () => snooze.isMuted(),
+  globalOn: () => notifyPrefs.current().cache,
+  store: cacheWatch,
+  warnSeconds: cfg.cacheWarnSeconds,
+  send: (msg) => void push.send(msg),
+});
+
 // ── Update-availability monitor ───────────────────────────────────────────────
 // The running plugin version, captured NOW at module load — never re-read from disk later, or a
 // post-pull package.json would mask the very update we detect (same class of bug as the buildId gap).
@@ -679,7 +732,9 @@ const updateMonitor = new UpdateMonitor({
   // version string (M17/02, the Arch pkgrel rebuild).
   exeReplaced: selfExeReplaced,
   startupStamp: bridgeStampSync(bridgeDir, rootDir),
-  fetchTags: githubTagsFetcher(updateRepo),
+  // With the operator's GitHub token when the env holds one (#254): the same three names, in the
+  // same order, that `collie update` reads, so the banner and the verb share one budget.
+  fetchTags: githubTagsFetcher(updateRepo, githubCredential(process.env)),
   // The newest release's own reading (M27/06) — one small GET beside the tag list, from the same
   // repo the release links point at. It answers null for every release that published none.
   fetchReleaseReading: releaseReadingFetcher(updateRepo),
@@ -698,14 +753,16 @@ const updateMonitor = new UpdateMonitor({
   // saying nothing happened.
   runState: () => readUpdateRun(cfg.stateDir),
   // One push a DAY, naming every release folded into it — the digest decides that; this only renders it.
-  notify: (versions, linkChange) =>
+  notify: (versions, linkChange, urgent) =>
     void push.send({
       type: "update",
       tag: "collie:update",
       // No command in the body — the tap opens Settings (target below), and the update banner / linked
       // release page carry the location-independent Herdr actions. Keeps this off the cwd-dependent path.
+      // The TITLE never moves, not even for an urgent release (ADR 0046): the notification is the same
+      // kind of thing it always was, and what makes it urgent is the first sentence of the body.
       title: "Collie update available",
-      body: updateDigestBody(currentVersion, versions, linkChange),
+      body: updateDigestBody(currentVersion, versions, linkChange, urgent),
       target: "settings",
     }),
 });
@@ -789,7 +846,7 @@ const preflightCache = new PreflightCache({
  * fetches `refs/tags/<tag>` explicitly. Nothing here adds a second mechanism.
  */
 const startDetachedUpdate = (a: { major: boolean; runId: string; toTag?: string | null }) => {
-  const command = updateStartCommand({
+  const plan = updateStartCommand({
     platform: process.platform,
     binary: collieBinary,
     major: a.major,
@@ -799,15 +856,10 @@ const startDetachedUpdate = (a: { major: boolean; runId: string; toTag?: string 
     runId: a.runId,
     toTag: a.toTag ?? null,
   });
-  try {
-    const child = Bun.spawn(command, { cwd: rootDir, stdout: "ignore", stderr: "ignore", stdin: "ignore" });
-    // Never waited on, and never held open: `collie update` stages and then restarts this very
-    // process. The record on disk is how the phone follows it from here (M15/04).
-    child.unref();
-    return { ok: true as const };
-  } catch (err) {
-    return { ok: false as const, reason: err instanceof Error ? err.message : String(err) };
-  }
+  // THE RUNNER'S OWN OUTPUT IS KEPT (#283): a runner that dies before it writes a run record used to
+  // leave nothing behind at all.
+  const log = openRunnerLog(cfg.stateDir, `${new Date().toISOString()} ${plan.command.join(" ")}`);
+  return launchUpdateRunner(plan, { cwd: rootDir, spawn: (command, options) => Bun.spawn(command, options), log });
 };
 
 /**
@@ -830,7 +882,7 @@ const updateAction = canRunUpdate
       newRunId,
       start: startDetachedUpdate,
       beginCrewRun: (a: { runId: string; to: string }) => {
-        updateTurns.begin(a.runId, a.to);
+        updateTurns.begin(a.runId, a.to, Date.now());
         // §20's FIRST immediate sweep: the operator has confirmed, so the first turn goes out on a
         // sweep of its own rather than waiting out the idle cadence.
         crewLead?.resweep();
@@ -983,10 +1035,32 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   // read as unseen); every successful poll reconciles the ledger against the panes that exist, which
   // seeds first sightings as already-seen and reaps closed ones. Reconciling covers bare shells too,
   // which the engine's agent-derived removal event never reports.
-  engine.onTransition((agent) => activity.noteActive(name, agent.paneId));
-  engine.onUpdate((s) =>
-    activity.reconcile(name, [...s.agents, ...s.shellPanes].map((p) => p.paneId)),
-  );
+  trackActivity(engine, activity, name);
+
+  // The prompt-cache probe rides the same poll, and for the reason the tracker's header gives:
+  // `localSnapshot` is synchronous, so the disk read cannot happen at serialise time. It is fired and
+  // not awaited — `onUpdate` is synchronous and a poll must never wait on a probe — and the tracker
+  // itself never throws, so a rejected promise here is not a case that exists. Its own per-session
+  // floor means a poll every 1.5 s does not become a read every 1.5 s.
+  // The cache warning rides the same poll, one step behind the probe: `refresh` is awaited through its
+  // own promise so the panes the warden judges already carry the reading this very tick produced (spec
+  // 02's ordering, made mechanical). `refresh` never throws, so there is no rejection branch to write.
+  // The tracker is ONE object for the whole bridge and every session runtime polls it with its own
+  // panes, so each poll names its session: the reap then forgets only this session's departed panes
+  // and never the other sessions' readings (bridge/cache/tracker.ts, § one tracker, many sessions).
+  if (paneCache !== null) {
+    const tracker = paneCache;
+    const probeThenWarn = async (panes: readonly AgentView[]): Promise<void> => {
+      await tracker.refresh(panes, { session: name });
+      cacheWarden.tick(
+        panes.flatMap((p) => {
+          const pane = localWatchPane(p, isPrimary ? undefined : name, (key) => tracker.get(key));
+          return pane === undefined ? [] : [pane];
+        }),
+      );
+    };
+    engine.onUpdate((s) => void probeThenWarn(s.agents));
+  }
 
   // Background notifications on lifecycle transitions (foreground toasts are computed client-side by
   // diffing snapshots). Each session gets its own coordinator + notification slot: the primary keeps
@@ -1253,10 +1327,6 @@ if (warnsOnWildcardBind(crew.mode, cfg.host)) {
 {
   const clamped = crewTimeoutClampWarning(cfg.pollMs);
   if (clamped !== null) console.warn(clamped);
-  // REMOVE_IN_1_9_0: the same posture for the 1.7.0 spelling of the two crew budget keys — said
-  // once here, never on the poll path that actually reads them.
-  const legacyEnv = crewEnvFallbackWarning();
-  if (legacyEnv !== null) console.warn(legacyEnv);
 }
 
 /**
@@ -1296,6 +1366,7 @@ const crewLead = (() => {
     // mid-life, and the roster changes under a running bridge.
     follow: {
       leadRelease: () => leadReleaseHeader({ version: crewVersion, run: readUpdateRun(cfg.stateDir) }),
+      leadRun: () => readUpdateRun(cfg.stateDir),
       turns: updateTurns,
       enrolledAt: (memberId) =>
         trustStore.current()?.peers.find((m) => m.memberId === memberId)?.enrolledAt ?? 0,
@@ -1312,7 +1383,19 @@ const crewLead = (() => {
     self: crewSelfOf(data),
     // Notifications for a peer's panes, derived on the lead from the body this sweep just parsed and
     // pushed through the same coordinator machinery a local session uses (M4/06).
-    onPeerSnapshot: (memberId, body) => peerNotifier?.observe(memberId, body),
+    onPeerSnapshot: (memberId, body) => {
+      peerNotifier?.observe(memberId, body);
+      // A member's watched pane warns FROM THE LEAD, where the subscriptions are, and on the hook the
+      // member's alerts already ride (§10.1: no second timer). The body's panes carry spec 02's
+      // reading, so nothing is probed here; a peer's pane is keyed by the identity the lead has
+      // (bridge/cache/watch-key.ts).
+      cacheWarden.tick(
+        body.agents.flatMap((p) => {
+          const pane = peerWatchPane(p, memberId);
+          return pane === undefined ? [] : [pane];
+        }),
+      );
+    },
     onPeerGone: (memberId) => {
       peerNotifier?.forget(memberId);
       // The client remembers one thing that reaches a verdict, how long this member has been
@@ -1476,7 +1559,7 @@ function settleUpdateGate(): void {
   // whose name nobody knows and whose journal outlives it by nothing, so a trace left only there is
   // a trace left nowhere. Once per run id per process, so a poll tick cannot make it a stream.
   console.log(`[crew] update ${start.runId}: levelling peers to ${start.to}`);
-  updateTurns.begin(start.runId, start.to);
+  updateTurns.begin(start.runId, start.to, Date.now());
   crewLead?.resweep();
 }
 
@@ -1502,8 +1585,6 @@ if (crewLead) {
 function takeoverClient(data: TrustStoreData): PeerClient {
   return new PeerClient({
     self: data.self.memberId,
-    // REMOVE_IN_1_9_0: the same process-wide set the sweep's client uses. See `toldVersion1`.
-    toldVersion1,
     secret: () => trustStore.current()?.crew?.secret ?? null,
     timeoutMs: crewTimeoutBudget(cfg.pollMs),
     patientTimeoutMs: crewHelloBudget(cfg.pollMs),
@@ -1707,6 +1788,11 @@ const server = startServer({
   version: crewVersion,
   audit,
   activity,
+  // Built above so the cache tracker probes through the same adapters this serves history from.
+  journals: journals ?? undefined,
+  cache: paneCache ?? undefined,
+  cacheWatch,
+  folders,
   crew,
   pairing,
   stt,

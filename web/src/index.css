@@ -19,6 +19,164 @@
   }
 }
 
+/* Native-mirror bright foregrounds (Muse, .adr/0047). A marked span keeps its emitted colour as
+   the var() fallback and reads --terminal-light-dark-fg only when the app is light: pinned
+   light, or System following an OS in light. Dark (pinned or System) defines nothing, so the
+   emitted colour stands untouched. The value is --foreground's light half, written literally to
+   match the mirror's one-spelling convention (#0a0a0a is oklch(0.145); use-theme.ts re-measures
+   if it moves). Scoped to pre.terminal-muse so no other surface can inherit the override. */
+:root.light pre.terminal-muse .terminal-light-dark-fg {
+  --terminal-light-dark-fg: #0a0a0a;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) pre.terminal-muse .terminal-light-dark-fg {
+    --terminal-light-dark-fg: #0a0a0a;
+  }
+}
+
+/* Native-mirror muted chrome (Muse, .adr/0047). Same mechanism as above: muted spans keep the
+   dark-space grey as their var() fallback and read --terminal-muted-fg only in a light native
+   mirror. The value is --muted-foreground's light half, written literally (#5d5d5d is oklch(0.48);
+   use-theme.ts re-measures if it moves) — ~6:1 on the page ground, the parity of what inversion
+   gives the same spans elsewhere. */
+:root.light pre.terminal-muse .terminal-muted {
+  --terminal-muted-fg: #5d5d5d;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) pre.terminal-muse .terminal-muted {
+    --terminal-muted-fg: #5d5d5d;
+  }
+}
+
+/* One cell of the mirror, painted rather than typed — lib/cell-glyphs.ts has the whole argument,
+   and its CELL_FILL table names every `data-cell` value below.
+
+   A BLOCK ELEMENT IS PAINTED ON A BAND THAT IS THE ROW. An inline box's own background covers the
+   font's content area, its ascent plus descent, and that is not the row: at 10px it measured 13px
+   against a 12.5px row in Chromium on Linux, and sat 0.75px above the row's centre. So the paint is
+   not the span's background. It is a `::before` box, absolutely positioned with `top` left `auto`,
+   and an absolutely positioned box that started out inline takes its STATIC POSITION: the top of
+   the line box it sits in. `height: 1lh` is the row pitch, and `left: 0; right: 0` is the span's
+   own advance, so the band is exactly one cell: the row's top and bottom in Chromium and WebKit,
+   with no offset of its own (web/e2e/cell-glyphs.spec.ts reads it off the pixels). Every shape is
+   then a background layer in percentages of that band.
+
+   HALF A PIXEL OVER, at the top only. Two bands that meet exactly are rounded to device pixels one
+   box at a time, and at device pixel ratio 3 WebKit rounded two stacked rows one pixel APART, a
+   dark line through a stacked bar. The extra 0.5px reaches up under the row above, which paints
+   first, and closes that at ratio 2 and up. It goes up and not down because the last row's band
+   would otherwise poke out of the <pre> and give it half a pixel to scroll. It moves a half
+   block's edge by 0.25px.
+
+   IT MOVES NOTHING. An absolutely positioned box takes no room, and the span sets no width, no
+   display and no padding, so every row and every column lands where it did. `inline-block` sized
+   to one cell measured 0.27px short at each end in WebKit and was dropped. The span is a stacking
+   context so the band can sit under its own text: a selection still shows over a painted cell.
+
+   ONE SPAN PER CHARACTER, on purpose. A span that holds a run is split across two lines when the
+   mirror wraps inside it, and an absolutely positioned child has one box, so the run's second line
+   would lose its paint and, with the ink emptied, show nothing at all.
+
+   THE CHARACTER IS STILL IN HERE, as a text node — find offsets, link offsets, selection and copy
+   all read it, and none of them may change. `-webkit-text-fill-color` is what stops it being seen:
+   it empties the INK and leaves `color` alone, so `currentColor` in the paint still resolves to the
+   segment's own foreground, and .adr/0002's inversion filter treats the paint exactly like text.
+   `color: transparent` would take the paint with it.
+
+   A browser without `lh` (Safari before 16.4) skips all of this and keeps the font's own glyph,
+   short but visible.
+
+   The Powerline four are the exception, and their rule below says why. */
+@supports (height: 1lh) {
+  .cell-glyph {
+    --ink: linear-gradient(currentColor, currentColor);
+    -webkit-text-fill-color: transparent;
+  }
+  .cell-glyph:not([data-cell^="wedge-"], [data-cell^="round-"]) {
+    position: relative;
+    z-index: 0;
+  }
+  .cell-glyph:not([data-cell^="wedge-"], [data-cell^="round-"])::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: calc(1lh + 0.5px);
+    margin-top: -0.5px;
+    z-index: -1;
+    pointer-events: none;
+    background-repeat: no-repeat;
+  }
+
+  /* `<position> / <size>` of each rectangle, in percentages of the band. Every rectangle a block
+     element draws is flush to an edge, so each position is 0% or 100%. */
+  .cell-glyph[data-cell="full"]::before { background-image: var(--ink); }
+  .cell-glyph[data-cell="lower-1"]::before { background: var(--ink) 0 100% / 100% 12.5% no-repeat; }
+  .cell-glyph[data-cell="lower-2"]::before { background: var(--ink) 0 100% / 100% 25% no-repeat; }
+  .cell-glyph[data-cell="lower-3"]::before { background: var(--ink) 0 100% / 100% 37.5% no-repeat; }
+  .cell-glyph[data-cell="lower-4"]::before { background: var(--ink) 0 100% / 100% 50% no-repeat; }
+  .cell-glyph[data-cell="lower-5"]::before { background: var(--ink) 0 100% / 100% 62.5% no-repeat; }
+  .cell-glyph[data-cell="lower-6"]::before { background: var(--ink) 0 100% / 100% 75% no-repeat; }
+  .cell-glyph[data-cell="lower-7"]::before { background: var(--ink) 0 100% / 100% 87.5% no-repeat; }
+  .cell-glyph[data-cell="upper-1"]::before { background: var(--ink) 0 0 / 100% 12.5% no-repeat; }
+  .cell-glyph[data-cell="upper-4"]::before { background: var(--ink) 0 0 / 100% 50% no-repeat; }
+  .cell-glyph[data-cell="left-1"]::before { background: var(--ink) 0 0 / 12.5% 100% no-repeat; }
+  .cell-glyph[data-cell="left-2"]::before { background: var(--ink) 0 0 / 25% 100% no-repeat; }
+  .cell-glyph[data-cell="left-3"]::before { background: var(--ink) 0 0 / 37.5% 100% no-repeat; }
+  .cell-glyph[data-cell="left-4"]::before { background: var(--ink) 0 0 / 50% 100% no-repeat; }
+  .cell-glyph[data-cell="left-5"]::before { background: var(--ink) 0 0 / 62.5% 100% no-repeat; }
+  .cell-glyph[data-cell="left-6"]::before { background: var(--ink) 0 0 / 75% 100% no-repeat; }
+  .cell-glyph[data-cell="left-7"]::before { background: var(--ink) 0 0 / 87.5% 100% no-repeat; }
+  .cell-glyph[data-cell="right-1"]::before { background: var(--ink) 100% 0 / 12.5% 100% no-repeat; }
+  .cell-glyph[data-cell="right-4"]::before { background: var(--ink) 100% 0 / 50% 100% no-repeat; }
+
+  /* Quadrants: each quarter is half the band each way, in its own corner. */
+  .cell-glyph[data-cell^="quad-"] {
+    --ul: var(--ink) 0 0 / 50% 50% no-repeat;
+    --ur: var(--ink) 100% 0 / 50% 50% no-repeat;
+    --ll: var(--ink) 0 100% / 50% 50% no-repeat;
+    --lr: var(--ink) 100% 100% / 50% 50% no-repeat;
+  }
+  .cell-glyph[data-cell="quad-ll"]::before { background: var(--ll); }
+  .cell-glyph[data-cell="quad-lr"]::before { background: var(--lr); }
+  .cell-glyph[data-cell="quad-ul"]::before { background: var(--ul); }
+  .cell-glyph[data-cell="quad-ur"]::before { background: var(--ur); }
+  .cell-glyph[data-cell="quad-ul-ll-lr"]::before { background: var(--ul), var(--ll), var(--lr); }
+  .cell-glyph[data-cell="quad-ul-lr"]::before { background: var(--ul), var(--lr); }
+  .cell-glyph[data-cell="quad-ul-ur-ll"]::before { background: var(--ul), var(--ur), var(--ll); }
+  .cell-glyph[data-cell="quad-ul-ur-lr"]::before { background: var(--ul), var(--ur), var(--lr); }
+  .cell-glyph[data-cell="quad-ur-ll"]::before { background: var(--ur), var(--ll); }
+  .cell-glyph[data-cell="quad-ur-ll-lr"]::before { background: var(--ur), var(--ll), var(--lr); }
+
+  /* Powerline: NOT the row, on purpose. These four exist to join a segment background beside them,
+     a prompt pill's middle, and a segment background covers the content area, not the row. So they
+     paint the span's own background, the content area, and meet the pill on the same two pixels in
+     any face. Painted to the row they would step out of the pill wherever the two differ. A wedge
+     is two half layers whose 50% stop lies on the layer's own diagonal, which IS the wedge's edge;
+     49.8% leaves the stop a sliver to antialias in. A cap is a full cell rounded all the way out
+     on one side, the half-ellipse the font draws. */
+  .cell-glyph[data-cell="wedge-right"] {
+    background:
+      linear-gradient(to top right, currentColor 49.8%, transparent 50%) 0 0 / 100% 50% no-repeat,
+      linear-gradient(to bottom right, currentColor 49.8%, transparent 50%) 0 100% / 100% 50% no-repeat;
+  }
+  .cell-glyph[data-cell="wedge-left"] {
+    background:
+      linear-gradient(to top left, currentColor 49.8%, transparent 50%) 0 0 / 100% 50% no-repeat,
+      linear-gradient(to bottom left, currentColor 49.8%, transparent 50%) 0 100% / 100% 50% no-repeat;
+  }
+  .cell-glyph[data-cell="round-right"] {
+    background: var(--ink);
+    border-radius: 0 100% 100% 0 / 0 50% 50% 0;
+  }
+  .cell-glyph[data-cell="round-left"] {
+    background: var(--ink);
+    border-radius: 100% 0 0 100% / 50% 0 0 50%;
+  }
+}
+
 /* `dark:` must fire for BOTH an explicitly-pinned dark root and a system-dark root the user hasn't
    pinned to light — otherwise the handful of literal `dark:` utilities silently stop working for
    everyone on System (the default). Token-driven colors don't need this; these are the literals. */
@@ -237,6 +395,31 @@
      (alpha-bar.tsx). */
   --status-info: light-dark(oklch(0.46 0.14 230), oklch(0.8 0.15 230));
 
+  /* Syntax colour for the Changes view's diff (components/changes-view.tsx, lib/diff-highlight.ts,
+     ADR 0065 rule 7). Six inks, all colour and nothing else: no weight, no italic, so a coloured
+     line keeps the plain line's glyphs and line boxes. Kinds without an ink (names, punctuation,
+     JSX text) keep --foreground.
+
+     Hues keep off the two row tints: no green (the added-row wash, done 152) and no red (the
+     deleted-row wash, blocked 25). Light halves sit at L 0.45-0.50 like the status palette, dark
+     halves at 0.76-0.80 like its glow. Comments are --muted-foreground's values, grey on purpose.
+
+     Contrast, computed in sRGB with the /12 row tint mixed over --background (plain alpha is the
+     pessimistic side of the oklab mix Tailwind emits), ground: page / card / added / deleted:
+       keyword   light 6.17 6.73 5.15 4.92   dark 8.60 7.78 7.29 7.60
+       string    light 6.82 7.43 5.69 5.44   dark 10.7 9.72 9.10 9.50
+       constant  light 6.26 6.83 5.23 5.00   dark 10.3 9.33 8.74 9.12
+       property  light 6.15 6.70 5.13 4.90   dark 11.0 9.94 9.31 9.71
+       entity    light 6.55 7.15 5.47 5.23   dark 8.84 8.00 7.49 7.82
+       comment   light 5.99 6.54 5.00 4.78   dark 7.63 6.91 6.47 6.75
+     Every cell clears 4.5. The tightest is light on the deleted row; darken there, never lighten. */
+  --syntax-keyword: light-dark(oklch(0.5 0.2 350), oklch(0.76 0.15 350));
+  --syntax-string: light-dark(oklch(0.45 0.13 250), oklch(0.8 0.1 240));
+  --syntax-constant: light-dark(oklch(0.48 0.13 55), oklch(0.8 0.12 60));
+  --syntax-property: light-dark(oklch(0.46 0.09 200), oklch(0.8 0.09 195));
+  --syntax-entity: light-dark(oklch(0.48 0.18 300), oklch(0.76 0.13 300));
+  --syntax-comment: light-dark(oklch(0.48 0 0), oklch(0.708 0 0));
+
   /* ── Per-host identity palette (components/host-chip.tsx, lib/hosts.ts) ──────────────────────
      Ten hues, `--host-0` … `--host-9`, handed to machines by lib/hosts.ts `hostSlot`. They are an
      IDENTITY, never a state: nothing about a host's health, version or reachability is encoded
@@ -250,9 +433,10 @@
      purple 302, fuchsia 325, pink 352 — and the SLOT ORDER below interleaves them, so the linear
      probe in `hostSlot` hands neighbouring slots hues from opposite sides of the wheel.
      Two hues sit near a status and are kept deliberately: cyan (9 off `info`) and sky (11 off it).
-     `--status-info` is drawn in exactly one place, the prerelease strip in the header
-     (alpha-bar.tsx), and never beside a host mark. Everything nearer a status than that was
-     dropped: rose and red (blocked), amber and yellow (working), green and emerald (done).
+     `--status-info` is drawn in two places, the prerelease strip in the header (alpha-bar.tsx)
+     and the cache chip's cold glyph (cache-chip.tsx), and never beside a host mark. Everything
+     nearer a status than that was dropped: rose and red (blocked), amber and yellow (working),
+     green and emerald (done).
 
      The light halves are NOT Tailwind's `-600` shades. Tailwind's 600s read 2.4-4.7:1, i.e. most of
      the ramp fails 4.5 outright, and its 700s and 800s fail too for the low-chroma hues. So the
@@ -361,6 +545,12 @@
   --color-status-blocked: var(--status-blocked);
   --color-status-working: var(--status-working);
   --color-status-done: var(--status-done);
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-constant: var(--syntax-constant);
+  --color-syntax-property: var(--syntax-property);
+  --color-syntax-entity: var(--syntax-entity);
+  --color-syntax-comment: var(--syntax-comment);
   --color-status-idle: var(--status-idle);
   --color-status-unknown: var(--status-unknown);
   --color-status-info: var(--status-info);
@@ -667,10 +857,12 @@
   }
 }
 
-/* We don't use view transitions (removed). But React Router can still fire document.startViewTransition
+/* React Router's view transitions stay off (removed). But React Router can still fire document.startViewTransition
    on a revalidation for a device carrying a stale persisted transition map from an older build (see
    router.tsx). Keep the whole document unnamed so any such stray transition captures nothing and swaps
-   instantly — no full-page crossfade flicker. This is a no-op-izing safety net, not a transition. */
+   instantly — no full-page crossfade flicker. This is a no-op-izing safety net, not a transition.
+   The transitions the app starts itself, the glides below (lib/glide.ts), name only their own parts
+   under `html.glide` and leave this rule alone. */
 :root {
   view-transition-name: none;
 }
@@ -784,4 +976,198 @@
   .status-breathe {
     animation: none;
   }
+}
+
+/* THE HOLD, SHOWN (hooks/use-long-press.ts, M38/02). Every element that spreads `useLongPress`'s props
+   carries `data-holding` from 150ms after the finger lands until the hold fires or is cancelled: the
+   dashboard rows, the pane pills, the workspace and tab chips. While it does, the element eases toward
+   "pressed" over the time left to the hold's 450ms mark (the hook sets `animation-duration` inline to
+   exactly that), so the press visibly fills toward the moment the sheet opens. Linear, because the fill
+   is a clock the thumb reads, not a flourish.
+   - A TRANSFORM AND A TINT, NOTHING ELSE. `transform` composes with the element's own `active:scale-*`
+     press (that one is the `scale` property), so a pill already at 95% goes on to press in rather than
+     springing back to a keyframe value. The tint is an inset box-shadow in the element's own ink,
+     which paints over its background whatever that is (a muted chip, a primary chip, a bare row) and
+     follows its radius, and never touches the box: no size, no border, no padding (DESIGN.md §2).
+     Its strength is the registered `--hold-tint`, animated as a number: a keyframed box-shadow whose
+     colour is a `color-mix` over `currentColor` flips at the halfway point instead of fading
+     (measured in Chromium), while a registered percentage interpolates in every engine.
+   - IT ENDS AT ONCE. The hook drops the attribute on the fire and on every cancel, and a removed
+     animation has no exit to play.
+   - REDUCED MOTION keeps the tint and drops the scale. */
+@property --hold-tint {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+[data-holding] {
+  box-shadow: inset 0 0 0 100vmax color-mix(in oklab, currentColor var(--hold-tint), transparent);
+  animation: hold-fill 300ms linear both;
+}
+@keyframes hold-fill {
+  from {
+    transform: none;
+    --hold-tint: 0%;
+  }
+  to {
+    transform: scale(0.97);
+    --hold-tint: 12%;
+  }
+}
+@keyframes hold-tint {
+  from {
+    --hold-tint: 0%;
+  }
+  to {
+    --hold-tint: 12%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-holding] {
+    animation-name: hold-tint;
+  }
+}
+
+/* THE CHANGES COUNT LINE (components/change-count.tsx ChangeCountSlot), on each row of the dashboard's
+   Changes tab and in the Changes screen's header. The screen's list skeleton (routes/changes.tsx)
+   breathes with `.count-skeleton` too, and its first real rows arrive with `.count-arrive`. Until a workspace's
+   first answer, a muted bar breathes in the line's own box; the answer fades in over it with a 3px
+   settle, and the bar fades out underneath. A later, different value dips and comes back. Opacity
+   and transform only, inside a fixed 16px line, so no box around it ever moves. The dimmed
+   "No changes"/"No folder" rows ease to their dim in the same 200ms. Reduced motion: every swap is
+   instant and the bar holds still. */
+.count-skeleton {
+  animation: count-skeleton-pulse 1.4s ease-in-out infinite;
+  transition: opacity 200ms ease-out;
+}
+.count-skeleton--done {
+  opacity: 0;
+  animation: none;
+}
+.count-arrive {
+  animation: count-arrive 200ms ease-out both;
+}
+.count-update {
+  animation: count-update 320ms ease-out both;
+}
+.count-row {
+  transition: opacity 200ms ease-out;
+}
+@keyframes count-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+@keyframes count-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes count-update {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .count-skeleton,
+  .count-arrive,
+  .count-update {
+    animation: none;
+  }
+  .count-skeleton,
+  .count-row {
+    transition: none;
+  }
+}
+
+/* THE GLIDE (lib/glide.ts). Live only while `html.glide` is set, for one hand-started view
+   transition. The script names each flying part inline, on exactly one element at a time, as
+   `glide-<pair>-<part>`; the header row and the screen wrapper take the two names below so the rest
+   crossfades under the parts. `:root` stays unnamed (above), so nothing else is captured.
+   `--glide-duration` and `--glide-ease` are the one timing every pair shares; the pseudo-elements
+   inherit them from `<html>`. The script never starts a glide under reduced motion; the media query
+   below is the second lock. The overlay takes no pointer events, so a tap during the 250ms reaches
+   the live screen under it instead of the document. */
+:root {
+  --glide-duration: 250ms;
+  --glide-ease: ease-out;
+}
+.glide [data-slot="header-row"] {
+  view-transition-name: glide-header;
+}
+.glide [data-slot="screen-transition"] {
+  view-transition-name: glide-screen;
+}
+.glide::view-transition {
+  pointer-events: none;
+}
+.glide::view-transition-group(*),
+.glide::view-transition-old(*),
+.glide::view-transition-new(*) {
+  animation-duration: var(--glide-duration);
+  animation-timing-function: var(--glide-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .glide::view-transition-group(*),
+  .glide::view-transition-old(*),
+  .glide::view-transition-new(*) {
+    animation: none;
+  }
+}
+/* The Changes pair: a dashboard Changes tab row and the header of `/space/:id/changes`. Text changes
+   size on the way (14px row label, 18px header label): the snapshots scale with their box, pinned to
+   the start edge, instead of stretching to a box of another shape. Both ways. */
+.glide-changes::view-transition-old(glide-changes-label),
+.glide-changes::view-transition-new(glide-changes-label),
+.glide-changes::view-transition-old(glide-changes-count),
+.glide-changes::view-transition-new(glide-changes-count) {
+  height: 100%;
+  width: auto;
+  object-position: left center;
+}
+/* The pane pair: a pane row (dashboard or space) and the pane screen's header identity. The name
+   changes size and weight on the way (14px medium in the row, 16px semibold in the header), so it
+   takes the same start-pinned scaling as the Changes label. The tile is 16px on both sides and the
+   dot 10px against 8px, so both keep the default box morph. Everything else on the pane screen, the
+   mirror, the composer and the belt, is inside `glide-screen` and crossfades as one picture; nothing
+   in it moves or is measured again, because a view transition animates snapshots and leaves the
+   live layout alone. */
+.glide-pane::view-transition-old(glide-pane-name),
+.glide-pane::view-transition-new(glide-pane-name) {
+  height: 100%;
+  width: auto;
+  object-position: left center;
+}
+
+/* THE ACTION BELT'S ONE SCALE (components/actions-row.tsx). The belt's root carries `--belt-scale`
+   inline, from the Settings row "Action belt size" (1.15 default, 1.3, 1.5), and every size on the
+   belt is derived from it here, so band, pills, icons and words grow together and never drift apart.
+   Each is rounded to a whole pixel, so a pill never lands on half a pixel and the pinned block's
+   measured width is a whole number. `--belt-pad` rounds DOWN so the band stays close to the asked
+   factor: 1.15 gives 4px + 37px + 4px = 45px, 1.3 gives 52px, 1.5 gives 60px. At scale 1 these are
+   the old belt to the pixel, 4 + 32 + 4 = 40.
+   `--belt-reach` is how far a pill's `::before` hit box reaches above and below its drawn box: from
+   the pill's padding box (1px inside its reserved transparent border) exactly to the band's edge, so
+   every pill answers the whole band, 45px or more, and nothing overflows the scroller. Outside the
+   belt none of these is defined, and STRIP_ROW_PILL's fallbacks are the old fixed sizes. */
+[data-slot="composer-actions"] {
+  --belt-pad: round(down, calc(0.25rem * var(--belt-scale)), 1px);
+  --belt-pill: round(calc(2rem * var(--belt-scale)), 1px);
+  --belt-band: calc(var(--belt-pill) + 2 * var(--belt-pad));
+  --belt-reach: calc(var(--belt-pad) + 1px);
+  --belt-icon: round(calc(1rem * var(--belt-scale)), 1px);
+  --belt-text: calc(0.75rem * var(--belt-scale));
+  --belt-rule: round(calc(1.25rem * var(--belt-scale)), 1px);
 }

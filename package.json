@@ -10,7 +10,7 @@
     "dev": "bun --watch bridge/index.ts",
     "build": "bun run cli/main.ts build",
     "build:web": "cd web && bun run build",
-    "build:cli": "bun build --compile --target=bun ./cli/main.ts --outfile bin/collie",
+    "build:cli": "bun run scripts/build-cli.ts",
     "web:dev": "cd web && bun run dev",
     "lint": "oxlint --max-warnings 0",
     "lint:fix": "oxlint --fix --max-warnings 0",
@@ -18,7 +18,9 @@
     "test:fork": "bun test scripts/fork-manifest.test.ts scripts/check-fork.test.ts && bun scripts/check-fork.ts",
     "test:ctl": "bash scripts/collie-ctl.test.sh",
     "test:crew": "bun test ./bridge/crew/harness.test.ts",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "harness:drift": "bun scripts/harness-drift.ts",
+    "canary": "bun scripts/harness-canary/run.ts"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.78.0",

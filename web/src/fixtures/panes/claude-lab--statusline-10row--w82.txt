@@ -1,0 +1,49 @@
+  What's interesting is that terminal interfaces didn't stagnate during the GUI
+  revolution. They evolved. The modern TUI—exemplified by tools like vim, tmux,
+  htop, lazygit, and increasingly sophisticated frameworks like Textual, Ratatui,
+  and Bubble Tea—represents a mature design tradition with its own conventions,
+  patterns, and aesthetic sensibilities, distinct from but informed by graphical
+  interface design.
+
+  [0m[1mWhy Text Endures[0m
+ 
+  The most obvious advantage of terminal interfaces is efficiency for those who
+  invest in
+[0m[38;5;246m  ⎿  Interrupted · What should Claude do instead?[0m
+
+[0m[38;5;239m[48;5;237m❯ [0m[38;5;231m[48;5;237mecho back exactly these four lines and nothing else: ---- then 1. Yes then 2. [0m[48;5;237m  [0m
+[0m[48;5;237m  [0m[38;5;231m[48;5;237mNo then Enter to select[0m[48;5;237m                                                         [0m
+
+[0m[38;5;231m● [0m--- 
+  1. Yes 
+  2. No
+     Enter to select
+
+[0m[38;5;246m✻[0m [0m[38;5;246mCogitated for 3s · done 12:45 AM[0m
+
+[0m[38;5;239m[48;5;237m❯ [0m[38;5;231m[48;5;237mhi[0m[48;5;237m                                                                              [0m
+  
+[0m[38;5;231m●[0m Hi! What would you like to do next?
+  
+[0m[38;5;246m✻ Cooked for 1s · done 12:46 AM[0m
+
+[0m[38;5;239m[48;5;237m❯ [0m[38;5;231m[48;5;237mhi[0m[48;5;237m                                                                              [0m
+
+[0m[38;5;231m● [0mHi again — how can I help?
+
+[0m[38;5;246m✻ Sautéed for 1s · done 12:47 AM[0m
+
+[0m[38;5;244m────────────────────────────────────────────────────────────────────── README.md ─[0m
+❯ [0m[2mfinish the terminal user interfaces essay[0m
+[0m[38;5;244m──────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;5;246mstatus row 1 of ten · lab[0m
+  [0m[38;5;246mstatus row 2 of ten · lab[0m
+  [0m[38;5;246mstatus row 3 of ten · lab[0m
+  [0m[38;5;246mstatus row 4 of ten · lab[0m
+  [0m[38;5;246mstatus row 5 of ten · lab[0m
+  [0m[38;5;246mstatus row 6 of ten · lab[0m
+  [0m[38;5;246mstatus row 7 of ten · lab[0m
+  [0m[38;5;246mstatus row 8 of ten · lab[0m
+  [0m[38;5;246mstatus row 9 of ten · lab[0m
+  [0m[38;5;246mstatus row 10 of ten · lab[0m
+  [0m[38;5;246m⏸ manual mode on · ← for agents[0m

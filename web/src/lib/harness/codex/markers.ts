@@ -44,12 +44,55 @@ export function rstrip(text: string): string {
 //
 // STATUS_ROW stays as the fast path for rows that still carry `Context`, and it is the ONLY
 // text-shaped acceptor. The styled acceptor keys on RENDERER PAINT — an unstyled two-space
-// indent, coloured non-dim fields, and dim ` · ` separators — and never on field names, because
+// indent, coloured non-dim fields, and ` · ` separators painted apart from them — and never on field names, because
 // field names are exactly the part the operator configures. Current Codex may paint one final
-// low-priority field together with its separator as a single dim segment (` · Main [default]`);
+// low-priority field together with its separator as a single quiet segment (` · Main [default]`);
 // that suffix is accepted only after two ordinary coloured fields and only at the end. A text-only
 // lookalike pasted or echoed into the transcript (`  model · Context 50% left` typed by hand, or
 // prose that happens to contain ` · `) carries no SGR at all, so it is still refused.
+//
+// "Quiet" has two renderers. Up to 0.154.0 a separator was SGR 2 (dim) with no colour. 0.156.1
+// drops SGR 2 and paints the separator with the theme's muted foreground instead
+// (`38;2;135;140;164` on the capture host) — and its default row still has no Context field, so
+// until the acceptor learned the second paint EVERY default 0.156.1 pane had no composer, and the
+// unread-dialog card sat over a live input box (codex--v0156-idle.txt). The colour is never
+// matched by value, because it belongs to the theme. The row test asks instead that every
+// separator on the row carry one and the same paint, and that no field carry it. 0.156.1 also
+// right-aligns a notice on the row when it has one (`⚠ 1 warning · f2 to view`); that is accepted
+// only after a gap and a left half that is already a whole status row (`isRightNotice`).
+//
+// A third renderer has no paint at all. A Codex started while no Herdr client is attached gets no
+// answer to its colour queries, so 0.156.1 paints the separator with no SGR and the composer with
+// no fill, while the fields keep their colours (#294, codex--v0156-headless-idle.txt). Refusing
+// that separator left every such idle pane with no composer and the unread-dialog card on top. It
+// is now its own paint, `plain`, under the same rules: one paint for every separator on the row,
+// at least two coloured fields, and the tail shape below. What the widening lets in is a transcript
+// row with coloured words and a plain ` · ` (an agent reply naming two bits of inline code); such a
+// row sits under its reply's column-0 `• ` row, and the tail walk refuses at that row
+// (codex.test.ts pins both halves). The right-aligned notice still wants every segment painted;
+// no headless capture shows one yet.
+//
+// While the first turn of a thread runs, 0.156.1 ends the row with a spinner: one more ` · ` in the
+// row's separator paint, then ONE braille frame in a colour of its own (`  GPT-6-Luna low ·
+// /tmp/collie-canary-project · ⠧`, codex--v0156-busy-streaming.txt). It holds the place of the
+// thread's title: a few seconds on, the same spot and colour read `Write a sheepdog story`, an
+// ordinary third field. The frame is a single coloured braille glyph, which is also what a starfield
+// sparkle is, so `withoutSparkles` used to paint it over; the row then ended in a bare separator and
+// was refused, and a busy Codex had no composer: the unread-dialog card, and a send refused as
+// `blocked` where Codex would have queued it. The spinner is now the row's TAIL (`isSpinnerFrame`,
+// `trailingSpinnerIndex`): not a field, so it never counts toward the two, and not a sparkle. It is
+// accepted only as the last segment, straight after an ordinary separator in the row's one paint,
+// and only when the row before that separator is already a whole status row on its own, so it adds
+// no way in for a row that was refused without it. A spinner anywhere else is still painted over as
+// a sparkle, exactly as before; no capture shows one there.
+//
+// Why a dialog cannot pass: every 0.156.1 dialog footer (`enter continue · esc quit`, `enter select
+// · esc back`, `Press enter to confirm or esc to cancel`) paints its key names BOLD, and its glue
+// text SGR 2 in the SAME segment as the ` · `, so neither a field nor a separator can be read off
+// it. The update prompt's heading row sits on a background fill. codex.test.ts pins composerReady
+// false on every 0.156.1 dialog capture, and the tail shape still has to hold on top: this row
+// last (or straight above the one 0.157.0 hint row, `isHintRow`), a column-0 `› ` row above, and
+// nothing at column 0 in between.
 //
 // Still unsupported: a DISABLED status line (`tui.status_line = null`). There is then no row
 // under the prompt to anchor on, and the rows that remain are transcript. Anchoring the composer
@@ -99,26 +142,51 @@ function isFieldSegment(segment: AnsiSegment): boolean {
   return codePointCount(segment.text) <= MAX_STATUS_FIELD_CHARS;
 }
 
-/** A dim ` \u00b7 ` separator segment, painted exactly so and nothing else. */
-function isSeparatorSegment(segment: AnsiSegment): boolean {
-  if (segment.text !== STATUS_SEPARATOR) return false;
-  if (segment.dim !== true) return false;
-  return segment.fg === undefined && segment.bg === undefined && segment.bold !== true;
+/**
+ * The QUIET paint Codex gives a status separator, as a comparable key, or null when the segment is
+ * not painted that way. Three renderers are known:
+ *
+ *   - `"dim"` — SGR 2 with no colour of its own (0.150.1 to 0.154.0).
+ *   - `"fg:<colour>"` — no SGR 2, an explicit foreground instead (0.156.1 paints ` · ` as
+ *     `38;2;135;140;164`). The colour is the THEME's muted tone, so it is never matched by value:
+ *     a theme change would silently darken every pane. What the row test asks of it instead is
+ *     that every separator on the row carries the SAME paint, and that no field shares it
+ *     (`isStyledStatusRow`), i.e. the separators are painted apart from the fields they divide.
+ *   - `"plain"` — no paint at all: 0.156.1 started with no Herdr client attached, so no colour query
+ *     was answered (#294). A field always carries a foreground, so it can never share this paint.
+ *
+ * Bold, underline, italic and a background are never separator paint: a dialog footer's key names
+ * are bold, and the 0.156.1 dialogs that sit on a fill (the update prompt) carry a background.
+ */
+function separatorPaint(segment: AnsiSegment): string | null {
+  if (segment.bg !== undefined || segment.bold === true) return null;
+  if (segment.italic === true || segment.underline === true) return null;
+  if (segment.dim === true) return segment.fg === undefined ? "dim" : null;
+  return segment.fg === undefined ? "plain" : `fg:${segment.fg}`;
 }
 
-/** One final low-priority field that Codex paints in the same dim segment as its separator. */
-function isDimSuffixFieldSegment(segment: AnsiSegment): boolean {
-  if (!segment.text.startsWith(STATUS_SEPARATOR)) return false;
+/** A ` \u00b7 ` separator segment, painted quietly and nothing else. Its paint key, or null. */
+function separatorSegmentPaint(segment: AnsiSegment): string | null {
+  return segment.text === STATUS_SEPARATOR ? separatorPaint(segment) : null;
+}
+
+/** One final low-priority field that Codex paints in the same quiet segment as its separator.
+ *  Its paint key, or null. */
+function quietSuffixFieldPaint(segment: AnsiSegment): string | null {
+  if (!segment.text.startsWith(STATUS_SEPARATOR)) return null;
   const field = segment.text.slice(STATUS_SEPARATOR.length);
-  if (field.length === 0 || field !== field.trim()) return false;
-  if (hasControlChar(field) || codePointCount(field) > MAX_STATUS_FIELD_CHARS) return false;
-  if (segment.dim !== true) return false;
-  return segment.fg === undefined && segment.bg === undefined && segment.bold !== true;
+  if (field.length === 0 || field !== field.trim()) return null;
+  if (hasControlChar(field) || codePointCount(field) > MAX_STATUS_FIELD_CHARS) return null;
+  return separatorPaint(segment);
 }
 
 /** The unstyled two-space indent Codex opens the row with. */
 function isIndentSegment(segment: AnsiSegment): boolean {
   if (segment.text !== STATUS_INDENT) return false;
+  return isUnstyled(segment);
+}
+
+function isUnstyled(segment: AnsiSegment): boolean {
   if (segment.fg !== undefined || segment.bg !== undefined) return false;
   return (
     segment.bold !== true &&
@@ -126,6 +194,48 @@ function isIndentSegment(segment: AnsiSegment): boolean {
     segment.italic !== true &&
     segment.underline !== true
   );
+}
+
+/** The unstyled run of spaces that pushes a right-aligned notice to the row's far edge. */
+function isGapSegment(segment: AnsiSegment): boolean {
+  return /^ {2,}$/.test(segment.text) && isUnstyled(segment);
+}
+
+// The busy row's spinner frames: the ten of the dots spinner, the only run of them in the 0.156.1
+// binary (beside its status-surface code). The canary's busy captures hold `⠋` and `⠧`. The starfield
+// draws from eight single-dot glyphs instead (`⠁⠂⠄⠈⠐⠠⡀⢀`, every sparkle in
+// codex--v0154-submitted-fill.txt), so no sparkle is a spinner frame. The frame's colour changes
+// from thread to thread (three captures, three colours), so it is never matched by value.
+const SPINNER_FRAME = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/u;
+
+/** One spinner frame as Codex paints it on a busy status row: a single glyph of the ten, in a
+ *  foreground of its own, with no background and no emphasis. */
+function isSpinnerFrame(segment: AnsiSegment): boolean {
+  if (segment.fg === undefined || segment.bg !== undefined) return false;
+  if (segment.bold === true || segment.dim === true) return false;
+  if (segment.italic === true || segment.underline === true) return false;
+  return SPINNER_FRAME.test(segment.text);
+}
+
+// 0.156.1 right-aligns a notice on the status row when it has one — seen as `⚠ 1 warning · f2 to
+// view` (codex--v0156-draft-multiline.txt). Its paint is mixed (a bold key, quiet glue text), so
+// its segments are not read as fields. It is bounded instead: short, every segment painted (a
+// foreground or SGR 2, never plain text, which is what an echo or prose looks like), and no
+// background. It is only ever accepted after a gap AND a left half that is already a complete
+// status row on its own, so it adds no way in for a row that was refused without it.
+const MAX_NOTICE_SEGMENTS = 12;
+
+function isRightNotice(segments: AnsiSegment[]): boolean {
+  if (segments.length === 0 || segments.length > MAX_NOTICE_SEGMENTS) return false;
+  if (segments[0]!.text.trimStart() !== segments[0]!.text) return false;
+  let chars = 0;
+  for (const segment of segments) {
+    if (segment.bg !== undefined) return false;
+    if (segment.fg === undefined && segment.dim !== true) return false;
+    if (isGapSegment(segment)) return false;
+    chars += codePointCount(segment.text);
+  }
+  return chars <= MAX_STATUS_FIELD_CHARS;
 }
 
 /** Trailing renderer padding is FOLDED, not matched: whitespace-only tail segments are dropped
@@ -142,11 +252,14 @@ function foldTrailingPadding(segments: AnsiSegment[]): AnsiSegment[] | null {
 }
 
 /**
- * The 0.150.1 default status row, recognised by its PAINT. All of these must hold, or the row is
- * refused: the styled line must be the same row as `text`; the segments must read as an unstyled
- * two-space indent then `field (sep field)*`, optionally ending with one combined dim
- * `sep + field` segment after two ordinary fields; and the field count must stay in bounds. Prose
- * that happens to contain ` \u00b7 ` fails on the paint, which is the whole point of the guard.
+ * The default status row, recognised by its PAINT. All of these must hold, or the row is refused:
+ * the styled line must be the same row as `text`; the segments must read as an unstyled two-space
+ * indent then `field (sep field)*`, optionally ending with one combined quiet `sep + field` segment
+ * after two ordinary fields, or with a gap and a right-aligned notice after two ordinary fields, or
+ * with a separator and a spinner frame after two ordinary fields (a busy row, not a field);
+ * every separator must carry ONE quiet paint, which no field may share; and the field count must
+ * stay in bounds. Prose that happens to contain ` \u00b7 ` fails on the paint, which is the whole
+ * point of the guard.
  */
 function isStyledStatusRow(text: string, line: StyledLine): boolean {
   const rowText = rstrip(text);
@@ -159,24 +272,45 @@ function isStyledStatusRow(text: string, line: StyledLine): boolean {
   if (!isIndentSegment(segments[0]!)) return false;
 
   let fields = 0;
+  // The one quiet paint every separator on this row carries; set by the first separator.
+  let paint: string | null = null;
+  const fieldColours = new Set<string>();
+
   let i = 1;
   while (i < segments.length) {
-    if (!isFieldSegment(segments[i]!)) return false;
+    const field = segments[i]!;
+    if (!isFieldSegment(field)) return false;
+    fieldColours.add(field.fg!);
     fields++;
     i++;
     if (i === segments.length) break;
 
-    const separator = segments[i]!;
-    if (isDimSuffixFieldSegment(separator)) {
-      if (fields < MIN_STATUS_FIELDS || i !== segments.length - 1) return false;
-      fields++;
-      i++;
+    const next = segments[i]!;
+    if (isGapSegment(next)) {
+      if (fields < MIN_STATUS_FIELDS || !isRightNotice(segments.slice(i + 1))) return false;
       break;
     }
-    if (!isSeparatorSegment(separator) || i === segments.length - 1) return false;
+    const suffix = quietSuffixFieldPaint(next);
+    const nextPaint = suffix ?? separatorSegmentPaint(next);
+    if (nextPaint === null || (paint !== null && nextPaint !== paint)) return false;
+    paint = nextPaint;
+    if (suffix !== null) {
+      if (fields < MIN_STATUS_FIELDS || i !== segments.length - 1) return false;
+      fields++;
+      break;
+    }
+    // A busy row: this separator, then a spinner frame as the very last segment. The frame is not a
+    // field; every check after the loop sees exactly the row before this separator.
+    if (i === segments.length - 2 && isSpinnerFrame(segments[i + 1]!)) {
+      if (fields < MIN_STATUS_FIELDS) return false;
+      break;
+    }
+    if (i === segments.length - 1) return false;
     i++;
   }
-  return fields >= MIN_STATUS_FIELDS && fields <= MAX_STATUS_FIELDS;
+  if (fields < MIN_STATUS_FIELDS || fields > MAX_STATUS_FIELDS) return false;
+  // A separator painted in a field's own colour is not a separator set apart from its fields.
+  return paint === null || !paint.startsWith("fg:") || !fieldColours.has(paint.slice(3));
 }
 
 /** True when the row could be the composer's status line. Never decisive alone — the composer
@@ -186,6 +320,30 @@ export function isStatusRow(text: string, line?: StyledLine): boolean {
   const row = rstrip(text);
   if (STATUS_ROW.test(row) || INLINE_QUEUE_CONTEXT_ROW.test(row)) return true;
   return line !== undefined && isStyledStatusRow(text, line);
+}
+
+// Codex 0.157.0 turned `tui.fullscreen_transcript` on by default. In that layout the status line
+// gets a row of its own and ONE more row sits under it: the key hints (`? for shortcuts`, `tab to
+// queue message`, and `← for agents · ? for shortcuts` when the TUI is attached to a local Codex
+// daemon), plus a right-aligned notice (`⚠ 1 warning · f2 to view`). With a draft and no notice
+// the row is blank. When it was not blank, the status row was no longer the last row, and every
+// such pane had no composer: the unread-dialog card, and every send refused (#294, the reporter's
+// pane and codex--v0157-idle.txt). This row is recognised by its SHAPE only. The status row
+// straight above it is the evidence. The hint row's muted colour is theme paint that a client-less
+// Codex does not get, and invariants.test.ts repaints the whole band, this row included.
+const HINT_ROW = /^ {2,}\S/;
+
+/**
+ * True when the row could be the key-hint row under a 0.157.0 status row: indented (column 0 is
+ * blank, which no transcript bullet and no prompt row is), bounded, no control bytes, and not a
+ * status row itself. Never decisive alone: locateComposer accepts it only as the last non-blank row
+ * and only straight under a status row.
+ */
+export function isHintRow(text: string, line?: StyledLine): boolean {
+  const row = rstrip(text);
+  if (!HINT_ROW.test(row) || hasControlChar(row)) return false;
+  if (codePointCount(row) > MAX_STATUS_ROW_CHARS) return false;
+  return !isStatusRow(text, line);
 }
 
 // The `› ` prompt row. Column 0 — but transcript ECHOES of submitted messages paint the same
@@ -229,4 +387,42 @@ export function regionSignature(lines: StyledLine[], from: number, to: number): 
     .slice(from, to)
     .map((l) => rstrip(lineText(l)))
     .join("\n");
+}
+
+// Codex's Astra models paint a starfield over the composer band: braille glyphs (U+2800 to U+28FF)
+// scattered across the row above the prompt, the prompt row after the draft, and the rows under it,
+// repainted every frame (issue #245, and codex--v0154-submitted-fill.txt, captured on gpt-6-astra).
+// Each sparkle is ONE glyph in its own segment with its own grey foreground. A typed draft is painted
+// in the default foreground, so the colour is what tells a sparkle from a braille character someone
+// typed, the same renderer-evidence rule isEmptyPlaceholder uses in chrome.ts.
+const BRAILLE = /^[⠀-⣿]$/u;
+
+/** One starfield sparkle: a single braille glyph carrying its own foreground colour. */
+export function isSparkle(segment: AnsiSegment): boolean {
+  return segment.fg !== undefined && BRAILLE.test(segment.text);
+}
+
+/**
+ * Where a busy status row's spinner sits: the line's last non-blank segment, when it is a spinner
+ * frame straight after a ` · ` segment. -1 when the line ends any other way. It only spares that one
+ * glyph from `withoutSparkles`; whether the row is a status row is still `isStatusRow`'s call.
+ */
+function trailingSpinnerIndex(segments: AnsiSegment[]): number {
+  let end = segments.length - 1;
+  while (end >= 0 && segments[end]!.text.trim() === "") end--;
+  if (end < 1 || !isSpinnerFrame(segments[end]!)) return -1;
+  return segments[end - 1]!.text === STATUS_SEPARATOR ? end : -1;
+}
+
+/** The line with every sparkle painted over by a space. Columns are kept, so the prompt prefix and
+ *  the continuation gutter still sit where the grammar looks for them. A busy status row's trailing
+ *  spinner is not a sparkle, and stays. The SAME reference when nothing is painted over. */
+export function withoutSparkles(line: StyledLine): StyledLine {
+  const spinner = trailingSpinnerIndex(line.segments);
+  const paintOver = (s: AnsiSegment, i: number) => i !== spinner && isSparkle(s);
+  if (!line.segments.some(paintOver)) return line;
+  return {
+    ...line,
+    segments: line.segments.map((s, i) => (paintOver(s, i) ? { ...s, text: " ", fg: undefined } : s)),
+  };
 }

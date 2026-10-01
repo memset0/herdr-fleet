@@ -7,13 +7,13 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 
 import { clearStatus, useStatus } from "@/lib/status";
 import { isReloadHeld, __resetReloadGuard } from "@/lib/reload-guard";
-import { loadDraft } from "@/lib/drafts";
+import { loadDraft, loadDraftEntry, saveDraft } from "@/lib/drafts";
 import { __resetOperatorCommands } from "@/lib/operator-config";
 import { server } from "@/test/setup";
 import { fixtureServers, recordReply } from "@/test/handlers";
 import { CrewProvider } from "./crew-provider";
 import { Composer, TUI_SETTLE_MS } from "./composer";
-import { statusLabel, type ServerSummary } from "@/lib/types";
+import { type ServerSummary } from "@/lib/types";
 
 // A guarded send is TWO reply calls: type (submit:false), then — once the text is verified on the
 // input line — submit-only (empty text). Overriding the reply handler therefore has to keep the fake
@@ -73,6 +73,8 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
+    mirrorNative: false,
+    setMirrorNative: vi.fn(),
     setExpandClippedReply: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
@@ -125,6 +127,8 @@ function renderComposerWithStatus(
     stepFontSize: vi.fn(),
     setRawTerminal: vi.fn(),
     setTapToFocus: vi.fn(),
+    mirrorNative: false,
+    setMirrorNative: vi.fn(),
     setExpandClippedReply: vi.fn(),
     onSent: vi.fn(),
     ...overrides,
@@ -169,6 +173,72 @@ describe("Composer — send", () => {
     expect(calls).toEqual([]); // no keys, no reply — nothing reached the pane at all
     expect(box).toHaveValue("please do not approve anything"); // the message survives
     expect(props.onSent).not.toHaveBeenCalled();
+  });
+
+  // .adr/0053: the unread-dialog card. The screen is a dialog nobody could READ, so the refusal is a
+  // guess — it still refuses, but it arms the deliberate second tap and names the key on the card.
+  it("refuses an unread dialog, names its key, and arms the type-anyway override", async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/keys$/, () => {
+        calls.push("keys");
+        return HttpResponse.json({ ok: true });
+      }),
+      replyHandler(() => calls.push("reply")),
+    );
+    const props = renderComposerWithStatus({ dialogPresent: true, dialogUnread: true });
+    const box = screen.getByPlaceholderText(/type a reply/i);
+
+    await user.type(box, "carry on");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // The status names the key the way the Keys keypad names it, and the card is where it is.
+    await waitFor(() =>
+      expect(screen.getByTestId("status")).toHaveTextContent(/Collie cannot read this dialog/i),
+    );
+    expect(screen.getByTestId("status")).toHaveTextContent(/Esc is on the card/);
+    expect(calls).toEqual([]);
+    expect(box).toHaveValue("carry on");
+    // Armed: the Send button now asks for the deliberate second tap.
+    expect(screen.getByRole("button", { name: /type anyway/i })).toBeInTheDocument();
+    expect(props.onSent).not.toHaveBeenCalled();
+  });
+
+  it("lets the second Send through on an unread dialog", async () => {
+    const user = userEvent.setup();
+    let submitted = false;
+    server.use(replyHandler(() => {}, () => (submitted = true)));
+    renderComposerWithStatus({ dialogPresent: true, dialogUnread: true });
+    const box = screen.getByPlaceholderText(/type a reply/i);
+
+    await user.type(box, "carry on");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("status")).toHaveTextContent(/Collie cannot read this dialog/i),
+    );
+
+    await user.click(screen.getByRole("button", { name: /type anyway/i }));
+    await waitFor(() => expect(submitted).toBe(true), { timeout: 5000 });
+    await waitFor(() => expect(box).toHaveValue(""));
+  });
+
+  it("keeps the flat refusal for a dialog a grammar READ: no unread override", async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    server.use(replyHandler(() => calls.push("reply")));
+    renderComposerWithStatus({ dialogPresent: true, dialogUnread: false });
+    const box = screen.getByPlaceholderText(/type a reply/i);
+
+    await user.type(box, "please do not approve anything");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/dialog is waiting/i));
+    // Flat: no override is armed, so a second tap refuses exactly the same way.
+    expect(screen.queryByRole("button", { name: /type anyway/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(calls).toEqual([]);
+    expect(box).toHaveValue("please do not approve anything");
   });
 
   // The same #34 failure one step upstream. `dialogPresent` and the stranded draft are both derived
@@ -501,6 +571,8 @@ describe("Composer — send", () => {
               stepFontSize={vi.fn()}
               setRawTerminal={vi.fn()}
               setTapToFocus={vi.fn()}
+              mirrorNative={false}
+              setMirrorNative={vi.fn()}
               setExpandClippedReply={vi.fn()}
               onSent={vi.fn()}
             />
@@ -595,6 +667,8 @@ describe("Composer — send", () => {
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
+    mirrorNative: false,
+    setMirrorNative: vi.fn(),
       setExpandClippedReply: vi.fn(),
       onSent: vi.fn(),
     };
@@ -692,6 +766,8 @@ describe("Composer — typing into the terminal", () => {
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
+              mirrorNative={false}
+              setMirrorNative={vi.fn()}
             setExpandClippedReply={vi.fn()}
             onSent={vi.fn()}
           />
@@ -825,6 +901,8 @@ describe("Composer — typing into the terminal", () => {
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
+              mirrorNative={false}
+              setMirrorNative={vi.fn()}
             setExpandClippedReply={vi.fn()}
             onSent={vi.fn()}
           />
@@ -1017,6 +1095,8 @@ describe("Composer — typing into the terminal", () => {
             stepFontSize={vi.fn()}
             setRawTerminal={vi.fn()}
             setTapToFocus={vi.fn()}
+              mirrorNative={false}
+              setMirrorNative={vi.fn()}
             setExpandClippedReply={vi.fn()}
             onSent={vi.fn()}
           />
@@ -1141,14 +1221,15 @@ describe("Composer — the draft field wears its own size", () => {
     expect(box.className).toMatch(/(?:^|\s)font-mono(?=\s|$)/);
   });
 
-  // The three things the field's class list already promises, unchanged by the size landing on it:
-  // the attach button's reserved strip, the wrap rule, and the fact that only ONE pr-* may exist
-  // (tailwind-merge keeps the last, DESIGN.md §7).
-  it("leaves the attach-button gutter and the wrap rule exactly where they were", () => {
+  // What the field's class list promises, unchanged by the size landing on it: no horizontal
+  // strip reserved for anything, and the wrap rule. The strip was `pr-11`, for the attach button
+  // in the field's bottom-right corner; the button is the field's sibling in the box now (ADR 0057),
+  // so the 44px is typing area again and NOTHING may reserve it back by adding a padding here.
+  it("reserves no gutter in the field, and keeps the wrap rule where it was", () => {
     renderComposerWithStatus();
     const box = screen.getByPlaceholderText(/type a reply/i);
-    expect(box.className.match(/(?:^|\s)pr-\S+/g)).toHaveLength(1);
-    expect(box.className).toMatch(/(?:^|\s)pr-11(?=\s|$)/);
+    expect(box.className).not.toMatch(/(?:^|\s)pr-/);
+    expect(box.className).toMatch(/(?:^|\s)wrap-anywhere(?=\s|$)/);
   });
 });
 
@@ -1368,12 +1449,6 @@ describe("Composer — destructive-input confirm", () => {
     expect(screen.getByTestId("status")).toHaveTextContent(
       "Destructive: sudo (runs as root) on workshop — tap Send again to confirm",
     );
-    // …and the SAME machine is named at the box the words were typed into. Two statements of one
-    // fact is right here and only here: the chip answers "where will this land" before you commit,
-    // the confirm answers it at the moment you do, and a destructive command on the wrong machine is
-    // the failure both exist to prevent. It is one node, docked inside the field, not a standalone
-    // row above it — the row above the input is the status line's.
-    expect(screen.getByLabelText("Sends to host: workshop")).toBeInTheDocument();
   });
 
   it("does not arm the confirm for innocent input", async () => {
@@ -1390,55 +1465,46 @@ describe("Composer — destructive-input confirm", () => {
   });
 });
 
-// THE MACHINE, ON THE COMPOSER'S STATUS STRIP. For one round it was docked inside the text box; the
-// reasoning survives ("which machine will this land on" is asked while writing, not while reading)
-// but the 60px it took out of the typing area does not. The strip above the controls row is the same
-// write surface and its space was already reserved and already empty.
+// THE MACHINE, ON THE ACTIONS BELT. It has moved twice and the reasoning is cumulative. Docked
+// inside the text box it cost 60px of the widest part of the composer; on the 14px status band above
+// the controls row it cost nothing, but the band's other half — the pane's status word — was what
+// Altan asked to be rid of ("the server is still necessary somewhere, but the status is unnecessary
+// at this place"). So the band went and the chip came down one row, onto the belt every one of those
+// buttons writes from.
 //
-// Four claims, each failing in BOTH directions — a chip that never renders passes none of them, a
-// chip that always renders fails the solo case, and a chip put back in the field fails the second.
-describe("Composer — the machine and the state, on a band of their own", () => {
+// Each claim below fails in BOTH directions: a chip that never renders passes none of them, a chip
+// that always renders fails the solo case, and a chip left on a band fails the first.
+describe("Composer — the machine opens the actions belt, and no band stands above it", () => {
   const box = () => screen.getByPlaceholderText(/type a reply/i);
   const row = () => document.querySelector<HTMLElement>('[data-slot="composer-controls"]')!;
-  /** The status band above it: the host run, the status slot, or both. */
-  const band = () => document.querySelector<HTMLElement>('[data-slot="composer-status"]')!;
-  /** The reserved word slot — the band's last child (`ui/one-of.tsx`).
-   *  SAFETY: the band renders exactly two children in this order, the host run then the slot, and
-   *  the host run is `null` on a solo install — so its last child is always the slot's element. */
-  const slot = () => band().lastElementChild as HTMLElement;
-  /** Every alternative the slot is holding open space for, in order. */
-  const words = () => Array.from(slot().children).map((l) => l.textContent);
-  /** The one it is actually SHOWING. */
-  const shown = () => slot().querySelector<HTMLElement>("[data-active]")?.textContent ?? null;
-  /** The field's own reserved strip. Read off the class, because the jsdom render has no layout. */
+  /** The belt: the scrolling row, which carries the ground, the rules and the row's own margins. */
+  const actions = () => document.querySelector<HTMLElement>('[data-slot="composer-actions"]')!;
+  /** Any strip the field reserves. Read off the class, because the jsdom render has no layout. */
   const reserved = (el: HTMLElement) => /(?:^|\s)pr-(\d+)(?=\s|$)/.exec(el.className)?.[1];
 
-  it("names the machine on the band above the controls row, and renders NOTHING on a solo install", () => {
-    // Solo — every install that exists today. There is no "which machine" question to answer, so the
-    // band carries the word alone. Scoped by data-slot, never a bare role query: `ui/strip-host`
-    // mounts two permanent sr-only live regions, so a role sweep is ambiguous in any tree with a host.
-    renderComposerWithStatus({ scope: { host: "workshop" } });
-    expect(band().querySelector('[aria-label*="host" i]')).toBeNull();
-    cleanup();
-
-    // Crew — the chip appears, INSIDE the band and nowhere else. Not inside the controls group: it
-    // names a machine, not a run of five buttons, and `role="group"` is named "Controls".
+  it("has no status band at all any more, and adds no visible word in its place", () => {
+    // The band is gone, and the word did not move somewhere else: a status word anywhere in this
+    // footer would be the thing Altan
+    // asked to be rid of, wearing a different address.
     renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
-    const chip = screen.getByLabelText("Sends to host: workshop");
-    expect(band().contains(chip)).toBe(true);
-    expect(row().contains(chip)).toBe(false);
+    expect(document.querySelector('[data-slot="composer-status"]')).toBeNull();
+    for (const word of ["needs you", "working", "done", "idle", "unknown", "shell"]) {
+      expect(screen.queryByText(word)).toBeNull();
+    }
   });
 
-  it("is NOT in the composer field: no chip in the box, and the typing width is the attach strip alone", async () => {
-    // The revision this round is. `pr-11` and only `pr-11` — MEASURED at 254px of typing width at a
-    // true 390px content width and 184px at 320px, on a crew exactly as on a solo install; docked,
-    // the crew figures were 194px and 124px. A second conditional `pr-*` would not stack
-    // (tailwind-merge keeps the last padding-right), which is why the number is read off the class.
+  it("is NOT in the composer field: no chip in the box, and the field reserves no strip at all", async () => {
+    // The revision this round is. NO `pr-*`, because there is nothing inside the field to keep a
+    // line clear of any more: the attach button is the field's sibling in the box (ADR 0057).
+    // It was `pr-11`, measured at 254px of typing width at a true 390px content width and 184px at
+    // 320px, on a crew exactly as on a solo install; docked, the crew figures were 194px and 124px.
+    // Read off the class, because a conditional `pr-*` would not stack with another (tailwind-merge
+    // keeps the last padding-right) and this is where such a one would land.
     const user = userEvent.setup();
     renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
-    expect(reserved(box())).toBe("11");
-    // …and nothing in the field's own relative box carries the host, by either route: no chip node
-    // inside it, and no `aria-describedby` pointing the textarea at one.
+    expect(reserved(box())).toBeUndefined();
+    // …and nothing in the box carries the host, by either route: no chip node inside it, and no
+    // `aria-describedby` pointing the textarea at one.
     const field = box().parentElement!;
     expect(field.querySelector('[aria-label*="host" i]')).toBeNull();
     expect(box().getAttribute("aria-describedby")).toBeNull();
@@ -1454,7 +1520,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     // "Controls" was doing two jobs and only one of them was visual. Sighted it labelled five
     // self-labelling buttons; in the accessibility tree it is the ONLY thing naming the group. So it
     // is `sr-only`, not deleted — which is also why `composer.controls.label` is still a live key in
-    // all six dictionaries. Delete the label and this group announces as an unnamed run of buttons.
+    // all seven dictionaries. Delete the label and this group announces as an unnamed run of buttons.
     renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
     expect(screen.getByRole("group", { name: "Controls" })).toBe(row());
     expect(row().getAttribute("aria-labelledby")).toBe("composer-controls-label");
@@ -1462,255 +1528,68 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     expect(label.className).toMatch(/(?:^|\s)sr-only(?=\s|$)/);
   });
 
-  it("holds host + word on a crew, the word ALONE on a solo install, in that order", () => {
-    // THE MOVE THIS ROUND MADE. The pane header's caption line carried the status word by itself, so
-    // the top of a 60px row was spent on one word; it came down here, beside the machine, where
-    // "which machine, and what is it doing" reads as one sentence at the surface being typed into.
-    // It was MOVED and not deleted: on the app's own tokens a deuteranope reads blocked / working /
-    // done as one colour in light theme, so the header's dot cannot carry the range alone
-    // (status-badge.tsx holds the measurement, agent-chat.test.tsx pins the dot's survival).
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: "blocked" }, fixtureServers);
-    expect(band().firstElementChild).toHaveTextContent("workshop"); // machine first…
-    expect(shown()).toBe("needs you"); // …then what it is doing
-    cleanup();
-
-    // Solo — every install that exists today. HostChip renders null, so the word stands alone.
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: "blocked" });
-    expect(shown()).toBe("needs you");
-    expect(band().querySelector('[aria-label*="host" i]')).toBeNull();
-    cleanup();
-
-    // A bare shell has no agent and therefore no agent status, and still owes the band a word.
-    renderComposerWithStatus({ isShell: true, scope: { host: "workshop" } });
-    expect(shown()).toBe("shell");
-  });
-
-  it("reserves the WORD's slot, so no status can change its width", () => {
-    // THE BUG THE OPERATOR FOUND. The band is right-aligned and the word is variable-width, so every
-    // status change slid the host sideways — DESIGN.md §2, verbatim: a state may repaint, it may not
-    // re-lay-out. MEASURED in the playground at a true 390px content width, crew pane, host chip's
-    // left edge: it was 262.92 / 271.89 / 290.86 / 296.28 / 267.33px for the five statuses (a 33.4px
-    // swing) and is 262.92px for all five now. In German the swing was 41.3px and is zero.
-    //
-    // jsdom has no layout, so what is pinned here is the STRUCTURE that makes it true: the slot
-    // renders every word it could ever hold, always, and a status change only moves `data-active`
-    // between them. Render one word alone and the DOM below differs per status; the test fails.
-    const dom = new Map<string, string>();
-    for (const status of ["blocked", "working", "done", "idle", "unknown"] as const) {
-      renderComposerWithStatus({ scope: { host: "workshop" }, status }, fixtureServers);
-      expect(words()).toEqual(["needs you", "working", "done", "idle", "unknown"]);
-      expect(shown()).toBe(statusLabel(status));
-      // Everything except which layer is in front is byte-identical across the five.
-      // Normalise away the marks whose whole job is to say WHICH layer is in front — everything
-      // else, the five words and the boxes they stand in, has to be identical.
-      const front = /(?: data-active=""| inert=""| aria-hidden="true"|opacity-\d+|pointer-events-none)/g;
-      dom.set(status, slot().innerHTML.replace(front, "").replace(/\s+/g, " "));
-      cleanup();
-    }
-    expect(new Set(dom.values()).size).toBe(1);
-
-    // …and the reserve is NOT a number. A pixel width could not do this job: the same slot is
-    // "braucht dich" (72.2px) in German and "desconocido" (70.0px) in Spanish against "needs you"
-    // at 54.6px, so any constant clips one locale or wastes another's space. The layout engine
-    // measures the real glyphs of the real dictionary instead.
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: "done" }, fixtureServers);
-    expect(slot().className).not.toMatch(/(?:^|\s)(?:min-)?w-\[/);
-    expect(slot().className).not.toMatch(/(?:^|\s)(?:min-)?w-\d/);
-    cleanup();
-
-    // A GONE pane shows no word at all — and keeps the slot, because "shows nothing" is a state too
-    // and a pane dying under you must not slide the machine's name at the moment you are reading it.
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: undefined }, fixtureServers);
-    expect(shown()).toBeNull();
-    expect(words()).toHaveLength(5);
-    cleanup();
-
-    // A SHELL pane reserves only what it can become. Its word is "shell" forever, so reserving the
-    // agent set would buy a solo shell ~24px of permanent emptiness for states it can never enter.
-    renderComposerWithStatus({ isShell: true, scope: { host: "workshop" } }, fixtureServers);
-    expect(words()).toEqual(["shell"]);
-  });
-
-  it("carries exactly ONE rule at each seam, and draws each from above", () => {
+  it("carries exactly ONE rule at each seam, and the belt draws its own two", () => {
     // DESIGN.md §4: where two chrome regions stack, ONE component draws the boundary. Two drawing it
     // gives a 2px line where the language says 1px — a fault this codebase has already fixed twice
     // (space-strip / tab-strip).
     //
-    // THE BAND NOW CLOSES BOTH OF ITS OWN EDGES, and that is the operator's third report answered:
-    // it had a rule below and the dock's 10px `pt-2.5` above, so the box the EYE drew ran from the
-    // dock's top rule to the band's bottom one — ~23px of unbroken ground with the words sitting at
-    // the bottom of it. Bounded on both edges the band IS the box it is centred in. The 10px moved
-    // BELOW, onto the controls row, where it separates the band from the buttons.
-    //
-    // The dock therefore draws NOTHING: its top rule and fill moved out to the chrome block in
-    // agent-chat.tsx, which also carries the swipe handle, so the boundary against the terminal is
-    // drawn once above everything the thumb operates. agent-chat.test.tsx pins that half.
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: "working" }, fixtureServers);
-    expect(band().className).toMatch(/(?:^|\s)border-y(?=\s|$)/);
-    // `border-border`, not `border-rule` — the band's edges are component edges inside ONE chrome
-    // surface (handle above, controls below); the regional cut is the chrome block's top rule. The
-    // operator read the 24% pair as too loud around 10px type; 12% still states the box.
-    expect(band().className).toMatch(/(?:^|\s)border-border(?=\s|$)/);
-    expect(band().className).not.toMatch(/(?:^|\s)border-rule(?=\s|$)/);
-    // …stated as ONE utility. `border-b border-t` would paint the same two lines and read as two
-    // decisions, and a later `border-b` in the same cn() would silently drop the top one.
-    expect(band().className).not.toMatch(/(?:^|\s)border-[bt](?=\s|$)/);
-    // The row below draws nothing at all: no edge of its own, in any direction.
+    // The belt closes its LOWER edge only, and the chrome block draws the upper one: the dock draws
+    // nothing (its top rule and fill moved out to the chrome block in agent-chat.tsx, which also
+    // carries the swipe handle, so the boundary against the terminal is drawn once above everything
+    // the thumb operates — agent-chat.test.tsx pins that half), the status band that used to sit
+    // between them is gone, and the belt now stands flush under that one rule with no margin.
+    renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
+    expect(actions().className).toMatch(/(?:^|\s)border-b(?=\s|$)/);
+    // `border-border`, not `border-rule` — the belt's edge is a component edge inside ONE chrome
+    // surface (the input below); the regional cut is the chrome block's top rule.
+    expect(actions().className).toMatch(/(?:^|\s)border-border(?=\s|$)/);
+    expect(actions().className).not.toMatch(/(?:^|\s)border-rule(?=\s|$)/);
+    // NO top rule and NO top margin — either one would put a second hairline, or a strip of empty
+    // chrome, between the mirror and the belt.
+    expect(actions().className).not.toMatch(/(?:^|\s)(?:border-y|border-t|mt-)/);
+    // The controls group draws NOTHING at all: with the capsule retired it stands on the belt's own
+    // ground, so it can neither double a seam nor outline itself.
     expect(row().className).not.toMatch(/(?:^|\s)border/);
+    expect(row().className).not.toMatch(/(?:^|\s)rounded/);
     // …and the dock around them draws no edge either — the chrome block above it does.
-    const dock = band().parentElement!;
+    const dock = actions().previousElementSibling!;
     expect(dock.className).not.toMatch(/(?:^|\s)border/);
-    // The 10px the dock used to spend above the band is now below it, on the controls row.
     expect(dock.className).not.toMatch(/(?:^|\s)pt-/);
-    expect(row().className).toMatch(/(?:^|\s)mt-2(?=\s|$)/);
-    // A border colour with no width paints nothing (DESIGN.md §7 trap 1) — so the width is asserted
-    // beside the colour, and this pin fails if either is dropped.
+    // …and the belt has no top margin of its own. It was `mt-2`, the air between the status band and
+    // these buttons, then `mt-1.5`, the room the pull-up grip's upper half hung into. Both are gone,
+    // so the belt stands flush under the chrome block's rule and there is no empty strip above it.
+    // The bottom margin is `mb-1` now, not `mb-1.5` — it came down 2px with the belt itself when the
+    // belt shrank to pill height (Option 6 of the belt-shade deck).
+    expect(actions().className).toMatch(/(?:^|\s)mb-1(?=\s|$)/);
   });
 
-  it("stands at ONE height — solo, crew, shell, gone, and across every status", () => {
-    // MEASURED in the browser on the pane screen at a true 390px viewport, both themes: the band is
-    // 14.00px — 1 + 12 + 1 — with the word alone (solo), with host + word (crew), on a shell, with
-    // no word at all (a gone pane) and on every one of the five statuses. The five buttons below
-    // still measure 44.00px, DESIGN.md §6's floor.
+  it("runs the ground and the rules edge to edge, and puts the gutter back on the scroller", () => {
+    // FULL-BLEED: `-mx-3` cancels the dock's `px-3`, so the ground and both rules reach the viewport
+    // edges. A band that stopped 12px short would read as a wide capsule — the shape this row just
+    // stopped being — so the ground and the rules belong to the element carrying that margin and
+    // never to the scroller one level in.
     //
-    // THE STACK GOT 9px SHORTER in the same edit: the dock's 10px of top padding went away and the
-    // band's new top rule cost 1px back.
-    //
-    // The height is STATED (`h-[14px]`) rather than summed from whatever stands in the band. It used
-    // to be 12px of line box plus the rules, i.e. equal solo and on a crew only because the occupants
-    // happened to agree; an occupant that ever measured 13 would have grown the band and nothing
-    // would have said so. Pinning the border box makes solo and crew identical by construction.
-    //
-    // jsdom has no layout, so what is pinned are the facts that make that true and that a refactor
-    // could quietly undo.
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: "working" });
-    const soloBand = band().className;
-    const soloRow = row().className;
-    expect(soloBand).toMatch(/(?:^|\s)h-\[14px\](?=\s|$)/);
-    // The 12px line box is stated on the BAND, not just on the runs inside it, and that is
-    // load-bearing: a block layer in the slot takes its line box from its own inherited strut, so
-    // without this the 14px page strut wins and the band measures 25px instead of 14px. One utility
-    // and never `text-[10px] leading-3` — tailwind-merge drops an earlier `leading-*` when a later
-    // `text-<size>` lands in the same cn(), which once rendered the host run at a 15px line and grew
-    // the pane header to 63px.
-    expect(soloBand).toContain("text-[10px]/3");
-    expect(soloBand).not.toMatch(/(?:^|\s)leading-/);
-    // Nothing PADS the row of buttons — the 10px above it is a margin, outside the band's box, so
-    // the band's own height stays a fact about the band.
-    expect(soloRow).not.toMatch(/(?:^|\s)pt-/);
-    expect(soloRow).not.toMatch(/(?:^|\s)py-/);
-    // And the band carries NO vertical padding in any direction: it is 1 + 12 + 1 exactly, and a
-    // pixel spent on either side would push a rule off the height the row was argued down to. The
-    // `pt-px` that used to sit here is gone with the reason for it — see the centring test below.
-    expect(soloBand).not.toMatch(/(?:^|\s)(?:pt|pb|py)-/);
-    cleanup();
-
-    for (const overrides of [
-      { scope: { host: "workshop" }, status: "blocked" as const },
-      { scope: { host: "workshop" }, status: "done" as const },
-      { scope: { host: "workshop" }, status: undefined },
-    ]) {
-      renderComposerWithStatus(overrides, fixtureServers);
-      expect(band().className).toBe(soloBand); // the crew pays nothing for the chip
-      expect(row().className).toBe(soloRow);
-      // Both runs state the same 12px line box, as ONE utility.
-      for (const run of [band().firstElementChild!, slot().firstElementChild!.firstElementChild!]) {
-        expect(run.className).toContain("text-[10px]/3");
-        expect(run.className).not.toMatch(/(?:^|\s)leading-/);
-      }
-      cleanup();
-    }
-  });
-
-  it("centres both occupants on the band's OWN middle, not on its content box's", () => {
-    // THE OPERATOR'S THIRD REPORT: "content in the bottom status row is still not vertically
-    // centered." The second report had already been answered with `h-[13px] pt-px`, and the numbers
-    // said it worked — so the third report is the useful one, because it says the numbers were
-    // answering the wrong question.
-    //
-    // THE BOX WAS WRONG, NOT THE CENTRING. The band had a rule below it and the dock's `pt-2.5`
-    // above it, on the dock's own ground: nothing marked where the band started, so the box the eye
-    // drew ran from the dock's top rule to the band's bottom rule — about 23px of unbroken surface
-    // with the two runs sitting in the last 13 of it. No amount of centring inside the 13px can fix
-    // a 23px box. `border-y` states the box instead, and the 10px goes below the band as the
-    // controls row's top margin (mt-2 since the 2026-08-31 shave), separating rather than
-    // pretending to belong.
-    //
-    // AND THE 1px NUDGE GOES WITH IT. `pt-px` existed to pay for a hairline on ONE edge. With both
-    // edges ruled the box is symmetric by construction and a compensation still applied tips it the
-    // other way. MEASURED on the page at 390px, DPR 3, dark, as ink rows in the band's own 14px
-    // border box (rules at 0 → 1 and 13 → 14), by sampling rendered pixels rather than boxes:
-    //
-    //                            WITH pt-px        WITHOUT
-    //   caps, both runs          4.00 → 11.00      3.00 → 10.00
-    //   caps centroid            7.33              6.33
-    //   ALL ink centroid         7.83              6.83
-    //   band centre              7.00              7.00
-    //
-    // The eye centres the CLUSTER, not the capital letters — the host's 10px glyph is part of the
-    // line and sits lower than the caps do — so the all-ink row is the one that decides: 0.83px low
-    // becomes 0.17px high. `items-center` over a stated height does the whole job.
-    //
-    // jsdom has no layout — it cannot measure any of the above — so what is pinned is the mechanism
-    // that produces it, and every clause fails in both directions: drop `items-center` and nothing
-    // centres, drop a rule and the box stops being the one the eye reads, put `pt-px` back and the
-    // cluster sits low again, put the glyph back to `size-3` and it fills the content box entirely.
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: "working" }, fixtureServers);
-    expect(band().className).toMatch(/(?:^|\s)items-center(?=\s|$)/);
-    expect(band().className).toMatch(/(?:^|\s)h-\[14px\](?=\s|$)/);
-    expect(band().className).toMatch(/(?:^|\s)border-y(?=\s|$)/);
-    // No compensating pixel, in either direction. This is the clause that fails if someone reads
-    // the old comment and "restores" the nudge.
-    expect(band().className).not.toMatch(/(?:^|\s)(?:pt|pb|py)-/);
-    // One height utility — a second `h-*` would win under tailwind-merge and the stated box would
-    // quietly become someone else's.
-    expect(band().className.match(/(?:^|\s)h-\S+/g)).toEqual([" h-[14px]"]);
-    // The glyph beside the host name is 10px here and nothing else. At 12px it was the band's whole
-    // content box, so it could not be centred in it — there was no room either side to centre into.
-    const glyph = band().querySelector("svg")!;
-    expect(glyph.getAttribute("class")).toMatch(/(?:^|\s)size-2\.5(?=\s|$)/);
-    expect(glyph.getAttribute("class")).not.toMatch(/(?:^|\s)size-3(?=\s|$)/);
-    // And the line box is still ONE utility on the band, unsplit — the whole geometry above is a
-    // sum of stated boxes, and a `leading-*` that tailwind-merge could delete would undo it.
-    expect(band().className).toContain("text-[10px]/3");
-    expect(band().className).not.toMatch(/(?:^|\s)leading-/);
-    cleanup();
-
-    // A SOLO install renders no host at all, so the band's only occupant is the word — and the
-    // centring must not be a fact about the crew. Same utilities, same class string.
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: "working" });
-    expect(band().querySelector("svg")).toBeNull();
-    expect(band().className).toMatch(/(?:^|\s)items-center(?=\s|$)/);
-    expect(band().className).toMatch(/(?:^|\s)h-\[14px\](?=\s|$)/);
-    expect(band().className).toMatch(/(?:^|\s)border-y(?=\s|$)/);
-    expect(band().className).not.toMatch(/(?:^|\s)(?:pt|pb|py)-/);
-  });
-
-  it("runs the ground and the rule edge to edge, and still insets the content by 10px", () => {
-    // The operator asked for a different background AND a bottom border. Both halves are read off
-    // the class because jsdom has no layout.
-    //
-    // FULL-BLEED: `-mx-3` cancels the dock's `px-3`, so the fill and the rule reach both viewport
-    // edges. A fill that stopped 12px short would read as a floating bar, and a rule that stopped
-    // short would not separate the two regions it sits between. `px-2.5` then puts the content back
-    // at the 10px inset the controls row asked for — which is also what absorbed the row's old
-    // `-mx-0.5`: as a 2px overhang on a TRANSPARENT strip it was invisible, and on a filled one it
-    // would not have been. The controls row keeps its own `-mx-0.5`, which is the 1px per button it
-    // was bought for. tailwind-merge keeps only the LAST padding-* in one cn(), which is why the
-    // band's inset is one `px-*` and not two.
-    //
-    // NO FILL. `--card` was tried here and measured against DESIGN.md §4, which says chrome is the
-    // page colour separated by a rule and never a fill band: 1.19:1 against the dock below in both
-    // themes, 1.09:1 / 1.10:1 against the mirror above, against a `border-b border-rule` doing
-    // 1.45:1 light and 2.19:1 dark. The rule was doing the separating; the fill was dropped. The
-    // band is page colour, per §4 — no `bg-*` utility of its own.
-    renderComposerWithStatus({ scope: { host: "workshop" }, status: "working" }, fixtureServers);
-    expect(band().className).toMatch(/(?:^|\s)-mx-3(?=\s|$)/);
-    expect(band().className).toMatch(/(?:^|\s)px-2\.5(?=\s|$)/);
-    expect(band().className).not.toMatch(/(?:^|\s)bg-/);
-    expect(band().className).toMatch(/(?:^|\s)justify-end(?=\s|$)/);
-    expect(row().className).toMatch(/(?:^|\s)-mx-0\.5(?=\s|$)/);
-    expect(row().className).not.toMatch(/(?:^|\s)px-/); // the row's inset is the dock's, trimmed
+    // THE GROUND IS A FILL, AND THAT OVERRIDES DESIGN.md §4 FOR THIS ROW ALONE. §4 says chrome
+    // separates with a rule and never a fill, and the status band that used to stand here carried
+    // the measurement that argued one down. Altan asked for a belt, which is a fill, so this is the
+    // operator's call. WHICH fill is measured: against the composer's `--chrome`, `bg-foreground/6`
+    // is 1.13:1 light and 1.16:1 dark, and it is the only symmetric recipe available — `--muted` IS
+    // `--chrome` in light and `--card` IS `--chrome` in dark, so neither token separates in both.
+    renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
+    expect(actions().className).toMatch(/(?:^|\s)-mx-3(?=\s|$)/);
+    expect(actions().className).toMatch(/(?:^|\s)bg-foreground\/6(?=\s|$)/);
+    expect(actions().className).not.toMatch(/rounded/);
+    // The 12px goes back on the SCROLLER, not on the OverflowEdges wrapper between them: that
+    // wrapper owns the flex sizing and the edge cues, and deliberately no padding of its own.
+    // `pl-3`/`pr-3` rather than one `px-3`: with a pinned Switch block the right half becomes a
+    // dynamic inline `paddingRight` instead (actions-row.tsx's `useSwitchBlockWidth`), so the two
+    // sides are separate classes even though this handle-less render keeps both at 12px.
+    const scrollerClass = actions().querySelector(".overflow-x-auto")!.className;
+    expect(scrollerClass).toMatch(/(?:^|\s)pl-3(?=\s|$)/);
+    expect(scrollerClass).toMatch(/(?:^|\s)pr-3(?=\s|$)/);
+    // The group's GUTTER is the scroller's and nothing else: with the capsule gone, Collie's
+    // controls stand on the belt's own ground and own no padding at all.
+    expect(row().className).not.toMatch(/(?:^|\s)px-/);
   });
 });
 
@@ -1737,6 +1616,8 @@ function renderDraftHarness(overrides: Partial<ComponentProps<typeof Composer>> 
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
+    mirrorNative: false,
+    setMirrorNative: vi.fn(),
       setExpandClippedReply: vi.fn(),
       onSent: vi.fn(),
       ...rest,
@@ -1860,12 +1741,75 @@ describe("Composer — terminal-draft preview", () => {
     await waitFor(() => expect(screen.queryByText(/draft in terminal/i)).not.toBeInTheDocument());
   });
 
-  it("renders no dismiss button — the preview has no user-facing dismiss", async () => {
+  // ADR 0061: the notice floats, and its x hides it until the draft is gone.
+  it("floats out of the flow: absolutely positioned, never a row of the composer", async () => {
     renderDraftHarness();
-    strandDraft("no dismiss here");
+    strandDraft("floating");
     await screen.findByText(/draft in terminal/i);
 
-    expect(screen.queryByLabelText(/dismiss terminal draft/i)).not.toBeInTheDocument();
+    const wrapper = screen.getByText("floating").closest('[data-slot="terminal-draft-notice"]')!;
+    expect(wrapper.className).toMatch(/(?:^|\s)absolute(?=\s|$)/);
+    expect(wrapper.className).toMatch(/(?:^|\s)pointer-events-none(?=\s|$)/);
+    // No Collapse around it: nothing in the composer's flow grows when it arrives.
+    expect(wrapper.closest('[data-slot="collapse"]')).toBeNull();
+    // The notice itself takes touches back from the pass-through wrapper.
+    expect(wrapper.firstElementChild!.className).toMatch(/(?:^|\s)pointer-events-auto(?=\s|$)/);
+  });
+
+  it("portals into the slot it is handed, and nowhere inside the composer", async () => {
+    const slot = document.createElement("div");
+    document.body.append(slot);
+    renderDraftHarness({ draftNoticeSlot: slot });
+    strandDraft("in the slot");
+    await screen.findByText(/draft in terminal/i);
+
+    expect(slot).toHaveTextContent("in the slot");
+    const wrapper = slot.querySelector('[data-slot="terminal-draft-notice"]')!;
+    // In the slot the wrapper is only the pass-through: the slot does the positioning.
+    expect(wrapper.className).not.toMatch(/(?:^|\s)absolute(?=\s|$)/);
+    slot.remove();
+  });
+
+  it("the x hides it, and editing the host draft keeps it hidden", async () => {
+    const user = userEvent.setup();
+    renderDraftHarness();
+    strandDraft("dismiss me");
+    await screen.findByText(/draft in terminal/i);
+
+    await user.click(screen.getByRole("button", { name: "Dismiss the terminal draft notice" }));
+    expect(screen.queryByText(/draft in terminal/i)).toBeNull();
+
+    // The host keeps typing into the same line: still hidden, however it changes.
+    setRawDraft("dismiss me now");
+    strandDraft("something else entirely");
+    expect(screen.queryByText(/draft in terminal/i)).toBeNull();
+  });
+
+  it("comes back for the next draft once the dismissed one is gone", async () => {
+    const user = userEvent.setup();
+    renderDraftHarness();
+    strandDraft("first");
+    await screen.findByText(/draft in terminal/i);
+    await user.click(screen.getByRole("button", { name: "Dismiss the terminal draft notice" }));
+
+    // The host line clears (sent or wiped on the host)…
+    setRawDraft("");
+    setStableDraft("");
+    // …and a later draft shows the notice again.
+    strandDraft("second");
+    expect(await screen.findByText("second")).toBeInTheDocument();
+    expect(screen.getByText(/draft in terminal/i)).toBeInTheDocument();
+  });
+
+  it("Take over still works from the floating notice", async () => {
+    const user = userEvent.setup();
+    renderDraftHarness();
+    strandDraft("carry this");
+    await screen.findByText(/draft in terminal/i);
+
+    await user.click(screen.getByRole("button", { name: /take over/i }));
+    expect(screen.getByPlaceholderText(/type a reply/i)).toHaveValue("carry this");
+    expect(screen.queryByText(/draft in terminal/i)).toBeNull();
   });
 
   it("persists across subsequent polls of the same text with no user action", async () => {
@@ -2009,6 +1953,8 @@ describe("Composer — in-flight echo suppression (match-last-sent)", () => {
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
+    mirrorNative: false,
+    setMirrorNative: vi.fn(),
       setExpandClippedReply: vi.fn(),
       onSent: vi.fn(),
     };
@@ -2123,8 +2069,8 @@ describe("Composer — reload-guard hold (no-SW self-update safety gate)", () =>
   });
 
   it("holds while an image upload is in flight, releases once it settles", async () => {
-    // Failing upload keeps the input empty (a successful one appends the returned path, which then
-    // legitimately holds as real unsent text) — so the release is observable in isolation.
+    // Failing upload keeps the draft empty (a successful one adds a chip, which then legitimately
+    // holds as real unsent work) — so the release is observable in isolation.
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     server.use(
@@ -2168,6 +2114,27 @@ describe("Composer — quick keys / image attach", () => {
     for (const d of ["1", "2", "3", "4", "5"]) {
       expect(screen.queryByRole("button", { name: d })).not.toBeInTheDocument();
     }
+  });
+
+  // The photos input carries `multiple`, so the picker can return several files in one change;
+  // onPickFile must upload every one, not just the first.
+  it("uploads every photo when several are selected at once", async () => {
+    let uploadCalls = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        uploadCalls++;
+        return HttpResponse.json({ ok: true, path: `/tmp/shot-${uploadCalls}.png` });
+      }),
+    );
+    renderComposer();
+
+    const a = new File(["a"], "a.png", { type: "image/png" });
+    const b = new File(["b"], "b.png", { type: "image/png" });
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const photos = screen.getByTestId("attach-photos") as HTMLInputElement;
+    fireEvent.change(photos, { target: { files: [a, b] } });
+
+    await waitFor(() => expect(uploadCalls).toBe(2));
   });
 });
 
@@ -2228,8 +2195,10 @@ describe("Composer — attachment limits published by this bridge", () => {
     const fileInput = screen.getByTestId("attach-files") as HTMLInputElement;
     fireEvent.change(fileInput, { target: { files: [file] } });
 
+    // A chip, not a path (ADR 0060): the field holds the marker, the chip holds the name.
     const box = screen.getByPlaceholderText(/type a reply/i);
-    await waitFor(() => expect(box).toHaveValue("/tmp/notes.md"));
+    await waitFor(() => expect(box).toHaveValue("[File #1] "));
+    expect(screen.getByRole("button", { name: "Remove notes.md" })).toBeInTheDocument();
   });
 
   it("refuses a .rb file the bridge did not publish and never calls the upload API", async () => {
@@ -2255,7 +2224,7 @@ describe("Composer — attachment limits published by this bridge", () => {
 });
 
 describe("Composer — clipboard image paste", () => {
-  it("uploads a pasted image the same way the picker does and appends its path", async () => {
+  it("uploads a pasted image the same way the picker does and adds its chip and marker", async () => {
     server.use(
       http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/shot.png" })),
     );
@@ -2266,7 +2235,8 @@ describe("Composer — clipboard image paste", () => {
 
     fireEvent.paste(box, { clipboardData: { items: [item] } });
 
-    await waitFor(() => expect(box).toHaveValue("/tmp/shot.png"));
+    await waitFor(() => expect(box).toHaveValue("[Image #1] "));
+    expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeInTheDocument();
   });
 
   it("leaves a plain-text paste alone — no upload, nothing written by the paste handler", () => {
@@ -2649,6 +2619,8 @@ describe("Composer — draft persistence", () => {
       stepFontSize: vi.fn(),
       setRawTerminal: vi.fn(),
       setTapToFocus: vi.fn(),
+    mirrorNative: false,
+    setMirrorNative: vi.fn(),
       setExpandClippedReply: vi.fn(),
       onSent: vi.fn(),
       ...overrides,
@@ -2778,7 +2750,9 @@ describe("Composer — a long upload path cannot widen the field", () => {
     expect(box.className).toMatch(/placeholder:whitespace-nowrap/);
   });
 
-  it("still takes the appended path verbatim — the fix is layout, not the text", async () => {
+  // The path no longer reaches the field at all (ADR 0060): the chip holds it and the marker
+  // holds its place. The two classes above still matter for a path the operator types or pastes.
+  it("keeps an uploaded path out of the field: the marker stands in for it", async () => {
     const path = "/home/operator/.local/share/collie/uploads/2026-08-31T09-14-22-a1b2c3d4e5f6.png";
     server.use(http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path })));
     renderComposer();
@@ -2789,7 +2763,8 @@ describe("Composer — a long upload path cannot widen the field", () => {
       clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => file }] },
     });
 
-    await waitFor(() => expect(box).toHaveValue(path));
+    await waitFor(() => expect(box).toHaveValue("[Image #1] "));
+    expect(box).not.toHaveValue(expect.stringContaining(path));
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
   });
 });
@@ -2912,5 +2887,860 @@ describe("Composer — the attach picker offers photos as well as files", () => 
     await user.click(screen.getByRole("button", { name: "Attach file" }));
     await user.click(await screen.findByRole("button", { name: "Files" }));
     expect(opened).toEqual(["attach-photos", "attach-files"]);
+  });
+});
+
+// ── THE COMPOSER IS ONE BOX, ONE ROW (.adr/0057, amended twice on 2026-09-22) ───────────────────
+//
+// The field, the attach control and Send used to be three shapes on one line. They are one bordered
+// container now, the prompt-input pattern the shadcn-registry chat kits settled on, ported by hand.
+// For one round the box put a toolbar row under the field; on a phone that was a second row of
+// height on an empty composer, so the box is ONE row: the field, attach, the primary action — attach
+// stood at the left for one round, then moved back beside Send, where it was before this ADR.
+//
+// These are STRUCTURAL and COUPLING assertions, in the house style of the two blocks above: jsdom
+// measures no layout, so what a class carries into this file is a fact about a real browser. What
+// each one stops is named at the assertion.
+describe("Composer — the composer is one box", () => {
+  const field = () => screen.getByPlaceholderText(/type a reply/i);
+  /** The bordered container: the field's own parent, which is where the frame is drawn. */
+  const boxOf = (el: HTMLElement) => el.parentElement!;
+  const attach = () => screen.getByRole("button", { name: "Attach file" });
+
+  // THE SEND KEY IS UNCHANGED BY THE NEW SHAPE, and it is the first thing a ported pattern gets
+  // wrong: every kit this was read from sends on a bare Enter. Enter is a shell character here, so
+  // it must stay a newline, and Cmd/Ctrl+Enter is the submit. Nothing pinned this before.
+  it("still sends on Ctrl+Enter, and still leaves a bare Enter to the textarea", async () => {
+    const user = userEvent.setup();
+    const props = renderComposer();
+
+    await user.type(field(), "looks good");
+    // `fireEvent` returns false when the handler called preventDefault, so this reads the two
+    // decisions directly: the plain key is handed to the textarea, the modified one is taken.
+    expect(fireEvent.keyDown(field(), { key: "Enter" })).toBe(true);
+    expect(props.onSent).not.toHaveBeenCalled();
+    expect(field()).toHaveValue("looks good");
+
+    expect(fireEvent.keyDown(field(), { key: "Enter", ctrlKey: true })).toBe(false);
+    await waitFor(() => expect(field()).toHaveValue(""));
+    expect(props.onSent).toHaveBeenCalled();
+  });
+
+  it("sends on Cmd+Enter too, for a keyboard-attached phone and a Mac", async () => {
+    const user = userEvent.setup();
+    const props = renderComposer();
+
+    await user.type(field(), "ship it");
+    expect(fireEvent.keyDown(field(), { key: "Enter", metaKey: true })).toBe(false);
+    await waitFor(() => expect(field()).toHaveValue(""));
+    expect(props.onSent).toHaveBeenCalled();
+  });
+
+  it("holds the field, attach and the primary action as siblings on ONE row of the box", async () => {
+    renderComposer();
+    const box = boxOf(field());
+    const send = screen.getByRole("button", { name: "Send" });
+
+    // One row, no toolbar row under the field: the three are direct children of the box, in
+    // reading order field, attach, action — attach next to the primary action, as it stood
+    // before the one-box change.
+    expect(attach().parentElement).toBe(box);
+    expect(send.parentElement).toBe(box);
+    const order = [...box.children].filter((el) => el === attach() || el === field() || el === send);
+    expect(order).toEqual([field(), attach(), send]);
+    // The box IS the flex row, and `items-end` pins both buttons to the bottom edge while a long
+    // draft grows the field upward.
+    expect(box.className).toMatch(/(?:^|\s)flex(?=\s|$)/);
+    expect(box.className).toMatch(/(?:^|\s)items-end(?=\s|$)/);
+    expect(box.className).not.toMatch(/(?:^|\s)flex-col(?=\s|$)/);
+    // The field takes the width the buttons leave, and the buttons never give theirs up.
+    expect(field().className).toMatch(/(?:^|\s)flex-1(?=\s|$)/);
+    expect(attach().className).toMatch(/(?:^|\s)shrink-0(?=\s|$)/);
+    expect(send.className).toMatch(/(?:^|\s)shrink-0(?=\s|$)/);
+  });
+
+  // AN EMPTY COMPOSER IS ONE BUTTON ROW TALL. The buttons are 36px; the box's `p-1` is their 4px
+  // hit-area reach, so the inside of the box is 44px. The field claims one line against the 36px
+  // face and no more: `min-h-9` with `py-1.5`, and nothing taller left over from the primitive.
+  it("claims one button row of height for an empty field, and no second row", () => {
+    renderComposer();
+    const box = boxOf(field());
+    expect(box.className).toMatch(/(?:^|\s)p-1(?=\s|$)/);
+    expect(field().className).toMatch(/(?:^|\s)min-h-9(?=\s|$)/);
+    expect(field().className).toMatch(/(?:^|\s)py-1\.5(?=\s|$)/);
+    expect(field().className).not.toMatch(/(?:^|\s)min-h-(?:1[0-9]|[2-9][0-9])(?=\s|$)/);
+    expect(field()).toHaveAttribute("rows", "1");
+  });
+
+  it("draws ONE frame and ONE focus mark on the box, and none of it on the textarea", () => {
+    renderComposer();
+    const box = boxOf(field());
+
+    // The frame. `focus-within`, so a caret in the textarea marks the whole shape: the border takes
+    // the ring colour and a 1px ring (a box-shadow) thickens it, which costs no layout (DESIGN.md
+    // §2). That is the visible focus indicator, and it is the only one.
+    expect(box.className).toMatch(/(?:^|\s)rounded-xl(?=\s|$)/);
+    expect(box.className).toMatch(/(?:^|\s)border-input(?=\s|$)/);
+    expect(box.className).toMatch(/(?:^|\s)focus-within:border-ring(?=\s|$)/);
+    expect(box.className).toMatch(/(?:^|\s)focus-within:ring-1(?=\s|$)/);
+    expect(box.className).toMatch(/(?:^|\s)focus-within:ring-ring(?=\s|$)/);
+    // …and NO second frame outside it. An offset outline on top of the ring-coloured border drew
+    // two frames around one field, which is the defect this amendment fixed.
+    expect(box.className).not.toMatch(/outline-offset/);
+    expect(box.className).not.toMatch(/focus-within:outline-(?:1|2|4|8|ring)/);
+
+    // The inner control draws no frame of its own either.
+    expect(field().className).toMatch(/(?:^|\s)border-0(?=\s|$)/);
+    expect(field().className).not.toMatch(/(?:^|\s)rounded-/);
+    expect(field().className).not.toMatch(/focus-visible:outline-2/);
+    expect(field().className).not.toMatch(/focus-visible:border-ring/);
+    expect(field().className).not.toMatch(/focus-visible:ring/);
+  });
+
+  // A 200-CHARACTER UNBROKEN PATH MAY NOT PUSH THE PRIMARY ACTION OFF THE SCREEN.
+  //
+  // `uploadFile()` appends the bridge's host path for an attached image, one run of `/`-joined
+  // characters with no break opportunity. The field is `field-sizing-content`, so under the
+  // textarea's UA `break-word` that token would become the field's laid-out width, and Send, beside
+  // it on the same row, would go off the right edge: the "the Send button disappeared after I
+  // uploaded a picture" report. Two independent things stop it and this pins both: the value wraps
+  // ANYWHERE, and the field is `min-w-0`, so as a flex item it may be narrower than its content.
+  it("keeps the primary action in the row under a 200-character unbroken path", async () => {
+    const path = `/home/operator/${"a".repeat(181)}.png`;
+    expect(path.length).toBeGreaterThanOrEqual(200);
+    renderComposer();
+
+    fireEvent.change(field(), { target: { value: path } });
+    await waitFor(() => expect(field()).toHaveValue(path));
+
+    expect(field().className).toMatch(/(?:^|\s)wrap-anywhere(?=\s|$)/);
+    expect(field().className).toMatch(/(?:^|\s)min-w-0(?=\s|$)/);
+    const send = screen.getByRole("button", { name: "Send" });
+    // Still in the box's one row, beside the field, after the field.
+    expect(send.parentElement).toBe(field().parentElement);
+    expect(field().compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Nothing in the field reserves a horizontal strip for a control, so the path has the field's
+    // whole width to wrap into.
+    expect(field().className).not.toMatch(/(?:^|\s)pr-/);
+  });
+
+  // DESIGN.md §6: 44px is the floor for anything tappable, and both buttons in the box are drawn at
+  // 36px. They buy the floor back as HIT AREA, the trade that section sanctions, and the reach is
+  // the arithmetic at `TOOLBAR_TAP_TARGET`: 36 + 4 + 4 = 44 in both axes. Drawn size and hit area
+  // are one decision here; a `size-9` that loses the `::before` is a 36px target.
+  it("buys the 44px tap floor back on both buttons in the box", () => {
+    renderComposer();
+    for (const button of [attach(), screen.getByRole("button", { name: "Send" })]) {
+      expect(button.className).toMatch(/(?:^|\s)size-9(?=\s|$)/);
+      expect(button.className).toMatch(/(?:^|\s)relative(?=\s|$)/);
+      expect(button.className).toMatch(/before:-inset-1/);
+    }
+  });
+
+  it("recedes the whole box when nothing may be written to it, and disables both buttons", () => {
+    renderComposer({ readOnly: true });
+    const box = screen.getByPlaceholderText(/read-only/i).parentElement!;
+
+    // The surface says it, not just the placeholder. `bg-muted/40` is last in the cn(), so
+    // tailwind-merge drops the `bg-background` it replaces.
+    expect(box.className).toMatch(/(?:^|\s)bg-muted\/40(?=\s|$)/);
+    expect(box.className).not.toMatch(/(?:^|\s)bg-background(?=\s|$)/);
+    expect(attach()).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+});
+
+// ── AN ATTACHMENT IS A CHIP, AND ITS MARKER HOLDS ITS PLACE (ADR 0060) ──────────────────────────
+//
+// An upload used to write the bridge's host path into the draft. Now it adds a chip above the field
+// and a `[Image #N]` / `[File #N]` marker where the caret stood; Send swaps each marker for its
+// path, and a chip whose marker was edited away sends its path in front. Asserted at the network
+// (the guard's typed text), because the line the terminal gets is the whole point.
+describe("Composer — an attachment is a chip (ADR 0060)", () => {
+  /** The upload route, answering each upload with the next path in order (the picker uploads one
+   *  by one, in pick order), then `/tmp/upload-N` once the list runs out. */
+  function uploadAnswers(...paths: string[]) {
+    let calls = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        calls += 1;
+        return HttpResponse.json({ ok: true, path: paths[calls - 1] ?? `/tmp/upload-${calls}` });
+      }),
+    );
+  }
+
+  function pick(...files: File[]) {
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const photos = screen.getByTestId("attach-photos") as HTMLInputElement;
+    fireEvent.change(photos, { target: { files } });
+  }
+
+  const png = (name: string) => new File(["x"], name, { type: "image/png" });
+  // SAFETY: the composer's only placeholder-bearing control is its ChatInput, a `<textarea>`, and
+  // `getByPlaceholderText` throws when it is absent.
+  const field = () => screen.getByPlaceholderText(/type a reply/i) as HTMLTextAreaElement;
+
+  it("adds a chip, and puts its marker at the caret without touching the text around it", async () => {
+    uploadAnswers("/a.png");
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "see this" } });
+    act(() => {
+      field().focus();
+      field().setSelectionRange(3, 3);
+    });
+
+    pick(png("a.png"));
+
+    await waitFor(() => expect(field()).toHaveValue("see [Image #1] this"));
+    const list = screen.getByRole("list", { name: "Attachments" });
+    expect(list).toHaveTextContent("#1");
+    expect(screen.getByRole("button", { name: "Remove a.png" })).toBeInTheDocument();
+  });
+
+  it("puts the marker at the end when the field never had a caret", async () => {
+    uploadAnswers();
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "hello" } });
+    act(() => field().blur());
+    // A change with no caret report of its own: jsdom leaves selectionStart at the end.
+    pick(png("a.png"));
+    await waitFor(() => expect(field()).toHaveValue("hello [Image #1] "));
+  });
+
+  it("marks a multi-photo pick in pick order, one chip each (PR #259)", async () => {
+    uploadAnswers();
+    renderComposer();
+
+    pick(png("first.png"), png("second.png"), png("third.png"));
+
+    await waitFor(() => expect(field()).toHaveValue("[Image #1] [Image #2] [Image #3] "));
+    const removes = screen.getAllByRole("button", { name: /^Remove / });
+    expect(removes.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Remove first.png",
+      "Remove second.png",
+      "Remove third.png",
+    ]);
+  });
+
+  it("the x removes the chip and its marker, with the space beside it", async () => {
+    const user = userEvent.setup();
+    uploadAnswers();
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "see this" } });
+    act(() => {
+      field().focus();
+      field().setSelectionRange(3, 3);
+    });
+    pick(png("a.png"));
+    await waitFor(() => expect(field()).toHaveValue("see [Image #1] this"));
+
+    await user.click(screen.getByRole("button", { name: "Remove a.png" }));
+
+    expect(field()).toHaveValue("see this");
+    expect(screen.queryByRole("list", { name: "Attachments" })).toBeNull();
+    expect(loadDraftEntry(undefined, "w1:p1")?.attachments).toEqual([]);
+  });
+
+  it("Send swaps each marker for its path, where it stands", async () => {
+    const user = userEvent.setup();
+    const typed: string[] = [];
+    uploadAnswers("/a.png", "/b.png");
+    server.use(replyHandler((t) => typed.push(t)));
+    const props = renderComposer();
+
+    fireEvent.change(field(), { target: { value: "look at " } });
+    pick(png("a.png"));
+    await waitFor(() => expect(field()).toHaveValue("look at [Image #1] "));
+    fireEvent.change(field(), { target: { value: `${field().value}and ` } });
+    act(() => field().setSelectionRange(field().value.length, field().value.length));
+    pick(png("b.png"));
+    await waitFor(() => expect(field()).toHaveValue("look at [Image #1] and [Image #2] "));
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(props.onSent).toHaveBeenCalled());
+    expect(typed).toEqual(["look at /a.png and /b.png"]);
+    // Text and chips leave together, and the next draft numbers from #1 again.
+    expect(field()).toHaveValue("");
+    expect(screen.queryByRole("list", { name: "Attachments" })).toBeNull();
+    expect(loadDraftEntry(undefined, "w1:p1")).toBeNull();
+  });
+
+  it("a chip whose marker was edited away sends its path in front, and is never dropped", async () => {
+    const user = userEvent.setup();
+    const typed: string[] = [];
+    uploadAnswers("/a.png");
+    server.use(replyHandler((t) => typed.push(t)));
+    const props = renderComposer();
+    pick(png("a.png"));
+    await waitFor(() => expect(field()).toHaveValue("[Image #1] "));
+
+    // Deleting the marker by hand keeps the chip.
+    fireEvent.change(field(), { target: { value: "hello" } });
+    expect(screen.getByRole("button", { name: "Remove a.png" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(props.onSent).toHaveBeenCalled());
+    expect(typed).toEqual(["/a.png hello"]);
+  });
+
+  it("leaves a marker-looking string with no chip behind it exactly as typed", async () => {
+    const user = userEvent.setup();
+    const typed: string[] = [];
+    server.use(replyHandler((t) => typed.push(t)));
+    const props = renderComposer();
+    fireEvent.change(field(), { target: { value: "[Image #7] is a label" } });
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(props.onSent).toHaveBeenCalled());
+    expect(typed).toEqual(["[Image #7] is a label"]);
+  });
+
+  it("chips alone are something to send: Send is enabled and sends the paths", async () => {
+    const user = userEvent.setup();
+    const typed: string[] = [];
+    uploadAnswers("/a.png");
+    server.use(replyHandler((t) => typed.push(t)));
+    const props = renderComposer();
+    pick(png("a.png"));
+    await waitFor(() => expect(field()).toHaveValue("[Image #1] "));
+    fireEvent.change(field(), { target: { value: "" } });
+
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeEnabled();
+    await user.click(send);
+    await waitFor(() => expect(props.onSent).toHaveBeenCalled());
+    expect(typed).toEqual(["/a.png"]);
+  });
+
+  it("the destructive confirm reads the composed line, paths included", async () => {
+    const user = userEvent.setup();
+    const typed: string[] = [];
+    uploadAnswers("/a.png");
+    server.use(replyHandler((t) => typed.push(t)));
+    renderComposerWithStatus();
+    fireEvent.change(field(), { target: { value: "rm -rf " } });
+    act(() => field().setSelectionRange(7, 7));
+    pick(png("a.png"));
+    await waitFor(() => expect(field()).toHaveValue("rm -rf [Image #1] "));
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("button", { name: /really send/i })).toBeInTheDocument();
+    expect(typed).toEqual([]);
+  });
+
+  it("a failed send keeps the chips and the text", async () => {
+    const user = userEvent.setup();
+    uploadAnswers("/a.png");
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/reply$/, () =>
+        HttpResponse.json({ ok: false, error: "pane unavailable" }, { status: 500 }),
+      ),
+    );
+    const props = renderComposerWithStatus();
+    pick(png("a.png"));
+    await waitFor(() => expect(field()).toHaveValue("[Image #1] "));
+    fireEvent.change(field(), { target: { value: "[Image #1] look" } });
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getByTestId("status")).not.toHaveTextContent(/^$/));
+
+    expect(props.onSent).not.toHaveBeenCalled();
+    expect(field()).toHaveValue("[Image #1] look");
+    expect(screen.getByRole("button", { name: "Remove a.png" })).toBeInTheDocument();
+  });
+
+  it("stores the chips with the draft, and a reload keeps the numbering going", async () => {
+    uploadAnswers("/a.png", "/b.png");
+    renderComposer();
+    pick(png("a.png"));
+    await waitFor(() => expect(field()).toHaveValue("[Image #1] "));
+    expect(loadDraftEntry(undefined, "w1:p1")).toEqual({
+      text: "[Image #1] ",
+      attachments: [{ n: 1, path: "/a.png", name: "a.png", kind: "image" }],
+      next: 2,
+    });
+
+    // A fresh mount reads it back: the chip returns as an icon tile (no preview survives a reload).
+    cleanup();
+    renderComposer();
+    expect(field()).toHaveValue("[Image #1] ");
+    expect(screen.getByRole("button", { name: "Remove a.png" })).toBeInTheDocument();
+    expect(screen.queryByRole("img")).toBeNull();
+
+    act(() => field().setSelectionRange(field().value.length, field().value.length));
+    pick(png("b.png"));
+    await waitFor(() => expect(field()).toHaveValue("[Image #1] [Image #2] "));
+  });
+
+  it("never reuses a removed chip's number within the draft", async () => {
+    const user = userEvent.setup();
+    uploadAnswers();
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "keep " } });
+    pick(png("a.png"), png("b.png"));
+    await waitFor(() => expect(field()).toHaveValue("keep [Image #1] [Image #2] "));
+    await user.click(screen.getByRole("button", { name: "Remove b.png" }));
+    expect(field()).toHaveValue("keep [Image #1] ");
+
+    act(() => field().setSelectionRange(field().value.length, field().value.length));
+    pick(png("c.png"));
+    await waitFor(() => expect(field()).toHaveValue("keep [Image #1] [Image #3] "));
+  });
+
+  it("an old text-only draft still loads, with no chips", () => {
+    localStorage.setItem("collie:draft:default:w1:p1", JSON.stringify({ text: "from before", at: Date.now() }));
+    renderComposer();
+    expect(field()).toHaveValue("from before");
+    expect(screen.queryByRole("list", { name: "Attachments" })).toBeNull();
+  });
+
+  it("a restored draft that is only chips still offers Send", () => {
+    saveDraft(undefined, "w1:p1", "", [{ n: 1, path: "/a.png", name: "a.png", kind: "image" }], 2);
+    renderComposer();
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove a.png" })).toBeInTheDocument();
+  });
+
+  describe("with object URLs", () => {
+    const created: string[] = [];
+    const revoked: string[] = [];
+    // jsdom has no object URLs at all, so each case defines the two statics and removes them again.
+    function defineStatic(name: "createObjectURL" | "revokeObjectURL", value: ((file: Blob) => string) | ((url: string) => void)) {
+      Object.defineProperty(URL, name, { value, configurable: true, writable: true });
+    }
+    beforeEach(() => {
+      created.length = 0;
+      revoked.length = 0;
+      defineStatic("createObjectURL", () => {
+        const url = `blob:test/${created.length + 1}`;
+        created.push(url);
+        return url;
+      });
+      defineStatic("revokeObjectURL", (url: string) => {
+        revoked.push(url);
+      });
+    });
+    afterEach(() => {
+      __resetOperatorCommands();
+      Reflect.deleteProperty(URL, "createObjectURL");
+      Reflect.deleteProperty(URL, "revokeObjectURL");
+    });
+
+    it("draws a photo as a thumbnail, and releases it when its chip is removed", async () => {
+      const user = userEvent.setup();
+      uploadAnswers();
+      renderComposer();
+      pick(png("a.png"));
+      const thumb = await screen.findByRole("img", { name: "a.png" });
+      expect(thumb).toHaveAttribute("src", "blob:test/1");
+
+      await user.click(screen.getByRole("button", { name: "Remove a.png" }));
+      expect(revoked).toEqual(["blob:test/1"]);
+    });
+
+    it("releases every thumbnail on send and on unmount", async () => {
+      const user = userEvent.setup();
+      uploadAnswers();
+      server.use(replyHandler(() => {}));
+      const props = renderComposer();
+      pick(png("a.png"));
+      await screen.findByRole("img", { name: "a.png" });
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(props.onSent).toHaveBeenCalled());
+      expect(revoked).toEqual(["blob:test/1"]);
+
+      pick(png("b.png"));
+      await screen.findByRole("img", { name: "b.png" });
+      cleanup();
+      expect(revoked).toEqual(["blob:test/1", "blob:test/2"]);
+    });
+
+    it("draws a non-image file as a named tile, never a thumbnail", async () => {
+      __resetOperatorCommands();
+      server.use(
+        http.get("/api/config", () =>
+          HttpResponse.json({
+            push: false,
+            vapidPublicKey: "",
+            upload: { maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md"] },
+          }),
+        ),
+      );
+      uploadAnswers();
+      renderComposer();
+      await waitFor(() => expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", "image/*,.png,.md"));
+      // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+      const files = screen.getByTestId("attach-files") as HTMLInputElement;
+      fireEvent.change(files, {
+        target: { files: [new File(["# hi"], "a-rather-long-notes-file.md", { type: "text/markdown" })] },
+      });
+      await waitFor(() => expect(field()).toHaveValue("[File #1] "));
+      expect(screen.queryByRole("img")).toBeNull();
+      expect(created).toEqual([]);
+      expect(screen.getByRole("list", { name: "Attachments" })).toHaveTextContent("a-rather-long…");
+    });
+
+  });
+});
+
+// THE BELT'S X AND ITS UNDO (M40 spec 04, issue #291; Altan, 2026-09-26/27). An icon-only X on the
+// belt's pinned block while the phone's box holds text or chips. One tap empties the text, the chips
+// and the stored draft of this pane and sends nothing to the pane; the slot then shows Undo until the
+// next act (no timer), and Undo puts all three back.
+describe("Composer — the belt's clear control (M40 spec 04, #291)", () => {
+  const chip = { n: 1, path: "/tmp/a.png", name: "a.png", kind: "image" as const };
+  // SAFETY: the composer's only placeholder-bearing control is its ChatInput, a `<textarea>`, and
+  // `getByPlaceholderText` throws when it is absent.
+  const field = () => screen.getByPlaceholderText(/type a reply/i) as HTMLTextAreaElement;
+  const xButton = () => screen.queryByRole("button", { name: "Clear message" });
+  const undoButton = () => screen.queryByRole("button", { name: "Undo clear" });
+
+  /** Every request that is not a read, as `METHOD /path`. The X and Undo must add none: no key, no
+   *  reply, no upload reaches any pane. */
+  const writes: string[] = [];
+  function logWrites({ request }: { request: Request }) {
+    if (request.method !== "GET") writes.push(`${request.method} ${new URL(request.url).pathname}`);
+  }
+  beforeEach(() => {
+    writes.length = 0;
+    server.events.on("request:start", logWrites);
+  });
+  afterEach(() => {
+    server.events.removeListener("request:start", logWrites);
+    vi.useRealTimers();
+  });
+
+  function pick(...files: File[]) {
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const photos = screen.getByTestId("attach-photos") as HTMLInputElement;
+    fireEvent.change(photos, { target: { files } });
+  }
+
+  it("draws no X on an empty box", () => {
+    renderComposer();
+    expect(xButton()).not.toBeInTheDocument();
+    expect(undoButton()).not.toBeInTheDocument();
+  });
+
+  it("draws the X on the belt once the box holds text, and takes it away when the text goes", () => {
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "half a thought" } });
+    const x = xButton();
+    expect(x).toBeInTheDocument();
+    expect(x!.closest('[data-slot="composer-actions"]')).not.toBeNull();
+    fireEvent.change(field(), { target: { value: "" } });
+    expect(xButton()).not.toBeInTheDocument();
+  });
+
+  it("draws the X for a box that holds only a chip", () => {
+    saveDraft(undefined, "w1:p1", "", [chip], 2);
+    renderComposer();
+    expect(field()).toHaveValue("");
+    expect(xButton()).toBeInTheDocument();
+  });
+
+  it("one tap clears the text, the chips and the stored draft, and sends nothing to the pane", async () => {
+    const user = userEvent.setup();
+    saveDraft(undefined, "w1:p1", "see [Image #1] this", [chip], 2);
+    renderComposer();
+    expect(screen.getByRole("button", { name: "Remove a.png" })).toBeInTheDocument();
+
+    await user.click(xButton()!);
+
+    expect(field()).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Remove a.png" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Attachments" })).not.toBeInTheDocument();
+    expect(loadDraftEntry(undefined, "w1:p1")).toBeNull();
+    // The slot is Undo now, and the empty box is back to its microphone-or-Send rest.
+    expect(undoButton()).toBeInTheDocument();
+    expect(xButton()).not.toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  it("clear, then Undo: the text, the chips, their numbering and the stored draft all come back", async () => {
+    const user = userEvent.setup();
+    saveDraft(undefined, "w1:p1", "see [Image #1] this", [chip], 2);
+    renderComposer();
+
+    await user.click(xButton()!);
+    await user.click(undoButton()!);
+
+    expect(field()).toHaveValue("see [Image #1] this");
+    expect(screen.getByRole("button", { name: "Remove a.png" })).toBeInTheDocument();
+    expect(loadDraftEntry(undefined, "w1:p1")).toEqual({ text: "see [Image #1] this", attachments: [chip], next: 2 });
+    // The window is spent: the box holds a draft again, so the slot is the X again.
+    expect(undoButton()).not.toBeInTheDocument();
+    expect(xButton()).toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  it("clear keeps the numbering it restarted: a chip after an Undo continues from the old next", async () => {
+    const user = userEvent.setup();
+    saveDraft(undefined, "w1:p1", "[Image #1] [Image #2] ", [chip, { ...chip, n: 2, name: "b.png" }], 3);
+    renderComposer();
+    await user.click(xButton()!);
+    // Cleared, the draft is gone from the store, numbering and all.
+    expect(loadDraftEntry(undefined, "w1:p1")).toBeNull();
+    await user.click(undoButton()!);
+    expect(loadDraftEntry(undefined, "w1:p1")?.next).toBe(3);
+  });
+
+  it("clear: Undo has no timer, it stands until the next act", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "never mind" } });
+
+    await user.click(xButton()!);
+    expect(undoButton()).toBeInTheDocument();
+
+    // Altan, 2026-09-27: a slot that left on a clock narrowed the pinned block under a tap on its way.
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    expect(undoButton()).toBeInTheDocument();
+  });
+
+  it("clear: a tap on another belt control ends Undo, and the draft stays gone", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "never mind" } });
+    await user.click(xButton()!);
+    expect(undoButton()).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Keys" }));
+
+    expect(undoButton()).not.toBeInTheDocument();
+    // An empty box after the window: the slot empties, nothing comes back.
+    expect(xButton()).not.toBeInTheDocument();
+    expect(field()).toHaveValue("");
+    expect(loadDraftEntry(undefined, "w1:p1")).toBeNull();
+  });
+
+  it("clear: the next keystroke ends the Undo window, and the slot is the X again", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "first try" } });
+    await user.click(xButton()!);
+
+    await user.type(field(), "n");
+
+    expect(field()).toHaveValue("n");
+    expect(undoButton()).not.toBeInTheDocument();
+    expect(xButton()).toBeInTheDocument();
+    // The keystroke's draft is the stored one, never the cleared text.
+    expect(loadDraftEntry(undefined, "w1:p1")?.text).toBe("n");
+  });
+
+  it("clear: a new chip ends the Undo window, and numbers from #1 again", async () => {
+    const user = userEvent.setup();
+    server.use(http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/new.png" })));
+    saveDraft(undefined, "w1:p1", "[Image #1] ", [chip], 2);
+    renderComposer();
+    await user.click(xButton()!);
+
+    pick(new File(["x"], "new.png", { type: "image/png" }));
+
+    await waitFor(() => expect(field()).toHaveValue("[Image #1] "));
+    expect(screen.getByRole("button", { name: "Remove new.png" })).toBeInTheDocument();
+    expect(undoButton()).not.toBeInTheDocument();
+    expect(xButton()).toBeInTheDocument();
+  });
+
+  it("clear: a pane switch ends the Undo window, and the cleared draft never comes back", async () => {
+    const user = userEvent.setup();
+    let swap: ((id: string) => void) | null = null;
+    function Harness() {
+      const [paneId, setPaneId] = useState("w1:p1");
+      swap = setPaneId;
+      return (
+        <Composer
+          paneId={paneId}
+          agent="claude"
+          isShell={false}
+          gone={false}
+          readOnly={false}
+          dialogPresent={false}
+          text="pane output"
+          terminalDraft={null}
+          rawTerminalDraft={null}
+          prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
+          setWrap={vi.fn()}
+          stepFontSize={vi.fn()}
+          setRawTerminal={vi.fn()}
+          setTapToFocus={vi.fn()}
+          mirrorNative={false}
+          setMirrorNative={vi.fn()}
+          setExpandClippedReply={vi.fn()}
+          onSent={vi.fn()}
+        />
+      );
+    }
+    render(<RouterProvider router={createMemoryRouter([{ path: "/", element: <Harness /> }])} />);
+    fireEvent.change(field(), { target: { value: "for pane A" } });
+    await user.click(xButton()!);
+    expect(undoButton()).toBeInTheDocument();
+
+    act(() => swap?.("w1:p2"));
+    expect(undoButton()).not.toBeInTheDocument();
+    act(() => swap?.("w1:p1"));
+    expect(field()).toHaveValue("");
+    expect(undoButton()).not.toBeInTheDocument();
+    expect(loadDraftEntry(undefined, "w1:p1")).toBeNull();
+  });
+
+  it("clear keeps the field focused, so the phone keyboard stays up", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    await user.click(field());
+    await user.keyboard("hello");
+    expect(field()).toHaveFocus();
+
+    await user.click(xButton()!);
+    expect(field()).toHaveValue("");
+    expect(field()).toHaveFocus();
+
+    await user.click(undoButton()!);
+    expect(field()).toHaveValue("hello");
+    expect(field()).toHaveFocus();
+  });
+
+  it("clear disarms a pending Really send? confirm, because the draft it was about is gone", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    fireEvent.change(field(), { target: { value: "rm -rf build" } });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByRole("button", { name: "Really send?" })).toBeInTheDocument();
+
+    await user.click(xButton()!);
+    expect(screen.queryByRole("button", { name: "Really send?" })).not.toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  describe("when the X is inert, and when it is not", () => {
+    it("is inert while a send is in flight: aria-disabled, and a tap clears nothing", async () => {
+      const user = userEvent.setup();
+      let release: () => void = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      server.use(
+        http.post<never, { text: string; submit?: boolean }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
+          const body = await request.json();
+          await held;
+          recordReply(body);
+          return HttpResponse.json({ ok: true });
+        }),
+      );
+      const props = renderComposer();
+      fireEvent.change(field(), { target: { value: "looks good" } });
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      const x = xButton()!;
+      await waitFor(() => expect(x).toHaveAttribute("aria-disabled", "true"));
+      await user.click(x);
+      expect(field()).toHaveValue("looks good");
+      expect(undoButton()).not.toBeInTheDocument();
+
+      release();
+      await waitFor(() => expect(props.onSent).toHaveBeenCalled());
+      // The request log is live: the send itself is in it, so the empty logs above are real.
+      expect(writes.some((w) => /^POST \/api\/pane\/[^/]+\/reply$/.test(w))).toBe(true);
+      // The verified send emptied the box itself, so the slot is empty, not Undo.
+      expect(xButton()).not.toBeInTheDocument();
+      expect(undoButton()).not.toBeInTheDocument();
+    });
+
+    it("is inert while Type is armed: the field is a live keyboard then, not a draft", async () => {
+      const user = userEvent.setup();
+      // Chips alone with no text: the one draft Type can still arm over.
+      saveDraft(undefined, "w1:p1", "", [chip], 2);
+      renderComposer();
+      await user.click(screen.getByRole("button", { name: "Type into terminal" }));
+      const x = xButton()!;
+      expect(x).toHaveAttribute("aria-disabled", "true");
+      await user.click(x);
+      expect(screen.getByRole("button", { name: "Remove a.png" })).toBeInTheDocument();
+    });
+
+    it("arming Type ends an open Undo window", async () => {
+      const user = userEvent.setup();
+      renderComposer();
+      fireEvent.change(field(), { target: { value: "draft" } });
+      await user.click(xButton()!);
+      expect(undoButton()).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Type into terminal" }));
+      expect(undoButton()).not.toBeInTheDocument();
+    });
+
+    it("is not inert on a locked composer: the draft is this phone's own", async () => {
+      const user = userEvent.setup();
+      saveDraft(undefined, "w1:p1", "typed before the pane went", [], 1);
+      renderComposer({ gone: true });
+      // A gone pane has its own placeholder, so the field is addressed by its role here.
+      const box = screen.getByRole("textbox");
+      expect(box).toBeDisabled();
+      const x = xButton()!;
+      expect(x).not.toHaveAttribute("aria-disabled");
+      await user.click(x);
+      expect(box).toHaveValue("");
+      expect(loadDraftEntry(undefined, "w1:p1")).toBeNull();
+      await user.click(undoButton()!);
+      expect(box).toHaveValue("typed before the pane went");
+      expect(writes).toEqual([]);
+    });
+  });
+
+  describe("with object URLs", () => {
+    const revoked: string[] = [];
+    beforeEach(() => {
+      revoked.length = 0;
+      let n = 0;
+      Object.defineProperty(URL, "createObjectURL", {
+        value: () => `blob:test/${++n}`,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        value: (url: string) => revoked.push(url),
+        configurable: true,
+        writable: true,
+      });
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(URL, "createObjectURL");
+      Reflect.deleteProperty(URL, "revokeObjectURL");
+    });
+
+    it("clear holds a photo's preview for Undo, and releases it only when the window ends without one", async () => {
+      const user = userEvent.setup();
+      server.use(http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/a.png" })));
+      renderComposer();
+      pick(new File(["x"], "a.png", { type: "image/png" }));
+      expect(await screen.findByRole("img", { name: "a.png" })).toHaveAttribute("src", "blob:test/1");
+
+      await user.click(xButton()!);
+      expect(screen.queryByRole("img", { name: "a.png" })).not.toBeInTheDocument();
+      expect(revoked).toEqual([]);
+
+      await user.click(undoButton()!);
+      expect(screen.getByRole("img", { name: "a.png" })).toHaveAttribute("src", "blob:test/1");
+      expect(revoked).toEqual([]);
+
+      // Cleared again, and this time a keystroke ends the window: now the preview goes.
+      await user.click(xButton()!);
+      await user.type(field(), "x");
+      expect(revoked).toEqual(["blob:test/1"]);
+    });
+
+    it("clear: an Undo window open at unmount releases the previews it held", async () => {
+      const user = userEvent.setup();
+      server.use(http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/a.png" })));
+      renderComposer();
+      pick(new File(["x"], "a.png", { type: "image/png" }));
+      await screen.findByRole("img", { name: "a.png" });
+      await user.click(xButton()!);
+      cleanup();
+      expect(revoked).toEqual(["blob:test/1"]);
+    });
   });
 });

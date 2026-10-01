@@ -35,6 +35,9 @@ import type {
   DeviceAuth,
   CrewMemberStatus,
   CrewStatusResponse,
+  CacheWatchListEntry,
+  CacheWatchState,
+  PaneCache,
   ServerSummary,
   SessionSummary,
   TabView,
@@ -219,6 +222,7 @@ const needsYou: AgentView[] = [
     lastActiveAt: TS - 90 * SEC,
     lastSeenAt: TS - 26 * MIN,
     readableLines: 400,
+    cache: { state: "warm", expiresAt: TS + 41 * MIN, ttlSeconds: 3600, ruleId: "claude.subscription", confidence: "documented" },
   },
   {
     paneId: "w2:p3",
@@ -236,6 +240,8 @@ const needsYou: AgentView[] = [
     lastActiveAt: TS - 7 * MIN,
     lastSeenAt: TS - 55 * MIN,
     readableLines: 400,
+    // Under the warn window: the countdown reads as `expiring`, not `warm`.
+    cache: { state: "expiring", expiresAt: TS + 2 * MIN, ttlSeconds: 300, ruleId: "codex.subscription", confidence: "documented" },
   },
   {
     paneId: "w3:p2",
@@ -276,6 +282,7 @@ const readyUnseen: AgentView[] = [
     lastActiveAt: TS - 11 * MIN,
     lastSeenAt: TS - 2 * HOUR,
     readableLines: 400,
+    cache: { state: "warm", expiresAt: TS + 23 * MIN, ttlSeconds: 3600, ruleId: "claude.subscription", confidence: "documented" },
   },
   {
     paneId: "w4:p2",
@@ -313,6 +320,9 @@ const working: AgentView[] = [
     lastActiveAt: TS - 40 * SEC,
     lastSeenAt: TS - 40 * SEC,
     readableLines: 400,
+    // Populated bottom slot: a warm reading, so the "Working" section shows one row with a cache
+    // chip beside rows carrying the empty slot the two-slot column reserves for it either way.
+    cache: { state: "warm", expiresAt: TS + 8 * MIN, ttlSeconds: 300, ruleId: "anthropic-claude-sonnet", confidence: "documented" },
   },
   {
     paneId: "w2:p1",
@@ -328,6 +338,7 @@ const working: AgentView[] = [
     terminalTitle: "running drizzle-kit generate",
     lastActiveAt: TS - 4 * MIN,
     lastSeenAt: TS - 12 * MIN,
+    cache: { state: "warm", expiresAt: TS + 6 * MIN, ttlSeconds: 300, ruleId: "codex.api", confidence: "documented" },
   },
   {
     paneId: "w3:p1",
@@ -343,6 +354,8 @@ const working: AgentView[] = [
     hasSession: true,
     lastActiveAt: TS - 12 * MIN,
     lastSeenAt: TS - 40 * MIN,
+    // A cold reading needs no `expiresAt` — the bridge's own state is trusted outright.
+    cache: { state: "cold", ttlSeconds: 300, ruleId: "pi.anthropic", confidence: "documented" },
   },
   {
     paneId: "w4:p1",
@@ -358,6 +371,7 @@ const working: AgentView[] = [
     paneLabel: "launch post",
     lastActiveAt: TS - 38 * MIN,
     lastSeenAt: TS - 38 * MIN,
+    cache: { state: "warm", expiresAt: TS + 4 * MIN, ttlSeconds: 300, ruleId: "opencode.google", confidence: "documented" },
   },
   {
     paneId: "w2:p2",
@@ -374,6 +388,7 @@ const working: AgentView[] = [
     terminalTitle: "waiting on CI",
     lastActiveAt: TS - 2 * HOUR - 20 * MIN,
     lastSeenAt: TS - 2 * HOUR - 20 * MIN,
+    cache: { state: "warm", expiresAt: TS + 12 * MIN, ttlSeconds: 3600, ruleId: "claude.subscription", confidence: "documented" },
   },
 ];
 
@@ -393,6 +408,9 @@ const resting: AgentView[] = [
     hasSession: true,
     lastActiveAt: TS - 4 * HOUR,
     lastSeenAt: TS - 34 * MIN,
+    // A cold reading needs no `expiresAt` — the bridge's own state is trusted outright
+    // (`lib/cache-view.ts`).
+    cache: { state: "cold", ttlSeconds: 300, ruleId: "anthropic-claude-sonnet", confidence: "documented" },
   },
   {
     paneId: "w1:p3",
@@ -405,12 +423,13 @@ const resting: AgentView[] = [
     status: "idle",
     cwd: "/home/you/src/collie",
     focused: false,
-    // A title the program that printed it has already exited under: it demotes to the muted line and
-    // stops being the pane's NAME (see `paneDisplayName`), which is a state worth being able to see.
+    // A title the program that printed it has already exited under: it stops being the pane's NAME
+    // (see `paneName` in lib/pane-name.ts), which is a state worth being able to see.
     terminalTitle: "pnpm test --watch",
     terminalTitleStale: true,
     lastActiveAt: TS - 6 * HOUR,
     lastSeenAt: TS - 3 * HOUR,
+    cache: { state: "cold", ttlSeconds: 300, ruleId: "codex.api", confidence: "documented" },
   },
   {
     paneId: "w1:p4",
@@ -1045,6 +1064,46 @@ export const paneStack: PaneFixture = paneHostUnreachable;
 /** A device the fronting proxy names and the bridge does not allowlist — the OTHER composer lock,
  *  independent of the crew host gate above, both driven at once for the stack card. */
 export const deviceStack: DeviceAuth = deviceRefused;
+
+// ── Prompt cache readings ────────────────────────────────────────────────────────────────────────
+//
+// `CacheChip` reads the live page clock (`lib/cache-clock.ts`'s own `Date.now()`), never a fixture's
+// clock, so a card's `expiresAt` has to be measured from THIS module's load time or every card would
+// read cold the moment it renders. `cacheNow` is that anchor — a second one from `TS` above, because
+// the cache chip's countdown and the herd's "since" ages are unrelated facts and have no reason to
+// share a number.
+
+export const cacheNow = Date.now();
+
+/**
+ * One pane's prompt-cache reading, with the ordinary defaults a rule-driven number carries. A card
+ * overrides only what it is demonstrating — `state` and usually `expiresAt` — so the ones it doesn't
+ * mention read as a plain, unremarkable rule.
+ */
+export function paneCache(overrides: Partial<PaneCache> & { state: PaneCache["state"] }): PaneCache {
+  return {
+    ttlSeconds: 300,
+    ruleId: "anthropic-claude-sonnet",
+    confidence: "documented",
+    ...overrides,
+  };
+}
+
+// ── The prompt-cache watch list ──────────────────────────────────────────────────────────────────
+
+/**
+ * Two watched panes: one on this collie, one on a member. Enough to show both row shapes the Settings
+ * list has — the bare label, and the label with a machine under it — plus the remove button beside each.
+ *
+ * The ids are what the bridge would publish: eight hex characters of a hash nobody can reverse.
+ */
+export const watchedPanes: CacheWatchListEntry[] = [
+  { id: "b7f1c2a9", label: "collie · next", session: "next", paneId: "%1" },
+  { id: "3d90ee14", label: "infra · claude", host: "minibuch", paneId: "w2:p1" },
+];
+
+/** One pane's place in the list: off, watchable, with the bridge's own 300-second window. */
+export const cacheWatchOff: CacheWatchState = { on: false, global: false, watchable: true, warnSeconds: 300 };
 
 // ── NoEchoNotice (gap 2) ─────────────────────────────────────────────────────────────────────────
 

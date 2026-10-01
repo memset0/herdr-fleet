@@ -16,7 +16,7 @@
 // (web/src/fixtures/panes/claude--select-multiselect-*.txt), and never touches a pane or the network.
 
 import type { StyledLine } from "../../blocks";
-import { classifyFooter, isBlank, isHorizontalRule, lineText } from "./markers";
+import { classifyFooter, isBlank, isHorizontalRule, lineText, questionRowText } from "./markers";
 import { checkboxState, isFreeTextLabel, parseOptionRow, trailingMenuRows } from "./prompt-select";
 import { parseStepperLine } from "./wizard";
 import type { WizardStepChip } from "../wizard-model";
@@ -190,7 +190,7 @@ function detectCheckboxPhase(
   texts: string[],
   fi: number,
 ): MultiSelectRegion | null {
-  if (classifyFooter(texts[fi]!) !== "select") return null;
+  if (classifyFooter(texts[fi]!, texts) !== "select") return null;
 
   // Numbered rows near the footer — the trailing 1,2,…,m run (the checkbox options + the numbered
   // "Chat about this" escape); a numbered body above it drops out (same hazard as prompt-select).
@@ -242,10 +242,19 @@ function detectCheckboxPhase(
   if (!stepper) return null;
   const stepperIdx = stepper.index;
 
-  // The question: every non-blank line between the stepper and the first option, joined.
+  // The "Type something" text field is the last checkbox row above the advance row, by POSITION: once
+  // someone types, the row reads "[✔] teal". While `❯` is on it every digit is typed INTO it (measured
+  // on Claude Code 2.1.283), so a toggle button would write its digit into someone's answer. No
+  // model has a lock for that, so the screen is not claimed; off the field, the typed row toggles
+  // with its digit like any other row (measured) and stays an option.
+  const fieldRow = menu.findLast((row) => row.index < advanceIdx);
+  if (fieldRow !== undefined && /^\s*❯/.test(texts[fieldRow.index]!)) return null;
+
+  // The question: every non-blank line between the stepper and the first option, joined, without the
+  // `│` gutter Claude paints down a question of more than one row.
   const questionLines: string[] = [];
   for (let i = stepperIdx + 1; i < firstOpt; i++) {
-    if (!isBlank(texts[i]!)) questionLines.push(texts[i]!.trim());
+    if (!isBlank(texts[i]!)) questionLines.push(questionRowText(texts[i]!));
   }
   if (questionLines.length === 0) return null;
   const question = questionLines.join(" ");
@@ -289,6 +298,8 @@ function detectCheckboxPhase(
       steps: stepper.steps,
       advanceLabel,
       pointer: pointerAt(texts, firstOpt, fi, advanceIdx),
+      pointerRow: null, // digit mode never reads it — the digit toggles pointer-independently
+      toggle: "digit",
       // Signature ends at the LAST menu row, NOT the footer: Claude's footer gains/loses a
       // "· ctrl+g to edit in nano" hint depending on which row the ❯ sits on (present on the
       // free-text/Submit/chat rows, absent on the checkbox rows). Since the Submit macro walks the
@@ -348,6 +359,8 @@ function detectReviewPhase(
     model: {
       phase: "review",
       incomplete,
+      pointer: null, // digit mode never reads it — review confirms on constant 1/2
+      submit: "digit",
       signature: coreSignature(texts, stepperIdx, fi),
       regionSignature: texts.slice(stepperIdx, fi + 1).join("\n"),
     },

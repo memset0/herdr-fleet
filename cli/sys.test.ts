@@ -1,10 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { fakeFiles, HOME } from "./fakes.ts";
-import { realExec, resolveTool, toolCandidates, withPathPrefix } from "./sys.ts";
+import { fakeExec, fakeFiles, HOME } from "./fakes.ts";
+import {
+  BUN_PROBE_TIMEOUT_MS,
+  realExec,
+  resolveRunnableBun,
+  resolveTool,
+  toolCandidates,
+  withEnvOverride,
+  withoutGitRelocators,
+  withPathPrefix,
+} from "./sys.ts";
 
 // The one place Collie looks for Bun, and the proof that the two shell copies of it agree.
 //
@@ -86,24 +95,48 @@ describe("resolveTool", () => {
   });
 });
 
+describe("a runnable Bun", () => {
+  test("proves the resolved absolute path with a bounded version probe", () => {
+    const bun = "/opt/bun/bin/bun";
+    const exec = fakeExec({ absent: ["bun"], answers: [[`${bun} --version`, { stdout: "1.1.0\n" }]] });
+    const readiness = resolveRunnableBun(exec, fakeFiles({ [bun]: "" }), { BUN_INSTALL: "/opt/bun" }, HOME);
+    expect(readiness).toEqual({ kind: "ready", bun: { path: bun, onPath: false, version: "1.1.0" } });
+    expect(exec.calls).toContain(`${bun} --version`);
+    expect(exec.timeouts).toContainEqual({ call: `${bun} --version`, ms: BUN_PROBE_TIMEOUT_MS });
+  });
+
+  test("rejects a resolved Bun that fails or does not answer a readable version", () => {
+    const bun = "/fake/bun";
+    for (const answer of [{ code: 1 }, { code: 124 }, { stdout: "\n" }]) {
+      const readiness = resolveRunnableBun(
+        fakeExec({ answers: [[`${bun} --version`, answer]] }),
+        fakeFiles(),
+        {},
+        HOME,
+      );
+      expect(readiness).toEqual({ kind: "unrunnable", tool: { path: bun, onPath: true } });
+    }
+  });
+});
+
 describe("the PATH a resolved tool's child gets", () => {
   // A phone-started update runs in a transient systemd user unit with no operator PATH. Resolving
   // Bun to `~/.bun/bin/bun` and spawning that absolute path is not enough: `bun cli/main.ts build`
   // shells out to `bunx tsc`, and `bunx` is found by NAME or not at all. A lab run died exactly
   // there — `bunx: command not found`, exit 127, checkout already advanced.
   test("the resolved tool's directory goes to the FRONT, so it outranks anything else", () => {
-    expect(withPathPrefix({ PATH: "/usr/bin:/bin" }, "/home/pat/.bun/bin").PATH).toBe(
+    expect(withPathPrefix({ PATH: "/usr/bin:/bin" }, "/home/pat/.bun/bin", "linux").PATH).toBe(
       "/home/pat/.bun/bin:/usr/bin:/bin",
     );
   });
 
   test("an empty or absent PATH becomes the directory alone, never a stray colon", () => {
-    expect(withPathPrefix({}, "/opt/bun/bin").PATH).toBe("/opt/bun/bin");
-    expect(withPathPrefix({ PATH: "" }, "/opt/bun/bin").PATH).toBe("/opt/bun/bin");
+    expect(withPathPrefix({}, "/opt/bun/bin", "linux").PATH).toBe("/opt/bun/bin");
+    expect(withPathPrefix({ PATH: "" }, "/opt/bun/bin", "linux").PATH).toBe("/opt/bun/bin");
   });
 
   test("a directory already on the PATH is left where it is, as the shim leaves it", () => {
-    expect(withPathPrefix({ PATH: "/usr/bin:/opt/bun/bin" }, "/opt/bun/bin").PATH).toBe(
+    expect(withPathPrefix({ PATH: "/usr/bin:/opt/bun/bin" }, "/opt/bun/bin", "linux").PATH).toBe(
       "/usr/bin:/opt/bun/bin",
     );
   });
@@ -112,6 +145,32 @@ describe("the PATH a resolved tool's child gets", () => {
     const env = { PATH: "/usr/bin" };
     expect(withPathPrefix(env, undefined)).toBe(env);
     expect(withPathPrefix(env, "")).toBe(env);
+  });
+
+  // A copied Windows environment keys the variable `Path` and separates it with `;`. Reading
+  // `env.PATH` there made the child's PATH the prefix alone, so an update's build found Bun and
+  // nothing else: `error: bash not found — cannot the version gate`.
+  test("Windows: the prefix joins the existing `Path` with `;`, under the key it was read from", () => {
+    const bun = "C:\\Users\\pat\\.bun\\bin";
+    const out = withPathPrefix({ Path: "C:\\Windows\\system32;C:\\Program Files\\Git\\bin" }, bun, "win32");
+    expect(out.Path).toBe(`${bun};C:\\Windows\\system32;C:\\Program Files\\Git\\bin`);
+    expect(out.PATH).toBeUndefined();
+  });
+
+  test("Windows: a directory already on the `Path` is left where it is", () => {
+    const env = { Path: "C:\\Windows\\system32;C:\\bun\\bin" };
+    expect(withPathPrefix(env, "C:\\bun\\bin", "win32")).toBe(env);
+  });
+
+  test("Windows: an uppercase `PATH` is still honoured, and an absent one becomes the directory", () => {
+    expect(withPathPrefix({ PATH: "C:\\Windows" }, "C:\\bun\\bin", "win32").PATH).toBe("C:\\bun\\bin;C:\\Windows");
+    expect(withPathPrefix({}, "C:\\bun\\bin", "win32").PATH).toBe("C:\\bun\\bin");
+  });
+
+  test("off Windows, a `Path` key is just another variable, never the search path", () => {
+    const out = withPathPrefix({ Path: "/elsewhere", PATH: "/usr/bin" }, "/opt/bun/bin", "linux");
+    expect(out.PATH).toBe("/opt/bun/bin:/usr/bin");
+    expect(out.Path).toBe("/elsewhere");
   });
 });
 
@@ -185,6 +244,27 @@ describe("bun lookup parity", () => {
   });
 });
 
+describe("realExec.capture timeout", () => {
+  const shell = { PATH: process.env.PATH ?? "" };
+
+  test("reports 124 after SIGKILL stops a direct child that ignores SIGTERM", () => {
+    const dir = mkdtempSync(join(tmpdir(), "collie-capture-"));
+    try {
+      const started = performance.now();
+      const result = realExec(shell, dir).capture(
+        "sh",
+        ["-c", "trap '' TERM; while :; do :; done"],
+        200,
+      );
+      expect(result.found).toBe(true);
+      expect(result.code).toBe(124);
+      expect(performance.now() - started).toBeLessThan(2_000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the bounded, logged client call the handoff waits for", () => {
   // The only seam in `Exec` whose whole purpose is an ANSWER from a detaching launcher, so it is
   // proved against a real child rather than a fake: the append and the bound are the contract.
@@ -245,6 +325,150 @@ describe("the bounded, logged client call the handoff waits for", () => {
       expect(missing.timedOut).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── No child inherits a redirected repository (ADR 0049) ─────────────────────
+// Git obeys `GIT_DIR` from any working directory, `-C` included. That is how a hook-run `git -C
+// <sandbox> init` once re-initialised the CALLER'S repository and wrote `bare = true` into a shared
+// config (the lesson `scripts/collie-cli.test.sh` records at its top, and defends itself with
+// `unset "${!GIT_@}"`). The shipped CLI runs in the same place — a pre-push hook that calls collie
+// hands it the same variables — so the seam strips them for every child.
+
+describe("withoutGitRelocators", () => {
+  test("an environment carrying none is returned unchanged, by identity", () => {
+    // Identity, not equality: this is the every-call case, and it must allocate nothing.
+    const env = { PATH: "/usr/bin", HOME: "/home/x", GIT_CEILING_DIRECTORIES: "/home/x" };
+    expect(withoutGitRelocators(env)).toBe(env);
+  });
+
+  test("every relocating name is removed and nothing else is touched", () => {
+    const env = {
+      PATH: "/usr/bin",
+      GIT_DIR: "/elsewhere/.git",
+      GIT_WORK_TREE: "/elsewhere",
+      GIT_COMMON_DIR: "/elsewhere/.git",
+      GIT_INDEX_FILE: "/elsewhere/.git/index",
+      GIT_OBJECT_DIRECTORY: "/elsewhere/.git/objects",
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: "/other/objects",
+      GIT_NAMESPACE: "ns",
+      GIT_PREFIX: "sub/",
+      // Kept on purpose: these decide how git AUTHENTICATES or how far it walks UP, not which
+      // repository it is looking at, and the hermetic test paths set the config ones deliberately.
+      GIT_CEILING_DIRECTORIES: "/home/x",
+      GIT_CONFIG_GLOBAL: "/tmp/g",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_SSH_COMMAND: "ssh -i /k",
+    };
+    expect(withoutGitRelocators(env)).toEqual({
+      PATH: "/usr/bin",
+      GIT_CEILING_DIRECTORIES: "/home/x",
+      GIT_CONFIG_GLOBAL: "/tmp/g",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_SSH_COMMAND: "ssh -i /k",
+    });
+    // The caller's own object is never mutated — `ctx.env` is read by everything else.
+    expect(env.GIT_DIR).toBe("/elsewhere/.git");
+  });
+});
+
+describe("realExec strips them from the child it actually starts", () => {
+  const dir = () => mkdtempSync(join(tmpdir(), "collie-gitenv-"));
+
+  test("a hostile GIT_DIR does not reach the child, and `-C` decides alone", () => {
+    const d = dir();
+    try {
+      // The real shape: `git -C <sandbox> init` while `GIT_DIR` points somewhere else. Unstripped,
+      // git initialises the directory GIT_DIR names and the sandbox stays empty.
+      const victim = join(d, "victim");
+      const sandbox = join(d, "sandbox");
+      mkdirSync(victim, { recursive: true });
+      mkdirSync(sandbox, { recursive: true });
+      const exec = realExec(
+        { PATH: process.env.PATH ?? "", GIT_DIR: join(victim, ".git"), GIT_WORK_TREE: victim },
+        d,
+      );
+      const r = exec.capture("git", ["-C", sandbox, "init", "-q"]);
+      expect(r.found).toBe(true);
+      expect(r.code).toBe(0);
+      // It landed where `-C` aimed it, and the victim was never touched.
+      expect(readFileSync(join(sandbox, ".git", "HEAD"), "utf8").length).toBeGreaterThan(0);
+      expect(() => readFileSync(join(victim, ".git", "HEAD"), "utf8")).toThrow();
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("`envAdd` cannot put one back — the seam's own env is spread last", () => {
+    const d = dir();
+    try {
+      const exec = realExec({ PATH: process.env.PATH ?? "" }, d);
+      const r = exec.capture("sh", ["-c", "echo \"[${GIT_DIR:-unset}]\""], undefined, {
+        GIT_DIR: "/elsewhere/.git",
+      });
+      // `envAdd` layers UNDER the Exec's env, and the Exec's env no longer carries the name, so
+      // without the post-merge filter this one WOULD reach the child. No caller passes a git name
+      // today; the invariant is not allowed to depend on that staying true.
+      expect(r.stdout.trim()).toBe("[unset]");
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a per-call override wins over the Exec's own environment (#283)", () => {
+  const dir = () => mkdtempSync(join(tmpdir(), "collie-envover-"));
+  const PRINT = 'echo "[${COLLIE_PLUGIN_ROOT:-unset}][${FOO:-unset}][${GIT_DIR:-unset}]"';
+
+  test("withEnvOverride: null removes, a string sets, nothing to apply allocates nothing", () => {
+    const env = { COLLIE_PLUGIN_ROOT: "/old", FOO: "exec" };
+    expect(withEnvOverride(env, undefined)).toBe(env);
+    expect(withEnvOverride(env, {})).toBe(env);
+    expect(withEnvOverride(env, { COLLIE_PLUGIN_ROOT: null, FOO: "over" })).toEqual({ FOO: "over" });
+    // The caller's object is never mutated: `ctx.env` is read by everything else.
+    expect(env.COLLIE_PLUGIN_ROOT).toBe("/old");
+  });
+
+  test("capture: envAdd < the Exec's env < envOverride, and the relocators are filtered after all three", () => {
+    const d = dir();
+    try {
+      const exec = realExec({ PATH: process.env.PATH ?? "", COLLIE_PLUGIN_ROOT: "/old", FOO: "exec" }, d);
+      // envAdd alone loses to the Exec's own env.
+      expect(exec.capture("sh", ["-c", PRINT], undefined, { FOO: "add" }).stdout.trim()).toBe("[/old][exec][unset]");
+      // The override beats both, removing one name and replacing the other.
+      expect(
+        exec.capture("sh", ["-c", PRINT], undefined, { FOO: "add" }, { COLLIE_PLUGIN_ROOT: null, FOO: "over" }).stdout.trim(),
+      ).toBe("[unset][over][unset]");
+      // And cannot put a git relocator back.
+      expect(exec.capture("sh", ["-c", PRINT], undefined, undefined, { GIT_DIR: "/elsewhere/.git" }).stdout.trim()).toBe(
+        "[/old][exec][unset]",
+      );
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("runIn takes the same override, and the same filter", () => {
+    const d = dir();
+    try {
+      const exec = realExec({ PATH: process.env.PATH ?? "", COLLIE_PLUGIN_ROOT: "/old" }, d);
+      const out = join(d, "out");
+      const r = exec.runIn("sh", ["-c", `${PRINT} > ${out}`], d, undefined, { COLLIE_PLUGIN_ROOT: null, GIT_DIR: "/x" });
+      expect(r.code).toBe(0);
+      expect(readFileSync(out, "utf8").trim()).toBe("[unset][unset][unset]");
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("a child killed by a signal says which one", () => {
+    const d = dir();
+    try {
+      const r = realExec({ PATH: process.env.PATH ?? "" }, d).capture("sh", ["-c", "kill -KILL $$"]);
+      expect(r.signal).toBe("SIGKILL");
+    } finally {
+      rmSync(d, { recursive: true, force: true });
     }
   });
 });

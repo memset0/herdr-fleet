@@ -1,13 +1,20 @@
 import { describe, expect, test, vi } from "vitest";
 
 import {
+  askInApp,
+  OPEN_MESSAGE,
+  parseOpenMessage,
+  type OpenMessage,
   openNotificationTarget,
   planNotificationOpen,
   type OpenTargetClient,
+  withOpenMarker,
 } from "@/lib/notification-open";
 
 const URL_A = "https://collie.example/pane/p1";
 const URL_B = "https://collie.example/settings";
+/** What `openWindow` is asked for: the target with the notification marker (ADR 0067). */
+const OPENED_A = `${URL_A}?from=notification`;
 
 /** A fake WindowClient that records the order its methods were called in, on a shared log. */
 function fakeClient(
@@ -80,7 +87,7 @@ describe("openNotificationTarget", () => {
     await expect(openNotificationTarget({ url: URL_A, clients: [], openWindow })).resolves.toBe(
       "opened",
     );
-    expect(openWindow).toHaveBeenCalledExactlyOnceWith(URL_A);
+    expect(openWindow).toHaveBeenCalledExactlyOnceWith(OPENED_A);
   });
 
   test("a stale non-visible client is not awaited before openWindow", async () => {
@@ -97,7 +104,7 @@ describe("openNotificationTarget", () => {
     await expect(
       openNotificationTarget({ url: URL_A, clients: [stale], openWindow }),
     ).resolves.toBe("opened");
-    expect(log).toEqual([`openWindow(${URL_A})`]);
+    expect(log).toEqual([`openWindow(${OPENED_A})`]);
   });
 
   test("a visible client already on the target URL is only focused", async () => {
@@ -151,7 +158,7 @@ describe("openNotificationTarget", () => {
     await expect(openNotificationTarget({ url: URL_A, clients: [live], openWindow })).resolves.toBe(
       "opened",
     );
-    expect(log).toEqual([`live.navigate(${URL_A})`, `openWindow(${URL_A})`]);
+    expect(log).toEqual([`live.navigate(${URL_A})`, `openWindow(${OPENED_A})`]);
   });
 
   test("#147: a discarded client whose navigate resolves null does not swallow the tap", async () => {
@@ -165,7 +172,7 @@ describe("openNotificationTarget", () => {
     await expect(
       openNotificationTarget({ url: URL_A, clients: [discarded], openWindow }),
     ).resolves.toBe("opened");
-    expect(log).toEqual([`openWindow(${URL_A})`]);
+    expect(log).toEqual([`openWindow(${OPENED_A})`]);
   });
 
   test("when openWindow is refused twice it falls back to navigating a hidden client", async () => {
@@ -180,8 +187,8 @@ describe("openNotificationTarget", () => {
       openNotificationTarget({ url: URL_A, clients: [hidden], openWindow }),
     ).resolves.toBe("navigated");
     expect(log).toEqual([
-      `openWindow(${URL_A})`,
-      `openWindow(${URL_A})`,
+      `openWindow(${OPENED_A})`,
+      `openWindow(${OPENED_A})`,
       `hidden.navigate(${URL_A})`,
       "hidden.focus",
     ]);
@@ -194,5 +201,91 @@ describe("openNotificationTarget", () => {
     await expect(openNotificationTarget({ url: URL_A, clients: [dead], openWindow })).resolves.toBe(
       "failed",
     );
+  });
+});
+
+// ADR 0067: a visible app is asked to open the URL in its own router first, so the screen the
+// operator was on stays behind the pane and a swipe goes back to it.
+describe("openInApp", () => {
+  const openWindow = () => Promise.resolve(null);
+
+  test("an app that acknowledges is focused and never navigated", async () => {
+    const log: string[] = [];
+    const client: OpenTargetClient = {
+      ...fakeClient(log, "live", { url: URL_B, visibilityState: "visible" }),
+      openInApp: (url) => {
+        log.push(`live.openInApp(${url})`);
+        return Promise.resolve(true);
+      },
+    };
+    await expect(openNotificationTarget({ url: URL_A, clients: [client], openWindow })).resolves.toBe("navigated");
+    expect(log).toEqual([`live.openInApp(${URL_A})`, "live.focus"]);
+  });
+
+  test("an app that does not answer is navigated the old way", async () => {
+    const log: string[] = [];
+    const client: OpenTargetClient = {
+      ...fakeClient(log, "live", { url: URL_B, visibilityState: "visible" }),
+      openInApp: () => Promise.resolve(false),
+    };
+    await expect(openNotificationTarget({ url: URL_A, clients: [client], openWindow })).resolves.toBe("navigated");
+    expect(log).toEqual([`live.navigate(${URL_A})`, "live.focus"]);
+  });
+
+  test("a hidden client is never asked: it may be a discarded tab", async () => {
+    const log: string[] = [];
+    const client: OpenTargetClient = {
+      ...fakeClient(log, "hidden", { url: URL_B, visibilityState: "hidden" }),
+      openInApp: () => {
+        log.push("hidden.openInApp");
+        return Promise.resolve(true);
+      },
+    };
+    await openNotificationTarget({ url: URL_A, clients: [client], openWindow: () => Promise.resolve({ url: URL_A }) });
+    expect(log).not.toContain("hidden.openInApp");
+  });
+});
+
+describe("askInApp", () => {
+  test("posts collie:open with a reply port and resolves with the answer", async () => {
+    const target = {
+      postMessage: (message: OpenMessage, transfer: Transferable[]) => {
+        expect(message).toEqual({ type: OPEN_MESSAGE, url: URL_A });
+        const [port] = transfer;
+        if (port instanceof MessagePort) port.postMessage(true, []);
+      },
+    };
+    await expect(askInApp(target, URL_A, 1000)).resolves.toBe(true);
+  });
+
+  test("resolves false on silence", async () => {
+    await expect(askInApp({ postMessage: () => {} }, URL_A, 10)).resolves.toBe(false);
+  });
+
+  test("resolves false when posting throws", async () => {
+    const target = {
+      postMessage: () => {
+        throw new Error("detached");
+      },
+    };
+    await expect(askInApp(target, URL_A, 1000)).resolves.toBe(false);
+  });
+});
+
+describe("parseOpenMessage", () => {
+  test("reads collie:open and nothing else", () => {
+    expect(parseOpenMessage({ type: OPEN_MESSAGE, url: URL_A })).toEqual({ type: OPEN_MESSAGE, url: URL_A });
+    expect(parseOpenMessage({ type: "precache-progress", done: 1 })).toBeUndefined();
+    expect(parseOpenMessage({ type: OPEN_MESSAGE, url: 3 })).toBeUndefined();
+    expect(parseOpenMessage(null)).toBeUndefined();
+    expect(parseOpenMessage(undefined)).toBeUndefined();
+  });
+});
+
+describe("withOpenMarker", () => {
+  test("adds the marker to the query, before any hash, keeping what is there", () => {
+    expect(withOpenMarker("https://c.test/pane/p1")).toBe("https://c.test/pane/p1?from=notification");
+    expect(withOpenMarker("https://c.test/pane/p1?h=a")).toBe("https://c.test/pane/p1?h=a&from=notification");
+    expect(withOpenMarker("https://c.test/settings#x")).toBe("https://c.test/settings?from=notification#x");
   });
 });

@@ -50,6 +50,7 @@ const PINNED = [
   "grok--plan-approval.txt",
   "grok--plan-request-changes.txt",
   "grok--plan-tab-prompt.txt",
+  "grok--reporter-294-draft-newline-hint.txt",
   "grok--startup.txt",
   "grok--user-bubble.txt",
   "grok--working.txt",
@@ -77,9 +78,14 @@ const DIALOG = [
 const ownFixtures = DIALOG;
 const neutralFixtures = allGrokFixtures.filter((f) => !DIALOG.includes(f));
 
+// Every opencode capture must stay raw under the grok adapter too — the cross-adapter leg.
+const allOpencodeFixtures = readdirSync(PANES_DIR)
+  .filter((f) => f.startsWith("oc--") && f.endsWith(".txt"))
+  .toSorted();
+
 describeAdapterConformance(grokAdapter, {
   ownFixtures,
-  foreignFixtures: [...allClaudeFixtures, ...allOmpFixtures, ...allCodexFixtures],
+  foreignFixtures: [...allClaudeFixtures, ...allOmpFixtures, ...allCodexFixtures, ...allOpencodeFixtures],
   neutralFixtures,
 });
 

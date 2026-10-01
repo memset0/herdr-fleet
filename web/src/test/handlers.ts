@@ -2,7 +2,13 @@ import { http, HttpResponse } from "msw";
 
 import type {
   AgentView,
+  CacheRuleWire,
+  ChangeCommitDiffResponse,
+  ChangeCommitResponse,
+  CreateResponse,
   CrewStatusResponse,
+  PaneChangeDiffResponse,
+  PaneChangesResponse,
   ServerSummary,
   SessionSummary,
   SnapshotResponse,
@@ -253,6 +259,38 @@ export const fixtureCrewStatus: CrewStatusResponse = {
   ts: 400_000,
 };
 
+/**
+ * What `POST /api/tab` answers: the fresh shell pane of a new tab in `collie` (w2). Shared by the
+ * unit layer's handler below and the browser tier's stub (e2e/fixtures/api.ts), so the two never
+ * describe a created tab two ways.
+ */
+export const fixtureNewTab: Extract<CreateResponse, { ok: true }> = {
+  ok: true,
+  pane: {
+    paneId: "w2:p9",
+    workspaceId: "w2",
+    workspaceLabel: "collie",
+    tabId: "w2:t9",
+    cwd: "/home/you/collie",
+  },
+};
+
+/**
+ * What `POST /api/workspace` answers: the fresh shell pane of a new space, opened in the fixture
+ * operator's home. Shared by the unit layer's handler below and the browser tier's stub
+ * (e2e/fixtures/api.ts), which swaps in the folder a create named, the way a multiplexer reports it.
+ */
+export const fixtureNewSpace: Extract<CreateResponse, { ok: true }> = {
+  ok: true,
+  pane: {
+    paneId: "w9:p1",
+    workspaceId: "w9",
+    workspaceLabel: "new-space",
+    tabId: "w9:t1",
+    cwd: "/home/you",
+  },
+};
+
 /** A minimal two-turn transcript: a human ask and the agent's tool-call-plus-answer reply. */
 export const fixtureTranscript: TranscriptEntry[] = [
   {
@@ -332,11 +370,210 @@ export function paneTextWithDraft(base = "hello from the pane"): string {
 }
 
 // Default happy-path handlers; individual tests can override via server.use(...).
+/** The rule catalog `GET /api/cache-rules` answers with. Shaped exactly as the bridge composes it. */
+export const fixtureCacheRules: CacheRuleWire[] = [
+  {
+    id: "claude.subscription",
+    label: "Claude Code on a Claude subscription (Pro/Max)",
+    ttlSeconds: 3600,
+    confidence: "documented",
+    sourceTitle: "How Claude Code uses prompt caching",
+    sourceUrl: "https://code.claude.com/docs/en/prompt-caching",
+    retrievedAt: "2026-08-24",
+    slidingWindow: true,
+    automatic: true,
+    note: "Subagents use the five-minute TTL even on a subscription.",
+  },
+  {
+    id: "claude.api",
+    label: "Claude Code on an API key or third-party provider",
+    ttlSeconds: 300,
+    confidence: "documented",
+    sourceTitle: "How Claude Code uses prompt caching",
+    sourceUrl: "https://code.claude.com/docs/en/prompt-caching",
+    retrievedAt: "2026-08-24",
+    slidingWindow: true,
+    automatic: true,
+    overridden: {
+      ttlSeconds: 3600,
+      sourceUrl: "https://our.gateway.invalid/notes",
+      retrieved: "2026-09-12",
+      note: "our gateway sends ttl 1h on every request",
+    },
+  },
+];
+
+// The Changes view (ADR 0065): a workspace repo with two member repos below it, the shape the
+// feature was asked for. Shared by the unit suite, the e2e stub and the playground.
+export const fixtureChanges: PaneChangesResponse = {
+  paneId: "w1:p1",
+  workspaceId: "w1",
+  workspaceLabel: "webapp",
+  available: true,
+  root: "/home/you/webapp",
+  truncated: false,
+  repos: [
+    {
+      relPath: ".",
+      name: "webapp",
+      files: [
+        { path: "src/routes/checkout.tsx", status: "M", added: 3, removed: 1, binary: false },
+        { path: "src/lib/cart.ts", status: "A", added: 4, removed: 0, binary: false },
+        { path: "public/logo.png", status: "M", added: 0, removed: 0, binary: true },
+      ],
+    },
+    {
+      relPath: "packages/api",
+      name: "api",
+      files: [
+        { path: "server/handlers/orders.ts", oldPath: "server/orders.ts", status: "R", added: 1, removed: 1, binary: false },
+        { path: "notes.md", status: "?", added: 2, removed: 0, binary: false },
+      ],
+    },
+  ],
+};
+
+const FIXTURE_DIFFS = {
+  ".\nsrc/routes/checkout.tsx": [
+    "diff --git a/src/routes/checkout.tsx b/src/routes/checkout.tsx",
+    "index 1a2b3c4..5d6e7f8 100644",
+    "--- a/src/routes/checkout.tsx",
+    "+++ b/src/routes/checkout.tsx",
+    "@@ -12,5 +12,7 @@ export function Checkout() {",
+    "   const cart = useCart();",
+    "-  const total = cart.items.reduce((sum, item) => sum + item.price, 0);",
+    "+  const total = cartTotal(cart.items);",
+    "+  const shipping = total > 50 ? 0 : 4.9;",
+    "+  const label = `${formatPrice(total + shipping)} including shipping to ${cart.address?.city ?? \"your door\"}`;",
+    "   return (",
+    "     <section>",
+    "       <h1>Checkout</h1>",
+    "",
+  ].join("\n"),
+  ".\nsrc/lib/cart.ts": [
+    "diff --git a/src/lib/cart.ts b/src/lib/cart.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/lib/cart.ts",
+    "@@ -0,0 +1,4 @@",
+    "+export function cartTotal(items: { price: number }[]): number {",
+    "+  return items.reduce((sum, item) => sum + item.price, 0);",
+    "+}",
+    "+",
+    "",
+  ].join("\n"),
+  "packages/api\nserver/handlers/orders.ts": [
+    "diff --git a/server/orders.ts b/server/handlers/orders.ts",
+    "similarity index 90%",
+    "rename from server/orders.ts",
+    "rename to server/handlers/orders.ts",
+    "@@ -1,3 +1,3 @@",
+    "-import { db } from \"./db\";",
+    "+import { db } from \"../db\";",
+    " ",
+    " export async function listOrders() {",
+    "",
+  ].join("\n"),
+  "packages/api\nnotes.md": "diff --git a/notes.md b/notes.md\nnew file\n--- /dev/null\n+++ b/notes.md\n@@ -0,0 +1,2 @@\n+# Notes\n+Orders moved under handlers/.\n",
+};
+
+function diffFor(key: string): string | undefined {
+  return Object.entries(FIXTURE_DIFFS).find(([k]) => k === key)?.[1];
+}
+
+/** The fixture diff for one listed file, answered the way the bridge answers it. */
+export function fixtureChangeDiff(repo: string, path: string): PaneChangeDiffResponse {
+  const file = fixtureChanges.available
+    ? fixtureChanges.repos.find((r) => r.relPath === repo)?.files.find((f) => f.path === path)
+    : undefined;
+  if (!file) return { paneId: "w1:p1", workspaceId: "w1", workspaceLabel: "webapp", available: false, reason: "unknown-path" };
+  const answer: PaneChangeDiffResponse = {
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    workspaceLabel: "webapp",
+    available: true,
+    repo,
+    path,
+    status: file.status,
+    binary: file.binary,
+    directory: false,
+    truncated: false,
+    diff: file.binary ? "" : (diffFor(`${repo}\n${path}`) ?? ""),
+  };
+  if (file.oldPath !== undefined) answer.oldPath = file.oldPath;
+  return answer;
+}
+
+// The commit view (ADR 0065): the same workspace after the agent committed its work. The list is
+// empty and offers the repo's last commit; that commit holds two of the files above.
+export const fixtureCleanChanges: PaneChangesResponse = {
+  paneId: "w1:p1",
+  workspaceId: "w1",
+  workspaceLabel: "webapp",
+  available: true,
+  root: "/home/you/webapp",
+  truncated: false,
+  repos: [],
+  clean: [{ relPath: ".", name: "webapp" }],
+};
+
+export const fixtureCommit: ChangeCommitResponse & { paneId: string } = {
+  paneId: "w1:p1",
+  workspaceId: "w1",
+  workspaceLabel: "webapp",
+  available: true,
+  repo: ".",
+  name: "webapp",
+  commit: {
+    hash: "3f2a9c1e5b7d4f60a8e2c4b6d8f0a1c3e5b7d9f1",
+    shortHash: "3f2a9c1",
+    subject: "Move the cart total into its own helper and charge shipping under 50",
+    author: "Claude",
+    time: 1_790_000_000,
+  },
+  truncated: false,
+  files: [
+    { path: "src/routes/checkout.tsx", status: "M", added: 3, removed: 1, binary: false },
+    { path: "src/lib/cart.ts", status: "A", added: 4, removed: 0, binary: false },
+  ],
+};
+
+/** One file of the fixture commit, answered the way the bridge answers it. */
+export function fixtureCommitDiff(repo: string, path: string): ChangeCommitDiffResponse & { paneId: string } {
+  const head = { paneId: "w1:p1", workspaceId: "w1", workspaceLabel: "webapp" };
+  const file = fixtureCommit.available && repo === fixtureCommit.repo ? fixtureCommit.files.find((f) => f.path === path) : undefined;
+  if (!file || !fixtureCommit.available) return { ...head, available: false, reason: "unknown-path" };
+  return {
+    ...head,
+    available: true,
+    repo,
+    path,
+    status: file.status,
+    binary: false,
+    directory: false,
+    truncated: false,
+    diff: diffFor(`${repo}\n${path}`) ?? "",
+    hash: fixtureCommit.commit.hash,
+  };
+}
+
 export const handlers = [
   http.get("/api/snapshot", () => HttpResponse.json(fixtureSnapshot)),
   http.get(/\/api\/pane\/[^/]+$/, () =>
     HttpResponse.json({ paneId: "w1:p1", text: paneTextWithDraft(), truncated: false, revision: 1 }),
   ),
+  // The Changes view: the list, or with ?repo=&path= one file's diff. Asked by pane or by
+  // workspace, the answer is the same list (ADR 0065).
+  http.get(/\/api\/(?:pane|workspace)\/[^/]+\/changes/, ({ request }) => {
+    const q = new URL(request.url).searchParams;
+    const repo = q.get("repo");
+    const path = q.get("path");
+    if (q.get("view") === "commit") {
+      return HttpResponse.json(repo !== null && path !== null ? fixtureCommitDiff(repo, path) : fixtureCommit);
+    }
+    if (repo !== null && path !== null) return HttpResponse.json(fixtureChangeDiff(repo, path));
+    return HttpResponse.json(fixtureChanges);
+  }),
   // Pane transcript history. Two turns, newest-anchored, with nothing older behind them.
   http.get(/\/api\/pane\/[^/]+\/history/, () =>
     HttpResponse.json({
@@ -355,30 +592,8 @@ export const handlers = [
   http.post(/\/api\/pane\/[^/]+\/keys$/, () => HttpResponse.json({ ok: true })),
   http.post(/\/api\/pane\/[^/]+\/close$/, () => HttpResponse.json({ ok: true })),
   http.post(/\/api\/pane\/[^/]+\/rename$/, () => HttpResponse.json({ ok: true })),
-  http.post("/api/tab", () =>
-    HttpResponse.json({
-      ok: true,
-      pane: {
-        paneId: "w2:p9",
-        workspaceId: "w2",
-        workspaceLabel: "collie",
-        tabId: "w2:t9",
-        cwd: "/home/you/collie",
-      },
-    }),
-  ),
-  http.post("/api/workspace", () =>
-    HttpResponse.json({
-      ok: true,
-      pane: {
-        paneId: "w9:p1",
-        workspaceId: "w9",
-        workspaceLabel: "new-space",
-        tabId: "w9:t1",
-        cwd: "/home/you",
-      },
-    }),
-  ),
+  http.post("/api/tab", () => HttpResponse.json(fixtureNewTab)),
+  http.post("/api/workspace", () => HttpResponse.json(fixtureNewSpace)),
   // The DEFAULT world is solo, so the census refuses exactly as a non-lead bridge does: 404 with the
   // app's ordinary JSON error shape. Every pre-existing test therefore keeps asserting the one-host
   // world, and a test that wants a crew overrides this with `fixtureCrewStatus`.
@@ -408,17 +623,36 @@ export const handlers = [
       freshness: "fresh",
     }),
   ),
+  // Default world: no folder recorded yet (#289), which is every bridge that never created a space
+  // in a folder. The new-space sheet then renders exactly as it did before the list existed; a test
+  // that wants a list overrides these two with its own.
+  http.get("/api/folders", () => HttpResponse.json({ recent: [], favourites: [], home: "" })),
+  http.post("/api/folders/star", () => HttpResponse.json({ recent: [], favourites: [], home: "" })),
+  // The prompt-cache rule catalog. Two rows are enough for every sheet case: one plain and one the
+  // operator moved. A test that wants a different catalog overrides this handler.
+  http.get("/api/cache-rules", () => HttpResponse.json({ rules: fixtureCacheRules })),
   http.post<never, { snoozedUntil: number | null }>("/api/notifications/snooze", async ({ request }) => {
     const { snoozedUntil } = await request.json();
     return HttpResponse.json({ snoozedUntil });
   }),
   http.get("/api/notifications/prefs", () =>
-    HttpResponse.json({ blocked: true, done: false, updates: true }),
+    HttpResponse.json({ blocked: true, done: false, updates: true, cache: false }),
   ),
-  http.post<never, Partial<{ blocked: boolean; done: boolean; updates: boolean }>>("/api/notifications/prefs", async ({ request }) => {
+  http.post<never, Partial<{ blocked: boolean; done: boolean; updates: boolean; cache: boolean }>>("/api/notifications/prefs", async ({ request }) => {
     const patch = await request.json();
-    return HttpResponse.json({ blocked: true, done: false, updates: true, ...patch });
+    return HttpResponse.json({ blocked: true, done: false, updates: true, cache: false, ...patch });
   }),
+  // The prompt-cache watch list (ADR 0042). The default world watches NOTHING and has the global switch
+  // off, which is a fresh install: a test that wants a watched pane overrides these three.
+  http.get("/api/notifications/cache-watch", () =>
+    HttpResponse.json({ on: false, global: false, watchable: true, warnSeconds: 300 }),
+  ),
+  http.post<never, { on: boolean }>("/api/notifications/cache-watch", async ({ request }) => {
+    const { on } = await request.json();
+    return HttpResponse.json({ on, global: false, watchable: true, warnSeconds: 300 });
+  }),
+  http.get("/api/notifications/cache-watch/list", () => HttpResponse.json({ entries: [] })),
+  http.post("/api/notifications/cache-watch/forget", () => HttpResponse.json({ entries: [] })),
   // Device pairing. The default world has NOTHING paired — writes are ungated, exactly like a
   // fresh install — so every pre-existing test keeps asserting the unpaired-and-unenforced bridge,
   // and a test that wants pairing on overrides these two.

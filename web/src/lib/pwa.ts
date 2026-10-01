@@ -1,10 +1,14 @@
-import { registerSW } from "virtual:pwa-register";
-
+import { basePath, mounted } from "./base-path";
 import { BUILD, isStaleBuild } from "./build";
+import { UPDATE_MODE_HOLD, isReloadHeld, isReloadHeldBy, subscribeReloadHeld } from "./reload-guard";
 import { getServerBuild, subscribeServerBuild } from "./server-build";
 
-// Service-worker registration + update wiring, in one place so the `virtual:pwa-register` import
-// (a build-time virtual module) stays isolated and easy to stub in tests.
+// Service-worker registration + update wiring, in one place. The worker is registered by hand
+// rather than through `virtual:pwa-register`: that module registers `${import.meta.env.BASE_URL}sw.js`,
+// and the base is a build-time constant while the mount is not (ADR 0052, one build serves any
+// mount): under `/collie/` it would register the root's worker. The mount is known only at runtime,
+// from the document the bridge served (lib/base-path.ts), and the worker is registered at
+// `<mount>sw.js` with the mount as its scope.
 //
 // The bridge serves a freshly-rebuilt bundle the instant it's built, but a browser only adopts it
 // when the service worker runs an update check. We don't trust vite-plugin-pwa's own auto-reload
@@ -88,6 +92,15 @@ const spent = new Set<ReloadLane>();
  * does not return, so anything after this flag is set is running in a page that is already leaving.
  */
 let navigating = false;
+
+/**
+ * Whether this page has asked for its reload and is on its way out. A notification's in-app open
+ * reads it (`lib/nav-entry.ts`): a move now would be lost with the page, so the target waits for the
+ * fresh one.
+ */
+export function isReloadInFlight(): boolean {
+  return navigating;
+}
 
 /**
  * How long a page waits for its own reload before it decides the reload is not coming.
@@ -242,8 +255,48 @@ async function forceReload(lane: ReloadLane): Promise<void> {
 }
 
 function onControllerChange() {
-  if (hadController) reloadOnce("auto");
-  else hadController = true;
+  // A REAL SWAP ONLY, never the first-visit initial claim. Stamped BEFORE the reload, which does not
+  // return. The update screen reads it as "this device's own leg is done": the page is now running
+  // the bundle the worker installed. Stamping the initial claim as well would tell the screen a
+  // download had finished on a device that has not started one.
+  if (!hadController) {
+    hadController = true;
+    return;
+  }
+  controllerChangedAt = Date.now();
+  for (const listener of controllerListeners) listener();
+  reloadWhenReleased();
+}
+
+/**
+ * THE SWAP'S RELOAD WAITS FOR THE RELOAD HOLD (ADR 0064).
+ *
+ * The swap used to reload at once, whatever the page was holding. Two holders cannot afford that:
+ * update mode, which saves the phone's own reload for the LAST step of an update and must not lose
+ * its screen while other machines still move, and a composer with unsent text, which the reload
+ * would eat. The page keeps running the bundle it booted; the new worker is already in control, and
+ * the reload fires the moment the last hold clears. The swap is stamped above either way, so the
+ * update screen still knows this device's download is over.
+ *
+ * `sw.ts` keeps `skipWaiting()` on install, so a worker another tab found can still take control of
+ * this one mid-hold. That is the case this deferral is for; this page itself stops LOOKING for a new
+ * worker while update mode holds (the periodic check below).
+ */
+let swapWaiting = false;
+
+function reloadWhenReleased(): void {
+  if (!isReloadHeld()) {
+    reloadOnce("auto");
+    return;
+  }
+  if (swapWaiting) return;
+  swapWaiting = true;
+  const stop = subscribeReloadHeld(() => {
+    if (isReloadHeld()) return;
+    stop();
+    swapWaiting = false;
+    reloadOnce("auto");
+  });
 }
 
 /**
@@ -274,7 +327,92 @@ export function subscribeUpdateStage(listener: () => void): () => void {
 function setStage(next: UpdateStage): void {
   if (stage === next) return;
   stage = next;
+  if (next === "installing") installingSince = Date.now();
+  else {
+    installingSince = null;
+    precacheProgress = null;
+    for (const listener of progressListeners) listener();
+  }
   for (const listener of stageListeners) listener();
+}
+
+/**
+ * WHEN THE DOWNLOAD STARTED, so a download with no progress yet still has an age.
+ *
+ * The update screen needs it twice: to show elapsed time, and to tell a download that is slow from
+ * one that has stopped (`lib/update-screen.ts`'s `DOWNLOAD_HUNG_MS`). Before the first asset lands
+ * there is no progress message to date, and a row that said nothing until one arrived would be
+ * silent for exactly the worst case.
+ */
+let installingSince: number | null = null;
+
+export function getInstallingSince(): number | null {
+  return installingSince;
+}
+
+/**
+ * PROGRESS, COUNTED IN FILES, BECAUSE FILES ARE THE ONLY HONEST UNIT (M28/01).
+ *
+ * `src/sw.ts` adds a precache plugin whose `fetchDidSucceed` posts one message per COMPLETED asset.
+ * That hook fires once per asset and carries no byte count, so a bar weighted by bytes would move in
+ * file-sized jumps anyway while costing a build-time size stamp, an extra fetch and a fallback for
+ * when the stamp is missing. `total` is the manifest's own length, which the worker knows exactly.
+ *
+ * `at` is the stamp of the message, not of the render: the screen asks "has anything arrived lately?"
+ * and a value dated when it was read could never answer that.
+ */
+export interface PrecacheProgress {
+  readonly done: number;
+  readonly total: number;
+  readonly at: number;
+}
+
+let precacheProgress: PrecacheProgress | null = null;
+const progressListeners = new Set<() => void>();
+
+export function getPrecacheProgress(): PrecacheProgress | null {
+  return precacheProgress;
+}
+
+export function subscribePrecacheProgress(listener: () => void): () => void {
+  progressListeners.add(listener);
+  return () => progressListeners.delete(listener);
+}
+
+/**
+ * WHEN THE CONTROLLER SWAPPED, or null.
+ *
+ * Stamped before the reload, because the reload is what the swap causes and the stamp has to outlive
+ * the decision to make it. A document that arrives with a stamp of null and a worker already in
+ * charge is the ordinary case: the swap happened to the document that left.
+ */
+let controllerChangedAt: number | null = null;
+const controllerListeners = new Set<() => void>();
+
+export function getControllerChangedAt(): number | null {
+  return controllerChangedAt;
+}
+
+export function subscribeControllerChanged(listener: () => void): () => void {
+  controllerListeners.add(listener);
+  return () => controllerListeners.delete(listener);
+}
+
+// The worker's own messages. Registered in module scope rather than inside `onRegisteredSW`, because
+// a worker that was ALREADY installing when this document loaded starts posting before the
+// registration callback has run.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event: MessageEvent) => {
+    // SAFETY: `MessageEvent.data` is `any` — a structured clone from our own registered worker, which
+    // is the only thing that can reach this listener on a same-origin page. Every field is read
+    // through a narrow shape and a payload of any other shape simply fails the comparison below.
+    const data = event.data as { type?: string; done?: number; total?: number } | null;
+    if (data?.type !== "precache-progress") return;
+    const { done, total } = data;
+    if (!Number.isFinite(done) || !Number.isFinite(total)) return;
+    precacheProgress = { done: done ?? 0, total: total ?? 0, at: Date.now() };
+    for (const listener of progressListeners) listener();
+  });
 }
 
 /**
@@ -309,11 +447,18 @@ function nudge(worker: ServiceWorker): void {
   worker.postMessage({ type: "SKIP_WAITING" }, []);
 }
 
-registerSW({
-  immediate: true,
-  onRegisteredSW(_swUrl, r) {
+if ("serviceWorker" in navigator) {
+  void navigator.serviceWorker
+    .register(mounted("/sw.js"), { scope: basePath() })
+    .then(onRegistered)
+    // An insecure context or a locked-down browser refuses the registration; the app runs without
+    // a worker, as it always has there. Nothing to tell the user that the address bar has not.
+    .catch(() => undefined);
+}
+
+function onRegistered(r: ServiceWorkerRegistration): void {
+  {
     registration = r;
-    if (!r) return;
     // Any newly-found worker (from the poll below or a manual check) → follow it, and let the
     // controller swap behind it be what reloads the page.
     r.addEventListener("updatefound", () => followWorker(r.installing));
@@ -326,9 +471,15 @@ registerSW({
     // *replaces* a prior controller (see onControllerChange); the first-visit initial claim is not
     // an update and must not reload.
     navigator.serviceWorker?.addEventListener("controllerchange", onControllerChange);
-    setInterval(() => void r.update().catch(() => {}), UPDATE_CHECK_MS);
-  },
-});
+    // PAUSED WHILE UPDATE MODE HOLDS (ADR 0064). A worker found here mid-update installs, skips
+    // waiting and takes control, which is this phone's reload arriving before the other machines are
+    // done. Update mode asks for the new app itself when its phone step starts.
+    setInterval(() => {
+      if (isReloadHeldBy(UPDATE_MODE_HOLD)) return;
+      void r.update().catch(() => {});
+    }, UPDATE_CHECK_MS);
+  }
+}
 
 // Force an immediate update check — the footer's manual "tap to update". A newer SW installs,
 // skip-waits, activates, takes control, and the controller swap reloads us onto it (the happy path;

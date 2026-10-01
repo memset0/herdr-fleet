@@ -53,6 +53,45 @@ const NEUTRAL = new Set([
   // thing separating it from a draft; see harness/claude/chrome.ts.
   "claude--ghost-suggestion.txt",
   "claude--ghost-typed-over.txt",
+  // `/model sonnet` answered with one acknowledgement row above an empty input box: the evidence that
+  // the harness bar's alias options are a real command form, and an ordinary idle screen to this
+  // adapter. Nothing on it is a dialog — the alias needs no picker, which is the point of the row.
+  "claude--model-alias.txt",
+  // The `/effort` slider at 40 columns with `low` selected: a genuine dialog, but not one this
+  // adapter's own grammars can read — at 40 columns with the marker leftmost Claude draws no `▲` at
+  // all, marking `low` by colour alone, so every specific detector and the generic menu decline it.
+  // `adapter.buildBlocks` is therefore raw-only here exactly as it is on a true no-dialog screen; the
+  // unread-dialog post-pass (outside the adapter, harness/index.ts) is what offers Cancel over it,
+  // and that card is pinned separately in unread-dialog.test.ts, not by this suite.
+  "claude--menu-effort-slider--w40-low.txt",
+  // Claude Code 2.1.283 input boxes whose multi-line draft holds a pasted `────` rule or a pasted
+  // `❯ ls -la` shell prompt. Idle screens with a draft, never a dialog: the indented rows are draft
+  // text (ADR 0048 addendum 2026-09-26).
+  "claude--v2283-draft-prompt.txt",
+  "claude--v2283-draft-rule.txt",
+  // The shell prompt under a Claude that is starting or exiting (herdr already, or still, reports the
+  // agent): no dialog at all, and since the 2026-09-26 addendum to ADR 0053 no unread card either.
+  "claude--v2283-shell-before-first-frame.txt",
+  "claude--v2283-shell-after-exit.txt",
+  // A multiSelect with the pointer on its "Type something" field: a real dialog the adapter declines
+  // on purpose, because every toggle digit would be typed into the field. The unread card covers it.
+  "claude--v2283-multiselect-type-something-focused.txt",
+  // Claude Code 2.1.283 after the `/plugin` Marketplaces tab applied an update: the menu is closed
+  // and "✔ Updated 1 marketplace" sits in the chat above an ordinary box. Idle, never a dialog.
+  "claude--v2283-plugin-marketplaces-updated--w40.txt",
+  "claude--v2283-plugin-marketplaces-updated--w82.txt",
+  "claude--v2283-plugin-marketplaces-updated--w120.txt",
+  "claude--v2283-fullscreen-plugin-marketplaces-updated--w40.txt",
+  "claude--v2283-fullscreen-plugin-marketplaces-updated--w82.txt",
+  "claude--v2283-fullscreen-plugin-marketplaces-updated--w120.txt",
+  // A marketplace's detail screen in the full-screen renderer, taller than the 40-row pane: Claude
+  // clips it at the bottom, so its footer is not on screen and it names no key. A real dialog that
+  // no grammar may read (ADR 0009), and with no key-hint row in its tail, no unread card either.
+  "claude--v2283-fullscreen-plugin-marketplace-detail--w40.txt",
+  "claude--v2283-fullscreen-plugin-marketplace-detail--w82.txt",
+  // The `/plugin` "Add Marketplace" source field: a text field no grammar reads. The unread card
+  // covers it (unread-dialog.test.ts).
+  "claude--v2283-plugin-marketplaces-add-form--w82.txt",
 ]);
 
 const allClaudeFixtures = readdirSync(PANES_DIR)
@@ -67,13 +106,17 @@ const allCodexFixtures = readdirSync(PANES_DIR)
 const allGrokFixtures = readdirSync(PANES_DIR)
   .filter((f) => f.startsWith("grok--") && f.endsWith(".txt"))
   .toSorted();
+// Every opencode capture must stay raw under the claude adapter too — the cross-adapter leg.
+const allOpencodeFixtures = readdirSync(PANES_DIR)
+  .filter((f) => f.startsWith("oc--") && f.endsWith(".txt"))
+  .toSorted();
 
 const ownFixtures = allClaudeFixtures.filter((f) => !NEUTRAL.has(f));
 const neutralFixtures = allClaudeFixtures.filter((f) => NEUTRAL.has(f));
 
 describeAdapterConformance(claudeAdapter, {
   ownFixtures,
-  foreignFixtures: [...allOmpFixtures, ...allCodexFixtures, ...allGrokFixtures], // the other adapters' captures — cross-adapter fail-closed
+  foreignFixtures: [...allOmpFixtures, ...allCodexFixtures, ...allGrokFixtures, ...allOpencodeFixtures], // the other adapters' captures — cross-adapter fail-closed
   neutralFixtures,
 });
 

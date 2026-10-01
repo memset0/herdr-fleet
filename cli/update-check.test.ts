@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
+import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
 import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
 import type { OpsRecord } from "../bridge/crew/ops-store.ts";
 import type { TrustStoreData } from "../bridge/crew/trust-store.ts";
@@ -32,6 +34,7 @@ import {
   parseReport,
   preflight,
   PREFLIGHT_SCHEMA,
+  PROTOCOL_FLOOR_VERSION,
   type PreflightCheck,
   type PreflightReport,
   skewCheck,
@@ -65,7 +68,7 @@ const df = (availableKb: number): string =>
 
 /** A checkout that is healthy in every respect: clean, current, supervised, roomy, with Bun. */
 const HEALTHY: NonNullable<Scripted["answers"]> = [
-  [`${GIT} rev-parse --git-dir`, { stdout: ".git\n" }],
+  [`${GIT} rev-parse --show-prefix`, { stdout: "" }],
   [`${GIT} symbolic-ref -q HEAD`, { code: 1 }],
   [`${GIT} remote get-url origin`, { stdout: "https://github.com/AltanS/collie.git\n" }],
   [`${GIT} status --porcelain --untracked-files=no`, { stdout: "" }],
@@ -251,6 +254,93 @@ describe("preflight — the doctor check", () => {
     expect(report.verdict).toBe("amber");
     expect(await cmdUpdateCheck(h.deps, ["--json"])).toBe(EXIT.OK);
   });
+
+  // ── ADR 0050 ──────────────────────────────────────────────────────────────
+  // 2026-09-20: a laptop slept, `member-reach` went red, and a healthy desktop could not take a
+  // release. This check asks whether THIS machine can update; another machine's fault is not an
+  // answer to it, and the crew is built for a member that is away (it levels itself on return).
+  test("a crew error is amber, so a sleeping member never blocks this machine", async () => {
+    const h = harness({
+      installed: "1.11.1",
+      findings: [
+        {
+          check: "member-reach",
+          status: "error",
+          detail: "1 of 1 did not answer: minibuch at minibuch:8788 — unreachable",
+          remedy: "collie restart on that machine",
+          scope: "crew",
+        },
+      ],
+    });
+    const report = await preflight(h.deps);
+    const check = byId(report, "doctor");
+    expect(check.verdict).toBe("amber");
+    expect(report.verdict).toBe("amber");
+    expect(check.reason).toContain("member-reach");
+    expect(check.reason).toContain("this machine can still update");
+    expect(await cmdUpdateCheck(h.deps, ["--json"])).toBe(EXIT.OK);
+  });
+
+  // The reason is built from the check ID, and the finding's own `detail` never reaches it. That
+  // detail is prose for a terminal and carries a real host and port; this reason is rendered
+  // verbatim in the update card's preflight list on the phone, beside translated text.
+  test("the amber reason carries no host, no port and no free text from the finding", async () => {
+    const h = harness({
+      installed: "1.11.1",
+      findings: [
+        {
+          check: "member-reach",
+          status: "error",
+          detail: "1 of 1 did not answer: minibuch at minibuch:8788 — hello: timed out after 5000ms",
+          remedy: "collie restart on that machine",
+          scope: "crew",
+        },
+      ],
+    });
+    const check = byId(await preflight(h.deps), "doctor");
+    expect(check.reason).not.toContain("minibuch");
+    expect(check.reason).not.toContain("8788");
+    expect(check.reason).not.toContain("timed out");
+  });
+
+  // Two at once is an ordinary state: a member that slept through a rotation is both unreachable and
+  // enrolled-but-inactive. Reporting one would hide a fault the operator then cannot see.
+  test("every crew error is named, never just the first", async () => {
+    const h = harness({
+      installed: "1.11.1",
+      findings: [
+        { check: "member-reach", status: "error", detail: "minibuch did not answer", remedy: "…", scope: "crew" },
+        { check: "secret-generation", status: "error", detail: "behind generation 4", remedy: "…", scope: "crew" },
+      ],
+    });
+    const check = byId(await preflight(h.deps), "doctor");
+    expect(check.verdict).toBe("amber");
+    expect(check.reason).toContain("member-reach");
+    expect(check.reason).toContain("secret-generation");
+  });
+
+
+  test("a local error still blocks, and a crew error beside it does not soften it", async () => {
+    const h = harness({
+      findings: [
+        { check: "web-dist", status: "error", detail: "missing", remedy: "collie build" },
+        { check: "member-reach", status: "error", detail: "minibuch did not answer", remedy: "…", scope: "crew" },
+      ],
+    });
+    const report = await preflight(h.deps);
+    const check = byId(report, "doctor");
+    expect(check.verdict).toBe("red");
+    expect(check.reason).toContain("web-dist");
+    // The red names the local fault ALONE. Listing the crew one beside it would send the operator
+    // to wake a laptop that has nothing to do with why this machine cannot build.
+    expect(check.reason).not.toContain("member-reach");
+    expect(check.reason).toContain("1 problem");
+  });
+
+  test("a finding with no scope is local, which is what every check answered before the field", async () => {
+    const h = harness({ findings: [{ check: "bind", status: "error", detail: "wildcard", remedy: "set COLLIE_HOST" }] });
+    expect(byId(await preflight(h.deps), "doctor").verdict).toBe("red");
+  });
 });
 
 describe("preflight — the disk check", () => {
@@ -330,18 +420,26 @@ describe("preflight — the bun check", () => {
     expect(bunCheck(h.deps).reason).toContain(bun);
   });
 
-  test("`bun is not installed` keeps today's red, sentence for sentence", () => {
+  test("a missing Bun is red before a managed checkout could advance", () => {
     const check = bunCheck(harness({ absent: ["bun"] }).deps);
     expect(check.verdict).toBe("red");
     expect(check.reason).toBe(
-      "bun is not installed, and this install rebuilds from source — the update would stop after the fetch",
+      "bun is not installed, and this install rebuilds from source — the update will not advance the checkout",
     );
     expect(check.remedy).toBe("install Bun from https://bun.sh, then re-run this check");
   });
 
+  test("a resolved Bun that cannot answer is red, not an advisory version warning", () => {
+    const check = bunCheck(harness({ answers: [["/fake/bun --version", { code: 124 }]] }).deps);
+    expect(check.verdict).toBe("red");
+    expect(check.reason).toContain("/fake/bun");
+    expect(check.reason).toContain("not runnable");
+    expect(check.remedy).toContain("repair or reinstall Bun");
+  });
+
   test("a binary install is never asked about bun", async () => {
     // No `.git` and a `versions/<x.y.z>` root with a `current` symlink beside it = the binary kind.
-    const h = harness({ answers: [[`git -C /opt/app/versions/1.0.0 rev-parse --git-dir`, { code: 128 }]] });
+    const h = harness({ answers: [[`git -C /opt/app/versions/1.0.0 rev-parse --show-prefix`, { code: 128 }]] });
     const link = fakeLinkFs({ "/opt/app/current": { kind: "symlink", target: "versions/1.0.0" } });
     const deps: UpdateCheckDeps = {
       ...h.deps,
@@ -686,6 +784,50 @@ describe("preflight crew — the members of a lead", () => {
     expect(skewCheck("", "1.0.0").verdict).toBe("amber");
   });
 
+  // ADR 0045. The one exception to §7.1, and it is not a build-version opinion: a member below the
+  // floor cannot speak the only protocol a 1.9.0 lead has left, so the roll cannot finish.
+  test("a member below the protocol floor is red under a 1.9.0 lead, and names the remedy", () => {
+    expect(PROTOCOL_FLOOR_VERSION).toBe("1.8.0");
+    const old = skewCheck("1.7.0", "1.9.0");
+    expect(old.verdict).toBe("red");
+    expect(old.reason).toContain("1.7.0");
+    expect(old.reason).toContain("1.9.0");
+    expect(old.reason).toContain(PROTOCOL_FLOOR_VERSION);
+    expect(old.reason).toContain(String(CREW_PROTOCOL_VERSION));
+    expect(old.remedy).toContain("collie update");
+    expect(old.remedy).toContain("own machine");
+    // Still red on a lead newer than 1.9.0, and on a member older than 1.7.0.
+    expect(skewCheck("1.7.0", "2.0.0").verdict).toBe("red");
+    expect(skewCheck("1.0.0", "1.9.0").verdict).toBe("red");
+  });
+
+  test("the floor is not enforced by a lead below 1.9.0, and a member at the floor is fine", () => {
+    expect(skewCheck("1.7.0", "1.8.2").verdict).toBe("amber");
+    expect(skewCheck("1.8.0", "1.9.0").verdict).toBe("amber");
+    expect(skewCheck("1.8.2", "1.9.0").verdict).toBe("amber");
+    expect(skewCheck("1.9.0", "1.9.0").verdict).toBe("green");
+  });
+
+  // A version this lead cannot read is not a known-old one. Reddening on a suffix would block an
+  // update on a string, and a prerelease of the floor is a build the operator chose.
+  test("an unreadable or prerelease version stays amber, never red", () => {
+    for (const theirs of ["", "unknown", "1.8.2-rc1", "1.9.0-dev", "1.7.0-beta.3", "v1.7.0", "1.7"]) {
+      expect(skewCheck(theirs, "1.9.0").verdict).toBe("amber");
+    }
+    // And the same on the lead's own side: a lead whose version does not parse reds nobody.
+    expect(skewCheck("1.7.0", "1.9.0-dev").verdict).toBe("amber");
+  });
+
+  // The floor and the protocol number are ONE fact: the floor is the release in which the current
+  // `CREW_PROTOCOL_VERSION` first shipped. Moving the number without moving the floor is red here.
+  test("the protocol floor is 1.8.0, the release in which the current protocol version shipped", () => {
+    const enrollment = readFileSync(new URL("../bridge/crew/enrollment.ts", import.meta.url), "utf8");
+    expect(enrollment).toContain(`export const CREW_PROTOCOL_VERSION = ${CREW_PROTOCOL_VERSION};`);
+    expect(enrollment).toContain(`**${CREW_PROTOCOL_VERSION} since ${PROTOCOL_FLOOR_VERSION}.**`);
+    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+    expect(changelog).toContain(`## [${PROTOCOL_FLOOR_VERSION}] - `);
+  });
+
   test("a peer runs no crew checks — it leads nobody", async () => {
     const report = await preflight(harness({ store: peerStore() }).deps);
     expect(report.crew).toBeUndefined();
@@ -753,21 +895,15 @@ describe("the JSON contract", () => {
     expect(parseReport('{"schema":1,"checks":[]}')).toBeNull();
   });
 
-  // REMOVE_IN_1_9_0: this document is printed by a MEMBER, over ssh, and during the roll that member
-  // may still be on 1.7.0 — which spells the crew rows `pack`. Read under both names, written under
-  // `crew` alone.
-  test("a member still on 1.7.0 spells the rows `pack`, and they are read as `crew`", () => {
+  // The member's rows are read under `crew` and nothing else since 1.9.0. A document naming 1.7.0's
+  // `pack` reads as a document with no crew rows, which is the closed reading.
+  test("the crew rows are read under `crew` alone", () => {
     const rows = [{ memberId: "nas", host: "nas.local", verdict: "red", checks: [] }];
-    const old = parseReport(JSON.stringify({ schema: 1, verdict: "red", checks: [], pack: rows }))!;
-    expect(old.crew).toHaveLength(1);
-    expect(old.crew![0]!.memberId).toBe("nas");
-    // The new spelling reads the same, and a document carrying both takes `crew`.
     const fresh = parseReport(JSON.stringify({ schema: 1, verdict: "red", checks: [], crew: rows }))!;
     expect(fresh.crew).toHaveLength(1);
-    const both = parseReport(
-      JSON.stringify({ schema: 1, verdict: "red", checks: [], crew: rows, pack: [] }),
-    )!;
-    expect(both.crew).toHaveLength(1);
+    expect(fresh.crew![0]!.memberId).toBe("nas");
+    const old = parseReport(JSON.stringify({ schema: 1, verdict: "red", checks: [], pack: rows }))!;
+    expect(old.crew).toBeUndefined();
   });
 
   test("exit code — 0 with no red, 1 with one", async () => {
@@ -872,7 +1008,7 @@ describe("preflight — a folder a package manager owns", () => {
   /** A Collie in a folder a package manager owns, with a release listing that answers. */
   function packaged(over: Parameters<typeof harness>[0] = {}) {
     const h = harness({
-      answers: [[`${GIT} rev-parse --git-dir`, { code: 128 }]],
+      answers: [[`${GIT} rev-parse --show-prefix`, { code: 128 }]],
       net: {
         ...deadNet,
         getJson: () => Promise.resolve({ ok: true, value: [{ name: "v1.0.0", commit: { sha: "cccccccc" } }] }),
@@ -908,7 +1044,7 @@ describe("preflight — a folder a package manager owns", () => {
     // The other half of the same rule: an unrecognised prefix costs the operator a command, never a
     // wrong kind, and Collie never invents one it cannot run.
     const NAMELESS = "/srv/collie";
-    const h = packaged({ answers: [[`git -C ${NAMELESS} rev-parse --git-dir`, { code: 128 }]] });
+    const h = packaged({ answers: [[`git -C ${NAMELESS} rev-parse --show-prefix`, { code: 128 }]] });
     h.files.entries.set(`${NAMELESS}/herdr-plugin.toml`, { text: 'id = "herdr.collie"\nversion = "1.0.0"\n' });
     const check = byId(await preflight({ ...h.deps, ctx: { ...h.deps.ctx, root: NAMELESS } }), "package");
     expect(check.verdict).toBe("green");
@@ -926,7 +1062,7 @@ describe("preflight — a folder a package manager owns", () => {
     const AUR = "/usr/lib/collie";
     const h = packaged({
       installed: "1.0.0",
-      answers: [[`git -C ${AUR} rev-parse --git-dir`, { code: 128 }]],
+      answers: [[`git -C ${AUR} rev-parse --show-prefix`, { code: 128 }]],
       net: {
         ...deadNet,
         getJson: () =>
@@ -998,5 +1134,33 @@ describe("preflight — a folder a package manager owns", () => {
     });
     const check = byId(await preflight(h.deps), "upstream");
     expect(check.remedy).toContain("wait an hour");
+  });
+
+  test("the rate-limit remedy names GH_TOKEN when none was sent, and the variable when one was (#254)", async () => {
+    const limited: Net = {
+      ...deadNet,
+      getJson: () => Promise.resolve({ ok: false, failure: { status: 403, message: "HTTP 403" } }),
+    };
+    const anonymous = byId(await preflight(packaged({ net: limited }).deps), "upstream");
+    expect(anonymous.remedy).toContain("set GH_TOKEN");
+    const withToken = byId(
+      await preflight(packaged({ net: limited, env: { COLLIE_GITHUB_TOKEN: "ghp_value" } }).deps),
+      "upstream",
+    );
+    expect(withToken.reason).toContain("even with the token in COLLIE_GITHUB_TOKEN");
+    expect(withToken.reason).not.toContain("ghp_value");
+    expect(withToken.remedy).toBe("wait an hour, then re-run this check");
+  });
+
+  test("a refused token is red, named by its variable, and never by its value", async () => {
+    const refused: Net = {
+      ...deadNet,
+      getJson: () => Promise.resolve({ ok: false, failure: { status: 401, message: "HTTP 401" } }),
+    };
+    const check = byId(await preflight(packaged({ net: refused, env: { GH_TOKEN: "ghp_bad" } }).deps), "upstream");
+    expect(check.verdict).toBe("red");
+    expect(check.reason).toContain("refused the token in GH_TOKEN");
+    expect(check.remedy).toContain("unset");
+    expect(`${check.reason} ${check.remedy}`).not.toContain("ghp_bad");
   });
 });

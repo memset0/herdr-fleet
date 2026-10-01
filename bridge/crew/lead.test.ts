@@ -980,7 +980,17 @@ describe("CrewLead — each member's update preflight (§19)", () => {
     const h = lead([member({ memberId: "laptop" })], () => ok(body));
     await h.lead.sweep();
     expect(h.lead.updateRows()).toEqual([
-      { name: "laptop", version: null, verdict: "unknown", reasons: ["we could not check laptop"], asOf: null },
+      // `health` rides along so the update gate can tell an ABSENT member from one that answered and
+      // simply carried no report (ADR 0050). This member answered, so it is `reachable`, and an
+      // unknown row that is reachable still refuses the tap.
+      {
+        name: "laptop",
+        version: null,
+        verdict: "unknown",
+        reasons: ["we could not check laptop"],
+        asOf: null,
+        health: "reachable",
+      },
     ]);
   });
 
@@ -1018,6 +1028,52 @@ describe("CrewLead — each member's update preflight (§19)", () => {
     await l.sweep({});
     expect(asked).toEqual([false, true, false]);
   });
+
+  // 2026-09-20. A lead that has just updated ITSELF has restarted, so it holds no verdict for
+  // anybody — and `eligible` refuses the turn on unknown. Until now only a phone on
+  // `GET /api/update/check` re-read it, and the phone stops asking the moment the lead's OWN run is
+  // done, which on the 1.11.0 run was six seconds in. The run asks for itself now.
+  test("a run stuck on a verdict it does not hold asks for that verdict, phone or no phone", async () => {
+    const asked: boolean[] = [];
+    const members = [member({ memberId: "laptop" })];
+    const turns = new UpdateTurns(() => {});
+    const registry = new CrewRegistry({ sessions: { get: () => undefined }, self: "desk", members: () => members });
+    // The member answers with no preflight at all until its own re-read lands, which is exactly what
+    // a peer whose six-hourly cache is empty serves.
+    let publishes = false;
+    const l = new CrewLead({
+      log: () => {},
+      registry,
+      snapshot: async (_link, _view, freshPreflight) => {
+        asked.push(freshPreflight === true);
+        return ok(publishes ? { ...body, updatePreflight: { verdict: "green", asOf: NOW, checks: [] } } : body);
+      },
+      proxy: neverProxy,
+      self: { id: "desk", name: "the herd" },
+      maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
+      now: () => NOW,
+      follow: { leadRelease: () => "1.4.1", turns, enrolledAt: () => 1 },
+    });
+
+    // No run: an unknown verdict is nobody's problem, and the strict budget stands.
+    await l.sweep();
+    expect(asked).toEqual([false]);
+
+    // A run is live and this member's leg is open, so the dial carries the request.
+    turns.begin("r-abc", "1.4.1");
+    await l.sweep();
+    expect(asked.at(-1)).toBe(true);
+    expect(registry.state("laptop").preflight).toBeNull();
+
+    // The member answered the request. The run has what it was stuck on.
+    publishes = true;
+    await l.sweep();
+    expect(registry.state("laptop").preflight?.verdict).toBe("green");
+
+    // And the dial goes back to the periodic budget rather than asking on every sweep of the run.
+    await l.sweep();
+    expect(asked.at(-1)).toBe(false);
+  });
 });
 
 // ── §5/§19 — the member's own running version, banked by the same sweep ──────
@@ -1039,6 +1095,7 @@ describe("CrewLead — each member's running version (§5, §19)", () => {
       verdict: "unknown",
       reasons: ["we could not check laptop"],
       asOf: null,
+      health: "reachable",
     });
   });
 

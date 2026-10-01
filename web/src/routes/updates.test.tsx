@@ -2,12 +2,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { server } from "@/test/setup";
 import { withHeaderHost } from "@/test/header-host";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
 import type { PreflightReport, UpdateInfo, UpdateCrewMember } from "@/lib/types";
+import { __resetUpdateRunStore } from "@/lib/update-run-store";
 import { UpdatesRoute } from "./updates";
 
 // ── THE UPDATES PAGE ────────────────────────────────────────────────────────────────────────────
@@ -103,8 +104,15 @@ function serveCheck(update: UpdateInfo, crew?: UpdateCrewMember[]) {
 }
 
 beforeEach(() => {
+  // The update poll is a module-scoped store now (M28/01): without this, one case's census is the
+  // next case's opening state.
+  __resetUpdateRunStore();
   serveCheck(info());
   server.use(http.post("/api/update/snooze", () => HttpResponse.json(info())));
+});
+
+afterEach(() => {
+  __resetUpdateRunStore();
 });
 
 describe("updates page", () => {
@@ -158,14 +166,14 @@ describe("updates page", () => {
     // Neutral weight: no red, and no reason line under the row.
     expect(list.querySelector(".text-status-blocked")).toBeNull();
     await waitFor(() => expect(screen.getByText("Up to date. Nothing to do.")).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: "Retry crew update" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Retry crew update|Try \S+ again)$/ })).not.toBeInTheDocument();
   });
 
   it("offers exactly one action button on the page", async () => {
     serveCheck(info(), CREW);
     renderUpdates(info(), LEAD_ROSTER);
-    expect(await screen.findByRole("button", { name: "Update crew to 1.4.0" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Update all machines to 1.4.0" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Update to/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry crew update" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Retry crew update|Try \S+ again)$/ })).not.toBeInTheDocument();
   });
 });

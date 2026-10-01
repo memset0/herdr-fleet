@@ -36,8 +36,8 @@ instructions, see
 
 ## Two machines, one crew
 
-Two commands add a machine, one for Herdr and one for Collie, and a manual path is there for the
-hosts they do not fit.
+Two commands add a machine, one for Herdr and one for Collie, and a manual path is there for a host
+`crew add` cannot ssh into and for a lead that serves plain HTTP.
 
 ```bash
 herdr machine add --label <name> <ssh-target>   # prepare the remote host
@@ -59,8 +59,29 @@ target lists the hosts your ssh config and Herdr already know, merged on the hos
 to, so pick from that list rather than typing the host a second way
 ([below](#herdr-machines-and-the-crew)).
 
-The manual path is four commands. The lead is the instance your phone already reaches, and the
-joining machine must have Collie installed and running.
+`crew add` takes the route its own install kind names. A lead that runs from a git checkout, as the
+Herdr plugin install does, pushes its own commit to the member and builds it there, so that member
+needs `git` and Bun. A lead from the [standalone install](install.md#standalone) or from a package
+has no commit, so it installs the member from the release it runs itself, with Collie's own
+installer sent over the same ssh, and that member needs `curl`, `tar` and `sha256sum` or `shasum`
+instead. `--path` names the remote checkout on the first route and the install root on the second.
+A member that already runs the other kind of install is refused rather than written over, and the
+refusal names the one command that resolves it. On that second route the member downloads the
+release from github.com itself, so a member with no route to github.com needs a lead that runs from
+a checkout.
+
+The terminal `collie crew update` takes the same two routes, and reads the same fact to pick one: a
+checkout lead pushes its own commit to each member, and a lead from the standalone install or from a
+package levels each member to the release it runs itself. On a release lead, a member running from a
+git checkout is skipped with the one command that moves it named on its row, `collie update --to-tag
+v<version>` on that machine. On a checkout lead, a member installed by install.sh is skipped the
+other way round: it takes releases, so the phone's Updates page levels it. A skipped member never
+stops the run, and the confirm counts it apart.
+
+The manual path is four commands. Use it for a host your ssh cannot reach, or for a lead that
+serves plain HTTP, and not because of the lead's install kind: every kind of lead adds a member with
+`crew add`. The lead is the instance your phone already reaches, and the joining machine must have
+Collie installed and running.
 
 1. On the lead, mint the token.
 
@@ -117,6 +138,13 @@ at `~/.config/collie/.env` on a binary install or in Herdr's plugin config dir o
 The crew protocol, which is the wire between the machines, contains no multiplexer-specific fields.
 Note that peers have only been tested with Herdr in v1
 ([`CREW_PROTOCOL.md` §16](../CREW_PROTOCOL.md)).
+
+`crew add` settles that value for a new member, because the member cannot always settle it itself. A
+member that runs exactly one multiplexer is left alone, and picks that one at its own first start. A
+member that runs several is a question the lead asks you, and your answer is written as `COLLIE_MUX`
+in that member's `.env`. A member that already names one is left alone too. Pass `--mux <name>` to
+answer ahead of time, or to replace a name the member already carries. A member with no multiplexer
+running gets a warning and nothing written, because its first start refuses until one runs.
 
 ## Herdr machines and the crew
 
@@ -205,14 +233,15 @@ counts the run as complete without it. It levels when you run that command on th
 line clears on the next check.
 
 **A packaged LEAD still levels its members.** The lead declines its own move for the same reason,
-and that is the whole of the refusal: the phone still levels every member to the version the lead is
-running now, and the confirm covers them. After the package manager has moved the lead and you have
+and that is the whole of the refusal: the phone and `collie crew update` both level every member to
+the version the lead is running now, and one confirm covers them. After the package manager has moved the lead and you have
 run `collie restart` on it, nothing levels by itself; one more confirm on the phone's Updates page
 brings the members up to the lead's new version.
 
-**A source checkout is a full member.** A member you cloned and built yourself updates through git
-like any other checkout, takes the crew update, and needs nothing said about it here. The lead pulls
-the tag, rebuilds and restarts it exactly as it does its own.
+**A source checkout is a full member, under a lead that has one too.** A member you cloned and built
+yourself takes the crew update from a checkout lead: that lead pushes its commit, rebuilds and
+restarts it exactly as it does its own. Under a lead with no commit, `collie crew update` skips it
+and names `collie update --to-tag v<version>` to run on that machine.
 
 So a mixed crew is a normal crew. One tap levels every member the lead can update, names the ones it
 cannot, and the crew is level again once you have run their package managers.
@@ -231,10 +260,10 @@ name, and the members already in the crew keep the old string in a field nobody 
 trimmed, is at most 64 characters, and carries no control characters. On a peer, or on a machine in
 no crew, the verb refuses and says where to run it.
 
-## Updating from 1.7.0
+## Updating to 1.9.0 from 1.7.0 or 1.8.x
 
-**Update the lead first.** The phone and `collie crew update` already take that order, and 1.8.0
-adds a second reason for it.
+**Bring every member to 1.8.x before you move the lead to 1.9.0.** 1.9.0 speaks one version of the
+crew link, and 1.8.0 is the oldest build that speaks it.
 
 You do not have to remember which releases those are. From 1.8.0 the update notice tells you when
 the release ahead changes the crew link, on the band, on the Updates card and in the daily push, and
@@ -245,28 +274,31 @@ files and the journal prefix all say crew now
 ([ADR 0039](../.adr/0039-the-machine-says-crew-too.md)). The link behaves exactly as before, and
 nothing you scripted has to move on the same day.
 
-**A 1.8.0 lead keeps a 1.7.0 member following it.** The lead answers the old `/pack/v1/*` paths for
-one release, so a member still on 1.7.0 enrols, answers hello and levels itself over the link it
-already has. A lead still on 1.7.0 cannot read a 1.8.0 member's status line, which is the reason
-lead first was already the order.
+**1.8.0 carried a 1.7.0 member for one release, and 1.9.0 does not.** A 1.8.0 lead also answered the
+old paths, so a member still on 1.7.0 kept following it. 1.9.0 removed that, which is what ADR 0039
+said it would do.
 
-A member you update first is not stuck. A 1.8.0 member dials `/crew/v1/*`, falls back to
-`/pack/v1/*` once against a 1.7.0 lead, and writes one journal line saying it did. The old paths and
-that fallback both go away in 1.9.0, so bring the whole crew to 1.8.0 before that release.
+**A member still on 1.7.0 under a 1.9.0 lead shows up twice, and neither is silence.** The lead's
+preflight reds the `version` check, naming both versions and the command to run, and that red blocks
+the crew update rather than starting a roll that cannot finish. In `collie crew status` the same
+member reads `incompatible`, with a reason that ends "this build speaks 2".
+
+**Level that member from its own machine.** A 1.9.0 lead cannot reach it over the link any more, so
+run `collie update` there, bring it to 1.8.x or newer, and the lead picks it up on the next poll.
 
 ### The new names
 
 | 1.7.0 | 1.8.0 | What happens on your machine |
 | --- | --- | --- |
-| `COLLIE_PACK_TIMEOUT_MS` | `COLLIE_CREW_TIMEOUT_MS` | The old key is still read while the new one is absent, and Collie logs one warning line at start. Both old keys go away in 1.9.0 |
+| `COLLIE_PACK_TIMEOUT_MS` | `COLLIE_CREW_TIMEOUT_MS` | Gone in 1.9.0. A 1.9.0 build reads the crew key only, so an unrenamed old key gives you the default budget |
 | `COLLIE_PACK_HELLO_TIMEOUT_MS` | `COLLIE_CREW_HELLO_TIMEOUT_MS` | The same |
-| `pack-trust.json`, `pack-ops.json`, `pack-runtime.json` | `crew-trust.json`, `crew-ops.json`, `crew-runtime.json` | Renamed once, on the first start, in `~/.local/state/collie/`. No copy of the old file is kept |
+| `pack-trust.json`, `pack-ops.json`, `pack-runtime.json` | `crew-trust.json`, `crew-ops.json`, `crew-runtime.json` | Renamed once by 1.8.x, in `~/.local/state/collie/`. Gone in 1.9.0: a directory that never saw 1.8.x is named at start and the collie stays solo |
 | `[pack]` | `[crew]` | The prefix on the crew's own journal lines |
-| `/pack/v1/…` | `/crew/v1/…` | Every path on the lead-to-member link |
+| `/pack/v1/…` | `/crew/v1/…` | Every path on the lead-to-member link. Gone in 1.9.0 |
 | `PACK_PROTOCOL.md` | [`CREW_PROTOCOL.md`](../CREW_PROTOCOL.md) | The wire contract itself |
 
-Rename the two environment keys in your own `.env` when it suits you. Until you do, Collie reads the
-old key and prints that warning at every start.
+Rename the two environment keys in your own `.env` before you move to 1.9.0. A 1.9.0 build does not
+read the old key and does not warn about it.
 
 **On a journal that spans the update, grep for both prefixes:**
 

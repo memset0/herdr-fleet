@@ -128,6 +128,10 @@ export const ACK_MANIFEST = {
     channel: "status",
     why: "A launcher creates a Space (dashboard) or a tab beside the pane you launched it from (switcher), and the app navigates straight into its pane either way, so the button that asked is already off screen; hooks/use-spaces.ts names what was created on arrival, exactly as createWorkspace does. A refusal (an unlisted row, an unknown pane, a failed send) has no control left to sit in either.",
   },
+  starFolder: {
+    channel: "silent",
+    why: "The row moves between Favourites and Recent and its star fills or empties under the thumb, both in the sheet the operator is looking at, once the bridge answers with the new list; a refusal publishes an error status through lib/mutate.ts and the list is read again (lib/folders.ts).",
+  },
   createWorktree: {
     channel: "status",
     why: "A worktree arrives as a whole new space and the app navigates into its pane, so the eye has already left the button that asked for it; hooks/use-spaces.ts names what was created on arrival, exactly as createWorkspace does.",
@@ -143,6 +147,14 @@ export const ACK_MANIFEST = {
   setNotifyPrefs: {
     channel: "echo",
     why: "The switch flips optimistically under the thumb; the server's merged view then reconciles it, and a REVERT is paired with an error status because a switch that moves back in silence misinforms anyone who has stopped looking (hooks/use-notify-prefs.ts).",
+  },
+  setCacheWatch: {
+    channel: "echo",
+    why: "The sheet's switch flips optimistically under the thumb and the bridge's answer reconciles it; a revert is paired with an error status, for the reason `setNotifyPrefs` states (hooks/use-cache-watch.ts).",
+  },
+  forgetCacheWatch: {
+    channel: "echo",
+    why: "The row leaves the watched list synchronously, so the row VANISHING is the receipt; the bridge's returned list then reconciles it, and a failure puts the row back with an error status (hooks/use-cache-watch-list.ts).",
   },
   registerPushSubscription: {
     channel: "inline",

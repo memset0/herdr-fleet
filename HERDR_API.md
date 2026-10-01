@@ -55,6 +55,15 @@ the socket assumptions behind the design in [`ARCHITECTURE.md`](./ARCHITECTURE.m
     visible grid, and its renderer hard-wraps prose at the pane width — there are no soft-wrapped
     rows for the unwrap to merge. It only differs on scrollback-accumulating panes (shells: one
     probe measured 199 → 188 lines with logical lines up to 222 cols re-joined).
+  - **`recent_unwrapped` is how a wrapped URL gets repaired.** The mirror renders the grid, so a URL
+    longer than the pane arrives cut at the column edge and the client can only link the first
+    fragment — with a truncated href (`web/src/lib/links.ts`). The bridge asks for `recent_unwrapped`
+    when the grid it already has shows a URL touching a row end with a row below that could
+    continue it (`hasSplitUrl`), strips the SGR and sends it as
+    `PaneReadResponse.logicalText`, which the client uses to give every fragment of that URL the href
+    of the whole URL. Same `lines` and same `ansi` format as the mirror read above, deliberately: the
+    observation that keeps this read from harvesting is the one the mirror read rests on too, and the
+    repair is only ever one extra read, on a pane that is showing the split.
   - **A `recent` text read can scroll the pane it reads.** Herdr's agent-automation docs state that
     for an idle, recognized agent at the bottom of its transcript, `recent` / `recent_unwrapped`
     reads "automatically use the agent's mouse-scroll interface" when `lines` asks for more than the
@@ -278,6 +287,13 @@ Two sibling structural ops reorder objects. Both live-verified 2026-07-20 on the
 ```
 
 `agent_status` ∈ `idle | working | blocked | done | unknown`. Panes without an agent omit/null `agent`.
+
+**Herdr 0.9's API status is not its terminal client's unread status.** A completed agent can be
+`idle` on the API while the terminal client shows `done`: the client projects that from its own
+acknowledgements and `state_change_seq` (v0.9.0,
+[`endpoint_agent_state.rs`](https://github.com/herdrdev/herdr/blob/v0.9.0/src/client/shell/endpoint_agent_state.rs)).
+Collie's Ready · unseen section must recognise both settled statuses using its own activity ledger,
+not require a literal `done` from Herdr. See [ADR 0003](.adr/0003-one-shared-seen.md#herdr-09-compatibility).
 
 > **`agent_session` has TWO kinds, and it can outlive the agent that reported it** (live-verified
 > 2026-07-29 against claude, codex and pi panes). Each harness's herdr integration reports through

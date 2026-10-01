@@ -1,7 +1,7 @@
 // The filesystem half of the journal, shared by every adapter.
 //
-// SECURITY. Reading session logs is the only thing in the bridge that touches the filesystem, so the
-// path is pinned shut here rather than re-argued per harness:
+// SECURITY. Reading session logs is the journal's only filesystem work, so the path is pinned shut
+// here rather than re-argued per harness:
 //  - the client never supplies a path — only a pane id, which the route maps to a session ref;
 //  - an `id` ref is pattern-validated by its adapter before it is ever concatenated into a path;
 //  - a `path` ref (pi reports one) is attacker-shaped by construction — it arrives over the socket
@@ -25,13 +25,19 @@
 // journal — bridge/operator-fonts.ts serves an operator's own font files under it. That does not
 // widen anything, because the rule was never "only the journal touches the disk". The rule is:
 //
-//   THE JOURNAL IS THE ONLY PLACE A CLIENT-SUPPLIED VALUE BECOMES A PATH.
+//   A CLIENT-SUPPLIED VALUE BECOMES A PATH IN TWO PLACES ONLY: THE JOURNAL, AND THE CHANGES VIEW.
 //
-// and even there it is a pane id, never a path. The font surface does not become a second such
-// place: `GET /api/fonts/<basename>` LOOKS the request's name UP in the rows the operator's own
-// `theme.toml` declared and takes THAT row's path, so a name nobody declared is refused before any
-// path exists. Containment then runs anyway, as an independent second check on the real paths. A
-// new reader may reuse this function; it may not become a third answer to the sentence above.
+// In the journal it is a pane id, never a path. The Changes view (bridge/changes.ts, ADR 0065) is
+// the second place, and it is bounded by a LISTED-PATHS rule: the client names a repo and a file,
+// and both are looked up, never joined blind. The repo must be one the bridge's own discovery under
+// the pane's folder returned, and the file one git itself listed as changed there; anything else is
+// refused before a path exists. The one file it reads off disk itself (an untracked one) goes
+// through `containedRealpath` against the repo's real path as well. The font surface does not become
+// a third such place: `GET /api/fonts/<basename>` LOOKS the request's name UP in the rows the
+// operator's own `theme.toml` declared and takes THAT row's path, so a name nobody declared is
+// refused before any path exists. Containment then runs anyway, as an independent second check on
+// the real paths. A new reader may reuse this function; it may not become a third place without an
+// ADR that says why and names its bound.
 
 import { realpath, stat } from "node:fs/promises";
 import { sep } from "node:path";
@@ -122,10 +128,37 @@ export async function head(path: string, bytes = 64 * 1024): Promise<string> {
 export async function loadTail(
   path: string,
 ): Promise<{ text: string; complete: boolean; size: number; mtimeMs: number }> {
+  return tailBytes(path, MAX_TRANSCRIPT_BYTES);
+}
+
+/**
+ * How much of the tail a cache probe reads. Big enough to hold the last assistant turn even after a
+ * few large tool results, small enough to be free — and the same 128 KB window herdr-cache-alert
+ * measured against a 3.7 GB transcript directory.
+ *
+ * It is NOT {@link MAX_TRANSCRIPT_BYTES}: a history read happens when somebody taps History, a cache
+ * probe happens on the poll loop, and 32 MB per pane per poll is not a thing to do.
+ */
+export const CACHE_PROBE_BYTES = 128 * 1024;
+
+/**
+ * Tail-read at most `bytes` of a log. {@link loadTail} is this at the journal's own cap.
+ *
+ * ALWAYS the same window, never a remembered offset. A resume-from-offset read is the right shape for
+ * streaming every turn and the wrong shape for asking "what is the newest turn": a poll where nothing
+ * new was written would read zero bytes and conclude, wrongly, that there is no turn at all.
+ *
+ * Over the cap the clipped first line is a partial JSON object; every parser skips unparseable lines
+ * by design, so the window simply starts one turn later.
+ */
+export async function tailBytes(
+  path: string,
+  bytes: number,
+): Promise<{ text: string; complete: boolean; size: number; mtimeMs: number }> {
   const st = await stat(path);
   const size = st.size;
-  const complete = size <= MAX_TRANSCRIPT_BYTES;
+  const complete = size <= bytes;
   const file = Bun.file(path);
-  const text = complete ? await file.text() : await file.slice(size - MAX_TRANSCRIPT_BYTES).text();
+  const text = complete ? await file.text() : await file.slice(size - bytes).text();
   return { text, complete, size, mtimeMs: st.mtimeMs };
 }

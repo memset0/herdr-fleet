@@ -29,6 +29,7 @@ import {
   type CrewUpdateRow,
 } from "../update-action.ts";
 import { UpdateTurns, type PeerLeg, type TurnMember } from "./follow.ts";
+import type { UpdateRun } from "../update-run.ts";
 
 // The lead's side of the crew, assembled: sweep the peers, remember the last-good body, merge.
 //
@@ -293,6 +294,12 @@ export interface FollowDistribution {
    * boot would keep a whole crew waiting for a restart.
    */
   readonly leadRelease: () => string | null;
+  /**
+   * This lead's own run record, resolved, or null. The queue reads it to tell a lead still taking
+   * the release from one whose update rolled back and will never state the target (A1). Optional:
+   * a caller that passes none leaves the queue to its wall clock and its run bound.
+   */
+  readonly leadRun?: () => Pick<UpdateRun, "state" | "runId" | "to"> | null;
   /** The in-memory queue. Never persisted — a lead restart re-derives it and re-grants. */
   readonly turns: UpdateTurns;
   /** `enrolledAt` per member, the trust store's own ordering. Read through the store each sweep. */
@@ -482,7 +489,7 @@ export class CrewLead {
       // — the link's `runAtStart`. See {@link CrewLead.dialGenerations}.
       const dialled = new Map(due.map((link) => [link.memberId, this.nextDialGeneration(link.memberId)]));
       const outcomes = await sweepPeers(due, (link) =>
-        this.deps.snapshot(link, SWEEP_VIEW, opts.freshPreflight === true, {
+        this.deps.snapshot(link, SWEEP_VIEW, opts.freshPreflight === true || this.verdictMissing(link.memberId, follow), {
           leadRelease,
           turn: follow?.turns.turnFor(link.memberId) ?? null,
         }),
@@ -616,7 +623,35 @@ export class CrewLead {
       const kind = state.preflight?.installKind;
       return kind === undefined ? turnMember : { ...turnMember, installKind: kind };
     });
-    if (follow.turns.observe(members, this.now()).released) this.resweep();
+    // What this lead states about itself gates every grant: a turn is handed out only while that is
+    // the run's own target, so a member can never be sent to an intermediate release (§20).
+    const lead = { release: follow.leadRelease(), run: follow.leadRun?.() ?? null };
+    if (follow.turns.observe(members, this.now(), lead).released) this.resweep();
+  }
+
+  /**
+   * Whether this dial must carry `X-Crew-Preflight: fresh` because the RUN is blocked without it.
+   *
+   * ── THE STALL THIS CLOSES (2026-09-20) ──────────────────────────────────────
+   * {@link import("./follow.ts").UpdateTurns} hands a member the turn only on a green or amber
+   * verdict, and unknown is refused. This lead banks that verdict from the member's snapshot body,
+   * and the member serves whatever its own six-hourly cache happens to hold — so a lead that has just
+   * RESTARTED, which is every lead that has just updated itself, holds nothing for anybody.
+   *
+   * Until now the only thing that re-read it was a phone on `GET /api/update/check`, which fires the
+   * fresh sweep. On the 1.11.0 run the lead's own record reached `done` in six seconds, the phone
+   * stopped asking there, and the member sat on `waiting` for two minutes twenty five seconds. It
+   * then took the release in four. A run must not need a phone watching it to finish.
+   *
+   * So the run asks for itself, and only when it is actually stuck on the answer: an OPEN leg with no
+   * banked verdict at all. A red or amber one is a real answer and is left alone. The cost is bounded
+   * on the member's side, not here, by its own `PREFLIGHT_TTL_MS` gate, so a sweep at 1.5 s cannot
+   * make a peer shell out to git more than once a minute.
+   */
+  private verdictMissing(memberId: string, follow: CrewLeadDeps["follow"]): boolean {
+    if (follow === undefined) return false;
+    if (!follow.turns.hasOpenLeg(memberId)) return false;
+    return this.deps.registry.state(memberId).preflight === null;
   }
 
   /**
@@ -963,6 +998,15 @@ export class CrewLead {
   }
 
   /**
+   * The version those legs' run levels the members to, live or over, or null. The composer sends it
+   * beside legs that ride the status, so the phone can tell a peers-only run (target = this lead's
+   * own version) from a full run whose own record has not landed yet. It dials nobody.
+   */
+  updateLegsTo(): string | null {
+    return this.deps.follow?.turns.legsTo() ?? null;
+  }
+
+  /**
    * When the run this lead drove last reached a terminal state on every leg, or null while one is
    * still open (M20/01).
    *
@@ -971,6 +1015,14 @@ export class CrewLead {
    */
   updateSettledAt(): number | null {
     return this.deps.follow?.turns.settledAt() ?? null;
+  }
+
+  /**
+   * Whether the crew run this lead drives is still open, which refuses a second confirm (A5). It
+   * dials nobody.
+   */
+  updateRunOpen(): boolean {
+    return this.deps.follow?.turns.open(this.now()) ?? false;
   }
 
   /**
@@ -1022,7 +1074,15 @@ export class CrewLead {
 
   updateRows(): CrewUpdateRow[] {
     return crewUpdateRows(
-      this.contributions().map((c) => ({ name: c.name, version: c.state.version, preflight: c.state.preflight })),
+      // `health` rides along so `mergedUpdateVerdict` can tell an ABSENT member from a merely
+      // uninspected one: the bank is in memory, so after any restart every member is `unknown`, and
+      // only the health says which of them the lead simply cannot reach (ADR 0050).
+      this.contributions().map((c) => ({
+        name: c.name,
+        version: c.state.version,
+        preflight: c.state.preflight,
+        health: c.state.health,
+      })),
     );
   }
 

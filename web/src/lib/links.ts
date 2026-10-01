@@ -92,8 +92,19 @@ const HAS_HOST = /^https?:\/\/[a-z0-9]/i;
  * stops at the newline, and stitching wrapped lines back together would mean knowing the pane's
  * column width and guessing which breaks were soft. A half-URL that opens the right host beats a
  * wrong URL assembled from two unrelated lines.
+ *
+ * `logicalText` — the same pane read with soft wraps undone by the adapter's unwrapped-read
+ * capability — turns that guess into a check, and the caller that has it should pass it. See
+ * `repairWrapped`.
  */
-export function findLinks(text: string): LinkMatch[] {
+export function findLinks(text: string, logicalText?: string): LinkMatch[] {
+  const found = scanLinks(text);
+  if (logicalText === undefined || logicalText === "") return found;
+  return repairWrapped(found, text, scanLinks(logicalText));
+}
+
+/** The scan itself: every http(s) URL one string of text carries, per the rules above. */
+function scanLinks(text: string): LinkMatch[] {
   const links: LinkMatch[] = [];
   URL_SCAN.lastIndex = 0;
   for (;;) {
@@ -104,4 +115,91 @@ export function findLinks(text: string): LinkMatch[] {
     links.push({ start: m.index, end: m.index + href.length, href });
   }
   return links;
+}
+
+/** The characters a URL may be made of — `URL_SCAN`'s own class, anchored to a whole string. */
+const URL_CHARS_ONLY = /^[^\s<>"'`\\{}|^[\]]*$/;
+
+/**
+ * Where the row holding `at` ends, before its terminator: Herdr's own reads terminate a row with
+ * `\r\n`, a bare `\n` is what a joined-lines fixture looks like anywhere else. `-1` for the last row,
+ * which has no next row to continue on.
+ */
+function rowEnd(text: string, at: number): number {
+  const lf = text.indexOf("\n", at);
+  if (lf === -1) return -1;
+  return text[lf - 1] === "\r" ? lf - 1 : lf;
+}
+
+/**
+ * Pair the grid's URL fragments with the URLs the pane's logical text carries.
+ *
+ * The mirror renders the *grid*, so a URL longer than the pane is cut at the column edge and the
+ * scan finds a fragment whose href is a prefix of the real one — an anchor that opens a truncated
+ * URL, with the rest of the URL as inert text. The logical read has the URL whole, which makes the
+ * pairing exact rather than a guess:
+ *
+ *   · a fragment is considered only when it runs to the END OF ITS LINE — nothing but URL
+ *     characters the scan trimmed as punctuation, then the row terminator (`\n`, or Herdr's own
+ *     `\r\n`). A fragment the scan stopped at a delimiter for ended there for real, and nothing
+ *     continues it;
+ *   · the fragment must be a prefix of exactly ONE URL in the logical text (duplicates of the same
+ *     URL — a typed command and its output — count as one), so two DIFFERENT candidates leave the
+ *     link alone instead of picking one;
+ *   · and the URL is adopted only when its remainder is FOUND in the following lines, compared
+ *     character by character from column 0. A complete URL that merely happens to prefix a longer
+ *     one elsewhere in the scrollback has no continuation to show, so it keeps its own href.
+ *
+ * The continuation fragments become ranges of their own with the same href, so the whole URL is one
+ * tap target across however many rows it occupies. Fragments keep their own characters — this
+ * changes hrefs and adds ranges, never the text.
+ */
+function repairWrapped(found: LinkMatch[], text: string, logical: LinkMatch[]): LinkMatch[] {
+  if (logical.length === 0) return found;
+  // A Set, because the same URL is commonly on screen twice (a typed command and its output): that is
+  // one URL to adopt, not an ambiguity to refuse.
+  const candidates = [...new Set(logical.map((l) => l.href))];
+  const repaired: LinkMatch[] = [];
+
+  for (const link of found) {
+    // The scan trims prose punctuation off a URL's end (`trimTrailing`), and the column edge cuts
+    // wherever it likes: `…client_id=123.apps.` is a fragment whose `.` is the URL's, not a full
+    // stop. So the fragment is the whole run to the row's end, as long as that run is URL characters.
+    const end = rowEnd(text, link.end);
+    const fragment = end === -1 ? "" : text.slice(link.start, end);
+    if (end === -1 || !URL_CHARS_ONLY.test(text.slice(link.end, end))) {
+      repaired.push(link);
+      continue;
+    }
+    const full = candidates.filter((href) => href.length > fragment.length && href.startsWith(fragment));
+    if (full.length !== 1) {
+      repaired.push(link);
+      continue;
+    }
+    const href = full[0]!;
+
+    const rest: LinkMatch[] = [];
+    let consumed = fragment.length;
+    let cursor = end;
+    while (consumed < href.length) {
+      if (text[cursor] === "\r") cursor += 1; // Herdr terminates a row with CR before the LF
+      if (text[cursor] !== "\n") break;
+      const lineStart = cursor + 1;
+      const lineEnd = rowEnd(text, lineStart);
+      // The row's own characters, never its CR: a middle row of a three-row URL ends `…\r\n` too.
+      const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+      const want = href.slice(consumed, consumed + line.length);
+      if (want.length === 0 || !line.startsWith(want)) break;
+      rest.push({ start: lineStart, end: lineStart + want.length, href });
+      consumed += want.length;
+      cursor = lineStart + want.length;
+    }
+    if (rest.length === 0) {
+      repaired.push(link);
+      continue;
+    }
+    repaired.push({ start: link.start, end, href }, ...rest);
+  }
+
+  return repaired.toSorted((a, b) => a.start - b.start);
 }

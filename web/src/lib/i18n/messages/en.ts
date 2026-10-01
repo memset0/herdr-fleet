@@ -38,6 +38,13 @@ export const en = {
   "settings.install.description": "Add Collie to your home screen — full screen, its own icon.",
   "settings.install.button": "Install",
   "settings.install.iosHint": "On an iPhone or iPad, install from the browser's share sheet: tap Share, then \"Add to Home Screen\".",
+  "settings.harnessBar.title": "Harness shortcuts",
+  "settings.harnessBar.description": "A row of the running agent's own commands above the keys.",
+  "settings.beltSize.title": "Action belt size",
+  "settings.beltSize.description": "How tall the row of actions above the input is, and how large its icons and words are.",
+  "settings.beltSize.option.default": "Default",
+  "settings.beltSize.option.large": "Large",
+  "settings.beltSize.option.larger": "Larger",
   "settings.zen.title": "Zen mode",
   "settings.zen.description": "Adds a row to the pane menu that hides everything but the terminal.",
   "settings.zen.auto.label": "Enter on landscape",
@@ -77,6 +84,15 @@ export const en = {
   "settings.notify.done.hint": "an agent completes its task",
   "settings.notify.updates.label": "App updates",
   "settings.notify.updates.hint": "a new Collie version is available",
+  "settings.notify.cache.label": "Cache about to go cold",
+  // The second clause is the whole point of this hint: the rule is global OR per-pane, with no per-pane
+  // off, so a watched list keeps working under this switch and the operator is told once, here.
+  "settings.notify.cache.hint":
+    "a pane's prompt cache expires in a few minutes; also covers panes you watched one by one",
+  "settings.notify.watched.title": "Watched panes",
+  "settings.notify.watched.empty": "None yet — open a pane's settings to watch it.",
+  "settings.notify.watched.remove": "Remove",
+  "settings.notify.watched.removeAria": "Stop watching {label}",
 
   // --- settings.snooze ---
   "settings.snooze.title": "Do not disturb",
@@ -206,6 +222,9 @@ export const en = {
   "settings.display.rawTerminal.label": "Raw terminal",
   "settings.display.rawTerminal.hint":
     "Shows the plain mirror — no tappable prompt buttons, no chrome or status strips. Use it when a dialog renders wrong and you want to drive it by hand from Keys.",
+  "settings.display.noInvert.label": "Render this pane natively",
+  "settings.display.noInvert.hint":
+    "Skips the light-theme inversion for this pane only. Turn it on when an agent is on a LIGHT theme and the mirror renders it dark; leave it off when the pane looks right.",
   "settings.display.textSize.label": "Text size",
   "settings.display.textSize.decrease": "Decrease font size",
   "settings.display.textSize.increase": "Increase font size",
@@ -235,6 +254,8 @@ export const en = {
   "composer.controls.agent": "Agent",
   "composer.controls.displayAria": "Display settings",
   "composer.controls.display": "Display",
+  "composer.controls.clear": "Clear message",
+  "composer.controls.undoClear": "Undo clear",
   "composer.sentPreview.label": "You sent:",
   "composer.placeholder.gone": "Pane is gone",
   "composer.placeholder.readOnly": "Read-only — not authorised",
@@ -255,6 +276,9 @@ export const en = {
   "composer.attach.title": "Attach",
   "composer.attach.photos": "Photos",
   "composer.attach.files": "Files",
+  "composer.attach.listAria": "Attachments",
+  "composer.attach.removeAria": "Remove {name}",
+  "composer.attach.inFront": "Its marker is gone from your text, so Send puts {name} in front.",
   "composer.send.typeAnyway": "Type anyway?",
   "composer.send.reallySend": "Really send?",
   "composer.send.stopTypingAria": "Stop typing into terminal",
@@ -262,6 +286,8 @@ export const en = {
   "composer.draft.tooLong":
     "Too long to keep as a saved draft — it survives switching panes, but not closing the app.",
   "composer.status.dialogWaiting": "A dialog is waiting — answer it first, then send.",
+  "composer.status.unreadDialog":
+    "Collie cannot read this dialog. {key} is on the card. Tap Send again to type anyway.",
   "composer.status.paneNotWritable": "Pane is no longer writable — nothing was sent",
   "composer.status.inputChanged":
     "The input box changed while clearing it — nothing was typed. Check the pane.",
@@ -272,7 +298,7 @@ export const en = {
   "composer.discard.confirmKeys.other": "Tap again to discard {count} queued keys",
   "composer.destructive.confirm": "Destructive: {reason} — tap Send again to confirm",
   "composer.destructive.confirmOnHost": "Destructive: {reason} on {host} — tap Send again to confirm",
-  "composer.upload.success": "File added, path in message",
+  "composer.upload.success": "File attached",
   "composer.upload.tooLarge": "That file is bigger than {max} MB, the limit on this collie.",
   "composer.upload.badType": "Collie can't attach {name}.",
   "composer.noEcho.title": "Password prompt — nothing echoes",
@@ -288,6 +314,7 @@ export const en = {
   "composer.noEcho.dismissAria": "Dismiss password-prompt notice",
   "composer.draftPreview.title": "Draft in terminal",
   "composer.draftPreview.takeOver": "Take over",
+  "composer.draftPreview.dismissAria": "Dismiss the terminal draft notice",
 
   // --- sendMode (the armed "typing straight through" indicator) ---
   "sendMode.armed.title": "Typing into terminal",
@@ -321,11 +348,14 @@ export const en = {
   "chat.scrollback.loading": "Loading…",
   "chat.scrollback.noSessionReported":
     "{agent} has not reported a session to Herdr. Install or update the Herdr integration for it, then restart the agent in this pane.",
+  "chat.scrollback.noSessionYet":
+    "{agent} reports its session to Herdr only after its first message, so there is no history yet. If this note stays after {agent} has replied, review its hooks with /hooks in {agent}, or update the Herdr integration and restart the agent.",
   "chat.fullReply.title": "Full reply",
   "chat.fullReply.fromTranscript": "from transcript",
   "chat.fullReply.showingTerminal": "showing the terminal",
   "chat.output.empty": "(no recent output)",
   "chat.switcher.aria": "Switch pane",
+  "chat.switcher.ariaNeedsYou": "Switch pane, another pane needs you",
   "chat.switcher.title": "Switch pane",
   "chat.switcher.launch.here": "here",
   "chat.status.feedbackSent": "Feedback sent",
@@ -363,8 +393,18 @@ export const en = {
     "The free-text row has the keyboard in the terminal — these buttons would type into it instead of answering. They resume when it closes.",
   "prompt.feedback.freeText.typedPrefix": "A custom answer is being written in the terminal: ",
 
+  // --- paneSettings (one pane's own preferences; today the prompt-cache warning, ADR 0042) ---
+  "paneSettings.title": "Pane settings",
+  "paneSettings.cacheWatch.label": "Warn me before this pane's cache goes cold",
+  // "about", because the deadline is read off the agent's own transcript and the clock is the poll.
+  "paneSettings.cacheWatch.hint": "about {minutes} minutes before it expires",
+  "paneSettings.cacheWatch.pushOff": "Turn notifications on for this device in Settings first.",
+  "paneSettings.cacheWatch.globalOn": "Settings warns about every pane, so this one is covered.",
+  "paneSettings.cacheWatch.noSession": "This pane's agent names no session, so there is nothing to watch.",
+
   // --- paneActions (long-press sheet: rename / close a pane) ---
   "paneActions.title.fallback": "Pane",
+  "paneActions.settings.label": "Pane settings",
   "paneActions.readOnly": "Read-only — this device isn't authorised to rename or close panes.",
   "paneActions.hostBlockSuffix": "{hostBlock} — rename and close are unavailable until it answers.",
   "paneActions.rename.label": "Rename",
@@ -376,6 +416,10 @@ export const en = {
   "paneActions.focus.labelFallback": "Focus in the terminal",
   "paneActions.focus.done": "Focused in the terminal",
   "paneActions.focus.failed": "Couldn't focus in the terminal",
+  "paneActions.pin.label": "Pin to top",
+  "paneActions.unpin.label": "Unpin",
+  "paneActions.pin.done": "Pinned to the top",
+  "paneActions.unpin.done": "Unpinned",
   "paneActions.empty.fallback": "This multiplexer offers no actions for a pane.",
   "paneActions.status.renamed": "Renamed",
   "paneActions.status.labelCleared": "Label cleared",
@@ -409,11 +453,16 @@ export const en = {
   "home.allClear": "Nothing needs you",
   "home.favorite.add": "Favorite {name}",
   "home.favorite.remove": "Remove favorite from {name}",
-  "home.sort.newest": "Newest",
-  "home.sort.oldest": "Oldest",
-  "home.sort.aria.newest": "Sorted by most recently used first — switch to oldest first",
-  "home.sort.aria.oldest": "Sorted by oldest first — switch to most recently used first",
+  "home.workspace.paneCount.one": "{count} pane",
+  "home.workspace.paneCount.other": "{count} panes",
+  "home.workspace.hidden": "hidden",
+  "home.machineHidden.show": "Show {name}'s panes",
   "home.sidebar.shells": "Shells",
+  "home.pinned.title": "Pinned",
+  "home.pinHint.hold": "Hold a pane to pin it here.",
+  "home.pinHint.rightClick": "Right-click a pane to pin it here.",
+  "home.pinHint.dismiss": "Dismiss hint",
+  "home.group.newTab": "New tab in {name}",
   "home.sidebar.paneActionsTitle": "Tap for pane actions",
   "fleet.navigation.hierarchy": "Herds",
   "fleet.navigation.agents": "Agents",
@@ -491,6 +540,21 @@ export const en = {
   "fleet.settings.shortcuts.unavailable": "This installation serves no settings document.",
   "fleet.settings.shortcuts.risky": "Browser-dependent: {bindings}",
   "fleet.settings.shortcuts.reference": "Command ids and their effective bindings",
+  "home.row.tabPosition": "tab {n}",
+  "home.row.unseen": "unseen",
+  "home.tabs.aria": "Dashboard views",
+  "home.tabs.panes": "Panes",
+  "home.tabs.focus": "Focus",
+  "home.tabs.blocked.one": "{count} blocked",
+  "home.tabs.blocked.other": "{count} blocked",
+  "home.tabs.unseen": "finished panes unseen",
+  "home.changes.listAria": "Changes by workspace",
+  "home.changes.loading": "Reading…",
+  "home.changes.clean": "No changes",
+  "home.changes.noFolder": "No folder",
+  "home.changes.unavailable": "Can't read changes",
+  "home.changes.files.one": "{count} file",
+  "home.changes.files.other": "{count} files",
 
   // --- status (triage sections, status labels, counts) ---
   "status.section.needsYou": "Needs you",
@@ -579,6 +643,17 @@ export const en = {
   "commands.empty": "No commands match “{query}”.",
   "commands.confirm": "Confirm?",
 
+  // --- harnessBar (the row of the running agent's own commands, above the keys) ---
+  // Slash commands are NEVER translated — they are wire text the harness parses — and neither is an
+  // operator's own `bar_label`. Only these labels are.
+  "harnessBar.label": "Harness shortcuts",
+  "harnessBar.model": "Model",
+  "harnessBar.effort": "Effort",
+  "harnessBar.compact": "Compact",
+  "harnessBar.resume": "Resume",
+  "harnessBar.tree": "Tree",
+  "harnessBar.confirmAria": "Tap again to confirm {command}",
+
   // --- quickActions (one-tap reply dock) ---
   "quickActions.group.confirm": "confirm",
   "quickActions.group.common": "common",
@@ -650,6 +725,8 @@ export const en = {
   "connection.session.allAria": "Showing every session. Switch session",
   "connection.server.title": "Machines",
   "connection.server.aria": "Host: {name}. Switch host",
+  "connection.server.show": "Show on the dashboard",
+  "connection.server.showLocked": "The machine you are on is always shown",
 
   // --- crew (the read-only /crew census; role names stay English, ADR 0030) ---
   "crew.title": "Crew",
@@ -746,6 +823,7 @@ export const en = {
   "mirror.imageAlt": "Terminal graphics",
   "mirror.imageBadge": "[Image]",
   "mirror.imageMatchedByOrder": "matched by order, open History to check",
+  "mirror.turnImageCaption": "the agent's newest picture, from its log",
 
   // --- time (relative/clock formatting) ---
   "time.justNow": "just now",
@@ -755,6 +833,15 @@ export const en = {
 
   // --- dialog (menu / multi-select / wizard / preview-select block renderers) ---
   "dialog.sendingAria": "Sending",
+  // ADR 0056: every lifted card's own way back to the terminal rows it replaced.
+  "dialog.terminalControl": "Terminal",
+  "dialog.terminalControlAria": "Show the terminal instead of this card",
+  "dialog.backToCard": "Back to the card",
+  // ADR 0056 counsel fix: the generic-menu and unread-dialog cards already show the mirror by
+  // default, so their own Terminal control only hides their buttons — it needs its own words.
+  "dialog.putAwayControl": "Put away",
+  "dialog.putAwayControlAria": "Hide this card's buttons, keep the terminal",
+  "dialog.showButtons": "Show the buttons",
   "dialog.previousStepAria": "Previous step",
   "dialog.nextStepAria": "Next step",
   "dialog.answeredAria": "Answered",
@@ -774,6 +861,11 @@ export const en = {
   "dialog.menu.moveDown": "Move down",
   "dialog.menu.leftAria": "Left — {verb} ({label})",
   "dialog.menu.rightAria": "Right — {verb} ({label})",
+  // The printed scale's chips (.adr/0054): one per value the screen listed. The chip's own text is
+  // the level, so the aria name adds what a tap DOES to it.
+  "dialog.menu.levelAria": "{verb} to {label}",
+  "dialog.menu.levelCurrentAria": "{label}, current",
+  "unreadDialog.caption": "Collie cannot read this dialog",
   "dialog.preview.currentAnswerAria": "Current answer",
   "dialog.preview.previewedBelowAria": "Previewed below",
   "dialog.preview.previewLabel": "Preview · {label}",
@@ -862,6 +954,8 @@ export const en = {
   "apiError.tab.workspace_required": "No space was named for the new tab.",
   "apiError.launch.not_allowlisted": "That command isn't one of your launchers",
   "apiError.launch.pane_unknown": "That pane is gone, nothing was launched",
+  "apiError.folders.unknown": "That folder is no longer in Recent, so it can't be starred.",
+  "apiError.folders.favourites_full": "Favourites are full ({max}). Remove one first.",
   "apiError.workspace.create_failed": "The space couldn't be created: {reason}",
   "apiError.upload.too_large": "That file is too large, {maxMb} MB is the limit.",
   "apiError.upload.no_file": "No file was sent.",
@@ -881,6 +975,8 @@ export const en = {
   "apiError.pairing.bad_code": "That code doesn't match.",
   "apiError.pairing.duplicate_label": "A device is already using that name.",
   "apiError.device.unknown": "No paired device has that name.",
+  "apiError.cache.pane_unknown": "That pane is gone, nothing was changed.",
+  "apiError.cache.no_session": "That pane's agent names no session, so it can't be watched.",
   "apiError.session.unknown": "There is no session called {session} on this collie.",
   "apiError.host.unknown": "There is no collie called {host} in this crew.",
   // The key mirrors the wire code `crew.not_lead` (`bridge/error-codes.ts`). Both say crew from 1.8.0.
@@ -911,6 +1007,11 @@ export const en = {
   "space.new.tab.worktree": "Worktree",
   "space.new.repo.label": "Repository",
   "space.new.host.label": "Host",
+  "space.new.folders.favourites": "Favourites",
+  "space.new.folders.recent": "Recent",
+  "space.new.folders.use": "Use {path}",
+  "space.new.folders.star": "Add {folder} to favourites",
+  "space.new.folders.unstar": "Remove {folder} from favourites",
   "worktree.orOpenExisting": "Or open one that already exists",
   // --- apiError.update (POST /api/update refusals, M15/05) ---
   "apiError.update.confirm_required": "That update needed a confirm, so nothing was started.",
@@ -920,6 +1021,7 @@ export const en = {
   "apiError.update.major_confirm_required": "{version} crosses a major, and a major needs its own confirm.",
   "apiError.update.target_mismatch": "This screen offered {asked}, but this collie would install {would}. Reload and read it again.",
   "apiError.update.none_available": "There is no newer release to take.",
+  "apiError.update.peers_packaged": "{name} is a packaged install. Its updates come from its own package manager.",
   "apiError.update.packaged": "Updates come from your package manager. Collie won't replace this install's files.",
   "apiError.update.start_failed": "The update couldn't be started: {reason}",
   // --- settings.updateCard (the update card, M15/05) ---
@@ -957,6 +1059,16 @@ export const en = {
   //
   // Generic on purpose: it is printed off a wire-version DIFFERENCE, never off a release name, so
   // the release after the next one carries it with no string edited.
+  // THE URGENT LABEL (ADR 0046). A label and nothing more: the sentence beside it is the release's
+  // own English, read from its `collie-release.json`, so it is printed as it was written and is
+  // never translated. An urgent release keeps the DAILY digest cadence even when the delta is
+  // patches only; the label is how the operator sees that on the card.
+  "settings.updateCard.urgent": "Urgent",
+  // THE SAME LABEL WHEN THE URGENT RELEASE IS NOT THE ONE ON OFFER (ADR 0046). An urgent 1.9.1 with
+  // a quiet 1.9.2 above it offers 1.9.2, and a bare "Urgent" would read as a claim about that
+  // release. Naming the version says what is true: the fix is in the pile, and taking the offer
+  // takes it.
+  "settings.updateCard.urgentSince": "Urgent since {version}",
   "settings.updateCard.linkChange": "Changes the crew link. Update the lead first, members follow.",
   "settings.updateCard.confirmAction": "Yes, update",
   "settings.updateCard.majorConfirmTitle": "Cross the major to {version}?",
@@ -981,7 +1093,11 @@ export const en = {
   "settings.updateCard.versionUnknown": "an unknown version",
 
   // --- settings.updateCard, the crew half (M16/01) ---
-  "settings.updateCard.actionCrew": "Update crew to {version}",
+  // THE BUTTON OPENS UPDATE MODE (ADR 0064). It names the whole of what happens, all machines and the
+  // version, and it no longer grows a confirm inside the card: "Start update" on the first screen of
+  // update mode is the confirm.
+  "settings.updateCard.actionAll": "Update all machines to {version}",
+  "settings.updateCard.retryOne": "Try {name} again",
   "settings.updateCard.retryCrew": "Retry crew update",
   "settings.updateCard.retryNow": "Retry now",
   "settings.updateCard.crewConfirmTitle": "Update the crew to {version}?",
@@ -1051,6 +1167,9 @@ export const en = {
   // THE BAND'S OWN CUT OF IT. One truncating row is about forty characters wide, which the whole
   // sentence is not, so the band states WHAT changes and the tap lands on the card, where the rest
   // of it sits above the confirm. Held to the budget like every other band string.
+  // THE BAND'S HALF OF IT (ADR 0046). The label alone, because the release's sentence is prose of
+  // unbounded length and this row is forty characters. The tap lands on the card, which prints it.
+  "updateRibbon.urgent": "Urgent.",
   "updateRibbon.linkChangeShort": "Changes the crew link.",
   "updateRibbon.available": "Collie {version} available.",
   // A packaged host cannot take the tap — its updates come from its package manager (ADR 0035) — so
@@ -1067,7 +1186,357 @@ export const en = {
   "updateRibbon.dismiss": "Dismiss this version",
   // The close on the two QUIET crew states. Not "dismiss this version": what is put down there is a
   // notice about another machine, and this host's own offer is untouched by it.
+  // ── The prompt-cache chip and its sheet (M28/02) ──────────────────────────
+  // A rule's `label`, its source title and its publisher are NOT here: those are another vendor's
+  // words about their own product, the same carve-out ADR 0030 makes for slash-command descriptions.
+  // The countdown itself is a number and a unit letter, which is the compact convention `timeAgoShort`
+  // already follows across every locale.
+  "cache.warm": "Prompt cache warm",
+  "cache.expiring": "Prompt cache expiring",
+  "cache.cold": "cold",
+  "cache.unknown": "Prompt cache not known",
+  "cache.under1m": "<1m",
+  "cache.overridden": "TTL set in cache-rules.toml",
+  "cache.sheet.title": "Prompt cache",
+  "cache.sheet.rule": "Rule",
+  "cache.sheet.ttl": "Stays warm for",
+  "cache.sheet.ttlMinutes": "{minutes} min",
+  "cache.sheet.confidence": "Confidence",
+  "cache.sheet.source": "Read on",
+  "cache.sheet.retrieved": "Checked",
+  "cache.sheet.measured": "Measured on this machine",
+  "cache.sheet.lastRead": "last read {age}",
+  "cache.sheet.overridden": "Moved by cache-rules.toml",
+  "cache.sheet.thisMachine": "This machine",
+  "cache.sheet.onPeer": "Read on {host}. Its rule catalog is not forwarded, so the source is not quoted here.",
+  "cache.sheet.reset.pending": "{action} after the last turn, so the next turn rebuilds the cache.",
+  "cache.sheet.reset.cause": "{action} before the last turn, so that turn rebuilt the cache.",
+  "cache.sheet.state": "State",
+  "cache.sheet.state.warm": "Warm",
+  "cache.sheet.state.expiring": "Expiring",
+  "cache.sheet.state.cold": "Cold",
+  "cache.confidence.documented": "documented",
+  "cache.confidence.reported": "reported",
+  "cache.confidence.inferred": "inferred",
+  "cache.confidence.observed": "measured",
   "updateRibbon.hideNotice": "Hide this notice",
+
+  // --- tour (the first-run screen, web/src/components/tour-sheet.tsx) ---
+  // ONE scrolling screen, shown once per device and then only when the operator asks in Settings.
+  // The English here is the source of truth; the six other catalogs carry it verbatim until it is
+  // translated. Raise TOUR_VERSION (lib/tour.ts) when a CLAIM below changes, never for polish.
+  "tour.skip": "Skip",
+  "tour.title": "Collie shows the agents in your terminal.",
+  // The claim's second sentence, in the three forms the facts can support. {mux} is the
+  // multiplexer's display name, {host} the lead machine's crew label; a clause whose fact is missing
+  // is dropped rather than filled with a placeholder.
+  "tour.lead":
+    "It mirrors the panes running under {mux} on {host}. It shows what is on those screens, and it never runs a terminal of its own.",
+  "tour.leadNoHost":
+    "It mirrors the panes running under {mux}. It shows what is on those screens, and it never runs a terminal of its own.",
+  "tour.leadNoMux":
+    "It mirrors the panes running in your terminal multiplexer. It shows what is on those screens, and it never runs a terminal of its own.",
+
+  // Your setup. Every row is a fact this snapshot carries, or the row is absent.
+  "tour.setup": "Your setup",
+  "tour.setup.panes.one": "{count} pane",
+  "tour.setup.panes.other": "{count} panes",
+  "tour.setup.needsYou.one": "{count} needs you",
+  "tour.setup.needsYou.other": "{count} need you",
+  "tour.setup.noPanes": "No panes yet",
+  "tour.setup.machines.one": "{count} machine in your crew",
+  "tour.setup.machines.other": "{count} machines in your crew",
+  "tour.setup.canType": "This device can type",
+  "tour.setup.readOnly": "This device can read only",
+  "tour.setup.pushOff": "Notifications are off on this phone",
+
+  // Do this next. At most two cards, first match wins, in this order.
+  "tour.doNext": "Do this next",
+  "tour.pair.title": "Pair this phone",
+  "tour.pair.body": "Run collie pair on the host, then type the code in Settings.",
+  "tour.pair.button": "Pair",
+  "tour.space.title": "Nothing is running yet",
+  "tour.space.body": "Start an agent in your terminal, or make a space here.",
+  "tour.space.button": "New space",
+  "tour.pushCard.title": "Be told when a pane needs you",
+  "tour.pushCard.body": "Collie notifies you when an agent is blocked, or done.",
+  "tour.install.title": "Keep Collie on your home screen",
+  "tour.install.body": "It opens full screen and remembers where you were.",
+  "tour.install.button": "Add",
+  "tour.push.enable": "Turn on",
+  "tour.push.enabled": "Notifications are on for this device.",
+
+  // What you can do here. The six lines the site sells and the app never said.
+  "tour.can": "What you can do here",
+  "tour.can.mirror": "Read the live pane, colour and all.",
+  "tour.can.answer": "Answer a prompt by tapping its card.",
+  "tour.can.type": "Type a reply, or send Esc, Tab and Ctrl keys.",
+  "tour.can.harness": "Set model and effort from the actions row.",
+  "tour.can.session": "Read the whole session, past the scrollback.",
+  "tour.can.crew": "Watch every machine in your crew from one URL.",
+
+  // The footer's one button. The first spelling opens the blocked pane; the second closes the sheet.
+  "tour.done.pane": "Open the pane that needs you",
+  "tour.done.dashboard": "Show the dashboard",
+
+  // --- settings.tour ---
+  "settings.tour.title": "Show the first screen again",
+  "settings.tour.description": "What Collie does, and what this install looks like.",
+  "settings.tour.button": "Show",
+
+  // --- updateScreen (M28/01) ---
+  // The sheet a running update takes the screen with: one row per machine, one for this device's own
+  // download, and a way out of every state that can stall. `components/update-screen.tsx` renders it;
+  // `lib/update-screen.ts` decides every state it can be in. Short words — these rows are read on a
+  // phone while a machine is being rebuilt underneath them.
+  "updateScreen.dialogAria": "Update in progress",
+  "updateScreen.title": "Updating Collie",
+  "updateScreen.close": "Close",
+  "updateScreen.rows.label": "Machines",
+  "updateScreen.thisMachine": "This machine",
+  "updateScreen.versionUnknown": "an unknown version",
+  "updateScreen.reasonUnknown": "no reason given",
+  "updateScreen.seeUpdates": "See Updates",
+  "updateScreen.keepWaiting": "Keep waiting",
+  // The one sentence of truth, small and last: the run is on the machines, and this screen only shows
+  // it. An operator who thinks closing the phone stops the update will not close the phone.
+  "updateScreen.truth": "The update runs on the machines. This screen only shows it, and closing the app does not stop it.",
+  // The badge, on a device that did not start the run. One line, so it truncates rather than wraps.
+  "updateScreen.badge.moving": "{name}: {word}",
+  "updateScreen.badge.downloading": "Downloading the new app",
+  "updateScreen.badge.generic": "Update in progress",
+  // A row's state, in the fewest words that are still true. The lead's four in-flight states say what
+  // the machine is DOING; a peer reports `updating` for all four, because the lead cannot see inside.
+  "updateScreen.state.preflight": "checking",
+  "updateScreen.state.staging": "building",
+  "updateScreen.state.restarting": "restarting, back in a moment",
+  "updateScreen.state.verifying": "checking the new version",
+  "updateScreen.state.done": "done",
+  "updateScreen.state.rolledBack": "back on {version}",
+  "updateScreen.state.stuck": "stuck",
+  "updateScreen.state.interrupted": "interrupted",
+  "updateScreen.state.idle": "idle",
+  "updateScreen.state.waiting": "waiting",
+  "updateScreen.state.updating": "updating",
+  "updateScreen.state.unreachable": "no answer",
+  "updateScreen.state.packageManaged": "package-managed",
+  "updateScreen.state.current": "already up to date",
+  "updateScreen.peer.lastSeen": "last seen {ago} ago",
+  "updateScreen.peer.packageManagedNote": "Its package manager owns this machine, so the run leaves it alone.",
+  // The run ended and it did not arrive. The sentence names what happened and the reason the host gave.
+  "updateScreen.failed.rolledBack": "The update rolled back. This machine is still on {version}: {reason}",
+  "updateScreen.failed.stuck": "The update is stuck: {reason}",
+  "updateScreen.failed.interrupted": "The update was interrupted: {reason}",
+  // The lead has held one state longer than a whole build, restart and verify takes. Keep waiting, with
+  // the app back in your hands — never a cancel, and never a forced reload.
+  "updateScreen.lead.stalled": "Still working. Nothing is wrong yet, and waiting is the whole job.",
+  "updateScreen.lead.crewOnly": "This run updates only the members. This machine stays as it is and does not restart.",
+  // THIS device, which is not a machine in the crew: it is the phone fetching the bundle the machines
+  // now serve. Counted in FILES, because per-file is the only thing the service worker reports.
+  "updateScreen.device.title": "This device",
+  "updateScreen.device.downloading": "Downloading the new app, {done} of {total} files",
+  "updateScreen.device.downloadingUnknown": "Downloading the new app",
+  "updateScreen.device.switching": "Switching to the new app",
+  "updateScreen.device.progressAria": "Files downloaded",
+  "updateScreen.device.hung": "Still downloading. Keep using the app you have, and it will switch over when it lands.",
+  "updateScreen.device.keepUsing": "Keep using the app",
+  // The end, through the status channel every other confirmation uses. A solo install names the MACHINE,
+  // because there is no crew to name.
+  "updateScreen.done.crew": "Crew updated to {version}",
+  "updateScreen.done.solo": "{machine} updated to {version}",
+  "updateScreen.done.members": "Members updated to {version}",
+
+  // --- updateScreen, update mode (ADR 0064) ---
+  // The docked panel a running update puts the phone under: a band with the step and a clock, the app
+  // behind a veil, and seven steps. Plain words, short sentences: these are read on a phone while a
+  // machine is rebuilt underneath them. `{lead}` is the machine that leads the crew.
+  "updateScreen.band.step": "Update mode · step {step} of {total}",
+  "updateScreen.band.done": "Update finished",
+  "updateScreen.band.stopped": "Update stopped",
+  "updateScreen.lock": "The app is locked until this finishes. Terminal sessions and agents keep running.",
+  "updateScreen.phone": "This phone",
+  "updateScreen.thisPhone": "this phone",
+  "updateScreen.list.two": "{a} and {b}",
+  "updateScreen.list.many": "{head} and {last}",
+  "updateScreen.action.start": "Start update",
+  "updateScreen.action.notNow": "Not now",
+  "updateScreen.action.back": "Back to the app",
+  "updateScreen.action.escape": "Use the app anyway",
+  "updateScreen.action.skip": "Skip {name}",
+  "updateScreen.action.keepTrying": "Keep trying",
+  "updateScreen.action.retryOne": "Try {name} again",
+  "updateScreen.action.retryMany.one": "Try {count} machine again",
+  "updateScreen.action.retryMany.other": "Try {count} machines again",
+  "updateScreen.action.tryAgain": "Try again",
+  "updateScreen.action.showLog": "Show log",
+  "updateScreen.action.copy": "Copy",
+  "updateScreen.action.copied": "Copied",
+  "updateScreen.strip.mine": "Update running. {step}.",
+  "updateScreen.strip.other": "Update running, started on another device. {step}.",
+  "updateScreen.strip.view": "View",
+  // Ready to start: the confirm, as the first screen of update mode.
+  "updateScreen.ready.heading": "Update to {version}",
+  "updateScreen.ready.majorHeading": "Cross to {version}",
+  "updateScreen.ready.majorSubtitle": "{version} is a new major, so it gets its own start. Read its release notes first.",
+  "updateScreen.ready.crew.one": "{count} machine and this phone, one at a time.",
+  "updateScreen.ready.crew.other": "{count} machines and this phone, one at a time.",
+  "updateScreen.ready.solo": "{lead} and this phone, one after the other.",
+  "updateScreen.ready.retryOne": "Try {name} again",
+  "updateScreen.ready.retryMany": "Update the other machines to {version}",
+  "updateScreen.ready.retrySubtitle": "{lead} already runs {version}. Only the other machines update.",
+  "updateScreen.ready.lead": "builds, then restarts",
+  "updateScreen.ready.leadNote": "The connection drops for up to 30 seconds.",
+  "updateScreen.ready.member": "updates next",
+  "updateScreen.ready.memberRetry": "updates to {version}",
+  "updateScreen.ready.memberNote": "Goes back on its own if its check fails.",
+  "updateScreen.ready.phone": "reloads at the end",
+  "updateScreen.ready.phoneNote": "Once, onto the new app.",
+  "updateScreen.ready.note": "While it runs, the app is locked on this phone. Terminal sessions and agents keep running.",
+  "updateScreen.ready.noteCrewOnly": "While it runs, the app is locked on this phone. This phone keeps its app.",
+  // The seven steps.
+  "updateScreen.check.heading": "Checking {lead}",
+  "updateScreen.check.subtitle": "Disk, service and build tools. About 10 seconds.",
+  "updateScreen.check.next": "Next: {lead} builds {version}.",
+  "updateScreen.build.heading": "Building {version} on {lead}",
+  "updateScreen.build.subtitle": "Fetching and compiling. The old version keeps running until the switch.",
+  "updateScreen.build.next": "Next: {lead} restarts. The connection drops for up to 30 seconds.",
+  "updateScreen.restart.heading": "{lead} is restarting",
+  "updateScreen.restart.subtitle": "The connection is down on purpose. The update goes on, and this screen picks it up again.",
+  "updateScreen.restart.next": "Back in about 15 seconds. Then {lead} checks the new version.",
+  "updateScreen.verify.heading": "Checking the new version on {lead}",
+  "updateScreen.verify.subtitle": "If the check fails, {lead} goes back to {from} on its own.",
+  "updateScreen.verify.nextMembers": "Next: the other machines, one at a time.",
+  "updateScreen.verify.nextPhone": "Next: this phone loads the new app.",
+  "updateScreen.members.heading": "Updating the other machines",
+  "updateScreen.members.subtitle": "One at a time, so a bad build stops at one machine.",
+  "updateScreen.members.next": "Then this phone loads the new app and reloads once.",
+  "updateScreen.members.nextCrewOnly": "This phone keeps its app. Nothing reloads here.",
+  "updateScreen.phone.heading": "Updating this phone",
+  "updateScreen.phone.subtitle": "Downloading the new app: {done} of {total} files.",
+  "updateScreen.phone.looking": "Getting the new app from {lead}.",
+  "updateScreen.phone.hung": "No new file for 2 minutes. You can keep using the app you have.",
+  "updateScreen.phone.next": "Then the screen reloads once, and this view comes back on its own.",
+  "updateScreen.switch.heading": "Switching this phone to {version}",
+  "updateScreen.switch.subtitle": "The screen reloads once. Do not close the app. This view comes back by itself.",
+  "updateScreen.done.heading": "Update finished",
+  "updateScreen.done.arrived.one": "{names} runs {version}.",
+  "updateScreen.done.arrived.other": "{names} run {version}.",
+  "updateScreen.done.behind.one": "{names} did not update.",
+  "updateScreen.done.behind.other": "{names} did not update.",
+  "updateScreen.rolledBack.heading": "{lead} went back to {from}",
+  "updateScreen.rolledBack.subtitle": "The new version failed its check. {lead} runs {from} and works normally. Nothing else changed.",
+  "updateScreen.stuck.heading": "The update stopped on {lead}",
+  "updateScreen.stuck.subtitle": "It did not finish or go back on its own. Terminal sessions keep running. Run this on {lead}:",
+  "updateScreen.stopped.subtitle": "It stopped before it finished. Nothing was left half-installed. {lead} still runs {from}.",
+  "updateScreen.failed.heading": "The update failed on {lead}",
+  "updateScreen.failed.subtitle": "Nothing was changed. {lead} still runs {from}. The reason is below.",
+  // A member that needs you, on step 5.
+  "updateScreen.ask.quiet": "{name} has not answered for {elapsed}. You can skip it.",
+  "updateScreen.ask.limited": "{name} waits out its once-an-hour limit. You can skip it.",
+  // One row's words, after the machine's name.
+  "updateScreen.row.on": "on {version}",
+  "updateScreen.row.already": "already on {version}",
+  "updateScreen.row.building": "building {version}",
+  "updateScreen.row.restarting": "offline, restarting {elapsed}",
+  "updateScreen.row.restartingNote": "Gone on purpose. The update goes on without it.",
+  "updateScreen.row.waitsFor": "waits for {name}",
+  "updateScreen.row.nextInLine": "next in line",
+  "updateScreen.row.limited": "waiting",
+  "updateScreen.row.quiet": "no answer for {elapsed}",
+  "updateScreen.row.noAnswer": "no answer",
+  "updateScreen.row.backOn": "back on {version}",
+  "updateScreen.row.stuck": "stuck",
+  "updateScreen.row.stopped": "stopped",
+  "updateScreen.row.failed": "failed",
+  "updateScreen.row.skipped": "skipped",
+  "updateScreen.row.stillOn": "Still on {version}.",
+  "updateScreen.row.untouched": "not touched",
+  "updateScreen.row.packageManaged": "its package manager updates it",
+  "updateScreen.row.phoneWaits": "waits its turn",
+  "updateScreen.row.phoneLooking": "getting the new app",
+  "updateScreen.row.phoneDownloading": "downloading",
+  "updateScreen.row.files": "{done} of {total} files",
+  "updateScreen.row.phoneHung": "no new file",
+  "updateScreen.row.phoneReloading": "reloading",
+  "updateScreen.row.phoneKeeps": "keeps this app",
+  "updateScreen.row.phoneKept": "keeps its app for now",
+  "updateScreen.row.phoneKeptNote": "The new app loads the next time Collie starts.",
+  "updateScreen.row.reading": "reading its state",
+  "updateScreen.reading.subtitle": "Reading where the update is. This takes a second.",
+
+  // --- changes (ADR 0065) ---
+  "chat.changes.label": "Changes",
+  "changes.title": "Changes",
+  "changes.backAria.dashboard": "Back to the dashboard",
+  "changes.backAria.workspace": "Back to the workspace",
+  "changes.backAria.pane": "Back to the pane",
+  "changes.listBackAria": "Back to the list",
+  "changes.refreshAria": "Refresh changes",
+  "changes.loading": "Reading changes…",
+  "changes.empty": "No changes since the last commit.",
+  "changes.unavailable.noFolder": "Collie can't find a folder for this workspace, so there are no changes to show.",
+  "changes.unavailable.noGit": "Git is not installed on this machine.",
+  "changes.unavailable.noPane": "This pane is gone.",
+  "changes.unavailable.noWorkspace": "This workspace is gone.",
+  "changes.error": "Couldn't read the changes. Tap refresh to try again.",
+  "changes.stale": "Not updating",
+  "changes.truncated": "The list hit a limit, so some repos or files may be missing.",
+  "changes.bound.depth.one": "Stopped at {count} level, with repos further down.",
+  "changes.bound.depth.other": "Stopped at {count} levels, with repos further down.",
+  "changes.bound.settings": "Look deeper in Settings",
+  "changes.thisPane": "This pane",
+  "changes.repoFiles.one": "{name} · {count} file",
+  "changes.repoFiles.other": "{name} · {count} files",
+  "changes.status.M": "Modified",
+  "changes.status.A": "Added",
+  "changes.status.D": "Deleted",
+  "changes.status.R": "Renamed",
+  "changes.status.untracked": "Untracked",
+  "changes.binaryShort": "binary",
+  "changes.file.binary": "Binary file, not shown.",
+  "changes.file.directory": "New folder. Its files are not listed one by one.",
+  "changes.file.truncated": "The diff stops here. It is too long to show in full.",
+  "changes.file.unknown": "This file is no longer in the list of changes. Go back and refresh.",
+  "changes.file.gone": "No longer changed",
+  "changes.file.error": "Couldn't read this diff.",
+  "changes.file.noLines": "No line changes.",
+  "changes.file.renamedFrom": "Renamed from {path}",
+  "changes.file.prev": "Previous file",
+  "changes.file.next": "Next file",
+  "changes.layout.aria": "Layout",
+  "changes.layout.list": "List",
+  "changes.layout.tree": "Tree",
+  "changes.tree.folderAria.one": "{name}, {count} file",
+  "changes.tree.folderAria.other": "{name}, {count} files",
+  "changes.filter.button": "Filter files",
+  "changes.filter.buttonActive": "Filter files, {shown} of {total} shown",
+  "changes.filter.placeholder": "Filter by path",
+  "changes.filter.clearText": "Clear text",
+  "changes.filter.statusAria": "Filter by status",
+  "changes.filter.shown": "{shown} of {total} files",
+  "changes.filter.none": "No files match.",
+  "changes.filter.clear": "Clear filter",
+  "changes.commit.show": "Show last commit",
+  "changes.commit.showFor": "Show last commit of {name}",
+  "changes.commit.cleanHeading": "No uncommitted changes",
+  "changes.commit.title": "Last commit",
+  "changes.commit.backAria": "Back to the commit",
+  "changes.commit.loading": "Reading the commit…",
+  "changes.commit.error": "Couldn't read the commit. Tap refresh to try again.",
+  "changes.commit.noCommit": "This repo has no commits yet.",
+  "changes.commit.unknown": "Collie can't find this repo any more. Go back and refresh.",
+  "changes.commit.empty": "This commit changes no files.",
+  "changes.commit.newer": "A newer commit exists",
+  "changes.commit.uncommitted": "New uncommitted changes",
+  "changes.commit.fileNewer": "The repo has a newer commit. Go back and load it to read this file.",
+  "settings.changes.title": "Changes",
+  "settings.changes.description": "How a pane's Changes view finds git repos.",
+  "settings.changes.nested.label": "Look for repos inside this folder",
+  "settings.changes.nested.hint": "Also show repos in folders below the pane's folder, even ones the parent repo ignores.",
+  "settings.changes.depth.label": "How deep to look",
+  "settings.changes.depth.hint": "Folder levels below the pane's folder.",
+  "settings.changes.depth.levels.one": "{count} level",
+  "settings.changes.depth.levels.other": "{count} levels",
 } as const;
 
 /** Every key that exists, as a union of string literals. The completeness contract. */

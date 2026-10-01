@@ -8,6 +8,7 @@
 // filter — see lib/hosts.ts `spaceKey`, which degrades to a pure prefix (`"\0w1"`) on a solo
 // snapshot where no pane is host-tagged at all.
 import { paneSpaceKey, spaceKey } from "./hosts";
+import { byPlaceInTab } from "./pane-groups";
 import { bucketOf, TRIAGE_ORDER, type TriageKey } from "./triage";
 import type { AgentView, TabView, WorkspaceView } from "./types";
 
@@ -21,6 +22,11 @@ export interface TabGroup {
  * Group a workspace's panes (agents + shells) by tab, in tab order. Panes whose tab isn't in the
  * tab list yet (a brief poll race after a create) fall into a trailing group so they're never lost.
  *
+ * Inside a tab: its agents, then its shells, each by their position in the tab ({@link byPlaceInTab}).
+ * This used to keep the order the lists arrived in, and the bridge sent agents status-first, so a
+ * pane that blocked jumped to the head of its tab and back when it resumed (ADR 0063). The order is
+ * recomputed here so no arrival order can move a row.
+ *
  * `host` is the machine the workspace belongs to (undefined on a solo snapshot, and on the lead-local
  * navigator before the crew tags anything). Panes from any OTHER machine are not in this space, even
  * when they report the same workspace id.
@@ -33,8 +39,17 @@ export function groupPanesByTab(
   host?: string,
 ): TabGroup[] {
   const key = spaceKey(host, workspaceId);
-  const panes = [...agents, ...shellPanes].filter((p) => paneSpaceKey(p) === key);
-  const wsTabs = tabs.filter((t) => t.workspaceId === workspaceId);
+  const here = (p: AgentView) => paneSpaceKey(p) === key;
+  const panes = [
+    ...agents.filter(here).toSorted(byPlaceInTab),
+    ...shellPanes.filter(here).toSorted(byPlaceInTab),
+  ];
+  // Same "untagged is ambient" rule as ambientPanes/findPane (lib/hosts.ts): a tab addressed on this
+  // host matches when it carries that host's own tag OR no tag at all, so a solo snapshot — where no
+  // tab is host-tagged — keeps grouping exactly as it always did.
+  const wsTabs = tabs.filter(
+    (t) => t.workspaceId === workspaceId && (t.host === undefined || t.host === host),
+  );
 
   const groups: TabGroup[] = wsTabs.map((t) => ({
     tabId: t.tabId,
@@ -80,9 +95,10 @@ export function spaceTriageMap(agents: readonly AgentView[]): Map<string, Triage
 }
 
 /**
- * Last-used time for EVERY space in one pass over the panes. The dashboard needs this per space and
- * again per rendered row, and it re-renders on every poll; deriving it per space would be
- * spaces × panes each time (45 × 59 on a real herd, three times over). One pass, then map lookups.
+ * Last-used time for EVERY space in one pass over the panes. The dashboard SHOWS this on each row
+ * (it no longer sorts by it — lib/../components/space-overview.tsx) and re-renders on every poll;
+ * deriving it per space would be spaces × panes each time (45 × 59 on a real herd). One pass, then
+ * map lookups.
  */
 export function spaceLastSeenMap(panes: readonly AgentView[]): Map<string, number> {
   const seen = new Map<string, number>();
@@ -92,25 +108,6 @@ export function spaceLastSeenMap(panes: readonly AgentView[]): Map<string, numbe
     if (at > (seen.get(key) ?? 0)) seen.set(key, at);
   }
   return seen;
-}
-
-/**
- * Most-recently-used spaces first. Never-used spaces (and every space on an older bridge) tie at 0
- * and therefore keep Herdr's own workspace order behind the ones you actually touch — `sort` is
- * stable, so no timestamps means no reordering at all.
- *
- * Pass a prebuilt {@link spaceLastSeenMap} when the caller already has one.
- */
-export function sortSpacesByRecency(
-  workspaces: readonly WorkspaceView[],
-  panes: readonly AgentView[],
-  seen: Map<string, number> = spaceLastSeenMap(panes),
-  host?: string,
-): WorkspaceView[] {
-  return workspaces.toSorted(
-    (a, b) =>
-      (seen.get(spaceKey(host, b.workspaceId)) ?? 0) - (seen.get(spaceKey(host, a.workspaceId)) ?? 0),
-  );
 }
 
 /**
@@ -139,20 +136,20 @@ export interface SpaceRow {
 }
 
 /**
- * Nest each worktree under the space showing its repo, keeping the list's recency order.
+ * Nest each worktree under the space showing its repo, keeping the list's incoming order.
  *
  * THREE RULES, and each answers a case the flat list never had:
  *
- *  • **A group takes the position of its most recent member.** Sorting by the parent alone would
- *    bury a worktree you used a minute ago under a repo checkout you last touched last week — the
- *    list promises "what is fresh is near the top", and a group must keep that promise.
+ *  • **A group takes the position of its first member.** A worktree that sorts ahead of its parent
+ *    pulls the whole group up to where it sits, so no row is ever moved past a row it was sent
+ *    ahead of.
  *  • **A worktree whose repo is not open stays at depth 0.** There is no row to indent under, and
  *    indenting under nothing reads as a rendering bug.
- *  • **Order within a group is the incoming order**, which is already recency: the parent first,
- *    then its worktrees as they were sorted.
+ *  • **Order within a group is the incoming order**: the parent first, then its worktrees as they
+ *    arrived.
  *
- * `ordered` must already be in the order the caller wants (see {@link sortSpacesByRecency}); this
- * function only regroups, never re-sorts.
+ * `ordered` must already be in the order the caller wants — the bridge's own space-number order, on
+ * every caller today; this function only regroups, never re-sorts.
  */
 export function nestWorktrees(ordered: readonly WorkspaceView[]): SpaceRow[] {
   // Only a space that IS the repo's own checkout can be a parent (`isWorktree === false`).

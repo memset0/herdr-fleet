@@ -1,3 +1,4 @@
+import { paneName, panePlace } from "./pane-name.ts";
 import type { PushMessage } from "./push.ts";
 import type { AgentStatus, AgentView } from "./types.ts";
 
@@ -28,7 +29,8 @@ export interface NotifyClock<H> {
 export interface HerdSummary {
   /** Headline: "claude needs you" for one, or "3 agents need you" for several. */
   title: string;
-  /** Sub-line: "demo · /path" for one outstanding alert, or the agent names for a digest. */
+  /** Sub-line: the pane's PLACE ("collie › UI work") for one outstanding alert, or the panes' names
+   *  for a digest — each one `name · place` where two of them read the same. */
   body: string;
   /** Deep-link target when exactly one alert is outstanding; undefined for a multi-agent digest. */
   paneId?: string;
@@ -103,9 +105,24 @@ export function makeNotifySink(
 
 interface Alert {
   agent: string;
-  workspaceLabel: string;
-  cwd: string;
+  /** What this pane is CALLED — the one name rule, `bridge/pane-name.ts`. */
+  label: string;
+  /** Where it sits — `space › tab`, or the space alone. The one place rule, same module. */
+  place: string;
   status: NotifiableStatus;
+}
+
+/**
+ * The digest body's per-alert labels, with a shared name disambiguated by its place. Applied only to
+ * a name that collides with another outstanding alert's — a lone name is never touched — and only
+ * once: two panes sharing both a name AND a place stay indistinguishable rather than chase a longer
+ * key. That residual collision is rare (both panes would need the same name in the same tab) and the
+ * digest still names every pane it can.
+ */
+function digestLabels(alerts: readonly Alert[]): string[] {
+  const counts = new Map<string, number>();
+  for (const a of alerts) counts.set(a.label, (counts.get(a.label) ?? 0) + 1);
+  return alerts.map((a) => ((counts.get(a.label) ?? 0) > 1 ? `${a.label} · ${a.place}` : a.label));
 }
 
 export class NotificationCoordinator<H = unknown> {
@@ -136,8 +153,8 @@ export class NotificationCoordinator<H = unknown> {
     this.cancelPending(id);
     const alert: Alert = {
       agent: agent.agent,
-      workspaceLabel: agent.workspaceLabel,
-      cwd: agent.cwd,
+      label: paneName(agent),
+      place: panePlace(agent),
       // SAFETY: `onTransition` is only reached for a status the prefs call notifiable, and the
       // notifiable set IS `NotifiableStatus` (blocked/done) — `isNotifiable` returns false for
       // every other member of `AgentStatus`, so this branch cannot be entered with one.
@@ -212,7 +229,12 @@ export class NotificationCoordinator<H = unknown> {
       // One outstanding agent → deep-link straight to its pane on tap.
       return {
         title: `${a.agent} ${verb}`,
-        body: `${a.workspaceLabel} · ${a.cwd}`,
+        // The PLACE, and nothing else. A push says the same two things the screens say — what it is
+        // called (the title, above) and where it sits — so the notification and the dashboard row it
+        // deep-links to read alike. The cwd is deliberately gone: a full absolute path on a lock
+        // screen is the least readable fact Collie has, and the space and tab are what locate the
+        // work.
+        body: a.place,
         paneId,
         renotify,
       };
@@ -226,7 +248,7 @@ export class NotificationCoordinator<H = unknown> {
       : allDone
         ? `${n} agents done`
         : `${n} agents need attention`;
-    return { title, body: alerts.map((a) => a.agent).join(", "), renotify };
+    return { title, body: digestLabels(alerts).join(", "), renotify };
   }
 
   private cancelPending(id: string): void {

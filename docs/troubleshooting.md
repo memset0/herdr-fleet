@@ -7,7 +7,9 @@ Symptoms below, in order — search the page for yours. **`Os { NotFound }` from
 reboot** · **a pane is stuck narrow** · **Collie refuses to open a tmux window** ·
 **`tmux list: output did not parse`** · **`herdr plugin list` shows the old version** ·
 **stale UI after a rebuild** · **I saved a machine in Herdr and the phone does not show it** ·
-**an update started from the phone stays at staging**.
+**an update started from the phone stays at staging** · **a phone update on macOS leaves Collie
+unloaded** · **a pane shows no prompt-cache chip** · **a new Codex pane says it has no history
+yet** · **the phone says Collie cannot read a screen the agent is not showing**.
 
 **`herdr plugin …` fails with `Error: Os { code: 2, kind: NotFound, message: "No such file or
 directory" }`** (plugin install fails, action invoke fails)**.** This is *not* a Collie problem — it
@@ -73,7 +75,7 @@ the fourth proxy requirement in
 [`docs/deployment.md`](deployment.md#variant-b--identity-aware-proxy--per-device-authorisation).
 
 **A `sudo` (or SSH passphrase, or `gpg`) prompt won't take your reply.** Use **Type** in the
-Controls row, not Send. Send *verifies* what it typed by reading it back off the screen before it
+actions row above the keyboard, not Send. Send *verifies* what it typed by reading it back off the screen before it
 presses Enter ([#34](https://github.com/AltanS/collie/issues/34)), and a password prompt turns echo
 off, so there is nothing to read back — **Type** sends your keystrokes straight to the pane, Enter
 included. Nothing you type in **Type** is stored, echoed into a draft, or restored later, and the
@@ -143,6 +145,35 @@ machine from the phone, enrol it: `collie crew add <ssh-host>` on the lead, then
 the lead and `collie crew status` to check the link. Adding or removing a machine in Herdr changes
 nothing in the crew ([Herdr machines and the crew](crew.md#herdr-machines-and-the-crew)).
 
+**A pane shows no prompt-cache chip.** One of three things, and `collie doctor` tells them apart. The
+pane's harness has no journal adapter, which its `integration-<agent>` and `journal-roots` lines name.
+The pane never reported a session, which its `agent-sessions` line lists by pane id. Or the agent has
+not taken a turn yet, which is not a fault: nothing is shown before it is measured, so the chip appears
+on the agent's first reply. A harness whose vendor publishes no cache lifetime shows nothing either,
+and `cache-claims` lists every rule this build does ship.
+
+**A new Codex pane says it has no history yet.** Expected until its first turn. Codex reports its
+session to Herdr only when the first prompt is sent, not when it starts, so a fresh pane has no
+session, and no History link, until then. `collie doctor` lists such a pane under `agent-sessions`
+as not reported yet, and does not count it as a fault. If the note is still there after Codex has
+replied, open `/hooks` in Codex. When its hooks change, Codex asks you to review them, and "Continue
+without trusting" turns the Herdr hook off while `herdr integration status` still says it is
+current. Trust the hook there, or run `herdr integration install codex` and start a new session.
+
+**The phone says Collie cannot read a dialog, or a send does not reach the input box, while the
+agent at the desk shows its normal prompt.** Collie misread the screen, usually because the agent
+changed how it draws it. Please open an issue with the screen's raw text, which shows what a
+screenshot cannot (the colours and dim text Collie reads). Find the pane id with `herdr pane list`,
+then run
+
+```sh
+herdr pane read <pane-id> --source recent --lines 200 --format ansi > pane.txt
+```
+
+while the phone still shows the problem, and attach `pane.txt` together with the agent's version
+(`claude --version`, `codex --version`, and so on). The file is the terminal's text, so read it
+first and remove anything private.
+
 **An update started from the phone stays at staging.** On Collie up to 1.6.0, an update tapped on
 the phone could stage the new version and then stop: the runner that performs the swap was never
 started, the service kept serving the old version, and the run record sat at `staging` with the lock
@@ -171,6 +202,19 @@ staging leaves behind. A suffixed instance keeps them in `~/.local/state/collie-
 whose lock you removed will flip `current` with nothing guarding it. Leave `versions/` alone. The
 half-staged version directory is harmless, the retry builds into it again, and the retention sweep
 removes what it no longer needs.
+
+**A phone update on macOS leaves Collie unloaded.** Run this on the Mac:
+
+```
+collie restart
+```
+
+On Collie up to 1.8.x, an update tapped on the phone could stop the launchd agent and never load it
+again, so the phone lost the service and `launchctl print gui/$(id -u)/herdr.collie` found nothing.
+The runner shared the agent's process group, and restarting the agent killed it half way.
+`collie restart` writes the agent's plist again and loads it. From the next release on, the bridge
+starts the runner in a session of its own. If a phone update still unloads the agent after that, run
+the same command and add a note to [#213](https://github.com/AltanS/collie/issues/213).
 
 ---
 

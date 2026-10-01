@@ -1,6 +1,7 @@
 import { useRef } from "react";
-import { ChevronLeft, Loader2, Plus } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 
+import { AddButton } from "@/components/ui/add-button";
 import { Chip } from "@/components/ui/chip";
 import {
   LabelledStrip,
@@ -18,6 +19,13 @@ import { useRevealActive } from "@/hooks/use-reveal-active";
 interface SpaceStripProps {
   workspaces: WorkspaceView[];
   agents: AgentView[];
+  /**
+   * The addressed host (`?h=`, or the lead absent one) — the same value the space route looks its
+   * panes up under. Without it, a chip matched agents by `workspaceId` alone, so a blocked agent in
+   * another machine's identically-numbered space coloured this one's chip too (#209). Undefined on a
+   * solo install, which is what every agent's own `host` is there too.
+   */
+  host?: string;
   /** Selected workspace id, or null for the "All" triage view. */
   selected: string | null;
   onSelect: (workspaceId: string | null) => void;
@@ -38,6 +46,7 @@ interface SpaceStripProps {
 export function SpaceStrip({
   workspaces,
   agents,
+  host,
   selected,
   onSelect,
   onNewSpace,
@@ -100,8 +109,15 @@ export function SpaceStrip({
             label={w.label}
             active={selected === w.workspaceId}
             ring={w.focused}
-            // Same dot language as the tab strip directly below it, and as the herd list.
-            status={worstTriage(agents.filter((a) => a.workspaceId === w.workspaceId))}
+            // Same dot language as the tab strip directly below it, and as the herd list. Host-
+            // qualified: another machine's identically-numbered space is not this one, however an
+            // UNTAGGED agent (an un-widened solo body) matches any host — the same rule
+            // `ambientPanes`/`findPane` use in lib/hosts.ts.
+            status={worstTriage(
+              agents.filter(
+                (a) => a.workspaceId === w.workspaceId && (a.host === undefined || a.host === host),
+              ),
+            )}
             onClick={() => onSelect(w.workspaceId)}
           />
         ))}
@@ -110,26 +126,15 @@ export function SpaceStrip({
           — the other place this "+" appears — carries the adapter's reason in full. Saying it twice
           in two shapes is how one wording rule turns into two. */}
       {newSpace.capable && (
-        <button
-          type="button"
+        // 32px drawn, 46x46 hit: STRIP_TAP_TARGET_SQUARE adds the horizontal half of the floor,
+        // which only this button needs and only this button can safely take (it is last in the row).
+        <AddButton
+          size="md"
+          reach={STRIP_TAP_TARGET_SQUARE}
+          label={t("space.overview.new.aria")}
+          busy={creatingSpace}
           onClick={onNewSpace}
-          disabled={creatingSpace}
-          aria-label={t("space.overview.new.aria")}
-          aria-busy={creatingSpace}
-          // 32px drawn, 46x46 hit: STRIP_TAP_TARGET_SQUARE adds the horizontal half of the floor,
-          // which only this button needs and only this button can safely take (it is last in the
-          // row). `rounded-full` stays — width equals height, so it is a circle and not a stadium.
-          className={cn(
-            STRIP_TAP_TARGET_SQUARE,
-            "flex size-8 shrink-0 items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:bg-accent active:scale-95 disabled:opacity-100",
-          )}
-        >
-          {creatingSpace ? (
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-          ) : (
-            <Plus className="size-4" />
-          )}
-        </button>
+        />
       )}
     </LabelledStrip>
   );

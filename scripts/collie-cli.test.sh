@@ -57,6 +57,37 @@ fail() {
   exit 1
 }
 
+# Bun's macOS compiler fallback can leave this exact root-level scratch shape. It may predate the
+# build we are testing, so snapshot approved legacy sidecars and reject only a new one. Never remove
+# either kind: the checkout does not own existing sidecars, and an escaped new one is evidence.
+is_approved_root_sidecar() {
+  [[ "${1##*/}" =~ ^\.[0-9a-f]{16}-[0-9a-f]{8}\.bun-build$ ]]
+}
+
+snapshot_root_sidecars() {
+  local root="$1" snapshot="$2" sidecar
+  : > "$snapshot"
+  while IFS= read -r sidecar; do
+    is_approved_root_sidecar "$sidecar" || fail "unexpected root Bun sidecar at $sidecar"
+    printf '%s\n' "$sidecar" >> "$snapshot"
+  done < <(find "$root" -maxdepth 1 -name '*.bun-build' -print | LC_ALL=C sort)
+}
+
+assert_no_new_root_sidecars() {
+  local root="$1" baseline="$2" actual escaped
+  actual="${baseline}.actual"
+  snapshot_root_sidecars "$root" "$actual"
+  escaped="$(comm -13 "$baseline" "$actual")"
+  [ -z "$escaped" ] || fail "new root Bun sidecar escaped: $escaped"
+}
+
+assert_no_compile_sandboxes() {
+  local root="$1"
+  local found
+  found="$(find "$root/bin" -maxdepth 1 -name '.bun-compile-*' -print -quit)"
+  [ -z "$found" ] || fail "build left Bun's compile sandbox behind at $found"
+}
+
 assert_eq() {
   [ "$1" = "$2" ] || fail "expected '$2', got '$1'"
 }
@@ -70,8 +101,11 @@ assert_contains() {
 
 # ── Build ────────────────────────────────────────────────────────────────────
 # Built here rather than assumed, so the suite tests the binary that matches the tree it is run in.
+ROOT_SIDECARS="${TMP_ROOT}/root-sidecars.before"
+snapshot_root_sidecars "$ROOT" "$ROOT_SIDECARS"
 ( cd "$ROOT" && bun run --silent build:cli >/dev/null ) || fail "bun run build:cli failed"
 [ -x "$BIN" ] || fail "bun run build:cli produced no executable at bin/collie"
+assert_no_new_root_sidecars "$ROOT" "$ROOT_SIDECARS"
 
 # `bin/` must stay out of the repo — a 95 MB artifact is built from the checkout, never committed.
 if command -v git >/dev/null && git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
@@ -122,8 +156,14 @@ if (!path) {
 }
 console.log(path);
 EOF
-( cd "$ROOT" && bun build --compile --target=bun "${TMP_ROOT}/path-dependent.ts" \
+# This is a standalone fixture rather than a Collie build, but it still must not compile from the
+# checkout: Bun's scratch belongs in the fixture's owned sandbox and the trap already owns cleanup.
+NEGATIVE_SANDBOX="${TMP_ROOT}/bin/.bun-compile"
+mkdir -p "$NEGATIVE_SANDBOX"
+snapshot_root_sidecars "$ROOT" "$ROOT_SIDECARS"
+( cd "$NEGATIVE_SANDBOX" && bun build --compile --target=bun "${TMP_ROOT}/path-dependent.ts" \
     --outfile "${TMP_ROOT}/path-dependent" >/dev/null ) || fail "could not build the negative control"
+assert_no_new_root_sidecars "$ROOT" "$ROOT_SIDECARS"
 if run_stripped "${TMP_ROOT}/path-dependent"; then
   fail "negative control passed under env -i — the harness is not stripping the environment"
 fi
@@ -257,6 +297,78 @@ assert_eq "$(stat -c '%a' "${CONFIG_DIR}/.env" 2>/dev/null || stat -f '%Lp' "${C
 # Said once: a file already at 600 is not a finding.
 run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" "$BIN" version   || fail "version failed over a mode-600 .env"
 case "$STDERR" in *"expected 600"*) fail "a private .env was still reported" ;; esac
+
+# ── The config file (ADR 0040) ───────────────────────────────────────────────
+# `config init | check | show` against the compiled binary, in a sandbox of their own: these three
+# verbs RESOLVE real paths and one of them WRITES a file, so they never run against the developer's
+# own `~/.collie` or `~/.config`.
+C_HOME="${TMP_ROOT}/config-home"
+C_CONFIG="${TMP_ROOT}/config-dir"
+mkdir -p "$C_HOME" "$C_CONFIG"
+c_collie() { run_stripped HOME="$C_HOME" HERDR_PLUGIN_CONFIG_DIR="$C_CONFIG" "$BIN" "$@"; }
+
+# `init` writes the machine's file, prints the path it wrote, and holds it owner-only.
+c_collie config init || fail "config init failed"
+assert_eq "$STDOUT" "${C_HOME}/.collie/config.toml"
+[ -f "${C_HOME}/.collie/config.toml" ] || fail "config init wrote no file"
+assert_eq "$(stat -c '%a' "${C_HOME}/.collie/config.toml" 2>/dev/null || stat -f '%Lp' "${C_HOME}/.collie/config.toml")" "600"
+assert_eq "$(stat -c '%a' "${C_HOME}/.collie" 2>/dev/null || stat -f '%Lp' "${C_HOME}/.collie")" "700"
+# It is a complete listing of the schema, and it changes nothing as written.
+assert_contains "$(cat "${C_HOME}/.collie/config.toml")" "#poll_ms = 1500"
+assert_contains "$(cat "${C_HOME}/.collie/config.toml")" "always override this file"
+
+# And it refuses to overwrite one that is already there.
+if c_collie config init; then fail "config init overwrote an existing file"; fi
+assert_contains "$STDERR" "refusing to overwrite"
+
+# A generated file checks clean, and `show` names BOTH paths in precedence order.
+c_collie config check || fail "config check failed on a generated file"
+assert_contains "$STDOUT" "ok: no problems."
+c_collie config show || fail "config show failed"
+assert_contains "$STDOUT" "machine   ${C_HOME}/.collie/config.toml  (present)"
+assert_contains "$STDOUT" "instance  ${C_CONFIG}/config.toml  (absent)"
+
+# One key uncommented is read, and the source column says which file won it.
+sed -i.bak 's/^#port = 8787$/port = 8800/' "${C_HOME}/.collie/config.toml"
+c_collie config show || fail "config show failed over an edited file"
+assert_contains "$STDOUT" "8800  [file:home]"
+
+# The instance file beats the machine's, key by key.
+c_collie config init --instance || fail "config init --instance failed"
+assert_eq "$STDOUT" "${C_CONFIG}/config.toml"
+sed -i.bak 's/^#port = 8787$/port = 8801/' "${C_CONFIG}/config.toml"
+c_collie config show || fail "config show failed over two files"
+assert_contains "$STDOUT" "8801  [file:instance]"
+
+# And the environment beats both, which is the whole precedence rule.
+printf 'COLLIE_PORT=8802\n' > "${C_CONFIG}/.env"
+chmod 600 "${C_CONFIG}/.env"
+c_collie config show || fail "config show failed with a .env"
+assert_contains "$STDOUT" "8802  [env]"
+
+# A secret in the file is never printed back, whatever it says.
+sed -i.bak 's|^#vapid_private = ""$|vapid_private = "a-signing-key-nobody-should-see"|' "${C_CONFIG}/config.toml"
+c_collie config show || fail "config show failed with a secret in the file"
+assert_contains "$STDOUT" "vapid_private"
+case "$STDOUT" in *a-signing-key-nobody-should-see*) fail "config show printed a secret" ;; esac
+
+# A broken key is a non-zero `config check` naming the key, and it never stops another verb.
+printf '[bridge]\npoll_mss = 1\n' > "${C_HOME}/.collie/config.toml"
+if c_collie config check; then fail "config check passed over an unknown key"; fi
+assert_contains "$STDERR" 'has no key "poll_mss"'
+c_collie version || fail "a broken config file stopped \`collie version\`"
+
+# `config check <path>` checks that one file alone, which is how a file is checked before it moves.
+printf '[network]\nport = 8900\n' > "${TMP_ROOT}/candidate.toml"
+c_collie config check "${TMP_ROOT}/candidate.toml" || fail "config check <path> failed on a good file"
+assert_contains "$STDOUT" "ok: no problems."
+
+# A bare `config` prints its usage block and exits 2.
+if c_collie config; then fail "a bare \`collie config\` exited 0"; fi
+assert_contains "$STDERR" "usage: collie config"
+
+rm -f "${C_HOME}/.collie/config.toml.bak" "${C_CONFIG}/config.toml.bak"
+echo "✓ collie CLI config: init writes 0600 in 0700 and refuses to overwrite, show names both paths and the winning layer, a secret is never printed, a broken key stops nothing"
 
 # ── Lifecycle ────────────────────────────────────────────────────────────────
 # Carried over from scripts/collie-ctl.test.sh:312-578 — `start`/`status`/`restart`/`stop` on all
@@ -579,7 +691,7 @@ rm -f "${L_CONFIG}/.env"
 BRIDGE_STATE="${TMP_ROOT}/bridge-state"
 mkdir -p "$BRIDGE_STATE"
 env -i HOME="$L_HOME" HERDR_PLUGIN_CONFIG_DIR="$L_CONFIG" PATH="$L_BIN" \
-  COLLIE_PORT="$BRIDGE_PORT" HERDR_PLUGIN_STATE_DIR="$BRIDGE_STATE" \
+  COLLIE_PORT="$BRIDGE_PORT" COLLIE_STATE_DIR="$BRIDGE_STATE" \
   HERDR_SOCKET_PATH="${TMP_ROOT}/absent.sock" \
   "$BIN" _exec-bridge > "${TMP_ROOT}/bridge.out" 2>&1 &
 BRIDGE_PID=$!
@@ -953,10 +1065,15 @@ B_ROOT="${TMP_ROOT}/build-checkout"
 B_BIN="${TMP_ROOT}/build-bin"
 B_CONFIG="${TMP_ROOT}/build-config"
 B_CALLS="${TMP_ROOT}/build-calls"
-B_FAIL="${TMP_ROOT}/build-fail"          # present → the fake `bun run build` fails
-B_GATE_FAIL="${TMP_ROOT}/build-gate-fail" # present → the fake version gate fails
+B_FAIL="${TMP_ROOT}/build-fail"                  # present → the fake `bun run build` fails
+B_GATE_FAIL="${TMP_ROOT}/build-gate-fail"         # present → the fake version gate fails
+B_COMPILE_FAIL="${TMP_ROOT}/build-compile-fail"   # present → the fake compiler fails
+B_ESCAPE_SIDECAR="${TMP_ROOT}/build-escape-sidecar" # present → fake Bun leaks at checkout root
+B_LEGACY_SIDECAR="${B_ROOT}/.0123456789abcdef-01234567.bun-build"
+B_SIDECARS="${TMP_ROOT}/build-sidecars.before"
 mkdir -p "${B_ROOT}/web/dist/assets" "${B_ROOT}/scripts" "${B_ROOT}/bin" "$B_BIN" "$B_CONFIG"
 printf 'id = "herdr.collie"\nversion = "9.9.9"\n' > "${B_ROOT}/herdr-plugin.toml"
+printf 'legacy sidecar\n' > "$B_LEGACY_SIDECAR"
 printf 'LIVE BUNDLE\n' > "${B_ROOT}/web/dist/index.html"
 printf 'LIVE ASSET\n' > "${B_ROOT}/web/dist/assets/app.js"
 printf 'OLD BINARY\n' > "${B_ROOT}/bin/collie"
@@ -991,6 +1108,9 @@ cat > "${B_BIN}/bun" <<EOF
 echo "\${PWD}\\\$ bun \$*" >> "$B_CALLS"
 case "\$1 \$2" in
   "build --compile")
+    : > .dfca361f92216413-00000000.bun-build
+    [ -f "$B_ESCAPE_SIDECAR" ] && : > "${B_ROOT}/.fedcba9876543210-76543210.bun-build"
+    [ -f "$B_COMPILE_FAIL" ] && { echo "bun: compile failed" >&2; exit 1; }
     for a in "\$@"; do
       [ "\$prev" = --outfile ] && printf 'NEW BINARY\n' > "\$a" && chmod +x "\$a"
       prev="\$a"
@@ -1016,14 +1136,20 @@ bld() {
 # The happy path: the steps, in order, each in the right tree. NO lint step and no mux-name gate —
 # both left the operator build in 1.0.0-beta.44, because oxlint's allocator aborts below ~7 GB of RAM
 # and bricked installs there. CI and the pre-commit hook are where they are enforced now.
+snapshot_root_sidecars "$B_ROOT" "$B_SIDECARS"
 bld "$BIN" build || fail "\`collie build\` failed: ${STDERR}"
+B_COMPILER_LINE="$(grep -F '/bin/.bun-compile-' "$B_CALLS")"
+case "$B_COMPILER_LINE" in
+  "${B_ROOT}/bin/.bun-compile-"*"\$ bun build --compile --target=bun ${B_ROOT}/cli/main.ts --outfile ${B_ROOT}/bin/collie.new") ;;
+  *) fail "build did not use an invocation-owned Bun compile sandbox: $B_COMPILER_LINE" ;;
+esac
 assert_eq "$(cat "$B_CALLS")" "$(cat <<EOF
 gate
 ${B_ROOT}\$ bun install
 ${B_ROOT}/web\$ bun install
 ${B_ROOT}\$ bun run typecheck
 ${B_ROOT}/web\$ bun run typecheck
-${B_ROOT}\$ bun build --compile --target=bun ./cli/main.ts --outfile ${B_ROOT}/bin/collie.new
+${B_COMPILER_LINE}
 ${B_ROOT}/web\$ bun run build -- --outDir dist-staging --emptyOutDir
 EOF
 )"
@@ -1032,28 +1158,56 @@ assert_eq "$(cat "${B_ROOT}/web/dist/index.html")" "NEW BUNDLE"
 assert_eq "$(cat "${B_ROOT}/bin/collie")" "NEW BINARY"
 [ ! -e "${B_ROOT}/web/dist-staging" ] || fail "build left the staging directory behind"
 [ ! -e "${B_ROOT}/bin/collie.new" ] || fail "build left the staged binary behind"
+assert_no_compile_sandboxes "$B_ROOT"
+assert_no_new_root_sidecars "$B_ROOT" "$B_SIDECARS"
+assert_eq "$(cat "$B_LEGACY_SIDECAR")" "legacy sidecar"
 
 # The binary is REPLACED BY RENAME, never written in place: a Bun single-file executable carries its
 # payload inside the file and the supervised daemon may be executing it, so the old inode has to
 # survive the swap. An open file descriptor still reading the old bytes is the proof.
 printf 'INODE UNDER TEST\n' > "${B_ROOT}/bin/collie"
 exec 9< "${B_ROOT}/bin/collie"
+snapshot_root_sidecars "$B_ROOT" "$B_SIDECARS"
 bld "$BIN" build || fail "second \`collie build\` failed: ${STDERR}"
 assert_eq "$(cat <&9)" "INODE UNDER TEST"
 exec 9<&-
 assert_eq "$(cat "${B_ROOT}/bin/collie")" "NEW BINARY"
+assert_no_new_root_sidecars "$B_ROOT" "$B_SIDECARS"
+assert_eq "$(cat "$B_LEGACY_SIDECAR")" "legacy sidecar"
+
+# A failed compile also leaves the live artifacts and checkout clean. The fake creates Bun's normal
+# cwd sidecar before failing, proving cleanup is not a success-only path.
+printf 'LIVE BUNDLE\n' > "${B_ROOT}/web/dist/index.html"
+printf 'LIVE ASSET\n' > "${B_ROOT}/web/dist/assets/app.js"
+printf 'OLD BINARY\n' > "${B_ROOT}/bin/collie"
+: > "$B_COMPILE_FAIL"
+snapshot_root_sidecars "$B_ROOT" "$B_SIDECARS"
+if bld "$BIN" build; then fail "a failed CLI compile reported success"; fi
+assert_contains "$STDERR" "compiling the collie binary failed"
+assert_eq "$(cat "${B_ROOT}/web/dist/index.html")" "LIVE BUNDLE"
+assert_eq "$(cat "${B_ROOT}/web/dist/assets/app.js")" "LIVE ASSET"
+assert_eq "$(cat "${B_ROOT}/bin/collie")" "OLD BINARY"
+[ ! -e "${B_ROOT}/bin/collie.new" ] || fail "a failed compile left a staged binary in place"
+assert_no_compile_sandboxes "$B_ROOT"
+assert_no_new_root_sidecars "$B_ROOT" "$B_SIDECARS"
+assert_eq "$(cat "$B_LEGACY_SIDECAR")" "legacy sidecar"
+rm -f "$B_COMPILE_FAIL"
 
 # A failed web build changes NOTHING: same served bundle, same binary, no staging leftovers.
 printf 'LIVE BUNDLE\n' > "${B_ROOT}/web/dist/index.html"
 printf 'LIVE ASSET\n' > "${B_ROOT}/web/dist/assets/app.js"
 printf 'OLD BINARY\n' > "${B_ROOT}/bin/collie"
 : > "$B_FAIL"
+snapshot_root_sidecars "$B_ROOT" "$B_SIDECARS"
 if bld "$BIN" build; then fail "a failed web build reported success"; fi
 assert_contains "$STDERR" "building the web UI failed"
 assert_eq "$(cat "${B_ROOT}/web/dist/index.html")" "LIVE BUNDLE"
 assert_eq "$(cat "${B_ROOT}/web/dist/assets/app.js")" "LIVE ASSET"
 assert_eq "$(cat "${B_ROOT}/bin/collie")" "OLD BINARY"
 [ ! -e "${B_ROOT}/bin/collie.new" ] || fail "a failed build left a half-compiled binary in place"
+assert_no_compile_sandboxes "$B_ROOT"
+assert_no_new_root_sidecars "$B_ROOT" "$B_SIDECARS"
+assert_eq "$(cat "$B_LEGACY_SIDECAR")" "legacy sidecar"
 rm -f "$B_FAIL"
 
 # The version gate is a gate: it fails, and nothing after it runs.
@@ -1069,6 +1223,15 @@ case "$(cat "$B_CALLS")" in
 esac
 rm -f "$B_GATE_FAIL"
 
+# An escaped sidecar fails the build, and is left in place for diagnosis rather than silently deleted.
+: > "$B_ESCAPE_SIDECAR"
+snapshot_root_sidecars "$B_ROOT" "$B_SIDECARS"
+if bld "$BIN" build; then fail "a root-sidecar escape reported success"; fi
+assert_contains "$STDERR" "new root-level Bun sidecar escaped"
+assert_eq "$(cat "$B_LEGACY_SIDECAR")" "legacy sidecar"
+[ -e "${B_ROOT}/.fedcba9876543210-76543210.bun-build" ] ||
+  fail "build deleted its escaped root sidecar"
+
 # ── update ───────────────────────────────────────────────────────────────────
 # Both checkout shapes, against REAL throwaway git repos — carried from
 # scripts/collie-ctl.test.sh:698-780. ADR 0006: `herdr plugin install` leaves a detached, shallow
@@ -1083,10 +1246,62 @@ U_DIR="${TMP_ROOT}/update"
 U_BIN="${TMP_ROOT}/update-bin"
 U_CALLS="${TMP_ROOT}/update-calls"
 U_HERDR="${TMP_ROOT}/update-herdr-calls"
+U_DETACHED_ENV="${TMP_ROOT}/detached-runner-env"
 ORIGIN="${U_DIR}/origin"
 mkdir -p "$U_DIR" "$U_BIN"
 
-git_q() { git -c init.defaultBranch=main -c user.email=t@t -c user.name=t -c commit.gpgsign=false "$@"; }
+# The update fixture uses real throwaway repositories, but no host Git configuration, hooks or
+# signing setup. A caller's global `commit.gpgSign` or `core.hooksPath` must not make this suite run
+# host hooks or require a signing key.
+GIT_FIXTURE_HOME="${TMP_ROOT}/git-fixture-home"
+GIT_FIXTURE_GLOBAL="${GIT_FIXTURE_HOME}/empty.gitconfig"
+UPDATE_HOME="${TMP_ROOT}/update-home"
+UPDATE_GIT_XDG="${TMP_ROOT}/update-git-xdg"
+UPDATE_GIT_GLOBAL="${TMP_ROOT}/update-git-global"
+mkdir -p "$GIT_FIXTURE_HOME" "$UPDATE_HOME" "$UPDATE_GIT_XDG"
+: > "$GIT_FIXTURE_GLOBAL"
+: > "$UPDATE_GIT_GLOBAL"
+git_q() {
+  HOME="$GIT_FIXTURE_HOME" \
+    XDG_CONFIG_HOME="${GIT_FIXTURE_HOME}/.config" \
+    GIT_CONFIG_NOSYSTEM=1 \
+    GIT_CONFIG_GLOBAL="$GIT_FIXTURE_GLOBAL" \
+    git -c core.hooksPath=/dev/null -c commit.gpgSign=false -c tag.gpgSign=false \
+      -c init.defaultBranch=main -c user.email=t@t -c user.name=t "$@"
+}
+
+# Put hostile settings in the updater's application HOME. `run_update` must explicitly ignore them;
+# a hook marker proves the actual managed updater does not leak them.
+GIT_HOSTILE_HOOKS="${TMP_ROOT}/hostile-hooks"
+GIT_HOSTILE_HIT="${TMP_ROOT}/hostile-hook-ran"
+mkdir -p "$GIT_HOSTILE_HOOKS"
+cat > "${GIT_HOSTILE_HOOKS}/pre-commit" <<EOF
+#!/bin/sh
+touch "$GIT_HOSTILE_HIT"
+exit 97
+EOF
+cat > "${GIT_HOSTILE_HOOKS}/pre-tag" <<EOF
+#!/bin/sh
+touch "$GIT_HOSTILE_HIT"
+exit 97
+EOF
+# The managed updater actually checks out the target, so this hook proves the hostile path reaches
+# the Git subprocesses under test rather than only fixture commits/tags.
+cat > "${GIT_HOSTILE_HOOKS}/post-checkout" <<EOF
+#!/bin/sh
+touch "$GIT_HOSTILE_HIT"
+exit 97
+EOF
+chmod +x "${GIT_HOSTILE_HOOKS}/pre-commit" "${GIT_HOSTILE_HOOKS}/pre-tag" \
+  "${GIT_HOSTILE_HOOKS}/post-checkout"
+cat > "${UPDATE_HOME}/.gitconfig" <<EOF
+[commit]
+	gpgSign = true
+[tag]
+	gpgSign = true
+[core]
+	hooksPath = $GIT_HOSTILE_HOOKS
+EOF
 
 # An upstream with two commits: the release the checkout is on, and the one it must advance to.
 mkdir -p "$ORIGIN"
@@ -1127,9 +1342,12 @@ advance_origin() {
 cat > "${U_BIN}/bun" <<EOF
 #!/bin/sh
 echo "\${PWD}\\\$ bun \$*" >> "$U_CALLS"
+case "\$1" in
+  --version) echo "1.4.0"; exit 0 ;;
+esac
 new_binary() {
   mkdir -p "\$(dirname "\$1")"
-  printf '#!/bin/sh\n# NEW BINARY\necho "\$0 \$*" >> "%s"\nexit 0\n' "$U_CALLS" > "\$1"
+  printf '#!/bin/sh\n# NEW BINARY\nif [ "\${COLLIE_DETACHED_ENV_PROBE:-}" = 1 ]; then\n  {\n    echo "HOME=\$HOME"\n    echo "XDG_CONFIG_HOME=\$XDG_CONFIG_HOME"\n    echo "GIT_CONFIG_NOSYSTEM=\$GIT_CONFIG_NOSYSTEM"\n    echo "GIT_CONFIG_GLOBAL=\$GIT_CONFIG_GLOBAL"\n    echo "GIT_CONFIG_COUNT=\$GIT_CONFIG_COUNT"\n    echo "GIT_CONFIG_KEY_0=\$GIT_CONFIG_KEY_0"\n    echo "GIT_CONFIG_VALUE_0=\$GIT_CONFIG_VALUE_0"\n    echo "GIT_CONFIG_KEY_1=\$GIT_CONFIG_KEY_1"\n    echo "GIT_CONFIG_VALUE_1=\$GIT_CONFIG_VALUE_1"\n    echo "GIT_CONFIG_KEY_2=\$GIT_CONFIG_KEY_2"\n    echo "GIT_CONFIG_VALUE_2=\$GIT_CONFIG_VALUE_2"\n  } > "%s"\nfi\necho "\$0 \$*" >> "%s"\nexit 0\n' "$U_DETACHED_ENV" "$U_CALLS" > "\$1"
   chmod +x "\$1"
 }
 case "\$1 \$2" in
@@ -1181,7 +1399,15 @@ while [ \$# -gt 0 ]; do
     *) break ;;
   esac
 done
-exec "\$@"
+# runnerEnv deliberately drops these Git controls before the real systemd boundary. The fixture
+# owns the detached runner, so it supplies the same isolated Git environment explicitly here rather
+# than widening production's whitelist.
+exec env HOME="$UPDATE_HOME" XDG_CONFIG_HOME="$UPDATE_GIT_XDG" \
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$UPDATE_GIT_GLOBAL" \
+  GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null \
+  GIT_CONFIG_KEY_1=commit.gpgSign GIT_CONFIG_VALUE_1=false \
+  GIT_CONFIG_KEY_2=tag.gpgSign GIT_CONFIG_VALUE_2=false \
+  COLLIE_DETACHED_ENV_PROBE=1 "\$@"
 EOF
 chmod +x "${U_BIN}/systemd-run"
 cat > "${U_BIN}/tailscale" <<EOF
@@ -1190,7 +1416,7 @@ echo "tailscale \$*" >> "$U_CALLS"
 [ "\$1" = "status" ] && echo '{"Self":{"DNSName":"host.example."}}'
 exit 0
 EOF
-chmod +x "${U_BIN}/herdr" "${U_BIN}/systemctl" "${U_BIN}/tailscale"
+chmod +x "${U_BIN}/herdr" "${U_BIN}/systemctl" "${U_BIN}/systemd-run" "${U_BIN}/tailscale"
 
 # COLLIE_UPDATE_REPO names the remote these fixtures actually have. `update` asserts that `origin`
 # is the configured update source BEFORE it fetches — on a fork it would otherwise read the fork's
@@ -1201,7 +1427,7 @@ chmod +x "${U_BIN}/herdr" "${U_BIN}/systemctl" "${U_BIN}/tailscale"
 # the version it just flipped to — "did it answer" alone is not the question, because a service that
 # came back on the OLD code answers perfectly well. The version served is a file, so a case can say
 # what the machine claims to be running; an empty file is "down".
-U_STATE="${TMP_ROOT}/update-home/.local/state/collie"
+U_STATE="${UPDATE_HOME}/.local/state/collie"
 U_HEALTH="${TMP_ROOT}/update-health-version"
 U_PORT="$(pick_port 48791 48891 48991)"
 printf '9.10.0\n' > "$U_HEALTH"
@@ -1246,6 +1472,20 @@ wait_for_run() {
   log: $(find "${TMP_ROOT}" -name 'collie*.log' -exec cat {} + 2>/dev/null)"
 }
 
+# Keep the direct updater's application HOME distinct from Git's isolated configuration. The fake
+# systemd-run boundary above recreates these test-owned controls for its detached real updater.
+run_update() {
+  local root="$1" update_repo="$2" port="$3"; shift 3
+  run_stripped HOME="$UPDATE_HOME" XDG_CONFIG_HOME="$UPDATE_GIT_XDG" \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$UPDATE_GIT_GLOBAL" \
+    GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null \
+    GIT_CONFIG_KEY_1=commit.gpgSign GIT_CONFIG_VALUE_1=false \
+    GIT_CONFIG_KEY_2=tag.gpgSign GIT_CONFIG_VALUE_2=false \
+    HERDR_PLUGIN_CONFIG_DIR="${TMP_ROOT}/update-config" PATH="${U_BIN}:${BASE_PATH}" \
+    COLLIE_MUX=herdr COLLIE_PORT="$port" COLLIE_PLUGIN_ROOT="$root" \
+    COLLIE_UPDATE_REPO="$update_repo" "$@"
+}
+
 upd() {
   local root="$1"; shift
   case " $* " in
@@ -1258,9 +1498,7 @@ upd() {
       rm -f "${U_STATE}/update.json" "${U_STATE}/update.lock"
       ;;
   esac
-  run_stripped HOME="${TMP_ROOT}/update-home" HERDR_PLUGIN_CONFIG_DIR="${TMP_ROOT}/update-config" \
-    PATH="${U_BIN}:${BASE_PATH}" COLLIE_MUX=herdr COLLIE_PORT="$U_PORT" COLLIE_PLUGIN_ROOT="$root" \
-    COLLIE_UPDATE_REPO="$ORIGIN" "$@"
+  run_update "$root" "$ORIGIN" "$U_PORT" "$@"
 }
 
 # Shape 1 — the Herdr-managed checkout, created verbatim the way herdr's plugin_install does.
@@ -1276,6 +1514,7 @@ advance_origin
 printf 'rewritten-by-bun-install\n' > "${MANAGED}/bun.lock"
 
 upd "$MANAGED" "$BIN" update || fail "\`collie update\` failed on a managed checkout: ${STDERR}"
+[ ! -e "$GIT_HOSTILE_HIT" ] || fail "the updater ran a hostile Git hook"
 assert_contains "$STDOUT" "Herdr-managed checkout"
 assert_contains "$STDOUT" "detach onto v9.10.0"          # the release tag, never the branch tip
 assert_contains "$STDOUT" "→ now at"
@@ -1287,7 +1526,7 @@ assert_eq "$(git -C "$MANAGED" rev-parse --is-shallow-repository)" "true"
 # writes FETCH_HEAD and no local ref, and `web/vite.config.ts` then finds no `refs/tags/v<version>`
 # at HEAD and stamps a real release `-dev` — measured in the VM lab as `1.0.0-dev+8d57cc8`.
 assert_eq "$(git -C "$MANAGED" tag --points-at HEAD)" "v9.10.0"
-git -C "$MANAGED" symbolic-ref -q HEAD >/dev/null 2>&1 &&
+git_q -C "$MANAGED" symbolic-ref -q HEAD >/dev/null 2>&1 &&
   fail "the managed checkout should still be detached"
 # The post-pull half runs the code that was just fetched, not the code that started the update.
 assert_contains "$(cat "$U_CALLS")" "${MANAGED}\$ bun ${MANAGED}/cli/main.ts _apply-update"
@@ -1311,6 +1550,24 @@ assert_contains "$STDOUT" "staged checkout"
 assert_contains "$STDOUT" "handed off to systemd-run --user --collect"
 assert_contains "$STDOUT" "Watch it with: collie update --status"
 wait_for_run done
+# The fake current binary only runs when the detached real updater restarts through the flipped
+# `current`; its record therefore proves this boundary's Git isolation reached that child.
+[ -f "$U_DETACHED_ENV" ] || fail "the detached updater did not receive the fixture Git environment"
+assert_eq "$(cat "$U_DETACHED_ENV")" "$(cat <<EOF
+HOME=$UPDATE_HOME
+XDG_CONFIG_HOME=$UPDATE_GIT_XDG
+GIT_CONFIG_NOSYSTEM=1
+GIT_CONFIG_GLOBAL=$UPDATE_GIT_GLOBAL
+GIT_CONFIG_COUNT=3
+GIT_CONFIG_KEY_0=core.hooksPath
+GIT_CONFIG_VALUE_0=/dev/null
+GIT_CONFIG_KEY_1=commit.gpgSign
+GIT_CONFIG_VALUE_1=false
+GIT_CONFIG_KEY_2=tag.gpgSign
+GIT_CONFIG_VALUE_2=false
+EOF
+)"
+[ ! -e "$GIT_HOSTILE_HIT" ] || fail "the detached updater ran a hostile Git hook"
 assert_contains "$(cat "$U_CALLS")" "systemd-run --user --collect --unit collie-update-"
 # The version is a worktree of the tag, and `current` is a RELATIVE symlink at it.
 assert_eq "$(git -C "${CLONE}/versions/v9.10.0" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-parse "v9.10.0^{commit}")"
@@ -1337,7 +1594,7 @@ assert_contains "$STDERR" "nothing to roll back to"
 # All three of clause 4's disjuncts are false, so this is the `loose-binary` unknown: it must name
 # the reinstall command rather than emit a raw git error about a missing origin, and it must not
 # reach the rebuild.
-PLAIN="${TMP_ROOT}/update-home/plain"
+PLAIN="${UPDATE_HOME}/plain"
 mkdir -p "$PLAIN"
 printf 'id = "herdr.collie"\nversion = "9.9.9"\n' > "${PLAIN}/herdr-plugin.toml"
 if upd "$PLAIN" "$BIN" update; then fail "update on a non-git tree reported success"; fi
@@ -1366,9 +1623,7 @@ esac
 # A mismatch names the fork docs and leaves the checkout exactly where it was — no fetch, no
 # force-checkout, which is the whole point (M14/02 amendment §1).
 MANAGED_BEFORE_FORK="$(git -C "$MANAGED" rev-parse HEAD)"
-if run_stripped HOME="${TMP_ROOT}/update-home" HERDR_PLUGIN_CONFIG_DIR="${TMP_ROOT}/update-config" \
-  PATH="${U_BIN}:${BASE_PATH}" COLLIE_MUX=herdr COLLIE_PORT="$PORT" COLLIE_PLUGIN_ROOT="$MANAGED" \
-  COLLIE_UPDATE_REPO="AltanS/collie" "$BIN" update; then
+if run_update "$MANAGED" "AltanS/collie" "$PORT" "$BIN" update; then
   fail "update did not refuse a checkout whose origin is not the update source"
 fi
 assert_contains "$STDERR" "docs/upgrading.md"
@@ -1394,7 +1649,7 @@ upd "$MANAGED" "$BIN" update --major || fail "\`collie update --major\` failed: 
 assert_contains "$STDOUT" "crossing to Collie 10.0.0"
 assert_eq "$(git -C "$MANAGED" rev-parse HEAD)" "$(git -C "$ORIGIN" rev-parse "v10.0.0^{commit}")"
 assert_eq "$(cat "${MANAGED}/VERSION")" "v10"
-git -C "$MANAGED" symbolic-ref -q HEAD >/dev/null 2>&1 &&
+git_q -C "$MANAGED" symbolic-ref -q HEAD >/dev/null 2>&1 &&
   fail "crossing a major must leave the managed checkout detached"
 
 # Linked: the target is a TAG here too now, so the gate is target selection — v10.0.0 is simply not
@@ -1488,8 +1743,8 @@ COLLIE_HERMETIC_PROBE="$PROBE" \
 [ -d "${PROBE}/.git" ] || fail "an inherited GIT_DIR redirected \`git -C … init\` away from its target"
 # …and the caller's repo is untouched. `git init` writes `bare = false`, so `false` is the healthy
 # baseline here; the corruption flipped it to `true`.
-assert_eq "$(git -C "$VICTIM" config --get core.bare)" "false"
-git -C "$VICTIM" status --porcelain > /dev/null 2>&1 ||
+assert_eq "$(git_q -C "$VICTIM" config --get core.bare)" "false"
+git_q -C "$VICTIM" status --porcelain > /dev/null 2>&1 ||
   fail "the suite corrupted the repository it was run from"
 
 # ── _apply-update ────────────────────────────────────────────────────────────
@@ -1529,12 +1784,12 @@ CREW_CALLS="${TMP_ROOT}/calls"
 # writes NOTHING. No trust store, no key, no directory materialised by asking a question. The `crew`
 # spelling is driven too, and its stdout must be byte-identical: the alias is one code path, and a
 # script that reads the status output must not be able to tell which word it typed.
-run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$CREW_STATE" \
   PATH="$BIN_DIR" "$BIN" crew status \
   || fail "\`collie crew status\` failed on a solo machine: ${STDERR}"
 assert_contains "$STDOUT" "mode: solo"
 CREW_STATUS_STDOUT="$STDOUT"
-run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$CREW_STATE" \
   PATH="$BIN_DIR" "$BIN" crew status \
   || fail "\`collie crew status\` failed on a solo machine: ${STDERR}"
 assert_eq "$STDOUT" "$CREW_STATUS_STDOUT"
@@ -1542,7 +1797,7 @@ assert_eq "$STDOUT" "$CREW_STATUS_STDOUT"
 
 # `crew` with no subcommand, and with a wrong one, are usage errors that name the real subcommands.
 set +e
-env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$CREW_STATE" \
   PATH="$BIN_DIR" "$BIN" crew nonsense >/dev/null 2>"${TMP_ROOT}/err"
 rc=$?
 set -e
@@ -1559,7 +1814,7 @@ done
 for spelling in "join" "crew join"; do
   set +e
   # shellcheck disable=SC2086
-  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$CREW_STATE" \
     PATH="$BIN_DIR" "$BIN" $spelling </dev/null >/dev/null 2>"${TMP_ROOT}/err"
   rc=$?
   set -e
@@ -1570,7 +1825,7 @@ done
 
 # An address with no token, with no terminal to ask at, is the same usage error — and still no dial.
 set +e
-env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$CREW_STATE" \
   PATH="$BIN_DIR" "$BIN" crew join example.invalid </dev/null >/dev/null 2>"${TMP_ROOT}/err"
 rc=$?
 set -e
@@ -1583,7 +1838,7 @@ assert_contains "$(cat "${TMP_ROOT}/err")" "collie crew join example.invalid -"
 # this lead's own trust store, so a solo root must get the refusal and keep an empty state dir —
 # nothing to rename means nothing to materialise.
 set +e
-env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$CREW_STATE" \
   PATH="$BIN_DIR" "$BIN" crew rename "the shed" </dev/null >/dev/null 2>"${TMP_ROOT}/err"
 rc=$?
 set -e
@@ -1596,7 +1851,7 @@ assert_contains "$(cat "${TMP_ROOT}/err")" "no crew to rename"
 for spelling in "leave" "crew leave"; do
   set +e
   # shellcheck disable=SC2086
-  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$CREW_STATE" \
+  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$CREW_STATE" \
     PATH="$BIN_DIR" "$BIN" $spelling </dev/null >/dev/null 2>"${TMP_ROOT}/err"
   rc=$?
   set -e
@@ -1615,7 +1870,7 @@ assert_eq "$(cat "$CREW_CALLS")" ""
 DOCTOR_STATE="${TMP_ROOT}/doctor-state"
 mkdir -p "$DOCTOR_STATE"
 set +e
-env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$DOCTOR_STATE" \
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$DOCTOR_STATE" \
   COLLIE_PLUGIN_ROOT="$EMPTY_ROOT" PATH="$BIN_DIR" COLLIE_MUX=herdr "$BIN" doctor --json \
   >"${TMP_ROOT}/doctor.json" 2>"${TMP_ROOT}/err"
 rc=$?
@@ -1638,7 +1893,7 @@ assert_contains "$DOCTOR_JSON" 'herdr — see herdr-socket · set by COLLIE_MUX'
 
 # The human form is one line per check, and every non-✓ line carries its remedy arrow.
 rc=0
-run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$DOCTOR_STATE" \
+run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$DOCTOR_STATE" \
   COLLIE_PLUGIN_ROOT="$EMPTY_ROOT" PATH="$BIN_DIR" "$BIN" doctor || rc=$?
 assert_eq "$rc" "1"
 assert_contains "$STDOUT" "error:"
@@ -1649,7 +1904,7 @@ assert_contains "$STDOUT" "crew: none"
 # `pair` and `devices` are the only verbs that write a CREDENTIAL to disk, and they are the two an
 # operator runs from wherever they happen to be — including a Herdr action, with no login shell. So
 # what this section proves is what `bun test` cannot: that under `env -i` the code really lands in the
-# state dir the BRIDGE resolves (`HERDR_PLUGIN_STATE_DIR`), owner-only, with no restart, and that the
+# state dir the BRIDGE resolves (`COLLIE_STATE_DIR`), owner-only, with no restart, and that the
 # only tool either verb reaches for is the read-only tailnet probe behind `pair`'s QR — pinned below,
 # so it cannot quietly grow.
 PAIR_STATE="${TMP_ROOT}/pair-state"
@@ -1659,7 +1914,7 @@ mkdir -p "$PAIR_STATE"
 PAIR_CALLS="${TMP_ROOT}/calls"
 : > "$PAIR_CALLS"
 pair_env() {
-  run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PAIR_STATE" \
+  run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$PAIR_STATE" \
     PATH="$BIN_DIR" "$BIN" "$@"
 }
 
@@ -1729,7 +1984,7 @@ assert_contains "$(cat "${PAIR_STATE}/paired-devices.json")" "ipad"
 
 # An unknown label is an operational failure (1) that names what does exist — not a silent success.
 set +e
-env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PAIR_STATE" \
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$PAIR_STATE" \
   PATH="$BIN_DIR" "$BIN" devices revoke pixel >/dev/null 2>"${TMP_ROOT}/err"
 rc=$?
 set -e
@@ -1741,7 +1996,7 @@ assert_contains "$(cat "${TMP_ROOT}/err")" "ipad"
 for args in "devices" "devices nonsense" "devices revoke"; do
   set +e
   # shellcheck disable=SC2086
-  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PAIR_STATE" \
+  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$PAIR_STATE" \
     PATH="$BIN_DIR" "$BIN" $args >/dev/null 2>"${TMP_ROOT}/err"
   rc=$?
   set -e
@@ -1771,7 +2026,7 @@ exit 0
 EOF
 chmod +x "${BIN_DIR}/codex"
 stt_env() {
-  run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$STT_STATE" \
+  run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$STT_STATE" \
     PATH="$BIN_DIR" "$@"
 }
 
@@ -1815,7 +2070,7 @@ assert_contains "$STDOUT" "(COLLIE_STT_MODEL)"
 # The codex provider refuses BEFORE it runs anything when the risks cannot be accepted: no terminal
 # and no `--accept-risk` means no probe, no file, and a message naming the flag a script would use.
 set +e
-env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$STT_STATE" \
+env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$STT_STATE" \
   PATH="$BIN_DIR" "$BIN" stt setup --provider codex >"${TMP_ROOT}/out" 2>"${TMP_ROOT}/err" </dev/null
 rc=$?
 set -e
@@ -1849,7 +2104,7 @@ assert_contains "$STDOUT" "COLLIE_STT_URL"
 for args in "stt" "stt nonsense"; do
   set +e
   # shellcheck disable=SC2086
-  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$STT_STATE" \
+  env -i HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$STT_STATE" \
     PATH="$BIN_DIR" "$BIN" $args >/dev/null 2>"${TMP_ROOT}/err"
   rc=$?
   set -e
@@ -1870,7 +2125,7 @@ PUSH_STATE="${TMP_ROOT}/push-state"
 mkdir -p "$PUSH_STATE"
 : > "$PAIR_CALLS"
 push_env() {
-  run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$PUSH_STATE" \
+  run_stripped HOME="$HOME_DIR" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$PUSH_STATE" \
     PATH="$BIN_DIR" "$BIN" "$@"
 }
 
@@ -2110,7 +2365,7 @@ DOCTOR_LINK_STATE="${TMP_ROOT}/doctor-link-state"
 mkdir -p "$DOCTOR_LINK_STATE"
 doctor_link() {
   set +e
-  env -i HOME="$LINK_HOME" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" HERDR_PLUGIN_STATE_DIR="$DOCTOR_LINK_STATE" \
+  env -i HOME="$LINK_HOME" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_STATE_DIR="$DOCTOR_LINK_STATE" \
     COLLIE_PLUGIN_ROOT="$1" PATH="$BIN_DIR" "$BIN" doctor --json 2>/dev/null
   set -e
 }
@@ -2141,7 +2396,7 @@ printf '#!/bin/sh\n' > "${BEACON_ROOT}/bin/collie"
 
 beacon_env() {
   run_stripped HOME="$BEACON_HOME" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_PLUGIN_ROOT="$BEACON_ROOT" \
-    HERDR_PLUGIN_STATE_DIR="$BEACON_STATE" PATH="$BIN_DIR" "$BIN" "$@"
+    COLLIE_STATE_DIR="$BEACON_STATE" PATH="$BIN_DIR" "$BIN" "$@"
 }
 
 # A settings file the operator already owns. Every assertion below is about it surviving.
@@ -2211,7 +2466,7 @@ assert_eq "$STDOUT" ""
 # here would BLOCK the operator's prompt, and anything on stdout would be injected into it.
 set +e
 printf 'not json' | env -i HOME="$BEACON_HOME" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" \
-  COLLIE_PLUGIN_ROOT="$BEACON_ROOT" HERDR_PLUGIN_STATE_DIR="$BEACON_STATE" PATH="$BIN_DIR" \
+  COLLIE_PLUGIN_ROOT="$BEACON_ROOT" COLLIE_STATE_DIR="$BEACON_STATE" PATH="$BIN_DIR" \
   TMUX_PANE="%7" TMUX="/tmp/tmux-1000/default,1,0" "$BIN" beacon emit > "${TMP_ROOT}/emit.out" 2>&1
 rc=$?
 set -e
@@ -2223,7 +2478,7 @@ assert_eq "$(cat "${TMP_ROOT}/emit.out")" ""
 set +e
 printf '{"session_id":"ff2dd3c2-e3d5-40db-9474-eea02e606c6c","hook_event_name":"UserPromptSubmit","cwd":"/tmp"}' \
   | env -i HOME="$BEACON_HOME" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_PLUGIN_ROOT="$BEACON_ROOT" \
-    HERDR_PLUGIN_STATE_DIR="$BEACON_STATE" PATH="$BIN_DIR" TMUX_PANE="%7" TMUX="/tmp/tmux-1000/default,1,0" \
+    COLLIE_STATE_DIR="$BEACON_STATE" PATH="$BIN_DIR" TMUX_PANE="%7" TMUX="/tmp/tmux-1000/default,1,0" \
     "$BIN" beacon emit > "${TMP_ROOT}/emit.out" 2>&1
 rc=$?
 set -e
@@ -2251,7 +2506,7 @@ cp "${BEACON_STATE}/beacons/${BEACON_FILE}" "${TMP_ROOT}/beacon.before"
 set +e
 printf '{"session_id":"other-session","agent_id":"sub-1","hook_event_name":"Stop"}' \
   | env -i HOME="$BEACON_HOME" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" COLLIE_PLUGIN_ROOT="$BEACON_ROOT" \
-    HERDR_PLUGIN_STATE_DIR="$BEACON_STATE" PATH="$BIN_DIR" TMUX_PANE="%7" TMUX="/tmp/tmux-1000/default,1,0" \
+    COLLIE_STATE_DIR="$BEACON_STATE" PATH="$BIN_DIR" TMUX_PANE="%7" TMUX="/tmp/tmux-1000/default,1,0" \
     "$BIN" beacon emit >/dev/null 2>&1
 rc=$?
 set -e

@@ -10,7 +10,11 @@
 //
 // The review bar is #99 (agy): exact agent string only, and every emitted keystroke probed on
 // the captured screen. Registered as `agent: "codex"`; variant folding belongs in
-// `canonicalAgent`, never here.
+// `canonicalAgent`, never here. The 0.156.1 screens (captured 2026-09-26) follow the same bar: the
+// patch approval sends the shortcuts it prints (`y`, Escape), the rewritten trust prompt sends a
+// pointer walk and the Enter its footer names, and each of those was pressed live the same day
+// (APPROVAL_NOTES.md, TRUST_NOTES.md). The update prompt and the `/model` and `/permissions`
+// pickers are deliberately left to the unread-dialog card.
 
 import { trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
@@ -74,6 +78,10 @@ export const codexAdapter: HarnessAdapter = {
   extractStatusLines,
   extractInputDraft,
   composerReady,
+  // The way OUT of a Codex modal, for the unread-dialog card (.adr/0053). Read from
+  // `codex/APPROVAL_NOTES.md`: `3. No, and tell Codex what to do differently (esc)` and
+  // `Press enter to confirm or esc to cancel`.
+  cancelKey: "Escape",
   composerPrompt,
   draftCarriesSend: codexDraftCarriesSend,
 };

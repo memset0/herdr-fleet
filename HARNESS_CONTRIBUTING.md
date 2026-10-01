@@ -24,6 +24,32 @@ in `harness/` allowed to touch the network (it re-fetches the pane before a guar
 **capability fence** (see below) enforces that every other harness module stays I/O-pure, because a
 socket call types into a live terminal.
 
+## Which side parses a pane
+
+**The phone parses what the phone draws. The bridge parses only what the bridge must act on without
+a phone attached.** Every grammar in this document is client-side for that reason, and a pull
+request that moves one into the bridge, or that adds a parsed field to `/api/snapshot` so the client
+does not have to look, will be declined.
+
+The bridge holds exactly one pane grammar today, `extractClaudeSessionName` in
+[`bridge/state-engine.ts`](./bridge/state-engine.ts). It is there because the BRIDGE consumes it: the
+name lands on `AgentView` and labels a pane for push notifications and the dashboard, which have to
+work when nobody has the app open. That is the whole test, and it is a narrow one.
+
+Three things follow, and they are why the seam sits here rather than the other way round:
+
+- **A wire field cannot carry what the client needs.** `extractStatusLines` returns `StyledLine[]`,
+  because a statusline separates its fields by colour and flattening it to text loses what makes it
+  readable at a glance. Publishing it means inventing a styled wire format nobody else needs.
+- **An older bridge sends nothing.** A crew member runs whatever release it is on. A client that
+  trusted a new field would go blank against a peer one version behind, so it needs the local parse
+  anyway — and then there are two parsers for one screen, which will drift.
+- **"Parse once" is not at stake.** The client already walks the pane's tail once per poll. A new
+  region found in that same walk costs nothing extra.
+
+If you need something on screen that the client cannot reach, the answer is a new probe on
+`HarnessAdapter`, not a new field on the snapshot.
+
 ## Fixtures-first workflow
 
 Detectors are developed and gated entirely against **byte-faithful pane captures** — never guessed
@@ -66,6 +92,36 @@ An adapter earns capability incrementally. Ship a lower tier first; each is inde
   - a green **`describeAdapterConformance`** run (the CI gate, below), and
   - **maintainer live-verification against a real pane** before the send path is enabled.
 
+### `cancelKey` — the way out of a modal you never taught Collie to read
+
+**Declare the key your harness's own modals print as the way OUT of them**, as
+`cancelKey` on your adapter, beside `composerReady`. It is a Herdr key token (`"Escape"`,
+`"ctrl+c"`), and a comment at the line must cite the capture or notes file you read it from.
+
+It buys one thing: when every grammar you wrote declines a screen, your `composerReady` still
+answers a definite `false`, and the pane is not blank, Collie draws the **unread-dialog card** over
+the raw mirror — one button, that key, under "Collie cannot read this dialog"
+([ADR 0053](./.adr/0053-an-unread-dialog-still-has-a-way-out.md)). The card is built by a post-pass
+OUTSIDE every adapter, so nothing about your fail-closed contract is loosened to make one, and it
+reads nothing off the screen: a declaration cannot be fooled by a phrase, which is the failure the
+card exists for.
+
+**Do not assume Escape.** On grok, Escape opens the scrollback view and `Ctrl+c` is the cancel. On
+Muse, Escape steps back rather than dismisses — still the right key, and the reason the card names
+the key and never a verb.
+
+**Declaring nothing is a supported answer, and it has a visible cost:** no card for that agent, ever,
+so an unread modal leaves the operator with the raw mirror and the Keys pad. Take it when your
+`composerReady` has a false-negative mode you do not trust. `omp` does: one ZWJ emoji in a statusline
+template makes its composer scanner return null on every frame, so `composerReady` would be false
+forever on a healthy pane and the card would paint itself permanently over a live composer.
+
+**Optionally declare `modalOnScreen(lines)` too**: positive evidence that one of your harness's
+modals is up. No input box is also what a shell prompt looks like while your agent starts or exits,
+and Herdr reports the agent in both windows, so without it the card can flash over the shell. When
+declared, the card needs it to answer `true`. Claude's answer is "one of the last six non-blank rows
+names a key"; pin yours against the card's allow-list test (`unread-dialog.test.ts`).
+
 ### The fail-closed contract (non-negotiable)
 
 **A detector MUST return `null` on anything it does not confidently recognise.** A partial lift is a
@@ -104,6 +160,36 @@ What your adapter must satisfy (all pinned by `describeAdapterConformance`):
    `revision` is a stub, so it is the entire race guard (the generic one — see the next section).
 4. Menu detection runs **last**, after every specific grammar you have, and must decline a screen with
    a live input box; your `composerReady` must answer `false` while the modal is up.
+5. **When the screen prints the WHOLE scale the arrows move along, put it in
+   `nav.leftRight.values`** — the values in the order the screen printed them on one row, with
+   `label` one of them. The card then renders one tappable chip per value and sends a tap as the
+   delta in presses of the arrow the footer named, so the operator sees every option and reaches one
+   in a single tap. Set it only where the screen really printed the scale: a row that shows the
+   current value alone (Claude's `/model` picker) leaves it undefined and keeps the plain arrows.
+   The scale is part of menu identity, so it must be stable across polls
+   ([ADR 0054](./.adr/0054-a-printed-scale-is-tappable.md)). **A narrow pane wraps that scale**, so
+   read the footer as the rows the terminal wrapped it onto (`readKeyHintFooter` in
+   `web/src/lib/harness/menu-hints.ts`, which joins them) and rebuild each value from its head and
+   the fragment printed under it, in the same column; merge only when every fragment lines up, and
+   decline the screen when a merge makes anything but one word.
+6. **A footer phrase may never be the whole reason a grammar declines.** Menu detection stands down
+   when a family classifier says another grammar owns the screen, so that classifier must be
+   answerable from the dialog it names, its title or its body, not from one line any screen may
+   print. Claude's `/effort` slider prints "Enter to confirm", was filed as the folder-trust prompt
+   on that phrase alone, and lost every button it had
+   ([ADR 0053](./.adr/0053-an-unread-dialog-still-has-a-way-out.md)).
+7. **A POINTED list is walked, not numbered.** The same arithmetic covers a modal that prints a
+   column of unnumbered rows with a `❯` on one of them and a commit key in its footer: a tap is the
+   arrow walk from the pointed row to the target row, then that commit key, sent as one batch.
+   Claude's folder-trust prompt is the reference case since 2.1.278 — it prints no digit, so none may
+   be synthesised, and ADR 0009 holds here exactly as it does above
+   ([ADR 0055](./.adr/0055-a-pointed-list-is-walked-then-confirmed.md)). Two things are load-bearing.
+   The arrow COUNT is a claim about where the pointer was, so the kind's committing comparator must
+   see the pointer row, or a highlight moved by a second device sends the wrong number of arrows.
+   And the row a bare commit key would take is the DEFAULT, which on the trust prompt quits the
+   agent, so the card has to show which row it is. This lift lives in Claude's prompt-select grammar
+   rather than in the generic menu, because a walk is only safe when the dialog is one you have
+   modelled; the menu's own bar (only the keys the footer named) is unchanged.
 
 ## Every dialog model is a contract, and the race guard is generic
 

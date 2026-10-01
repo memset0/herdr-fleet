@@ -25,6 +25,7 @@ import {
 import { parseAnsi } from "@/lib/ansi";
 import { noteUpdateRun } from "./self-update";
 import { splitLines } from "@/lib/blocks";
+import { type CacheHold, holdCacheReadings } from "@/lib/cache-hold";
 import { isLostLatched } from "@/lib/connection-health";
 import { ambientSpaces } from "@/lib/hosts";
 import {
@@ -36,6 +37,7 @@ import {
 } from "@/lib/last-seen";
 import { detectNoEchoPrompt } from "@/lib/no-echo";
 import { markPollResult } from "@/lib/poll-intent";
+import { prefetchPane, takePanePrefetch } from "@/lib/pane-prefetch";
 import { clearNotPaired, markNotPaired } from "@/lib/pairing";
 import {
   internScope,
@@ -68,7 +70,7 @@ import type {
 // A superseded revalidation is aborted via the loader's request.signal; that surfaces as an
 // AbortError we must RETHROW so React Router discards the stale run — swallowing it into the
 // stale-data/error-banner path would flash a spurious "reconnecting…" on every fast poll.
-function isAbortError<TThrown>(e: TThrown): boolean {
+export function isAbortError<TThrown>(e: TThrown): boolean {
   // `fetch` rejects an aborted request with a DOMException, which is an Error subclass in every
   // engine Collie runs in (and in jsdom) — so an `instanceof Error` test reaches it without having
   // to inspect the shape of an arbitrary thrown value.
@@ -180,6 +182,10 @@ export interface PaneData {
   text: string;
   /** True when the buffer was cut off at the requested line count — older scrollback still exists. */
   truncated: boolean;
+  /** The same rows with soft wraps undone, when the bridge found a URL the pane split — the mirror
+   * hands it to the autolinker so a wrapped URL is one whole link instead of a truncated first
+   * fragment. Absent on every pane that needs no repair. */
+  logicalText?: string;
   /** The scrollback window this result was fetched with — lets the UI tell a grown fetch from a
    * stale in-flight poll (a "Load older" tap raises this; see growRequestedLines). */
   requestedLines: number;
@@ -288,6 +294,11 @@ function isPaneUrl(url: string | undefined): boolean {
   }
 }
 
+// The last reading seen for each pane address, carried from one snapshot to the next by
+// {@link holdCacheReadings}. Module state, like the keep-previous-data caches above and for the same
+// reason: it is this page's memory of the last good answer, and a reload is entitled to forget it.
+let paneCacheHold: CacheHold = new Map();
+
 function toHomeData(
   snap: SnapshotResponse,
   scope: Scope,
@@ -299,12 +310,24 @@ function toHomeData(
   // out from under a running update, and it must reload once that run is done (M15/05). Stamped here
   // rather than in the card so the hold applies on every route, not only where the card is mounted.
   noteUpdateRun(snap.update?.run?.state);
+  // THE CACHE READING HOLDS ACROSS A POLL THAT ARRIVED WITHOUT ONE (lib/cache-hold.ts). The reading is
+  // a measurement, not a field of the pane, and the bridge drops one for a poll on several ordinary
+  // paths — a failed `stat`, a harness session id that has not resolved yet, another Herdr session's
+  // poll reaping it. Each of those used to unmount the chip for one frame and put it back on the next
+  // poll: "cache is blinking". BOTH pane lists are read against the SAME hold and their results are
+  // merged into the next one, so a pane that moves between the two lists keeps its reading and a pane
+  // in neither list drops it. This runs on the stale path as well, because the same snapshot read
+  // twice may not answer twice.
+  const holdIn = paneCacheHold;
+  const agents = holdCacheReadings(holdIn, snap.agents);
+  const shells = holdCacheReadings(holdIn, snap.shellPanes ?? []);
+  paneCacheHold = new Map([...agents.held, ...shells.held]);
   return {
     lastSeenAt,
     bridge: snap.bridge,
     device: snap.device,
-    agents: snap.agents,
-    shellPanes: snap.shellPanes ?? [],
+    agents: agents.panes,
+    shellPanes: shells.panes,
     // Narrowed to the address the URL is on, for the reason `ambientPanes` narrows the panes drawn
     // beside them: the navigator is a tree of ONE machine, and on a crew the lead's merged body now
     // carries every machine's spaces. A solo body carries no host on any row, so both calls pass
@@ -518,6 +541,17 @@ function holdsNoEchoPrompt(text: string): boolean {
   return detectNoEchoPrompt(splitLines(parseAnsi(tail))) !== null;
 }
 
+/**
+ * Start the read `paneLoader` will need for this pane, from a row's `pointerdown`, so the answer is
+ * usually in by the tap's `click` (lib/pane-prefetch.ts). Returns a promise that settles when it is,
+ * and never rejects. Nothing starts during a known outage, where the loader answers from its cache
+ * without a read.
+ */
+export function prefetchPaneData(paneId: string, scope: Scope | undefined): Promise<void> {
+  if (isLostLatched()) return Promise.resolve();
+  return prefetchPane(paneId, scope, getRequestedLines(paneId, scope));
+}
+
 export async function paneLoader({
   params,
   request,
@@ -547,7 +581,16 @@ export async function paneLoader({
     // On a 304 fetchPane returns the cached body, so `read.text` is populated either way; the
     // `?? lastPaneText` is just belt-and-suspenders. Both paths are a success (not the error
     // branch) so the connection bar doesn't flicker on an unchanged poll.
-    const read: PaneReadResponse = await fetchPane(paneId, lines, scope, request?.signal);
+    // A navigation takes the read the row's `pointerdown` already started, when one is fresh
+    // (lib/pane-prefetch.ts). That read left the pane's unseen mark alone, so the seen read follows
+    // it, once it is in: by then the ETag cache holds its body and the bridge answers a 304. Nothing
+    // waits on it. A poll never takes a prefetched read.
+    const prefetched = isNavigation ? takePanePrefetch(paneId, scope, lines) : undefined;
+    if (prefetched) {
+      const markSeen = () => fetchPane(paneId, lines, scope).catch(() => {});
+      void prefetched.then(markSeen, markSeen);
+    }
+    const read: PaneReadResponse = await (prefetched ?? fetchPane(paneId, lines, scope, request?.signal));
     const text = read.text || lastPaneText.get(key) || "";
     // THE "IS THE SCREEN STILL MOVING" SIGNAL, taken at the one place that can honestly answer it.
     //
@@ -569,6 +612,7 @@ export async function paneLoader({
       scope,
       text,
       truncated: read.truncated,
+      logicalText: read.logicalText,
       requestedLines: lines,
       revision: read.revision,
       error: false,

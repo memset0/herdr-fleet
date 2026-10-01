@@ -1,5 +1,10 @@
 import { createBrowserRouter, replace } from "react-router";
 
+import { basePath } from "@/lib/base-path";
+import { listenForInAppOpen, markBooted, openPendingTarget, probeStandalone, seedColdEntry, type OpenGate } from "@/lib/nav-entry";
+import { isReloadInFlight } from "@/lib/pwa";
+import { UPDATE_MODE_HOLD, isReloadHeldBy, subscribeReloadHeld } from "@/lib/reload-guard";
+
 import { BootSplash, RootError, RootLayout } from "@/routes/root";
 // DOWNSTREAM PORT. The pane route's element and loader are the fork's, and each is a drop-in: with
 // the pane-surface switch off they are Collie's own `DetailRoute` and `paneLoader`, called with the
@@ -9,6 +14,7 @@ import { FleetPaneRoute, fleetPaneLoader } from "@/components/fleet-pane-route";
 import { HomeRoute } from "@/routes/home";
 import { SpaceRoute } from "@/routes/space";
 import { HistoryRoute } from "@/routes/history";
+import { ChangesRoute } from "@/routes/changes";
 import { SettingsRoute } from "@/routes/settings";
 import { CrewRoute } from "@/routes/crew";
 import { UpdatesRoute } from "@/routes/updates";
@@ -21,7 +27,8 @@ import {
   ROOT_ROUTE_ID,
 } from "@/lib/loaders";
 
-// We don't use view transitions. React Router persists an "applied view transitions" map to
+// We don't use React Router's view transitions (the glides start their own, by hand, and never
+// touch this map: lib/glide.ts). React Router persists an "applied view transitions" map to
 // sessionStorage ("remix-router-transitions") and replays a phantom same-location transition on every
 // revalidation for any path it once saw a `viewTransition: true` navigation from. A device that ran an
 // older Collie build (which did use them) can carry a stale entry that fires
@@ -32,6 +39,23 @@ try {
   sessionStorage.removeItem("remix-router-transitions");
 } catch {
   // sessionStorage access can throw in locked-down / private contexts — ignore.
+}
+
+// A cold deep link gets its parents put behind it BEFORE the router reads the entry it boots on, so
+// the phone's first edge swipe goes up one level instead of doing nothing (ADR 0067, lib/nav-entry).
+seedColdEntry({
+  location: window.location,
+  history: window.history,
+  sessionStorage: safeSessionStorage(),
+  standalone: probeStandalone,
+});
+
+function safeSessionStorage(): Storage | undefined {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 // Created once at module scope so the idle-lock in App can unmount/remount RouterProvider without
@@ -83,6 +107,47 @@ export const router = createBrowserRouter([
         // navigation; the view pages back through it with direct api calls.
         shouldRevalidate: () => false,
       },
+      {
+        // The Changes view (ADR 0065). No loader: the view reads the list and an open file's diff
+        // itself, on open, on its own 5 s beat while visible and on its refresh button, so the poll
+        // loop's revalidate() fetches nothing for it. `shouldRevalidate` states the same opt-out as
+        // History's, should a loader ever be added.
+        // `/*` so the commit view below the list (`changes/commit`, ADR 0065) is the same route
+        // and the same mounted component: the list keeps its state under the commit.
+        path: "pane/:paneId/changes/*",
+        element: <ChangesRoute />,
+        shouldRevalidate: () => false,
+      },
+      {
+        // The same view asked by workspace: every pane of a space shows one list (ADR 0065), and
+        // this form lets a dashboard entry open it without naming a pane. Host-aware through the
+        // scope query like every other route.
+        path: "space/:spaceId/changes/*",
+        element: <ChangesRoute />,
+        shouldRevalidate: () => false,
+      },
     ],
   },
-]);
+], {
+  // The mount the bridge served this document under (ADR 0052): `/` at the root, `/collie/` behind
+  // a proxy that gives Collie a path. Every route path above stays root-relative; the router puts
+  // the mount in front of them and takes it off what it reads from the address bar.
+  basename: basePath(),
+});
+
+// This tab has booted: a later fresh entry in it is a reload (iOS evicting the installed app drops
+// `history.state`), never a cold start to seed (ADR 0067).
+markBooted(safeSessionStorage());
+
+// A notification tapped while the app is on screen opens its pane in THIS router, as a push from
+// wherever the operator was (ADR 0067). The service worker asks and waits for the answer; an app
+// that does not answer gets the old full-document navigate. While update mode holds the reload, or
+// a reload is already on its way, the target waits in sessionStorage for the fresh page, which opens
+// it right here at boot.
+const openGate: OpenGate = {
+  busy: () => isReloadHeldBy(UPDATE_MODE_HOLD) || isReloadInFlight(),
+  subscribe: subscribeReloadHeld,
+  storage: safeSessionStorage(),
+};
+openPendingTarget(router, openGate);
+listenForInAppOpen(router, openGate);

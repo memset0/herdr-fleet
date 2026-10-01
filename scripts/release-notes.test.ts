@@ -16,7 +16,9 @@ import { describe, expect, test } from "bun:test";
 import {
 	changelogAnchor,
 	checkUnreleased,
+	creditedHandles,
 	parseSection,
+	parseUrgent,
 	renderBody,
 } from "./release-notes.ts";
 
@@ -137,7 +139,9 @@ describe("checkUnreleased", () => {
 			"## [Unreleased]\n",
 			"## [Unreleased]\n\n### Fixed\n\n- **A thing is fixed.** The detail follows here. (#1)\n",
 		);
-		expect(checkUnreleased(filled)).toEqual([{ name: "Fixed", leads: ["A thing is fixed."] }]);
+		expect(checkUnreleased(filled)).toEqual([
+			{ name: "Fixed", leads: ["A thing is fixed."], credits: [[]] },
+		]);
 	});
 
 	test("a bullet with no bold lead fails, and the message names the section", () => {
@@ -195,7 +199,7 @@ Check with \`collie version\` or \`herdr plugin action invoke version --plugin h
 
 **Added**
 
-- The crew levels itself.
+- The crew levels itself. Thanks @someone.
 
 **Changed**
 
@@ -258,6 +262,164 @@ HTTPS and the pinned github.com host carry that.
 	});
 });
 
+// ── Credits ─────────────────────────────────────────────────────────────────────────────────────
+// GitHub draws a release's Contributors avatars only for users the body @mentions, so the page line
+// keeps the credit its bullet carries.
+
+const CREDITS = `# Changelog
+
+## [3.0.0] - 2026-11-01
+
+### Added
+
+- **A.** Detail. Thanks @alice (#1, fixes #2). ([aaaaaaa](https://github.com/AltanS/collie/commit/aaaaaaa))
+- **B.** Detail. Reported by @bob (#3). ([bbbbbbb](https://github.com/AltanS/collie/commit/bbbbbbb))
+- **C.** Detail. Thanks to @carol and @dave-x, and suggested by @Alice. (#4)
+- **D.** Contributed by [@erin](https://github.com/erin) (#5).
+
+### Fixed
+
+- **E.** The \`@effort\` token, \`Thanks @mallory\`, the @types/node scope, mail me@example.com and the @word in prose.
+- **F.** Thanks @AltanS for the review, and thanks @frank.
+- **G.** Built by @AltanS alone.
+`;
+
+describe("credits", () => {
+	test("each bullet keeps its own credit, phrase as written", () => {
+		const section = parseSection(CREDITS, "3.0.0");
+		const added = section.groups.find((g) => g.name === "Added");
+		expect(added?.credits).toEqual([
+			[{ phrase: "Thanks", handles: ["alice"] }],
+			[{ phrase: "Reported by", handles: ["bob"] }],
+			[
+				{ phrase: "Thanks to", handles: ["carol", "dave-x"] },
+				{ phrase: "Suggested by", handles: ["Alice"] },
+			],
+			[{ phrase: "Contributed by", handles: ["erin"] }],
+		]);
+	});
+
+	test("code spans, scopes, e-mail, bare @words and the maintainer do not count", () => {
+		const fixed = parseSection(CREDITS, "3.0.0").groups.find((g) => g.name === "Fixed");
+		expect(fixed?.credits).toEqual([[], [{ phrase: "Thanks", handles: ["frank"] }], []]);
+	});
+
+	test("the section's handles are deduped, first spelling wins", () => {
+		expect(creditedHandles(parseSection(CREDITS, "3.0.0"))).toEqual([
+			"alice",
+			"bob",
+			"carol",
+			"dave-x",
+			"erin",
+			"frank",
+		]);
+	});
+
+	test("the page line ends with the credit, as a bare @mention", () => {
+		const body = renderBody(CREDITS, "3.0.0", REPO, "v3.0.0");
+		expect(body).toContain("- A. Thanks @alice.\n");
+		expect(body).toContain("- B. Reported by @bob.\n");
+		expect(body).toContain("- C. Thanks to @carol and @dave-x. Suggested by @Alice.\n");
+		expect(body).toContain("- D. Contributed by @erin.\n");
+		expect(body).toContain("- E.\n");
+		expect(body).toContain("- F. Thanks @frank.\n");
+		expect(body).toContain("- G.\n");
+		expect(body).not.toContain("@AltanS");
+	});
+});
+
+// ── The urgent line (ADR 0046) ──────────────────────────────────────────────────────────────────
+
+const URGENT = `# Changelog
+
+## [1.9.1] - 2026-09-20
+
+**Urgent.** The cache reaper deletes live entries, take this today.
+
+### Fixed
+
+- **The cache reaper keeps live entries.** It read the window backwards. ([abc1234](https://github.com/AltanS/collie/commit/abc1234))
+`;
+
+describe("parseUrgent", () => {
+	test("reads the line directly under the heading", () => {
+		expect(parseUrgent(URGENT, "1.9.1")).toEqual({
+			reason: "The cache reaper deletes live entries, take this today.",
+		});
+	});
+
+	test("an ordinary release says nothing", () => {
+		expect(parseUrgent(FULL, "2.1.0")).toBeNull();
+		expect(parseUrgent(SMALL, "1.0.0")).toBeNull();
+	});
+
+	test("ONLY that position counts — a line inside a group is prose", () => {
+		const inside = URGENT.replace(
+			"**Urgent.** The cache reaper deletes live entries, take this today.\n\n",
+			"",
+		).replace(
+			"### Fixed\n",
+			"### Fixed\n\n**Urgent.** This one is below the first group heading.\n",
+		);
+		expect(parseUrgent(inside, "1.9.1")).toBeNull();
+	});
+
+	// A NEAR MISS STOPS THE RELEASE. Reading one of these as prose would publish a fix on the weekly
+	// window while its author believed they had put it on the daily one.
+	test("a near miss throws instead of reading as prose", () => {
+		const withLine = (line: string) =>
+			URGENT.replace("**Urgent.** The cache reaper deletes live entries, take this today.", line);
+		for (const line of [
+			"**Urgent.**",
+			"**urgent** The cache reaper deletes live entries.",
+			"**Urgent** The cache reaper deletes live entries.",
+			"**URGENT.** The cache reaper deletes live entries.",
+			"Urgent: the cache reaper deletes live entries.",
+			"Urgent. The cache reaper deletes live entries.",
+			"** Urgent.** The cache reaper deletes live entries.",
+		]) {
+			expect(() => parseUrgent(withLine(line), "1.9.1")).toThrow(/Expected exactly/);
+		}
+	});
+
+	test("the sentence is checked, and a bad one stops the release", () => {
+		const withReason = (reason: string) =>
+			URGENT.replace("The cache reaper deletes live entries, take this today.", reason);
+		// Too long: a reason nobody finishes reading is a reason nobody acts on.
+		expect(() => parseUrgent(withReason(`${"a".repeat(140)}.`), "1.9.1")).toThrow(/141 characters/);
+		// Exactly at the limit is fine.
+		expect(parseUrgent(withReason(`${"a".repeat(139)}.`), "1.9.1")).toEqual({
+			reason: `${"a".repeat(139)}.`,
+		});
+		// No markup: neither the push body nor the card renders any.
+		expect(() => parseUrgent(withReason("Run `collie update` today."), "1.9.1")).toThrow(/backtick/);
+		expect(() => parseUrgent(withReason("See [the notes](https://x.dev) today."), "1.9.1")).toThrow(
+			/markdown link/,
+		);
+		// One sentence, and a sentence ends.
+		expect(() => parseUrgent(withReason("The cache reaper deletes live entries"), "1.9.1")).toThrow(
+			/period/,
+		);
+	});
+
+	test("the release page keeps the line as it was written, at the top of the body", () => {
+		const body = renderBody(URGENT, "1.9.1", REPO, "v1.9.1");
+		expect(body.startsWith("**Urgent.** The cache reaper deletes live entries, take this today.\n")).toBe(true);
+		expect(body.indexOf("**Urgent.**")).toBeLessThan(body.indexOf("## Update"));
+		// The rest of the page is what it always was — the line adds, it replaces nothing.
+		expect(body).toContain("## What changed");
+		expect(body).toContain("**Fixed**");
+		// An ordinary release's page does not start with it.
+		expect(renderBody(FULL, "2.1.0", REPO, "v2.1.0")).not.toContain("**Urgent.**");
+	});
+
+	test("the section still parses with the line in it", () => {
+		const section = parseSection(URGENT, "1.9.1");
+		expect(section.groups).toHaveLength(1);
+		expect(section.groups[0]?.leads).toEqual(["The cache reaper keeps live entries."]);
+	});
+});
+
 // ── The repository's own CHANGELOG ──────────────────────────────────────────────────────────────
 // Not a fixture: the real file, so a badly shaped bullet is red in CI on the commit that wrote it
 // rather than at tag time, when the release is already being published.
@@ -271,6 +433,26 @@ describe("the repository's CHANGELOG.md", () => {
 		const section = parseSection(changelog, newest ?? "");
 		expect(section.groups.length).toBeGreaterThan(0);
 		for (const group of section.groups) expect(group.leads.length).toBeGreaterThan(0);
+	});
+
+	test("1.12.1 credits the contributor its changelog names", () => {
+		expect(creditedHandles(parseSection(changelog, "1.12.1"))).toEqual(["enieuwy"]);
+	});
+
+	test("1.12.0 credits every contributor its changelog names", () => {
+		expect(creditedHandles(parseSection(changelog, "1.12.0"))).toEqual([
+			"edwinhu",
+			"CorrectRoadH",
+			"fonnesbeck",
+			"waynehoover",
+			"jyothyswaroop",
+			"bendrucker",
+			"lighcen",
+			"dantebarba",
+			"jpcarranza94",
+			"ubuntudroid",
+			"Femoon",
+		]);
 	});
 
 	test("every bullet under Unreleased is grouped and has a bold lead", () => {

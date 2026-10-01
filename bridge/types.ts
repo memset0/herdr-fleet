@@ -1,14 +1,19 @@
 // Domain model for the bridge. These are OUR types, decoupled from Herdr's wire shapes
 // (which live only in mux/herdr/client.ts). The rest of the app talks in these terms.
 
+import type { Confidence } from "./cache/claims.ts";
+import type { PaneCache } from "./cache/engine.ts";
 import type { ApiErrorDetail, ErrorCode } from "./error-codes.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
 import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
 import type { UpdateRun } from "./update-run.ts";
 
 // Re-exported so the wire surface has ONE import site: a consumer of PaneHistoryResponse gets the
-// entry shape from here too, without reaching into an adapter module.
+// entry shape from here too, without reaching into an adapter module. `PaneCache` rides along for the
+// same reason — it is a pane field now, so a reader of this module needs no second import.
 export type { TranscriptEntry, TranscriptPart } from "./journal/types.ts";
+export type { CacheStateName, PaneCache } from "./cache/engine.ts";
+export type { Confidence } from "./cache/claims.ts";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
@@ -68,10 +73,25 @@ export interface AgentView {
   /**
    * The pane's tab label, denormalised from `tab.list` exactly as `workspaceLabel` already is — so
    * every client surface (card, sidebar, palette, space view) gets it without joining `tabs[]`.
-   * Absent when the label carries no information: an unlabelled tab in a single-tab space is named
-   * positionally by Herdr ("1"), which would render as `project · 1`. See `meaningfulTabLabel`.
+   * Absent when the label carries no information: an unlabelled tab is named positionally by Herdr
+   * ("1") and by zellij (`Tab #1`), which would render as `project › 1`. See `meaningfulTabLabel`,
+   * and `isUnnamedTab` in pane-name.ts, which is the one rule underneath it.
    */
   tabLabel?: string;
+  /**
+   * The tab's name, when the operator named that tab and this pane is alone in it. The bridge decides
+   * (bridge/state-engine.ts) because only the multiplexer adapter knows whether a label was chosen
+   * (`MuxPane.tabNamed`: tmux's automatic window name is not). The name rule reads it: a one-pane tab
+   * is how most operators name a pane, and that name outranks the title Claude rewrites every turn.
+   * Absent from an older peer, which keeps the title.
+   */
+  soleTabName?: string;
+  /**
+   * The pane's 0-based position inside its tab, in the multiplexer's own order. The dashboard's fixed
+   * order reads it, since a pane id's alphabetical order is not the order on screen. Absent from an
+   * older peer.
+   */
+  tabPosition?: number;
   /**
    * What the pane's own process says it is doing — its OSC title, glyph-stripped and dropped when
    * uninformative (see `meaningfulTerminalTitle`). Claude rewrites this per turn, so unlike
@@ -112,6 +132,17 @@ export interface AgentView {
    * `done` agent IS the "finished while you weren't looking" state — there is no stored seen flag.
    */
   lastSeenAt?: number;
+  /**
+   * How long this pane's prompt cache stays warm, read from the harness's own transcript
+   * (bridge/cache/tracker.ts). Attached at serialise time exactly as {@link lastActiveAt} is, so it
+   * rides `toPaneWire`'s rest spread onto the wire.
+   *
+   * ABSENT, NEVER A PLACEHOLDER. A pane with no journal adapter, no session, or an agent that has not
+   * taken a turn yet carries no key at all — the bridge cannot read the agent's environment, so it
+   * does not guess ([ADR 0041](../.adr/0041-cache-rules-are-sourced-claims.md)). That is what keeps a
+   * solo body byte-identical to 1.8.2's for every non-agent pane (`solo-baseline.test.ts`).
+   */
+  cache?: PaneCache;
 }
 
 /**
@@ -213,6 +244,12 @@ export interface WorkspaceView {
    */
   isWorktree?: boolean;
   /**
+   * The space's own folder, when the multiplexer keeps one (MuxSpace.folder): herdr's worktree
+   * checkout, tmux's `session_path`. Absent otherwise. The Changes view prefers it as its root
+   * (bridge/changes-root.ts); without it the root is the panes' common folder.
+   */
+  folder?: string;
+  /**
    * Which member of the crew this space lives on — the same tag panes and sessions carry.
    *
    * **Present exactly when {@link SnapshotResponse.servers} is**, and absent otherwise (§11), so a
@@ -290,7 +327,7 @@ export interface SnapshotResponse {
   bridge: BridgeStatus;
   /** Per-device authorisation for the requesting client; absent when the feature is off. */
   device?: DeviceAuth;
-  /** Agent-bearing panes, triage-sorted (the home list). */
+  /** Agent-bearing panes, in place order: space, tab, position in the tab. Never by status (ADR 0063). */
   agents: PaneWire[];
   /** Bare shell panes (no agent) — surfaced so freshly-created tabs/spaces are reachable. */
   shellPanes: PaneWire[];
@@ -452,6 +489,18 @@ export interface UpdateLinkChange {
 }
 
 /**
+ * A release in the delta that asked to reach operators today (ADR 0046).
+ *
+ * `version` is the NEWEST release in the delta that carried the marker, and `reason` is that
+ * release's own sentence, written by the person who cut it and read from its `collie-release.json`.
+ * The reason is the release's English and is never translated: it is a quotation, not a label.
+ */
+export interface UpdateUrgent {
+  version: string;
+  reason: string;
+}
+
+/**
  * GET /api/snapshot `update` — whether the running plugin is behind (see bridge/update.ts). Both a
  * newer upstream RELEASE (`releaseAvailable` + `latest`) and a rebuilt-but-not-restarted bridge
  * PROCESS (`bridgeStale`) surface here; the client shows one banner, `bridgeStale` taking precedence.
@@ -534,7 +583,9 @@ export interface UpdateStatus {
    *
    * The update card lists them so the operator can see WHAT they are about to fold in, rather than
    * only the top of the pile. Versions and nothing else: the phone never fetches release notes from
-   * GitHub, so what is not already on this wire is not shown (M15/05).
+   * GitHub. The HOST reads each release's small `collie-release.json` sidecar — that is where
+   * {@link linkChange} and {@link urgent} come from — and what is not already on this wire is not
+   * shown (M15/05, ADR 0046).
    */
   newerVersions?: string[];
   /**
@@ -561,6 +612,17 @@ export interface UpdateStatus {
    * (`bridge/solo-baseline.test.ts`), and a solo instance never has a link change.
    */
   linkChange?: UpdateLinkChange | null;
+  /**
+   * The newest release in the delta that called itself urgent, and why (ADR 0046).
+   *
+   * An urgent release is an ordinary release on every axis but one: it keeps the DAILY digest
+   * cadence even when the delta is patches only. The surfaces print a short label and the sentence,
+   * so the operator reads why before they decide.
+   *
+   * OPTIONAL and ABSENT when there is nothing to say, the rule `run` and `linkChange` follow: no
+   * release in the delta carried the marker, the sidecars could not be read, or no check has run.
+   */
+  urgent?: UpdateUrgent;
 }
 
 /** GET /api/pane/:id — recent terminal output for one agent (ANSI/SGR, rendered colored). */
@@ -570,6 +632,13 @@ export interface PaneReadResponse {
   truncated: boolean;
   /** Herdr's monotonic pane revision — passed through for the client's prompt-select race guard. */
   revision: number;
+  /**
+   * The same rows with soft wraps undone, present only when the grid shows a URL the pane's width
+   * cut in two (`hasSplitUrl`). The mirror keeps rendering `text`; the client uses this to give the
+   * fragments of one URL the href of the whole URL. ABSENT rather than empty when there is nothing
+   * to repair — the payload stays byte-identical to what it was for every other pane.
+   */
+  logicalText?: string;
 }
 
 /**
@@ -592,6 +661,146 @@ export type PaneHistoryResponse =
       /** The log exceeded the read cap, so only its tail was parsed. */
       fileTruncated: boolean;
     };
+
+/**
+ * One changed file in a Changes list (ADR 0065). `status` is the file's state against HEAD, staged
+ * and unstaged together: Modified, Added, Deleted, Renamed, or `?` untracked. An untracked FOLDER
+ * (git lists one entry for a new folder under `--untracked-files=normal`) keeps its trailing `/`.
+ */
+export type ChangeStatus = "M" | "A" | "D" | "R" | "?";
+
+export interface ChangedFile {
+  /** Relative to the repo's top level, `/`-separated, exactly as git spelled it. */
+  path: string;
+  /** The old path of a rename. Absent otherwise. */
+  oldPath?: string;
+  status: ChangeStatus;
+  added: number;
+  removed: number;
+  binary: boolean;
+}
+
+export interface ChangedRepo {
+  /** Where the repo sits relative to the pane's folder: `.` (the folder itself), `..` style for a
+   *  repo that contains the folder, or `sub/dir` for one found below it. The id a diff names. */
+  relPath: string;
+  /** The repo folder's own name, for display. */
+  name: string;
+  files: ChangedFile[];
+}
+
+/**
+ * Why a Changes request has nothing to show. Ordinary answers, never errors. `no-workspace` is the
+ * workspace route's `no-pane`: the id names no workspace in the snapshot.
+ */
+export type ChangesUnavailableReason = "no-pane" | "no-workspace" | "no-folder" | "no-git";
+
+/**
+ * The uncommitted changes under a workspace's folder, read-only (ADR 0065). Only repos with changes
+ * are listed. `root` is the folder the list was read from; `truncated` means a discovery or listing
+ * cap was reached, so the list may be incomplete. `depthLimited` means discovery stopped at the
+ * asked depth with a repo one level further down, so a deeper setting would find more. Optional:
+ * a bridge from before it sends none, which reads as false.
+ */
+export type ChangesList =
+  | { available: false; reason: ChangesUnavailableReason }
+  | {
+      available: true;
+      root: string;
+      repos: ChangedRepo[];
+      truncated: boolean;
+      depthLimited?: boolean;
+      /**
+       * The discovered repos with nothing uncommitted and at least one commit: what the view offers
+       * "Show last commit" for. Absent when there are none, and from a bridge that predates it.
+       */
+      clean?: CleanRepo[];
+    };
+
+/** A repo discovery found with no uncommitted changes and a HEAD commit to show. */
+export interface CleanRepo {
+  relPath: string;
+  name: string;
+}
+
+/**
+ * One file's diff against HEAD, as raw unified-diff text. The phone parses it. `diff` is empty for
+ * a binary file and for an untracked folder.
+ */
+export type ChangeDiff =
+  | { available: false; reason: ChangesUnavailableReason | "unknown-repo" | "unknown-path" }
+  | {
+      available: true;
+      repo: string;
+      path: string;
+      oldPath?: string;
+      status: ChangeStatus;
+      binary: boolean;
+      /** An untracked folder: git lists it as one entry and there is no single file to show. */
+      directory: boolean;
+      /** The diff hit a line or byte cap and was cut at a line boundary. */
+      truncated: boolean;
+      diff: string;
+    };
+
+/** The commit a commit view shows: always the repo's HEAD at the time of the read. */
+export interface CommitInfo {
+  /** The full object id. The view compares it across re-reads to notice a newer commit. */
+  hash: string;
+  shortHash: string;
+  /** The message's first paragraph on one line, as `git log --format=%s` prints it. */
+  subject: string;
+  author: string;
+  /** Author time, Unix seconds. */
+  time: number;
+}
+
+/**
+ * The last commit of one discovered repo, read-only (ADR 0065, the commit view): HEAD against its
+ * first parent, or against the empty tree for a root commit. `files` carry `M`, `A`, `D` or `R`.
+ * `no-commit` is a repo whose HEAD names no commit yet.
+ */
+export type ChangeCommit =
+  | { available: false; reason: ChangesUnavailableReason | "unknown-repo" | "no-commit" }
+  | { available: true; repo: string; name: string; commit: CommitInfo; files: ChangedFile[]; truncated: boolean };
+
+/**
+ * One file of the last commit. `hash` names the commit the diff was read from, so a view still
+ * showing an older commit can tell the answer belongs to a newer one.
+ */
+export type ChangeCommitDiff =
+  | { available: false; reason: ChangesUnavailableReason | "unknown-repo" | "unknown-path" | "no-commit" }
+  | (Extract<ChangeDiff, { available: true }> & { hash: string });
+
+/**
+ * Which workspace a Changes answer covers, so the screen can say so. Present whenever the workspace
+ * was found, including when the pane route fell back to the pane's own folder.
+ */
+export interface ChangesWorkspace {
+  workspaceId?: string;
+  workspaceLabel?: string;
+}
+
+/**
+ * GET /api/pane/:id/changes — the list for the pane's WORKSPACE (bridge/changes-root.ts). `paneRepo`
+ * is the `relPath` of the listed repo that holds the asking pane's folder, absent when that repo has
+ * no changes; the view marks that group "this pane".
+ */
+export type PaneChangesResponse = { paneId: string; paneRepo?: string } & ChangesWorkspace & ChangesList;
+/** GET /api/pane/:id/changes?repo=&path= — one file's diff in the pane's workspace. */
+export type PaneChangeDiffResponse = { paneId: string } & ChangesWorkspace & ChangeDiff;
+/** GET /api/workspace/:id/changes — the same list, asked by workspace. */
+export type WorkspaceChangesResponse = { workspaceId: string; workspaceLabel?: string } & ChangesList;
+/** GET /api/workspace/:id/changes?repo=&path= — the same diff, asked by workspace. */
+export type WorkspaceChangeDiffResponse = { workspaceId: string; workspaceLabel?: string } & ChangeDiff;
+/** GET /api/pane/:id/changes?view=commit&repo= — the last commit of one repo in the pane's workspace. */
+export type PaneChangeCommitResponse = { paneId: string } & ChangesWorkspace & ChangeCommit;
+/** GET /api/pane/:id/changes?view=commit&repo=&path= — one file of that commit. */
+export type PaneChangeCommitDiffResponse = { paneId: string } & ChangesWorkspace & ChangeCommitDiff;
+/** GET /api/workspace/:id/changes?view=commit&repo= — the same commit, asked by workspace. */
+export type WorkspaceChangeCommitResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommit;
+/** GET /api/workspace/:id/changes?view=commit&repo=&path= — the same file, asked by workspace. */
+export type WorkspaceChangeCommitDiffResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommitDiff;
 
 /**
  * POST /api/pane/:id/{reply,keys} — result of a send. Discriminated on `ok`: a failure always
@@ -702,6 +911,19 @@ export interface OperatorCommand {
    * command's confirm regardless (rule 3 in agent-commands.ts), and `false` cannot lift it.
    */
   confirm: boolean;
+  /**
+   * The operator putting this row on the HARNESS BAR, the row of the running agent's own commands
+   * above the key rail. It is the only way onto that bar, and a bar row is still an ordinary palette
+   * row. Replacement is per surface: bar rows replace the shipped BAR for the panes they address and
+   * leave the Agent palette alone (ADR 0043, which applies ADR 0018's rule to one surface).
+   */
+  bar: boolean;
+  /**
+   * The bar button's text. Absent means the command name without its slash. Over 12 characters it
+   * arrives already shortened — the bridge truncates rather than dropping the row, so a label two
+   * characters too long never costs the operator their button.
+   */
+  barLabel?: string;
 }
 
 /**
@@ -879,6 +1101,92 @@ export interface LaunchersResponse {
   home: string;
 }
 
+/**
+ * GET /api/folders, and the answer to POST /api/folders/star — THIS host's own folder list for the
+ * new-space sheet (#289), read from its `folders.json` (bridge/folders.ts). Session-scoped only so a
+ * `?host=` call forwards to the peer whose folders they are (CREW_PROTOCOL.md §5); the list itself is
+ * one per machine, never per session. `recent` is newest first, at most eight, and holds only folders
+ * a space was created in; `favourites` is in starred order, at most twelve, and never overlaps it.
+ * `home` is that host's home dir, never an entry, so the client can shorten a folder with a leading
+ * `~` without knowing which machine answered — `LaunchersResponse.home`'s reason.
+ */
+export interface FoldersResponse {
+  recent: string[];
+  favourites: string[];
+  home: string;
+}
+
+/**
+ * One rule as the pane sheet reads it — the catalog entry behind a pane's `cache.ruleId`.
+ *
+ * The source title and the retrieved date do NOT ride every pane: seven small fields do, and the sheet
+ * fetches this catalog once per boot, lazily, on the first time it is opened. A rule the operator moved
+ * carries `overridden` with their OWN url and date, because an override may move a number and may not
+ * remove its provenance (ADR 0041).
+ */
+export interface CacheRuleWire {
+  id: string;
+  /** Another vendor's words for their own product, so it is not translated (ADR 0030's carve-out). */
+  label: string;
+  ttlSeconds: number;
+  confidence: Confidence;
+  sourceTitle: string;
+  sourceUrl: string;
+  retrievedAt: string;
+  slidingWindow: boolean;
+  automatic: boolean;
+  /** One line a reader needs in order to not misread the number. Absent when the rule carries none. */
+  note?: string;
+  /** Present only when `cache-rules.toml` moves this rule, and then it is the operator's own source. */
+  overridden?: { ttlSeconds: number; sourceUrl: string; retrieved: string; note?: string };
+}
+
+/**
+ * GET /api/cache-rules — the catalog behind every cache chip on THIS host, plus its applied overrides.
+ *
+ * A read, gated as `/api/config` is, ETagged through `bridge/http-cache.ts`. It is this host's own
+ * catalog and is not forwarded across the crew link: a peer may hold its own override, so quoting the
+ * lead's catalog for a peer's number would cite a page that peer never read. The sheet on a peer's pane
+ * says so in a sentence instead.
+ */
+export interface CacheRulesResponse {
+  rules: CacheRuleWire[];
+}
+
+/**
+ * GET/POST /api/notifications/cache-watch — one pane's place in the prompt-cache watch list.
+ *
+ * A PREFERENCE, which is why it sits in the `notifications` family and is query-addressed rather than
+ * hung off `PANE_ROUTE`: that route is mirrored onto the crew wire, and a forwarded preference would be
+ * stored on the peer that owns the pane, where no push subscription lives (ADR 0042).
+ */
+export interface CacheWatchResponse {
+  /** This pane's own entry in the list. */
+  on: boolean;
+  /** `prefs.cache`, so the sheet can say the global switch already covers this pane. */
+  global: boolean;
+  /** False when the pane names no harness session, carries no `cache` key, or reads `unknown`. */
+  watchable: boolean;
+  /** The resolved `COLLIE_CACHE_WARN_SECONDS`, so the copy quotes the bridge's number. */
+  warnSeconds: number;
+}
+
+/** One row of the watched-pane list. `id` is an opaque handle; the stored ref never leaves the bridge. */
+export interface CacheWatchEntryWire {
+  id: string;
+  label: string;
+  /** Present only for a peer's pane, omitted for a local one. */
+  host?: string;
+  session?: string;
+  /** Present when the entry's pane is in the current snapshot. Absent means it lists but cannot link. */
+  paneId?: string;
+}
+
+/** GET /api/notifications/cache-watch/list — the whole bridge's list, not one pane's. */
+export interface CacheWatchListResponse {
+  entries: CacheWatchEntryWire[];
+}
+
 /** GET /api/config — bridge capabilities and the build id (push setup + stale-cache detection). */
 export interface BridgeConfig {
   push: boolean;
@@ -959,7 +1267,10 @@ export interface SttCapability {
   reason?: string;
 }
 
-/** Rank for triage ordering — lower sorts first ("NEEDS YOU" at the top). */
+/**
+ * Urgency rank per status, lower is more urgent. It ranks a MARK, never a row: no list is sorted by
+ * it (ADR 0063). The merge also reads its keys as the set of valid status words.
+ */
 export const STATUS_RANK = {
   blocked: 0,
   working: 1,

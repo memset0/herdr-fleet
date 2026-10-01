@@ -199,7 +199,49 @@ const channelIconsPlugin: Plugin = {
 
 const channelManifest = manifestFor(channel);
 
+// ADR 0052: ONE BUILD SERVES ANY MOUNT. The shell (index.html) is built ROOT-ABSOLUTE, every
+// reference `/…`, and the bridge resolves it to the mount it was started with when it serves the
+// file (bridge/server.ts, `mountIndexHtml`); at the root it is served as it lies on disk. Inside the
+// bundle nothing may name the root: a chunk reaches its siblings and its assets from
+// `import.meta.url`, a stylesheet from its own address, so the same files work under any path.
+// `renderBuiltUrl` is how Vite is told that split: the HTML host keeps the base, every other host
+// gets a relative URL.
+//
+// The guard on the shell's half of that contract. One reference that is not root-absolute — a
+// bare `assets/x.js`, a `./` — would mount at the root and break under a path, at runtime, on
+// someone else's machine; so a build whose index.html carries one fails HERE. External and inline
+// values are not references to this build.
+const mountReadyShellPlugin: Plugin = {
+  name: "collie-mount-ready-shell",
+  apply: "build",
+  // Read back from disk once everything is written: the HTML transform hooks still see Vite's
+  // public-asset placeholders in the inline style, which are resolved after them.
+  writeBundle(options) {
+    const dir = options.dir ?? resolve(import.meta.dirname, "dist");
+    const html = readFileSync(resolve(dir, "index.html"), "utf8");
+    const refs = [...html.matchAll(/(?:href|src)="([^"]*)"|url\(["']?([^"')]*)["']?\)/g)].map(
+      (m) => m[1] ?? m[2] ?? "",
+    );
+    const foreign = refs.filter(
+      (ref) => ref !== "" && !/^\/(?!\/)/.test(ref) && !ref.startsWith("#") && !/^(?:https?:|data:|mailto:)/.test(ref),
+    );
+    if (foreign.length > 0) {
+      throw new Error(
+        `index.html carries ${String(foreign.length)} reference(s) that are not root-absolute, so the bridge could` +
+          ` not mount it under a path: ${foreign.join(", ")}`,
+      );
+    }
+  },
+};
+
 export default defineConfig({
+  // The shell is root-absolute and the bridge mounts it (ADR 0052, above).
+  base: "/",
+  experimental: {
+    renderBuiltUrl(_filename, { hostType }) {
+      return hostType === "html" ? undefined : { relative: true };
+    },
+  },
   define: { __BUILD_INFO__: JSON.stringify(BUILD_INFO) },
   plugins: [
     react(),
@@ -224,9 +266,14 @@ export default defineConfig({
         name: channelManifest.name,
         short_name: channelManifest.short_name,
         description: "Monitor and reply to your terminal AI agents from your phone",
-        id: "/",
-        start_url: "/",
-        scope: "/",
+        // Relative, so the installed app's start page and scope are the mount the manifest was
+        // served from (ADR 0052). No `id`: a manifest id is resolved against the ORIGIN, so a
+        // relative one would name the root for every mount; left out it defaults to the processed
+        // `start_url`, which for a root install is `https://host/`, the identity every phone
+        // already holds. Do not add an `id` or a query to `start_url`: either mints a new app and
+        // orphans every home-screen icon.
+        start_url: "./",
+        scope: "./",
         display: "standalone",
         // Not locked to portrait: the manifest was the only thing stopping an installed Collie from
         // rotating on a tablet. Every route lays out as a centred column rather than a fluid sheet —
@@ -237,33 +284,37 @@ export default defineConfig({
         orientation: "any",
         background_color: "#0a0a0a",
         theme_color: "#0a0a0a",
-        icons: [
-          // The 192/512 are safe-zone-padded, so they serve as both the regular ("any") install
-          // icon and the Android adaptive ("maskable") icon, and they paint their own paper —
-          // an app icon that lets the home screen through is a bug. (favicon.svg is intentionally
-          // NOT a manifest icon: it is a different drawing — the head alone, on no background,
-          // legible at 16px — so declaring it sizes:"any" would let an installer pick the wrong
-          // artwork for the install icon.)
-          //
-          // THE TILES ARE THE DARK POLARITY BECAUSE THE MANIFEST IS DARK. Android paints the
-          // install splash as this icon centred on `background_color`, and a manifest colour is a
-          // single value — it cannot follow the OS the way index.html's paired `theme-color` metas
-          // and index.css's `light-dark()` do. `background_color` and `theme_color` were already
-          // both #0a0a0a, so the light tile that shipped first put a near-white square on black:
-          // the one combination that is wrong under EVERY theme. Making the tile dark makes all
-          // three manifest values agree, and it is the choice that costs least — flipping
-          // `background_color` to the light paper instead would leave `theme_color` dark, i.e. a
-          // light splash under dark system bars, and it would still be one fixed polarity.
-          // The tile's own paper is #0f1113 against a #0a0a0a splash: a hair lighter, invisible in
-          // practice, and `background_color` is left alone so the installed chrome keeps one value.
-          // If these are ever re-copied, take the `collie-tile-dark-*` files, not the light ones.
-          //
-          // A dev build (channel !== "release") swaps this pair for the `-dev` tiles instead
-          // (vite-icons.ts's manifestFor) — same dark polarity, same safe-zone padding, orange
-          // paint, so a dev install is unmistakable next to a release install on the same home
-          // screen without breaking either fact above.
-          ...channelManifest.icons,
-        ],
+        // The 192/512 are safe-zone-padded, so they serve as both the regular ("any") install
+        // icon and the Android adaptive ("maskable") icon, and they paint their own paper —
+        // an app icon that lets the home screen through is a bug. (favicon.svg is intentionally
+        // NOT a manifest icon: it is a different drawing — the head alone, on no background,
+        // legible at 16px — so declaring it sizes:"any" would let an installer pick the wrong
+        // artwork for the install icon.)
+        //
+        // THE TILES ARE THE DARK POLARITY BECAUSE THE MANIFEST IS DARK. Android paints the
+        // install splash as this icon centred on `background_color`, and a manifest colour is a
+        // single value — it cannot follow the OS the way index.html's paired `theme-color` metas
+        // and index.css's `light-dark()` do. `background_color` and `theme_color` were already
+        // both #0a0a0a, so the light tile that shipped first put a near-white square on black:
+        // the one combination that is wrong under EVERY theme. Making the tile dark makes all
+        // three manifest values agree, and it is the choice that costs least — flipping
+        // `background_color` to the light paper instead would leave `theme_color` dark, i.e. a
+        // light splash under dark system bars, and it would still be one fixed polarity.
+        // The tile's own paper is #0f1113 against a #0a0a0a splash: a hair lighter, invisible in
+        // practice, and `background_color` is left alone so the installed chrome keeps one value.
+        // If these are ever re-copied, take the `collie-tile-dark-*` files, not the light ones.
+        //
+        // A dev build (channel !== "release") swaps this pair for the `-dev` tiles instead
+        // (vite-icons.ts's manifestFor) — same dark polarity, same safe-zone padding, orange
+        // paint, so a dev install is unmistakable next to a release install on the same home
+        // screen without breaking either fact above.
+        // vite-icons.ts spells the tile srcs root-absolute; the manifest is relative (above).
+        icons: channelManifest.icons.map((icon) => ({
+          src: `./${icon.src.replace(/^\/+/, "")}`,
+          sizes: icon.sizes,
+          type: icon.type,
+          purpose: icon.purpose,
+        })),
       },
       injectManifest: {
         // Files baked into the precache manifest (injected at src/sw.ts's `self.__WB_MANIFEST`).
@@ -283,6 +334,7 @@ export default defineConfig({
       devOptions: { enabled: false },
     }),
     playgroundOnlyPlugin,
+    mountReadyShellPlugin,
   ],
   resolve: {
     alias: { "@": resolve(import.meta.dirname, "src") },

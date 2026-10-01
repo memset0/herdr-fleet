@@ -42,6 +42,138 @@ export const STRIP_TAP_TARGET =
 export const STRIP_TAP_TARGET_SQUARE = `${STRIP_TAP_TARGET} before:-inset-x-[7px]`;
 
 /**
+ * The tap floor for a 28px square control in the pane screen's 30px tab row: the "+" and the fold
+ * chevron (`tab-strip.tsx`). It is NOT centred on the drawn circle, and that is the point.
+ *
+ * The row cannot reach up (the route's content scroller clips at the header's bottom edge, see the
+ * tab scroller's comment in `tab-strip.tsx`), so the whole floor hangs from the row's TOP edge down
+ * to the same 44px line every tab's reach ends on. The numbers assume a 1px border on the control
+ * (the "+" draws a dashed one, the fold reserves a transparent one), because an absolutely placed
+ * `::before` resolves its insets against the PADDING box, 1px inside the drawn edge:
+ *
+ *  - top `-2px`: the 28px circle is centred in 30, so its border edge is 1px below the row's top
+ *    and its padding edge 2px. The reach starts on the row's top edge, no higher.
+ *  - bottom `-16px`: padding edge at 28, reach to 44.
+ *  - sideways `-9px`: 26 + 18 = 44 across. Safe only because both controls are last in their group
+ *    with 12px of air on the tab side (the scroller's `gap-3`, its `pr-3` and the slot's `pl-1.5`),
+ *    so no two reaches touch.
+ *  - `z-[1]`: the lower 14px lie over the terminal mirror, which is positioned and later in the
+ *    tree, and would otherwise take the tap.
+ */
+export const TAB_ROW_SQUARE_TAP_TARGET =
+  "relative before:absolute before:-top-[2px] before:-bottom-4 before:-inset-x-[9px] before:z-[1] before:content-['']";
+
+/**
+ * The sideways scroller the composer's thin rows are built on — the key rail and the actions row.
+ *
+ * Written down once because the recipe is three decisions that only work together: `py-1.5` is the
+ * room {@link STRIP_TAP_TARGET} reaches into for its 44px floor, `min-w-0` lets the row shrink
+ * inside its flex parent instead of pushing its neighbours off, and the two scrollbar rules hide
+ * the one the platform would draw. Change one of them at a call site and that row quietly loses its
+ * tap floor or its overflow.
+ *
+ * The "there is more this way" cue is NOT here any more. It used to be a mask that faded both ends
+ * unconditionally, including the left, where nothing was hidden. It now belongs to
+ * `ui/overflow-edges.tsx`, which measures the scroller and fades — and draws a chevron over — only
+ * the side that actually hides something. Wrap this scroller in `OverflowEdges`; a bare one still
+ * scrolls and simply says nothing about it.
+ *
+ * The horizontal padding is NOT here either: each row pairs its own `px-*` with the negative margin
+ * that cancels it, and those two are one number (see LabelledStrip's note 3).
+ */
+export const STRIP_SCROLLER =
+  "flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overscroll-x-contain py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
+
+/**
+ * The 32px face a button wears inside {@link STRIP_SCROLLER}, **belt-only** — the actions row and
+ * the harness section import this directly (`actions-row.tsx`, `harness-bar.tsx`) and nothing else
+ * does; the key rail and every other strip keep {@link STRIP_TAP_TARGET} unmodified. That is what
+ * makes the next paragraph safe to do here and nowhere else.
+ *
+ * `before:inset-y-0` CANCELS {@link STRIP_TAP_TARGET}'s `-7px` vertical reach on this pill alone —
+ * the horizontal half (`before:-inset-x-px`, next) stays. The belt's own scroller is `py-0`
+ * (`actions-row.tsx`, "Option 6" of the belt-shade deck): with no padding round the 32px pill to
+ * reach into, the vertical half of the floor had nowhere to go and overflowed the scroller's own
+ * box by 6-7px on the bottom edge — measured with the reach in place and gone: `scrollHeight` 38
+ * against a `clientHeight` of 32, dropping to 38 = 32 the moment the reach was disabled, with every
+ * *visible* child box already reading exactly 32px (`getBoundingClientRect` on each, before and
+ * after — the pseudo-element is what moved). Silent because it paints nothing: `before:content-['']`
+ * is empty, so the only thing this loses is 12px of invisible touch margin round an already-32px
+ * pill, still comfortably past the 24px WCAG AA floor. `cn()` at every call site resolves the two
+ * `before:inset-y-*` utilities as one conflicting group and keeps the LAST one in the merged string —
+ * this one, because it is appended after `${STRIP_TAP_TARGET}` below — so this is not a second,
+ * competing rule left for the cascade to arbitrate; it is the one rule that survives.
+ * `before:-inset-x-px` reaches the border edges rather than a neighbour, which is what
+ * lets these sit at a 6px gap without two hit boxes overlapping. The caller adds its own colour and
+ * typography; nothing about the box is a caller's to pick.
+ *
+ * `px-2` and not `px-2.5`: when the actions row's general half took its words back, five labelled
+ * pills measured 416px against a 382px row, and the 10px came off here rather than off a label or
+ * off the type size. It buys 5px a pill — 25px across the five general pills, 20px across a four-button
+ * harness section — and it is ONE number for every pill in every strip on purpose, because the
+ * actions row's two parts only read as one belt while their pills are the same box. The key rail wears
+ * it too; its caps are mono and short, so it lost 5px a key and nothing else.
+ *
+ * `has-[>svg]:px-2` is not decoration and may not be dropped: `ui/button.tsx`'s `sm` size sets
+ * `has-[>svg]:px-2.5`, and tailwind-merge does not read that as conflicting with a bare `px-*` —
+ * different modifier, so both survive and the MODIFIED one wins on every pill that carries an icon,
+ * which is all of them in the actions row. Measured: the bare number alone moved nothing at all.
+ *
+ * SCALED, SINCE 2026-09-23. The height, the `::before` reach and the word's size read the belt's
+ * `--belt-*` custom properties (`index.css`, derived from the one `--belt-scale` the belt's root
+ * sets), so the pill grows with the Settings row "Action belt size". The reach is no longer
+ * cancelled: the scaled scroller has real padding again (`--belt-pad`), and `--belt-reach` runs from
+ * the pill's padding box exactly to the band's edge, so every pill answers the whole band (45px at
+ * the default scale) and nothing overflows the scroller. Outside the belt no `--belt-*` is defined
+ * and the fallbacks are the old fixed box: 32px tall, no vertical reach, 12px words.
+ */
+export const STRIP_ROW_PILL = `${STRIP_TAP_TARGET} before:-inset-x-px before:-inset-y-[var(--belt-reach,0px)] h-[var(--belt-pill,2rem)] min-w-11 shrink-0 touch-manipulation px-2 has-[>svg]:px-2 text-[length:var(--belt-text,0.75rem)] select-none`;
+
+/** An icon on a belt pill: `--belt-icon`, 18px at the default scale, 16px outside the belt. */
+export const BELT_ICON = "size-[var(--belt-icon,1rem)] shrink-0";
+
+/**
+ * A SECTION OF THE BELT — the rectangle a group of {@link STRIP_ROW_PILL}s sits in when it needs a
+ * ground of its own inside the actions row. One caller today: the harness's commands.
+ *
+ * It replaced `STRIP_CAPSULE`, which drew two rounded floating capsules, because the actions row is
+ * now one continuous band and the groups on it are parts of that band rather than objects dropped on
+ * it (`components/actions-row.tsx` holds the whole argument). So: SQUARE corners, and the box spans
+ * the belt's full inner height instead of floating inside it.
+ *
+ * **`h-8 py-0` is a fixed 32px box — the pill's own height, {@link STRIP_ROW_PILL}'s `h-8` — not a
+ * reach into the scroller's padding.** It used to be `-my-1.5` paired with `py-1.5`: the section
+ * grew 6px past its own flow box on top and bottom, and relied on the scroller's `py-1.5` being
+ * exactly 6px to land back on the scroller's padding box. That broke the moment the belt's own
+ * scroller went to `py-0` (`components/actions-row.tsx`, "Option 6" of the belt-shade deck): the
+ * section still reached 6px past its flow box, but there was no padding left to reach INTO, so it
+ * overflowed the scroller's own border box by 6px on each side — measured as `scrollHeight` 40
+ * against `clientHeight` 34. Chromium hid the resulting scrollbar; WebKit let `scrollTop` settle on
+ * the 6px and a vertical swipe on the belt could nudge it. A fixed 32px box has nothing to reach
+ * into and nothing to overflow: it IS the pill's height, so `scrollHeight === clientHeight` in both
+ * engines. `border-y-0`, folded into `border-x` below, is the other half of the same fix — a real
+ * (if transparent) top/bottom border on an `h-8` box eats into its own content box and pushes a
+ * 32px pill 1px past it on each side, reopening a 2px version of the same overflow.
+ *
+ * Two numbers remain, each measured against {@link STRIP_SCROLLER}:
+ *
+ *  1. **`px-1.5` and `gap-1.5` are the belt's own pill gap, 6px**, the same number the scroller uses
+ *     between the general pills and this section. One gap everywhere is what makes the belt read as
+ *     one strip: the section is told apart by its TINT, not by a wider gap around it.
+ *  2. **`border-x border-transparent`** is reserved, never drawn by default. It is the §2 recipe — a
+ *     section that needs a hairline on one edge (see the black-branded fallback in
+ *     `harness-bar.tsx`) colours the reserved width instead of adding one, so the tinted and the
+ *     untinted section are the same box to the pixel. Left and right only, not top and bottom: the
+ *     section has never drawn a top or bottom border (`border-l-border` is the only colour override
+ *     that exists), so dropping that pair's reserved width paints nothing different — it only frees
+ *     the 2px `h-8` needs for the pill's own height.
+ *
+ * It owns the geometry and NOT the ground. The caller paints it.
+ */
+export const BELT_SECTION =
+  "flex h-8 shrink-0 items-center gap-1.5 border-x border-transparent px-1.5 py-0";
+
+/**
  * Whether the strips in this subtree DRAW their names, or only expose them to a screen reader.
  *
  * This is a ROUTE-level treatment and deliberately not a prop. `hideLabel` used to be a prop and was

@@ -49,6 +49,8 @@ interface FakeSession {
   id: string;
   name: string;
   activity: number;
+  /** `session_path`: the folder the session was started in. */
+  path: string;
 }
 
 /** One window in the fake server. */
@@ -269,6 +271,19 @@ export class FakeTmux implements TmuxExec {
   async exitProgram(paneId: string): Promise<void> {
     const pane = this.panes.find((candidate) => candidate.id === paneId);
     if (pane !== undefined) pane.command = "bash";
+    await Promise.resolve();
+  }
+
+  /**
+   * tmux reports no working directory for this pane — `#{pane_current_path}` renders empty.
+   *
+   * Probed as a real, if rare, tmux answer: a pane whose cwd was deleted out from under it. The
+   * folder-label rule (adapter.ts § `windowLabel`) needs a way to put a window into exactly that
+   * state without inventing a directory tmux never reported.
+   */
+  async blankPaneCwd(paneId: string): Promise<void> {
+    const pane = this.panes.find((candidate) => candidate.id === paneId);
+    if (pane !== undefined) pane.cwd = "";
     await Promise.resolve();
   }
 
@@ -551,9 +566,10 @@ export class FakeTmux implements TmuxExec {
     if (name !== undefined && this.sessions.some((session) => session.name === name)) {
       return { code: 1, stdout: "", stderr: `duplicate session: ${name}\n` };
     }
-    const session = this.newSessionNamed(name ?? String(this.sessions.length));
+    const cwd = flagValue(group, "-c") ?? "/tmp";
+    const session = this.newSessionNamed(name ?? String(this.sessions.length), cwd);
     const window = this.newWindowIn(session, "bash", true);
-    const pane = this.newPaneIn(window, flagValue(group, "-c") ?? "/tmp");
+    const pane = this.newPaneIn(window, cwd);
     return said(`${render(flagValue(group, "-F") ?? "", this.paneVars(pane))}\n`);
   }
 
@@ -605,6 +621,7 @@ export class FakeTmux implements TmuxExec {
       ["session_id", session.id],
       ["session_name", session.name],
       ["session_activity", String(session.activity)],
+      ["session_path", session.path],
       ["session_windows", String(this.windows.filter((window) => window.sessionId === session.id).length)],
     ]);
   }
@@ -642,9 +659,9 @@ export class FakeTmux implements TmuxExec {
     ]);
   }
 
-  private newSessionNamed(name: string): FakeSession {
+  private newSessionNamed(name: string, path: string): FakeSession {
     this.minted += 1;
-    const session: FakeSession = { id: `$${String(this.minted)}`, name, activity: this.minted };
+    const session: FakeSession = { id: `$${String(this.minted)}`, name, activity: this.minted, path };
     this.sessions.push(session);
     return session;
   }
@@ -698,13 +715,13 @@ export class FakeTmux implements TmuxExec {
    * pass vacuously — nothing about a space join, nothing about ids staying unique across two spaces.
    */
   private seed(): void {
-    const first = this.newSessionNamed("collie");
+    const first = this.newSessionNamed("collie", "/home/dev/collie");
     const firstTab = this.newWindowIn(first, "agents", false);
     const titled = this.newPaneIn(firstTab, "/home/dev/collie");
     titled.title = "the title the pane printed";
     this.newPaneIn(firstTab, "/home/dev/collie");
 
-    const second = this.newSessionNamed("scratch");
+    const second = this.newSessionNamed("scratch", "/tmp");
     const secondTab = this.newWindowIn(second, "bash", true);
     this.newPaneIn(secondTab, "/tmp");
   }

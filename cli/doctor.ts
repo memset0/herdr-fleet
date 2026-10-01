@@ -13,6 +13,7 @@ import {
 import { beaconReader } from "../bridge/beacon-io.ts";
 import { readBeacons, type BeaconSweepDeps } from "../bridge/beacon/reader.ts";
 import { envBool, nonLoopbackBindRefusal, resolveBridgeHost } from "../bridge/config.ts";
+import { configFilePaths } from "../bridge/config-source.ts";
 import type { MuxCapabilityDeclaration } from "../bridge/mux/capabilities.ts";
 import {
   buildMuxRegistry,
@@ -38,9 +39,10 @@ import type { HelloResult, CrewFetch, PeerOutcome } from "../bridge/crew/peer-cl
 import { crewRuntimePath, parseMarker, rosterDrift, type CrewRuntimeMarker } from "../bridge/crew/staleness.ts";
 import { enrollmentOf, TrustStore, type TrustedMember, type TrustStoreData } from "../bridge/crew/trust-store.ts";
 import { collieVersionBare, type CliContext } from "./context.ts";
-import { bad, ok, skipped, warn, type DoctorStatus, type Finding } from "./finding.ts";
+import { aboutCrew, bad, ok, skipped, warn, type DoctorStatus, type Finding } from "./finding.ts";
 import { explicitMux, probeMuxes, refusedMux, type MuxSighting } from "./mux.ts";
-import { historyFindings } from "./history.ts";
+import { cacheFindings } from "./cache-findings.ts";
+import { historyFindings, type SnapshotRead } from "./history.ts";
 import { EXIT, type Io } from "./io.ts";
 import {
   binaryLayout,
@@ -62,7 +64,7 @@ import { collieBinary, unitName } from "./unit.ts";
 import { pidFilePath } from "./lifecycle.ts";
 import type { Ui } from "./render.ts";
 import { failureLine, type MemberReach, parseCrewArgs, probeMemberReach, VERSION_REPORTED_SINCE } from "./crew.ts";
-import { fingerprintRoot, parseRecord, parseServeStatus, rootAvailability } from "./serve.ts";
+import { fingerprintRoot, mountName, parseRecord, parseServeStatus, rootAvailability } from "./serve.ts";
 import type { Exec, Files } from "./sys.ts";
 import { BUILD_MARKER, currentVersionDir, listVersions, platformId, readBuildMarker } from "./update.ts";
 import {
@@ -178,8 +180,13 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
   // The one artefact a running bridge leaves behind, read once: `restart-pending` takes the pid and
   // the boot stamp out of it, and `storeDrift` below reads the same marker for the roster.
   const runtimeMarker = parseMarker(deps.files.read(crewRuntimePath(deps.ctx.stateDir)));
+  // This bridge's own `/api/snapshot`, read ONCE and handed to the two sections that ask for it: the
+  // history section reads the panes off it, and `restart-pending` reads the bridge's own verdict on
+  // whether it is still running the collie on disk (issue #238). One request, two readers.
+  const ownRead = once(() => ownSnapshot(deps));
   const local: Finding[] = [
     identity(deps),
+    configFile(deps),
     webDist(deps),
     pathLink(deps),
     installKind(deps, install),
@@ -201,18 +208,68 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
       ctx: deps.ctx,
       exec: deps.exec,
       files: deps.files,
-      snapshot: () => ownSnapshot(deps),
+      snapshot: ownRead,
     })),
-    restartPending(deps, install, runtimeMarker),
-    clock(inCrew, probes),
+    // Whether the prompt-cache chip is telling the truth: every TTL's date, and the one variable
+    // `doctor` can read that the bridge deliberately cannot (ADR 0041). Its own module for the same
+    // reason `historyFindings` is one — a section, not a check.
+    ...cacheFindings({ ctx: deps.ctx, files: deps.files, env: deps.ctx.env, now: () => Date.now() }),
+    restartPending(deps, install, runtimeMarker, await ownRead()),
+    // STAMPED `crew` when it is a comparison at all (ADR 0050), while still PRINTING here, where it
+    // always has. `clock` measures this machine against a member's `Date` header and its own remedy
+    // says "enable NTP on whichever machine is off", so the machine at fault may be entirely the far
+    // one: a laptop that wakes six minutes out before NTP resyncs would otherwise turn this desktop's
+    // update button off, which is the exact incident ADR 0050 exists to end. Solo it is `skipped`,
+    // about nobody, and carries no stamp. Together with `store-drift` below this is the rule: these
+    // two arrays are RENDER SECTIONS, and `aboutCrew` is applied per finding on its own merit.
+    inCrew ? aboutCrew(clock(inCrew, probes)) : clock(inCrew, probes),
   ].filter((f) => appliesToMux(f.check, chosen.name));
+  // STAMPED `scope: "crew"`, every one of them (ADR 0050). These four describe the crew's health,
+  // never this machine's readiness to take a new version, and `collie update --check` is the reader
+  // that must not confuse the two: a laptop asleep in another room is not a reason this desktop
+  // cannot update. The stamp rides the finding into `--json` as well, so a script gets the same
+  // split the renderer below already draws as two sections.
+  //
+  // THE STAMP IS NOT A GROUP PASS, AND IT IS NOT THE RENDER SECTION EITHER. ADR 0050's rule is that
+  // a crew fault stops an update only when the update would make it worse, and that is asked of each
+  // check on its own terms. Taken one at a time:
+  //
+  //   `reach`           — CAN be an error, and IS a crew fact. A member that did not answer is
+  //                       already out of contact and levels itself to its lead when it returns
+  //                       (ADR 0016). Stamped, so it is amber.
+  //   `clock`           — CAN be an error, and IS a crew fact, though it prints in the LOCAL section
+  //                       above. Its own remedy says "whichever machine is off", so the machine at
+  //                       fault may be the far one. Stamped there, at its line.
+  //   `store-drift`     — CAN be an error, and is NOT a crew fact. It compares this machine's running
+  //                       bridge to this machine's own store, so it is local and stays red, exactly
+  //                       as it was before ADR 0050. Not stamped; see the note at the list below.
+  //   `secret-generation` — `warn` at worst, so it never reaches the preflight's error filter and the
+  //                       stamp changes nothing for it. A rotation a member slept through does strand
+  //                       that member, which is why it is reported at all, but the strand is already
+  //                       done and an update neither causes nor deepens it. The remedy is a fresh
+  //                       invite, not a held-back release.
+  //   `member-versions` — `warn` at worst, for the same reason: §7.1 makes build skew refuse nothing
+  //                       on the wire, so it is never an error to begin with.
+  //
+  // `cli/doctor.test.ts` holds that last pair to `warn` by reading this file, so a future `bad(` in
+  // either is a failing test rather than a silent downgrade to amber. Two checks can therefore turn
+  // the preflight amber: `reach` and `clock`. Stamping anything else means re-arguing it here.
   const crew: Finding[] =
     inCrew && data !== null
       ? [
+          // RENDERED in the crew section, NOT stamped as a crew fact. `store-drift` compares this
+          // machine's running bridge to this machine's own trust store; it needs no answer from
+          // anywhere else, and its remedy is `collie restart` HERE. `scope` says which machine a
+          // finding is about (`cli/finding.ts`), so stamping this one `crew` would be the group pass
+          // ADR 0050 refuses, and it would read on the phone as "the crew reports: store-drift" when
+          // no other machine reported anything. Left local, it also stays red on a PACKAGED install,
+          // where `collie update` refuses outright, so no update is ever going to restart anything.
           storeDrift(deps, data),
-          secretGeneration(data, members),
-          reach(data, members, reaches),
-          memberVersions(deps, members, probes),
+          ...[
+            secretGeneration(data, members),
+            reach(data, members, reaches),
+            memberVersions(deps, members, probes),
+          ].map(aboutCrew),
         ]
       : [];
 
@@ -313,6 +370,43 @@ function identity(deps: DoctorDeps): Finding {
   const version = collieVersionBare(deps.ctx.root, (p) => deps.files.read(p));
   const platform = platformId(process.platform, process.arch) ?? `${process.platform}-${process.arch}`;
   return ok("collie", `v${version} · ${platform}`);
+}
+
+/**
+ * The two `config.toml` files (ADR 0040), both named whether or not they are there.
+ *
+ * BOTH paths are always in the message, because the failure this check exists for is a typo'd
+ * `COLLIE_CONFIG` pointing at a file nobody wrote: the settings an operator believes they set are
+ * then simply absent, and nothing else in Collie would say so. The verdict ladder is the layer's own
+ * state — a dropped secret is the only `error`, because it is the only case where a value reached the
+ * file and deliberately did not reach the process.
+ */
+function configFile(deps: DoctorDeps): Finding {
+  const layer = deps.ctx.configLayer;
+  // The PATHS come from the resolver, not from the layer, so both are named even when nothing was
+  // read — which is exactly the typo'd-`COLLIE_CONFIG` case this check exists for.
+  const present = new Map(layer.files.map((f) => [f.path, f.present]));
+  const where = configFilePaths(deps.ctx.env, deps.ctx.home, deps.ctx.configDir)
+    .map((f) => `${f.layer} ${f.path} (${present.get(f.path) === true ? "present" : "absent"})`)
+    .join(" · ");
+  if (layer.blocked.length > 0) {
+    return bad(
+      "config-file",
+      `${where} — dropped ${layer.blocked.join(", ")}: the file holding them is not owner-only`,
+      "`chmod 600` that file, then `collie restart`",
+    );
+  }
+  if (layer.problems.length > 0) {
+    return warn(
+      "config-file",
+      `${where} — ${String(layer.problems.length)} problem(s)`,
+      "`collie config check`",
+    );
+  }
+  if (![...present.values()].includes(true)) {
+    return skipped("config-file", `${where} — no config file, the env decides everything`, "`collie config init`");
+  }
+  return ok("config-file", `${where} — parsed clean`);
 }
 
 /** The bundle the bridge serves from disk at request time. Absent means a blank app, not an error page. */
@@ -454,6 +548,16 @@ function installKind(deps: DoctorDeps, install: InstallKind): Finding {
           "install",
           `binary layout with no \`current\` symlink (${binaryLayout(root).installRoot})`,
           "reinstall: curl -fsSL https://colliepwa.dev/install.sh | sh",
+        );
+      }
+      if (install.why === "broken-checkout") {
+        // NOT "cannot tell how this was installed" — we can tell, and the answer is why it stopped.
+        // The remedy is a repair, and naming it matters: the alternative the operator would
+        // otherwise reach for is a reinstall, which throws the working tree away.
+        return warn(
+          "install",
+          `a checkout whose git data is unreadable (${root}/.git exists, git will not read it)`,
+          "`git -C <root> status` to see what git says; repair or re-clone before updating",
         );
       }
       return warn(
@@ -789,7 +893,7 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
     const listener = deps.ctx.serveMode === "http" ? deps.ctx.port : deps.ctx.servePort;
     let availability;
     try {
-      availability = rootAvailability(status, listener, deps.ctx.serveMode, proxy);
+      availability = rootAvailability(status, listener, deps.ctx.serveMode, proxy, deps.ctx.basePath);
     } catch {
       return skipped("front-door", "the serve status was not readable", "run `tailscale serve status --json` by hand");
     }
@@ -834,9 +938,21 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
       `fix or remove ${deps.ctx.handlerFile}, then \`collie serve\``,
     );
   }
-  const fingerprint = fingerprintRoot(status, record.hostPort, record.port);
+  // The record names the mount the door was published at; the bridge serves the one in its
+  // environment. When the two differ the phone opens one path and the app lives at another, and
+  // nothing else reports it (ADR 0052).
+  if (record.path !== deps.ctx.basePath) {
+    return warn(
+      "front-door",
+      `the published door is the ${mountName(record.path)} on ${record.hostPort}, but COLLIE_BASE_PATH` +
+        ` mounts this collie at ${deps.ctx.basePath} — the phone and the app name different paths`,
+      "`collie serve` here to move the door to the configured mount",
+    );
+  }
+  const fingerprint = fingerprintRoot(status, record.hostPort, record.port, record.path);
   if (fingerprint === `${record.mode}|proxy:${record.proxy}`) {
-    return ok("front-door", `${record.hostPort} → ${record.proxy} (recorded and live)`);
+    const at = record.path === "/" ? "" : ` at ${record.path}`;
+    return ok("front-door", `${record.hostPort}${at} → ${record.proxy} (recorded and live)`);
   }
   if (fingerprint === "absent") {
     return warn(
@@ -876,22 +992,93 @@ function liveServeStatus(deps: DoctorDeps): ReturnType<typeof parseServeStatus> 
  * `doctor` is run when something is already wrong, and a hung diagnostic is a worse answer than
  * "it did not answer".
  */
-async function ownSnapshot(deps: DoctorDeps): Promise<string | null> {
+async function ownSnapshot(deps: DoctorDeps): Promise<SnapshotRead> {
   const host = resolvedBind(deps);
   const dialled = bindIsWildcard(host) ? "127.0.0.1" : host;
   const bracketed = dialled.includes(":") && !dialled.startsWith("[") ? `[${dialled}]` : dialled;
   try {
     const answer = await deps.fetch(`http://${bracketed}:${String(deps.ctx.port)}/api/snapshot`, {
       signal: AbortSignal.timeout(SNAPSHOT_BUDGET_MS),
+      headers: identityHeader(deps),
     });
-    return answer.ok ? await answer.text() : null;
+    if (answer.ok) return { kind: "body", text: await answer.text() };
+    return { kind: "refused", status: answer.status };
   } catch {
-    return null;
+    return { kind: "silent" };
   }
+}
+
+/**
+ * The identity this verb shows its own bridge, or nothing when none is configured (issue #238).
+ *
+ * `checkAccess` (bridge/server.ts) fails closed on a request with no `Tailscale-User-Login` while
+ * `tailscale serve` is in front, because an absent header is not evidence of a local caller: a TAGGED
+ * node arrives without one too. So this verb could not read its own snapshot, and reported a healthy
+ * bridge as one that had not answered.
+ *
+ * Sending the configured login GRANTS NOTHING THAT WAS NOT ALREADY THERE. The login is an identity,
+ * not a secret, and the bridge already accepts the header from any caller that reaches its port —
+ * `curl -H 'Tailscale-User-Login: …' http://127.0.0.1:<port>/api/snapshot` answers 200 today, which is
+ * how the reporter demonstrated the bug. The alternative, a loopback exemption, is the one thing that
+ * must NOT be done: `tailscale serve` dials the bridge from loopback itself, so every tailnet request
+ * would take it.
+ *
+ * With no login configured the header is omitted rather than invented: the bridge is then either open
+ * to the tailnet (it warns about that itself at boot) or it refuses, and a refusal reads as a refusal.
+ */
+function identityHeader(deps: DoctorDeps): Record<string, string> | undefined {
+  const login = deps.ctx.env.COLLIE_TRUSTED_USER ?? "";
+  return login === "" ? undefined : { "Tailscale-User-Login": login };
 }
 
 /** Long enough for a busy loopback bridge, short enough that a wedged one does not hold the verb. */
 const SNAPSHOT_BUDGET_MS = 3000;
+
+/** A thunk that runs at most once: the first caller pays, every later one shares the same promise. */
+function once<T>(run: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | null = null;
+  return () => (pending ??= run());
+}
+
+/**
+ * The running bridge's own answer to "am I still executing the collie on disk?", read off its
+ * snapshot: `update.restartNeeded`, and the restart command it spells for its install kind.
+ *
+ * `null` when the read carried no such verdict — a refusal, a silence, or a body from a bridge old
+ * enough not to report one — and the caller falls back to reading the process from outside.
+ */
+function bridgeRestartVerdict(read: SnapshotRead): { restartNeeded: boolean; restartCommand: string | null } | null {
+  if (read.kind !== "body") return null;
+  let parsed: RestartWire;
+  try {
+    // SAFETY: the shape `bridge/server.ts` serialises for `/api/snapshot`, of which only the two
+    // `update` fields this check reads are declared, both optional. A body that disagrees yields no
+    // verdict below and the process is read from outside instead — never a pass.
+    parsed = JSON.parse(read.text.trim() === "" ? "{}" : read.text) as RestartWire;
+  } catch {
+    return null;
+  }
+  const restartNeeded = parsed.update?.restartNeeded;
+  if (restartNeeded !== true && restartNeeded !== false) return null;
+  return { restartNeeded, restartCommand: parsed.update?.restartCommand ?? null };
+}
+
+/** The two fields of `UpdateStatus` (bridge/types.ts) this verb reads off the snapshot wire. */
+interface RestartWire {
+  update?: { restartNeeded?: boolean; restartCommand?: string } | null;
+}
+
+/** Why the bridge's own verdict was not available, for the sentence that falls back to the process. */
+function ownAnswerSentence(read: SnapshotRead): string {
+  switch (read.kind) {
+    case "refused":
+      return `the bridge refused this check's own read of \`/api/snapshot\` (${String(read.status)})`;
+    case "silent":
+      return "the bridge did not answer `/api/snapshot`";
+    case "body":
+      return "the bridge's `/api/snapshot` carries no restart verdict";
+  }
+}
 
 /**
  * Is the running bridge still executing the collie that is installed?
@@ -908,9 +1095,27 @@ const SNAPSHOT_BUDGET_MS = 3000;
  * version the version comparison in `bridge/update.ts` cannot see it at all, because no version
  * string moved.
  *
- * So the executable is read directly: `/proc/<pid>/exe` of the bridge's own pid, judged by
- * {@link classifyExe}. The check was previously skipped here with the sentence "whatever installs
- * the new version restarts it", which is simply false for a package manager.
+ * THE BRIDGE IS ASKED FIRST (issue #238). It already answers this exact question about itself, on
+ * every snapshot, as `update.restartNeeded`: two witnesses, the version files against the version it
+ * booted with, and on Linux `/proc/self/exe` against the file on disk (`selfExeReplaced`,
+ * bridge/index.ts). That answer needs no pid and no `/proc` from this side, which is what a launchd
+ * or unsupervised install on a Mac had neither of — there `bridgePid` had no tier to ask, and even
+ * with a pid there is no `/proc/<pid>/exe` to read, so the check said "no pid" against a bridge that
+ * was up and could have said. The bridge also spells the restart command for its own install kind,
+ * so the remedy is its sentence rather than a guess.
+ *
+ * Asking the process whether it is stale is not circular: neither witness runs new code. Both compare
+ * a value captured at boot (the version, the inode) against a file on disk NOW, and a stale process
+ * reads the disk as well as a fresh one. What it is, on Linux, is a superset of the read below, and
+ * elsewhere the only read there is. Two limits are accepted and said rather than hidden: the bridge
+ * recomputes the answer at most every `STALE_TTL_MS` (5s, bridge/update.ts), so a `doctor` run inside
+ * that window after a swap can still read the previous answer; and off Linux the pass rests on the
+ * version witness alone, which the finding's own sentence states.
+ *
+ * Only when the snapshot carried no verdict — refused, silent, or an older bridge — is the process
+ * read from outside: `/proc/<pid>/exe` of the bridge's own pid, judged by {@link classifyExe}. The
+ * check was once skipped here with the sentence "whatever installs the new version restarts it",
+ * which is simply false for a package manager.
  *
  * ── ON A CHECKOUT IT STILL IS NOT ───────────────────────────────────────────
  * There the process may be behind `bridge/*.ts`, and the running bridge leaves exactly one artefact
@@ -918,13 +1123,40 @@ const SNAPSHOT_BUDGET_MS = 3000;
  * roster — not a version, and not a source stamp. Answering that would take a new field, a new file
  * or a new route, so it ships `skipped` rather than approximating.
  */
-function restartPending(deps: DoctorDeps, install: InstallKind, marker: CrewRuntimeMarker | null): Finding {
+function restartPending(
+  deps: DoctorDeps,
+  install: InstallKind,
+  marker: CrewRuntimeMarker | null,
+  read: SnapshotRead,
+): Finding {
   if (install.kind !== "binary" && install.kind !== "packaged") {
     return skipped(
       "restart-pending",
       "the running bridge records no version — `crew-runtime.json` carries its boot time, pid, mode and" +
         " roster, and nothing names the code it is executing",
       "`collie restart` after any build if in doubt; `collie logs` dates the running process",
+    );
+  }
+  const own = bridgeRestartVerdict(read);
+  if (own !== null) {
+    const binary = collieBinary(deps.ctx.root);
+    if (own.restartNeeded) {
+      return warn(
+        "restart-pending",
+        `the running bridge reports that ${binary} no longer holds the collie it is executing — the` +
+          " files were replaced under it and nothing restarted it",
+        `\`${own.restartCommand ?? "collie restart"}\``,
+      );
+    }
+    // On Linux the bridge compared both the version files and the executable's inode; elsewhere
+    // there is no `/proc/self/exe`, so only the version witness spoke, and a same-version rebuild
+    // by a package manager would pass unseen. Said, rather than reported as a full pass.
+    return ok(
+      "restart-pending",
+      process.platform === "linux"
+        ? `the running bridge reports it is executing ${binary}, the installed collie`
+        : `the running bridge reports it is executing the version installed at ${binary} — judged by` +
+            " version alone on this platform, where the executable itself cannot be compared",
     );
   }
   const pid = bridgePid(deps, marker);
@@ -944,8 +1176,8 @@ function restartPending(deps: DoctorDeps, install: InstallKind, marker: CrewRunt
       return skipped(
         "restart-pending",
         pid === null
-          ? "no pid for the bridge — without one there is no executable to compare against the" +
-              " installed collie"
+          ? `${ownAnswerSentence(read)}, and there is no pid for the bridge — without one there is no` +
+              " executable to compare against the installed collie"
           : `the executable behind pid ${String(pid)} could not be read, so it cannot be compared` +
               " against the installed collie",
         "`collie restart` after a package upgrade — a package manager replaces the files and restarts" +

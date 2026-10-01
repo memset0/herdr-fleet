@@ -26,7 +26,7 @@ import type { MenuAction } from "./menu-model";
 // The footer's segment separator: a middle dot with space on both sides. Anchored on the spaces so a
 // dot inside a value ("Haiku 4.5 · Fastest") in a BODY row can't be mistaken for a footer — only the
 // footer line is ever split, and its hints are always spaced.
-const SEGMENT_SPLIT = /\s+·\s+/;
+export const SEGMENT_SPLIT = /\s+·\s+/;
 
 // One hint segment: "<key token> to <verb phrase>". Non-greedy on the key so "Enter to set as
 // default" yields "Enter" / "set as default" rather than swallowing the first "to".
@@ -98,4 +98,159 @@ export function parseKeyHintFooter(text: string): MenuAction[] {
     actions.push(action);
   }
   return actions;
+}
+
+/**
+ * Whether ANY `·`-separated segment of `text` is a "<key> to <verb>" hint naming a sendable key — a
+ * single "Esc to cancel" included, which `parseKeyHintFooter` deliberately refuses (it needs two
+ * segments to claim a footer). This is the loose test, for the opposite job: not claiming a menu,
+ * but REFUSING to call a screen safe to type into when one of its rows names a key the way a modal's
+ * footer does.
+ */
+export function namesAMenuKey(text: string): boolean {
+  return text
+    .trim()
+    .split(SEGMENT_SPLIT)
+    .some((segment) => {
+      const m = HINT.exec(segment.trim());
+      return m !== null && menuKeyFor(m[1]!) !== null;
+    });
+}
+
+// How many rows a wrapped key-hint footer may span. Three is what a real capture needs: Claude Code
+// 2.1.278 runs the `/effort` footer onto three rows at 40 columns and two at 60. A bound rather than
+// "keep going while it parses", because every extra row is one more chance for a body row to read
+// like a hint.
+const MAX_FOOTER_ROWS = 3;
+
+// The SHAPE of one hint segment, looser than `HINT` above on purpose: it accepts "<key> for
+// <phrase>" as well as "<key> to <verb>", because a screen that writes "s for this session only"
+// still wrote a hint there. This is not used to BUILD an action — `parseKeyHintFooter` does that, and
+// it keeps its narrower grammar — only to answer "is every part of this joined text hint text?",
+// which is how a group of rows proves that all of it is footer and none of it is an option, a label
+// or a rule.
+const HINT_FORM = /^(.+?)\s+(?:to|for)\s+(.+)$/i;
+
+/** A key-hint footer, read as the one or more rows the terminal wrapped it onto. */
+export interface KeyHintFooter {
+  /** The group's rows, trimmed and joined with one space — the text that was parsed. */
+  text: string;
+  /** The group's FIRST row, and its last. Both indices into the `texts` that were read. */
+  startLine: number;
+  endLine: number;
+  /** What `parseKeyHintFooter` made of `text`. Never empty. */
+  actions: MenuAction[];
+}
+
+/**
+ * Read the key-hint footer at the tail of `texts`, joining the rows a narrow pane wrapped it onto.
+ *
+ * The group is the last `k` NON-BLANK rows, contiguous (a blank row ends it), with `k` at most
+ * MAX_FOOTER_ROWS. A `k` is accepted when all three hold:
+ *
+ *   * every row carries the SAME left indent, because a wrapped footer is one block the renderer
+ *     drew at one indent. This is what keeps ordinary agent output that scrolled in below a dialog
+ *     out of the group: it is written at the transcript's indent, not the dialog's. ONE exception,
+ *     for the wrap the TERMINAL did rather than the renderer: a row at indent 0 is still part of the
+ *     block when the row above it could not have held that row's first word —
+ *     `prev.trimEnd().length + 1 + firstWord(cont).length > width`, with `width` the longest row on
+ *     the screen (a dialog's own `▔▔▔` and `───` rules run the full width, so that IS the column
+ *     count). Claude's own flex wrap keeps the indent; the terminal's hard break puts the
+ *     continuation at column 0. The evidence is
+ *     `fixtures/panes/claude--menu-effort-slider--w60-ultracode.txt`: the footer's first row ends at
+ *     column 57 of a 60-column pane, the next word is `only`, and it could not fit, so the terminal
+ *     broke the line and the rest of the footer starts at column 0. A row at any OTHER indent than
+ *     the block's, and a row at indent 0 whose predecessor had room for the next word, are still
+ *     refused — the latter is ordinary output that happens to sit flush left;
+ *   * every `·`-separated segment of the joined text is hint text (HINT_FORM), so a group holding an
+ *     option row, a label row or a rule is refused whole rather than parsed in part;
+ *   * `parseKeyHintFooter` gets at least one action out of the joined text.
+ *
+ * The LARGEST accepted `k` wins. Smallest-first would stop too early and read a true footer's tail as
+ * the whole of it: at 40 columns `/effort`'s last two rows are "s for this session only · Esc to
+ * cancel", which parses on its own and silently loses the two hints above it.
+ *
+ * Returns null when no group qualifies — the same answer `parseKeyHintFooter` gives for a line that
+ * is not a footer, so a caller gains the wrapped case and loses no bail.
+ */
+export function readKeyHintFooter(texts: string[], maxRows: number = MAX_FOOTER_ROWS): KeyHintFooter | null {
+  let end = texts.length - 1;
+  while (end >= 0 && texts[end]!.trim() === "") end--;
+  if (end < 0) return null;
+
+  // The pane's column count, read off the screen rather than passed in: a dialog draws its own rules
+  // edge to edge, so the longest row IS the width. Only the soft-wrap exception below uses it.
+  const width = texts.reduce((w, t) => Math.max(w, t.length), 0);
+
+  let best: KeyHintFooter | null = null;
+  for (let k = 1; k <= maxRows; k++) {
+    const start = end - k + 1;
+    if (start < 0) break;
+    if (texts[start]!.trim() === "") break; // a blank row ends the group; no larger k is contiguous
+    const rows = texts.slice(start, end + 1);
+    if (!rowsAreOneBlock(rows, width)) continue;
+    const text = rows.map((t) => t.trim()).join(" ");
+    const segments = text.split(SEGMENT_SPLIT);
+    if (!segments.every((segment) => HINT_FORM.test(segment.trim()))) continue;
+    const actions = parseKeyHintFooter(text);
+    if (actions.length === 0) continue;
+    best = { text, startLine: start, endLine: end, actions };
+  }
+  return best;
+}
+
+/**
+ * Whether `rows` read as ONE block the renderer drew: every row at the first row's indent, save a
+ * row at indent 0 the TERMINAL wrapped there (`softWrappedAt0`). See `readKeyHintFooter`'s comment.
+ */
+function rowsAreOneBlock(rows: string[], width: number): boolean {
+  const indent = indentOf(rows[0]!);
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i]!;
+    if (indentOf(row) === indent) continue;
+    if (indentOf(row) !== 0) return false;
+    if (!softWrappedAt0(rows[i - 1]!, row, width)) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether `cont` sits at column 0 because `prev` had no room for its first word. Trailing spaces on
+ * `prev` are the grid's padding, not text the cursor passed, so they are trimmed first; the `+ 1` is
+ * the space that would have separated the two words.
+ */
+function softWrappedAt0(prev: string, cont: string, width: number): boolean {
+  const first = /\S+/.exec(cont);
+  if (first === null) return false;
+  return prev.trimEnd().length + 1 + first[0].length > width;
+}
+
+/** A row's left indent, in characters. Compared only between rows of one candidate footer group. */
+function indentOf(text: string): number {
+  return /^\s*/.exec(text)![0].length;
+}
+
+/**
+ * A footer that is ONE "<key> to <verb>" hint, as its Herdr key token and the verb: `Esc to cancel`
+ * → { key: "Escape", verb: "cancel" }. Null when the footer has more than one segment, is not a hint,
+ * or names no sendable key. parseKeyHintFooter refuses a single segment on purpose; this is for a
+ * caller that has other evidence the screen is a modal (claude/menu.ts, under a `▔` edge).
+ */
+export function parseSingleHint(footer: string): { key: string; verb: string } | null {
+  const text = footer.trim();
+  if (text.split(SEGMENT_SPLIT).length !== 1) return null;
+  const m = HINT.exec(text);
+  if (m === null) return null;
+  const key = menuKeyFor(m[1]!);
+  return key === null ? null : { key, verb: m[2]! };
+}
+
+/** The keystroke plan for the row at `target` when the pointer sits on `pointed`: the arrow walk the
+ *  highlight implies, then Enter. Sent as ONE batch (lib/prompt-action.ts hands the whole array to
+ *  `pane.send_keys`), so no half-walked pointer can be left behind. Shared by every pointed list
+ *  (Claude's folder-trust prompt, ADR 0055, and Codex 0.156.1's). */
+export function pointerWalk(pointed: number, target: number): string[] {
+  const steps = target - pointed;
+  const arrow = steps > 0 ? "Down" : "Up";
+  return [...Array<string>(Math.abs(steps)).fill(arrow), "Enter"];
 }

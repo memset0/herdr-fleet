@@ -10,8 +10,8 @@ import {
   MENU_RIGHT_KEYS,
   MENU_UP_KEYS,
 } from "@/lib/harness/menu-hints";
-import { MIRROR_INVERT, MIRROR_SPACE, styleFor } from "@/components/mirror-space";
 import { OptionGroupCaption, PromptPanel } from "@/components/option-button";
+import { RawMirror } from "@/components/raw-mirror";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -25,7 +25,8 @@ export interface MenuBlockAction {
 export interface MenuBlockProps {
   /** The detected menu: its title, the keys its footer named, and the nav it advertised. */
   menu: MenuModel;
-  /** The region's own styled lines — rendered verbatim above the controls (see below). */
+  /** The region's own styled lines — rendered verbatim above the controls, but only for a card that
+   *  has no parsed scale to show instead (see below). */
   lines: StyledLine[];
   /**
    * Injected send handler (from AgentChat). Presentational contract: this component NEVER touches
@@ -38,11 +39,17 @@ export interface MenuBlockProps {
 
 // Native, tappable rendering of a generic modal menu — the `/model` picker and its kin.
 //
-// Unlike the other block renderers this one KEEPS the terminal region visible above the controls,
-// and that is the whole design: the grammar understands the screen's FOOTER, not its body, so the
-// options, their descriptions and the `❯` highlight only exist as terminal text. Replacing them with
-// a synthesised list would be inventing structure we did not parse. So the body is mirrored verbatim
-// and the buttons below it drive it.
+// TWO CARDS SHARE THIS COMPONENT (ADR 0054, amended 2026-09-22; ADR 0056). A card that reads the
+// body replaces it: once the grammar has parsed a full scale (`nav.leftRight` carries a non-empty
+// `values` array and a `label` that is one of them — Claude's `/effort` slider), the mirrored rows
+// are wrapped fragments at 40 and 60 columns, so the card drops the mirror and commits to the title,
+// the chips and the footer buttons instead — PromptPanel's own Terminal toggle (ADR 0056) is the one
+// way back to it, via the shared RawMirror over `lines`. A card that reads only the footer shows the
+// body BY DEFAULT, unchanged: the generic menu (`/model`, `/tasks`, `/resume`) parses no scale, so
+// its options, their descriptions and the `❯` highlight only exist as terminal text — replacing them
+// with a synthesised list would be inventing structure we did not parse — and the mirror stays, with
+// the buttons below it driving it. The SAME Terminal toggle still applies to that shape too, for a
+// decluttered view with the buttons put away.
 //
 // Text is React text nodes only — colour and weight come from the ANSI parse, never markup. Same XSS
 // boundary as the mirror, and the same dark colour space (MIRROR_SPACE/MIRROR_INVERT, ADR 0002),
@@ -69,6 +76,27 @@ export function MenuBlock({ menu, lines, onAction, disabled }: MenuBlockProps) {
     <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label={t("dialog.sendingAria")} />
   );
 
+  // THE PRINTED SCALE (.adr/0054). When the screen printed the whole scale the arrows move along,
+  // the card shows every value instead of the current one between two arrows: on a wide pane the
+  // mirror above is cut off on a phone, so the arrows named a level and hid the rest. A tap is the
+  // DELTA in arrow presses — the same Left/Right the footer advertised, repeated — so nothing is
+  // emitted that the screen did not name. An unreadable scale (fewer than two values, or a label
+  // that is not one of them) falls back to the plain arrows rather than guessing a position.
+  const leftRight = menu.nav.leftRight;
+  const scale = leftRight?.values ?? [];
+  const current = leftRight === undefined ? -1 : scale.indexOf(leftRight.label);
+  // READS THE BODY (ADR 0054, amended 2026-09-22): a fully parsed scale — a non-empty `values` array
+  // and a `label` that is one of them — is everything the mirror could show, so this card does not
+  // render it. One predicate, two uses below: it also decides the chip row, because a card with
+  // chips to show is exactly a card that no longer needs the mirror.
+  const readsBody = scale.length >= 2 && current >= 0;
+
+  /** The arrow presses that walk the marker from `current` to `target`, in order. */
+  const stepKeys = (target: number): string[] => {
+    const key = target > current ? MENU_RIGHT_KEYS[0]! : MENU_LEFT_KEYS[0]!;
+    return Array.from({ length: Math.abs(target - current) }, () => key);
+  };
+
   const navButton = (id: string, label: string, keys: string[], icon: ReactNode) => (
     <button
       key={id}
@@ -83,34 +111,21 @@ export function MenuBlock({ menu, lines, onAction, disabled }: MenuBlockProps) {
   );
 
   return (
-    <PromptPanel ariaLabel={menu.title}>
+    // rawMode (ADR 0056 counsel fix): !readsBody is exactly the branch below that still renders
+    // the RawMirror in children, so the control there only puts the buttons away, never a swap.
+    <PromptPanel ariaLabel={menu.title} raw={lines} rawMode={readsBody ? "reveal" : "declutter"}>
       <OptionGroupCaption>{menu.title}</OptionGroupCaption>
 
-      {/* The region, mirrored verbatim. Scrolls horizontally on its own so a wide picker never makes
-          the page pan (the option/description columns are laid out for a desktop width). */}
-      <pre
-        className={cn(
-          "m-0 overflow-x-auto rounded-lg px-2 py-1.5 font-mono text-[11px] leading-[1.25] whitespace-pre",
-          MIRROR_SPACE,
-          MIRROR_INVERT,
-        )}
-      >
-        {lines.map((line, li) => (
-          <span key={li}>
-            {li > 0 ? "\n" : null}
-            {line.segments.map((s, si) => (
-              <span key={si} style={styleFor(s)}>
-                {s.text}
-              </span>
-            ))}
-          </span>
-        ))}
-      </pre>
+      {/* The region, mirrored verbatim by default — ONLY for a card that reads just the footer. A
+          card that reads the body (readsBody, above) has already parsed everything the mirror could
+          show, so rendering both would repeat the same scale twice, wrapped fragments and all; its
+          way back to these rows is the Terminal toggle above instead (ADR 0056). */}
+      {!readsBody && <RawMirror lines={lines} />}
 
       {/* Arrow cluster — only the directions the screen itself advertised (a `❯` row for Up/Down, an
           "←/→ to <verb>" row for Left/Right). Each is one keystroke; they move a highlight and commit
           nothing, so they take the weaker identity guard. */}
-      {(menu.nav.upDown || menu.nav.leftRight !== undefined) && (
+      {(menu.nav.upDown || (leftRight !== undefined && !readsBody)) && (
         <div className="flex items-center gap-1.5">
           {menu.nav.upDown &&
             navButton("up", t("dialog.menu.moveUp"), MENU_UP_KEYS, <ArrowUp className="size-4" />)}
@@ -119,25 +134,64 @@ export function MenuBlock({ menu, lines, onAction, disabled }: MenuBlockProps) {
           {/* The ←/→ pair sits AROUND the value it adjusts ("←  ◐ Medium effort  →"): the arrows are
               meaningless without it, and the row is re-derived every poll, so the label tracks the
               live value. Rendered in app space, not mirror space — no `dark:` question arises. */}
-          {menu.nav.leftRight !== undefined && (
+          {leftRight !== undefined && !readsBody && (
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
               {navButton(
                 "left",
-                t("dialog.menu.leftAria", { verb: menu.nav.leftRight.verb, label: menu.nav.leftRight.label }),
+                t("dialog.menu.leftAria", { verb: leftRight.verb, label: leftRight.label }),
                 MENU_LEFT_KEYS,
                 <ArrowLeft className="size-4" />,
               )}
               <span className="min-w-0 flex-1 truncate text-center font-mono text-[11px] text-muted-foreground">
-                {menu.nav.leftRight.label}
+                {leftRight.label}
               </span>
               {navButton(
                 "right",
-                t("dialog.menu.rightAria", { verb: menu.nav.leftRight.verb, label: menu.nav.leftRight.label }),
+                t("dialog.menu.rightAria", { verb: leftRight.verb, label: leftRight.label }),
                 MENU_RIGHT_KEYS,
                 <ArrowRight className="size-4" />,
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* The printed scale, one chip per value, in the order the screen printed them. It wraps onto a
+          second line rather than scrolling: six levels at the 44px floor do not fit one phone row,
+          and a row the operator has to scroll hides exactly what this card exists to show.
+
+          The current chip is marked by colour and `aria-current`, and it is disabled, because moving
+          the marker to where it already is sends nothing. Nothing about a chip's box changes with
+          that state — no weight, no padding, no border width, only paint (DESIGN.md §2) — so the
+          marker moving never slides the chip under a thumb already on its way down. */}
+      {readsBody && leftRight !== undefined && (
+        <div className="flex flex-wrap gap-1.5">
+          {scale.map((value, i) => {
+            const isCurrent = i === current;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-current={isCurrent ? "true" : undefined}
+                aria-label={
+                  isCurrent
+                    ? t("dialog.menu.levelCurrentAria", { label: value })
+                    : t("dialog.menu.levelAria", { verb: leftRight.verb, label: value })
+                }
+                disabled={locked || isCurrent}
+                onClick={() => press(`level-${i}`, { keys: stepKeys(i), nav: true })}
+                className={cn(
+                  "flex min-h-11 min-w-11 grow items-center justify-center rounded-lg border border-transparent px-3 text-center font-mono text-xs transition-colors",
+                  isCurrent
+                    ? "border-primary/60 bg-primary/15 text-foreground"
+                    : "border-border bg-secondary text-muted-foreground active:bg-primary/5",
+                  locked && "opacity-60",
+                )}
+              >
+                {value}
+              </button>
+            );
+          })}
         </div>
       )}
 

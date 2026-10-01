@@ -7,9 +7,11 @@ import { join, sep } from "node:path";
 import { AuditLog, fileAuditAppender, formatAuditLine, type AuditEntry } from "./audit.ts";
 import { ActivityLedger } from "./activity.ts";
 import { loadConfig, type Config } from "./config.ts";
+import { CONFIG_SETTINGS } from "./config-schema.ts";
 import { computeEtag } from "./http-cache.ts";
 import { muxOk } from "./mux/types.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
+import { FolderStore } from "./folders.ts";
 import type { PushMessage } from "./push.ts";
 import { TrustStore } from "./crew/trust-store.ts";
 import { Snooze } from "./snooze.ts";
@@ -301,6 +303,14 @@ const PANE_WIRE_KEYS = {
   // and then on every pane in the body. Nothing in this baseline asks, so it is absent on every
   // pane here and no golden byte moved — which is the claim, not an aside.
   session: true,
+  // The pane's prompt-cache reading (M28/02). Also not a crew dimension, and also absent here: no
+  // pane in this baseline names a session a probe could read, so no golden byte moved — which is the
+  // claim the feature makes, not an aside. The bridge never guesses a number before it measures one.
+  cache: true,
+  // Not crew dimensions: the operator's name for this pane's one-pane tab, and the pane's position in
+  // its tab. Computed on the machine the pane lives on; an older peer omits both.
+  soleTabName: true,
+  tabPosition: true,
 } satisfies Record<keyof PaneWire, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -340,6 +350,9 @@ const UPDATE_STATUS_KEYS = {
   // The release ahead changes the crew wire (M27/06). Optional, and ABSENT on a solo instance by
   // construction: there is no link to change, so the golden bodies below carry no such key.
   linkChange: true,
+  // The newest urgent release in the delta (ADR 0046). Optional, and absent on every ordinary
+  // release — an urgent one is rare by construction, so the golden bodies below carry no such key.
+  urgent: true,
 } satisfies Record<keyof UpdateStatus, true>;
 
 const WORKSPACE_KEYS = {
@@ -352,6 +365,9 @@ const WORKSPACE_KEYS = {
   paneCount: true,
   repoRoot: true,
   isWorktree: true,
+  // The space's own folder when the multiplexer keeps one (Changes view root, ADR 0065). Optional and
+  // not a crew dimension: it is present on a solo instance whenever the mux reports it.
+  folder: true,
   // A crew dimension, and the SAME one a pane and a session carry: Herdr numbers spaces per machine,
   // so `(host, workspaceId)` is a space's identity in a crew and `workspaceId` alone collides. Like
   // `PaneWire.host` it is present exactly when `servers` is, which is never in this baseline — the
@@ -407,6 +423,7 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
   test("PaneWire carries the two address dimensions and nothing else", () => {
     expect(Object.keys(PANE_WIRE_KEYS).toSorted()).toEqual([
       "agent",
+      "cache",
       "cwd",
       "focused",
       "hasSession",
@@ -420,9 +437,11 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
       "readableLines",
       "session",
       "sessionName",
+      "soleTabName",
       "status",
       "tabId",
       "tabLabel",
+      "tabPosition",
       "terminalTitle",
       "terminalTitleStale",
       "workspaceId",
@@ -460,10 +479,14 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
       // The detached updater's run record (M15/04) — optional, so an install that has never run one
       // sends no such key at all.
       "run",
+      // The newest urgent release in the delta (ADR 0046) — optional, and absent unless a release
+      // asked for the daily cadence.
+      "urgent",
     ]);
     expect(Object.keys(WORKSPACE_KEYS).toSorted()).toEqual([
       "activeTabId",
       "focused",
+      "folder",
       "host",
       "isWorktree",
       "label",
@@ -578,15 +601,23 @@ describe("solo zero-tax — routes", () => {
       // read-gated like the pane read beside it, so a `?host=` call forwards to the member whose
       // journal named the file (CREW_PROTOCOL.md §9.1).
       "/^\\/api\\/blobs\\/([^/]+)$/",
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|focus))?$/",
+      // `changes` is the Changes view (ADR 0065): read-only git over the pane's folder, read-gated
+      // like `history` beside it and forwarded to the member that owns the pane.
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|changes|focus))?$/",
       "/^\\/api\\/pane\\/([^/]+)\\/resize$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
+      // The Changes view asked by workspace (ADR 0065): the same read as the pane route's `changes`,
+      // read-gated and forwarded with `?host=` to the member that owns the space.
+      "/^\\/api\\/workspace\\/([^/]+)\\/changes$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
+      // The prompt-cache rule catalog (M28/02). A process-scoped READ, gated exactly as `/api/config`
+      // is, and the only route this feature adds. Not forwarded across the crew link.
+      "/api/cache-rules",
       "/api/config",
       // The Crew overview (bridge/crew/status-wire.ts) — a FRONT-DOOR route, and it legitimately
       // extends this list rather than being exempted, exactly as pairing and STT do. It is not a
-      // crew route: `/pack/v1/*` is the link a peer answers (ADR 0013), and this is the lead's own
+      // crew route: `/crew/v1/*` is the link a peer answers (ADR 0013), and this is the lead's own
       // browser answering its own operator. A solo instance registers it and 404s
       // (`crew.not_lead`) — the same shape `/api/stt` has when no provider is configured.
       "/api/crew",
@@ -594,6 +625,13 @@ describe("solo zero-tax — routes", () => {
       // It is named here, not exempted: the guard's job is that a route arrives on purpose.
       "/api/devices",
       "/api/devices/revoke",
+      // The new-space sheet's folder list (M40/02, #289) — two SOLO routes that legitimately extend
+      // this list, named here rather than exempted. Session-scoped through the same closure
+      // `/api/launchers` rides, the read gated as a read and the star as a write, so a `?host=` call
+      // forwards to the member whose folders they are. A solo instance registers both and answers
+      // about its own `folders.json`, which it writes only once the operator uses it (see §6 below).
+      "/api/folders",
+      "/api/folders/star",
       // The detached updater's probe (M15/04) — a solo feature that legitimately extends this list,
       // named here rather than exempted. It is the one ungated `/api/*` route: the prober is a local
       // updater holding no credential, and what it answers is `{ ok, version, deposed, mode }`.
@@ -609,6 +647,13 @@ describe("solo zero-tax — routes", () => {
       // read-gated through the same closure `/api/launch` rides, so a `?host=` call forwards to
       // the peer that runs the rows rather than reading the lead's own file.
       "/api/launchers",
+      // The prompt-cache watch list (M28/03, ADR 0042). Three SOLO routes in the notifications family,
+      // named here rather than exempted: the preference lives on the collie holding the subscription, so
+      // none of the three is forwardable and `bridge/crew/router.test.ts` pins all three as 404 across a
+      // link. A solo instance registers them and answers about its own panes.
+      "/api/notifications/cache-watch",
+      "/api/notifications/cache-watch/forget",
+      "/api/notifications/cache-watch/list",
       "/api/notifications/prefs",
       "/api/notifications/snooze",
       // The Crew overview (bridge/crew/status-wire.ts) — a FRONT-DOOR route, and it legitimately
@@ -616,9 +661,6 @@ describe("solo zero-tax — routes", () => {
       // crew route: `/crew/v1/*` is the link a peer answers (ADR 0013), and this is the lead's own
       // browser answering its own operator. A solo instance registers it and 404s
       // (`crew.not_lead`) — the same shape `/api/stt` has when no provider is configured.
-      // REMOVE_IN_1_9_0: 1.7.0's name for the census, answering a 308 to `/api/crew`. Named here
-      // for the same reason every other route is: it arrives on purpose, and it leaves on purpose.
-      "/api/pack",
       "/api/pair",
       // "Look now" (ADR 0031) — a SOLO route that legitimately extends this list, named here rather
       // than exempted. It is session-scoped and read-gated, and it registers no crew route of its
@@ -652,14 +694,13 @@ describe("solo zero-tax — routes", () => {
   // §11's actual promise, and it is about the PREFIX: `/crew/v1/*` is not routed here on any
   // instance, solo or otherwise — it is declared in `bridge/crew/router.ts` and reached through the
   // `crewRouter` closure, which is what lets this file prove by grep that server.ts names no crew
-  // path. A front-door route whose NAME contains the word (`/api/pack`, 1.7.0's name for
-  // `/api/crew`) is a different thing
-  // entirely and is pinned by the list above; matching on the substring would have conflated the two.
+  // path. A front-door route whose NAME merely contained the word would be a different thing
+  // entirely and would be pinned by the list above; matching on the substring would have conflated
+  // the two.
   //
-  // BOTH prefixes are asserted. The version 1 overlap (`/pack/v1/*`, REMOVE_IN_1_9_0) is declared in
-  // `bridge/crew/v1-overlap.ts` and dispatched by `bridge/crew/router.ts`, for the same reason
-  // version 2 is, so server.ts names neither and solo still registers nothing.
-  test("no crew prefix is routed at all, version 2 or the version 1 overlap", () => {
+  // 1.7.0's prefix is asserted too, and since 1.9.0 dropped the overlap (ADR 0039) it is absent on
+  // both counts: server.ts never named it, and now nothing routes it either.
+  test("no crew prefix is routed at all, and 1.7.0's is gone with the overlap", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
     expect(declaredRoutes().filter((r) => r.startsWith("/crew") || r.startsWith("/pack"))).toEqual([]);
     expect(src).not.toMatch(/"\/crew/);
@@ -683,6 +724,7 @@ const CONFIG_KEYS = {
   themeFile: true,
   fontsDir: true,
   launchersFile: true,
+  cacheRulesFile: true,
   maxUploadBytes: true,
   port: true,
   host: true,
@@ -708,7 +750,9 @@ const CONFIG_KEYS = {
   stateDir: true,
   multiSession: true,
   skipServe: true,
+  basePath: true,
   uploadExtraTypes: true,
+  cacheWarnSeconds: true,
 } satisfies Record<keyof Config, true>;
 
 describe("solo zero-tax — config", () => {
@@ -719,6 +763,9 @@ describe("solo zero-tax — config", () => {
       "allowNonLoopbackBind",
       "allowedOrigins",
       "auditContent",
+      "basePath",
+      "cacheRulesFile",
+      "cacheWarnSeconds",
       "commandsFile",
       "deviceAllowlist",
       "deviceHeader",
@@ -774,14 +821,27 @@ describe("solo zero-tax — config", () => {
     expect(src).toContain('envInt("COLLIE_POLL_IDLE_MS", 12_000');
   });
 
-  test("config.ts reads exactly today's COLLIE_* env keys — no crew enrollment key", () => {
-    const src = readFileSync(join(import.meta.dir, "config.ts"), "utf8");
-    const keys = [...new Set([...src.matchAll(/COLLIE_[A-Z0-9_]+/g)].map((m) => m[0]))].toSorted();
+  // Read from `bridge/config-schema.ts` rather than by grepping `config.ts`'s source, because the
+  // schema is now the single declaration of what every setting is (ADR 0040). The rows that carry a
+  // `configField` are exactly the settings `loadConfig` resolves, which is the list §11 pins. A
+  // CONFIG FILE ADDS NO ENV KEY, so this list is the 38 names it has always been plus `COLLIE_BASE_PATH` (ADR 0052) — the two
+  // `COLLIE_MUX_ENDPOINT_<NAME>` rows collapse back to the prefix the old grep saw, because the env
+  // name is built at the call site and the file key must not be.
+  test("the schema names exactly today's COLLIE_* env keys — no crew enrollment key", () => {
+    const keys = [
+      ...new Set(
+        CONFIG_SETTINGS.filter((s) => s.configField !== undefined && s.env.startsWith("COLLIE_")).map(
+          (s) => (s.env.startsWith("COLLIE_MUX_ENDPOINT_") ? "COLLIE_MUX_ENDPOINT_" : s.env),
+        ),
+      ),
+    ].toSorted();
     expect(keys).toEqual([
       "COLLIE_ALLOWED_ORIGINS",
       "COLLIE_ALLOW_ANY_HOST",
       "COLLIE_ALLOW_NON_LOOPBACK_BIND",
       "COLLIE_AUDIT_CONTENT",
+      "COLLIE_BASE_PATH",
+      "COLLIE_CACHE_WARN_SECONDS",
       "COLLIE_CODEX_ROOT",
       "COLLIE_DEVICE_ALLOWLIST",
       "COLLIE_DEVICE_HEADER",
@@ -832,6 +892,16 @@ const STATE_DIR_ENTRIES = [
   // READS it, and the emitter that fills it is a CLI verb the operator installs a hook for. An
   // instance whose operator never ran `collie hooks install` never has this directory at all.
   "beacons",
+  // The prompt-cache watch list (M28/03). Absent until the first watch toggle or the first warning sent
+  // under the global switch — both are events, so a bridge that is merely started still writes the four
+  // entries asserted below.
+  "cache-watch.json",
+  // The new-space sheet's folder list (M40/02, #289), and a §11 row RENEGOTIATED ON PURPOSE: it is
+  // the one entry here a solo instance's own operator writes through ordinary use, from the phone.
+  // Absent until the first space created with a folder or the first star — both are acts, and a
+  // bridge that is only started, only read, or only ever asked for spaces in home writes none of it,
+  // so the four entries asserted below hold. Driven in "the folder list appears only on use".
+  "folders.json",
   "notify-prefs.json",
   // Device pairing. Both are absent until the operator runs `collie pair`, and an install that
   // never does keeps writing exactly the six entries above it.
@@ -842,6 +912,10 @@ const STATE_DIR_ENTRIES = [
   // Speech-to-text settings. Absent until the operator runs `collie stt setup`, and READ ONLY by
   // the bridge — `bridge/stt/config.ts` names this path and never writes it.
   "stt.json",
+  // The detached updater's own stdout and stderr (#283), with the run before it kept beside it as
+  // `update-runner.log.1`. Absent until the first update started from the phone: the bridge opens it
+  // only to hand the descriptor to the runner it spawns.
+  "update-runner.log",
   "update-state.json",
   // The detached updater's run record and its lock (M15/04). WRITTEN BY THE CLI, never by the
   // bridge — `bridge/update-run.ts` only reads them, so the scan below sees the names here and no
@@ -875,6 +949,11 @@ const CREW_STATE_DIR_ENTRIES = [
   // It is a separate file from `paired-devices.json` on purpose and permanently: `enforced()` is "the
   // registry is non-empty", so merging the two would arm the deputy's own write gate for its own
   // operator (`bridge/crew/standby-devices.ts`).
+  // 1.7.0's trust-store name, and the one entry on this list NOTHING here ever writes, reads or
+  // moves. `legacyStateFileNotice` (`crew/trust-store.ts`, ADR 0045) asks whether it is present so a
+  // state directory that never saw 1.8.x is named rather than adopted in silence. One `exists()` on
+  // the boot path, no open, no rename; a solo instance finds nothing and says nothing.
+  "pack-trust.json",
   "standby-devices.json",
 ];
 
@@ -932,6 +1011,12 @@ describe("solo zero-tax — the filesystem", () => {
       const cfg: Config = { ...loadConfig(), stateDir };
       await new Snooze(cfg, () => TS).set(TS + 60_000);
       await new NotifyPrefsStore(cfg).set({ blocked: false });
+      // The folder list, loaded as index.ts loads it at startup and fed the two things an idle solo
+      // bridge sees: a space created in home, and nothing at all. Neither is an entry, so no file.
+      const folders = new FolderStore(cfg, "/home/op");
+      await folders.load();
+      await folders.recordRecent("/home/op");
+      await folders.recordRecent("");
       const ledger = new ActivityLedger({ stateDir }, () => TS, 60 * 60 * 1000);
       ledger.ensure("default", "w1:p1");
       await ledger.flush();
@@ -949,6 +1034,22 @@ describe("solo zero-tax — the filesystem", () => {
       const written = (await readdir(stateDir)).toSorted();
       expect(written).toEqual(["activity.json", "audit.log", "notify-prefs.json", "snooze.json"]);
       expect(written.filter((f) => !STATE_DIR_ENTRIES.includes(f))).toEqual([]);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  // §11's "Files written" row, amended on purpose by M40/02: `folders.json` is written by use and by
+  // nothing else. Driven, so the amendment is a fact about the store rather than a sentence.
+  test("the folder list appears only on use: a create with a folder, or a star", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "collie-solo-baseline-"));
+    try {
+      const folders = new FolderStore({ stateDir }, "/home/op");
+      await folders.load();
+      expect(await readdir(stateDir)).toEqual([]);
+      await folders.recordRecent("/home/op/proj");
+      expect(await readdir(stateDir)).toEqual(["folders.json"]);
+      expect(STATE_DIR_ENTRIES).toContain("folders.json");
     } finally {
       await rm(stateDir, { recursive: true, force: true });
     }

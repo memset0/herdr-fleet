@@ -57,21 +57,36 @@ export function crewRouteFor(pathname: string): string | null {
  * one of two declarations is a guard the next declaration walks around.
  */
 const FORWARDABLE: readonly RegExp[] = [
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|focus|resize))?$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|changes|focus|resize))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
+  // The Changes view asked by workspace (ADR 0065): read-only git over the folder of a space that
+  // lives on ONE member, so a `?host=` call is proxied like `pane/:id/changes`. Mirrors
+  // `WORKSPACE_CHANGES_ROUTE` in bridge/server.ts one-for-one.
+  /^workspace\/[^/]+\/changes$/,
   // Rows must come from the host that runs them: a launch (and the rows a launch button reads)
   // addressed at a peer via `?host=` has to reach THAT machine's `launchers.toml`, never the
   // lead's. Both ride the crew link exactly like `workspace` does.
   /^launch$/,
   /^launchers$/,
+  // The new-space sheet's folder list (#289): folders exist on ONE machine, so the list is that
+  // machine's own `folders.json`, read and starred on the member that holds it — the lead keeps no
+  // copy. Additive-optional (CREW_PROTOCOL.md §7.1): a member that predates it answers 404, and the
+  // phone reads that as "no list", never as an error.
+  /^folders$/,
+  /^folders\/star$/,
   // A blob is bytes on ONE machine's disk: the journal that named it is that member's journal, and
   // the lead holds no copy. So a `?host=` blob read is proxied byte for byte exactly like
   // `history` (CREW_PROTOCOL.md §9.1). The hash is matched as an opaque segment, mirroring
   // `BLOB_ROUTE` in bridge/server.ts one-for-one — `forward.test.ts` pins that correspondence.
   /^blobs\/[^/]+$/,
 ];
+
+/** `workspace/<id>/changes` — the one workspace route that is a read. */
+function isWorkspaceChanges(route: string): boolean {
+  return /^workspace\/[^/]+\/changes$/.test(route);
+}
 
 /** The inverse of {@link crewRouteFor}, for the peer dispatching a crew route into its own routes. */
 export function apiPathFor(route: string): string | null {
@@ -91,12 +106,20 @@ export function forwardKind(route: string): ForwardKind {
   // this lead has not heard from in a while, never refused before it is tried (§10.3's "a READ to a
   // dead member is still attempted").
   if (route === "launchers") return "read";
+  // The folder list is a GET that changes nothing, read even from a stale member like the rows
+  // above; a star writes that member's file, so it is a write and a member not taking writes
+  // refuses it before it is tried (§10.3), as a read-only device does on the member itself.
+  if (route === "folders") return "read";
+  if (route === "folders/star") return "write";
   // A blob read serves a file off the owning member's disk and changes nothing there — the same
   // shape as `pane/:id/history`, and attempted against a stale member for the same reason (§10.3).
   if (route.startsWith("blobs/")) return "read";
+  // A workspace's Changes list is the pane route's `changes`, asked by space: a read.
+  if (isWorkspaceChanges(route)) return "read";
   if (!route.startsWith("pane/")) return "write";
   const action = route.split("/")[2];
-  return action === undefined || action === "history" ? "read" : "write";
+  // `changes` is read-only git over the owning member's folder (ADR 0065): a read, like history.
+  return action === undefined || action === "history" || action === "changes" ? "read" : "write";
 }
 
 /** The pane id a route addresses, for the lead's own audit line. `undefined` for tab/workspace. */
@@ -112,7 +135,10 @@ export function forwardPaneId(route: string): string | undefined {
  * the two independent logs can be read against each other without a translation table.
  *
  * `null` ⇒ a read, which is not audited on either side today and does not become audited by crossing
- * a link.
+ * a link — or a write neither side audits, which is one only: a star on the folder list. It is a
+ * preference, like `notifications/prefs`, and the audit log records what reaches a terminal
+ * (keystrokes, replies, uploads, pane and tab lifecycle), so the peer writes no line for it and the
+ * lead's line would have nothing to be read against.
  */
 export function forwardAuditAction(route: string): string | null {
   if (route === "tab") return "tab.create";
@@ -122,10 +148,12 @@ export function forwardAuditAction(route: string): string | null {
   // target host"), and the peer's own audit line is the accurate record of which one ran.
   if (route === "launch") return "launch";
   if (route === "launchers") return null;
+  if (route === "folders" || route === "folders/star") return null; // a read, and a preference
   if (route.startsWith("blobs/")) return null; // a read
+  if (isWorkspaceChanges(route)) return null; // a read
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
-  if (action === undefined || action === "history") return null;
+  if (action === undefined || action === "history" || action === "changes") return null;
   // The handlers for these four namespace themselves; `reply`, `keys` and `upload` do not. The list
   // is not a style choice — it is read off what the PEER's own handler records, and a mismatch here
   // makes the lead's line and the peer's line disagree about what happened.

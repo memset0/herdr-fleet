@@ -1,6 +1,15 @@
+import { chmodSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import {
+  configFilePaths,
+  readConfigFiles,
+  type ConfigFileLayer,
+  type Environment,
+  type FilePerms,
+} from "./config-source.ts";
+import { diskIo } from "./operator-file.ts";
 import type { AuditContent } from "./audit.ts";
 import type { DialMode } from "./dial.ts";
 import type { JournalRoots } from "./journal/registry.ts";
@@ -21,8 +30,9 @@ function envInt(
   name: string,
   fallback: number,
   opts: { min?: number; max?: number } = {},
+  env: Environment = process.env,
 ): number {
-  const raw = process.env[name];
+  const raw = env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   const trimmed = raw.trim();
   if (!/^[+-]?\d+$/.test(trimmed)) {
@@ -38,7 +48,7 @@ function envInt(
   return n;
 }
 
-function envList(name: string, env: Record<string, string | undefined> = process.env): string[] {
+function envList(name: string, env: Environment = process.env): string[] {
   return (env[name] ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -75,7 +85,7 @@ function normaliseUploadTypes(raw: string[]): string[] {
 function envRoots(
   name: string,
   fallback: string | string[],
-  env: Record<string, string | undefined> = process.env,
+  env: Environment = process.env,
 ): string[] {
   const list = envList(name, env);
   const fallbacks = Array.isArray(fallback) ? fallback : [fallback];
@@ -86,8 +96,13 @@ function envRoots(
  * Read an env var constrained to a fixed set of string values, falling back (with a warning) on
  * anything not in `allowed`. Empty/unset → `fallback`. Case-insensitive.
  */
-function envEnum<T extends string>(name: string, allowed: readonly T[], fallback: T): T {
-  const raw = process.env[name];
+function envEnum<T extends string>(
+  name: string,
+  allowed: readonly T[],
+  fallback: T,
+  env: Environment = process.env,
+): T {
+  const raw = env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   const v = raw.trim().toLowerCase();
   const match = allowed.find((a) => a.toLowerCase() === v);
@@ -107,7 +122,7 @@ function envEnum<T extends string>(name: string, allowed: readonly T[], fallback
 export function envBool(
   name: string,
   fallback: boolean,
-  env: Record<string, string | undefined> = process.env,
+  env: Environment = process.env,
 ): boolean {
   const raw = env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
@@ -257,6 +272,19 @@ export interface Config {
    */
   launchersFile: string;
   /**
+   * Where the operator's prompt-cache overrides live — `cache-rules.toml`, the sixth file on the same
+   * contract, read the same way (bridge/operator-cache-rules.ts) and likewise never read here.
+   */
+  cacheRulesFile: string;
+  /**
+   * How many seconds before a pane's prompt cache expires the watched-pane push goes out
+   * (`bridge/cache/warden.ts`). One window for every watched pane; there is no per-pane threshold.
+   *
+   * NOT the threshold that turns the countdown chip amber, which is a quarter of each rule's own TTL
+   * (`bridge/cache/engine.ts` § warnSecondsFor). Two numbers with two jobs.
+   */
+  cacheWarnSeconds: number;
+  /**
    * Tailscale identity gate. If set under `tailscale serve`, the request must carry a matching
    * `Tailscale-User-Login` header. A mismatch is rejected. A missing header is also rejected —
    * serve injects none for tagged nodes, so tolerating it let any tagged node write. Under
@@ -332,6 +360,20 @@ export interface Config {
    * and per-device auth ({@link deviceHeader}) becomes the way to gate writes (docs/deployment.md → Variant C).
    */
   skipServe: boolean;
+  /**
+   * The path this collie is mounted under when a proxy gives it one (`COLLIE_BASE_PATH`), always
+   * with a leading and a trailing slash: `/` for the root, `/collie/` for `https://host/collie/`.
+   *
+   * ONE BUILD SERVES ANY MOUNT (ADR 0052). Inside `web/dist` nothing names the root (chunks and
+   * stylesheets reference each other relatively), and the mount is applied at serve time: under a
+   * mount `index.html` goes out with its root-absolute references prefixed with this path and with
+   * the path in `<meta name="collie-base">`, which is where the app reads it. Nothing else on disk
+   * changes, so the release payload's prebuilt bundle mounts anywhere. A proxy normally strips
+   * the mount before it forwards (`tailscale serve` does); one that does not is tolerated, because
+   * the request handler reads an inbound path that still carries the mount as if it had been
+   * stripped. `collie serve` publishes at this path instead of the root when it is set.
+   */
+  basePath: string;
 }
 
 /**
@@ -348,7 +390,7 @@ export const DEFAULT_PORT = 8787;
  * the `collie start`/`status` banner's readiness probe (`cli/lifecycle.ts`) both need the bridge's
  * real bind from their own merged `.env`, not a re-derived guess that could drift from this one.
  */
-export function resolveBridgeHost(env: Record<string, string | undefined> = process.env): string {
+export function resolveBridgeHost(env: Environment = process.env): string {
   return env.COLLIE_HOST ?? "127.0.0.1";
 }
 
@@ -404,7 +446,7 @@ export function nonLoopbackBindRefusal(
  */
 export function defaultSocketPath(
   platform: NodeJS.Platform = process.platform,
-  env: Record<string, string | undefined> = process.env,
+  env: Environment = process.env,
   home: string = homedir(),
 ): string {
   if (platform === "win32") {
@@ -416,7 +458,15 @@ export function defaultSocketPath(
 
 /**
  * Where runtime state lives: uploads, `audit.log`, `push-subscriptions.json`, `snooze.json` — and the
- * crew trust store. Herdr's injected dir wins, then the explicit override, then the user state dir.
+ * crew trust store. The explicit override, then the user state dir.
+ *
+ * `HERDR_PLUGIN_STATE_DIR` is IGNORED, on purpose (#226). Herdr injects it into a plugin ACTION, but
+ * the bridge never runs as one: it runs as a systemd or launchd service, whose environment
+ * (`cli/unit.ts` `bridgeEnvironment`) has never carried it. So honouring it split one install in two:
+ * `herdr plugin action invoke push-test` read `~/.local/state/herdr/plugins/herdr.collie`, found no
+ * subscriptions, and failed, while the service kept them under `~/.local/state/collie`. The same split
+ * reached every verb that reads or writes state through an action: pairing, devices, crew, update
+ * runs. The service's answer is the one that has always held the data, so it is the only answer.
  *
  * Pure and exported because the CLI resolves the same directory from its own `.env`-merged
  * environment (`cli/context.ts`): the crew verbs write the trust store the bridge reads, so the two
@@ -424,10 +474,10 @@ export function defaultSocketPath(
  * key `loadConfig` did not already name — the solo baseline's env-key list is unchanged by it.
  */
 export function resolveStateDir(
-  env: Record<string, string | undefined> = process.env,
+  env: Environment = process.env,
   home: string = homedir(),
 ): string {
-  return env.HERDR_PLUGIN_STATE_DIR ?? env.COLLIE_STATE_DIR ?? join(home, ".local", "state", "collie");
+  return env.COLLIE_STATE_DIR ?? join(home, ".local", "state", "collie");
 }
 
 /**
@@ -442,7 +492,7 @@ export function resolveStateDir(
  * bridge running as another user reads that user's `~/.claude/projects`, not the operator's.
  */
 export function resolveJournalRoots(
-  env: Record<string, string | undefined> = process.env,
+  env: Environment = process.env,
   home: string = homedir(),
 ): JournalRoots {
   return {
@@ -497,53 +547,85 @@ export function resolveJournalRoots(
  * CLI wrote. It names no key `loadConfig` did not already name.
  */
 export function resolveConfigDir(
-  env: Record<string, string | undefined> = process.env,
+  env: Environment = process.env,
   home: string = homedir(),
 ): string {
   return env.HERDR_PLUGIN_CONFIG_DIR ?? join(home, ".config", "collie");
 }
 
-export function loadConfig(): Config {
-  const stateDir = resolveStateDir();
+/**
+ * Every bridge setting, resolved from one environment.
+ *
+ * The environment is a PARAMETER, defaulting to `process.env`, so the config file's layer can be
+ * spread underneath it before anything is read (ADR 0040): `loadConfig(overlayConfig(process.env,
+ * layer))` is the whole of how a `config.toml` reaches the bridge. Called with nothing it behaves
+ * exactly as it always has, which is why no existing call site moved.
+ */
+/** {@link FilePerms} against the real filesystem, for the secret-permission rule on `config.toml`. */
+const diskFilePerms: FilePerms = {
+  mode(path) {
+    try {
+      return statSync(path).mode & 0o777;
+    } catch {
+      return null;
+    }
+  },
+  tighten(path) {
+    try {
+      chmodSync(path, 0o600);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
 
-  const submitKeys = envList("COLLIE_SUBMIT_KEYS");
+export function loadConfig(env: Environment = process.env): Config {
+  const stateDir = resolveStateDir(env);
 
-  const host = resolveBridgeHost();
-  const allowNonLoopbackBind = envBool("COLLIE_ALLOW_NON_LOOPBACK_BIND", false);
+  const submitKeys = envList("COLLIE_SUBMIT_KEYS", env);
+
+  const host = resolveBridgeHost(env);
+  const allowNonLoopbackBind = envBool("COLLIE_ALLOW_NON_LOOPBACK_BIND", false, env);
 
   // The operator's config dir — where their `.env` lives, and now their `commands.toml` beside it.
   // Resolved exactly the way scripts/collie-ctl.sh resolves it MINUS the `herdr` shell-out: the
   // launcher passes HERDR_PLUGIN_CONFIG_DIR into the unit (and the launchd plist) precisely so this
   // process never has to ask the CLI, and the two entry points must not disagree about which dir
   // that is. ~/.config/collie is the same last-resort default the shim ends on.
-  const configDir = resolveConfigDir();
+  const configDir = resolveConfigDir(env);
 
-  const mux = (process.env.COLLIE_MUX ?? "").trim() || DEFAULT_MUX;
-  const socketPath = process.env.HERDR_SOCKET_PATH ?? defaultSocketPath();
+  const mux = (env.COLLIE_MUX ?? "").trim() || DEFAULT_MUX;
+  const socketPath = env.HERDR_SOCKET_PATH ?? defaultSocketPath(process.platform, env);
 
   return {
     mux,
     // Herdr's endpoint IS its socket path, so the default adapter keeps reading exactly the setting
     // it always read and nothing about an existing deployment moves.
-    muxEndpoint: mux === DEFAULT_MUX ? socketPath : (process.env[muxEndpointVar(mux)] ?? "").trim(),
-    tmuxBin: (process.env.COLLIE_TMUX_BIN ?? "").trim(),
-    zellijBin: (process.env.COLLIE_ZELLIJ_BIN ?? "").trim(),
+    muxEndpoint: mux === DEFAULT_MUX ? socketPath : (env[muxEndpointVar(mux)] ?? "").trim(),
+    tmuxBin: (env.COLLIE_TMUX_BIN ?? "").trim(),
+    zellijBin: (env.COLLIE_ZELLIJ_BIN ?? "").trim(),
     socketPath,
-    dialMode: envEnum("COLLIE_HERDR_DIAL", ["auto", "net", "bun"] as const, "auto"),
-    port: envInt("COLLIE_PORT", DEFAULT_PORT, { min: 1, max: 65535 }),
+    dialMode: envEnum("COLLIE_HERDR_DIAL", ["auto", "net", "bun"] as const, "auto", env),
+    port: envInt("COLLIE_PORT", DEFAULT_PORT, { min: 1, max: 65535 }, env),
     host,
     allowNonLoopbackBind,
-    pollMs: envInt("COLLIE_POLL_MS", 1500, { min: 250 }),
-    pollIdleMs: envInt("COLLIE_POLL_IDLE_MS", 12_000, { min: 1000 }),
-    notifyDelayMs: envInt("COLLIE_NOTIFY_DELAY_MS", 30_000, { min: 0 }),
-    readLines: envInt("COLLIE_READ_LINES", 200, { min: 1 }),
+    pollMs: envInt("COLLIE_POLL_MS", 1500, { min: 250 }, env),
+    pollIdleMs: envInt("COLLIE_POLL_IDLE_MS", 12_000, { min: 1000 }, env),
+    notifyDelayMs: envInt("COLLIE_NOTIFY_DELAY_MS", 30_000, { min: 0 }, env),
+    // How early a watched pane's prompt-cache warning goes out. The floor is 30 s (a window shorter
+    // than one poll's idle resolution is noise, not a warning) and the ceiling an hour, which is past
+    // the longest TTL any shipped rule claims.
+    cacheWarnSeconds: envInt("COLLIE_CACHE_WARN_SECONDS", 300, { min: 30, max: 3600 }, env),
+    readLines: envInt("COLLIE_READ_LINES", 200, { min: 1 }, env),
     // Whole megabytes in, bytes out. The floor is 1 MB (a cap below one screenshot is a broken
     // install, not a tight one) and the ceiling 512 MB, which is well past useful and still short
     // of the point where a single buffered body is the thing that ends the process.
-    maxUploadBytes: envInt("COLLIE_MAX_UPLOAD_MB", DEFAULT_MAX_UPLOAD_MB, { min: 1, max: 512 }) * 1024 * 1024,
-    uploadExtraTypes: normaliseUploadTypes(envList("COLLIE_UPLOAD_EXTRA_TYPES")),
-    transcript: envBool("COLLIE_TRANSCRIPT", true),
-    journalRoots: resolveJournalRoots(),
+    maxUploadBytes:
+      envInt("COLLIE_MAX_UPLOAD_MB", DEFAULT_MAX_UPLOAD_MB, { min: 1, max: 512 }, env) * 1024 * 1024,
+    uploadExtraTypes: normaliseUploadTypes(envList("COLLIE_UPLOAD_EXTRA_TYPES", env)),
+    transcript: envBool("COLLIE_TRANSCRIPT", true, env),
+    journalRoots: resolveJournalRoots(env),
     submitKeys: submitKeys.length ? submitKeys : ["Enter"],
     commandsFile: join(configDir, "commands.toml"),
     keysFile: join(configDir, "keys.toml"),
@@ -551,20 +633,60 @@ export function loadConfig(): Config {
     themeFile: join(configDir, "theme.toml"),
     fontsDir: join(configDir, "fonts"),
     launchersFile: join(configDir, "launchers.toml"),
-    trustedUser: process.env.COLLIE_TRUSTED_USER ?? "",
-    trustedUserOptional: envBool("COLLIE_TRUSTED_USER_OPTIONAL", false),
-    auditContent: envEnum("COLLIE_AUDIT_CONTENT", ["preview", "none"] as const, "preview"),
-    deviceHeader: (process.env.COLLIE_DEVICE_HEADER ?? "").trim(),
-    deviceAllowlist: envList("COLLIE_DEVICE_ALLOWLIST"),
-    allowedOrigins: envList("COLLIE_ALLOWED_ORIGINS"),
-    publicHosts: envList("COLLIE_PUBLIC_HOSTS"),
-    tailscaleHosts: envList("COLLIE_TAILSCALE_HOSTS"),
-    allowAnyHost: envBool("COLLIE_ALLOW_ANY_HOST", false),
-    vapidPublic: process.env.COLLIE_VAPID_PUBLIC ?? "",
-    vapidPrivate: process.env.COLLIE_VAPID_PRIVATE ?? "",
-    vapidSubject: process.env.COLLIE_VAPID_SUBJECT ?? "mailto:admin@example.com",
+    cacheRulesFile: join(configDir, "cache-rules.toml"),
+    trustedUser: env.COLLIE_TRUSTED_USER ?? "",
+    trustedUserOptional: envBool("COLLIE_TRUSTED_USER_OPTIONAL", false, env),
+    auditContent: envEnum("COLLIE_AUDIT_CONTENT", ["preview", "none"] as const, "preview", env),
+    deviceHeader: (env.COLLIE_DEVICE_HEADER ?? "").trim(),
+    deviceAllowlist: envList("COLLIE_DEVICE_ALLOWLIST", env),
+    allowedOrigins: envList("COLLIE_ALLOWED_ORIGINS", env),
+    publicHosts: envList("COLLIE_PUBLIC_HOSTS", env),
+    tailscaleHosts: envList("COLLIE_TAILSCALE_HOSTS", env),
+    allowAnyHost: envBool("COLLIE_ALLOW_ANY_HOST", false, env),
+    vapidPublic: env.COLLIE_VAPID_PUBLIC ?? "",
+    vapidPrivate: env.COLLIE_VAPID_PRIVATE ?? "",
+    vapidSubject: env.COLLIE_VAPID_SUBJECT ?? "mailto:admin@example.com",
     stateDir,
-    multiSession: envBool("COLLIE_MULTI_SESSION", true),
-    skipServe: envBool("COLLIE_SKIP_SERVE", false),
+    multiSession: envBool("COLLIE_MULTI_SESSION", true, env),
+    skipServe: envBool("COLLIE_SKIP_SERVE", false, env),
+    basePath: normaliseBasePath(env.COLLIE_BASE_PATH),
   };
+}
+
+/**
+ * `COLLIE_BASE_PATH` as the bridge uses it: `/` for unset, empty or `/`; otherwise one leading and
+ * one trailing slash around the given segments (`collie`, `/collie`, `collie/`, `//collie//` all
+ * read as `/collie/`). A value a URL path cannot carry — a `.`/`..` segment, whitespace, `?` or `#` —
+ * is refused with one warning and the root is used, because a mount that is half a path would
+ * quietly move every asset somewhere the app cannot follow.
+ */
+export function normaliseBasePath(raw: string | undefined): string {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "" || trimmed === "/") return "/";
+  const segments = trimmed.split("/").filter((s) => s !== "");
+  const bad = segments.some((s) => s === "." || s === ".." || /[\s?#\\]/.test(s));
+  if (segments.length === 0 || bad) {
+    console.warn(`[config] COLLIE_BASE_PATH="${raw ?? ""}" is not a path Collie can be mounted at — using /`);
+    return "/";
+  }
+  return `/${segments.join("/")}/`;
+}
+
+/**
+ * The config-file layer this process will read, resolved from its own environment and home.
+ *
+ * The bridge's entry point awaits this ONCE and hands the overlaid environment to {@link loadConfig};
+ * it is not resolved at module scope, because importing `bridge/config.ts` must not open a file (the
+ * CLI imports it for `resolveStateDir` alone, in every verb). `cli/context.ts` resolves the same two
+ * paths from its own config-dir ladder, so both sides land on one answer.
+ */
+export async function loadConfigLayer(
+  env: Environment = process.env,
+  home: string = homedir(),
+  warn: (line: string) => void = (l) => console.warn(l),
+): Promise<ConfigFileLayer> {
+  return readConfigFiles(diskIo, configFilePaths(env, home, resolveConfigDir(env, home)), warn, {
+    home,
+    perms: diskFilePerms,
+  });
 }

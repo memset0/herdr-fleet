@@ -76,6 +76,38 @@ export function buildJournalRegistry(roots: JournalRoots): Record<string, Journa
 export const AGENT_ALIASES = { omp: "pi" } as const;
 
 /**
+ * Agents that report their session to Herdr on the FIRST PROMPT, not when they start (issue #294).
+ *
+ * Codex fires its SessionStart hook only when the first prompt is submitted (openai/codex#15266), and
+ * Herdr's codex hook reports from SessionStart alone. So a Codex pane that has not had a turn yet has
+ * no session, and that is not a fault: the hook is fine, the agent has simply not reported yet. The
+ * phone's note and `collie doctor` both read this list, so neither blames the integration for a pane
+ * that has not had a turn. Codex has a second silent cause as well: when its hooks change it asks to
+ * review them, and "Continue without trusting" disables the Herdr hook while `herdr integration
+ * status` still says current. `/hooks` in Codex is where that is reviewed.
+ *
+ * `web/src/lib/journal-agents.ts` mirrors it by hand (registry.test.ts fails when the two drift).
+ */
+export const REPORTS_SESSION_ON_FIRST_PROMPT: readonly string[] = ["codex"];
+
+/**
+ * Agents that draw a picture the live mirror cannot see, and whose journal records it (#292).
+ *
+ * pi-tui 0.87.1 draws an image only by direct Kitty placement (`a=T`, no `U=1`). A direct placement
+ * leaves nothing on the grid `pane.read` returns: no placeholder cell, only the blank rows pi keeps
+ * for it. So the mirror's placeholder path never sees the picture, and the only copy the phone can
+ * reach is the journal, where pi's adapter yields it as a tool result's `imageUrl` (or an `image`
+ * part). Oh My Pi draws the same way unless `PI_KITTY_PLACEHOLDERS=1` is set, and writes pi's log.
+ *
+ * The phone reads the newest turn's picture out of the journal after each finished turn, for these
+ * agents only. The list is what bounds that cost: every other agent draws no picture at all, so a
+ * read per finished turn would buy nothing there. It keys a read, never a grammar or a pane's
+ * identity. `web/src/lib/journal-agents.ts` mirrors it by hand (registry.test.ts fails when the
+ * two drift).
+ */
+export const DRAWS_IMAGES_OFF_GRID: readonly string[] = ["omp", "pi"];
+
+/**
  * The same pairs as a Map, which is how {@link adapterFor} asks.
  *
  * A Map rather than a property read because the key is an agent name that ORIGINATES in an agent's

@@ -18,16 +18,23 @@
 //   {"type":"user",      "message":{"role":"user","content":"..." | [ {type:"tool_result",...} ]}, ...}
 //   {"type":"assistant", "message":{"role":"assistant","content":[ {type:"text"|"thinking"|"tool_use"} ]}}
 //   plus bookkeeping rows we ignore (mode, permission-mode, ai-title, file-history-*, queue-operation…).
-// Human turns carry a STRING content; a `user` row whose content is a LIST is tool-result traffic,
-// not something the user typed — we fold those into the tool call that produced them rather than
-// rendering 705 fake "user" turns. `isSidechain` marks subagent traffic (dropped by default);
-// `isCompactSummary` marks the summary Claude writes when a session is compacted.
+// Human turns carry a STRING content; a `user` row whose content is a LIST is usually tool-result
+// traffic, not something the user typed — we fold those into the tool call that produced them rather
+// than rendering fake "user" turns. `isMeta` marks a row the operator did not write. Most are
+// addressed to the model (a skill body, an attached image's source path, the local-command caveat)
+// and are dropped; a prompt Claude sent on its own (`promptSource: "system"`) becomes a note.
+// `isSidechain` marks subagent traffic (dropped by default); `isCompactSummary` marks the summary
+// Claude writes when a session is compacted.
 
 import { readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { observedClaim, type Sourced } from "../cache/claims.ts";
+import type { CacheProbe } from "../cache/engine.ts";
 import type { JsonObject, JsonValue } from "../json.ts";
-import { containedRealpath, exists, head, loadTail, rootList, statFile } from "./files.ts";
+import { asRecord, asText, probeTail, tokenCount } from "./cache-probe.ts";
+import { claudeResets, lastTwoTurns } from "./claude-resets.ts";
+import { containedRealpath, exists, head, loadTail, rootList, statFile, tailBytes } from "./files.ts";
 import { clamp, type Clamped, MAX_RESULT_CHARS, MAX_TEXT_CHARS, stripAnsi, summarizeToolInput } from "./text.ts";
 import type {
   AgentSessionRef,
@@ -162,6 +169,12 @@ export function parseClaudeTranscript(
     // no row shape at all — skip it exactly as an unparseable line is skipped.
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
     const row: RawRow = parsed;
+    // `isMeta`: the operator did not write this row. Measured on Claude Code 2.1.146 to 2.1.283, a
+    // meta row that also carries `promptSource: "system"` is a prompt Claude sent on its own: another
+    // session's message, a scheduled or /loop wake-up, the continuation after a usage limit. The
+    // turn after it answers it, so it stays, as a note and never as "You". Every other meta row is
+    // addressed to the model (a skill body, an image's source path, a caveat) and is dropped.
+    if (row.isMeta === true && row.promptSource !== "system") continue;
     const type = row.type;
     if (type !== "user" && type !== "assistant") continue;
     if (row.isSidechain === true && !opts.includeSidechains) continue;
@@ -172,8 +185,9 @@ export function parseClaudeTranscript(
     const uuid = typeof row.uuid === "string" ? row.uuid : "";
     const ts = typeof row.timestamp === "string" ? row.timestamp : "";
     const parts: TranscriptPart[] = [];
-    // Set by a `user` row whose string content turns out to be injected plumbing rather than speech.
-    let roleOverride: "note" | undefined;
+    // Set by a `user` row that is not the operator's speech: a prompt Claude sent on its own (the
+    // only meta row left here), or string content that turns out to be injected plumbing.
+    let roleOverride: "note" | undefined = row.isMeta === true ? "note" : undefined;
 
     if (typeof content === "string") {
       // A string content is the HUMAN-turn carrier — but Claude Code also routes injected plumbing
@@ -265,6 +279,50 @@ export function conversationRoot(text: string): string | null {
   return null;
 }
 
+/** Enough hops for any real chain of hand-overs; a bound so a cycle, or a planted chain, cannot spin a poll. */
+const MAX_HAND_OVERS = 8;
+
+/**
+ * How much of a log's END is read to find a hand-over. The record is the old log's last word, followed
+ * at most by a few bookkeeping rows (one `cost-state` of about 1 KB in the case on record).
+ */
+const HAND_OVER_TAIL_BYTES = 64 * 1024;
+
+/**
+ * The session a log was HANDED OVER to, if its end says so, or null. PURE.
+ *
+ * Claude Code can move a live conversation into a new session file and leave
+ * `{"type":"continued-in","continuedInSessionId":…}` as the last word of the old one, while Herdr keeps
+ * reporting the OLD id. Walked newest-first, and an assistant turn met before the record means the old
+ * log is live again (a resumed session writes turns after it), so there is no hand-over to follow.
+ * Only a canonical session uuid is returned, because the id becomes a file name.
+ *
+ * Unlike {@link conversationRoot}'s heuristic this is Claude Code's own statement, so it needs no
+ * guard on size or mtime: the old log goes on being written after the hand-over (its `cost-state`),
+ * and a fresh continuation can be both smaller and older than it.
+ */
+export function handedOverTo(lines: readonly string[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const raw = lines[i]?.trim();
+    if (raw === undefined || raw === "") continue;
+    // Cheap first: most rows are neither, and this runs on the poll loop.
+    if (!raw.includes('"assistant"') && !raw.includes('"continued-in"')) continue;
+    let row: JsonValue;
+    try {
+      // SAFETY: JSON.parse output is a JsonValue by construction (see parseClaudeTranscript).
+      row = JSON.parse(raw) as JsonValue;
+    } catch {
+      continue; // a clipped first line, or a partial write at the end
+    }
+    if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
+    if (row.type === "assistant" && row.isSidechain !== true) return null;
+    if (row.type !== "continued-in") continue;
+    const id = row.continuedInSessionId;
+    return typeof id === "string" && isSessionId(id) ? id : null;
+  }
+  return null;
+}
+
 /**
  * Real filesystem source rooted at Claude's projects directory.
  *
@@ -285,6 +343,12 @@ export function conversationRoot(text: string): string | null {
 export class ClaudeTranscriptSource implements TranscriptSource {
   private readonly pathCache = new Map<string, { path: string; root: string }>();
 
+  /**
+   * What each log's end said about a hand-over, stamped with the size and mtime it was read at. The
+   * tracker resolves every floor tick, and a log that has not moved cannot have said anything new.
+   */
+  private readonly handOvers = new Map<string, { size: number; mtimeMs: number; next: string | null }>();
+
   private readonly roots: string[];
 
   constructor(roots: string | readonly string[]) {
@@ -304,34 +368,106 @@ export class ClaudeTranscriptSource implements TranscriptSource {
       // which never changes. Continuation-following must still run on every call, because the
       // conversation rotates into a new file WHILE the bridge is up: caching its result would pin the
       // answer to whatever was true at the first request and go stale minutes later.
-      if (await exists(cached.path)) return this.followContinuation(cached.path, cached.root);
+      if (await exists(cached.path)) return this.follow(cached.path, cached.root);
       this.pathCache.delete(sessionId);
     }
 
-    const file = `${sessionId}.jsonl`;
     for (const root of this.roots) {
-      let dirs: string[];
-      try {
-        dirs = await readdir(root);
-      } catch {
-        continue; // this projects dir doesn't exist — a profile that isn't on this machine
-      }
-      for (const dir of dirs) {
-        const candidate = join(root, dir, file);
-        if (!(await exists(candidate))) continue;
-        const real = await containedRealpath(candidate, root);
-        if (real === null) {
-          // A log by this name exists here but points out of this root, so it is not this root's to
-          // serve — and we do not go on to accept it under a sibling root either (files.ts header).
-          // Abandoning the root rather than the whole search is the only multi-root difference: a
-          // planted symlink in one profile can't blank the history of the others.
-          break;
-        }
-        this.pathCache.set(sessionId, { path: real, root });
-        return this.followContinuation(real, root);
-      }
+      const real = await this.scanRoot(sessionId, root);
+      if (real === null) continue;
+      this.pathCache.set(sessionId, { path: real, root });
+      return this.follow(real, root);
     }
     return null;
+  }
+
+  /**
+   * One root's projects directories, searched for `<sessionId>.jsonl`. The contained real path, or null.
+   *
+   * Null covers both "not here" and "here, but pointing out of this root": the caller moves on to the
+   * next root either way.
+   */
+  private async scanRoot(sessionId: string, root: string): Promise<string | null> {
+    const file = `${sessionId}.jsonl`;
+    let dirs: string[];
+    try {
+      dirs = await readdir(root);
+    } catch {
+      return null; // this projects dir doesn't exist — a profile that isn't on this machine
+    }
+    for (const dir of dirs) {
+      const candidate = join(root, dir, file);
+      if (!(await exists(candidate))) continue;
+      // A log by this name exists here but points out of this root, so it is not this root's to serve —
+      // and we do not go on to accept it under a sibling root either (files.ts header). Abandoning the
+      // root rather than the whole search is the only multi-root difference: a planted symlink in one
+      // profile can't blank the history of the others.
+      return containedRealpath(candidate, root);
+    }
+    return null;
+  }
+
+  /**
+   * Everything that runs after a uuid has been mapped to its file, on EVERY call: first Claude Code's
+   * own hand-over record, then the conversation-root heuristic from wherever that landed.
+   */
+  private async follow(path: string, root: string): Promise<string> {
+    return this.followContinuation(await this.followHandOver(path, root), root);
+  }
+
+  /**
+   * Follow `continued-in` records to the log the conversation moved to, at most {@link MAX_HAND_OVERS}
+   * hops, and never outside the root the chain started in.
+   *
+   * This is the resolve seam, so the cache probe, the tracker's stat and the history route all read the
+   * log that is still being written, not the one Herdr keeps naming.
+   */
+  private async followHandOver(path: string, root: string): Promise<string> {
+    const visited = new Set([path]);
+    let current = path;
+    for (let hop = 0; hop < MAX_HAND_OVERS; hop++) {
+      const next = await this.handOverOf(current);
+      if (next === null) break;
+      const found = await this.locate(next, root, dirname(current));
+      // A cycle, or a hand-over to a file that is not there (yet): stay on the last log that exists.
+      if (found === null || visited.has(found)) break;
+      visited.add(found);
+      this.pathCache.set(next, { path: found, root });
+      current = found;
+    }
+    return current;
+  }
+
+  /** What `path`'s end says about a hand-over, read once per size and mtime. Null on any failure. */
+  private async handOverOf(path: string): Promise<string | null> {
+    const st = await statFile(path);
+    if (st === null) return null;
+    const known = this.handOvers.get(path);
+    if (known !== undefined && known.size === st.size && known.mtimeMs === st.mtimeMs) return known.next;
+    let next: string | null = null;
+    try {
+      const read = await tailBytes(path, HAND_OVER_TAIL_BYTES);
+      const lines = read.text.split("\n");
+      next = handedOverTo(read.complete ? lines : lines.slice(1));
+    } catch {
+      next = null;
+    }
+    this.handOvers.set(path, { size: st.size, mtimeMs: st.mtimeMs, next });
+    return next;
+  }
+
+  /**
+   * Where a handed-over session's log lives: beside the log that named it first, since a hand-over
+   * stays in one project, then the rest of the SAME root. Containment is checked on the real path
+   * either way, so a sibling symlinked out of the root is never read.
+   */
+  private async locate(sessionId: string, root: string, beside: string): Promise<string | null> {
+    const sibling = join(beside, `${sessionId}.jsonl`);
+    if (await exists(sibling)) {
+      const real = await containedRealpath(sibling, root);
+      if (real !== null) return real;
+    }
+    return this.scanRoot(sessionId, root);
   }
 
   /**
@@ -345,7 +481,11 @@ export class ClaudeTranscriptSource implements TranscriptSource {
    *  - a candidate must be at least as large as the log we already have, so following can never show
    *    LESS history than not following;
    *  - only the first line of each sibling is read (plus a stat), so the scan is a few milliseconds
-   *    over a directory of ~40 logs — and this route is on-demand, never on the poll loop.
+   *    over a directory of ~40 logs. That matters, because `resolve` runs on the cache tracker's
+   *    floor tick as well as on a History tap.
+   *
+   * A sibling whose own end records a hand-over is never picked: {@link handedOverTo} is Claude
+   * Code's statement that the conversation left it, and that outranks a guess from size and mtime.
    *
    * Known limit: a `/fork` of the same conversation shares the root too, so a fork being written more
    * recently than the pane's own session would win. That needs a per-pane session id Herdr doesn't
@@ -383,6 +523,10 @@ export class ClaudeTranscriptSource implements TranscriptSource {
         const real = await containedRealpath(candidate, root);
         if (real === null) continue;
         if (conversationRoot(await head(real)) !== self.root) continue;
+        // A log that ends in a hand-over is dead by its own account, however new and big it looks: the
+        // old process goes on appending to it after the move, which is exactly what made this
+        // heuristic walk back into it from the live log.
+        if ((await this.handOverOf(real)) !== null) continue;
         best = { path: real, size: st.size, mtimeMs: st.mtimeMs };
       } catch {
         continue; // unreadable sibling — ignore it rather than fail the whole read
@@ -403,9 +547,73 @@ export class ClaudeTranscriptSource implements TranscriptSource {
  * order.
  */
 export function claudeJournal(roots: string | readonly string[]): JournalAdapter {
+  const source = new ClaudeTranscriptSource(roots);
   return {
     agent: "claude",
-    source: new ClaudeTranscriptSource(roots),
+    source,
     parse: (text) => parseClaudeTranscript(text),
+    cacheProbe: (ref) => claudeCacheProbe(source, ref),
   };
+}
+
+// ── The prompt-cache probe ───────────────────────────────────────────────────
+//
+// Claude is the best-served harness here for the same reason it is the best-served journal: every
+// assistant entry carries `message.usage`, and that one object answers BOTH questions the cache chip
+// exists for.
+//
+//   cache_read_input_tokens = 0 with a real write behind it  → the turn MISSED
+//   cache_creation.ephemeral_1h_input_tokens > 0             → this session is on the ONE-HOUR TTL
+//
+// The second is why no pane ever shows a guessed number for Claude. The same entry that gives
+// `lastRequestAt` says which window was written, so the FIRST reading is already measured — there is
+// no one-turn-wrong answer to live through (ADR 0041, Decision 1). Ported from herdr-cache-alert
+// `src/harness/claude.ts:269-291`.
+
+/** Claude's `usage.cache_creation` split, as far as the probe cares. */
+function ttlFromUsage(usage: JsonObject, path: string): Sourced<number> | undefined {
+  const split = asRecord(usage.cache_creation);
+  if (split === null) return undefined;
+  const hour = tokenCount(split.ephemeral_1h_input_tokens) ?? 0;
+  const fiveMin = tokenCount(split.ephemeral_5m_input_tokens) ?? 0;
+  if (hour > 0) return observedClaim(3600, `${String(hour)} tokens written to the 1h cache in ${path}`);
+  if (fiveMin > 0) return observedClaim(300, `${String(fiveMin)} tokens written to the 5m cache in ${path}`);
+  return undefined;
+}
+
+/**
+ * The newest turn's reading, plus every reset event around it.
+ *
+ * One walk of the same 128 KB tail finds the newest turn and the turn before it
+ * (`claude-resets.ts` § lastTwoTurns). The newest answers the clock and the telemetry, as it always
+ * has; the two stretches around it answer "did an action drop the cache" (issue #236). A subagent's
+ * record and a `<synthetic>` notice are not turns, because neither is a request on this cache.
+ */
+async function claudeCacheProbe(
+  source: ClaudeTranscriptSource,
+  ref: AgentSessionRef,
+): Promise<CacheProbe | null> {
+  const tail = await probeTail(source, ref);
+  if (tail === null) return null;
+  const turns = lastTwoTurns(tail.lines);
+  // The tail held no assistant turn at all — a session that has only just started, or one turn larger
+  // than the window. The tracker keeps whatever the last successful probe left behind.
+  if (turns === null) return null;
+  const { entry, message, at, stamp } = turns.newest;
+  const usage = asRecord(message.usage) ?? {};
+  const probe: CacheProbe = {
+    lastRequestAt: at,
+    turnId: asText(message.id) ?? asText(entry.uuid) ?? String(at),
+    cacheReadTokens: tokenCount(usage.cache_read_input_tokens) ?? 0,
+    cacheCreationTokens: tokenCount(usage.cache_creation_input_tokens) ?? 0,
+    measuredAt: tail.mtimeMs,
+    evidence: `${tail.path} (${stamp})`,
+  };
+  const observed = ttlFromUsage(usage, tail.path);
+  if (observed !== undefined) probe.observedTtlSeconds = observed;
+  const model = asText(message.model);
+  if (model !== undefined) probe.model = model;
+  const resets = claudeResets(turns, tail.path);
+  if (resets.length > 0) probe.resets = resets;
+  return probe;
 }
