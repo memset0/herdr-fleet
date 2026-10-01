@@ -46,6 +46,12 @@ every path currently declared downstream-owned that the target now ships. A path
 its own and upstream has begun to occupy is a collision of meaning that MUST be escalated to an
 explicit decision before the merge, not discovered as a conflict during it.
 
+A declared path that the target renames or moves is disturbed. The preflight SHALL count both the
+path it left and the path it arrived at as changed, and SHALL report the destination beside the
+declared path, so a port whose upstream file moved is reported on that path and the reviewer is told
+where the port now has to live. This SHALL NOT depend on the operator's Git configuration for rename
+detection: the same repository and target produce the same report on every machine.
+
 The preflight SHALL refuse to start while the working tree carries uncommitted or untracked changes.
 The boundary check classifies an untracked file as a downstream addition, so on a dirty tree its
 report cannot distinguish the operator's work in progress from what the adoption brings; and once the
@@ -59,6 +65,14 @@ explicit authorization for this adoption; the tooling records the decision, it d
 #### Scenario: A preflight runs against a target
 - **WHEN** the preflight resolves a target release
 - **THEN** it reports every invasive entry the target disturbs and every owned path the target now ships
+
+#### Scenario: The target renames a declared path
+- **WHEN** an invasive entry declares a path that the target moves to a new name
+- **THEN** the entry is reported as disturbed on that declared path, and the report names the path it moved to
+
+#### Scenario: Git rename detection is configured differently
+- **WHEN** the preflight runs where Git's rename detection is enabled, disabled, or left at its default
+- **THEN** the set of disturbed entries and their paths is the same in every case
 
 #### Scenario: The target occupies a downstream-owned path
 - **WHEN** the selected target ships a path declared under an `[[owned]]` entry

@@ -74,4 +74,4 @@
 ## 10. Hand-off
 
 - [x] 10.1 Report to the operator the deployment-side changes in design.md's Migration Plan and the release's member obligations; verify the report states the push is not a completed adoption
-- [ ] 10.2 Archive only after the operator reports every member on 3.4.0 through the new link (design decision 10); verify `openspec validate adopt-collie-1-8-2 --strict` passes before archiving
+- [x] 10.2 Archive only after the operator reports every member on 3.4.0 through the new link (design decision 10); verify `openspec validate adopt-collie-1-8-2 --strict` passes before archiving — satisfied: the operator reduced the member set to the levelled members, and every remaining member reports 3.4.0 through the new link
