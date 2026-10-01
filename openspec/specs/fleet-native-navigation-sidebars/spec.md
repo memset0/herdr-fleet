@@ -406,7 +406,7 @@ whose label meets 4.5:1 contrast, the unselected ones muted. The build identity 
 of the same height, top rule and ground as Collie's bottom tab bar — 56px plus the bottom safe-area
 inset — so on a route that shows that tab bar the footer's rule and the tab bar's rule meet on one
 line. The desktop hierarchy rail SHALL render the same footer ordering. The footer build identity
-SHALL be independent of selected host, member reachability, and release discovery. It SHALL preserve
+SHALL be independent of selected host, member reachability, and crew census availability. It SHALL preserve
 development and available commit qualification and MUST NOT replace either surface choice or reduce
 its keyboard, touch, or narrow-screen access.
 
@@ -435,7 +435,7 @@ its keyboard, touch, or narrow-screen access.
 - **THEN** both hierarchy surfaces retain that development qualification in their shared footer
 
 #### Scenario: The selected host or release source changes
-- **WHEN** host selection changes or published release evidence is unavailable
+- **WHEN** host selection changes or the crew census cannot be read
 - **THEN** the footer's page build remains unchanged and both selector choices remain usable
 
 ### Requirement: A rail row's controls and facts sit at opposite corners
@@ -657,7 +657,10 @@ machine.
 The row SHALL report connectivity and version evidence as independent facts. Existing unreachable,
 never-seen, slow-link and protocol wording and styling SHALL continue to derive from the lead's
 existing health view. Beside it, the row SHALL show the member's full reported Fleet runtime identity
-when that identity is parseable and outdated, manual-major, development, or last-reported. When the
+when that identity is parseable, qualified as outdated, manual-major, development, or last-reported
+where that applies, each judged against the lead's own runtime version rather than any published
+release. The row MUST NOT say when a reference was last checked or call a reference fresh, stale or
+unavailable. When the
 identity is absent or unparseable, the row SHALL report "Version unknown" and MUST NOT echo the raw
 reported value, because an unparseable identity is arbitrary member text. A version state
 MUST NOT change the connectivity glyph, tint, sorting, disclosure, navigation, selection, folding,
@@ -686,7 +689,7 @@ down, an update action, a per-row request, or a private installation-state sourc
 - **THEN** it discloses and conceals as before, and its state is announced on the row's own label
 
 #### Scenario: A reachable host reports an older minor
-- **WHEN** fresh shared release evidence identifies a higher Fleet minor than the host's reported runtime
+- **WHEN** the lead's own runtime version has a higher Fleet minor than the host's reported runtime in the same major
 - **THEN** the Host row shows the outdated state and full reported version while preserving its reachable glyph, tint, position, disclosure, and actions
 
 #### Scenario: An unreachable host retains a version
@@ -694,12 +697,16 @@ down, an update action, a per-row request, or a private installation-state sourc
 - **THEN** the row keeps its unreachable presentation and separately labels the version as last reported
 
 #### Scenario: Version evidence is unknown
-- **WHEN** a host has no parseable runtime identity or fresh release conclusion
-- **THEN** the row reports the applicable unknown or unavailable version state without hiding the host or changing navigation, and an unknown state says "Version unknown" without echoing any unparseable reported value
+- **WHEN** a host has no parseable runtime identity, or the lead's own runtime version cannot be read
+- **THEN** the row says "Version unknown" without hiding the host or changing navigation and without echoing any unparseable reported value
 
 #### Scenario: Compatible patch skew exists
-- **WHEN** the host and newest stable release share a major.minor and differ only by patch
-- **THEN** the Host row does not present a peer-required update
+- **WHEN** the host and the lead share a major.minor and differ only by patch
+- **THEN** the Host row shows the host's full reported version with no outdated label and no peer-required update
+
+#### Scenario: The lead runs a later major
+- **WHEN** the lead's own runtime version has a higher major than the host's
+- **THEN** the Host row says a major update is manual beside the host's full reported version and offers no update action
 
 ### Requirement: The menu is measured for a cursor, and names its target only to a reader who needs it
 
