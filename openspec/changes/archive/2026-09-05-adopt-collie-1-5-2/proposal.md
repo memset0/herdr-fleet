@@ -12,7 +12,7 @@ it now is the cheapest this decision will ever be.
 - Review all nineteen invasive entries against the release: eight the release disturbs, eleven it
   does not.
 - Cut this product's release for the adoption, at least a MINOR, and deploy it to every Fleet v3
-  member — the lead first, then each peer — as `fleet-upstream-sync` and mem.conf's
+  member — the lead first, then each peer — as `fleet-upstream-sync` and the private parent repository's
   `herdr-device-deployments` now require.
 
 What the release brings is upstream's: a Traditional Chinese dictionary and its locale registration,

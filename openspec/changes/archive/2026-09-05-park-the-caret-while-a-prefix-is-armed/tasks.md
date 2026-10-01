@@ -14,5 +14,5 @@
 ## 3. Verification
 
 - [x] 3.1 Run both typechecks, the linter, the fork check and the affected suites
-- [x] 3.2 Run the full suites on nvl72 against the pushed commit
+- [x] 3.2 Run the full suites on the test host against the pushed commit
 - [x] 3.3 Add the `CHANGELOG.md` line and assess the release axis

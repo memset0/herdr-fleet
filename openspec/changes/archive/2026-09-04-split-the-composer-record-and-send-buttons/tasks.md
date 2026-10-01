@@ -32,6 +32,6 @@
 
 ## 6. Release 3.0.1
 
-- [ ] 6.1 Run the complete suites on nvl72 against the exact pushed commit, per the repository's release gate; confirm they pass before cutting anything.
+- [ ] 6.1 Run the complete suites on the test host against the exact pushed commit, per the repository's release gate; confirm they pass before cutting anything.
 - [ ] 6.2 Cut `chore(release): 3.0.1` — bump the three version files, rename `## [Unreleased]` with today's date and the entry's short hash, re-open an empty `## [Unreleased]` — and verify `scripts/check-version.sh` prints `✓`.
 - [ ] 6.3 Tag `v3.0.1` annotated, push the commit and the tag, and verify both on the remote.

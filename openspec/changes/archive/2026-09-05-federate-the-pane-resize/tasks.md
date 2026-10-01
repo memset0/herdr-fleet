@@ -11,6 +11,6 @@
 
 ## 3. Verification
 
-- [x] 3.1 Run both typechecks, the linter, the fork check and the pack-wire check, and the full suites on nvl72 against the pushed commit
+- [x] 3.1 Run both typechecks, the linter, the fork check and the pack-wire check, and the full suites on the test host against the pushed commit
 - [x] 3.2 Record the three upstream paths on the existing manual-pane-fit manifest entry
 - [x] 3.3 Add the `CHANGELOG.md` line, and assess the release axis — this obliges every member to redeploy

@@ -34,7 +34,7 @@ notion of "empty".
 ### Search follows what is displayed
 
 An operator types what they can see. The host field is therefore matched on the resolved name, not on
-the id — searching `vultr` finds the lead's Panes, and searching `lead` no longer does, because that
+the id — searching `lodge` finds the lead's Panes, and searching `lead` no longer does, because that
 string is not on screen anywhere.
 
 ### The mark is ink and a rule, not weight

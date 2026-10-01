@@ -27,6 +27,6 @@
 
 ## 5. Verification
 
-- [x] 5.1 Run both typechecks, the linter and the fork check, and the full suites on nvl72 against the pushed commit
+- [x] 5.1 Run both typechecks, the linter and the fork check, and the full suites on the test host against the pushed commit
 - [x] 5.2 Record the new port on the already-attributed manifest entry
 - [x] 5.3 Add the `CHANGELOG.md` lines under `## [Unreleased]`

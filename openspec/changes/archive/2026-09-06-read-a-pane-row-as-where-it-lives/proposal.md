@@ -2,9 +2,9 @@
 
 Three things are wrong with a Pane row in the switcher, and one of them is a plain bug.
 
-**The host is named by its id, not its name.** The snapshot carries `{ id: "lead", name: "vultr" }`
+**The host is named by its id, not its name.** The snapshot carries `{ id: "lead", name: "lodge" }`
 and tags every lead Pane `host: "lead"`, so the row reads `lead` where the sidebar — which resolves
-the same id through `hostName` — reads `vultr`. Two surfaces naming one machine differently is the
+the same id through `hostName` — reads `lodge`. Two surfaces naming one machine differently is the
 kind of disagreement that makes an operator doubt both.
 
 **The emphasis is inverted.** The row leads with the Pane's own name, which is the least

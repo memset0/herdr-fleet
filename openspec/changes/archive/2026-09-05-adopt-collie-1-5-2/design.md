@@ -58,7 +58,7 @@ dropped an entry.
 ### The adoption is released and deployed in this change
 
 New since the last adoption, and the reason this one is not finished at the push:
-`fleet-upstream-sync` now requires the adoption to cut a release of at least MINOR, and mem.conf's
+`fleet-upstream-sync` now requires the adoption to cut a release of at least MINOR, and the private parent repository's
 `herdr-device-deployments` requires that release to reach every member, lead first, with a failed
 member rolled back alone and the history untouched.
 

@@ -6,5 +6,5 @@
 
 ## 2. Verification
 
-- [x] 2.1 Run both typechecks and the linter, and the full suites on nvl72 against the pushed commit; record the results
+- [x] 2.1 Run both typechecks and the linter, and the full suites on the test host against the pushed commit; record the results
 - [x] 2.2 Add the `CHANGELOG.md` line under `## [Unreleased]` and assess the change against the release axis
