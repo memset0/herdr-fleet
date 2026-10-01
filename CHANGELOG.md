@@ -24,6 +24,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 - **Adopt Collie 1.15.0.** Chat as an opt-in pane body, Settings as four sections, the pane switcher's Place, Activity and cache orders, Copy output in the pane menu, push titles in the device's language, tool calls folded in History, the experimental tuios backend and upstream's fixes, including the Codex goal-row reading (#317) beneath the fork's headless status-row port.
 - **The terminal surface also replaces Collie's new Chat body.** Under it no Chat switch is offered and no live session window is read; Resize stands below Text size among the terminal rows of the belt's Display sheet and not among Chat's, and every Settings page, the index and its sections, fills the column between the rails with the Fleet group at the head of the index.
 
+### Fixed
+
+- **Claude's working-turn mode line no longer reads as a dialog.** With background agents running, `esc to interrupt` and a trailing `↓ to manage` on the permission-mode line are dropped before the tail checks, with or without an agent count, whole or clipped; the port stays temporary.
+
 ## [3.5.3] - 2026-10-01
 
 **Frontend and Gateway only; no member is obliged to redeploy, and the lead alone levels.** Host rows

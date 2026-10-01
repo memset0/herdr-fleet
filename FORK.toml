@@ -161,14 +161,16 @@ verify = [
 
 [[owned]]
 id = "claude-mode-line-compat"
-intent = "Hold the temporary recogniser for Claude Code 2.1.286's background-work mode-line hint, with its synthetic fixtures and its suite."
+intent = "Hold the temporary recogniser for Claude Code 2.1.286's own mode-line key hints, with its synthetic fixtures and its suite."
 paths = [
   "web/src/fixtures/fleet-panes/claude--manage-hint--w120.txt",
   "web/src/fixtures/fleet-panes/claude--manage-hint--w73.txt",
+  "web/src/fixtures/fleet-panes/claude--v2286-agents-interrupt-manage-hint--w120.txt",
+  "web/src/fixtures/fleet-panes/claude--v2286-agents-interrupt-manage-hint--w93.txt",
   "web/src/lib/fleet-claude-mode-line.ts",
   "web/src/lib/harness/claude/fleet-manage-hint.test.ts"
 ]
-contracts = ["the trailing `← N agent(s) · ↓ to manage` mode-line segment is not a dialog key hint, and nothing else changes reading"]
+contracts = ["on the permission-mode line, `esc to interrupt` and a trailing `↓ to manage` (whole, or clipped no shorter than `<key> to`) are not dialog key hints, and nothing else changes reading"]
 verify = ["web/src/lib/harness/claude/fleet-manage-hint.test.ts"]
 
 [[owned]]
@@ -609,7 +611,7 @@ reason = "Collie 1.8 embeds its operator manual in the binary from a hand-writte
 
 [[invasive]]
 id = "claude-manage-hint-port"
-intent = "TEMPORARY compatibility port: keep Claude Code 2.1.286's background-work hint on the mode line from reading as a dialog key hint, until upstream reads it itself."
+intent = "TEMPORARY compatibility port: keep Claude Code 2.1.286's own key hints on the mode line (`esc to interrupt`, `↓ to manage`) from reading as dialog key hints, until upstream reads them itself."
 strategy = "adapt"
 review = "every-upstream-sync"
 reviewed = "v1.15.0"
@@ -624,7 +626,7 @@ verify = [
   "web/src/lib/harness/unread-dialog.test.ts",
   "web/src/lib/harness/conformance.test.ts"
 ]
-reason = "Claude Code 2.1.286 mode line; upstream unaware as of v1.15.0, whose ledger verifies Claude Code 2.1.285. While background agents run Claude appends `· ← N agents · ↓ to manage` to its mode line (clipped to `↓ to ma…` in a narrow pane), and the Claude grammar's two statusline-tail checks — the input-box locator's no-menu-hint step and the adapter's modalOnScreen scan — read any `<key> to <verb>` segment with a sendable key as a dialog footer, and `↓` is sendable. So a healthy working screen lost its composer and wore the unread-dialog card. The decision lives in the fork-owned web/src/lib/fleet-claude-mode-line.ts, which removes only that trailing segment on the permission-mode line; each check passes its row through it, one call per site, and every other row and every other `↓` hint keeps upstream's reading. menu-hints.ts is shared by every harness and the generic menu, so teaching it was the wider port and was rejected. THIS PORT IS TEMPORARY: an upstream pull request will be opened from the owner's own fork of Collie, and at the first upstream sync that adopts a release carrying that fix, both call sites return to upstream's text and this entry, the helper, its suite, its fixtures and the claude-mode-line-compat owned entry are removed."
+reason = "Claude Code 2.1.286 mode line; upstream unaware as of v1.15.0, whose ledger verifies Claude Code 2.1.285. While background agents run Claude appends `· ← N agents · ↓ to manage` to its mode line (clipped to `↓ to ma…` in a narrow pane), and while the main turn works beside them `· esc to interrupt · ← for agents · ↓ to manage`, and the Claude grammar's two statusline-tail checks — the input-box locator's no-menu-hint step and the adapter's modalOnScreen scan — read any `<key> to <verb>` segment with a sendable key as a dialog footer, and `↓` and `esc` are sendable. So a healthy working screen lost its composer and wore the unread-dialog card. The decision lives in the fork-owned web/src/lib/fleet-claude-mode-line.ts, which removes only those two hints, and only on the permission-mode line; each check passes its row through it, one call per site, and every other row and every other `↓` or `Esc` hint keeps upstream's reading. menu-hints.ts is shared by every harness and the generic menu, so teaching it was the wider port and was rejected. THIS PORT IS TEMPORARY: an upstream pull request will be opened from the owner's own fork of Collie, and at the first upstream sync that adopts a release carrying that fix, both call sites return to upstream's text and this entry, the helper, its suite, its fixtures and the claude-mode-line-compat owned entry are removed."
 
 [[invasive]]
 id = "codex-headless-status-row-port"
