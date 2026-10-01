@@ -32,4 +32,4 @@
 
 ## 7. Archive
 
-- [ ] 7.1 Archive with spec sync, validate `--specs --strict`; no release is cut
+- [x] 7.1 Archive with spec sync, validate `--specs --strict`; no release is cut
