@@ -103,13 +103,8 @@ A RESIZE SHALL REACH THE MACHINE THE PANE IS ON. Where the addressed Host is ano
 request SHALL be forwarded across the crew link, on the crew prefix and protocol the adopted Collie
 speaks, and answered by that member's own handler, exactly as every other Pane write is. The lead's
 own record of the forward SHALL carry the same audit action the peer's handler writes, so the two
-independent logs read against each other without translation.
-
-While the adopted Collie keeps its one release of protocol overlap, the resize route SHALL be carried
-by that overlap in both directions like every other forwarded Pane write: a new lead reaches a member
-still on the previous protocol through Collie's own fallback, and a member on the new protocol answers
-a lead still on the previous one on the previous prefix. The route SHALL be documented in the crew
-protocol document, not in the retired one.
+independent logs read against each other without translation. The route SHALL be documented in the
+crew protocol document.
 
 A member that does not yet answer the route SHALL refuse it, and the refusal SHALL be reported as an
 ordinary unsuccessful resize rather than as a resize that happened.
@@ -140,12 +135,12 @@ closes or when the bridge shuts down, without killing an unrelated process by na
 - **THEN** the request is forwarded to that member on the crew link, its own handler performs the resize, and both machines record `pane.resize`
 
 #### Scenario: The member still speaks the previous protocol
-- **WHEN** a lead on the adopted release fits a Pane on a member that answers only the previous prefix
-- **THEN** Collie's own one-release fallback carries the resize, the member's handler performs it, and both machines record `pane.resize`
+- **WHEN** a lead on the adopted release fits a Pane on a member whose release shares no crew protocol version with it
+- **THEN** Collie refuses the forward as it refuses every write to an incompatible member, the operator is told the resize did not happen, and Fleet adds no fallback
 
 #### Scenario: The lead still speaks the previous protocol
-- **WHEN** a lead on the previous release forwards a resize to a member on the adopted release
-- **THEN** the member answers it on the previous prefix through Collie's own overlap and performs the resize
+- **WHEN** a lead on this product's previous release forwards a resize to a member on the adopted release, both speaking the same crew protocol version
+- **THEN** the member answers it on the crew prefix, its handler performs the resize, and both machines record `pane.resize`
 
 #### Scenario: The member has not been levelled
 - **WHEN** the addressed member does not yet answer the resize route

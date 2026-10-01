@@ -68,4 +68,4 @@
 ## 10. Hand-off
 
 - [x] 10.1 Report the Migration Plan to the operator; verify the report states the push is not a completed adoption
-- [ ] 10.2 Archive only after the operator reports the lead and the designated member on 3.5.0, lead first, with Collie's crew mode and member id unchanged (design decision 13); verify `openspec validate adopt-collie-1-14-2 --strict` passes before archiving
+- [x] 10.2 Archive only after the operator reports the lead and the designated member on 3.5.0, lead first, with Collie's crew mode and member id unchanged (design decision 13); verify `openspec validate adopt-collie-1-14-2 --strict` passes before archiving — done 2026-10-01: the operator deployed 3.5.0 to the lead, then to the one remaining member; both report `3.5.0+60f94efc` reachable (see design "Adoption record")

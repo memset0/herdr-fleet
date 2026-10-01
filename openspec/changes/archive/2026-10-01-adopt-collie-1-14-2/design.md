@@ -512,6 +512,15 @@ phase C found no operator step (its fixes are a browser-side navigation fix and 
 As before: the push ends this repository's part, but the change is archived only after the operator
 reports the lead and the designated member running 3.5.0, lead first.
 
+**Adoption record (2026-10-01).** The operator levelled the lead to 3.5.0 first, then the one
+remaining member; both report `3.5.0+60f94efc` and are reachable. One repair was needed on the
+member: its trust store still carried the pre-1.9 inner shape (`pack` / `packId`), because a peer
+never commits a trust change under 1.8, so nothing had rewritten it. Collie 1.9 and later loaded that
+store as "no crew", and the member refused the lead as unauthorized. It was repaired with the 3.4.0
+`TrustStore.update` no-op commit, which rewrites the store in the current shape. Product follow-up,
+left to a separate change: the 3.5.x loader should refuse a `pack`-shaped store with a clear notice
+instead of reading it as "no crew".
+
 ### 14. Entry review against `v1.14.2` (task group 7)
 
 Every entry's anchors were re-read in the merged tree against `v1.14.2` and its `verify` list run

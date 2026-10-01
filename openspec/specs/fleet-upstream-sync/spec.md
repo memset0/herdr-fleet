@@ -173,12 +173,23 @@ merged into the upstream text. One marker line at the seam SHALL say that upstre
 file and that what follows is retained from an earlier adoption, so a reader is never shown a
 continuous history upstream did not write.
 
+An entry is dropped when the adopted changelog no longer carries it: its release heading is gone, or
+the entry is gone from under a heading upstream still carries. An entry upstream rewrote in place —
+the same release, the same commits, reworded — is upstream's correction of its own record, not a
+dropped entry; the adopted wording replaces the earlier one and nothing is retained below the seam
+for it. The adoption that meets such a rewrite SHALL name it in its own design so the replacement is
+a recorded decision rather than an unnoticed one.
+
 Nothing of this product's SHALL be written into that file, and Collie's entries SHALL NOT be written
 into this product's changelog.
 
 #### Scenario: An adoption brings a rewritten upstream changelog
 - **WHEN** the adopted release's changelog no longer contains entries the retained file has
 - **THEN** the adopted text goes on top verbatim and the dropped entries are retained below it, unedited
+
+#### Scenario: Upstream corrects an entry in place
+- **WHEN** the adopted changelog carries every retained release heading and entry, one of them reworded under the same release and commits
+- **THEN** the adopted text replaces the file with no seam, and the adoption's design names the reworded entry
 
 #### Scenario: The retention is checked
 - **WHEN** the boundary check runs
