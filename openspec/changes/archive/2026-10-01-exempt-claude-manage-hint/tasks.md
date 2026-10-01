@@ -21,4 +21,4 @@
 
 ## 5. Archive
 
-- [ ] 5.1 Archive with spec sync into a new `openspec/specs/fleet-harness-compat/spec.md`, validate `--specs --strict`; no release is cut by this change
+- [x] 5.1 Archive with spec sync into a new `openspec/specs/fleet-harness-compat/spec.md`, validate `--specs --strict`; no release is cut by this change
