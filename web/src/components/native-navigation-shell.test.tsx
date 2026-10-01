@@ -1012,3 +1012,70 @@ describe("the rails and the strip band", () => {
     expect(railReservations()).toHaveLength(2);
   });
 });
+
+describe("mark all seen from the Agents rail", () => {
+  const packServers: HomeData["servers"] = [
+    { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 1 },
+    { id: "peer-a", name: "attic", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 1 },
+  ];
+  const unseenData: HomeData = {
+    ...data,
+    servers: packServers,
+    agents: [
+      { ...pane, paneId: "p1", status: "done", lastActiveAt: 200, lastSeenAt: 100, host: "lead" },
+      { ...pane, paneId: "p1", status: "idle", lastActiveAt: 300, lastSeenAt: 100, host: "peer-a" },
+      { ...pane, paneId: "p3", status: "done", lastActiveAt: 100, lastSeenAt: 200, host: "lead" },
+    ],
+  };
+
+  /** Stands in for the Pane page's switcher sheet, which draws the published content. */
+  function SwitcherSheet() {
+    const switcher = useNativePaneSwitcher();
+    return <div data-testid="switcher-sheet">{switcher?.content}</div>;
+  }
+
+  function renderWithLoader() {
+    const loads = vi.fn(() => null);
+    function Layout() {
+      return (
+        <NativeNavigationShell data={unseenData} preferenceStore={new NavigationPreferenceStore()}>
+          <SwitcherSheet />
+          <Outlet />
+        </NativeNavigationShell>
+      );
+    }
+    const router = createMemoryRouter(
+      [{ id: "root", path: "/", loader: loads, element: <Layout />, children: [{ index: true, element: <div /> }] }],
+      { initialEntries: ["/"] },
+    );
+    render(<RouterProvider router={router} />);
+    return { loads };
+  }
+
+  it("sends one seen read per unseen pane on its own host, then revalidates, from the rail and the sheet", async () => {
+    const reads: string[] = [];
+    server.use(
+      http.get("/api/pane/:id", ({ request, params }) => {
+        const url = new URL(request.url);
+        reads.push(`${String(params.id)}@${url.searchParams.get("host") ?? "lead"}:${request.headers.get("x-collie-seen")}`);
+        return HttpResponse.json({ paneId: params.id, text: "" });
+      }),
+    );
+    const { loads } = renderWithLoader();
+    const rail = await screen.findByRole("complementary", { name: "Agents" });
+    const sheet = screen.getByTestId("switcher-sheet");
+    const inRail = within(rail).getByRole("button", { name: "Mark 2 unseen panes seen" });
+    // The phone's sheet holds the same rail element, control and all.
+    expect(within(sheet).getByRole("button", { name: "Mark 2 unseen panes seen" })).toBeInTheDocument();
+    const before = loads.mock.calls.length;
+
+    await userEvent.click(inRail);
+    await waitFor(() => expect(loads.mock.calls.length).toBe(before + 1));
+    // The lead's pane keeps the bare address; the peer's identically numbered pane is read on the peer.
+    expect(reads.toSorted()).toEqual(["p1@lead:1", "p1@peer-a:1"]);
+    await waitFor(() => expect(inRail).toBeEnabled());
+
+    await userEvent.click(within(sheet).getByRole("button", { name: "Mark 2 unseen panes seen" }));
+    await waitFor(() => expect(reads).toHaveLength(4));
+  });
+});

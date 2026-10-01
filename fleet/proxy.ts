@@ -11,6 +11,10 @@ const REQUEST_HEADERS = [
   "if-none-match",
   "if-range",
   "range",
+  // Collie's own seen signal (bridge/server.ts `marksPaneSeen`): no credential and no identity, only
+  // the page saying a pane read is the operator looking at it. A cross-site request cannot set it
+  // here any more than at Collie, so forwarding it keeps Collie's same-origin proof intact.
+  "x-collie-seen",
 ] as const;
 
 const HOP_BY_HOP = [

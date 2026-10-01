@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { rosterEntryKey } from "../../../fleet/ui/pane-roster.ts";
@@ -250,5 +250,91 @@ describe("NativeAgentRail", () => {
     expect(rows().map((row) => row.textContent?.replace(/^\d/u, ""))).toEqual(
       [order[1], order[0]].map((text) => text?.replace(/^\d/u, "")),
     );
+  });
+});
+
+describe("mark all seen", () => {
+  const unseenHere = () => agent("here", { status: "done", lastActiveAt: 200, lastSeenAt: 100 });
+  const unseenThere = () => agent("there", { status: "idle", lastActiveAt: 300, lastSeenAt: 100, host: "peer-a" });
+  const seen = () => agent("seen", { status: "done", lastActiveAt: 100, lastSeenAt: 200 });
+  const control = () => screen.queryByRole("button", { name: /mark \d+ unseen panes? seen/i });
+
+  function renderRail(agents: AgentView[], onMarkAllSeen?: (panes: AgentView[]) => Promise<void>) {
+    return render(
+      <CrewProvider servers={PACK} sessions={[]}>
+        <NativeAgentRail agents={agents} servers={PACK} onOpen={vi.fn()} onMarkAllSeen={onMarkAllSeen} />
+      </CrewProvider>,
+    );
+  }
+
+  it("offers the control beside the summary line with the unseen count across every host", () => {
+    renderRail([unseenHere(), unseenThere(), seen(), agent("busy")], vi.fn(async () => {}));
+    const button = control()!;
+    expect(button).toHaveAccessibleName("Mark 2 unseen panes seen");
+    expect(button).toHaveTextContent(/Mark all seen\s*2/u);
+    // The summary line still stands first in the same row, ahead of the control, above every row.
+    const row = button.parentElement!;
+    expect(row.firstElementChild).toHaveTextContent(/unseen/i);
+    expect(row.contains(rows()[0]!)).toBe(false);
+  });
+
+  it("names a single pane in the singular", () => {
+    renderRail([unseenHere(), seen()], vi.fn(async () => {}));
+    expect(control()).toHaveAccessibleName("Mark 1 unseen pane seen");
+  });
+
+  it("is not drawn when nothing is unseen, or when no one can mark", () => {
+    renderRail([seen(), agent("busy")], vi.fn(async () => {}));
+    expect(control()).toBeNull();
+    cleanup();
+    renderRail([unseenHere()]);
+    expect(control()).toBeNull();
+  });
+
+  it("hands over exactly the unseen panes and stays disabled until the caller settles", async () => {
+    let settle!: () => void;
+    const onMarkAllSeen = vi.fn((_panes: AgentView[]) => new Promise<void>((resolve) => (settle = resolve)));
+    renderRail([unseenHere(), unseenThere(), seen()], onMarkAllSeen);
+    const button = control()!;
+    await userEvent.click(button);
+    expect(onMarkAllSeen).toHaveBeenCalledTimes(1);
+    expect(onMarkAllSeen.mock.calls[0]![0].map((a: AgentView) => a.paneId)).toEqual(["here", "there"]);
+    expect(button).toBeDisabled();
+    // A second tap while in flight sends nothing more.
+    await userEvent.click(button);
+    expect(onMarkAllSeen).toHaveBeenCalledTimes(1);
+    settle();
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it("is reached and pressed from the keyboard", async () => {
+    const onMarkAllSeen = vi.fn(async () => {});
+    renderRail([unseenHere()], onMarkAllSeen);
+    control()!.focus();
+    expect(control()).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(onMarkAllSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes when the snapshot reports the panes seen, and comes back when one goes unseen again", () => {
+    const onMarkAllSeen = vi.fn(async () => {});
+    const view = renderRail([unseenHere(), unseenThere()], onMarkAllSeen);
+    expect(control()).toHaveAccessibleName("Mark 2 unseen panes seen");
+    const markedHere = agent("here", { status: "done", lastActiveAt: 200, lastSeenAt: 250 });
+    const markedThere = agent("there", { status: "idle", lastActiveAt: 300, lastSeenAt: 350, host: "peer-a" });
+    view.rerender(
+      <CrewProvider servers={PACK} sessions={[]}>
+        <NativeAgentRail agents={[markedHere, markedThere]} servers={PACK} onOpen={vi.fn()} onMarkAllSeen={onMarkAllSeen} />
+      </CrewProvider>,
+    );
+    expect(control()).toBeNull();
+    expect(screen.queryByRole("img", { name: /unseen/i })).toBeNull();
+    const finishedAgain = agent("here", { status: "done", lastActiveAt: 400, lastSeenAt: 250 });
+    view.rerender(
+      <CrewProvider servers={PACK} sessions={[]}>
+        <NativeAgentRail agents={[finishedAgain, markedThere]} servers={PACK} onOpen={vi.fn()} onMarkAllSeen={onMarkAllSeen} />
+      </CrewProvider>,
+    );
+    expect(control()).toHaveAccessibleName("Mark 1 unseen pane seen");
   });
 });

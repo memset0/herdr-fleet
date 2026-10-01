@@ -68,6 +68,7 @@ import type { HomeData } from "@/lib/loaders";
 import { closePane, closeTab } from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { migrateLegacyFavorites, paneRosterFrom, pinnedAgents } from "@/lib/fleet-roster";
+import { markPanesSeen } from "@/lib/fleet-mark-seen";
 import { usePins } from "@/lib/pins";
 import { setStatus } from "@/lib/status";
 import { useFleetSettings } from "@/lib/fleet-settings";
@@ -357,6 +358,17 @@ export function NativeNavigationShell({
     nav.open(panePath(id, paneScope(data.scope, pane, data.servers, data.sessions)));
     closeHierarchy();
   };
+  // Mark every unseen pane the rail lists seen through Collie's own per-pane seen read, each on its
+  // own host and session exactly as `openAgent` addresses it, then wait for the route data so the
+  // rail's control stays disabled until the snapshot that clears the marks has landed.
+  const { revalidate } = revalidator;
+  const markAllSeen = useCallback(
+    async (panes: AgentView[]) => {
+      await markPanesSeen(panes, (agent) => paneScope(data.scope, agent, data.servers, data.sessions));
+      await revalidate();
+    },
+    [data.scope, data.servers, data.sessions, revalidate],
+  );
   const openAgent = useCallback(
     (agent: AgentView) => {
       nav.open(panePath(agent.paneId, paneScope(data.scope, agent, data.servers, data.sessions)));
@@ -554,9 +566,10 @@ export function NativeNavigationShell({
         servers={data.servers}
         currentKey={currentKey}
         onOpen={openAgent}
+        onMarkAllSeen={markAllSeen}
       />
     ),
-    [data.agents, data.bridge, data.error, data.lastSeenAt, tabsForPins, data.servers, currentKey, openAgent],
+    [data.agents, data.bridge, data.error, data.lastSeenAt, tabsForPins, data.servers, currentKey, openAgent, markAllSeen],
   );
 
   const navigation = useMemo(

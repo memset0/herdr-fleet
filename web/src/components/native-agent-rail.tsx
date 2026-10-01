@@ -1,18 +1,20 @@
 import { Inbox, WifiOff } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { rosterEntryKey } from "../../../fleet/ui/pane-roster.ts";
 import { paneRosterFrom, pinnedAgents, togglePanePin } from "@/lib/fleet-roster";
 import { NativeAgentCard } from "@/components/native-agent-card";
 import { SectionHeader } from "@/components/section-header";
 import { StatusSummaryLine } from "@/components/status-counts";
+import { Button } from "@/components/ui/button";
 import { ListGroup } from "@/components/ui/list-group";
+import { UnseenMark } from "@/components/ui/unseen-mark";
 import { clockTime } from "@/lib/format";
 import { paneRowKey } from "@/lib/hosts";
 import { usePins } from "@/lib/pins";
-import { ATTENTION, bucketOf, triage, type TriageKey, type TriageSection } from "@/lib/triage";
+import { ATTENTION, bucketOf, isUnseen, triage, type TriageKey, type TriageSection } from "@/lib/triage";
 import type { AgentView, BridgeStatus, ServerSummary, TabView } from "@/lib/types";
-import { t } from "@/lib/i18n";
+import { t, tn } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
 interface NativeAgentRailProps {
@@ -26,6 +28,11 @@ interface NativeAgentRailProps {
   /** `rosterEntryKey` of the Pane the route is showing, or null on any other route. */
   currentKey?: string | null;
   onOpen: (agent: AgentView) => void;
+  /**
+   * Mark these unseen panes seen and resolve once the route data has revalidated. Present, the rail
+   * offers its mark-all-seen control while any listed pane is unseen; absent, it offers none.
+   */
+  onMarkAllSeen?: ((panes: AgentView[]) => Promise<void>) | undefined;
 }
 
 /** Which timestamp a section's rows date themselves by — Collie's own rule, unchanged: a blocked
@@ -59,6 +66,11 @@ const AGE_BY_SECTION = new Map<TriageKey, "seen" | "active">([
  * The shortcut ordinal is numbered across the WHOLE rail rather than per section, because a key the
  * operator presses addresses one row on screen and does not know which heading it fell under. The
  * ORDER comes from the roster (fleet/ui/pane-roster.ts), which the command layer walks too.
+ *
+ * MARK ALL SEEN sits at the summary line's trailing end while any listed pane — every host's — is
+ * unseen by Collie's own `isUnseen`. The rail only draws it and holds it disabled from the tap until
+ * the caller's promise settles (the seen reads AND the revalidation, so the old count never flashes
+ * back); the caller does the marking through Collie's own per-pane seen read (lib/fleet-mark-seen.ts).
  */
 export function NativeAgentRail({
   agents,
@@ -69,9 +81,11 @@ export function NativeAgentRail({
   servers,
   currentKey = null,
   onOpen,
+  onMarkAllSeen,
 }: NativeAgentRailProps) {
   useLocale();
   const pins = usePins();
+  const [marking, setMarking] = useState(false);
   const container = useRef<HTMLElement>(null);
   // A star moves its row between Pinned and its bucket, which remounts it. Focus goes back to the
   // star in its new place — looked up inside THIS rail, because the same rows are also mounted in
@@ -127,6 +141,12 @@ export function NativeAgentRail({
   const pinnedRows = resolve(ordered.get("pinned") ?? []);
   // The dashboard's own predicate (agent-list.tsx `allClear`): nothing in an ATTENTION bucket.
   const allClear = !all.some((section) => ATTENTION.has(section.key) && section.agents.length > 0);
+  const unseen = agents.filter(isUnseen);
+  const markAll = () => {
+    if (marking || onMarkAllSeen === undefined) return;
+    setMarking(true);
+    void onMarkAllSeen(unseen).finally(() => setMarking(false));
+  };
   let ordinal = -1;
 
   const row = (agent: AgentView, density: "card" | "row", age?: "seen" | "active") => {
@@ -161,7 +181,28 @@ export function NativeAgentRail({
       className="flex min-h-0 flex-1 flex-col"
     >
       <div className="flex flex-col gap-3 p-1.5">
-        <StatusSummaryLine panes={agents} allClear={allClear} className="px-1.5" />
+        {/* One wrapping row: the summary keeps its slot, and the control comes and goes at its
+            trailing end at the line's own 32px — beneath it when the rail is too narrow for both. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <StatusSummaryLine panes={agents} allClear={allClear} className="min-w-0 px-1.5" />
+          {onMarkAllSeen !== undefined && unseen.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-slot="mark-all-seen"
+              disabled={marking}
+              aria-busy={marking || undefined}
+              aria-label={tn("fleet.navigation.markAllSeenLabel", unseen.length)}
+              onClick={markAll}
+              className="h-8 shrink-0 gap-1.5 px-2.5 text-xs"
+            >
+              <UnseenMark size="sm" />
+              {t("fleet.navigation.markAllSeen")}
+              <span className="font-mono tabular-nums text-muted-foreground">{unseen.length}</span>
+            </Button>
+          )}
+        </div>
         {pinnedRows.length > 0 && (
           <section className="flex flex-col gap-2">
             <SectionHeader label={t("home.pinned.title")} className="px-1.5" />

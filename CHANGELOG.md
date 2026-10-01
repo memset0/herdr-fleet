@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Mark every unseen pane seen from the Agents rail.** A control beside the rail's summary line, shown with its count while any pane on any host is unseen, sends Collie's own seen read to each one and refreshes; the Pane page's switcher sheet carries it too.
+
 ### Changed
 
 - **Adopt Collie 1.15.0.** Chat as an opt-in pane body, Settings as four sections, the pane switcher's Place, Activity and cache orders, Copy output in the pane menu, push titles in the device's language, tool calls folded in History, the experimental tuios backend and upstream's fixes, including the Codex goal-row reading (#317) beneath the fork's headless status-row port.
@@ -27,6 +31,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Fixed
 
 - **Claude's working-turn mode line no longer reads as a dialog.** With background agents running, `esc to interrupt` and a trailing `↓ to manage` on the permission-mode line are dropped before the tail checks, with or without an agent count, whole or clipped; the port stays temporary.
+- **Behind the Gateway, opening a pane marks it seen.** The Gateway now forwards Collie's seen header, which carries no credential, so a pane read reaches Collie as the operator looking at it.
 
 ## [3.5.3] - 2026-10-01
 

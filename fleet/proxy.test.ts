@@ -58,6 +58,19 @@ describe("single Collie proxy", () => {
     expect(response.headers.getSetCookie()).toEqual(["collie_pref=kept; Path=/"]);
   });
 
+  test("forwards Collie's seen signal on a pane read, and nothing else outside the allowlist", () => {
+    const seen = upstreamRequestHeaders(
+      new Request("https://fleet.example.com/api/pane/p1?lines=1", {
+        headers: { "x-collie-seen": "1", "x-unlisted": "dropped" },
+      }),
+      config,
+    );
+    expect(seen.get("x-collie-seen")).toBe("1");
+    expect(seen.get("x-unlisted")).toBeNull();
+    const plain = upstreamRequestHeaders(new Request("https://fleet.example.com/api/pane/p1"), config);
+    expect(plain.get("x-collie-seen")).toBeNull();
+  });
+
   test("refuses an absolute redirect whose parsed origin is not the Collie origin", async () => {
     const request = new Request("https://fleet.example.com/");
     const response = await proxyCollie(request, config, async () =>
