@@ -26,6 +26,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Fixed
 
+- **Back from a pane reached through a rail goes up a level.** The Herds and Agents rails, the phone's pane switcher and the pane commands now open a pane the way upstream does since 1.13 — a replace when switching from another pane — so Back no longer returns to the pane just left.
 - **Stop the roster and Agent rail fixtures naming real machines.** Their host, Tab and workspace labels were real machine and repository names; they now use upstream's synthetic outbuilding names, and each test pins the same distinction as before.
 
 ## [3.4.0] - 2026-09-30

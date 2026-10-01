@@ -74,6 +74,7 @@ import { useFleetSettings } from "@/lib/fleet-settings";
 import { homePath, panePath, settingsPath, spacePath } from "@/lib/nav";
 import { triage } from "@/lib/triage";
 import { usePairing } from "@/lib/pairing";
+import { useNav } from "@/hooks/use-nav";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { paneName } from "@/lib/pane-name";
 import { isReadOnly, type AgentView } from "@/lib/types";
@@ -127,6 +128,10 @@ export function NativeNavigationShell({
   // outlives every navigation, and claimed only by a surface that opens right after the gesture.
   usePointerMenuGestures();
   const navigate = useNavigate();
+  // Every pane this shell opens goes through upstream's `open` (ADR 0067): a push from the dashboard
+  // or a space, a replace from a pane, so Back from a pane reached sideways goes up a level rather
+  // than onto the pane the operator just left.
+  const nav = useNav();
   const location = useLocation();
   const { paneId, spaceId } = useParams();
   const preferences = useSyncExternalStore(
@@ -357,15 +362,15 @@ export function NativeNavigationShell({
     const pane = allPanes.find(
       (candidate) => candidate.paneId === id && (host === undefined || (candidate.host ?? "") === host),
     );
-    navigate(panePath(id, paneScope(data.scope, pane, data.servers, data.sessions)));
+    nav.open(panePath(id, paneScope(data.scope, pane, data.servers, data.sessions)));
     closeHierarchy();
   };
   const openAgent = useCallback(
     (agent: AgentView) => {
-      navigate(panePath(agent.paneId, paneScope(data.scope, agent, data.servers, data.sessions)));
+      nav.open(panePath(agent.paneId, paneScope(data.scope, agent, data.servers, data.sessions)));
       closeHierarchy();
     },
-    [navigate, data.scope, data.servers, data.sessions, closeHierarchy],
+    [nav, data.scope, data.servers, data.sessions, closeHierarchy],
   );
 
   // Favourites are browser-local and change without the snapshot moving, so the roster has to be
@@ -401,10 +406,10 @@ export function NativeNavigationShell({
         (candidate) =>
           candidate.paneId === entry.paneId && (candidate.host ?? "") === (entry.host ?? ""),
       );
-      navigate(panePath(entry.paneId, paneScope(data.scope, pane, data.servers, data.sessions)));
+      nav.open(panePath(entry.paneId, paneScope(data.scope, pane, data.servers, data.sessions)));
       closeHierarchy();
     },
-    [allPanes, navigate, data.scope, data.servers, data.sessions, closeHierarchy],
+    [allPanes, nav, data.scope, data.servers, data.sessions, closeHierarchy],
   );
 
   const available = useCallback(
