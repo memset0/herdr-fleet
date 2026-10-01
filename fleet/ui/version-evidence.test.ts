@@ -1,60 +1,66 @@
 import { describe, expect, test } from "bun:test";
 
-import type { FleetReleaseObservation } from "../version/release-observer.ts";
 import { classifyHostVersion } from "./version-evidence.ts";
 
-const FRESH: FleetReleaseObservation = {
-  latest: "4.0.0",
-  majors: [
-    { major: 3, version: "3.4.2" },
-    { major: 4, version: "4.0.0" },
-  ],
-  checkedAt: 1_700_000_000_000,
-  freshUntil: 1_700_000_300_000,
-  freshness: "fresh",
-};
+const LEAD = "3.5.3+0123abc";
 
-describe("Host version evidence", () => {
-  test("uses numeric major.minor compatibility without treating build identity as development", () => {
-    expect(
-      classifyHostVersion({ reported: "3.4.0+2fc727c", answering: true, release: FRESH }),
-    ).toMatchObject({
-      reported: "3.4.0+2fc727c",
-      state: "manual-major",
+describe("Host version evidence against the lead", () => {
+  test("compares major.minor with the lead, ignoring patch and build identity", () => {
+    expect(classifyHostVersion({ reported: "3.5.3+0123abc", answering: true, lead: LEAD })).toMatchObject({
+      reported: "3.5.3+0123abc",
+      state: "compatible",
       development: false,
     });
-
-    const sameMajor = { ...FRESH, latest: "3.4.2", majors: [FRESH.majors[0]!] };
-    expect(
-      classifyHostVersion({ reported: "3.4.0+2fc727c", answering: true, release: sameMajor }),
-    ).toMatchObject({ state: "compatible", development: false });
-    expect(
-      classifyHostVersion({ reported: "3.3.9+2fc727c", answering: true, release: sameMajor }),
-    ).toMatchObject({ state: "outdated", development: false });
+    expect(classifyHostVersion({ reported: "3.5.0", answering: true, lead: LEAD })).toMatchObject({
+      state: "compatible",
+    });
+    expect(classifyHostVersion({ reported: "3.4.9+fedcba9", answering: true, lead: LEAD })).toMatchObject({
+      reported: "3.4.9+fedcba9",
+      state: "outdated",
+    });
+    expect(classifyHostVersion({ reported: "3.9.0", answering: true, lead: "4.0.1" })).toMatchObject({
+      state: "manual-major",
+    });
+    // A member ahead of the lead is not behind it.
+    expect(classifyHostVersion({ reported: "3.6.0", answering: true, lead: LEAD })).toMatchObject({
+      state: "compatible",
+    });
   });
 
-  test("keeps explicit development and last-reported qualification ahead of release comparison", () => {
-    expect(
-      classifyHostVersion({ reported: "3.3.0-dev+2fc727c", answering: true, release: FRESH }),
-    ).toMatchObject({ state: "development", development: true });
-    expect(
-      classifyHostVersion({ reported: "3.3.0-dev+2fc727c", answering: false, release: FRESH }),
-    ).toMatchObject({ state: "last-reported", development: true });
+  test("uses a development lead's numbers as the reference", () => {
+    expect(classifyHostVersion({ reported: "3.5.2", answering: true, lead: "3.6.0-dev+0123abc" })).toMatchObject({
+      state: "outdated",
+    });
+    expect(classifyHostVersion({ reported: "3.6.0", answering: true, lead: "3.6.0-dev+0123abc" })).toMatchObject({
+      state: "compatible",
+    });
   });
 
-  test("never calls a version current when publication freshness is not trustworthy", () => {
-    const stale = { ...FRESH, freshness: "stale" as const };
-    expect(
-      classifyHostVersion({ reported: "3.4.0+2fc727c", answering: true, release: stale }),
-    ).toMatchObject({ state: "release-stale", checkedAt: FRESH.checkedAt });
-    expect(
-      classifyHostVersion({
-        reported: "3.4.0+2fc727c",
-        answering: true,
-        release: { latest: null, majors: [], checkedAt: null, freshUntil: null, freshness: "unavailable" },
-      }),
-    ).toMatchObject({ state: "release-unavailable" });
-    expect(classifyHostVersion({ reported: "not-semver", answering: true, release: FRESH })).toMatchObject({
+  test("keeps development and last-reported qualification ahead of the comparison", () => {
+    expect(classifyHostVersion({ reported: "3.3.0-dev+2fc727c", answering: true, lead: LEAD })).toMatchObject({
+      state: "development",
+      development: true,
+    });
+    expect(classifyHostVersion({ reported: "3.3.0-dev+2fc727c", answering: false, lead: LEAD })).toMatchObject({
+      state: "last-reported",
+      development: true,
+    });
+    expect(classifyHostVersion({ reported: "3.4.0", answering: false, lead: null })).toMatchObject({
+      state: "last-reported",
+      development: false,
+    });
+  });
+
+  test("asserts nothing without a parseable member identity or lead reference", () => {
+    expect(classifyHostVersion({ reported: "not-semver", answering: true, lead: LEAD })).toMatchObject({
+      state: "unknown",
+    });
+    expect(classifyHostVersion({ answering: true, lead: LEAD })).toMatchObject({ reported: null, state: "unknown" });
+    expect(classifyHostVersion({ reported: "3.5.3", answering: true, lead: null })).toMatchObject({
+      reported: "3.5.3",
+      state: "unknown",
+    });
+    expect(classifyHostVersion({ reported: "3.5.3", answering: true, lead: "unknown" })).toMatchObject({
       state: "unknown",
     });
   });

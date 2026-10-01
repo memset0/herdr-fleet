@@ -457,8 +457,6 @@ export const ja: Dictionary = {
   "fleet.version.development": "開発版 · {version}",
   "fleet.version.lastReported": "最終報告 · {version}",
   "fleet.version.lastReportedDevelopment": "最終報告（開発版）· {version}",
-  "fleet.version.lastChecked": "最終確認 {time} · {version}",
-  "fleet.version.freshnessUnavailable": "鮮度不明 · {version}",
   "fleet.version.unknown": "バージョン不明",
   "fleet.version.footerName": "Herdr Fleet",
   "fleet.command.bar.label": "Fleet コマンド",

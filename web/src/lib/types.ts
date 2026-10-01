@@ -373,18 +373,12 @@ export interface ServerSummary {
   /** Epoch ms, stamped by the LEAD on receipt — never the peer's clock (§10.2). `0` = never answered. */
   lastSeenAt: number;
 }
-/** `GET /fleet/api/version` — cached publication evidence from the authenticated Fleet Gateway. */
-export interface FleetReleaseObservation {
-  latest: string | null;
-  majors: Array<{ major: number; version: string }>;
-  checkedAt: number | null;
-  freshUntil: number | null;
-  freshness: "fresh" | "stale" | "unavailable";
-}
-
-/** The shell's one joined view: publication evidence plus `/api/crew` runtime reports. */
+/**
+ * The shell's one version view, from one `/api/crew` read: the lead's own runtime version (the
+ * reference every member is compared against) and each member's runtime report.
+ */
 export interface FleetVersionView {
-  release: FleetReleaseObservation;
+  lead: string | null;
   members: Array<{ id: string; version?: string }>;
 }
 

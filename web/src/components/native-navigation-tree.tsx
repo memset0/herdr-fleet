@@ -15,7 +15,6 @@ import { StatusDot } from "@/components/status-badge";
 import { HOST_TEXT_CLASSES, hostSlot } from "@/lib/hosts";
 import { Collapse } from "@/components/ui/collapse";
 import { t } from "@/lib/i18n";
-import { clockTime } from "@/lib/format";
 import { statusLabel } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
@@ -222,7 +221,7 @@ function Row({
           <RowIcon row={row} />
           {row.icon === "host" ? (
             // Every Host reserves this second line, including a compatible version and `unknown`.
-            // Version freshness may repaint the words but cannot change the row's geometry.
+            // A version state may repaint the words but cannot change the row's geometry.
             <span className="min-w-0 flex-1 py-0.5">
               <span className="flex min-w-0 items-center gap-1.5">
                 <span className="truncate">{row.label}</span>
@@ -352,10 +351,6 @@ function HostVersion({ evidence }: { evidence: NavigationRow["version"] }) {
     label = evidence.development
       ? t("fleet.version.lastReportedDevelopment", { version })
       : t("fleet.version.lastReported", { version });
-  } else if (evidence.state === "release-stale" && evidence.checkedAt !== null) {
-    label = t("fleet.version.lastChecked", { version, time: clockTime(evidence.checkedAt) });
-  } else if (evidence.state === "release-stale" || evidence.state === "release-unavailable") {
-    label = t("fleet.version.freshnessUnavailable", { version });
   } else {
     label = t("fleet.version.unknown");
   }

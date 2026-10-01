@@ -160,7 +160,6 @@ describe("NativeNavigationTree", () => {
               reported: "3.2.1+2fc727c",
               state: "outdated",
               development: false,
-              checkedAt: 1_700_000_000_000,
             },
             workspaces: [],
             tabs: [],

@@ -612,17 +612,6 @@ export const handlers = [
   // in front of it does. Without it the Settings route's one fetch never settles under MSW and the
   // playground's render of every card times out, which is exactly how this handler came to be here.
   http.get("/fleet/api/settings", () => new HttpResponse(null, { status: 404 })),
-  // The Gateway observer's cached public evidence. Tests remain hermetic: this is a synthetic
-  // annotated stable tag, not a live release-source request.
-  http.get("/fleet/api/version", () =>
-    HttpResponse.json({
-      latest: "3.3.0",
-      majors: [{ major: 3, version: "3.3.0" }],
-      checkedAt: 1_700_000_000_000,
-      freshUntil: 4_102_444_800_000,
-      freshness: "fresh",
-    }),
-  ),
   // Default world: no folder recorded yet (#289), which is every bridge that never created a space
   // in a folder. The new-space sheet then renders exactly as it did before the list existed; a test
   // that wants a list overrides these two with its own.

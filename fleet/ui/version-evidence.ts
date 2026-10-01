@@ -1,13 +1,9 @@
-import type { FleetReleaseObservation } from "../version/release-observer.ts";
-
 export type HostVersionState =
   | "compatible"
   | "outdated"
   | "manual-major"
   | "development"
   | "last-reported"
-  | "release-stale"
-  | "release-unavailable"
   | "unknown";
 
 export interface HostVersionEvidence {
@@ -16,17 +12,16 @@ export interface HostVersionEvidence {
   readonly state: HostVersionState;
   /** Preserved beside `last-reported`, whose historical qualification otherwise wins the state. */
   readonly development: boolean;
-  readonly checkedAt: number | null;
 }
 
-interface ParsedReportedVersion {
+interface ParsedVersion {
   readonly major: number;
   readonly minor: number;
   readonly prerelease: boolean;
 }
 
-function parseReportedVersion(reported: string | undefined): ParsedReportedVersion | null {
-  if (reported === undefined) return null;
+function parseVersion(reported: string | null | undefined): ParsedVersion | null {
+  if (reported === undefined || reported === null) return null;
   const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
     reported.trim(),
   );
@@ -38,52 +33,29 @@ function parseReportedVersion(reported: string | undefined): ParsedReportedVersi
 }
 
 /**
- * Classify display evidence only. The result has no target, action or installation claim, and patch
- * never participates because Fleet peers are compatible at major.minor.
+ * Classify display evidence only, against the lead's own running version from the same census read.
+ * The lead is levelled first, so it is the reference a member must match; only its major.minor
+ * counts — between releases it runs a `-dev` commit build, and patch never participates because
+ * Fleet peers are compatible at major.minor. The result has no target, action or installation claim.
  */
 export function classifyHostVersion(input: {
   readonly reported?: string;
   readonly answering: boolean;
-  readonly release: FleetReleaseObservation;
+  /** The lead's own runtime version (`self.version` of the crew census), or null when unread. */
+  readonly lead: string | null;
 }): HostVersionEvidence {
   const raw = input.reported?.trim();
-  const parsed = parseReportedVersion(raw);
-  if (parsed === null) {
-    return { reported: raw || null, state: "unknown", development: false, checkedAt: input.release.checkedAt };
+  const parsed = parseVersion(raw);
+  if (parsed === null) return { reported: raw || null, state: "unknown", development: false };
+  const reported = raw ?? null;
+  if (!input.answering) return { reported, state: "last-reported", development: parsed.prerelease };
+  if (parsed.prerelease) return { reported, state: "development", development: true };
+  const lead = parseVersion(input.lead);
+  // No reference, no conclusion: a version is never called compatible against nothing.
+  if (lead === null) return { reported, state: "unknown", development: false };
+  if (lead.major > parsed.major) return { reported, state: "manual-major", development: false };
+  if (lead.major === parsed.major && lead.minor > parsed.minor) {
+    return { reported, state: "outdated", development: false };
   }
-  if (!input.answering) {
-    return {
-      reported: raw ?? null,
-      state: "last-reported",
-      development: parsed.prerelease,
-      checkedAt: input.release.checkedAt,
-    };
-  }
-  if (parsed.prerelease) {
-    return { reported: raw ?? null, state: "development", development: true, checkedAt: input.release.checkedAt };
-  }
-  if (input.release.freshness === "stale") {
-    return { reported: raw ?? null, state: "release-stale", development: false, checkedAt: input.release.checkedAt };
-  }
-  if (input.release.freshness === "unavailable" || input.release.latest === null) {
-    return {
-      reported: raw ?? null,
-      state: "release-unavailable",
-      development: false,
-      checkedAt: input.release.checkedAt,
-    };
-  }
-  const latestMajor = input.release.majors.at(-1)?.major;
-  if (latestMajor !== undefined && latestMajor > parsed.major) {
-    return { reported: raw ?? null, state: "manual-major", development: false, checkedAt: input.release.checkedAt };
-  }
-  const latestInMajor = input.release.majors.find(({ major }) => major === parsed.major)?.version;
-  if (latestInMajor !== undefined) {
-    const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(latestInMajor);
-    const latestMinor = match === null ? parsed.minor : Number(match[2]);
-    if (latestMinor > parsed.minor) {
-      return { reported: raw ?? null, state: "outdated", development: false, checkedAt: input.release.checkedAt };
-    }
-  }
-  return { reported: raw ?? null, state: "compatible", development: false, checkedAt: input.release.checkedAt };
+  return { reported, state: "compatible", development: false };
 }

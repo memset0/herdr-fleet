@@ -108,14 +108,6 @@ interface NativeNavigationShellProps {
  * machine that has actually gone stays named within a sweep of going.
  */
 const MISSED_SWEEP_MS = 20_000;
-const UNAVAILABLE_FLEET_RELEASE = {
-  latest: null,
-  majors: [],
-  checkedAt: null,
-  freshUntil: null,
-  freshness: "unavailable",
-} as const;
-
 
 export function NativeNavigationShell({
   data,
@@ -225,7 +217,7 @@ export function NativeNavigationShell({
             version: classifyHostVersion({
               reported: memberVersions.get(hostId),
               answering: !hostFaultSinks(hostFaults.get(hostId)),
-              release: data.fleetVersions?.release ?? UNAVAILABLE_FLEET_RELEASE,
+              lead: data.fleetVersions?.lead ?? null,
             }),
             workspaces: on(data.allWorkspaces ?? data.workspaces),
             tabs: on(data.allTabs ?? data.tabs),
@@ -239,7 +231,7 @@ export function NativeNavigationShell({
       hostIds,
       hostFaults,
       memberVersions,
-      data.fleetVersions?.release,
+      data.fleetVersions?.lead,
       data.servers,
       data.allWorkspaces,
       data.workspaces,

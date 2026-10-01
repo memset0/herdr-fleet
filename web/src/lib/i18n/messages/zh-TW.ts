@@ -437,8 +437,6 @@ export const zhTW: Dictionary = {
   "fleet.version.development": "開發版本 · {version}",
   "fleet.version.lastReported": "上次回報 · {version}",
   "fleet.version.lastReportedDevelopment": "上次回報的開發版本 · {version}",
-  "fleet.version.lastChecked": "上次檢查 {time} · {version}",
-  "fleet.version.freshnessUnavailable": "新舊狀態無法取得 · {version}",
   "fleet.version.unknown": "版本未知",
   "fleet.version.footerName": "Herdr Fleet",
   "fleet.command.bar.label": "Fleet 指令",

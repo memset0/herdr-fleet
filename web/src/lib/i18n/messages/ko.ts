@@ -455,8 +455,6 @@ export const ko: Dictionary = {
   "fleet.version.development": "개발 빌드 · {version}",
   "fleet.version.lastReported": "마지막 보고 · {version}",
   "fleet.version.lastReportedDevelopment": "마지막 보고(개발 빌드) · {version}",
-  "fleet.version.lastChecked": "마지막 확인 {time} · {version}",
-  "fleet.version.freshnessUnavailable": "최신 여부 확인 불가 · {version}",
   "fleet.version.unknown": "버전 알 수 없음",
   "fleet.version.footerName": "Herdr Fleet",
   "fleet.command.bar.label": "Fleet 명령",

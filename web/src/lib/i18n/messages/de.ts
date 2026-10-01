@@ -462,8 +462,6 @@ export const de: Dictionary = {
   "fleet.version.development": "Entwicklung · {version}",
   "fleet.version.lastReported": "Zuletzt gemeldet · {version}",
   "fleet.version.lastReportedDevelopment": "Zuletzt als Entwicklung gemeldet · {version}",
-  "fleet.version.lastChecked": "Zuletzt geprüft {time} · {version}",
-  "fleet.version.freshnessUnavailable": "Aktualität nicht verfügbar · {version}",
   "fleet.version.unknown": "Version unbekannt",
   "fleet.version.footerName": "Herdr Fleet",
   "fleet.command.bar.label": "Fleet-Befehle",

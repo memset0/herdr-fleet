@@ -479,8 +479,6 @@ export const en = {
   "fleet.version.development": "Development · {version}",
   "fleet.version.lastReported": "Last reported · {version}",
   "fleet.version.lastReportedDevelopment": "Last reported development · {version}",
-  "fleet.version.lastChecked": "Last checked {time} · {version}",
-  "fleet.version.freshnessUnavailable": "Freshness unavailable · {version}",
   "fleet.version.unknown": "Version unknown",
   "fleet.version.footerName": "Herdr Fleet",
   // --- fleet.command (the command bar). Command NAMES are not translated: they are the catalog's

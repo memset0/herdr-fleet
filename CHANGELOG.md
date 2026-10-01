@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Host rows compare each member with the lead, not with published tags.** The lead's own runtime version from the same `/api/crew` read is the reference: same major.minor is compatible, a lower minor is outdated, a higher lead major is a manual update; "Last checked" and "Freshness unavailable" are gone, and the Gateway's `/fleet/api/version` route and its outbound tag lookup are removed.
+
 ## [3.5.2] - 2026-10-01
 
 **Frontend-only; no member is obliged to redeploy, and the lead alone levels.** The Agents rail and

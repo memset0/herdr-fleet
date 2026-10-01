@@ -6,7 +6,6 @@ import { SessionStore } from "./session-store.ts";
 import { createSettingsStore, settingsPathFor } from "./settings/store.ts";
 import { leadResolver, localSnapshotSource } from "./terminal/resolve.ts";
 import { createTerminalService } from "./terminal/service.ts";
-import { createFleetReleaseObserver } from "./version/release-observer.ts";
 
 async function main(): Promise<void> {
   const configPath = resolveFleetConfigPath();
@@ -36,9 +35,6 @@ async function main(): Promise<void> {
     // Beside the private configuration, not in the state directory: bindings are the operator's own
     // choice, and a wiped state directory must not quietly return them to stock defaults.
     settings: createSettingsStore(settingsPathFor(dirname(configPath))),
-    // Fixed, public, read-only release metadata. The observer returns its cache immediately and
-    // coalesces the bounded source refresh behind ordinary authenticated shell revalidation.
-    versions: createFleetReleaseObserver(),
     terminal: terminal ?? undefined,
     onSessionRevoked: terminal === null ? undefined : (sessionId) => terminal.revoked(sessionId),
   });

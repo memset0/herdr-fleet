@@ -27,7 +27,6 @@ import type {
   ChangeDiffResponse,
   ChangesResponse,
   PaneHistoryResponse,
-  FleetReleaseObservation,
   CrewStatusResponse,
   PaneReadResponse,
   PaneResizeResponse,
@@ -1062,11 +1061,6 @@ export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
  */
 export function fetchCrew(signal?: AbortSignal): Promise<CrewStatusResponse> {
   return req<CrewStatusResponse>("/api/crew", { signal });
-}
-
-/** Cached, read-only stable-tag evidence from the authenticated Fleet Gateway. */
-export function fetchFleetReleases(signal?: AbortSignal): Promise<FleetReleaseObservation> {
-  return req<FleetReleaseObservation>("/fleet/api/version", { signal });
 }
 
 /**

@@ -321,14 +321,10 @@ describe("NativeNavigationShell", () => {
       allWorkspaces: [here.workspace, there.workspace],
       allTabs: [here.tab, there.tab],
       agents: [here.pane, there.pane],
+      // The lead's own runtime version is the reference: a member on its minor is compatible, one
+      // a minor behind is outdated.
       fleetVersions: {
-        release: {
-          latest: "3.3.2",
-          majors: [{ major: 3, version: "3.3.2" }],
-          checkedAt: 1_700_000_000_000,
-          freshUntil: 1_700_000_300_000,
-          freshness: "fresh",
-        },
+        lead: "3.3.0+leadbuild",
         members: [
           { id: "lead", version: "3.3.0+leadbuild" },
           { id: "peer-a", version: "3.2.9+peerbuild" },

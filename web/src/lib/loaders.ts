@@ -15,7 +15,6 @@
 
 import {
   fetchDevices,
-  fetchFleetReleases,
   fetchHistory,
   fetchCrew,
   fetchPane,
@@ -52,7 +51,6 @@ import type {
   AgentView,
   BridgeStatus,
   DeviceAuth,
-  FleetReleaseObservation,
   FleetVersionView,
   CrewStatusResponse,
   PairedDeviceWire,
@@ -230,43 +228,20 @@ function isAuthError<TThrown>(error: TThrown): boolean {
 let lastRootUrl: string | undefined;
 let lastPaneUrl: string | undefined;
 
-const UNAVAILABLE_RELEASE: FleetReleaseObservation = {
-  latest: null,
-  majors: [],
-  checkedAt: null,
-  freshUntil: null,
-  freshness: "unavailable",
-};
-let currentFleetVersions: FleetVersionView = { release: UNAVAILABLE_RELEASE, members: [] };
+let currentFleetVersions: FleetVersionView = { lead: null, members: [] };
 let fleetVersionRefresh: Promise<void> | null = null;
 
 /**
- * Refresh optional version evidence beside, never in front of, the usable snapshot. The Gateway
- * release endpoint itself returns cache-first; `/api/crew` reads the lead's existing observations.
+ * Refresh optional version evidence beside, never in front of, the usable snapshot. One `/api/crew`
+ * read carries both halves: the lead's own runtime version, which is the reference every member is
+ * compared against, and each member's report. Taking them from one answer keeps the pair coherent.
  */
 function refreshFleetVersionView(): void {
   if (fleetVersionRefresh !== null) return;
-  const release = fetchFleetReleases()
-    .then((observed) => {
-      currentFleetVersions = { ...currentFleetVersions, release: observed };
-      return undefined;
-    })
-    .catch(() => {
-      // If the authenticated observation route itself cannot answer, a previously fresh copy is no
-      // longer evidence of freshness. Keep its version and checked time, but qualify it immediately.
-      currentFleetVersions = {
-        ...currentFleetVersions,
-        release: {
-          ...currentFleetVersions.release,
-          freshness:
-            currentFleetVersions.release.checkedAt === null ? "unavailable" : "stale",
-        },
-      };
-    });
-  const members = fetchCrew()
+  fleetVersionRefresh = fetchCrew()
     .then((status) => {
       currentFleetVersions = {
-        ...currentFleetVersions,
+        lead: status.self.version,
         members: status.members.map((member) =>
           member.version === undefined ? { id: member.id } : { id: member.id, version: member.version },
         ),
@@ -274,12 +249,8 @@ function refreshFleetVersionView(): void {
       return undefined;
     })
     .catch((error) => {
-      if (isApiErrorStatus(error, 404)) {
-        currentFleetVersions = { ...currentFleetVersions, members: [] };
-      }
-    });
-  fleetVersionRefresh = Promise.all([release, members])
-    .then(() => undefined)
+      if (isApiErrorStatus(error, 404)) currentFleetVersions = { lead: null, members: [] };
+    })
     .finally(() => {
       fleetVersionRefresh = null;
     });
@@ -410,9 +381,8 @@ export async function rootLoader({ request }: { request?: Request } = {}): Promi
   // markLive clears the latch → the next run fetches live and replaces the stale herd).
   if (isNavigation && isLostLatched()) return staleHome(scope, viewAll);
 
-  // Optional release/member evidence starts beside the snapshot and is never awaited. On first load
-  // the shell can render unknown immediately; ordinary polling revalidates after the shared bounded
-  // reads settle and replaces it with fresh or explicitly stale evidence.
+  // Optional version evidence starts beside the snapshot and is never awaited. On first load the
+  // shell can render unknown immediately; ordinary polling revalidates after the census read settles.
   refreshFleetVersionView();
 
   try {

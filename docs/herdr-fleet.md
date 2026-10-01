@@ -226,26 +226,23 @@ reaches Collie.
 
 ## Version evidence
 
-The authenticated Gateway owns `GET /fleet/api/version`. It observes the public Git refs for this
-product at one fixed source, accepts only exact stable `vMAJOR.MINOR.PATCH` refs whose Git object is
-an annotated tag, and selects versions numerically. The request sends no credential, follows no
-redirect, has a short deadline and bounded response body, and is shared through one retained cache.
-Published annotated tags are the complete release signal; no branch head, Releases entry, or separate
-approval file participates.
-The route always answers immediately with fresh, stale, or unavailable cached evidence; a needed
-refresh runs in the background and a later ordinary UI revalidation observes it. A failed refresh
-keeps the last successful observation and cannot hold navigation behind the public source.
+The native Host rows compare each member's runtime report with the lead's own runtime version. Both
+come from one read of Collie's existing `/api/crew` census — the lead's `self.version` beside every
+member's `version` — so the reference and the reports are always from the same moment. The lead is
+levelled first, which is why it, rather than any published tag, is the version a member must match.
+No request leaves the lead for version evidence, and the Gateway owns no version route.
 
-The native Host rows join that publication evidence to Collie's existing `/api/crew` runtime
-reports. A reported value such as `3.3.0+2fc727c` is the member's full running identity; it is not a
-verified on-disk installation. Patch differences are compatible, a higher minor in the same major is
-shown as outdated, and a higher published major is explicitly a manual update. Only an explicit
-SemVer prerelease is a development build. A member that is not answering keeps its value qualified
-as last reported, while stale or unavailable publication evidence is stated rather than guessed.
+A reported value such as `3.3.0+2fc727c` is the member's full running identity; it is not a verified
+on-disk installation. Only major.minor is compared: a member on the lead's major.minor is compatible
+whatever its patch, a lower minor in the same major is shown as outdated, and a lead on a higher major
+makes the member's update explicitly manual. The lead's own prerelease or build suffix does not change
+the reference. Only an explicit SemVer prerelease on the member is a development build. A member that
+is not answering keeps its value qualified as last reported. An absent or unparseable member value —
+or a census that names no readable lead version — reads "Version unknown".
 
 Below the shared Collie/TTYD selector, both the desktop rail and mobile drawer show this page's own
 `Herdr Fleet` build stamp. That footer is bundle identity, not the selected Host's runtime report.
-Neither observation surface installs, deploys, enrolls, reaches a peer, or carries release authority.
+Neither surface installs, deploys, enrolls, reaches a peer, or carries release authority.
 
 ## Reverse-proxy contract
 

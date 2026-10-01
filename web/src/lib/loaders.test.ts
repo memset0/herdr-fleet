@@ -48,27 +48,28 @@ describe("rootLoader", () => {
   });
 
   it("does not hold the first usable snapshot behind optional version discovery", async () => {
-    let releaseEvidence = () => {};
-    const heldEvidence = new Promise<void>((resolve) => {
-      releaseEvidence = resolve;
+    let releaseCensus = () => {};
+    const heldCensus = new Promise<void>((resolve) => {
+      releaseCensus = resolve;
     });
     server.use(
-      http.get("/fleet/api/version", async () => {
-        await heldEvidence;
-        return HttpResponse.json({
-          latest: "3.3.0",
-          majors: [{ major: 3, version: "3.3.0" }],
-          checkedAt: 1_700_000_000_000,
-          freshUntil: 1_700_000_300_000,
-          freshness: "fresh",
-        });
+      http.get("/api/crew", async () => {
+        await heldCensus;
+        return HttpResponse.json(fixtureCrewStatus);
       }),
     );
     const { rootLoader } = await import("./loaders");
 
-    const data = await rootLoader();
-    expect(data.bridge).toBe("connected");
-    releaseEvidence();
+    const first = await rootLoader();
+    expect(first.bridge).toBe("connected");
+    expect(first.fleetVersions).toEqual({ lead: null, members: [] });
+    releaseCensus();
+    await vi.waitFor(async () => {
+      // The lead's own version and every member's report come from the same census answer.
+      const next = await rootLoader();
+      expect(next.fleetVersions?.lead).toBe(fixtureCrewStatus.self.version);
+      expect(next.fleetVersions?.members).toContainEqual({ id: "workshop", version: "0.29.0" });
+    });
   });
 
   it.each([401, 403] as const)("marks a %i response as an auth error", async (status) => {

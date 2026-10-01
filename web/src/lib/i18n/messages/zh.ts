@@ -443,8 +443,6 @@ export const zh: Dictionary = {
   "fleet.version.development": "开发版本 · {version}",
   "fleet.version.lastReported": "上次报告 · {version}",
   "fleet.version.lastReportedDevelopment": "上次报告的开发版本 · {version}",
-  "fleet.version.lastChecked": "上次检查 {time} · {version}",
-  "fleet.version.freshnessUnavailable": "新旧状态不可用 · {version}",
   "fleet.version.unknown": "版本未知",
   "fleet.version.footerName": "Herdr Fleet",
   "fleet.command.bar.label": "Fleet 命令",

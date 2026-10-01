@@ -10,7 +10,6 @@ import type { FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import { SessionStore } from "./session-store.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
-import type { FleetReleaseObserver } from "./version/release-observer.ts";
 
 let config: FleetLeadConfig;
 const loginCsrfToken = "C".repeat(43);
@@ -41,7 +40,7 @@ function request(path: string, init: RequestInit = {}): Request {
   return new Request(`${config.public.origin}${path}`, { ...init, headers });
 }
 
-async function setup(fetcher: FleetFetcher = fetch, versions?: FleetReleaseObserver) {
+async function setup(fetcher: FleetFetcher = fetch) {
   const root = await mkdtemp(join(tmpdir(), "herdr-fleet-gateway-"));
   roots.push(root);
   const sessions = new SessionStore(join(root, "sessions.json"));
@@ -53,7 +52,6 @@ async function setup(fetcher: FleetFetcher = fetch, versions?: FleetReleaseObser
       sessions,
       limiter,
       fetcher,
-      versions,
       now: () => 1_000,
       loginCsrfToken,
     }),
@@ -267,48 +265,24 @@ describe("authenticated solo Gateway", () => {
     expect(loginPage.headers.get("cache-control")).toBe("no-store");
   });
 
-  test("serves cached publication evidence only through the authenticated read route", async () => {
-    let observations = 0;
-    const versions: FleetReleaseObserver = {
-      observe: () => {
-        observations += 1;
-        return {
-          latest: "3.3.0",
-          majors: [{ major: 3, version: "3.3.0" }],
-          checkedAt: 900,
-          freshUntil: 1_200,
-          freshness: "fresh",
-        };
-      },
-    };
-    const { handler } = await setup(fetch, versions);
-    expect(
-      (await handler(request("/fleet/api/version"), { peerAddress: "127.0.0.1" })).status,
-    ).toBe(401);
-    expect(observations).toBe(0);
+  test("owns no published-release route: the retired version path is Collie's like any other", async () => {
+    const proxied: string[] = [];
+    const { handler } = await setup(async (input) => {
+      proxied.push(new URL(input instanceof Request ? input.url : String(input)).pathname);
+      return new Response("collie", { status: 404 });
+    });
+    // No longer a Fleet machine surface, so an anonymous caller meets the login redirect, not a 401.
+    const anonymous = await handler(request("/fleet/api/version"), { peerAddress: "127.0.0.1" });
+    expect([302, 303]).toContain(anonymous.status);
+    expect(proxied).toEqual([]);
 
     const cookie = await login(handler);
-    const response = await handler(
-      request("/fleet/api/version", { headers: { cookie } }),
-      { peerAddress: "127.0.0.1" },
-    );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      latest: "3.3.0",
-      majors: [{ major: 3, version: "3.3.0" }],
-      checkedAt: 900,
-      freshUntil: 1_200,
-      freshness: "fresh",
+    const response = await handler(request("/fleet/api/version", { headers: { cookie } }), {
+      peerAddress: "127.0.0.1",
     });
-    const write = await handler(
-      request("/fleet/api/version", {
-        method: "POST",
-        headers: { cookie, origin: config.public.origin },
-      }),
-      { peerAddress: "127.0.0.1" },
-    );
-    expect(write.status).toBe(405);
-    expect(observations).toBe(1);
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("collie");
+    expect(proxied).toEqual(["/fleet/api/version"]);
   });
 
   test("contains an authenticated upstream failure without exposing its exception", async () => {
