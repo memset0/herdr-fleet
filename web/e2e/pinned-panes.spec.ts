@@ -139,7 +139,9 @@ test("Changes: pinned rows lead in place order, open the pane, and the workspace
   await viaMenu(page, mainRow(page, "claude"), "paneActions.pin.label");
 
   await tab(page, CHANGES).click();
-  const pinnedRows = pinnedGroup(page).getByRole("button");
+  // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): every agent row carries a favorite
+  // control beside it, so a pinned row is the button with the row's own slot.
+  const pinnedRows = pinnedGroup(page).locator('button[data-slot="agent-row"]');
   await expect(pinnedRows).toHaveCount(2);
   await expect(pinnedRows.nth(0)).toHaveAccessibleName(AGENT_ROW.claude);
   await expect(pinnedRows.nth(1)).toHaveAccessibleName(AGENT_ROW.codex);
@@ -160,6 +162,7 @@ test("Changes: pinned rows lead in place order, open the pane, and the workspace
 });
 
 test("switcher: the Pinned section leads the sheet and each pane is listed once", async ({ page }) => {
+  test.skip(true, "the switcher sheet holds the Agents rail, which ignores dashboard pins (native-navigation-sidebars-port)");
   await page.goto("/");
   await viaMenu(page, mainRow(page, "codex"), "paneActions.pin.label");
   await mainRow(page, "claude").click();

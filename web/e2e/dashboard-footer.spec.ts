@@ -109,7 +109,9 @@ test("Focus with nothing urgent shows the all-clear line, not an empty list", as
   );
   await page.goto("/");
   await tab(page, FOCUS).click();
-  await expect(page.getByText(en["home.allClear"])).toBeVisible();
+  // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Agents rail says the same line
+  // beside the route, so look inside the route's own main region.
+  await expect(page.getByRole("main").getByText(en["home.allClear"])).toBeVisible();
   await expect(page.getByRole("heading", { name: "webapp" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "collie" })).toHaveCount(0);
   // No badge when nothing needs you.

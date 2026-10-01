@@ -824,7 +824,8 @@ describe("preflight crew — the members of a lead", () => {
     const enrollment = readFileSync(new URL("../bridge/crew/enrollment.ts", import.meta.url), "utf8");
     expect(enrollment).toContain(`export const CREW_PROTOCOL_VERSION = ${CREW_PROTOCOL_VERSION};`);
     expect(enrollment).toContain(`**${CREW_PROTOCOL_VERSION} since ${PROTOCOL_FLOOR_VERSION}.**`);
-    const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+    // Collie's release history is retained here as COLLIE_CHANGELOG.md; CHANGELOG.md is Herdr Fleet's.
+    const changelog = readFileSync(new URL("../COLLIE_CHANGELOG.md", import.meta.url), "utf8");
     expect(changelog).toContain(`## [${PROTOCOL_FLOOR_VERSION}] - `);
   });
 

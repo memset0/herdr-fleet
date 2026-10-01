@@ -7,7 +7,9 @@ import { installApiStub } from './fixtures/api';
 test.use({ serviceWorkers: 'block' });
 
 for (const theme of ['dark', 'light']) {
-  test(`Codex removes composer padding and matches Claude spacing (${theme})`, async ({ page }) => {
+  test(`Codex removes composer padding and matches Claude spacing (${theme})`, async ({ page }, testInfo) => {
+    // DOWNSTREAM PORT (FORK.toml native-manual-pane-fit-port, decline-the-centred-pane-column).
+    test.skip(testInfo.project.name === 'app-tablet', 'the Pane column is not centred at 768px here, so the two agents\' session notes wrap to different heights');
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await installApiStub(page);
     await page.addInitScript((value) => localStorage.setItem('collie:theme:v1', value), theme);

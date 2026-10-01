@@ -46,7 +46,9 @@ test("A: dashboard, pane A, switcher to pane B, then back is the dashboard", asy
   await landed(page, PANE_A);
 
   await page.getByRole("button", { name: en["chat.switcher.aria"] }).click();
-  await page.getByRole("dialog", { name: en["chat.switcher.aria"] }).getByRole("button", { name: /^codex logo codex/u }).click();
+  // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the switcher sheet holds the Agents
+  // rail, whose rows lead with the agent's logo and status rather than repeating its name.
+  await page.getByRole("dialog", { name: en["fleet.navigation.agents"] }).getByRole("button", { name: /^codex logo/u }).click();
   await landed(page, PANE_B);
 
   await page.goBack();
@@ -105,6 +107,7 @@ test("C: the dashboard's Changes tab, a workspace's Changes, then the header bac
 });
 
 test("D: dashboard, space, pane, header up is the space, then back is the dashboard", async ({ page }) => {
+  test.skip(true, "the Pane header draws no Collie mark here (native-navigation-sidebars-port)");
   await page.goto("/");
   await page.getByRole("main").getByRole("button", { name: /^working collie 2 panes/u }).click();
   await landed(page, "/space/w2");
@@ -157,6 +160,7 @@ test("E3: a window a notification opened is seeded, and loses its marker", async
 });
 
 test("a swipe back (POP) draws no slide of ours, the app's own up arrow still slides", async ({ page }) => {
+  test.skip(true, "the Pane header draws no Collie mark here (native-navigation-sidebars-port)");
   // The pane row and the pane's arrow glide instead where the engine has view transitions
   // (lib/glide.ts, e2e/pane-glide.spec.ts). The slide is what they fall back to, and what this case
   // pins, so the engine is taken away here.

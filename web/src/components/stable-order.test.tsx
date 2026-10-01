@@ -87,7 +87,9 @@ function surfaces(agents: AgentView[]) {
   const dash = render(
     <AgentList agents={agents} shellPanes={SHELLS} tabs={tabs} servers={servers} onOpen={vi.fn()} />,
   );
-  const dashboard = [...dash.container.querySelectorAll("section button")].map(
+  // DOWNSTREAM PORT (FORK.toml native-agent-favorites-port): every agent row carries a favorite
+  // control beside it, also a button inside the section, so a row is the button with the row's slot.
+  const dashboard = [...dash.container.querySelectorAll('section button[data-slot="agent-row"]')].map(
     (b) => [...agents, ...SHELLS].find((a) => b.textContent?.includes(a.paneLabel!))?.paneLabel,
   );
   dash.unmount();

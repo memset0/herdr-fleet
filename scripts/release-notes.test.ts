@@ -426,6 +426,8 @@ describe("parseUrgent", () => {
 
 describe("the repository's CHANGELOG.md", () => {
 	const changelog = readFileSync(join(import.meta.dir, "..", "CHANGELOG.md"), "utf8");
+	// Collie's release history is retained here as COLLIE_CHANGELOG.md; CHANGELOG.md is Herdr Fleet's.
+	const collieChangelog = readFileSync(join(import.meta.dir, "..", "COLLIE_CHANGELOG.md"), "utf8");
 
 	test("the newest numbered version's section parses", () => {
 		const newest = /^## \[(\d[^\]]*)\]/m.exec(changelog)?.[1];
@@ -436,11 +438,11 @@ describe("the repository's CHANGELOG.md", () => {
 	});
 
 	test("1.12.1 credits the contributor its changelog names", () => {
-		expect(creditedHandles(parseSection(changelog, "1.12.1"))).toEqual(["enieuwy"]);
+		expect(creditedHandles(parseSection(collieChangelog, "1.12.1"))).toEqual(["enieuwy"]);
 	});
 
 	test("1.12.0 credits every contributor its changelog names", () => {
-		expect(creditedHandles(parseSection(changelog, "1.12.0"))).toEqual([
+		expect(creditedHandles(parseSection(collieChangelog, "1.12.0"))).toEqual([
 			"edwinhu",
 			"CorrectRoadH",
 			"fonnesbeck",
