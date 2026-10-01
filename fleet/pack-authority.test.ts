@@ -11,7 +11,7 @@ import {
   TrustStore,
   type TrustStoreData,
 } from "../bridge/crew/trust-store.ts";
-import { readOnlyTrustStoreIo, validatePackAuthority } from "./pack-authority.ts";
+import { preCrewTrustStoreNotice, readOnlyTrustStoreIo, validatePackAuthority } from "./pack-authority.ts";
 import {
   fleetTestConfig,
   fleetTestPackLeadConfig,
@@ -221,6 +221,102 @@ describe("Fleet native Pack authority", () => {
         "unavailable or invalid",
       );
       expect(await readdir(root)).toEqual([]);
+    });
+  });
+
+  describe("a trust store in the pre-Collie-1.9 inner shape", () => {
+    // A peer under the 1.8 overlap never commits a trust change, so nothing rewrites its store: the
+    // file NAME is current while the inner key is still `pack`. Collie parses that as "no crew".
+    const peerFile = () => peerStore();
+    const values = (data: TrustStoreData): string[] => [
+      data.crew?.secret ?? "",
+      data.crew?.crewId ?? "",
+      data.self.keyPem,
+      data.self.fingerprint,
+    ];
+
+    test("a crew-shaped store starts and is left unchanged", async () => {
+      await withStateDir(async (root) => {
+        const path = join(root, TRUST_STORE_FILENAME);
+        await writeFile(path, serializeTrustStore(peerFile()), { mode: 0o600 });
+        const before = await readFile(path);
+        expect(await preCrewTrustStoreNotice(root)).toBeNull();
+        await expect(validatePackAuthority(fleetTestPackPeerConfig(), root)).resolves.toBeUndefined();
+        expect(await readFile(path)).toEqual(before);
+        expect(await readdir(root)).toEqual([TRUST_STORE_FILENAME]);
+      });
+    });
+
+    test("a pack-shaped store is refused with a key-only notice and the directory is untouched", async () => {
+      await withStateDir(async (root) => {
+        const path = join(root, TRUST_STORE_FILENAME);
+        const data = peerFile();
+        const old = legacySerialized(data);
+        expect(old).not.toContain('"crew":');
+        await writeFile(path, old, { mode: 0o600 });
+        const before = await readFile(path);
+
+        const notice = await preCrewTrustStoreNotice(root);
+        expect(notice).not.toBeNull();
+        expect(notice).toContain(path);
+        expect(notice).toContain('"pack"');
+        expect(notice).toContain('"crew"');
+        expect(notice).toContain("3.4.x");
+        expect(notice).toContain("no-op commit");
+        for (const value of values(data)) expect(notice).not.toContain(value);
+
+        await expect(validatePackAuthority(fleetTestPackPeerConfig(), root)).rejects.toThrow(notice ?? "");
+        // Refused before any reader runs, even an injected one that would have accepted.
+        let reads = 0;
+        await expect(
+          validatePackAuthority(fleetTestPackPeerConfig(), root, async () => {
+            reads += 1;
+            return peerStore();
+          }),
+        ).rejects.toThrow(notice ?? "");
+        expect(reads).toBe(0);
+        // A lead's store in the same shape is refused the same way, not reported as solo.
+        await writeFile(path, legacySerialized(leadStore({ peers: [member({ memberId: "peer-a" })] })), {
+          mode: 0o600,
+        });
+        const leadBefore = await readFile(path);
+        await expect(validatePackAuthority(fleetTestPackLeadConfig(), root)).rejects.toThrow(
+          "pre-Collie-1.9 shape",
+        );
+        expect(await readFile(path)).toEqual(leadBefore);
+        await writeFile(path, before, { mode: 0o600 });
+        await expect(validatePackAuthority(fleetTestPackPeerConfig(), root)).rejects.toThrow(notice ?? "");
+        expect(await readFile(path)).toEqual(before);
+        expect(await readdir(root)).toEqual([TRUST_STORE_FILENAME]);
+      });
+    });
+
+    test("a store carrying both keys proceeds, because Collie reads crew", async () => {
+      await withStateDir(async (root) => {
+        const path = join(root, TRUST_STORE_FILENAME);
+        const data = peerFile();
+        const both = `${JSON.stringify({ ...data, pack: data.crew }, null, 2)}\n`;
+        await writeFile(path, both, { mode: 0o600 });
+        const before = await readFile(path);
+        expect(await preCrewTrustStoreNotice(root)).toBeNull();
+        await expect(validatePackAuthority(fleetTestPackPeerConfig(), root)).resolves.toBeUndefined();
+        expect(await readFile(path)).toEqual(before);
+      });
+    });
+
+    test("a missing, unparseable or non-object document is left to the ordinary refusal", async () => {
+      await withStateDir(async (root) => {
+        expect(await preCrewTrustStoreNotice(root)).toBeNull();
+        const path = join(root, TRUST_STORE_FILENAME);
+        for (const raw of ["not json\n", "[]\n", '"pack"\n', "null\n"]) {
+          await writeFile(path, raw, { mode: 0o600 });
+          expect(await preCrewTrustStoreNotice(root)).toBeNull();
+          await expect(validatePackAuthority(fleetTestPackPeerConfig(), root)).rejects.toThrow(
+            "unavailable or invalid",
+          );
+          expect(await readFile(path, "utf8")).toBe(raw);
+        }
+      });
     });
   });
 });

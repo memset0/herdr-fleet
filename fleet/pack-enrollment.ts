@@ -14,7 +14,7 @@ import {
 import { CREW_ENROLL_PATH } from "../bridge/crew/router.ts";
 import { TrustStore, type TrustStoreData } from "../bridge/crew/trust-store.ts";
 import type { JsonValue } from "../bridge/json.ts";
-import { assertNoLegacyOnlyTrustState } from "./pack-authority.ts";
+import { assertNoLegacyOnlyTrustState, assertNoPreCrewTrustStore } from "./pack-authority.ts";
 
 // Membership changes, driven through Collie's OWN transitions.
 //
@@ -31,14 +31,18 @@ import { assertNoLegacyOnlyTrustState } from "./pack-authority.ts";
 // the Herdr plugin, which is the caller's act, not this module's.
 
 /**
- * Open the store this operator act will write, refusing a directory that holds only 1.7.0's name.
+ * Open the store this operator act will write, refusing a directory that holds only 1.7.0's name or
+ * a store still in the pre-1.9 `pack` shape.
  *
  * The adopted Collie no longer moves that name and never reads it. Opening such a directory for
  * writing would mint a second, crew-named trust store beside the operator's real one, so enrolment
- * refuses first, with Collie's own notice naming the hand edits, and writes nothing.
+ * refuses first, with Collie's own notice naming the hand edits, and writes nothing. A pack-shaped
+ * store loads as one with no crew, and a transition's write would keep only the fields Collie knows —
+ * dropping the `pack` object, and the crew secret with it — so that is refused first as well.
  */
-function openStoreForEnrolment(stateDir: string): TrustStore {
+async function openStoreForEnrolment(stateDir: string): Promise<TrustStore> {
   assertNoLegacyOnlyTrustState(stateDir);
+  await assertNoPreCrewTrustStore(stateDir);
   return new TrustStore(stateDir);
 }
 
@@ -102,7 +106,7 @@ export interface MintOptions {
  * answerable when the caller restarts the plugin, and the caller is told so rather than surprised.
  */
 export async function mintPeerInvite(options: MintOptions): Promise<MintedInvite> {
-  const store = openStoreForEnrolment(options.collieStateDir);
+  const store = await openStoreForEnrolment(options.collieStateDir);
   const now = options.now ?? Date.now();
   const mint = options.identity ?? identityMinter({ commonName: options.selfId });
   const data = await ensureStore(store, options.selfId, now, mint);
@@ -140,7 +144,7 @@ export interface JoinOptions {
  * invite either way, which is Collie's deliberate design and not something this side can soften.
  */
 export async function joinPack(options: JoinOptions): Promise<EnrollResponse> {
-  const store = openStoreForEnrolment(options.collieStateDir);
+  const store = await openStoreForEnrolment(options.collieStateDir);
   const now = options.now ?? Date.now();
   const mint = options.identity ?? identityMinter({ commonName: options.selfId });
   const data = await ensureStore(store, options.selfId, now, mint);

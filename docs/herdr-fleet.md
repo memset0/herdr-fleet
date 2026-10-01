@@ -301,6 +301,15 @@ directory that still holds only 1.7.0's `pack-trust.json` fails startup with Col
 which names the renames to make by hand; Fleet never performs them and never writes either file.
 When both names exist, `crew-trust.json` decides and neither is touched.
 
+The inner shape is checked as well. Collie 1.9 and later read the crew identity from the store's
+top-level `crew` key only, and read a store without it as one holding no crew; a peer that never
+committed a trust change under the 1.8 overlap can still carry the older `pack` key, start in Peer
+mode, and then refuse its own lead. So before Collie's reader runs, Fleet's start (daemon and control
+alike) and both enrolment commands refuse a `crew-trust.json` whose top level has a `pack` key and no
+`crew` key, naming the file and the keys and never a value, and change nothing. Rewrite such a store
+with the member's previous Fleet release (3.4.x) — its own trust-store no-op commit writes the current
+shape — then run this release. A store that has `crew` proceeds, with or without a stray `pack`.
+
 Members must all run 3.5.0 or later together with the lead: from that release (Collie 1.14.2) the
 1.7/1.8 crew-wire overlap is gone, and Collie reports a member below its protocol floor as
 incompatible. Fleet adds no fallback.

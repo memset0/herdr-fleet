@@ -6,10 +6,12 @@ import {
   fsStateFilePresence,
   legacyStateFileNotice,
   TrustStore,
+  trustStorePath,
   type StateFilePresence,
   type TrustStoreData,
   type TrustStoreIo,
 } from "../bridge/crew/trust-store.ts";
+import type { JsonValue } from "../bridge/json.ts";
 import type { FleetConfig, FleetNativePackConfig, FleetSchema2LeadConfig } from "./config.ts";
 
 export type PackTrustReader = () => Promise<TrustStoreData | null>;
@@ -53,6 +55,52 @@ export function readOnlyTrustStoreIo(): TrustStoreIo {
   };
 }
 
+/**
+ * The line to print when the trust store is in the pre-Collie-1.9 inner shape, or `null` when not.
+ *
+ * Collie 1.9 and later read the crew identity from the top-level `crew` key only, and parse a
+ * document without it as a valid store holding no crew. A store a 1.8-era peer never rewrote still
+ * spells that key `pack`: it derives Peer mode from its lead record, starts, and then refuses its own
+ * lead, because it holds no crew secret. So the shape is decided here from the raw document, by key
+ * presence alone — `pack` without `crew` refuses, `crew` with or without a stray `pack` proceeds — and
+ * the line names keys and never a value. A missing, unreadable, unparseable or non-object document is
+ * not this check's to decide; it falls through to the ordinary absent-or-invalid handling.
+ */
+export async function preCrewTrustStoreNotice(
+  stateDir: string,
+  io: TrustStoreIo = readOnlyTrustStoreIo(),
+): Promise<string | null> {
+  const path = trustStorePath(stateDir);
+  let raw: string | null;
+  try {
+    raw = await io.read(path);
+  } catch {
+    return null;
+  }
+  if (raw === null) return null;
+  let parsed: JsonValue;
+  try {
+    // SAFETY: `JSON.parse` output IS a JsonValue by construction; only its top-level keys are read.
+    parsed = JSON.parse(raw) as JsonValue;
+  } catch {
+    return null;
+  }
+  if (parsed === null || Array.isArray(parsed) || !(parsed instanceof Object)) return null;
+  if (!Object.hasOwn(parsed, "pack") || Object.hasOwn(parsed, "crew")) return null;
+  return (
+    `[fleet] ${path} is a trust store in the pre-Collie-1.9 shape: it has the top-level key "pack" ` +
+    `and no "crew", so this release would read it as holding no crew. Fleet has started nothing and ` +
+    `changed nothing. Rewrite the store with this member's previous Fleet release (3.4.x) — its own ` +
+    `trust-store no-op commit writes the current shape — then run this release.`
+  );
+}
+
+/** Refuse a pack-shaped trust store before anything reads it as a store with no crew. */
+export async function assertNoPreCrewTrustStore(stateDir: string): Promise<void> {
+  const notice = await preCrewTrustStoreNotice(stateDir);
+  if (notice !== null) throw new Error(notice);
+}
+
 function productionReader(stateDir: string): PackTrustReader {
   const store = new TrustStore(stateDir, readOnlyTrustStoreIo());
   return () => store.load();
@@ -69,6 +117,7 @@ export async function validatePackAuthority(
 ): Promise<void> {
   if (!usesNativePack(config)) return;
   assertNoLegacyOnlyTrustState(collieStateDir);
+  await assertNoPreCrewTrustStore(collieStateDir);
   let trust: TrustStoreData | null;
   try {
     trust = await readTrust();

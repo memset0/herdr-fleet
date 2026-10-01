@@ -187,6 +187,48 @@ describe("Fleet Pack enrolment", () => {
     }
   });
 
+  test("an enrolment against a pack-shaped store refuses with the shape notice and writes nothing", async () => {
+    const dir = await scratch();
+    try {
+      // The current file name, but the inner `pack`/`packId` spelling a 1.8-era peer never rewrote.
+      const lead = createTrustStore(selfIdentity("lead", material("lead"), T0));
+      const invited = mintInvite(lead, { now: T0 }).next;
+      const old = serializeTrustStore(invited)
+        .replace(/"crew":/g, '"pack":')
+        .replace(/"crewId":/g, '"packId":');
+      expect(old).not.toContain('"crew":');
+      await writeFile(storePath(dir), old, { mode: 0o600 });
+      const before = await readFile(storePath(dir));
+      expect(legacyStateFileNotice(dir)).toBeNull();
+
+      await expect(
+        mintPeerInvite({
+          collieStateDir: dir,
+          selfId: "lead",
+          now: T0 + 1_000,
+          identity: () => Promise.reject(new Error("identity must not be minted")),
+        }),
+      ).rejects.toThrow("pre-Collie-1.9 shape");
+      await expect(
+        joinPack({
+          collieStateDir: dir,
+          selfId: "peer",
+          leadOrigin: "http://127.0.0.1:19790",
+          address: "127.0.0.1:19791",
+          token: "an-invite-token",
+          now: T0,
+          identity: () => Promise.reject(new Error("identity must not be minted")),
+          transport: () => Promise.reject(new Error("the lead must not be dialled")),
+        }),
+      ).rejects.toThrow("pre-Collie-1.9 shape");
+
+      expect(await readdir(dir)).toEqual([TRUST_STORE_FILENAME]);
+      expect(await readFile(storePath(dir))).toEqual(before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a refused invite and an unreachable lead both write nothing", async () => {
     for (const [label, transport] of [
       ["refused", () => Promise.resolve(undefined)],

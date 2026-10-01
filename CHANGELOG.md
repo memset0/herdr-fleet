@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Refuse a trust store still in the pre-Collie-1.9 `pack` shape.** Start and both enrolment commands now fail closed on a `crew-trust.json` with a top-level `pack` key and no `crew`, naming the file and keys and changing nothing, instead of starting a member that cannot authenticate its lead; rewrite it with 3.4.x's trust-store no-op commit first.
+
 ## [3.5.0] - 2026-10-01
 
 **Every member redeploys, lead first, and all of them must run 3.5.0 or later.** This release adopts
