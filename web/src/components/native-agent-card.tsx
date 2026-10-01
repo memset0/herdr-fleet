@@ -2,11 +2,13 @@ import { Star } from "lucide-react";
 
 import { operatorChosenName } from "../../../fleet/ui/pane-naming.ts";
 import { AgentIcon } from "@/components/agent-icon";
-import { HostChip } from "@/components/host-chip";
+import { PaneMeta } from "@/components/pane-meta";
 import { StatusDot } from "@/components/status-badge";
 import { Card } from "@/components/ui/card";
+import { UnseenMark } from "@/components/ui/unseen-mark";
 import { shortCwd, timeAgoShort } from "@/lib/format";
 import { t } from "@/lib/i18n";
+import { isUnseen } from "@/lib/triage";
 import { statusLabel, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
@@ -14,61 +16,67 @@ import { useLocale } from "@/hooks/use-locale";
 interface NativeAgentCardProps {
   agent: AgentView;
   onOpen: () => void;
-  favorite: boolean;
-  onFavoriteToggle: () => void;
+  /** Whether this device pinned the pane — Collie's own pin, which the star toggles. */
+  pinned: boolean;
+  onPinToggle: () => void;
   /**
-   * The ordinal a keyboard shortcut will reach this row by, badged on the avatar. Omitted past the
-   * range a shortcut can address, where a number names nothing the operator can type.
+   * The ordinal a keyboard shortcut will reach this row by. Omitted past the range a shortcut can
+   * address, where a number names nothing the operator can type; the slot stays, so names align.
    */
   index?: number;
   /** Which timestamp the row dates itself by, or none — the same rule the herd list uses. */
   age?: "seen" | "active";
   /**
-   * Collie's own emphasis, unchanged and read from Collie's own set (`components/agent-list.tsx`'s
-   * `ATTENTION`): "card" for the sections that mean a person is wanted here, "row" for the rest.
-   *
-   * The dashboard's argument applies verbatim in a 320px rail, and the rail proved it: card chrome
-   * on every row is wallpaper rather than emphasis — a Working row and a Recent row drawn
-   * identically throw away the four-level priority `triage()` had just computed. See a card,
-   * something wants you; all flat, nothing does.
+   * "card" for the one section Collie draws in its alert accent (a person is wanted NOW), "row" for
+   * everything else. Read by the rail from Collie's own section record, never restated here.
    */
   density?: "card" | "row";
+  /** The row stands for the Pane the route is showing. */
+  current?: boolean;
+  /** The row's identity, so the rail can put focus back on this row's star after a pin moved it. */
+  rowKey?: string;
 }
 
 /** The highest row a single keypress can address. Past it the badge would promise a shortcut. */
 export const NATIVE_AGENT_SHORTCUT_LIMIT = 9;
 
 /**
- * THE RAIL'S ROW, and it is the fork's own rather than Collie's card.
+ * THE RAIL'S ROW: Collie's row, with the fork's order of the two lines.
  *
- * Collie's dashboard row leads with the pane's own title and puts the address beneath it, which is
- * right for a full-width list a reader is scanning as the page. This rail is 320px of chrome beside
- * the work, read at a glance while something else has the reader's attention, and there the two
- * lines answer in the other order: WHERE first — the project, then the name the operator gave this
- * piece of work — and WHAT it is doing second. The avatar already says which agent, so neither line
- * spends a word on it.
+ * EVERYTHING ABOUT THE BOX IS COLLIE'S `agent-row`: 44px stated rather than grown (`h-11 py-0`), the
+ * status dot leading inline, the 16px agent mark, a 16px medium name, Collie's unseen square after
+ * it, a 12px muted line 2 led by Collie's own pane meta (host · cache · session, borderless), the 36px round star in a `pr-12` reserve, and the same `data-glide` part names. A rail row
+ * and a dashboard row stand for one object; a reader should not have to learn two sizes for it.
  *
- * WHY NOT REUSE THE SHARED CARD. It is one component serving the dashboard, the space view and the
- * pane sheet through four presentation props, and this would be a fifth that changes the order of
- * its two lines. That is the point at which a prop stops being a variant and becomes a different
- * component wearing one; Collie's own rows keep their behavior exactly, and this one is ours.
+ * WHAT IS THE FORK'S IS THE ORDER. Collie's dashboard row leads with the pane's own title and puts
+ * the address beneath it, which is right for a full-width list read as the page. This rail is chrome
+ * beside the work, read at a glance, and there the lines answer the other way round: WHERE first —
+ * the Space, then the name the operator gave this piece of work — and WHAT it is doing second. The
+ * shortcut ordinal leads, because a key addresses a row on screen, not a heading.
  *
  * THE NAME ON LINE 1 is the same rule the hierarchy uses (fleet/ui/pane-naming.ts): the operator's
  * own name for the pane when they gave it one, and the Tab's otherwise — never a number the
  * multiplexer assigned, and never a terminal title, which line 2 already carries.
+ *
+ * WHY NOT REUSE THE SHARED CARD. It serves the dashboard, the space view and the pane sheet through
+ * four presentation props; a fifth that reverses its two lines stops being a variant. Collie's own
+ * rows keep their behaviour exactly, and this one is ours.
  */
 export function NativeAgentCard({
   agent,
   onOpen,
-  favorite,
-  onFavoriteToggle,
+  pinned,
+  onPinToggle,
   index,
   age,
-  density = "card",
+  density = "row",
+  current = false,
+  rowKey,
 }: NativeAgentCardProps) {
   useLocale();
   const flat = density === "row";
   const blocked = agent.status === "blocked";
+  const unseen = isUnseen(agent);
   // Collie's own switch, for Collie's own reason: a card is a bordered object with air around it, a
   // flat row is a line inside one bordered group, and the two cannot be one element with a class.
   const Shell = flat ? "div" : Card;
@@ -80,126 +88,95 @@ export function NativeAgentCard({
     index !== undefined && index < NATIVE_AGENT_SHORTCUT_LIMIT ? String(index + 1) : null;
 
   return (
-    <div data-slot="native-agent-card" className="group relative min-w-0">
-      {/* COLLIE'S OWN TREATMENT, BOTH OF THEM, and deliberately not a third. The rail's rows are the
-          same objects the dashboard lists, so they wear the same edge, ground, shadow and press —
-          and, just as importantly, they DROP them in the same sections. What the fork owns is the
-          ORDER of the two lines inside the box, never the box. */}
+    <div data-slot="native-agent-card" data-row-key={rowKey} className="relative min-w-0">
       <button
         type="button"
         onClick={onOpen}
+        aria-current={current ? "page" : undefined}
         className={cn(
           "w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
           // A flat row has no box of its own to light up, so the hover lives out here on the row.
-          flat && "transition-colors hover:bg-muted/50",
+          flat && "transition-colors",
+          flat && !current && "hover:bg-muted/50",
         )}
       >
         <Shell
           className={cn(
-            "flex min-w-0 items-center gap-3",
-            // NO RADIUS ON A FLAT ROW, in any state: these sit in a `ListGroup`'s run of hairlines,
-            // and a rounded fill under a full-width straight line reads as a rendering fault. The
-            // 2px left rail is reserved transparent, so a blocked row changes colour without
-            // changing the box.
-            flat
-              ? "flex-row px-3.5 py-2.5 shadow-[inset_2px_0_0_0_transparent]"
-              : "flex-row rounded-xl px-3.5 py-3 shadow-sm transition-colors hover:bg-muted/50",
-            // The blocked tint survives both, because it is the one cue that reads at a glance.
-            blocked &&
-              (flat
-                ? "bg-status-blocked/5 shadow-[inset_2px_0_0_0_var(--color-status-blocked)]"
-                : "border-status-blocked/40 bg-status-blocked/5"),
+            // THE HEIGHT IS THE STATEMENT, exactly as on Collie's row: 44px whether line 2 has
+            // anything to say or not, so nothing in the rail moves when a pane's title arrives.
+            "flex h-11 min-w-0 flex-row items-center gap-3 px-3.5 py-0 pr-12",
+            !flat && "rounded-xl shadow-sm transition-colors",
+            !flat && !current && "hover:bg-muted/50",
+            // The blocked tint survives both, because it is the one cue that reads at a glance; a
+            // card keeps its alarm edge as well, and a flat row takes nothing on its edge.
+            blocked && (flat ? "bg-status-blocked/10" : "border-status-blocked/40 bg-status-blocked/5"),
+            // The pane on screen, in Collie's switcher idiom. Applied after the tint, because two
+            // grounds cannot both win; a blocked card keeps its edge, so both cues compose.
+            current && "bg-accent text-accent-foreground",
           )}
         >
-          {/* The avatar carries both marks the row needs and neither costs a column: the state at
-              the corner the eye already lands on, and the shortcut ordinal at the one it does not.
-              NO BOX BEHIND IT: `AgentIcon` draws its own tile, so a wrapper with a ground of its own
-              would put a second, differently-coloured square behind the artwork and make both badges
-              read as blobs sitting on that square rather than on the row. */}
-          <span className="relative shrink-0">
-            <AgentIcon agent={agent.agent} className="size-8" />
-            <StatusDot
-              status={agent.status}
-              // A hollow resting ring is filled with the colour it actually sits on — a card is
-              // `--card`, and a flat row is the rail it sits on, because `ListGroup` draws a frame
-              // and no fill.
-              surface={flat ? "bg-chrome" : "bg-card"}
-              className="absolute -bottom-0.5 -right-0.5 size-2.5"
-            />
-            <span className="sr-only">{statusLabel(agent.status)}</span>
-            {badge !== null && (
+          <span className="min-w-0 flex-1">
+            {/* Line 1 — where, then which. */}
+            <span data-slot="native-agent-row-title" className="flex min-w-0 items-center gap-2">
               <span
                 aria-hidden
-                className="absolute -bottom-1.5 -left-1 text-[9px] font-medium leading-none tabular-nums text-muted-foreground"
+                className="w-3 shrink-0 text-center text-xs leading-none tabular-nums text-muted-foreground"
               >
                 {badge}
               </span>
-            )}
-          </span>
-
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            {/* Line 1 — where. The project gives up width first: it is the run every sibling row
-                repeats, and the name beside it is the only thing telling two rows apart. */}
-            {/* THE RESERVE FOR THE STAR IS ON THIS LINE, not on the button. The favourite control is
-                positioned at the row's top trailing corner, so only the line it shares has to clear
-                it — put on the button, the same 32px pushed line 2 in as well and the age stopped
-                being at the bottom trailing corner it is supposed to occupy. */}
-            <span className="flex min-w-0 items-baseline gap-1 overflow-hidden pr-6 text-[13px] leading-tight">
-              <span className="min-w-0 truncate text-muted-foreground">{project}</span>
-              <span className="shrink-0 text-muted-foreground">·</span>
-              {/* Both truncate. The name was `shrink-0`, which let a long Tab name push the row past
-                  its container — on a phone the whole sheet then read as shifted left. */}
-              <span className="min-w-0 truncate text-foreground">{name}</span>
-            </span>
-            {/* Line 2 — what. Absent rather than padded: a row with nothing to say here is one line
-                tall, which is the honest height for it. */}
-            {/* Line 2 — what, with the age at its trailing end so the row's right edge reads top to
-                bottom: the control first, then the fact. */}
-            {/* WHICH MACHINE, in Collie's own chip rather than a second vocabulary for one fact. It
-                hides itself on a solo snapshot (components/host-chip.tsx), so a single-host rail is
-                unchanged.
-                
-                THE PILL, NOT THE BORDERLESS RUN. `caption` is the chip's form for a LINE OF CHROME
-                TYPE — the composer's 14px status band, where a bordered box would read as an object
-                dropped into a sentence. This is a card, and the machine here is the same object
-                Collie's own dashboard row names in the same place: a bordered, filled tag with the
-                host's tint on its glyph. One fact, one look, wherever a card names it.
-                
-                AND THE ROW CENTRES RATHER THAN SHARING A BASELINE. A bordered box's baseline is its
-                own text plus its padding, so on a baseline row the pill sat low and the two runs
-                beside it no longer lined up with it. Both runs here are one size, so centring them
-                changes nothing about their own alignment and puts the tag on their line. */}
-            {(doing !== null || stamp !== undefined || agent.host !== undefined) && (
-              <span className="flex min-w-0 items-center gap-2 text-[11px] leading-tight text-muted-foreground">
-                <HostChip host={agent.host} />
-                <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
-                {stamp !== undefined && (
-                  <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>
-                )}
+              <StatusDot
+                status={agent.status}
+                // A hollow resting ring is filled with the ground it actually sits on.
+                surface={current ? "bg-accent" : flat ? "bg-chrome" : "bg-card"}
+                glide="dot"
+              />
+              <AgentIcon agent={agent.agent} className="size-4" glide="tile" />
+              {/* The Space gives up width first: it is the run every sibling row repeats, and the
+                  name beside it is the only thing telling two rows apart. */}
+              <span className="flex min-w-0 items-baseline gap-1 self-baseline">
+                <span className="min-w-0 max-w-[45%] shrink truncate text-muted-foreground">{project}</span>
+                <span className="shrink-0 text-muted-foreground">·</span>
+                <span data-glide="name" className="min-w-0 truncate font-medium text-foreground">
+                  {name}
+                </span>
               </span>
-            )}
+              <UnseenMark on={unseen} reserve />
+            </span>
+            {/* Line 2 — what, with the age at its end. Collie's 16px slot, always drawn. */}
+            <span
+              data-slot="native-agent-row-detail"
+              className="flex h-4 min-w-0 items-center gap-2 text-xs text-muted-foreground"
+            >
+              {/* WHICH MACHINE, in Collie's own pane meta (host · cache · session, borderless) — the
+                  run Collie's dashboard row ends its first line with. Here it LEADS line 2: a 320px
+                  rail cannot give line 1 to a 16px name and a host tag both, and the name is the one
+                  fact that tells two rows apart. It draws nothing on a solo snapshot. */}
+              <PaneMeta host={agent.host} cache={agent.cache} session={agent.session} />
+              <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
+              {stamp !== undefined && <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>}
+            </span>
           </span>
         </Shell>
+        {/* The dot is colour only; its word is for a screen reader, after the row's own text. */}
+        <span className="sr-only">{statusLabel(agent.status)}</span>
       </button>
 
       {/* A sibling and never a child: a button inside a button is invalid markup, and nesting would
-          make favouriting a row also open it. ALWAYS DRAWN, muted until it is set — a control that
-          appears on hover is a control a phone does not have. */}
+          make starring a row also open it. Collie's round icon button, the one its own dashboard row
+          wears through the favourites port: 36px, a 16px glyph, muted ink at full strength rather
+          than at half (half failed 3:1 on the chrome ground). ALWAYS DRAWN — a control that appears
+          on hover is a control a phone does not have. */}
       <button
         type="button"
-        aria-pressed={favorite}
-        aria-label={
-          favorite ? t("home.favorite.remove", { name }) : t("home.favorite.add", { name })
-        }
-        onClick={onFavoriteToggle}
+        aria-pressed={pinned}
+        aria-label={pinned ? t("home.favorite.remove", { name }) : t("home.favorite.add", { name })}
+        onClick={onPinToggle}
         className={cn(
-          "absolute right-2 grid size-7 place-items-center rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
-          // The corner it sits in is the box's, and the flat row's box is 4px shorter.
-          flat ? "top-1.5" : "top-2",
-          favorite ? "text-foreground" : "text-muted-foreground/50 hover:text-foreground",
+          "absolute right-1.5 top-1 flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:scale-95",
+          pinned && "text-foreground",
         )}
       >
-        <Star className={cn("size-3.5", favorite && "fill-current")} aria-hidden />
+        <Star className={cn("size-4", pinned && "fill-current")} aria-hidden />
       </button>
     </div>
   );

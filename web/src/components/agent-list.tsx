@@ -1,5 +1,5 @@
 import { Inbox, Server, WifiOff } from "lucide-react";
-import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import { clockTime } from "@/lib/format";
 import { useMuxCapability } from "@/lib/mux-capability";
@@ -24,10 +24,9 @@ import { WorkspaceNewTab } from "./workspace-new-tab";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/hooks/use-locale";
-import {
-  agentFavoriteStore,
-  favoriteFirst,
-} from "../../../fleet/ui/agent-favorites.ts";
+// DOWNSTREAM PORT (FORK.toml native-agent-favorites-port): the star on every agent row toggles this
+// device's pin, through the same store the hold and the actions sheet write.
+import { togglePanePin } from "@/lib/fleet-roster";
 
 interface AgentListProps {
   agents: AgentView[];
@@ -230,7 +229,6 @@ export function AgentList({
   reveal = null,
 }: AgentListProps) {
   useLocale();
-  useSyncExternalStore(agentFavoriteStore.subscribe, agentFavoriteStore.snapshot, agentFavoriteStore.snapshot);
   // Whether the multiplexer can say which agent a pane holds. Read unconditionally — a hook cannot
   // sit behind the early return below, and the answer is only consulted in the empty branch.
   const agentDetection = useMuxCapability("agentDetection");
@@ -409,8 +407,8 @@ export function AgentList({
       density="row"
       unseen={bucketOf(a) === "ready"}
       tint
-      favorite={agentFavoriteStore.isFavorite(a)}
-      onFavoriteToggle={() => agentFavoriteStore.toggle(a)}
+      favorite={isPinned(a)}
+      onFavoriteToggle={() => togglePanePin(a, [...agents, ...shellPanes], rowDomId(paneRowKey(a)))}
     />
   );
 
@@ -543,9 +541,7 @@ export function AgentList({
               </>
             }
           />
-          {/* DOWNSTREAM PORT (FORK.toml native-agent-favorites-port): favorites lead their own
-              workspace group, each partition in the group's own order; nothing crosses a group. */}
-          <ListGroup>{favoriteFirst(rows, agentFavoriteStore.isFavorite).map((a) => row(a))}</ListGroup>
+          <ListGroup>{rows.map((a) => row(a))}</ListGroup>
         </section>
       ))}
     </div>

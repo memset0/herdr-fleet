@@ -53,4 +53,19 @@ describe("the pane-surface switch in the rail", () => {
     const { container } = render(<FleetPaneSurfaceToggle />);
     expect(within(container).getByRole("radiogroup")).toHaveAccessibleName();
   });
+
+  it("is Collie's segmented control: a filled primary pill for the surface that is on", () => {
+    const { container } = render(<FleetPaneSurfaceToggle />);
+    const group = within(container).getByRole("radiogroup");
+    expect(group.className.split(/\s+/u)).toEqual(expect.arrayContaining(["flex", "gap-1", "p-2"]));
+    const on = segment(container, "Collie");
+    const off = segment(container, "TTYD");
+    expect(on.className.split(/\s+/u)).toEqual(
+      expect.arrayContaining(["rounded-md", "bg-primary", "text-primary-foreground", "min-h-11"]),
+    );
+    // Selection changes the fill and the ink, never the weight, so nothing re-measures on a switch.
+    expect(off.className).not.toContain("bg-primary");
+    expect(off.className).toContain("font-medium");
+    expect(on.className).toContain("font-medium");
+  });
 });

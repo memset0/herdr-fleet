@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import type { ComponentProps } from "react";
 
 import { server } from "@/test/setup";
 import { CrewProvider } from "./crew-provider";
@@ -14,10 +15,9 @@ import { groupPanesByWorkspace, type WorkspaceGroup } from "@/lib/pane-groups";
 import { paneName } from "@/lib/pane-name";
 import { workspacePrefKey } from "./agent-list";
 import { paneRowKey } from "@/lib/hosts";
-import { currentPins, setPinned } from "@/lib/pins";
+import { __resetPins, currentPins, setPinned, usePins } from "@/lib/pins";
 import { setMachineHidden, useHiddenMachines } from "@/lib/hidden-machines";
 import type { AgentStatus, AgentView, MuxConfig, ServerSummary } from "@/lib/types";
-import { __resetAgentFavorites } from "../../../fleet/ui/agent-favorites.ts";
 
 function agent(
   paneId: string,
@@ -61,9 +61,6 @@ const rowButtons = () =>
  *  (whose chips share the heading's own text) without weakening what it asserts. */
 const groupSection = (label: string) => screen.getByRole("heading", { name: label }).closest("section")!;
 
-/** DOWNSTREAM PORT (FORK.toml native-agent-favorites-port): every agent row, in render order. */
-const agentRows = () =>
-  Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="agent-row"]'));
 /** The agent rows inside one region, without the favorite control each one carries beside it. */
 const rowsIn = (el: HTMLElement) =>
   within(el)
@@ -86,7 +83,7 @@ const soleRowIn = (el: HTMLElement) => {
 
 beforeEach(() => {
   localStorage.clear();
-  __resetAgentFavorites();
+  __resetPins();
 });
 
 describe("AgentList — two axes, urgency then workspace", () => {
@@ -480,12 +477,18 @@ describe("AgentList — the empty herd", () => {
   });
 });
 
-describe("AgentList — browser-local favorites", () => {
-  it("favorites within one workspace group without opening the Pane", async () => {
+describe("AgentList — the star is this device's pin", () => {
+  /** The list as the dashboard mounts it: its pins prop read from Collie's own pin store. */
+  function PinnedList(props: Omit<ComponentProps<typeof AgentList>, "pins">) {
+    const pins = usePins();
+    return <AgentList {...props} pins={pins} />;
+  }
+
+  it("pins from the star without opening the Pane, and focus follows the star to the Pinned group", async () => {
     const user = userEvent.setup();
     const onOpen = vi.fn();
     render(
-      <AgentList
+      <PinnedList
         agents={[
           agent("p1", "working", { ...UI_WORK, sessionName: "first" }),
           agent("p2", "working", { ...UI_WORK, sessionName: "second" }),
@@ -494,45 +497,28 @@ describe("AgentList — browser-local favorites", () => {
       />,
     );
 
-    const toggle = screen.getByRole("button", { name: "Favorite second" });
-    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "Pin second to top" }));
 
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(toggle).toHaveFocus();
-    expect(agentRows().map((element) => element.textContent)).toEqual([
-      expect.stringContaining("second"),
-      expect.stringContaining("first"),
-    ]);
+    expect(currentPins()).toHaveLength(1);
+    const pinnedGroup = screen.getByRole("region", { name: "Pinned" });
+    const star = within(pinnedGroup).getByRole("button", { name: "Unpin second" });
+    expect(star).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(star).toHaveFocus());
     expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it("keeps favorite priority inside the Agent's own workspace group", async () => {
+  it("unpins from the star, and the row returns to its own workspace group", async () => {
     const user = userEvent.setup();
-    render(
-      <AgentList
-        agents={[
-          agent("p1", "blocked", {
-            workspaceId: "w1",
-            workspaceLabel: "alpha",
-            workspaceNumber: 1,
-            tabId: "w1:t1",
-            sessionName: "first",
-          }),
-          agent("p2", "working", {
-            workspaceId: "w2",
-            workspaceLabel: "beta",
-            workspaceNumber: 2,
-            tabId: "w2:t1",
-            sessionName: "second",
-          }),
-        ]}
-        onOpen={vi.fn()}
-      />,
-    );
-    await user.click(screen.getByRole("button", { name: "Favorite second" }));
-    expect(headings()).toEqual(["alpha", "beta"]);
-    expect(agentRows()[0]!.textContent).toContain("first");
-    expect(agentRows()[1]!.textContent).toContain("second");
+    const second = agent("p2", "working", { ...UI_WORK, sessionName: "second" });
+    setPinned(second, true, [second]);
+    render(<PinnedList agents={[agent("p1", "working", { ...UI_WORK, sessionName: "first" }), second]} onOpen={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Unpin second" }));
+    expect(currentPins()).toHaveLength(0);
+    expect(screen.queryByRole("region", { name: "Pinned" })).toBeNull();
+    const star = screen.getByRole("button", { name: "Pin second to top" });
+    expect(star).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() => expect(star).toHaveFocus());
   });
 });
 

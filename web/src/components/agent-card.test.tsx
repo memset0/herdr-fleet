@@ -50,7 +50,7 @@ describe("AgentCard's two lines", () => {
         />,
       );
 
-      const toggle = screen.getByRole("button", { name: "Favorite review auth" });
+      const toggle = screen.getByRole("button", { name: "Pin review auth to top" });
       expect(container.querySelector("button button")).toBeNull();
       expect(toggle.className).toContain("right-1.5");
       expect(toggle.className).toContain("top-1.5");
@@ -71,7 +71,7 @@ describe("AgentCard's two lines", () => {
         />,
       );
       expect(container.querySelector('[data-slot="agent-row"] > div')).toHaveClass("pr-12");
-      expect(screen.getByRole("button", { name: "Remove favorite from review auth" })).toHaveAttribute(
+      expect(screen.getByRole("button", { name: "Unpin review auth" })).toHaveAttribute(
         "aria-pressed",
         "true",
       );

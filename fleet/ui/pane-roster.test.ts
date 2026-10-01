@@ -10,11 +10,11 @@ import {
 } from "./pane-roster.ts";
 
 function agent(paneId: string, extra: Partial<RosterEntry> = {}): RosterEntry {
-  return { paneId, kind: "agent", label: paneId, favorite: false, ...extra };
+  return { paneId, kind: "agent", label: paneId, ...extra };
 }
 
-function shell(paneId: string, lastSeenAt: number, favorite = false): RosterEntry {
-  return { paneId, kind: "shell", label: paneId, favorite, lastSeenAt };
+function shell(paneId: string, lastSeenAt: number): RosterEntry {
+  return { paneId, kind: "shell", label: paneId, lastSeenAt };
 }
 
 describe("deriving the roster", () => {
@@ -45,18 +45,32 @@ describe("deriving the roster", () => {
     expect(withShell.sections.map((s) => s.key)).toEqual(["needs", "shell"]);
   });
 
-  test("favourites come first inside every section, including shell", () => {
+  test("pinned panes lead in the order given, and each leaves its triage section", () => {
     const roster = derivePaneRoster({
       triaged: [
-        { key: "needs", entries: [agent("a"), agent("b", { favorite: true }), agent("c")] },
+        { key: "needs", entries: [agent("a"), agent("b"), agent("c")] },
+        { key: "working", entries: [agent("d")] },
       ],
-      shellPanes: [shell("s1", 30), shell("s2", 20, true), shell("s3", 10)],
+      pinned: [agent("d"), agent("b")],
+      shellPanes: [shell("s1", 30)],
     });
-    expect(roster.sections[0]?.entries.map((e) => e.paneId)).toEqual(["b", "a", "c"]);
-    expect(roster.sections[1]?.entries.map((e) => e.paneId)).toEqual(["s2", "s1", "s3"]);
+    expect(roster.sections.map((s) => s.key)).toEqual(["pinned", "needs", "shell"]);
+    expect(roster.entries.map((e) => e.paneId)).toEqual(["d", "b", "a", "c", "s1"]);
   });
 
-  test("the non-favourite half keeps the order it arrived in", () => {
+  test("a pin is matched by the full row identity, not the pane id alone", () => {
+    const roster = derivePaneRoster({
+      triaged: [{ key: "working", entries: [agent("p1", { host: "lead" }), agent("p1", { host: "peer" })] }],
+      pinned: [agent("p1", { host: "peer" })],
+      shellPanes: [],
+    });
+    expect(roster.sections.map((s) => [s.key, s.entries.map((e) => e.host)])).toEqual([
+      ["pinned", ["peer"]],
+      ["working", ["lead"]],
+    ]);
+  });
+
+  test("a section keeps the order it arrived in", () => {
     const roster = derivePaneRoster({
       triaged: [{ key: "recent", entries: [agent("x"), agent("y"), agent("z")] }],
       shellPanes: [],

@@ -1,227 +1,121 @@
 import type { JsonValue } from "../../bridge/json.ts";
 import { jsonRecord, jsonStringField } from "../../bridge/stt/json.ts";
 
+// THE RETIRED FAVOURITES RECORD, READ ONCE AND THEN DELETED.
+//
+// Fleet used to keep its own browser-local favourites beside Collie's pins. The two said the same
+// thing ("this one matters") two ways, so the star now toggles Collie's own pin and this store is
+// gone. What is left is the reader a browser that still holds the old record needs, exactly once:
+// the shell matches each stored favourite against a fresh snapshot, pins the live ones through
+// Collie's own pin store, and removes the key. A favourite whose pane is not live is dropped,
+// because a pin is keyed by the workspace the pane sits in and only a live row says that.
+//
+// The parser and its bounds are the retired store's, unchanged: a record it would have refused is
+// refused here too, and is deleted without pinning anything.
+
 export const AGENT_FAVORITES_STORAGE_KEY = "herdr-fleet:agent-favorites:v1";
 
 const STORAGE_VERSION = 1;
-const DEFAULT_MAX_ENTRIES = 256;
-const DEFAULT_MAX_BYTES = 32_768;
-const DEFAULT_MAX_FIELD_LENGTH = 512;
+const MAX_ENTRIES = 256;
+const MAX_BYTES = 32_768;
+const MAX_FIELD_LENGTH = 512;
 
-export interface FavoriteAgentIdentity {
-  readonly host?: string;
-  readonly session?: string;
+/** One stored favourite: optional host, optional session, pane id, Agent implementation. */
+export interface LegacyFavorite {
+  readonly host: string | null;
+  readonly session: string | null;
   readonly paneId: string;
   readonly agent: string;
-  readonly kind?: "agent" | "shell";
 }
 
-export interface FavoriteStorage {
+export interface LegacyFavoriteStorage {
   getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
 }
 
-export interface AgentFavoriteStore {
-  readonly isFavorite: (agent: FavoriteAgentIdentity) => boolean;
-  readonly toggle: (agent: FavoriteAgentIdentity) => boolean;
-  readonly subscribe: (listener: () => void) => () => void;
-  readonly snapshot: () => number;
-  readonly reset: () => void;
-}
-
-interface FavoriteStoreOptions {
-  readonly maxEntries?: number;
-  readonly maxBytes?: number;
-  readonly maxFieldLength?: number;
-}
-
-type FavoriteTuple = readonly [string | null, string | null, string, string];
-
-interface FavoriteDocument {
-  readonly version: 1;
-  readonly favorites: FavoriteTuple[];
-}
-
-function tuple(agent: FavoriteAgentIdentity): FavoriteTuple | null {
-  if (agent.kind === "shell" || agent.paneId === "" || agent.agent === "") return null;
-  return [agent.host ?? null, agent.session ?? null, agent.paneId, agent.agent];
-}
-
-function keyOf(agent: FavoriteAgentIdentity): string | null {
-  const identity = tuple(agent);
-  return identity === null ? null : JSON.stringify(identity);
-}
-
-function optionalIdentityField(value: JsonValue | undefined, maximum: number): string | null | undefined {
+function optionalField(value: JsonValue | undefined): string | null | undefined {
   if (value === null) return null;
   const field = jsonStringField(value);
-  if (field === null || field.length === 0 || field.length > maximum) return undefined;
+  if (field === null || field.length === 0 || field.length > MAX_FIELD_LENGTH) return undefined;
   return field;
 }
 
-function requiredIdentityField(value: JsonValue | undefined, maximum: number): string | null {
+function requiredField(value: JsonValue | undefined): string | null {
   const field = jsonStringField(value);
-  if (field === null || field.length === 0 || field.length > maximum) return null;
+  if (field === null || field.length === 0 || field.length > MAX_FIELD_LENGTH) return null;
   return field;
 }
 
-function parseTuple(value: JsonValue, maximum: number): FavoriteTuple | null {
+function parseTuple(value: JsonValue): LegacyFavorite | null {
   if (!Array.isArray(value) || value.length !== 4) return null;
-  const host = optionalIdentityField(value[0], maximum);
-  const session = optionalIdentityField(value[1], maximum);
-  const paneId = requiredIdentityField(value[2], maximum);
-  const agent = requiredIdentityField(value[3], maximum);
+  const host = optionalField(value[0]);
+  const session = optionalField(value[1]);
+  const paneId = requiredField(value[2]);
+  const agent = requiredField(value[3]);
   if (host === undefined || session === undefined || paneId === null || agent === null) return null;
-  return [host, session, paneId, agent];
+  return { host, session, paneId, agent };
 }
 
-function parseDocument(
-  raw: string,
-  maxEntries: number,
-  maxBytes: number,
-  maxFieldLength: number,
-): FavoriteDocument | null {
-  if (new TextEncoder().encode(raw).byteLength > maxBytes) return null;
+/** The stored favourites, or `[]` for a record that is malformed, unsupported or oversized. */
+export function parseLegacyFavorites(raw: string): LegacyFavorite[] {
+  if (new TextEncoder().encode(raw).byteLength > MAX_BYTES) return [];
   let parsed: JsonValue;
   try {
     // SAFETY: JSON.parse returns JSON primitives, arrays, or objects recursively; naming that
     // representation once lets the shared readers establish every domain field below.
     parsed = JSON.parse(raw) as JsonValue;
   } catch {
-    return null;
+    return [];
   }
   const record = jsonRecord(parsed);
-  if (record === null) return null;
   if (
+    record === null ||
     Object.keys(record).some((key) => key !== "version" && key !== "favorites") ||
     record.version !== STORAGE_VERSION ||
     !Array.isArray(record.favorites) ||
-    record.favorites.length > maxEntries
+    record.favorites.length > MAX_ENTRIES
   ) {
-    return null;
+    return [];
   }
-  const favorites: FavoriteTuple[] = [];
-  const seen = new Set<string>();
+  const out: LegacyFavorite[] = [];
   for (const value of record.favorites) {
-    const identity = parseTuple(value, maxFieldLength);
-    if (identity === null) return null;
-    const key = JSON.stringify(identity);
-    if (seen.has(key)) return null;
-    seen.add(key);
-    favorites.push(identity);
+    const favorite = parseTuple(value);
+    if (favorite === null) return [];
+    out.push(favorite);
   }
-  return { version: STORAGE_VERSION, favorites };
+  return out;
 }
 
-function browserStorage(): FavoriteStorage | null {
+/** What a browser still holds: `null` when there is no record to migrate at all. */
+export function readLegacyFavorites(storage: LegacyFavoriteStorage | null): LegacyFavorite[] | null {
+  if (storage === null) return null;
   try {
-    return globalThis.localStorage ?? null;
+    const raw = storage.getItem(AGENT_FAVORITES_STORAGE_KEY);
+    return raw === null ? null : parseLegacyFavorites(raw);
   } catch {
     return null;
   }
 }
 
-export function favoriteFirst<T>(items: readonly T[], isFavorite: (item: T) => boolean): T[] {
-  const favorites: T[] = [];
-  const others: T[] = [];
-  for (const item of items) (isFavorite(item) ? favorites : others).push(item);
-  return [...favorites, ...others];
+/** Remove the record. A storage that refuses is left as it is; the next page load tries again. */
+export function forgetLegacyFavorites(storage: LegacyFavoriteStorage | null): void {
+  try {
+    storage?.removeItem(AGENT_FAVORITES_STORAGE_KEY);
+  } catch {
+    // Blocked or partitioned storage: nothing to do.
+  }
 }
 
-export function createAgentFavoriteStore(
-  storage: FavoriteStorage | null = browserStorage(),
-  options: FavoriteStoreOptions = {},
-): AgentFavoriteStore {
-  const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  const maxFieldLength = options.maxFieldLength ?? DEFAULT_MAX_FIELD_LENGTH;
-  if (maxEntries < 1 || maxBytes < 1 || maxFieldLength < 1) {
-    throw new Error("favorite store bounds must be positive");
-  }
-
-  let favorites = new Map<string, FavoriteTuple>();
-  if (storage !== null) {
-    try {
-      const raw = storage.getItem(AGENT_FAVORITES_STORAGE_KEY);
-      const document =
-        raw === null ? null : parseDocument(raw, maxEntries, maxBytes, maxFieldLength);
-      if (document !== null) {
-        favorites = new Map(document.favorites.map((identity) => [JSON.stringify(identity), identity]));
-      }
-    } catch {
-      favorites = new Map();
-    }
-  }
-
-  let revision = 0;
-  const listeners = new Set<() => void>();
-
-  const serialize = () => {
-    const document: FavoriteDocument = {
-      version: STORAGE_VERSION,
-      favorites: [...favorites.values()],
-    };
-    return JSON.stringify(document);
-  };
-
-  const persist = () => {
-    if (storage === null) return;
-    try {
-      storage.setItem(AGENT_FAVORITES_STORAGE_KEY, serialize());
-    } catch {
-      // The bounded in-memory state remains authoritative for this page.
-    }
-  };
-
-  const publish = () => {
-    revision += 1;
-    for (const listener of listeners) listener();
-  };
-
-  const isFavorite = (agent: FavoriteAgentIdentity) => {
-    const key = keyOf(agent);
-    return key !== null && favorites.has(key);
-  };
-
-  const toggle = (agent: FavoriteAgentIdentity) => {
-    const identity = tuple(agent);
-    if (identity === null) return false;
-    const key = JSON.stringify(identity);
-    if (favorites.delete(key)) {
-      persist();
-      publish();
-      return false;
-    }
-    if (favorites.size >= maxEntries) {
-      const oldest = favorites.keys().next();
-      if (!oldest.done) favorites.delete(oldest.value);
-    }
-    favorites.set(key, identity);
-    while (new TextEncoder().encode(serialize()).byteLength > maxBytes) {
-      const oldest = favorites.keys().next();
-      if (oldest.done) break;
-      favorites.delete(oldest.value);
-    }
-    persist();
-    publish();
-    return favorites.has(key);
-  };
-
-  const subscribe = (listener: () => void) => {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
-  };
-
-  const reset = () => {
-    favorites = new Map();
-    publish();
-  };
-
-  return { isFavorite, toggle, subscribe, snapshot: () => revision, reset };
-}
-
-export const agentFavoriteStore = createAgentFavoriteStore();
-
-export function __resetAgentFavorites(): void {
-  agentFavoriteStore.reset();
+/** Whether a live Agent row is the one a stored favourite named: same machine, session, pane, Agent. */
+export function matchesLegacyFavorite(
+  favorite: LegacyFavorite,
+  row: { readonly host?: string; readonly session?: string; readonly paneId: string; readonly agent: string; readonly kind?: string },
+): boolean {
+  return (
+    row.kind !== "shell" &&
+    (row.host ?? null) === favorite.host &&
+    (row.session ?? null) === favorite.session &&
+    row.paneId === favorite.paneId &&
+    row.agent === favorite.agent
+  );
 }

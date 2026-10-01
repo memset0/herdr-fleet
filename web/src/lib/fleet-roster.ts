@@ -10,11 +10,18 @@ import {
   type PaneRoster,
   type RosterEntry,
 } from "../../../fleet/ui/pane-roster.ts";
-import { agentFavoriteStore } from "../../../fleet/ui/agent-favorites.ts";
+import {
+  forgetLegacyFavorites,
+  matchesLegacyFavorite,
+  readLegacyFavorites,
+} from "../../../fleet/ui/agent-favorites.ts";
+import { pinnedRows } from "@/lib/dash-view";
 import { hostName, isMultiHost } from "@/lib/hosts";
+import { groupPanesByWorkspace } from "@/lib/pane-groups";
+import { currentPins, pinMatcher, setPinned, type Pin } from "@/lib/pins";
 import type { TriageSection } from "@/lib/triage";
 import { paneName } from "@/lib/pane-name";
-import type { AgentView, ServerSummary } from "@/lib/types";
+import type { AgentView, ServerSummary, TabView } from "@/lib/types";
 
 /** The same fields as {@link RosterEntry}, writable while one is assembled. */
 interface RosterEntryDraft {
@@ -28,7 +35,6 @@ interface RosterEntryDraft {
   tabLabel?: string;
   hostLabel?: string;
   lastSeenAt?: number;
-  favorite: boolean;
 }
 
 /**
@@ -44,7 +50,6 @@ export function toRosterEntry(pane: AgentView, servers?: readonly ServerSummary[
     // The same name the rail and the hierarchy show, so a row is called one thing everywhere.
     label: paneName(pane),
     context: pane.workspaceLabel,
-    favorite: agentFavoriteStore.isFavorite(pane),
   };
   // Denormalised bridge-side, and absent when the Tab's name says nothing (Herdr numbers an
   // unlabelled tab). Absent means it is not a fact to search on, not that it is the empty string.
@@ -66,21 +71,96 @@ export function toRosterEntry(pane: AgentView, servers?: readonly ServerSummary[
 }
 
 /**
- * The roster, from Collie's own triage output plus the Panes that are not Agents.
+ * The roster, from Collie's own triage output, this device's pinned Agents and the Panes that are
+ * not Agents.
  *
- * `triaged` arrives already bucketed because bucketing is Collie's rule; this adds the fork's part —
- * the shell section, the favourites partition, the empty-section removal and the flattening.
+ * `triaged` arrives already bucketed because bucketing is Collie's rule, and `pinned` already in
+ * Collie's pinned order (see {@link pinnedAgents}); this adds the fork's part — the Pinned section
+ * first, each pinned pane listed once, the shell section, the empty-section removal and the
+ * flattening.
  */
 export function paneRosterFrom(
   triaged: readonly TriageSection[],
   shellPanes: readonly AgentView[] = [],
   servers?: readonly ServerSummary[],
+  pinned: readonly AgentView[] = [],
 ): PaneRoster {
   return derivePaneRoster({
     triaged: triaged.map((section) => ({
       key: section.key,
       entries: section.agents.map((pane) => toRosterEntry(pane, servers)),
     })),
+    pinned: pinned.map((pane) => toRosterEntry(pane, servers)),
     shellPanes: shellPanes.map((pane) => toRosterEntry(pane, servers)),
   });
+}
+
+const NO_PANES: readonly AgentView[] = [];
+
+/**
+ * The Agent panes this device pinned, in the order Collie's own Pinned group lists them: the
+ * dashboard's place order (`pinnedRows` over the fixed workspace grouping), which never reads a
+ * status, so no state change moves a pinned row. Shells are not Agent rows and are left out.
+ */
+export function pinnedAgents(
+  agents: readonly AgentView[],
+  pins: readonly Pin[],
+  tabs?: readonly TabView[],
+  servers?: readonly ServerSummary[],
+): readonly AgentView[] {
+  if (pins.length === 0 || agents.length === 0) return NO_PANES;
+  return pinnedRows(groupPanesByWorkspace(agents, [], { order: "fixed", tabs, servers }), pinMatcher(pins));
+}
+
+/**
+ * THE STAR. Pin or unpin one pane through Collie's own pin store — the same write its hold and its
+ * actions sheet make, so the two doors cannot disagree. `herd` is every pane the caller lists; the
+ * store's prune reads it (lib/pins.ts).
+ *
+ * A pin moves the row between groups and React remounts it, so focus would fall to the document.
+ * Given the row button's DOM id, the star in the row's new place takes focus after the commit.
+ * Only a surface whose row ids are unique may pass one; the Agent rail refocuses inside its own
+ * container instead (components/native-agent-rail.tsx).
+ */
+export function togglePanePin(pane: AgentView, herd: readonly AgentView[], rowId?: string): void {
+  setPinned(pane, !pinMatcher(currentPins())(pane), herd);
+  if (rowId === undefined) return;
+  requestAnimationFrame(() => {
+    document
+      .getElementById(rowId)
+      ?.parentElement?.querySelector<HTMLElement>(":scope > button[aria-pressed]")
+      ?.focus();
+  });
+}
+
+function browserStorage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The one-shot migration of the retired Fleet favourites into Collie's pins
+ * (fleet/ui/agent-favorites.ts). Called with a FRESH snapshot's Agents only — the caller refuses an
+ * error render or an empty list — because a favourite whose pane is not listed is dropped for good.
+ * Every live match is pinned (never unpinned), then the retired record is deleted. Returns how many
+ * panes it pinned, for the test.
+ */
+export function migrateLegacyFavorites(
+  agents: readonly AgentView[],
+  storage: Storage | null = browserStorage(),
+): number {
+  const stored = readLegacyFavorites(storage);
+  if (stored === null) return 0;
+  const isPinned = pinMatcher(currentPins());
+  let pinned = 0;
+  for (const pane of agents) {
+    if (isPinned(pane) || !stored.some((favorite) => matchesLegacyFavorite(favorite, pane))) continue;
+    setPinned(pane, true, agents);
+    pinned += 1;
+  }
+  forgetLegacyFavorites(storage);
+  return pinned;
 }

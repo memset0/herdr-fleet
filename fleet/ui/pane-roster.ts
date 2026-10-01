@@ -5,9 +5,10 @@
 // indexes into it. When the order lived inside the rail component, the other three had to
 // re-derive it, and re-derivation is how "the fifth row" comes to mean two different Panes.
 //
-// **This module does not bucket.** It takes the sections Collie's own triage already produced and
-// adds what the fork owns on top: the shell section, favourites-first inside every section, the
-// removal of empty sections, and the flattening. Two reasons, and both are load-bearing. `fleet/ui`
+// **This module does not bucket, and it does not pin.** It takes the sections Collie's own triage
+// already produced and the panes Collie's own pin store holds, in Collie's own pinned order, and adds
+// what the fork owns on top: a Pinned section first, each pinned pane listed there once and taken out
+// of its triage section, the shell section, the removal of empty sections, and the flattening. Two reasons, and both are load-bearing. `fleet/ui`
 // imports downward only — never from `web/src` — which is what lets the root suite run it with no
 // browser; and bucketing is Collie's rule, so a copy of it here would be a second answer to "which
 // section is this Pane in" that drifts the first time upstream changes its mind.
@@ -16,8 +17,8 @@
 // says shell rows never appear in it, so the rail consumes `sections` minus that one — see
 // {@link agentSections}.
 
-/** The four sections Collie's triage produces, plus the one the fork appends. */
-export type RosterSectionKey = "needs" | "ready" | "working" | "recent" | "shell";
+/** The four sections Collie's triage produces, led by this device's pins and followed by shells. */
+export type RosterSectionKey = "pinned" | "needs" | "ready" | "working" | "recent" | "shell";
 
 export const TRIAGE_SECTION_KEYS = ["needs", "ready", "working", "recent"] as const;
 export type TriageSectionKey = (typeof TRIAGE_SECTION_KEYS)[number];
@@ -58,7 +59,6 @@ export interface RosterEntry {
   readonly tabLabel?: string;
   /** When this Pane was last seen, used to order the shell section. */
   readonly lastSeenAt?: number;
-  readonly favorite: boolean;
 }
 
 /**
@@ -110,22 +110,13 @@ export interface PaneRosterInput {
    * order triage returns them. Empty sections may be included; they are dropped here.
    */
   readonly triaged: readonly { readonly key: TriageSectionKey; readonly entries: readonly RosterEntry[] }[];
+  /**
+   * The Agent panes this device has pinned, in the order Collie's own Pinned group lists them. They
+   * lead the roster and leave their triage section, so each pane is listed once. Absent: none.
+   */
+  readonly pinned?: readonly RosterEntry[];
   /** The Panes that are not Agents. Ordered here, not by the caller. */
   readonly shellPanes: readonly RosterEntry[];
-}
-
-/**
- * Favourites first, and nothing else moved.
- *
- * A stable partition rather than a sort: both halves keep the order the caller gave them, which for
- * the triage sections is Collie's own comparator and for the shell section is the last-seen order
- * applied just above. A comparator that ranked "favourite" as a key would have re-sorted the rest.
- */
-function favoritesFirst(entries: readonly RosterEntry[]): RosterEntry[] {
-  const favorites: RosterEntry[] = [];
-  const rest: RosterEntry[] = [];
-  for (const entry of entries) (entry.favorite ? favorites : rest).push(entry);
-  return [...favorites, ...rest];
 }
 
 /**
@@ -141,14 +132,20 @@ function byLastSeenDescending(entries: readonly RosterEntry[]): readonly RosterE
 
 export function derivePaneRoster(input: PaneRosterInput): PaneRoster {
   const sections: RosterSection[] = [];
+  const pinned = input.pinned ?? [];
+  const pinnedKeys = new Set(pinned.map(rosterEntryKey));
+
+  if (pinned.length > 0) sections.push({ key: "pinned", entries: pinned });
 
   for (const section of input.triaged) {
-    if (section.entries.length === 0) continue;
-    sections.push({ key: section.key, entries: favoritesFirst(section.entries) });
+    // A pinned pane is listed once, in Pinned; whatever order is left is triage's own.
+    const entries = section.entries.filter((entry) => !pinnedKeys.has(rosterEntryKey(entry)));
+    if (entries.length === 0) continue;
+    sections.push({ key: section.key, entries });
   }
 
   if (input.shellPanes.length > 0) {
-    sections.push({ key: "shell", entries: favoritesFirst(byLastSeenDescending(input.shellPanes)) });
+    sections.push({ key: "shell", entries: byLastSeenDescending(input.shellPanes) });
   }
 
   const entries: RosterEntry[] = [];

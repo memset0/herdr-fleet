@@ -2748,7 +2748,7 @@ describe("AgentChat — the Fleet shell's switcher port", () => {
         // SAFETY: the fake implements every member of MediaQueryList that useMediaQuery and the
         // setup polyfill it replaces touch; it is a test double, never handed to the platform.
         ({
-          matches: query === "(min-width: 80rem)",
+          matches: query === "(min-width: 96rem)",
           media: query,
           onchange: null,
           addEventListener: vi.fn(),

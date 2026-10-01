@@ -64,7 +64,7 @@ import { useHostHealth } from "@/components/crew-provider";
 import { writeRefusal } from "@/lib/host-health";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
-import { StatusBadge, StatusDot, StatusWord } from "@/components/status-badge";
+import { StatusDot } from "@/components/status-badge";
 import { submitPromptFeedback, submitPromptOption } from "@/lib/prompt-action";
 import { submitWizardKeys } from "@/lib/wizard-action";
 import { submitPreviewKeys, submitPreviewNote, submitPreviewOption } from "@/lib/preview-action";
@@ -576,12 +576,12 @@ export function AgentChat({
   const hereKey = agent ? paneRowKey(agent) : null;
   const elsewhereNeedsYou = agents.some((a) => a.status === "blocked" && paneRowKey(a) !== hereKey);
   // DOWNSTREAM PORT (native-navigation-sidebars-port) — no switcher entry at the breakpoint where
-  // the Fleet shell's rails stand (`xl`, 80rem): the hierarchy and Agent rails already list every
-  // pane. The entry was a grip above the composer that carried `xl:hidden`; upstream moved it onto
+  // the Fleet shell's Agents rail stands (`2xl`, 96rem): the rail already lists every pane. Between
+  // `xl` and `2xl` only the hierarchy rail stands, so the entry is drawn and carries the Agents rail. The entry was a grip above the composer that carried `xl:hidden`; upstream moved it onto
   // the actions belt as the Switch pill, which the belt draws only when handed a handle, so the entry
   // stands down here by not being handed one. The sheet, the gesture and every narrower width are
   // unchanged.
-  const railsShown = useMediaQuery("(min-width: 80rem)");
+  const railsShown = useMediaQuery("(min-width: 96rem)");
   const pullHandle =
     !railsShown && (agents.length + shellPanes.length > 0 || launchers.length > 0)
       ? {
@@ -1869,17 +1869,6 @@ export function AgentChat({
                       panes={tabPanes}
                       currentPaneId={paneId}
                       onExpand={toggleStrips}
-                      // DOWNSTREAM PORT — the state, as a WORD. A badge is a pill with a ground and
-                      // its own padding; this bar is 24px tall and spends none. The colour and the
-                      // word are the same pair the badge carries, which is what keeps the fact
-                      // readable for a reader the colour alone fails (status-badge.tsx measures it).
-                      trailing={
-                        <StatusWord
-                          status={agent.status}
-                          stale={connecting}
-                          className="shrink-0"
-                        />
-                      }
                     />
                   )
                 }
@@ -1909,17 +1898,12 @@ export function AgentChat({
                     // the space has nothing left to land on. Closing any other tab just revalidates so it
                     // drops out of the strip.
                     onClosed={(tabId) => (agent?.tabId === tabId ? closeCurrentTab(tabId) : revalidator.revalidate())}
-                    // DOWNSTREAM PORT — the pane's state, pinned to the row's trailing end where it
-                    // costs no height: the tab row's height is already spent, so this centres in pixels
-                    // the row was spending anyway.
-                    //
-                    // THE MANUAL FOLD CONTROL IS GONE FROM HERE. The fold is automatic — the strips
-                    // stand down while the keyboard is up and come back when it closes — and a second,
-                    // manual way to reach the same state was one control the operator had to keep in
-                    // their head. Expanding is still one tap on the whole folded bar.
-                    trailing={
-                      <StatusBadge status={agent.status} stale={connecting} className="shrink-0" />
-                    }
+                    // DOWNSTREAM PORT — NOTHING AT THE ROW'S TRAILING END. Upstream pins its manual fold
+                    // control here; the fold is automatic (the strips stand down while the keyboard is
+                    // up and come back when it closes), and a second, manual way to reach the same state
+                    // was one control the operator had to keep in their head. Expanding is still one tap
+                    // on the whole folded bar. The pane's state is Collie's own dots and header mark;
+                    // Fleet spells it nowhere else (fleet-pane-chrome).
                   />
                 )}
 

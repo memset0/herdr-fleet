@@ -17,9 +17,11 @@ import {
  * thing you are looking at, and Settings is two navigations away from it — the rail is the only
  * surface that is on screen no matter which Pane is.
  *
- * Two segments and no third state, so there is nothing to read: the selected side is the surface
- * every Pane is drawn as. Selection changes colour and nothing else — DESIGN.md §2 — because a
- * weight change would re-measure the label and move the segment beside it every time you switched.
+ * Two segments and no third state, drawn as COLLIE'S OWN SEGMENTED CONTROL (`theme-control.tsx`):
+ * segments a gap apart inside the footer's padding, the selected one a filled primary pill. The
+ * fork's first version tinted the selected segment with `--accent`, which is a hover ground and
+ * barely separated from the rail, so which surface was on was a guess. The weight never changes
+ * (DESIGN.md §2): a bold label is wider and would move the segment beside it on every switch.
  */
 export function FleetPaneSurfaceToggle() {
   useLocale();
@@ -29,17 +31,9 @@ export function FleetPaneSurfaceToggle() {
     () => DEFAULT_PANE_SURFACE,
   );
   return (
-    <div className="px-3 py-2">
-      <div
-        role="radiogroup"
-        aria-label={t("fleet.settings.surface.title")}
-        // One frame, one hairline down the middle: `--border` is a component's own edge, and the
-        // segment divider is inside that component rather than a cut between two regions (§4).
-        className="grid grid-cols-2 overflow-hidden rounded-md border border-border"
-      >
-        <Segment surface="mirror" label="Collie" selected={surface === "mirror"} />
-        <Segment surface="terminal" label="TTYD" selected={surface === "terminal"} divided />
-      </div>
+    <div role="radiogroup" aria-label={t("fleet.settings.surface.title")} className="flex gap-1 p-2">
+      <Segment surface="mirror" label="Collie" selected={surface === "mirror"} />
+      <Segment surface="terminal" label="TTYD" selected={surface === "terminal"} />
     </div>
   );
 }
@@ -48,12 +42,10 @@ function Segment({
   surface,
   label,
   selected,
-  divided = false,
 }: {
   surface: PaneSurface;
   label: string;
   selected: boolean;
-  divided?: boolean;
 }) {
   return (
     <button
@@ -64,10 +56,8 @@ function Segment({
       // 44px floor, stated as a floor (§6): the label is one short word today and the row must not
       // shrink under it if it ever is not.
       className={cn(
-        "min-h-11 px-2 text-xs font-medium transition-colors",
-        divided && "border-l border-border",
-        // The rail's own selected-row idiom, so the switch reads as part of the rail it sits in.
-        selected ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted",
+        "flex min-h-11 flex-1 items-center justify-center rounded-md px-3 text-sm font-medium transition-colors",
+        selected ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted active:bg-muted",
       )}
     >
       {label}

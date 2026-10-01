@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 
@@ -8,11 +8,12 @@ import { createMemoryRouter, Link, Outlet, RouterProvider } from "react-router";
 import { useEffect } from "react";
 
 import { NavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
-import { agentFavoriteStore, __resetAgentFavorites } from "../../../fleet/ui/agent-favorites.ts";
+import { __resetPins, currentPins, pinMatcher, setPinned } from "@/lib/pins";
 import type { HomeData } from "@/lib/loaders";
 import { NativeHierarchyToggle, useNativePaneSwitcher } from "./native-navigation-context";
 import { NativeNavigationShell } from "./native-navigation-shell";
 import { StripHost, StripSlot } from "./ui/strip-host";
+import { TabBar } from "./ui/tab-bar";
 
 const pane = {
   paneId: "p1",
@@ -112,7 +113,7 @@ function renderShell(
 
 beforeEach(() => {
   localStorage.clear();
-  __resetAgentFavorites();
+  __resetPins();
 });
 
 describe("NativeNavigationShell", () => {
@@ -165,6 +166,67 @@ describe("NativeNavigationShell", () => {
     for (const control of controls) {
       expect(segment(control, "TTYD")).toHaveAttribute("aria-checked", "true");
     }
+  });
+
+  it("stands the hierarchy from xl, capped for the route, and the Agents rail from 2xl", () => {
+    renderShell();
+    const herds = screen.getByRole("complementary", { name: "Herds" });
+    const agents = screen.getByRole("complementary", { name: "Agents" });
+    const tokens = (el: Element) => el.className.split(/\s+/u);
+    expect(tokens(herds)).toEqual(expect.arrayContaining(["xl:flex", "max-2xl:max-w-[calc(100vw-66.25rem)]"]));
+    expect(tokens(agents)).toContain("2xl:flex");
+    expect(tokens(agents)).not.toContain("xl:flex");
+    const [left, right] = document.querySelectorAll('[role="separator"]');
+    expect(tokens(left!)).toContain("xl:block");
+    expect(tokens(right!)).toContain("2xl:block");
+    // Collie's sheet-title voice for both rail titles and the drawer's.
+    for (const title of [herds, agents].map((rail) => rail.querySelector("span")!)) {
+      expect(tokens(title)).toEqual(expect.arrayContaining(["text-sm", "font-semibold", "text-foreground"]));
+      expect(tokens(title)).not.toContain("uppercase");
+    }
+  });
+
+  it("stands the footer's build row in the tab bar's band", () => {
+    renderShell();
+    const tabBar = render(
+      <TabBar items={[{ value: "a", label: "A", icon: null }]} active={null} onSelect={() => undefined} label="Tabs" />,
+    );
+    const band = tabBar.container.querySelector('[data-slot="tab-bar"]')!;
+    const tokens = (el: Element) => el.className.split(/\s+/u);
+    const herds = screen.getByRole("complementary", { name: "Herds" });
+    const row = within(herds).getByText("Herdr Fleet").closest("div")!;
+    // The same rule, the same ground and the same safe area under it as the tab bar's band…
+    for (const token of ["border-t", "border-rule", "bg-background", "pb-[env(safe-area-inset-bottom)]"]) {
+      expect(tokens(band)).toContain(token);
+      expect(tokens(row)).toContain(token);
+    }
+    // …and the same 56px floor its tabs hold.
+    expect(tokens(row)).toContain("min-h-14");
+    expect(tokens(band.querySelector("button")!)).toContain("min-h-14");
+  });
+
+  it("marks the pane on screen in the Agents rail", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await user.click(screen.getByRole("link", { name: "Open direct" }));
+    expect(await screen.findByText("Pane route")).toBeInTheDocument();
+    const rail = screen.getByRole("complementary", { name: "Agents" });
+    expect(rail.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
+  });
+
+  it("turns the retired favourites into pins once, and only against a fresh snapshot", () => {
+    const LEGACY = "herdr-fleet:agent-favorites:v1";
+    const record = JSON.stringify({ version: 1, favorites: [[null, null, pane.paneId, pane.agent]] });
+    localStorage.setItem(LEGACY, record);
+    const stale = renderShell(new NavigationPreferenceStore(), vi.fn(), { ...data, error: true });
+    expect(localStorage.getItem(LEGACY)).toBe(record);
+    expect(currentPins()).toHaveLength(0);
+    stale.router.dispose();
+    cleanup();
+
+    renderShell();
+    expect(localStorage.getItem(LEGACY)).toBeNull();
+    expect(pinMatcher(currentPins())(pane)).toBe(true);
   });
 
   it("resizes a rail by keyboard within its bounds and remembers the width", () => {
@@ -633,12 +695,12 @@ describe("the shell's command layer", () => {
     expect(copied).not.toContain("cookie");
   });
 
-  it("walks the agents in the order the rail drew them, favourites and all", async () => {
+  it("walks the agents in the order the rail drew them, pins and all", async () => {
     const user = userEvent.setup();
     const second = { ...pane, paneId: "p2", tabId: "t2", tabLabel: "Second", agent: "codex" };
     const two: HomeData = { ...data, agents: [pane, second] };
-    // A favourite moves a row inside its section; the command layer must move with it.
-    agentFavoriteStore.toggle(second);
+    // A pin moves a row to the Pinned group at the top; the command layer must move with it.
+    setPinned(second, true, [pane, second]);
     renderShell(new NavigationPreferenceStore(), vi.fn(), two);
 
     const rail = screen.getByRole("complementary", { name: "Agents" });

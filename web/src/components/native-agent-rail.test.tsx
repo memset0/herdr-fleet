@@ -1,13 +1,12 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { agentFavoriteStore, __resetAgentFavorites } from "../../../fleet/ui/agent-favorites.ts";
-import type { AgentView } from "@/lib/types";
+import { rosterEntryKey } from "../../../fleet/ui/pane-roster.ts";
+import type { AgentView, ServerSummary } from "@/lib/types";
 import { NativeAgentRail } from "./native-agent-rail";
 import { CrewProvider } from "@/components/crew-provider";
-import type { ServerSummary } from "@/lib/types";
 import { __resetHiddenMachines, currentHiddenMachines, setMachineHidden } from "@/lib/hidden-machines";
-import { __resetPins, currentPins, setPinned } from "@/lib/pins";
+import { __resetPins, currentPins, pinMatcher, setPinned } from "@/lib/pins";
 
 function agent(paneId: string, overrides: Partial<AgentView> = {}): AgentView {
   return {
@@ -21,7 +20,7 @@ function agent(paneId: string, overrides: Partial<AgentView> = {}): AgentView {
     status: "working",
     cwd: "/repo",
     focused: false,
-    lastActiveAt: paneId === "favorite" ? 1 : 2,
+    lastActiveAt: 2,
     ...overrides,
   };
 }
@@ -30,42 +29,60 @@ function rows() {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-slot="native-agent-card"]'));
 }
 
+const PACK: ServerSummary[] = [
+  { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 2 },
+  { id: "peer-a", name: "attic", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 2 },
+];
+
 beforeEach(() => {
   localStorage.clear();
-  __resetAgentFavorites();
   __resetHiddenMachines();
   __resetPins();
 });
 
 describe("NativeAgentRail", () => {
-  it("keeps the favorite-aware order and opens one native row", async () => {
-    const favorite = agent("favorite");
+  it("leads with a Pinned group, opens one native row, and lists a pinned pane once", async () => {
+    const pinned = agent("pinned", { lastActiveAt: 1 });
     const newer = agent("newer");
-    agentFavoriteStore.toggle(favorite);
+    setPinned(pinned, true, [pinned, newer]);
     const onOpen = vi.fn();
     const user = userEvent.setup();
-    render(<NativeAgentRail agents={[favorite, newer]} onOpen={onOpen} />);
+    render(<NativeAgentRail agents={[pinned, newer]} onOpen={onOpen} />);
 
     expect(rows().map((row) => row.textContent)).toEqual([
-      expect.stringContaining("favorite"),
+      expect.stringContaining("pinned"),
       expect.stringContaining("newer"),
     ]);
+    // Pinned in Collie's muted caption with no count; the bucket still counts every pane of it.
+    expect(screen.getAllByRole("heading").map((h) => h.textContent)).toEqual(["Pinned", "Working(2)"]);
 
     await user.click(within(rows()[0]!).getAllByRole("button")[0]!);
-    expect(onOpen).toHaveBeenCalledExactlyOnceWith(favorite);
-    expect(screen.getByRole("button", { name: /remove favorite/i })).toBeInTheDocument();
+    expect(onOpen).toHaveBeenCalledExactlyOnceWith(pinned);
+    expect(screen.getByRole("button", { name: "Unpin pinned" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("pins and unpins from the star through Collie's store, and focus follows the star", async () => {
+    const a = agent("alpha");
+    const b = agent("beta", { lastActiveAt: 1 });
+    const user = userEvent.setup();
+    render(<NativeAgentRail agents={[a, b]} onOpen={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Pin beta to top" }));
+    expect(pinMatcher(currentPins())(b)).toBe(true);
+    expect(rows()[0]!.textContent).toContain("beta");
+    const unpin = screen.getByRole("button", { name: "Unpin beta" });
+    await waitFor(() => expect(unpin).toHaveFocus());
+
+    await user.click(unpin);
+    expect(currentPins()).toHaveLength(0);
+    const pin = screen.getByRole("button", { name: "Pin beta to top" });
+    await waitFor(() => expect(pin).toHaveFocus());
   });
 
   it("leads each row with where the work is and follows with what it is doing", () => {
     render(
       <NativeAgentRail
-        agents={[
-          agent("p1", {
-            tabLabel: "workshop",
-            sessionName: "SSHFS support check",
-            lastSeenAt: Date.now(),
-          }),
-        ]}
+        agents={[agent("p1", { tabLabel: "workshop", sessionName: "SSHFS support check", lastSeenAt: Date.now() })]}
         onOpen={vi.fn()}
       />,
     );
@@ -80,6 +97,9 @@ describe("NativeAgentRail", () => {
     // The project gives up width first; the name is the only thing telling two rows apart.
     expect(project.className).toContain("text-muted-foreground");
     expect(name.className).toContain("text-foreground");
+    // Collie's row type: the name at the row's own 16px in medium weight, the meta at 12px.
+    expect(name.className).toContain("font-medium");
+    expect(doing.closest('[data-slot="native-agent-row-detail"]')?.className).toContain("text-xs");
   });
 
   it("names a row by its Tab when the multiplexer numbered the Pane", () => {
@@ -111,55 +131,87 @@ describe("NativeAgentRail", () => {
     expect(screen.getByText(/no agents running/i)).toBeInTheDocument();
   });
 
-  it("keeps the card for the sections that want a person and flattens the rest", () => {
+  it("keeps the card for the section that needs a person and flattens the rest", () => {
+    const blocked = agent("blocked", { status: "blocked" });
     // `done` with nothing seen since is Ready·unseen; `idle` with a later stamp is Recent.
     const unseen = agent("unseen", { status: "done", lastActiveAt: 200, lastSeenAt: 100 });
     const recent = agent("recent", { status: "idle", lastActiveAt: 100, lastSeenAt: 200 });
-    render(<NativeAgentRail agents={[unseen, recent]} onOpen={vi.fn()} />);
+    render(<NativeAgentRail agents={[blocked, unseen, recent]} onOpen={vi.fn()} />);
 
-    const [first, second] = rows();
-    // The card is the emphasis, and it is Collie's own `ATTENTION` set that decides which rows get
-    // it — every row a card would be wallpaper rather than emphasis.
+    const [first, second, third] = rows();
+    // Only Collie's alert section is a card; an unseen reply is marked by Collie's square instead.
     expect(first?.querySelector("[data-slot='card']")).not.toBeNull();
-    expect(second?.querySelector("[data-slot='card']")).toBeNull();
-    // …and a run of flat rows is ONE bordered group, never an open-ended stack of hairlines.
-    expect(second?.closest("[data-slot='list-group']")).not.toBeNull();
     expect(first?.closest("[data-slot='list-group']")).toBeNull();
+    for (const flat of [second, third]) {
+      expect(flat?.querySelector("[data-slot='card']")).toBeNull();
+      // …and a run of flat rows is ONE bordered group, never an open-ended stack of hairlines.
+      expect(flat?.closest("[data-slot='list-group']")).not.toBeNull();
+    }
+    expect(within(second!).getByRole("img", { name: /unseen/i })).toBeInTheDocument();
+    expect(within(third!).queryByRole("img", { name: /unseen/i })).toBeNull();
   });
 
-  it("puts the age at the row's own trailing edge, under the favourite control", () => {
-    render(
-      <NativeAgentRail
-        agents={[agent("p1", { tabLabel: "workshop", lastSeenAt: Date.now() })]}
-        onOpen={vi.fn()}
-      />,
-    );
+  it("draws every row at Collie's 44px row density, with Collie's own marks", () => {
+    render(<NativeAgentRail agents={[agent("p1"), agent("p2", { status: "blocked" })]} onOpen={vi.fn()} />);
+    for (const row of rows()) {
+      const shell = row.firstElementChild!.firstElementChild!;
+      expect(shell.className).toMatch(/\bh-11\b/u);
+      expect(shell.className).toMatch(/\bpy-0\b/u);
+      expect(row.querySelector('[data-glide="dot"]')).not.toBeNull();
+      expect(row.querySelector('[data-glide="tile"]')?.getAttribute("class")).toContain("size-4");
+      expect(row.querySelector('[data-glide="name"]')).not.toBeNull();
+      // No arbitrary type sizes: the row speaks in Collie's scale.
+      expect(row.innerHTML).not.toMatch(/text-\[\d+px\]/u);
+    }
+  });
+
+  it("marks the pane on screen, and only that one", () => {
+    const here = agent("here");
+    render(<NativeAgentRail agents={[here, agent("there")]} currentKey={rosterEntryKey(here)} onOpen={vi.fn()} />);
+    const current = document.querySelectorAll<HTMLElement>('[aria-current="page"]');
+    expect(current).toHaveLength(1);
+    expect(current[0]!.textContent).toContain("here");
+    expect(current[0]!.firstElementChild?.className).toContain("bg-accent");
+  });
+
+  it("says what the dashboard says above the groups", () => {
+    const unseen = agent("unseen", { status: "done", lastActiveAt: 200, lastSeenAt: 100 });
+    const first = render(<NativeAgentRail agents={[unseen, agent("w")]} onOpen={vi.fn()} />);
+    // One unseen reply is not "nothing needs you" on the dashboard, so it is not that here either.
+    expect(screen.queryByText("Nothing needs you")).toBeNull();
+    expect(screen.getByText("1 unseen")).toBeInTheDocument();
+    first.unmount();
+    render(<NativeAgentRail agents={[agent("w")]} onOpen={vi.fn()} />);
+    expect(screen.getByText("Nothing needs you")).toBeInTheDocument();
+  });
+
+  it("ends line 2 with the age beside the star's reserve, and draws Collie's round star", () => {
+    render(<NativeAgentRail agents={[agent("p1", { tabLabel: "workshop", lastSeenAt: Date.now() })]} onOpen={vi.fn()} />);
 
     const row = rows()[0]!;
-    const name = within(row).getByText("workshop");
     const age = within(row).getByText(/^(now|\d+[mhd])$/);
-    // THE RESERVE FOR THE STAR IS ONE LINE'S, not the button's. Line 1 shares its row with the
-    // control and clears it; line 2 runs to the row's own trailing edge, which is the corner the
-    // age is specified to sit in. Asserted as "line 1 reserves, line 2 and the button do not",
-    // rather than as a particular width, so retuning the control's size stays a style change.
-    expect(/\bpr-\d/.test(name.parentElement?.className ?? "")).toBe(true);
-    expect(/\bpr-\d/.test(age.parentElement?.className ?? "")).toBe(false);
-    expect(/\bpr-\d/.test(age.closest("button")?.className ?? "")).toBe(false);
+    // The reserve is the row's (`pr-12`), so neither line runs under the 36px star.
+    expect(row.firstElementChild!.firstElementChild!.className).toMatch(/\bpr-12\b/u);
+    expect(age.parentElement?.getAttribute("data-slot")).toBe("native-agent-row-detail");
+    const star = within(row).getByRole("button", { name: /pin/i });
+    expect(star.className).toMatch(/\bsize-9\b/u);
+    expect(star.className).toContain("rounded-full");
+    expect(star.querySelector("svg")?.getAttribute("class")).toContain("size-4");
+    // Full muted ink at rest: the half-strength ink it had failed 3:1 on the chrome ground.
+    expect(star.className).toMatch(/(^|\s)text-muted-foreground(\s|$)/u);
+    expect(star.className).not.toMatch(/text-muted-foreground\/\d+/u);
   });
+
   test("a row names the member it came from, and a solo rail names none", () => {
-    const servers: ServerSummary[] = [
-      { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 2 },
-      { id: "peer-a", name: "attic", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 2 },
-    ];
     const here = agent("here", { host: "lead" });
     const there = agent("there", { host: "peer-a" });
 
     const pack = render(
-      <CrewProvider servers={servers} sessions={[]}>
+      <CrewProvider servers={PACK} sessions={[]}>
         <NativeAgentRail agents={[here, there]} onOpen={() => undefined} />
       </CrewProvider>,
     );
-    // Collie's own chip, not a second vocabulary: one marker per row, naming that row's machine.
+    // Collie's own pane meta, not a second vocabulary: one marker per row, naming that row's machine.
     expect(screen.getAllByText("north")).not.toHaveLength(0);
     expect(screen.getAllByText("attic")).not.toHaveLength(0);
     pack.unmount();
@@ -171,30 +223,32 @@ describe("NativeAgentRail", () => {
     expect(rows()).toHaveLength(2);
   });
 
-  test("a machine hidden or a pane pinned on the dashboard changes nothing in the rail", () => {
-    const servers: ServerSummary[] = [
-      { id: "lead", name: "north", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 2 },
-      { id: "peer-a", name: "attic", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 2 },
-    ];
+  test("a machine hidden on the dashboard changes nothing in the rail, and a pin leads it", () => {
     const here = agent("here", { host: "lead" });
-    const there = agent("there", { host: "peer-a" });
+    const there = agent("there", { host: "peer-a", lastActiveAt: 1 });
     const draw = () =>
       render(
-        <CrewProvider servers={servers} sessions={[]}>
-          <NativeAgentRail agents={[here, there]} onOpen={() => undefined} />
+        <CrewProvider servers={PACK} sessions={[]}>
+          <NativeAgentRail agents={[here, there]} servers={PACK} onOpen={() => undefined} />
         </CrewProvider>,
       );
     const before = draw();
     const order = rows().map((row) => row.textContent);
     before.unmount();
 
-    // The dashboard's own device-local choices: the rails are the fleet's map, not that view.
-    setMachineHidden("peer-a", true, servers);
-    setPinned(there, true, [here, there]);
+    // The dashboard's machine filter is a view of that screen; the rails are the fleet's map.
+    setMachineHidden("peer-a", true, PACK);
     expect(currentHiddenMachines()).toEqual(["peer-a"]);
-    expect(currentPins()).toHaveLength(1);
-    draw();
+    const hidden = draw();
     expect(rows().map((row) => row.textContent)).toEqual(order);
     expect(screen.getAllByText("attic")).not.toHaveLength(0);
+    hidden.unmount();
+
+    // A pin is the operator's own "this one matters", and the rail honours it: Pinned leads.
+    setPinned(there, true, [here, there]);
+    draw();
+    expect(rows().map((row) => row.textContent?.replace(/^\d/u, ""))).toEqual(
+      [order[1], order[0]].map((text) => text?.replace(/^\d/u, "")),
+    );
   });
 });

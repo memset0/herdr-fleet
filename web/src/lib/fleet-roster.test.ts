@@ -1,4 +1,5 @@
-import { toRosterEntry, paneRosterFrom } from "./fleet-roster";
+import { migrateLegacyFavorites, paneRosterFrom, pinnedAgents, toRosterEntry, togglePanePin } from "./fleet-roster";
+import { __resetPins, currentPins, pinMatcher, setPinned } from "@/lib/pins";
 import type { AgentView, ServerSummary } from "@/lib/types";
 
 /**
@@ -65,5 +66,60 @@ describe("naming the machine a pane is on", () => {
       PACK,
     );
     expect(roster.entries[0]?.hostLabel).toBe("lodge");
+  });
+});
+
+describe("the star is Collie's pin", () => {
+  const LEGACY = "herdr-fleet:agent-favorites:v1";
+  beforeEach(() => {
+    localStorage.clear();
+    __resetPins();
+  });
+
+  it("toggles the pane's pin in Collie's own store, both ways", () => {
+    const a = pane();
+    togglePanePin(a, [a]);
+    expect(pinMatcher(currentPins())(a)).toBe(true);
+    togglePanePin(a, [a]);
+    expect(currentPins()).toHaveLength(0);
+  });
+
+  it("lists pinned Agents in Collie's place order, never by status", () => {
+    const first = pane({ paneId: "w1:p1", status: "idle" });
+    const second = pane({ paneId: "w2:p1", workspaceId: "w2", workspaceLabel: "api", workspaceNumber: 2, status: "blocked" });
+    setPinned(second, true, [first, second]);
+    setPinned(first, true, [first, second]);
+    expect(pinnedAgents([second, first], currentPins()).map((p) => p.paneId)).toEqual(["w1:p1", "w2:p1"]);
+    expect(pinnedAgents([first, second], [])).toEqual([]);
+  });
+
+  it("puts the pinned panes first in the roster, each listed once", () => {
+    const a = pane({ paneId: "w1:p1" });
+    const b = pane({ paneId: "w1:p2", status: "working" });
+    const roster = paneRosterFrom([{ key: "working", label: "Working", dot: "", agents: [a, b] }], [], undefined, [b]);
+    expect(roster.entries.map((e) => e.paneId)).toEqual(["w1:p2", "w1:p1"]);
+    expect(roster.sections.map((s) => s.key)).toEqual(["pinned", "working"]);
+  });
+
+  it("migrates a stored favourite whose pane is live, drops the rest, and deletes the record once", () => {
+    const live = pane({ host: "lead", session: "main", paneId: "w1:p1" });
+    localStorage.setItem(
+      LEGACY,
+      JSON.stringify({ version: 1, favorites: [["lead", "main", "w1:p1", "claude"], ["lead", "main", "w9:p9", "codex"]] }),
+    );
+    expect(migrateLegacyFavorites([live], localStorage)).toBe(1);
+    expect(pinMatcher(currentPins())(live)).toBe(true);
+    expect(currentPins()).toHaveLength(1);
+    expect(localStorage.getItem(LEGACY)).toBeNull();
+    // Once: with the record gone, a second run pins nothing and unpins nothing.
+    expect(migrateLegacyFavorites([live], localStorage)).toBe(0);
+    expect(currentPins()).toHaveLength(1);
+  });
+
+  it("deletes an unreadable record without pinning anything", () => {
+    localStorage.setItem(LEGACY, "not json");
+    expect(migrateLegacyFavorites([pane()], localStorage)).toBe(0);
+    expect(currentPins()).toHaveLength(0);
+    expect(localStorage.getItem(LEGACY)).toBeNull();
   });
 });

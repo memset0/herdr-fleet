@@ -19,6 +19,17 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **The Agents rail draws Collie's own rows.** 44px rows with a leading status dot, the 16px agent mark, a 16px/500 name, 12px meta, Collie's unseen square and pane meta, cards only for Needs you, and the pane on screen marked `aria-current` on the accent ground; the where-then-what order stays.
+- **The star is Collie's pin; the separate favourites store is retired.** The star on dashboard and rail rows pins or unpins through Collie's own store, the rail leads with a Pinned group, and stored favourites whose panes are live become pins once (the rest are dropped) before the old key is deleted.
+- **The rail's summary line is the dashboard's.** It says "Nothing needs you" only when no pane needs you or waits unseen.
+- **Rail controls take Collie's shapes.** The star is the 36px round button with a 16px glyph, and the Collie/TTYD switch is Collie's segmented control with a filled primary pill.
+- **The rail footer meets the tab bar on one line.** The build row is the tab bar's 56px band, rule and ground, on desktop and in the phone drawer.
+- **The Agents rail stands from 1536px.** Below it the Pane page's Switch entry carries the rail, and the hierarchy rail is capped so a 1280px pane column (1056px) is no longer narrower than a 1024px one.
+- **The Pane screen no longer repeats its own state.** The fork's tab-row badge and folded-bar word are gone; Collie's dots and header mark state it.
+- **Rail and drawer titles use Collie's sheet-title voice.** Rail groups take its 13px workspace-heading voice in their own case; Pinned keeps Collie's muted caption.
+
 ### Fixed
 
 - **CJK text in the default UI face now reaches the selected fallback.** Collie's unlayered splash mirror of the default stack shadowed the fork's `@layer theme` hole, so rail headings, tab labels and belt labels drew CJK in the system font; an unlayered default stack in `index.css` now carries `var(--font-cjk)`.

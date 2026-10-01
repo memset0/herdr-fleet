@@ -27,7 +27,7 @@ function row(
 }
 
 function entry(paneId: string, label: string, extra: Partial<RosterEntry> = {}): RosterEntry {
-  return { paneId, kind: "agent", agent: "claude", label, favorite: false, ...extra };
+  return { paneId, kind: "agent", agent: "claude", label, ...extra };
 }
 
 function roster(): PaneRoster {

@@ -28,7 +28,6 @@ import {
   type NativeNavigationPreferenceStore,
   type SidebarSide,
 } from "../../../fleet/ui/native-navigation/preferences.ts";
-import { agentFavoriteStore } from "../../../fleet/ui/agent-favorites.ts";
 import { COMMAND_ORDINALS, type CommandId, type CommandScope } from "../../../fleet/ui/commands/catalog.ts";
 import {
   EMPTY_PANE_HISTORY,
@@ -68,7 +67,8 @@ import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
 import { closePane, closeTab } from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
-import { paneRosterFrom } from "@/lib/fleet-roster";
+import { migrateLegacyFavorites, paneRosterFrom, pinnedAgents } from "@/lib/fleet-roster";
+import { usePins } from "@/lib/pins";
 import { setStatus } from "@/lib/status";
 import { useFleetSettings } from "@/lib/fleet-settings";
 import { homePath, panePath, settingsPath, spacePath } from "@/lib/nav";
@@ -96,11 +96,11 @@ interface NativeNavigationShellProps {
  * siblings of the column the header heads, so the header's width is the column's by construction
  * and stays correct when the prerelease strip appears or the safe-area inset changes.
  *
- * On a wide viewport both rails are always shown. There is no collapse control, because a rail the
- * operator keeps open is not worth a control that hides it — the widths are the adjustment, and
- * they persist. Below that breakpoint the rails are gone entirely and the hierarchy arrives as one
- * overlay from the header's leading trigger, while the Agent list is presented by the Pane page's
- * own switcher entry (components/native-navigation-context.tsx states that seam).
+ * The hierarchy rail stands from `xl` and the Agents rail from `2xl` (see Rail). There is no collapse
+ * control, because a rail the operator keeps open is not worth a control that hides it — the widths
+ * are the adjustment, and they persist. Below `xl` the hierarchy arrives as one overlay from the
+ * header's leading trigger, and below `2xl` the Agent list is presented by the Pane page's own
+ * switcher entry (components/native-navigation-context.tsx states that seam).
  */
 /**
  * How old the lead's last receipt from a member may be before its refusal is believed as a label.
@@ -373,21 +373,30 @@ export function NativeNavigationShell({
     [nav, data.scope, data.servers, data.sessions, closeHierarchy],
   );
 
-  // Favourites are browser-local and change without the snapshot moving, so the roster has to be
-  // recomputed when they do. The rail already reads the store directly; this subscribes so the
-  // command layer's copy of the order cannot fall behind the one on screen.
-  useSyncExternalStore(
-    agentFavoriteStore.subscribe,
-    agentFavoriteStore.snapshot,
-    agentFavoriteStore.snapshot,
-  );
+  // Pins are Collie's, per device, and change without the snapshot moving, so the roster has to be
+  // recomputed when they do. The rail reads the same store; this subscribes so the command layer's
+  // copy of the order cannot fall behind the one on screen.
+  const pins = usePins();
+  const tabsForPins = data.allTabs ?? data.tabs;
+
+  // THE RETIRED FAVOURITES BECOME PINS, ONCE (fleet/ui/agent-favorites.ts). Only against a fresh
+  // snapshot that lists Agents: a favourite whose pane is not listed is dropped for good, so an error
+  // render or an empty herd must not be the snapshot it is matched against.
+  useEffect(() => {
+    if (data.error === true || data.agents.length === 0) return;
+    migrateLegacyFavorites(data.agents);
+  }, [data.error, data.agents]);
 
   // Recomputed every render rather than memoised, which is what the rail beside it already does with
-  // the same two calls: `triage()` and the favourites partition are cheap, and a memo here would have
-  // to name the favourites revision as a dependency it never actually reads.
+  // the same calls: `triage()` and the pinned partition are cheap.
   // The rail draws exactly these sections, from this same function — so `next-agent` and the ninth
   // ordinal address the row the rail drew ninth, rather than agreeing by coincidence.
-  const roster = paneRosterFrom(triage(data.agents, "newest"), data.shellPanes, data.servers);
+  const roster = paneRosterFrom(
+    triage(data.agents, "newest"),
+    data.shellPanes,
+    data.servers,
+    pinnedAgents(data.agents, pins, tabsForPins, data.servers),
+  );
 
   // The whole pack's tabs, matching the rails: a Tab command must be able to address the Space the
   // operator is actually on, and on a pack that Space may not be the one the URL's scope narrows to.
@@ -549,10 +558,13 @@ export function NativeNavigationShell({
         bridge={data.bridge}
         error={data.error}
         lastSeenAt={data.lastSeenAt}
+        tabs={tabsForPins}
+        servers={data.servers}
+        currentKey={currentKey}
         onOpen={openAgent}
       />
     ),
-    [data.agents, data.bridge, data.error, data.lastSeenAt, openAgent],
+    [data.agents, data.bridge, data.error, data.lastSeenAt, tabsForPins, data.servers, currentKey, openAgent],
   );
 
   const navigation = useMemo(
@@ -583,6 +595,7 @@ export function NativeNavigationShell({
             name a face. Here rather than in a route because it must outlive every navigation. */}
         <FleetWebfonts />
         <Rail
+          side="left"
           title={t("fleet.navigation.hierarchy")}
           width={preferences.left.preferredWidth}
           collapsed={railsCollapsed}
@@ -616,6 +629,7 @@ export function NativeNavigationShell({
           collapsed={railsCollapsed}
         />
         <Rail
+          side="right"
           title={t("fleet.navigation.agents")}
           width={preferences.right.preferredWidth}
           collapsed={railsCollapsed}
@@ -745,12 +759,14 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
  * under a 11px label to line up with a header edge that, without a rule, nobody can see.
  */
 function Rail({
+  side,
   title,
   width,
   collapsed,
   children,
   footer,
 }: {
+  side: SidebarSide;
   title: string;
   width: number;
   collapsed: boolean;
@@ -776,7 +792,12 @@ function Rail({
       // chrome around the route, not more of the page. The rule between rail and route lives on the
       // SEPARATOR, not here — see RailSeparator.
       className={cn(
-        "hidden min-h-0 shrink-0 flex-col overflow-hidden bg-chrome transition-[width,opacity] duration-200 motion-reduce:transition-none xl:flex",
+        "hidden min-h-0 shrink-0 flex-col overflow-hidden bg-chrome transition-[width,opacity] duration-200 motion-reduce:transition-none",
+        // TWO BREAKPOINTS, ONE RULE: a rail may never leave the route narrower than the drawer layout
+        // leaves it. Both rails at 1280px left the pane 672px, against 1024px on a 1024px screen. So
+        // the hierarchy stands from `xl` and is capped there so the route keeps at least 66rem, and
+        // the Agents rail stands from `2xl`; below it the Pane page's own Switch entry carries it.
+        side === "left" ? "xl:flex max-2xl:max-w-[calc(100vw-66.25rem)]" : "2xl:flex",
         collapsed && "pointer-events-none opacity-0",
       )}
     >
@@ -790,19 +811,18 @@ function Rail({
         {/* The title sits DIRECTLY over its list. It carried the header's 60px floor so the three
             columns' first line agreed, but with no rule under it that agreement bought nothing and
             spent 30px of blank between a label and the thing it labels. */}
+        {/* Collie's sheet-title voice (`ui/sheet.tsx`): 14px, semibold, full ink, the name in its own
+            case. The drawer below wears the same, because it is this rail arriving from the edge. */}
         <div className="flex items-center px-3 pb-1 pt-2">
-          <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {title}
-          </span>
+          <span className="truncate text-sm font-semibold text-foreground">{title}</span>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       {footer === undefined ? null : (
-        // The seam is drawn once, from above (§4): this block closes its own top against the list
-        // and the footer's own contents draw no rule of their own.
-        <div className="shrink-0 border-t border-rule [padding-bottom:env(safe-area-inset-bottom)]">
-          {footer}
-        </div>
+        // The seam is drawn once, from above (§4): this block closes its own top against the list.
+        // The bottom inset is the footer's last row's, which is the tab bar's band (see
+        // fleet-navigation-footer.tsx), so it is not reserved here a second time.
+        <div className="shrink-0 border-t border-rule">{footer}</div>
       )}
     </aside>
   );
@@ -868,7 +888,8 @@ function RailSeparator({
       // line on it at all. Two visible boundaries where there is one region change. Drawn here, the
       // rule lands exactly where the ground changes, which is what a rule is for (DESIGN.md §4).
       className={cn(
-        "group relative z-10 hidden shrink-0 cursor-col-resize bg-chrome outline-none transition-[width,opacity] duration-200 motion-reduce:transition-none xl:block",
+        "group relative z-10 hidden shrink-0 cursor-col-resize bg-chrome outline-none transition-[width,opacity] duration-200 motion-reduce:transition-none",
+        side === "left" ? "xl:block" : "2xl:block",
         collapsed ? "w-0 opacity-0" : "w-1",
         side === "left" ? "border-r border-rule" : "border-l border-rule",
       )}
@@ -910,7 +931,7 @@ function HierarchyOverlay({
         )}
       />
       {/* THE SAME RAIL, ARRIVING FROM THE EDGE. It wears the rail's ground and the rail's title —
-          same token, same 11px uppercase caption, same absence of a rule under it — so the surface a
+          same token, same sheet-title voice, same absence of a rule under it — so the surface a
           phone slides in is the one a desktop keeps open, rather than a second design of it. What it
           adds is the one thing a drawer needs and a rail does not: a way to send it back. */}
       <section
@@ -930,9 +951,7 @@ function HierarchyOverlay({
       >
         <div className="shrink-0 [padding-top:env(safe-area-inset-top)]">
           <div className="flex items-center justify-between gap-2 pb-1 pl-3 pr-1 pt-2">
-            <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {title}
-            </span>
+            <span className="truncate text-sm font-semibold text-foreground">{title}</span>
             <button
               ref={closeRef}
               type="button"
@@ -948,7 +967,7 @@ function HierarchyOverlay({
         {/* The same footer the rail carries, for the same reason the drawer wears the rail's ground
             and title: it is the rail arriving from the edge, and a switch that existed on one of
             them and not the other would make that sentence false on a phone. */}
-        <div className="shrink-0 border-t border-rule [padding-bottom:env(safe-area-inset-bottom)]">
+        <div className="shrink-0 border-t border-rule">
           <FleetNavigationFooter />
         </div>
       </section>

@@ -162,7 +162,7 @@ test("Changes: pinned rows lead in place order, open the pane, and the workspace
 });
 
 test("switcher: the Pinned section leads the sheet and each pane is listed once", async ({ page }) => {
-  test.skip(true, "the switcher sheet holds the Agents rail, which ignores dashboard pins (native-navigation-sidebars-port)");
+  test.skip(true, "the switcher sheet holds the Agents rail, whose own Pinned group the fork's rail test covers (native-navigation-sidebars-port)");
   await page.goto("/");
   await viaMenu(page, mainRow(page, "codex"), "paneActions.pin.label");
   await mainRow(page, "claude").click();
