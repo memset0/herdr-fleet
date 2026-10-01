@@ -25,4 +25,4 @@
 
 ## 6. Archive
 
-- [ ] 6.1 Archive with spec sync into `openspec/specs/fleet-pack-authority/spec.md` and validate `--specs --strict`
+- [x] 6.1 Archive with spec sync into `openspec/specs/fleet-pack-authority/spec.md` and validate `--specs --strict`
