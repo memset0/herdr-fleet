@@ -248,13 +248,16 @@ Upstream's switcher tests and its new `display-prefs`, `pane-actions-sheet`, `pa
   and `COLLIE_MUX_ENDPOINT_TUIOS` a new endpoint beside the existing ones; manual Pane fit stays
   Herdr-only because the tuios adapter advertises no `resizePane`.
 - **Boot splash.** `index.html` now draws `/collie-mark-header-{light,dark}.svg`. **Revised in phase C:**
-  the Gateway's public list gains both exact paths. The list already held the splash's artwork — the
-  gallop sprite, public since the Gateway was written because the splash paints it before the app has
-  asked for anything — and the marks take the sprite's place in the splash; behind the session they
-  were answered `no-store`, so every boot fetched them again. Both carry no protected data, the rule
-  stays an exact-path allowlist (no pattern, no source map), and the sprite stays listed because the
-  app still draws it. One fork-owned edit (`fleet/gateway.ts`), one test case, one `CHANGELOG.md` line;
-  the first paint is checked on the lead after deploy.
+  the Gateway's public list gains both exact paths and drops the gallop sprite. The list held the
+  splash's artwork — the sprite, public since the Gateway was written because the splash paints it
+  before the app has asked for anything — and the marks take the sprite's place in the splash; behind
+  the session they were answered `no-store`, so every boot fetched them again. No page draws the
+  sprite any more (upstream's `<DogGallop/>` is mounted nowhere), so it leaves the list, as the lean
+  rule asks; it is still served behind the session. Both marks carry no protected data and the rule
+  stays an exact-path allowlist (no pattern, no source map). Fork-owned edits only (`fleet/gateway.ts`
+  and its test), one `CHANGELOG.md` line; the first paint is checked on the lead after deploy. (The
+  first commit kept the sprite on a wrong reading that the app still drew it; the follow-up corrects
+  it.)
 
 ### 8. Repository guidance
 

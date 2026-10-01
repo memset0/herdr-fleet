@@ -168,6 +168,7 @@ describe("authenticated solo Gateway", () => {
       "/pane/p1?session=demo",
       "/collie-mark-header.svg",
       "/collie-mark-header-light.svg.map",
+      "/dog-gallop.png",
     ]) {
       const response = await handler(request(path), { peerAddress: "127.0.0.1" });
       expect(response.status).toBe(303);

@@ -38,12 +38,12 @@ const BASE_HEADERS = {
 } satisfies Readonly<Record<string, string>>;
 
 // The boot splash's artwork is public because the splash paints it before the app has asked for
-// anything: the two header marks it draws now, and the gallop sprite it drew before Collie 1.15.
+// anything. Collie 1.15 draws its two header marks there in place of the gallop sprite, which no
+// page draws any more, so the marks took the sprite's place in this list.
 const PUBLIC_FILES = new Set([
   "/apple-touch-icon.png",
   "/collie-mark-header-dark.svg",
   "/collie-mark-header-light.svg",
-  "/dog-gallop.png",
   "/favicon-96x96.png",
   "/favicon.ico",
   "/favicon.svg",

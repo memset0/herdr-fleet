@@ -31,7 +31,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Fixed
 
 - **Claude's working-turn mode line no longer reads as a dialog.** With background agents running, `esc to interrupt` and a trailing `↓ to manage` on the permission-mode line are dropped before the tail checks, with or without an agent count, whole or clipped; the port stays temporary.
-- **The boot splash's two header marks load before sign-in.** Collie 1.15's splash draws `/collie-mark-header-{light,dark}.svg` in place of the gallop sprite, so the Gateway serves both exact paths without a session, as it serves the sprite.
+- **The boot splash's two header marks load before sign-in.** Collie 1.15's splash draws `/collie-mark-header-{light,dark}.svg` in place of the gallop sprite, so the Gateway serves both exact paths without a session in place of the sprite, which no page draws any more.
 - **Behind the Gateway, opening a pane marks it seen.** The Gateway now forwards Collie's seen header, which carries no credential, so a pane read reaches Collie as the operator looking at it.
 
 ## [3.5.3] - 2026-10-01
