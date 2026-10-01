@@ -1,32 +1,32 @@
 ## 1. Decisions and ground
 
-- [ ] 1.1 Record the coordinator's choice for each of design decisions 6 (dashboard tabs), 7 (composer), 8 (route and service worker) and 9 (command bar), and for decision 11 (no seam); if any choice differs from the recommendation, revise the affected delta specs and tasks with the update workflow before task 2.1; verify `openspec validate adopt-collie-1-14-2 --strict` passes after the revision
-- [ ] 1.2 Verify the local hooks are installed (`scripts/install-hooks.sh`), `main` is level with `origin/main`, and record the pre-change results of `bun run test:fork`, `bun test ./fleet` and `bun scripts/check-fork.ts`
+- [x] 1.1 Record the coordinator's choice for each of design decisions 6 (dashboard tabs), 7 (composer), 8 (route and service worker) and 9 (command bar), and for decision 11 (no seam); if any choice differs from the recommendation, revise the affected delta specs and tasks with the update workflow before task 2.1; verify `openspec validate adopt-collie-1-14-2 --strict` passes after the revision
+- [x] 1.2 Verify the local hooks are installed (`scripts/install-hooks.sh`), `main` is level with `origin/main`, and record the pre-change results of `bun run test:fork`, `bun test ./fleet` and `bun scripts/check-fork.ts`
 
 ## 2. Preflight
 
-- [ ] 2.1 Commit this change's planning artifacts on their own (explicit paths, planning-only); verify `git status --porcelain --untracked-files=all` prints nothing
-- [ ] 2.2 Obtain and record the owner's (or coordinator's) authorization to proceed with this change active, then run `bun scripts/check-fork.ts --target v1.14.2 --allow-active-changes`; verify tag object `5271116783decc927b84b4da9814d5fbef6277b7`, commit `887a37dbfc5582d08c7d7703deadd53146f654bb`, 20 disturbed entries, 3 untouched (`native-pane-chrome-port`, `private-fact-guard-port`, `downstream-docs`), no moved declared path, no owned-path collision. Without the authorization, stop
-- [ ] 2.3 Re-run `git merge-tree --write-tree --name-only HEAD v1.14.2`; verify the 35 conflicted paths match design.md's table, each attributed to its entry; stop and escalate any unattributed path
+- [x] 2.1 Commit this change's planning artifacts on their own (explicit paths, planning-only); verify `git status --porcelain --untracked-files=all` prints nothing
+- [x] 2.2 Obtain and record the owner's (or coordinator's) authorization to proceed with this change active, then run `bun scripts/check-fork.ts --target v1.14.2 --allow-active-changes`; verify tag object `5271116783decc927b84b4da9814d5fbef6277b7`, commit `887a37dbfc5582d08c7d7703deadd53146f654bb`, 20 disturbed entries, 3 untouched (`native-pane-chrome-port`, `private-fact-guard-port`, `downstream-docs`), no moved declared path, no owned-path collision. Without the authorization, stop
+- [x] 2.3 Re-run `git merge-tree --write-tree --name-only HEAD v1.14.2`; verify the 35 conflicted paths match design.md's table, each attributed to its entry; stop and escalate any unattributed path
 
 ## 3. Open the merge
 
-- [ ] 3.1 Run `git merge --no-ff --no-commit v1.14.2`; verify `git rev-parse MERGE_HEAD` is `887a37dbfc5582d08c7d7703deadd53146f654bb` and every conflicted path is a predicted one
+- [x] 3.1 Run `git merge --no-ff --no-commit v1.14.2`; verify `git rev-parse MERGE_HEAD` is `887a37dbfc5582d08c7d7703deadd53146f654bb` and every conflicted path is a predicted one
 
 ## 4. Resolve the contract conflicts
 
-- [ ] 4.1 `CLAUDE.md` stays the relative symlink to `AGENTS.md`; verify `test -L CLAUDE.md && [ "$(readlink CLAUDE.md)" = AGENTS.md ]` and no `CLAUDE.md~v1.14.2` remains
-- [ ] 4.2 `CHANGELOG.md` stays this product's plus one bold-lead Unreleased line for the adoption; `package.json`, `web/package.json` (with `sugar-high`), `herdr-plugin.toml` take upstream's content with `3.4.0`, this product's identity and the fork's ports; verify `bash scripts/check-version.sh` prints `✓` and no Collie entry entered `CHANGELOG.md`
+- [x] 4.1 `CLAUDE.md` stays the relative symlink to `AGENTS.md`; verify `test -L CLAUDE.md && [ "$(readlink CLAUDE.md)" = AGENTS.md ]` and no `CLAUDE.md~v1.14.2` remains
+- [x] 4.2 `CHANGELOG.md` stays this product's plus one bold-lead Unreleased line for the adoption; `package.json`, `web/package.json` (with `sugar-high`), `herdr-plugin.toml` take upstream's content with `3.4.0`, this product's identity and the fork's ports; verify `bash scripts/check-version.sh` prints `✓` and no Collie entry entered `CHANGELOG.md`
 - [ ] 4.3 `COLLIE_CHANGELOG.md` becomes `v1.14.2`'s `CHANGELOG.md` verbatim per decision 11; verify the retention check in `bun scripts/check-fork.ts` passes and `cmp` against `git show v1.14.2:CHANGELOG.md` is clean
-- [ ] 4.4 `.oxlintrc.json` (parse-boundary override) and `bridge/removal-schedule.test.ts` (upstream's tombstone verbatim, the fork's `upstreamVersion` import removed, decision 10); verify `bun test bridge/removal-schedule.test.ts` and `bun run lint` on the file pass
+- [x] 4.4 `.oxlintrc.json` (parse-boundary override) and `bridge/removal-schedule.test.ts` (upstream's tombstone verbatim, the fork's `upstreamVersion` import removed, decision 10); verify `bun test bridge/removal-schedule.test.ts` and `bun run lint` on the file pass
 
 ## 5. Resolve the code conflicts
 
-- [ ] 5.1 Manual fit union (decision 5): `bridge/server.ts`, `bridge/crew/forward.ts`, `forward.test.ts`, `bridge/solo-baseline.test.ts`; verify `bun test bridge/crew/forward.test.ts bridge/solo-baseline.test.ts bridge/state-engine.test.ts bridge/sessions.test.ts` pass and `bash scripts/check-crew-wire.sh` accepts the staged pair
-- [ ] 5.2 Composer per decision 7 (`composer.tsx`, `composer-stt.test.tsx`, `composer.test.tsx`, `agent-chat.tsx`, `agent-chat.test.tsx`): record control in the box after attach, `hasDraft` kept, Send refusing on `!hasDraft || recorder.busy`, mic and type-mode command registrations kept, Display slot after Text size; status band switch, app-bar host chip and control-rank constants removed under B1; verify `cd web && bun run test composer composer-stt agent-chat display` and `bun test fleet/ui/mic-commands.test.ts fleet/ui/manual-pane-fit.test.ts` pass, including a chips-only draft accepting both controls
-- [ ] 5.3 Favorites and rows (`agent-list.tsx`, `agent-list.test.tsx`, `agent-card.tsx`, `agent-card.test.tsx`, `routes/home.test.tsx`, the seven dictionaries): upstream's file with the favorite port re-applied beside pins and hidden machines, the `ATTENTION` re-export dropped; verify `cd web && bun run test agent-list agent-card home i18n` and `bun test fleet/ui/agent-favorites.test.ts` pass
+- [x] 5.1 Manual fit union (decision 5): `bridge/server.ts`, `bridge/crew/forward.ts`, `forward.test.ts`, `bridge/solo-baseline.test.ts`; verify `bun test bridge/crew/forward.test.ts bridge/solo-baseline.test.ts bridge/state-engine.test.ts bridge/sessions.test.ts` pass and `bash scripts/check-crew-wire.sh` accepts the staged pair
+- [x] 5.2 Composer per decision 7 (`composer.tsx`, `composer-stt.test.tsx`, `composer.test.tsx`, `agent-chat.tsx`, `agent-chat.test.tsx`): record control in the box after attach, `hasDraft` kept, Send refusing on `!hasDraft || recorder.busy`, mic and type-mode command registrations kept, Display slot after Text size; status band switch, app-bar host chip and control-rank constants removed under B1; verify `cd web && bun run test composer composer-stt agent-chat display` and `bun test fleet/ui/mic-commands.test.ts fleet/ui/manual-pane-fit.test.ts` pass, including a chips-only draft accepting both controls
+- [x] 5.3 Favorites and rows (`agent-list.tsx`, `agent-list.test.tsx`, `agent-card.tsx`, `agent-card.test.tsx`, `routes/home.test.tsx`, the seven dictionaries): upstream's file with the favorite port re-applied beside pins and hidden machines, the `ATTENTION` re-export dropped; verify `cd web && bun run test agent-list agent-card home i18n` and `bun test fleet/ui/agent-favorites.test.ts` pass
 - [ ] 5.4 Shell and routes (`routes/root.tsx` imports with `TourHost`, `routes/settings.tsx` fork group beside upstream's new cards, `motion.test.tsx` main-region scope, `routes/detail.tsx` `renderContent`, `routes/history.tsx` declined column, `tab-strip.tsx` actions slot, `test/handlers.ts`); verify `cd web && bun run test root settings motion detail history tab-strip` pass
-- [ ] 5.5 Service worker per decision 8: network-first route first, upstream's mount helpers, in-app open and progress plugin kept, precached-shell navigation route dropped; update `fleet/sw-boundary.test.ts` to the `PRECACHE_MANIFEST` form; verify `bun test fleet/sw-boundary.test.ts` passes and `__WB_MANIFEST` appears exactly once in `web/src/sw.ts`
+- [x] 5.5 Service worker per decision 8: network-first route first, upstream's mount helpers, in-app open and progress plugin kept, precached-shell navigation route dropped; update `fleet/sw-boundary.test.ts` to the `PRECACHE_MANIFEST` form; verify `bun test fleet/sw-boundary.test.ts` passes and `__WB_MANIFEST` appears exactly once in `web/src/sw.ts`
 
 ## 6. Fork-side migration (its own commit after the merge commit's resolution)
 
@@ -61,7 +61,7 @@
 
 - [ ] 9.1 Read the newest tag on the remote (`git ls-remote --tags origin`); verify it is still `v3.4.0` (else cut the MINOR after it)
 - [ ] 9.2 Re-assess the axis (design decision 12): if an operator step appeared, the coordinator ruled the config-file refusal breaking, or 8.6 failed, stop and report instead of cutting; otherwise confirm MINOR 3.4.0 → 3.5.0
-- [ ] 9.3 Commit the merge with both parents; verify `git log -1 --format=%P` names the previous `main` head and `887a37dbfc5582d08c7d7703deadd53146f654bb`
+- [x] 9.3 Commit the merge with both parents; verify `git log -1 --format=%P` names the previous `main` head and `887a37dbfc5582d08c7d7703deadd53146f654bb`
 - [ ] 9.4 Cut `chore(release): 3.5.0` — the three version files, `## [3.5.0] - <date>` with each line's short hash, a fresh empty Unreleased heading, notes stating every member redeploys lead first, no configuration edit, and the Fleet-owned Collie settings rule; verify `bash scripts/check-version.sh` prints `✓` and `scripts/release-notes.test.ts` passes
 - [ ] 9.5 `git tag -a v3.5.0 -m "Herdr Fleet 3.5.0"` and `git push origin main v3.5.0` (tag named on the push line; never `--follow-tags` or `--tags`; no GitHub Release); verify `git ls-remote --tags origin` shows `v3.5.0` and no upstream `v1.x` tag, and `bash scripts/check-tag.sh` is clean
 

@@ -110,6 +110,44 @@ the merge and its conflict resolution only; the fork-side migration (decisions 2
 commit on `main`, nothing released or pushed between the two, exactly as 3.4.0 was phased. The merge
 commit knowingly does not typecheck where fork code still imports the two deleted modules.
 
+#### Phase A record (2026-10-01)
+
+- Baseline before the change: `bun run test:fork` 20 pass and the boundary check clean;
+  `bun test ./fleet` 590 pass, 0 fail; hooks active; `main` level with `origin/main` at `e3b6f87e`.
+- Planning commit `61eb15e2`. Preflight `check-fork.ts --target v1.14.2 --allow-active-changes`
+  (authorization above): tag object `5271116783decc927b84b4da9814d5fbef6277b7`, commit
+  `887a37dbfc5582d08c7d7703deadd53146f654bb`, 20 disturbed, 3 untouched (`native-pane-chrome-port`,
+  `private-fact-guard-port`, `downstream-docs`), no moved declared path, no owned path occupied.
+  `merge-tree` and the opened merge both gave the 35 predicted paths.
+- Merge commit `67a62f98` (parents `61eb15e2`, `887a37db`). Guard A was skipped for it with
+  `SKIP_VERSION_CHECK=1`, as for 3.4.0's merge: with 971 staged paths, the hook's
+  `echo "$staged" | grep -q` under `pipefail` intermittently loses the pipe and reads a staged
+  `CHANGELOG.md` as unstaged (reproduced outside the hook). Version consistency and the added
+  Unreleased bullet (2 against 1) and its shape were checked by hand. The same race affects
+  `check-crew-wire.sh` run standalone. It passed inside the hook, so no hatch was used for it.
+- Resolutions that go beyond the tables above:
+  - Favorites (`native-agent-favorites-port`): upstream replaced the dashboard's triage sections with
+    workspace groups in fixed order plus a Pinned group. The favorite control is re-applied on every
+    row, and favorites lead their own workspace group. Nothing crosses a group, and Pinned stays in
+    place order. `fleet-agent-favorites` still speaks of the four triage sections, which no longer
+    exist. **That requirement needs a delta in this change before archive.** Upstream's tests that
+    counted or named row buttons were scoped to the row's own slot, because every row now has a
+    favorite button beside it. The removed `home.sort.*` keys were dropped with upstream.
+  - Pane switcher (`native-navigation-sidebars-port`): upstream deleted the grip above the composer
+    that carried `xl:hidden` and moved the entry onto the actions belt as the Switch pill. The rail
+    breakpoint is re-applied in `agent-chat.tsx` by handing the belt no handle at `(min-width:
+    80rem)`, which keeps the requirement "Wide viewport hides the pane-switcher entry" true. The
+    fork's test now asserts the absence at that width.
+  - Composer (B1): the fork's `data-slot="composer-dock"` lost its last reader and was dropped.
+  - Command bar (D1): the bar listens on `document` in the capture phase and the tour's dialog traps
+    only Tab, so the first-use tour cannot swallow the prefix. This was checked by reading the
+    source. A browser check stays with 8.3.
+- Input to group 6, beyond decision 2's table: fork-owned `fleet-row-actions.tsx`,
+  `native-navigation-shell.tsx` and `lib/fleet-roster.ts` import `paneDisplayName`, which upstream
+  removed (`6e8eeafc`; its successor is `paneName` in `lib/pane-name.ts`). `native-agent-rail.tsx`
+  imports `sectionHeaderProps`, which upstream removed (`bac490b4`), as well as `ATTENTION`. The
+  playground walkthrough (`motion.test.tsx`) fails at runtime until `paneDisplayName` is replaced.
+
 ### 2. The fork sheds what the overlap removal made dead
 
 | fork file | change |
