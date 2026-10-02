@@ -4,6 +4,32 @@ import type { Dictionary } from "./en";
 // key this file invents that English does not have is one too. Keep the `{slot}` names byte-exact.
 
 export const de: Dictionary = {
+  "fleet.tags.title": "Bereichs-Tags",
+  "fleet.tags.manage": "Tags verwalten",
+  "fleet.tags.assign": "Bereichs-Tags bearbeiten",
+  "fleet.tags.shared": "Browserübergreifend geteilt. Tags bleiben beim Bereich.",
+  "fleet.tags.search": "Tag suchen oder erstellen",
+  "fleet.tags.add": "Hinzufügen",
+  "fleet.tags.create": "Erstellen",
+  "fleet.tags.empty": "Keine passenden Tags",
+  "fleet.tags.editNamed": "Tag {name} bearbeiten",
+  "fleet.tags.close": "Schließen",
+  "fleet.tags.name": "Name",
+  "fleet.tags.color": "Farbe",
+  "fleet.tags.palette": "Vorgeschlagene Farben",
+  "fleet.tags.globalEdit": "Änderungen gelten für alle Bereiche mit diesem Tag.",
+  "fleet.tags.cancel": "Abbrechen",
+  "fleet.tags.save": "Änderungen speichern",
+  "fleet.tags.saving": "Wird gespeichert…",
+  "fleet.tags.loading": "Tags werden geladen…",
+  "fleet.tags.retry": "Erneut versuchen",
+  "fleet.tags.error.conflict": "Tags wurden andernorts geändert. Prüfe den aktuellen Stand und versuche es erneut.",
+  "fleet.tags.error.duplicate": "Ein anderer Tag verwendet diesen Namen bereits.",
+  "fleet.tags.error.limit": "Das Tag-Limit ist erreicht.",
+  "fleet.tags.error.missing": "Dieser Tag existiert nicht mehr.",
+  "fleet.tags.error.invalid": "Prüfe den Namen und die Farbe des Tags.",
+  "fleet.tags.error.unavailable": "Tags sind nicht verfügbar. Lade den aktuellen Stand erneut.",
+
   "settings.language.title": "Sprache",
   "settings.language.description": "Der Terminal-Spiegel wird nie übersetzt.",
 

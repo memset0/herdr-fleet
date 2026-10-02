@@ -260,7 +260,7 @@ describe("tableRuns — the whole pane corpus", () => {
 
   it("claims real tables and nothing else across every committed capture", () => {
     const claimed: string[] = [];
-    for (const file of readdirSync(DIR).filter((f) => f.endsWith(".txt"))) {
+    for (const file of readdirSync(DIR).filter((f) => f.endsWith(".txt")).toSorted()) {
       const agent = file.split("--")[0]!;
       const lines = splitLines(parseAnsi(readFileSync(join(DIR, file), "utf8")));
       for (const block of buildBlocks(lines, { agent })) {

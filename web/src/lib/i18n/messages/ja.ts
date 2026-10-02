@@ -3,6 +3,32 @@ import type { Dictionary } from "./en";
 // Japanese. See de.ts for the typing contract. One plural category, so both suffixes match.
 
 export const ja: Dictionary = {
+  "fleet.tags.title": "ペインのタグ",
+  "fleet.tags.manage": "タグを管理",
+  "fleet.tags.assign": "ペインのタグを編集",
+  "fleet.tags.shared": "ブラウザー間で共有され、タグはペインに保持されます。",
+  "fleet.tags.search": "タグを検索または作成",
+  "fleet.tags.add": "追加",
+  "fleet.tags.create": "作成",
+  "fleet.tags.empty": "一致するタグはありません",
+  "fleet.tags.editNamed": "タグ「{name}」を編集",
+  "fleet.tags.close": "閉じる",
+  "fleet.tags.name": "名前",
+  "fleet.tags.color": "色",
+  "fleet.tags.palette": "おすすめの色",
+  "fleet.tags.globalEdit": "変更はこのタグを使用するすべてのペインに適用されます。",
+  "fleet.tags.cancel": "キャンセル",
+  "fleet.tags.save": "変更を保存",
+  "fleet.tags.saving": "保存中…",
+  "fleet.tags.loading": "タグを読み込み中…",
+  "fleet.tags.retry": "再試行",
+  "fleet.tags.error.conflict": "別の場所でタグが変更されました。最新の状態を確認して再試行してください。",
+  "fleet.tags.error.duplicate": "この名前は別のタグが使用しています。",
+  "fleet.tags.error.limit": "タグの上限に達しました。",
+  "fleet.tags.error.missing": "このタグは存在しません。",
+  "fleet.tags.error.invalid": "タグの名前と色を確認してください。",
+  "fleet.tags.error.unavailable": "タグを利用できません。再試行して最新の状態を読み込んでください。",
+
   "settings.language.title": "言語",
   "settings.language.description": "ターミナル出力は翻訳されません。",
 

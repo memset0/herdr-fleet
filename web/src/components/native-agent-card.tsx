@@ -1,3 +1,4 @@
+import { PaneTagButton, PaneTagLine } from "@/components/fleet-pane-tags";
 import { Star } from "lucide-react";
 
 import { operatorChosenName } from "../../../fleet/ui/pane-naming.ts";
@@ -45,7 +46,7 @@ export const NATIVE_AGENT_SHORTCUT_LIMIT = 9;
  *
  * EVERYTHING ABOUT THE BOX IS COLLIE'S `agent-row`: 44px stated rather than grown (`h-11 py-0`), the
  * status dot leading inline, the 16px agent mark, a 16px medium name, Collie's unseen square after
- * it, a 12px muted line 2 led by Collie's own pane meta (host · cache · session, borderless), the 36px round star in a `pr-12` reserve, and the same `data-glide` part names. A rail row
+ * it, a 12px muted line 2 led by Collie's own pane meta (host · cache · session, borderless), the 36px round star in a shared `pr-20` control reserve, and the same `data-glide` part names. A rail row
  * and a dashboard row stand for one object; a reader should not have to learn two sizes for it.
  *
  * WHAT IS THE FORK'S IS THE ORDER. Collie's dashboard row leads with the pane's own title and puts
@@ -104,7 +105,7 @@ export function NativeAgentCard({
           className={cn(
             // THE HEIGHT IS THE STATEMENT, exactly as on Collie's row: 44px whether line 2 has
             // anything to say or not, so nothing in the rail moves when a pane's title arrives.
-            "flex h-11 min-w-0 flex-row items-center gap-3 px-3.5 py-0 pr-12",
+            "flex h-11 min-w-0 flex-row items-center gap-3 px-3.5 py-0 pr-20",
             !flat && "rounded-xl shadow-sm transition-colors",
             !flat && !current && "hover:bg-muted/50",
             // The blocked tint survives both, because it is the one cue that reads at a glance; a
@@ -160,6 +161,9 @@ export function NativeAgentCard({
         {/* The dot is colour only; its word is for a screen reader, after the row's own text. */}
         <span className="sr-only">{statusLabel(agent.status)}</span>
       </button>
+
+      <PaneTagLine agent={agent} />
+      <PaneTagButton agent={agent} />
 
       {/* A sibling and never a child: a button inside a button is invalid markup, and nesting would
           make starring a row also open it. Collie's round icon button, the one its own dashboard row

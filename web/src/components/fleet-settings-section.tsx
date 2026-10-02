@@ -1,3 +1,4 @@
+import { ManagePaneTags } from "@/components/fleet-pane-tags";
 import { Keyboard, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
@@ -46,6 +47,7 @@ export function FleetSettingsSection() {
         </h2>
         <p className="text-xs text-muted-foreground">{t("fleet.settings.description")}</p>
       </div>
+      <ManagePaneTags settings />
       <FleetCjkFallbackControl />
       <FleetPaneSurfaceControl />
       <FleetShortcutsControl />

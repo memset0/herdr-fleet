@@ -53,6 +53,7 @@ import {
   type CommandAdapters,
 } from "@/components/fleet-commands";
 import { usePointerMenuGestures } from "@/components/fleet-context-menu";
+import { FleetPaneTagsProvider } from "@/components/fleet-pane-tags";
 import { FleetNavigationFooter } from "@/components/fleet-navigation-footer";
 import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
@@ -583,6 +584,7 @@ export function NativeNavigationShell({
   );
 
   return (
+    <FleetPaneTagsProvider>
     <FleetCommandsProvider
       adapters={adapters}
       available={available}
@@ -737,6 +739,7 @@ export function NativeNavigationShell({
       </div>
       </NativeNavigationProvider>
     </FleetCommandsProvider>
+    </FleetPaneTagsProvider>
   );
 }
 

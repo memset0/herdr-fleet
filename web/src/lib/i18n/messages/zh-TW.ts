@@ -4,6 +4,32 @@ import type { Dictionary } from "./en";
 // suffixes match.
 
 export const zhTW: Dictionary = {
+  "fleet.tags.title": "面板標籤",
+  "fleet.tags.manage": "管理標籤",
+  "fleet.tags.assign": "編輯面板標籤",
+  "fleet.tags.shared": "各瀏覽器共用，標籤隨面板保留。",
+  "fleet.tags.search": "尋找或建立標籤",
+  "fleet.tags.add": "新增",
+  "fleet.tags.create": "建立",
+  "fleet.tags.empty": "沒有符合的標籤",
+  "fleet.tags.editNamed": "編輯標籤 {name}",
+  "fleet.tags.close": "關閉",
+  "fleet.tags.name": "名稱",
+  "fleet.tags.color": "顏色",
+  "fleet.tags.palette": "建議顏色",
+  "fleet.tags.globalEdit": "變更將套用至所有使用此標籤的面板。",
+  "fleet.tags.cancel": "取消",
+  "fleet.tags.save": "儲存變更",
+  "fleet.tags.saving": "正在儲存…",
+  "fleet.tags.loading": "正在載入標籤…",
+  "fleet.tags.retry": "重試",
+  "fleet.tags.error.conflict": "標籤已在其他位置修改，請檢查最新狀態後重試。",
+  "fleet.tags.error.duplicate": "已有其他標籤使用此名稱。",
+  "fleet.tags.error.limit": "已達標籤數量上限。",
+  "fleet.tags.error.missing": "此標籤已不存在。",
+  "fleet.tags.error.invalid": "請檢查標籤名稱與顏色。",
+  "fleet.tags.error.unavailable": "標籤暫時無法使用，請重試以載入最新狀態。",
+
   "settings.language.title": "語言",
   "settings.language.description": "終端機鏡像輸出不會被翻譯。",
 

@@ -4,6 +4,32 @@ import type { Dictionary } from "./en";
 // `.other` carry the same sentence — the pair still exists because `tn()` asks for it by suffix.
 
 export const ko: Dictionary = {
+  "fleet.tags.title": "패널 태그",
+  "fleet.tags.manage": "태그 관리",
+  "fleet.tags.assign": "패널 태그 편집",
+  "fleet.tags.shared": "브라우저 간에 공유되며 태그는 패널에 유지됩니다.",
+  "fleet.tags.search": "태그 검색 또는 만들기",
+  "fleet.tags.add": "추가",
+  "fleet.tags.create": "만들기",
+  "fleet.tags.empty": "일치하는 태그 없음",
+  "fleet.tags.editNamed": "{name} 태그 편집",
+  "fleet.tags.close": "닫기",
+  "fleet.tags.name": "이름",
+  "fleet.tags.color": "색상",
+  "fleet.tags.palette": "추천 색상",
+  "fleet.tags.globalEdit": "변경 사항은 이 태그를 사용하는 모든 패널에 적용됩니다.",
+  "fleet.tags.cancel": "취소",
+  "fleet.tags.save": "변경 사항 저장",
+  "fleet.tags.saving": "저장 중…",
+  "fleet.tags.loading": "태그 불러오는 중…",
+  "fleet.tags.retry": "다시 시도",
+  "fleet.tags.error.conflict": "다른 곳에서 태그가 변경되었습니다. 최신 상태를 확인하고 다시 시도하세요.",
+  "fleet.tags.error.duplicate": "다른 태그가 이미 이 이름을 사용합니다.",
+  "fleet.tags.error.limit": "태그 한도에 도달했습니다.",
+  "fleet.tags.error.missing": "이 태그는 더 이상 존재하지 않습니다.",
+  "fleet.tags.error.invalid": "태그 이름과 색상을 확인하세요.",
+  "fleet.tags.error.unavailable": "태그를 사용할 수 없습니다. 최신 상태를 불러오려면 다시 시도하세요.",
+
   "settings.language.title": "언어",
   "settings.language.description": "터미널 출력 내용은 번역되지 않습니다.",
 

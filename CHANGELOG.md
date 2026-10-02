@@ -19,6 +19,15 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Shared colored tags stay with panes across browsers.** Create or select tags from Agent rows, show their names on a separate wrapping line, and rename or recolor them globally from the rail or Settings; the lead persists definitions and associations with conflict-aware saves.
+
+### Fixed
+
+- **Speech deadlines survive the gaps between operation phases.** Keep the supported runtime’s timeout signal subscribed through token lookup, request and stalled response disposal; preserve the existing timeout budget and cancellation behavior.
+- **Corpus verification no longer depends on filesystem enumeration order.** Sort fixture filenames before the exhaustive table assertion without changing expected captures.
+
 ## [3.6.0] - 2026-10-02
 
 **Every member redeploys, lead first; no operator configuration changes.** This release adopts

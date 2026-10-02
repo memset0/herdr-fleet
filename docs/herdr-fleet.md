@@ -562,3 +562,33 @@ the upstream fork reviewable. The Fleet lead profile does not use it: the launch
 sets `COLLIE_SKIP_SERVE=1`, supplies the public Host/Origin, and removes conflicting inherited
 Tailscale or device-trust values. In this profile the Fleet password/session Gateway is the public
 authorization boundary; a retained upstream header check must not be treated as one.
+
+## Pane tags
+
+The Agent rail and the phone pane switcher offer a tag button beside each star. Search for an
+existing tag or type a new name and choose Create. A new name receives a random palette color;
+an existing name reuses its definition. Assigned names appear on a separate colored line below
+the pane, wrapping as needed. Uncheck a tag to remove it from that pane.
+
+Manage tags in the rail or the Fleet group in Settings edits a tag's name and color for every pane
+using it. Names are trimmed, Unicode-normalized and case-sensitive. Renaming to an existing name
+is refused. Colors may be chosen from the palette or the color picker.
+
+Tags belong to the same place identity as native pins: host, multiplexer session, pane ID and
+workspace name. Replacing the agent or conversation in that place keeps the tags; moving a
+conversation to another pane does not move them. Temporary absence retains the associations.
+The workspace-name guard catches reuse across different workspaces; reuse within the same named
+workspace has the same limitation as pins. Favorites remain browser-local.
+
+The lead keeps schema-1 `pane-tags.json` beside `fleet.toml`, with atomic private writes. Back up
+that document to retain both the catalog and its associations. The Gateway is its sole supported
+writer: authenticated GET/POST requests to `/fleet/api/pane-tags` load it and apply bounded commands.
+The browser never submits a storage path. A corrupt or unreadable file refuses writes instead of
+resetting data; restore a valid backup before retrying. There is no peer protocol change.
+
+Visible, unpaused browsers refresh tag state every 15 seconds and on returning to the page.
+The native idle pause suspends tag polling too; resuming refreshes it. Saves update
+the current browser immediately; concurrent edits report a conflict and show the latest state
+for review. Offline browsers keep the last displayed labels and disable writes until recovery.
+Limits are 256 definitions, 4096 pane places, 32 tags per pane and 64 characters per name.
+Color-only presentation, tag filtering and global deletion are not offered.

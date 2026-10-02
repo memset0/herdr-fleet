@@ -21,6 +21,9 @@ import { LOGIN_CSS, loginPage } from "./login-ui.ts";
 import { proxyCollie, type FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import type { SessionStore } from "./session-store.ts";
+import { TAGS_PATH } from "./pane-tags/document.ts";
+import { tagResponse } from "./pane-tags/route.ts";
+import type { TagStore } from "./pane-tags/store.ts";
 import type { SettingsStore } from "./settings/store.ts";
 import { TERMINAL_PATH, admit, type TerminalTarget } from "./terminal/admit.ts";
 
@@ -66,7 +69,7 @@ export const FLEET_SETTINGS_PATH = "/fleet/api/settings";
  */
 function isApiPath(pathname: string): boolean {
   if (pathname === "/api" || pathname.startsWith("/api/")) return true;
-  return pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
+  return pathname === TAGS_PATH || pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
 }
 
 /**
@@ -108,6 +111,7 @@ export interface GatewayOptions {
    * capability this Gateway does not have takes, rather than a half-answered endpoint.
    */
   readonly settings?: SettingsStore;
+  readonly tags?: TagStore;
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
   readonly now?: () => number;
@@ -294,6 +298,11 @@ export function createGatewayHandler(options: GatewayOptions) {
 
     if (!safeMethod(request.method) && request.headers.get("origin") !== config.public.origin) {
       return text("forbidden\n", 403);
+    }
+
+    if (url.pathname === TAGS_PATH) {
+      if (!options.tags) return json({ error: "not found" }, 404);
+      return withBaseHeaders(await tagResponse(request, options.tags), "no-store");
     }
 
     // FLEET'S OWN SURFACE, above the proxy and below the session gate. It is served here rather than

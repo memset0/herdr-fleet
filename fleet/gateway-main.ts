@@ -1,7 +1,8 @@
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 import { isFleetLeadConfig, loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
 import { startGateway } from "./server.ts";
+import { createTagStore } from "./pane-tags/store.ts";
 import { SessionStore } from "./session-store.ts";
 import { createSettingsStore, settingsPathFor } from "./settings/store.ts";
 import { leadResolver, localSnapshotSource } from "./terminal/resolve.ts";
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
     sessions,
     // Beside the private configuration, not in the state directory: bindings are the operator's own
     // choice, and a wiped state directory must not quietly return them to stock defaults.
+    tags: createTagStore(join(dirname(configPath), "pane-tags.json")),
     settings: createSettingsStore(settingsPathFor(dirname(configPath))),
     terminal: terminal ?? undefined,
     onSessionRevoked: terminal === null ? undefined : (sessionId) => terminal.revoked(sessionId),

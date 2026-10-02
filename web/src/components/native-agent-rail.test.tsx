@@ -185,13 +185,13 @@ describe("NativeAgentRail", () => {
     expect(screen.getByText("Nothing needs you")).toBeInTheDocument();
   });
 
-  it("ends line 2 with the age beside the star's reserve, and draws Collie's round star", () => {
+  it("ends line 2 with the age beside the tag and star reserve, and draws Collie's round star", () => {
     render(<NativeAgentRail agents={[agent("p1", { tabLabel: "workshop", lastSeenAt: Date.now() })]} onOpen={vi.fn()} />);
 
     const row = rows()[0]!;
     const age = within(row).getByText(/^(now|\d+[mhd])$/);
-    // The reserve is the row's (`pr-12`), so neither line runs under the 36px star.
-    expect(row.firstElementChild!.firstElementChild!.className).toMatch(/\bpr-12\b/u);
+    // The reserve is the row's (`pr-20`), so neither line runs under the 36px star.
+    expect(row.firstElementChild!.firstElementChild!.className).toMatch(/\bpr-20\b/u);
     expect(age.parentElement?.getAttribute("data-slot")).toBe("native-agent-row-detail");
     const star = within(row).getByRole("button", { name: /pin/i });
     expect(star.className).toMatch(/\bsize-9\b/u);

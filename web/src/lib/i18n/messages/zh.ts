@@ -4,6 +4,32 @@ import type { Dictionary } from "./en";
 // match.
 
 export const zh: Dictionary = {
+  "fleet.tags.title": "面板标签",
+  "fleet.tags.manage": "管理标签",
+  "fleet.tags.assign": "编辑面板标签",
+  "fleet.tags.shared": "各浏览器共享，标签跟随面板保留。",
+  "fleet.tags.search": "查找或创建标签",
+  "fleet.tags.add": "添加",
+  "fleet.tags.create": "创建",
+  "fleet.tags.empty": "没有匹配的标签",
+  "fleet.tags.editNamed": "编辑标签 {name}",
+  "fleet.tags.close": "关闭",
+  "fleet.tags.name": "名称",
+  "fleet.tags.color": "颜色",
+  "fleet.tags.palette": "推荐颜色",
+  "fleet.tags.globalEdit": "修改将应用于所有使用此标签的面板。",
+  "fleet.tags.cancel": "取消",
+  "fleet.tags.save": "保存修改",
+  "fleet.tags.saving": "正在保存…",
+  "fleet.tags.loading": "正在加载标签…",
+  "fleet.tags.retry": "重试",
+  "fleet.tags.error.conflict": "标签已在其他位置修改，请检查最新状态后重试。",
+  "fleet.tags.error.duplicate": "已有其他标签使用此名称。",
+  "fleet.tags.error.limit": "已达到标签数量上限。",
+  "fleet.tags.error.missing": "此标签已不存在。",
+  "fleet.tags.error.invalid": "请检查标签名称和颜色。",
+  "fleet.tags.error.unavailable": "标签暂不可用，请重试以加载最新状态。",
+
   "settings.language.title": "语言",
   "settings.language.description": "终端镜像输出不会被翻译。",
 

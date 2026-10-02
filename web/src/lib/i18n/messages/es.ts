@@ -3,6 +3,32 @@ import type { Dictionary } from "./en";
 // Spanish. See de.ts for the typing contract.
 
 export const es: Dictionary = {
+  "fleet.tags.title": "Etiquetas de panel",
+  "fleet.tags.manage": "Gestionar etiquetas",
+  "fleet.tags.assign": "Editar etiquetas del panel",
+  "fleet.tags.shared": "Compartidas entre navegadores. Las etiquetas permanecen en el panel.",
+  "fleet.tags.search": "Buscar o crear una etiqueta",
+  "fleet.tags.add": "Añadir",
+  "fleet.tags.create": "Crear",
+  "fleet.tags.empty": "No hay etiquetas coincidentes",
+  "fleet.tags.editNamed": "Editar etiqueta {name}",
+  "fleet.tags.close": "Cerrar",
+  "fleet.tags.name": "Nombre",
+  "fleet.tags.color": "Color",
+  "fleet.tags.palette": "Colores sugeridos",
+  "fleet.tags.globalEdit": "Los cambios afectan a todos los paneles con esta etiqueta.",
+  "fleet.tags.cancel": "Cancelar",
+  "fleet.tags.save": "Guardar cambios",
+  "fleet.tags.saving": "Guardando…",
+  "fleet.tags.loading": "Cargando etiquetas…",
+  "fleet.tags.retry": "Reintentar",
+  "fleet.tags.error.conflict": "Las etiquetas cambiaron en otro lugar. Revisa el estado actual y reintenta.",
+  "fleet.tags.error.duplicate": "Otra etiqueta ya usa este nombre.",
+  "fleet.tags.error.limit": "Se ha alcanzado el límite de etiquetas.",
+  "fleet.tags.error.missing": "Esta etiqueta ya no existe.",
+  "fleet.tags.error.invalid": "Revisa el nombre y el color de la etiqueta.",
+  "fleet.tags.error.unavailable": "Las etiquetas no están disponibles. Reintenta para cargar el estado actual.",
+
   "settings.language.title": "Idioma",
   "settings.language.description": "La salida del terminal nunca se traduce.",
 

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { rosterEntryKey } from "../../../fleet/ui/pane-roster.ts";
 import { paneRosterFrom, pinnedAgents, togglePanePin } from "@/lib/fleet-roster";
+import { ManagePaneTags } from "@/components/fleet-pane-tags";
 import { NativeAgentCard } from "@/components/native-agent-card";
 import { SectionHeader } from "@/components/section-header";
 import { StatusSummaryLine } from "@/components/status-counts";
@@ -103,6 +104,7 @@ export function NativeAgentRail({
   if (agents.length === 0) {
     return (
       <section aria-label={t("fleet.navigation.agents")} className="flex min-h-0 flex-1 flex-col">
+        <div className="p-1.5"><ManagePaneTags /></div>
         <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-muted-foreground">
           {error ? <WifiOff className="size-6" /> : <Inbox className="size-6" />}
           {/* An empty herd on a stale render means "we do not know", never "nothing is running" —
@@ -181,6 +183,7 @@ export function NativeAgentRail({
       className="flex min-h-0 flex-1 flex-col"
     >
       <div className="flex flex-col gap-3 p-1.5">
+        <div><ManagePaneTags /></div>
         {/* One wrapping row: the summary keeps its slot, and the control comes and goes at its
             trailing end at the line's own 32px — beneath it when the rail is too narrow for both. */}
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">

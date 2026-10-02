@@ -13,6 +13,32 @@
 // Seeded with the language-selector copy only — the full string sweep lands separately.
 
 export const en = {
+  "fleet.tags.title": "Pane tags",
+  "fleet.tags.manage": "Manage tags",
+  "fleet.tags.assign": "Edit pane tags",
+  "fleet.tags.shared": "Shared across browsers. Tags stay with the pane.",
+  "fleet.tags.search": "Find or create a tag",
+  "fleet.tags.add": "Add",
+  "fleet.tags.create": "Create",
+  "fleet.tags.empty": "No matching tags",
+  "fleet.tags.editNamed": "Edit tag {name}",
+  "fleet.tags.close": "Close",
+  "fleet.tags.name": "Name",
+  "fleet.tags.color": "Color",
+  "fleet.tags.palette": "Suggested colors",
+  "fleet.tags.globalEdit": "Changes apply to every pane using this tag.",
+  "fleet.tags.cancel": "Cancel",
+  "fleet.tags.save": "Save changes",
+  "fleet.tags.saving": "Saving…",
+  "fleet.tags.loading": "Loading tags…",
+  "fleet.tags.retry": "Retry",
+  "fleet.tags.error.conflict": "Tags changed elsewhere. Review the latest state and retry.",
+  "fleet.tags.error.duplicate": "Another tag already uses this name.",
+  "fleet.tags.error.limit": "The tag limit has been reached.",
+  "fleet.tags.error.missing": "This tag no longer exists.",
+  "fleet.tags.error.invalid": "Check the tag name and color.",
+  "fleet.tags.error.unavailable": "Tags are unavailable. Retry to load the current state.",
+
   "settings.language.title": "Language",
   "settings.language.description": "The terminal mirror is never translated.",
 

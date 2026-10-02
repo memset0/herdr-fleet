@@ -534,9 +534,8 @@ NOT differ in what they do.
 ### Requirement: A rail row wears Collie's own treatment, and drops it where Collie drops it
 
 An Agent rail row SHALL be drawn at Collie's own row density — the same 44px height its dashboard
-rows state, the same ground, hover and press — and only the ARRANGEMENT inside that box may be the
-fork's. A rail row and a dashboard row stand for the same object, so a reader MUST NOT have to learn
-two sizes for one row.
+rows state, the same ground, hover and press — with an additional named colored tag line below that content when tags are attached, as specified by `fleet-pane-tags`. The untagged content area stays 44px; tagged rows grow to fit their tags. The arrangement inside the content area may be the fork's. A rail row and a dashboard row stand for the same object, so a reader MUST NOT have to learn
+different content densities for one row; tags alone add height.
 
 The card treatment SHALL be reserved for the one section Collie marks in its alert accent — the panes
 that need the operator now — read from Collie's own section data rather than restated. Every other
@@ -556,11 +555,11 @@ star port.
 
 #### Scenario: A row in a section that wants a person
 - **WHEN** the rail lists a row in the section Collie draws in its alert accent
-- **THEN** the row is a 44px card with Collie's card edge, ground and shadow
+- **THEN** the row has a 44px content area in a card with Collie's card edge, ground and shadow
 
 #### Scenario: A row in a section that does not
 - **WHEN** the rail lists a row outside that section, including a Ready·unseen or a pinned row
-- **THEN** the row is flat, square and 44px tall, the run it belongs to is one bordered group, and an unseen row carries Collie's unseen mark
+- **THEN** the row is flat and square with a 44px content area, the run it belongs to is one bordered group, and an unseen row carries Collie's unseen mark
 
 #### Scenario: Rows stand apart
 - **WHEN** the alert section lists more than one card
