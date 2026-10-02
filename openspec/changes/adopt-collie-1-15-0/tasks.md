@@ -35,11 +35,11 @@
 
 ## 6. Verify (phase C)
 
-- [ ] 6.1 Full suites on a designated member: root `bun run test`, `cd web && bun run test`, `bun test ./cli`, the `scripts/` shell suites and `bun run test:crew`; verify they pass, triaging any failure against the pre-merge baseline and the known exit/hang issues owned by other changes
-- [ ] 6.2 Browser tier: `cd web && bun run e2e`; verify it passes, or settle each failing case in the port it meets and declare it in `FORK.toml` — including `pair-landing.spec.ts`, `m24-crew.spec.ts` and any case that meets the rails, the Settings index or the Display sheet
-- [ ] 6.3 UI check on a scratch build: the Display sheet (Resize below Text size on the mirror, absent on Chat), the Settings index (Fleet group first, full width) and a section, Chat under the mirror and no Chat switch under the terminal surface, Copy output, the boot splash marks
-- [ ] 6.4 Rollback probe in scratch directories: a 3.5.3 Collie starts against state a 3.6.0 Collie wrote, in the same crew mode with the same ids
-- [ ] 6.5 Public-tree audit: the commits and this change's artifacts carry no private host, address, path, credential, mesh name or parent-tooling name; `FORK.toml` classifies every changed path
+- [x] 6.1 Full suites on a designated member: root `bun run test`, `cd web && bun run test`, `bun test ./cli`, the `scripts/` shell suites and `bun run test:crew`; verify they pass, triaging any failure against the pre-merge baseline and the known exit/hang issues owned by other changes
+- [x] 6.2 Browser tier: `cd web && bun run e2e`; verify it passes, or settle each failing case in the port it meets and declare it in `FORK.toml` — including `pair-landing.spec.ts`, `m24-crew.spec.ts` and any case that meets the rails, the Settings index or the Display sheet
+- [x] 6.3 UI check on a scratch build: the Display sheet (Resize below Text size on the mirror, absent on Chat), the Settings index (Fleet group first, full width) and a section, Chat under the mirror and no Chat switch under the terminal surface, Copy output, the boot splash marks
+- [x] 6.4 Rollback probe in scratch directories: a 3.5.3 Collie starts against state a 3.6.0 Collie wrote, in the same crew mode with the same ids
+- [x] 6.5 Public-tree audit: the commits and this change's artifacts carry no private host, address, path, credential, mesh name or parent-tooling name; `FORK.toml` classifies every changed path
 
 ## 7. Release
 

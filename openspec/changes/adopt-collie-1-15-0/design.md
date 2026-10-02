@@ -126,6 +126,63 @@ the root typecheck on one line (decision 2) until the migration commit.
   `bun test ./fleet` 598 / 0; web vitest over every entry's `verify` file plus the touched components
   and the whole harness tree: 88 files, 10488 pass, 32 expected fail, 47 todo, 0 fail.
 
+#### Phase C record (2026-10-01, task group 6)
+
+Two commits on `main`, both `fix(gateway)` in fork-owned `fleet/gateway.ts` and its test, one
+`CHANGELOG.md` line between them: `1b98cf6c` puts the boot splash's two header marks on the Gateway's
+exact public list, and `b73c7b96` takes the gallop sprite off it, correcting the first commit's reading
+that the app still drew the sprite (decision 7, revised). No other fix was needed; nothing was pushed,
+tagged or bumped.
+
+- **Local (6.1, 6.5).** Both typechecks and `bun run lint` clean; `bun run test:fork` 20 / 0 and the
+  boundary check clean (676 owned, 96 invasive paths, no unclassified path); `check-private-facts`,
+  `check-version.sh` and `check-crew-wire.sh` (nothing staged) pass; the four hook suites (`check-tag`,
+  `pre-commit`, `check-flake-lock`, `check-payload-links`) pass; `bun test ./fleet` 599 / 0 at both fix
+  commits; all 28 `bridge/crew/*.test.ts` files and `integration/crew-harness.test.ts` (`test:crew`) pass
+  file by file, 1174 / 0; `cli/*.test.ts` file by file, 41 files, 1606 pass and the one environmental
+  failure known from the previous adoption (`cli/tools.test.ts` finds this host's own `herdr`; it passes
+  on the designated member); `scripts/release-notes.test.ts` 41 / 0; full web vitest 320 files, 13917
+  pass, 32 expected fail, 47 todo, 0 fail.
+- **Designated member (6.1).** Tree brought to `1b98cf6c` by an incremental bundle, then to `b73c7b96`;
+  `bun install` changed nothing. `bun test ./bridge` file by file: 128 files, 3870 pass, 5 fail, 2 timed
+  out. The five failures are upstream 1.15's new long-session journal cases (`hermes`, `opencode`),
+  whose sqlite fixtures time out at the 5 s default when the private temporary directory sits on the
+  host's network-mounted home; with it on local disk both files pass (17 / 0, 118 / 0), so 3875 / 0. The
+  two timeouts are `bridge/stt/codex` and `bridge/stt/openai`, the known hangs. `bun test ./cli` file by
+  file 43 files, 1622 / 0; `bun test ./fleet` 599 / 0 (and again at `b73c7b96`); `bun test ./scripts`
+  229 / 0; `bun run test:crew` 63 / 0; all nine shell suites, both typechecks and lint pass; web vitest
+  320 files, 13917 pass, 32 expected fail, 47 todo, 0 fail. Tree left clean.
+- **Browser tier (6.2).** `cd web && bun run e2e` (Chromium): 167 passed, 0 failed, 99 skipped on the
+  first run, so no case needed settling at this adoption. `pair-landing.spec.ts` (all three cases) and
+  `m24-crew.spec.ts` (all six, now through `/settings/system`) pass on both app projects. The phone
+  project's 11 skips are exactly the ones already declared at 3.5.0 (two network-first
+  `service-worker` cases, `back-goes-up` D and the slide case, four `pane-glide` back-arrow cases,
+  `pinned-panes` switcher, upstream's WebKit-only `update-screen` variant, `filter-strip`'s own skip);
+  the tablet project's 88 are upstream's phone-only cases plus the two declared `codex-padding` tablet
+  skips. The six new passes against 3.5.0's 161 are `pair-landing` on both projects.
+- **UI check (6.3)** over CDP on a scratch build with a synthetic mock, 1600/1440/1280/390, dark and
+  light: the terminal view's Display sheet has Text size then Resize (badge "Custom") then Collie's
+  rows; the Chat view's sheet has View, Text size and Tool calls and no Resize; the pane menu offers Copy
+  output (mirror and Chat), Chat offers "Terminal view", and under the terminal surface with Chat the
+  standing choice there is no Chat switch, no session text, no Copy output and no Display sheet (the
+  surface replaces the body and composer); the Settings index has the Fleet group above the section rows
+  at the column's full width (32px of padding at every width) and its sections fill the column too; the
+  two widened Claude mode-line screens (w120, w93) draw no dialog card and leave the composer open;
+  "Mark all seen" shows its count, sends the seen read for the unseen pane and disappears, in the rail
+  at 1600 and in the phone's switcher sheet; rail rows 44px at 16px/500 and the footer build row level
+  with the tab bar (0/844/280/56 at 1440, 0/744/220/56 at 1280), as measured at 3.5.2. With the bundle
+  blocked the boot splash paints the dark or light mark (200, `image/svg+xml`).
+- **Rollback probe (6.4) — pass.** In scratch directories, a lead minted an invite and a peer enrolled
+  through Fleet's own enrolment against it, both with this change's code, and came up as `lead` and
+  `peer`. Then `16f04a11`'s tree (3.5.3, from `git archive`) was started against the same directories:
+  `lead` and `peer` again, the same crew id and member ids, the peer reachable; a 3.5.3 lead with this
+  change's peer was also reachable across versions. Both trees' `validatePackAuthority` accept both
+  directories; the trust stores were byte-identical before and after the 3.5.3 run and no file was
+  renamed (only `crew-runtime.json` was refreshed). No deployed instance was touched.
+- **Public-tree audit (6.5).** The private-fact guard passes; this change's first-parent commits and
+  artifacts name no host, address, path, credential, mesh or parent tooling; `check-fork.ts` reports no
+  unclassified path.
+
 Resolutions, by conflicted path:
 
 | path | resolution |
