@@ -43,11 +43,11 @@
 
 ## 7. Release
 
-- [ ] 7.1 Read the newest tag on the remote (`git ls-remote --tags origin`); verify it is still `v3.5.3` (else cut the MINOR after it)
-- [ ] 7.2 Cut `chore(release): 3.6.0` — the three version files, `## [3.6.0] - <date>` with each line's short hash, a fresh empty Unreleased heading, notes stating every member redeploys lead first and no configuration edit; verify `bash scripts/check-version.sh` prints `✓` and `scripts/release-notes.test.ts` passes
-- [ ] 7.3 `git tag -a v3.6.0 -m "Herdr Fleet 3.6.0"` and `git push origin main v3.6.0` (tag named on the push line; never `--follow-tags` or `--tags`; no GitHub Release); verify `git ls-remote --tags origin` shows `v3.6.0` and no upstream `v1.x` tag
+- [x] 7.1 Read the newest tag on the remote (`git ls-remote --tags origin`); verify it is still `v3.5.3` (else cut the MINOR after it)
+- [x] 7.2 Cut `chore(release): 3.6.0` — the three version files, `## [3.6.0] - <date>` with each line's short hash, a fresh empty Unreleased heading, notes stating every member redeploys lead first and no configuration edit; verify `bash scripts/check-version.sh` prints `✓` and `scripts/release-notes.test.ts` passes
+- [x] 7.3 `git tag -a v3.6.0 -m "Herdr Fleet 3.6.0"` and `git push origin main v3.6.0` (tag named on the push line; never `--follow-tags` or `--tags`; no GitHub Release); verify `git ls-remote --tags origin` shows `v3.6.0` and no upstream `v1.x` tag
 
 ## 8. Hand-off
 
-- [ ] 8.1 Report the Migration Plan to the operator; verify the report states the push is not a completed adoption
+- [x] 8.1 Report the Migration Plan to the operator; verify the report states the push is not a completed adoption
 - [ ] 8.2 Archive only after the operator reports the lead and the remaining member on 3.6.0, lead first; verify `openspec validate adopt-collie-1-15-0 --strict` passes before archiving

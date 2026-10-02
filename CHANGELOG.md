@@ -19,20 +19,34 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-10-02
+
+**Every member redeploys, lead first; no operator configuration changes.** This release adopts
+Collie 1.15.0: Chat as an opt-in pane body, Settings as an index of four sections, Copy output in the
+pane menu, push titles in the device's language and upstream's fixes. Level the lead first, then each
+member; crew protocol stays 2 with additive reads, so a 3.5.x member beside a 3.6.0 lead keeps
+working in the short gap, and rolling a machine back to 3.5.x is a plain redeploy with nothing renamed
+on disk. The fork's two temporary harness ports remain: the Codex headless status-row port now sits on
+upstream's goal-row reading, and the Claude mode-line port now also covers the `esc to interrupt` and
+`← for agents` hints a working turn with background agents prints. Behind the Gateway, opening a pane
+now marks it seen, because the Gateway forwards Collie's seen signal, and the Agents rail gains a
+"Mark all seen" control. The Gateway serves the boot splash's new header marks before sign-in in place
+of the retired gallop sprite.
+
 ### Added
 
-- **Mark every unseen pane seen from the Agents rail.** A control beside the rail's summary line, shown with its count while any pane on any host is unseen, sends Collie's own seen read to each one and refreshes; the Pane page's switcher sheet carries it too.
+- **Mark every unseen pane seen from the Agents rail.** A control beside the rail's summary line, shown with its count while any pane on any host is unseen, sends Collie's own seen read to each one and refreshes; the Pane page's switcher sheet carries it too. ([31b6113](https://github.com/memset0/herdr-fleet/commit/31b6113))
 
 ### Changed
 
-- **Adopt Collie 1.15.0.** Chat as an opt-in pane body, Settings as four sections, the pane switcher's Place, Activity and cache orders, Copy output in the pane menu, push titles in the device's language, tool calls folded in History, the experimental tuios backend and upstream's fixes, including the Codex goal-row reading (#317) beneath the fork's headless status-row port.
-- **The terminal surface also replaces Collie's new Chat body.** Under it no Chat switch is offered and no live session window is read; Resize stands below Text size among the terminal rows of the belt's Display sheet and not among Chat's, and every Settings page, the index and its sections, fills the column between the rails with the Fleet group at the head of the index.
+- **Adopt Collie 1.15.0.** Chat as an opt-in pane body, Settings as four sections, the pane switcher's Place, Activity and cache orders, Copy output in the pane menu, push titles in the device's language, tool calls folded in History, the experimental tuios backend and upstream's fixes, including the Codex goal-row reading (#317) beneath the fork's headless status-row port. ([da8bdeb](https://github.com/memset0/herdr-fleet/commit/da8bdeb))
+- **The terminal surface also replaces Collie's new Chat body.** Under it no Chat switch is offered and no live session window is read; Resize stands below Text size among the terminal rows of the belt's Display sheet and not among Chat's, and every Settings page, the index and its sections, fills the column between the rails with the Fleet group at the head of the index. ([f23db66](https://github.com/memset0/herdr-fleet/commit/f23db66))
 
 ### Fixed
 
-- **Claude's working-turn mode line no longer reads as a dialog.** With background agents running, `esc to interrupt` and a trailing `↓ to manage` on the permission-mode line are dropped before the tail checks, with or without an agent count, whole or clipped; the port stays temporary.
-- **The boot splash's two header marks load before sign-in.** Collie 1.15's splash draws `/collie-mark-header-{light,dark}.svg` in place of the gallop sprite, so the Gateway serves both exact paths without a session in place of the sprite, which no page draws any more.
-- **Behind the Gateway, opening a pane marks it seen.** The Gateway now forwards Collie's seen header, which carries no credential, so a pane read reaches Collie as the operator looking at it.
+- **Claude's working-turn mode line no longer reads as a dialog.** With background agents running, `esc to interrupt` and a trailing `↓ to manage` on the permission-mode line are dropped before the tail checks, with or without an agent count, whole or clipped; the port stays temporary. ([d9b7fb7](https://github.com/memset0/herdr-fleet/commit/d9b7fb7))
+- **The boot splash's two header marks load before sign-in.** Collie 1.15's splash draws `/collie-mark-header-{light,dark}.svg` instead of the gallop sprite, so the Gateway serves both exact paths without a session and no longer the sprite, which no page draws any more. ([1b98cf6](https://github.com/memset0/herdr-fleet/commit/1b98cf6)) ([b73c7b9](https://github.com/memset0/herdr-fleet/commit/b73c7b9))
+- **Behind the Gateway, opening a pane marks it seen.** The Gateway now forwards Collie's seen header, which carries no credential, so a pane read reaches Collie as the operator looking at it. ([31b6113](https://github.com/memset0/herdr-fleet/commit/31b6113))
 
 ## [3.5.3] - 2026-10-01
 

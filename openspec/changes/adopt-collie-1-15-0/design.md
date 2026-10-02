@@ -407,3 +407,20 @@ Text size on the mirror, absent on Chat), the Settings index with the Fleet grou
 width, Chat under the mirror and its absence under the terminal surface, Copy output, the boot splash
 marks; a rollback probe of a 3.5.3 Collie against state 3.6.0 wrote; the public-tree audit; then the
 release.
+
+## Release
+
+Cut as `3.6.0` (MINOR, from `3.5.3`; the remote's newest tag was still `v3.5.3`) in one
+`chore(release): 3.6.0` commit, the last on `main`, tagged `v3.6.0` and pushed with the tag named on
+the push line. No GitHub Release is published. The heading carries the real date of the cut,
+2026-10-02 (UTC). Decision 10 held: phase C found no operator step, the rollback probe (6.4) passed,
+and the only additions since phase B are a frontend control, a Gateway header and the Gateway's two
+public splash paths. The `3.6.0` section says, in the operator's words: every member redeploys, lead
+first; no operator configuration changes; crew protocol stays 2, so a 3.5.x member keeps working
+beside a 3.6.0 lead and rolling back to 3.5.x is a plain redeploy; both harness ports remain temporary,
+the Claude one now also covering the interrupt and agents hints; opening a pane behind the Gateway now
+marks it seen; the rail gains "Mark all seen".
+
+Hand-off (8.1): deploy the lead first, then the remaining member, following the Migration Plan above.
+The push is not a completed adoption: this change stays active until the lead and the designated
+member both run 3.6.0, lead first (decision 11); task 8.2 archives it then.
