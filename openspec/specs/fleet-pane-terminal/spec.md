@@ -20,12 +20,17 @@ rather than by navigating away from the Pane the choice is about.
 
 While the switch selects the mirror, the Pane's existing route, loader, data, polling, mirror,
 composer and every surface around them SHALL behave exactly as they do without this capability, and
-no terminal connection, process, or session SHALL be created.
+no terminal connection, process, or session SHALL be created. That includes the adopted Collie's own
+choice of body: where this browser has opted into Collie's Chat body and chosen it, the Pane is drawn
+as Chat exactly as Collie draws it.
 
 While the switch selects the terminal, the Pane's address SHALL be unchanged, the application's
 persistent navigation rails and header SHALL be rendered as they are for every other route, and the
 Pane's mirror text SHALL NOT be requested. The in-Pane tab and Pane strips MAY be omitted from the
-terminal surface.
+terminal surface. The terminal surface SHALL replace whichever body Collie would otherwise draw — the
+mirror or Chat — so while it is selected Collie's Chat switch SHALL NOT be offered on the Pane and the
+Pane's session SHALL NOT be read for a Chat body. Collie's stored body choice SHALL be left unchanged,
+and applies again once the switch selects the mirror.
 
 #### Scenario: The switch is at its default
 - **WHEN** an operator opens a Pane in a browser that has never set the switch
@@ -34,6 +39,14 @@ terminal surface.
 #### Scenario: The switch selects the terminal
 - **WHEN** the switch is on and the operator opens any Pane
 - **THEN** that Pane's address is unchanged, the rails and header render as on every other route, the terminal surface replaces the mirror and composer, and the Pane's mirror text is not fetched
+
+#### Scenario: Chat is Collie's chosen body while the switch selects the terminal
+- **WHEN** this browser has opted into Collie's Chat body and chosen it, and the switch selects the terminal
+- **THEN** the terminal surface is drawn, the Pane offers no Chat switch, no Chat session read is made, and the stored Chat choice is unchanged
+
+#### Scenario: Chat is Collie's chosen body while the switch selects the mirror
+- **WHEN** this browser has opted into Collie's Chat body and chosen it, and the switch selects the mirror
+- **THEN** the Pane is drawn as Collie's Chat body with Collie's own switch, exactly as without this capability
 
 #### Scenario: The switch is changed from the navigation
 - **WHEN** the operator changes the surface from the control in the persistent navigation

@@ -50,4 +50,4 @@
 ## 8. Hand-off
 
 - [x] 8.1 Report the Migration Plan to the operator; verify the report states the push is not a completed adoption
-- [ ] 8.2 Archive only after the operator reports the lead and the remaining member on 3.6.0, lead first; verify `openspec validate adopt-collie-1-15-0 --strict` passes before archiving
+- [x] 8.2 Archive only after the operator reports the lead and the remaining member on 3.6.0, lead first; verify `openspec validate adopt-collie-1-15-0 --strict` passes before archiving

@@ -424,3 +424,8 @@ marks it seen; the rail gains "Mark all seen".
 Hand-off (8.1): deploy the lead first, then the remaining member, following the Migration Plan above.
 The push is not a completed adoption: this change stays active until the lead and the designated
 member both run 3.6.0, lead first (decision 11); task 8.2 archives it then.
+
+Levelled (8.2): the lead was redeployed at the release commit first, then the designated member from
+the `v3.6.0` tag; both report `3.6.0+1a4a0f8c` as reachable in the lead's census, the trust stores and
+configuration are unchanged on both, and the boot splash's two marks answer 200 through the Gateway
+without a session. The change is archived with its delta specs synced.

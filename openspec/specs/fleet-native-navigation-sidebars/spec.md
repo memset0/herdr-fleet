@@ -22,7 +22,7 @@ portalled route content, and hidden-row behavior.
 Route content SHALL fill the route column, and its header SHALL span the same width as its content.
 No route MAY constrain itself to a narrower centred reading column — the Pane and history routes
 included, which is stated because upstream centres them above the phone breakpoint and this fork
-declines that. The rails are what claims the width a centred column would otherwise leave empty, so a
+declines that, and every Settings page included, the index and each section it opens. The rails are what claims the width a centred column would otherwise leave empty, so a
 cap inside them takes width from a terminal mirror rather than from emptiness, and the refusal is
 declared in the fork manifest so an upstream release cannot reinstate it unreported.
 
@@ -43,7 +43,7 @@ switcher as the wide-layout Agent rail.
 - **THEN** neither rail is overlapped by the header and the header's rule begins and ends at the route column
 
 #### Scenario: A route that is not a Pane is displayed
-- **WHEN** the dashboard, a Space, Settings, or Pack is the current route
+- **WHEN** the dashboard, a Space, the Settings index or any of its sections, or Pack is the current route
 - **THEN** its content fills the route column at every viewport width instead of being centred in a narrower reading column, and its header spans the same width as its content
 
 #### Scenario: A Pane or history route is displayed above the phone breakpoint
@@ -584,8 +584,11 @@ its own and each over that member's own Space, Tab and Pane rows. The Agent rail
 Agent rows of every member, not only the member the current address belongs to.
 
 The rails are the fleet's map, not a view of the dashboard. A machine the dashboard hides on this
-device, a pane it pins, and the dashboard tab or workspace filter chosen on it SHALL NOT change which
-hosts and rows the rails present or their order; those choices stay the dashboard's own.
+device, the dashboard tab or workspace filter chosen on it, and the order this device chose for
+Collie's pane switcher (by place, by activity, or by which prompt cache goes cold first) SHALL NOT
+change which hosts and rows the rails present or their order; those choices stay the dashboard's and
+the switcher's own. A pin is the one device choice the rails honour, and only as the Agent rail's
+Pinned group states, because the rail's star is Collie's own pin.
 
 Host order SHALL be stable across renders and SHALL place the lead first, so a rail does not reorder
 itself as members come and go. A member the snapshot reports as unreachable SHALL keep the rows the
@@ -603,8 +606,12 @@ the same order, and no host marker anywhere.
 - **THEN** the hierarchy shows one collapsible Host item per member over that member's own rows, and the Agent rail lists both members' Agents
 
 #### Scenario: The dashboard hides a machine
-- **WHEN** the operator turns off a machine's dashboard visibility, pins a pane, or picks a dashboard tab on this device
+- **WHEN** the operator turns off a machine's dashboard visibility or picks a dashboard tab on this device
 - **THEN** both rails still present that machine and its rows, in the same order as before
+
+#### Scenario: The pane switcher's order changes
+- **WHEN** the operator sets the pane order to activity or to cache expiry, from the switcher or from Settings
+- **THEN** both rails present the same hosts and rows in the same order as before
 
 #### Scenario: A row on another member is activated
 - **WHEN** the operator activates a Pane or Agent row belonging to a member other than the current address

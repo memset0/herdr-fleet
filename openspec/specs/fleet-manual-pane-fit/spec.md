@@ -9,9 +9,15 @@ terminal mirror without introducing automatic resize or controller takeover.
 
 ### Requirement: Display Settings exposes one explicit manual fit action
 An authorised operator viewing an active Herdr Pane SHALL see a `Resize` action immediately below
-`Text size` in native Display Settings. The row SHALL carry a visible `Custom` badge identifying the
-downstream extension. The action MUST be absent or unavailable when the multiplexer of the machine the
-Pane is on does not support the capability, the Pane is unavailable, or the client is read-only.
+`Text size` among the terminal mirror's rows of native Display Settings. The row SHALL carry a visible
+`Custom` badge identifying the downstream extension. The action MUST be absent or unavailable when the
+multiplexer of the machine the Pane is on does not support the capability, the Pane is unavailable, or
+the client is read-only.
+
+Native Display Settings answers for the body on screen. Resize fits the shared PTY to the terminal
+mirror, so it SHALL be one of the mirror's rows only: while the Pane is drawn as Collie's Chat body,
+whose rows are Chat's own, the action SHALL be absent, and it SHALL return with the mirror's rows when
+the Pane is drawn as the mirror again.
 
 Which machine answers is the adopted Collie's per-host capability rule: a member's own reported
 capability decides for that member's Panes, and a member that reports nothing is answered by the
@@ -23,8 +29,12 @@ existing status surface. It MUST NOT navigate, close the settings surface, chang
 preference, or trigger from a render/effect without an explicit operator activation.
 
 #### Scenario: Operator opens Display Settings on a writable Herdr Pane
-- **WHEN** the active Pane supports manual fit and the client may perform writes
+- **WHEN** the active Pane supports manual fit, the client may perform writes, and the Pane is drawn as the terminal mirror
 - **THEN** `Resize` with a `Custom` badge appears directly below `Text size`
+
+#### Scenario: The Pane is drawn as Chat
+- **WHEN** the operator opens Display Settings on a Pane drawn as Collie's Chat body
+- **THEN** no `Resize` action and no `Custom` badge appear, and no resize request is made
 
 #### Scenario: Operator activates Resize
 - **WHEN** the operator activates the available action once
