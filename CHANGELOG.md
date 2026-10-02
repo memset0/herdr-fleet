@@ -19,14 +19,26 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.7.1] - 2026-10-02
+
+**Every member redeploys, lead first; no operator configuration changes.** Colored pane tags are
+maintained on the lead and shared across browsers. The minor transition from 3.6 is required by the
+speech deadline correction in the bridge; members need this release to receive that fix. The crew
+wire contract is unchanged during rollout. Tag definitions and associations are retained in the
+lead's private configuration directory, and rollback leaves that document and local favorites intact.
+
+The `v3.7.0` tag was accidentally attached to the preceding development commit, whose manifests
+still declare `3.6.0`. It is retained as a historical record, not a matching release tag. Use
+`v3.7.1` or later for the 3.7 line.
+
 ### Added
 
-- **Shared colored tags stay with panes across browsers.** Create or select tags from Agent rows, show their names on a separate wrapping line, and rename or recolor them globally from the rail or Settings; the lead persists definitions and associations with conflict-aware saves.
+- **Shared colored tags stay with panes across browsers.** Create or select tags from Agent rows, show their names on a separate wrapping line, and rename or recolor them globally from the rail or Settings; the lead persists definitions and associations with conflict-aware saves. ([67b5e36](https://github.com/memset0/herdr-fleet/commit/67b5e36))
 
 ### Fixed
 
-- **Speech deadlines survive the gaps between operation phases.** Keep the supported runtime’s timeout signal subscribed through token lookup, request and stalled response disposal; preserve the existing timeout budget and cancellation behavior.
-- **Corpus verification no longer depends on filesystem enumeration order.** Sort fixture filenames before the exhaustive table assertion without changing expected captures.
+- **Speech deadlines survive the gaps between operation phases.** Keep the supported runtime’s timeout signal subscribed through token lookup, request and stalled response disposal; preserve the existing timeout budget and cancellation behavior. ([67b5e36](https://github.com/memset0/herdr-fleet/commit/67b5e36))
+- **Corpus verification no longer depends on filesystem enumeration order.** Sort fixture filenames before the exhaustive table assertion without changing expected captures. ([67b5e36](https://github.com/memset0/herdr-fleet/commit/67b5e36))
 
 ## [3.6.0] - 2026-10-02
 
