@@ -3,21 +3,13 @@ import { useLocale } from "@/hooks/use-locale";
 import { BUILD } from "@/lib/build";
 import { t } from "@/lib/i18n";
 
-/**
- * The hierarchy rail's one footer, reused verbatim by its mobile drawer.
- *
- * THE BUILD ROW IS COLLIE'S TAB BAR'S BAND (`ui/tab-bar.tsx`): the same 56px floor, the same rule
- * above it, the same page ground and the same bottom safe-area inset under it. On the dashboard the
- * tab bar stands at the bottom of the route column beside this rail, and beneath the drawer on a
- * phone; with the band's numbers the two rules meet on one line instead of missing each other by a
- * row and a half. The label takes the tab labels' own 11px type.
- */
+/** One compact footer shared by the hierarchy rail and its mobile drawer. */
 export function FleetNavigationFooter() {
   useLocale();
   return (
-    <div>
+    <div className="pb-[env(safe-area-inset-bottom)]">
       <FleetPaneSurfaceToggle />
-      <div className="flex min-h-14 items-center justify-center border-t border-rule bg-background px-3 pb-[env(safe-area-inset-bottom)] text-center text-[11px] leading-tight text-muted-foreground">
+      <div className="flex min-h-6 items-center justify-center px-3 pb-1 text-center text-[10px] leading-tight text-neutral-500 dark:text-neutral-400">
         <span>
           <span>{t("fleet.version.footerName")}</span>{" "}
           {/* A qualified version and commit are machine build ids, not bare semver (DESIGN.md §5).

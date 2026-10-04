@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 
+import { Button } from "@/components/ui/button";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -17,11 +18,9 @@ import {
  * thing you are looking at, and Settings is two navigations away from it — the rail is the only
  * surface that is on screen no matter which Pane is.
  *
- * Two segments and no third state, drawn as COLLIE'S OWN SEGMENTED CONTROL (`theme-control.tsx`):
- * segments a gap apart inside the footer's padding, the selected one a filled primary pill. The
- * fork's first version tinted the selected segment with `--accent`, which is a hover ground and
- * barely separated from the rail, so which surface was on was a guess. The weight never changes
- * (DESIGN.md §2): a bold label is wider and would move the segment beside it on every switch.
+ * One track and one moving indicator make the mutually exclusive choice visible. The 44px
+ * buttons own the hit area; the inset track spends only 36px on paint. Labels never move and
+ * reduced motion removes the slide. Both navigation surfaces share this exact control.
  */
 export function FleetPaneSurfaceToggle() {
   useLocale();
@@ -31,7 +30,15 @@ export function FleetPaneSurfaceToggle() {
     () => DEFAULT_PANE_SURFACE,
   );
   return (
-    <div role="radiogroup" aria-label={t("fleet.settings.surface.title")} className="flex gap-1 p-2">
+    <div role="radiogroup" aria-label={t("fleet.settings.surface.title")} className="relative mx-3 grid grid-cols-2">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 inset-y-1 rounded-md border border-border bg-muted/60 p-0.5">
+        <div
+          className={cn(
+            "h-full w-1/2 rounded-md bg-primary shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none",
+            surface === "terminal" && "translate-x-full",
+          )}
+        />
+      </div>
       <Segment surface="mirror" label="Collie" selected={surface === "mirror"} />
       <Segment surface="terminal" label="TTYD" selected={surface === "terminal"} />
     </div>
@@ -48,19 +55,18 @@ function Segment({
   selected: boolean;
 }) {
   return (
-    <button
+    <Button
       type="button"
       role="radio"
       aria-checked={selected}
       onClick={() => paneSurfaceStore.set(surface)}
-      // 44px floor, stated as a floor (§6): the label is one short word today and the row must not
-      // shrink under it if it ever is not.
+      variant="ghost"
       className={cn(
-        "flex min-h-11 flex-1 items-center justify-center rounded-md px-3 text-sm font-medium transition-colors",
-        selected ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted active:bg-muted",
+        "relative min-h-11 h-auto rounded-md px-3 py-2 text-xs font-medium hover:bg-transparent active:scale-100 motion-reduce:transition-none",
+        selected ? "text-primary-foreground hover:text-primary-foreground" : "text-muted-foreground hover:text-foreground",
       )}
     >
       {label}
-    </button>
+    </Button>
   );
 }

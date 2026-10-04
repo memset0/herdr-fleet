@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Compact the navigation footer with a sliding surface selector.** Center a smaller gray build caption beneath the shared Collie/TTYD track, preserving touch targets and reduced motion.
+
 ## [3.7.1] - 2026-10-02
 
 **Every member redeploys, lead first; no operator configuration changes.** Colored pane tags are

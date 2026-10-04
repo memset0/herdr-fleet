@@ -400,12 +400,14 @@ dismissed by tapping past rather than as a route the operator has navigated to, 
 be capped near the wide-layout rail's own resting width rather than growing with the viewport.
 
 The shared footer SHALL keep the existing Collie/TTYD surface selector and place the current page's
-Herdr Fleet build identity beneath it. The selector SHALL be drawn as Collie's own segmented control:
-segments with a small gap inside the footer's padding, the selected segment a filled primary pill
-whose label meets 4.5:1 contrast, the unselected ones muted. The build identity SHALL stand in a row
-of the same height, top rule and ground as Collie's bottom tab bar — 56px plus the bottom safe-area
-inset — so on a route that shows that tab bar the footer's rule and the tab bar's rule meet on one
-line. The desktop hierarchy rail SHALL render the same footer ordering. The footer build identity
+Herdr Fleet build identity beneath it. The selector SHALL use one shared recessed track with an
+inset selected indicator that slides horizontally between its two equal segments. The selected label
+SHALL retain at least 4.5:1 contrast in either theme. Switching SHALL NOT move the labels or change
+the control's height, and reduced-motion preference SHALL remove the slide. The selector SHALL retain
+44px minimum hit targets while occupying less vertical space than its previous padded button row.
+The build identity SHALL be a small, centered neutral-gray caption beneath the track, with a compact
+row and the bottom safe-area inset preserved. It SHALL NOT reserve the bottom tab bar's height or
+add a separate regional divider between the selector and caption. The desktop hierarchy rail SHALL render the same footer ordering. The footer build identity
 SHALL be independent of selected host, member reachability, and crew census availability. It SHALL preserve
 development and available commit qualification and MUST NOT replace either surface choice or reduce
 its keyboard, touch, or narrow-screen access.
@@ -423,12 +425,16 @@ its keyboard, touch, or narrow-screen access.
 - **THEN** the Collie/TTYD selector appears first and the current page's Herdr Fleet build identity appears beneath it
 
 #### Scenario: The footer meets the tab bar
-- **WHEN** the dashboard's tab bar is on screen beside the hierarchy rail, or beneath the open drawer
-- **THEN** the build-identity row has the tab bar's height, rule and ground, and the two top rules are at the same vertical position
+- **WHEN** the dashboard tab bar is beside the rail or beneath the drawer at the default text size
+- **THEN** the selector and caption together occupy less height than the previous two bands, with a centered gray build caption and safe-area clearance
 
 #### Scenario: The selected surface is read
-- **WHEN** the selector is drawn in either theme
-- **THEN** the selected segment is a filled primary pill whose label contrast is at least 4.5:1
+- **WHEN** either segment is activated in either theme
+- **THEN** the selected indicator slides to that segment, its label contrast is at least 4.5:1, and neither label nor the surrounding layout moves
+
+#### Scenario: Reduced motion is requested
+- **WHEN** the surface changes while reduced motion is requested
+- **THEN** the indicator immediately reaches the selected segment without sliding
 
 #### Scenario: The page is a development build
 - **WHEN** the current bundle carries a development build identity

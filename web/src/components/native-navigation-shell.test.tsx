@@ -13,7 +13,6 @@ import type { HomeData } from "@/lib/loaders";
 import { NativeHierarchyToggle, useNativePaneSwitcher } from "./native-navigation-context";
 import { NativeNavigationShell } from "./native-navigation-shell";
 import { StripHost, StripSlot } from "./ui/strip-host";
-import { TabBar } from "./ui/tab-bar";
 
 const pane = {
   paneId: "p1",
@@ -186,23 +185,15 @@ describe("NativeNavigationShell", () => {
     }
   });
 
-  it("stands the footer's build row in the tab bar's band", () => {
+  it("centers a compact gray build caption and preserves the safe area", () => {
     renderShell();
-    const tabBar = render(
-      <TabBar items={[{ value: "a", label: "A", icon: null }]} active={null} onSelect={() => undefined} label="Tabs" />,
-    );
-    const band = tabBar.container.querySelector('[data-slot="tab-bar"]')!;
-    const tokens = (el: Element) => el.className.split(/\s+/u);
     const herds = screen.getByRole("complementary", { name: "Herds" });
     const row = within(herds).getByText("Herdr Fleet").closest("div")!;
-    // The same rule, the same ground and the same safe area under it as the tab bar's band…
-    for (const token of ["border-t", "border-rule", "bg-background", "pb-[env(safe-area-inset-bottom)]"]) {
-      expect(tokens(band)).toContain(token);
-      expect(tokens(row)).toContain(token);
-    }
-    // …and the same 56px floor its tabs hold.
-    expect(tokens(row)).toContain("min-h-14");
-    expect(tokens(band.querySelector("button")!)).toContain("min-h-14");
+    expect(row.className.split(/\s+/u)).toEqual(expect.arrayContaining([
+      "min-h-6", "justify-center", "text-center", "text-[10px]", "text-neutral-500", "dark:text-neutral-400",
+    ]));
+    expect(row.className).not.toContain("border-t");
+    expect(row.parentElement!.className).toContain("pb-[env(safe-area-inset-bottom)]");
   });
 
   it("marks the pane on screen in the Agents rail", async () => {
