@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.7.2] - 2026-10-04
+
+**Lead-only frontend update; members do not redeploy.**
+
 ### Changed
 
-- **Compact the navigation footer with a sliding surface selector.** Center a smaller gray build caption beneath the shared Collie/TTYD track, preserving touch targets and reduced motion.
+- **Compact the navigation footer with a sliding surface selector.** Center a smaller gray build caption beneath the shared Collie/TTYD track, preserving touch targets and reduced motion. ([76f304ab](https://github.com/memset0/herdr-fleet/commit/76f304ab))
 
 ## [3.7.1] - 2026-10-02
 
