@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agent tags share the card surface.** Keep assigned tags on an aligned lower line inside the same background, border and state treatment.
+
 ## [3.7.6] - 2026-10-04
 
 **Lead-only frontend update; members do not redeploy.**

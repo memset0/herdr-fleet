@@ -169,7 +169,7 @@ describe("NativeAgentRail", () => {
   it("draws roomier compact rows with native marks and coarse pointer targets", () => {
     render(<NativeAgentRail agents={[agent("p1"), agent("p2", { status: "blocked" })]} onOpen={vi.fn()} />);
     for (const row of rows()) {
-      const shell = row.firstElementChild!.firstElementChild!;
+      const shell = row.querySelector('[data-slot="native-agent-body"]')!;
       expect(shell.className).toMatch(/\bmin-h-16\b/u);
       expect(shell.className).toMatch(/\bpy-2\b/u);
       expect(row.querySelector('[data-glide="dot"]')).not.toBeNull();
@@ -195,7 +195,7 @@ describe("NativeAgentRail", () => {
     const current = document.querySelectorAll<HTMLElement>('[aria-current="page"]');
     expect(current).toHaveLength(1);
     expect(current[0]!.textContent).toContain("here");
-    expect(current[0]!.firstElementChild?.className).toContain("bg-accent");
+    expect(current[0]!.closest('[data-agent-surface]')?.className).toContain("bg-accent");
   });
 
   it("says what the dashboard says above the groups", () => {
@@ -215,7 +215,7 @@ describe("NativeAgentRail", () => {
     const row = rows()[0]!;
     const age = within(row).getByText(/^(now|\d+[mhd])$/);
     // One column reserves 40px, with a larger reserve for coarse pointers.
-    expect(row.firstElementChild!.firstElementChild!.className).toMatch(/\bpr-10\b/u);
+    expect(row.querySelector('[data-slot="native-agent-body"]')!.className).toMatch(/\bpr-10\b/u);
     expect(age.parentElement?.getAttribute("data-slot")).toBe("native-agent-row-detail");
     const star = within(row).getByRole("button", { name: /pin/i });
     expect(star.className).toMatch(/\bsize-7\b/u);

@@ -564,7 +564,7 @@ NOT differ in what they do.
 
 ### Requirement: A rail row wears Collie's own treatment, and drops it where Collie drops it
 
-An Agent rail row SHALL use smaller title and detail type with more vertical breathing room than the former 44px row. It SHALL reserve one fixed trailing action column rather than two side-by-side controls, giving text more usable width. Its content height SHALL have a stable minimum that fits both actions, with larger independent targets for coarse pointers. Assigned named colored tags SHALL remain below its content as specified by `fleet-pane-tags`, and text and tags MUST NOT overlap the action column.
+An Agent rail row SHALL use smaller title and detail type with more vertical breathing room than the former 44px row. It SHALL reserve one fixed trailing action column rather than two side-by-side controls, giving text more usable width. Its content height SHALL have a stable minimum that fits both actions, with larger independent targets for coarse pointers. Assigned named colored tags SHALL remain below its content as specified by `fleet-pane-tags`, and text and tags MUST NOT overlap the action column. The row's background, border and hover/current/blocked treatment SHALL form one continuous surface around both its body and tag line.
 
 The card treatment SHALL be reserved for the one section Collie marks in its alert accent — the panes
 that need the operator now — read from Collie's own section data rather than restated. Every other

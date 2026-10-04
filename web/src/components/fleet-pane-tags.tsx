@@ -65,7 +65,7 @@ export function PaneTagLine({ agent }: { agent: AgentView }) {
   const tags = context?.state.snapshot ? tagsForPane(context.state.snapshot.document, tagPanePlace(agent)) : [];
   return (
     <Collapse open={tags.length > 0}>
-      {tags.length > 0 && <div data-slot="pane-tag-line" className="flex min-w-0 flex-wrap gap-1 px-3 pb-1 pt-0.5 pr-10 pointer-coarse:pr-14">
+      {tags.length > 0 && <div data-slot="pane-tag-line" className="flex min-w-0 flex-wrap gap-1 px-3 pb-2 pt-0.5 pr-10 pointer-coarse:pr-14">
         {tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}
       </div>}
     </Collapse>

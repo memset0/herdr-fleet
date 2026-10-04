@@ -67,14 +67,22 @@ it("globally edits the stable definition on every associated row", async () => {
 
 it("shows all assigned tags in order, and removing the last leaves no reserved line", async () => {
   const document: TagDocument = { schemaVersion: 1, tags: [{ id: "t1", name: "First", color: "#123456" }, { id: "t2", name: "Second", color: "#abcdef" }], panes: [{ ...tagPanePlace(agent), tags: ["t2", "t1"] }] };
-  const { container, client } = setup(document);
+  const { container, client, onOpen, onPin } = setup(document);
   const q = within(container), user = userEvent.setup();
   await waitFor(() => expect(client.getSnapshot().available).toBe(true));
   const line = container.querySelector('[data-slot="pane-tag-line"]')!;
   expect(line.textContent).toBe("SecondFirst");
   expect(line.className).toContain("flex-wrap");
   expect(line.className).toContain("pr-10");
-  expect(line.className).toContain("px-3 pb-1");
+  expect(line.className).toContain("px-3 pb-2");
+  const surface = line.closest('[data-agent-surface]')!;
+  expect(surface).not.toBeNull();
+  expect(surface.querySelector('[data-slot="native-agent-body"]')).not.toBeNull();
+  await user.click(line);
+  expect(line.closest("button")).toBeNull();
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(onPin).not.toHaveBeenCalled();
+
   for (const badge of line.querySelectorAll('[data-slot="pane-tag"]')) {
     expect(badge.className).toContain("text-[10px]");
     expect(badge.className).toContain("whitespace-normal");

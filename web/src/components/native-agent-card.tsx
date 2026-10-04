@@ -78,8 +78,7 @@ export function NativeAgentCard({
   const flat = density === "row";
   const blocked = agent.status === "blocked";
   const unseen = isUnseen(agent);
-  // Collie's own switch, for Collie's own reason: a card is a bordered object with air around it, a
-  // flat row is a line inside one bordered group, and the two cannot be one element with a class.
+  // The shared surface encloses body and passive tags; controls remain independent siblings.
   const Shell = flat ? "div" : Card;
   const project = agent.workspaceLabel || agent.workspaceId;
   const name = operatorChosenName(agent.paneLabel) ?? agent.tabLabel ?? agent.agent;
@@ -90,77 +89,71 @@ export function NativeAgentCard({
 
   return (
     <div data-slot="native-agent-card" data-row-key={rowKey} className="relative min-w-0">
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-current={current ? "page" : undefined}
+      <Shell
+        data-agent-surface=""
         className={cn(
-          "w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
-          // A flat row has no box of its own to light up, so the hover lives out here on the row.
-          flat && "transition-colors",
-          flat && !current && "hover:bg-muted/50",
+          "flex min-w-0 flex-col gap-0 py-0 transition-colors",
+          !flat && "rounded-xl shadow-sm",
+          !current && "hover:bg-muted/50",
+          // State paint surrounds both body and tags; a blocked card also keeps its alarm edge.
+          blocked && (flat ? "bg-status-blocked/10" : "border-status-blocked/40 bg-status-blocked/5"),
+          current && "bg-accent text-accent-foreground",
         )}
       >
-        <Shell
-          className={cn(
-            // The floor fits the two independent actions even when line 2 has no content.
-            "flex min-h-16 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10 pointer-coarse:min-h-24 pointer-coarse:pr-14",
-            !flat && "rounded-xl shadow-sm transition-colors",
-            !flat && !current && "hover:bg-muted/50",
-            // The blocked tint survives both, because it is the one cue that reads at a glance; a
-            // card keeps its alarm edge as well, and a flat row takes nothing on its edge.
-            blocked && (flat ? "bg-status-blocked/10" : "border-status-blocked/40 bg-status-blocked/5"),
-            // The pane on screen, in Collie's switcher idiom. Applied after the tint, because two
-            // grounds cannot both win; a blocked card keeps its edge, so both cues compose.
-            current && "bg-accent text-accent-foreground",
-          )}
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-current={current ? "page" : undefined}
+          className="w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
         >
-          <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-            {/* Line 1 — where, then which. */}
-            <span data-slot="native-agent-row-title" className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
-              <span
-                aria-hidden
-                className="w-3 shrink-0 text-center text-xs leading-none tabular-nums text-muted-foreground"
-              >
-                {badge}
-              </span>
-              <StatusDot
-                status={agent.status}
-                // A hollow resting ring is filled with the ground it actually sits on.
-                surface={current ? "bg-accent" : flat ? "bg-chrome" : "bg-card"}
-                glide="dot"
-              />
-              <AgentIcon agent={agent.agent} className="size-3.5" glide="tile" />
-              {/* Space and work name form one phrase: only its trailing end gives up width. */}
-              <span data-slot="native-agent-heading" className="min-w-0 flex-1 truncate self-baseline">
-                <span className="text-muted-foreground">{project}</span>
-                <span className="text-muted-foreground">{" · "}</span>
-                <span data-glide="name" className="font-medium text-foreground">
-                  {name}
+          <div data-slot="native-agent-body" className="flex min-h-16 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10 pointer-coarse:min-h-24 pointer-coarse:pr-14">
+            <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+              {/* Line 1 — where, then which. */}
+              <span data-slot="native-agent-row-title" className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
+                <span
+                  aria-hidden
+                  className="w-3 shrink-0 text-center text-xs leading-none tabular-nums text-muted-foreground"
+                >
+                  {badge}
                 </span>
+                <StatusDot
+                  status={agent.status}
+                  // A hollow resting ring is filled with the ground it actually sits on.
+                  surface={current ? "bg-accent" : flat ? "bg-chrome" : "bg-card"}
+                  glide="dot"
+                />
+                <AgentIcon agent={agent.agent} className="size-3.5" glide="tile" />
+                {/* Space and work name form one phrase: only its trailing end gives up width. */}
+                <span data-slot="native-agent-heading" className="min-w-0 flex-1 truncate self-baseline">
+                  <span className="text-muted-foreground">{project}</span>
+                  <span className="text-muted-foreground">{" · "}</span>
+                  <span data-glide="name" className="font-medium text-foreground">
+                    {name}
+                  </span>
+                </span>
+                <UnseenMark on={unseen} reserve />
               </span>
-              <UnseenMark on={unseen} reserve />
+              {/* Line 2 — what, with the age at its end. Collie's 16px slot, always drawn. */}
+              <span
+                data-slot="native-agent-row-detail"
+                className="flex min-h-4 min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+              >
+                {/* WHICH MACHINE, in Collie's own pane meta (host · session, borderless) — the
+                    run Collie's dashboard row ends its first line with. Here it LEADS line 2: a 320px
+                    rail cannot give line 1 to a name and a host tag both, and the name is the one
+                    fact that tells two rows apart. It draws nothing on a solo snapshot. */}
+                <PaneMeta host={agent.host} cache={undefined} session={agent.session} />
+                <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
+                {stamp !== undefined && <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>}
+              </span>
             </span>
-            {/* Line 2 — what, with the age at its end. Collie's 16px slot, always drawn. */}
-            <span
-              data-slot="native-agent-row-detail"
-              className="flex min-h-4 min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
-            >
-              {/* WHICH MACHINE, in Collie's own pane meta (host · session, borderless) — the
-                  run Collie's dashboard row ends its first line with. Here it LEADS line 2: a 320px
-                  rail cannot give line 1 to a name and a host tag both, and the name is the one
-                  fact that tells two rows apart. It draws nothing on a solo snapshot. */}
-              <PaneMeta host={agent.host} cache={undefined} session={agent.session} />
-              <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
-              {stamp !== undefined && <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>}
-            </span>
-          </span>
-        </Shell>
-        {/* The dot is colour only; its word is for a screen reader, after the row's own text. */}
-        <span className="sr-only">{statusLabel(agent.status)}</span>
-      </button>
+          </div>
+          {/* The dot is colour only; its word is for a screen reader, after the row's own text. */}
+          <span className="sr-only">{statusLabel(agent.status)}</span>
+        </button>
 
-      <PaneTagLine agent={agent} />
+        <PaneTagLine agent={agent} />
+      </Shell>
 
       {/* Sibling actions never invoke the row's open button. */}
       <div data-slot="native-agent-actions" className="absolute right-1 top-1 flex flex-col">
