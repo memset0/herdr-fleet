@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.7.3] - 2026-10-04
+
+**Lead-only frontend update; members do not redeploy.**
+
 ### Added
 
-- **Send Alt+Up joins the command bar.** The unbound Pane command sends one fixed chord through the existing guarded writer.
+- **Send Alt+Up joins the command bar.** The unbound Pane command sends one fixed chord through the existing guarded writer. ([0652004a](https://github.com/memset0/herdr-fleet/commit/0652004a))
 
 ## [3.7.2] - 2026-10-04
 
