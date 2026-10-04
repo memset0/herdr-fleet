@@ -104,7 +104,7 @@ export function NativeAgentCard({
         <Shell
           className={cn(
             // The floor fits the two independent actions even when line 2 has no content.
-            "flex min-h-18 min-w-0 flex-row items-center gap-3 px-4 py-3 pr-12 pointer-coarse:min-h-26 pointer-coarse:pr-16",
+            "flex min-h-16 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10 pointer-coarse:min-h-24 pointer-coarse:pr-14",
             !flat && "rounded-xl shadow-sm transition-colors",
             !flat && !current && "hover:bg-muted/50",
             // The blocked tint survives both, because it is the one cue that reads at a glance; a
@@ -164,7 +164,7 @@ export function NativeAgentCard({
       <PaneTagLine agent={agent} />
 
       {/* Sibling actions never invoke the row's open button. */}
-      <div data-slot="native-agent-actions" className="absolute right-2 top-2 flex flex-col">
+      <div data-slot="native-agent-actions" className="absolute right-1 top-1 flex flex-col">
         <Button
           data-slot="agent-pin"
           variant="ghost"

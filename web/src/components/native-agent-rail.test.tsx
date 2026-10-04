@@ -155,14 +155,16 @@ describe("NativeAgentRail", () => {
     render(<NativeAgentRail agents={[agent("p1"), agent("p2", { status: "blocked" })]} onOpen={vi.fn()} />);
     for (const row of rows()) {
       const shell = row.firstElementChild!.firstElementChild!;
-      expect(shell.className).toMatch(/\bmin-h-18\b/u);
-      expect(shell.className).toMatch(/\bpy-3\b/u);
+      expect(shell.className).toMatch(/\bmin-h-16\b/u);
+      expect(shell.className).toMatch(/\bpy-2\b/u);
       expect(row.querySelector('[data-glide="dot"]')).not.toBeNull();
       expect(row.querySelector('[data-glide="tile"]')?.getAttribute("class")).toContain("size-3.5");
       expect(row.querySelector('[data-glide="name"]')).not.toBeNull();
       expect(row.querySelector('[data-slot="native-agent-row-title"]')?.className).toContain("text-xs");
       expect(row.querySelector('[data-slot="native-agent-row-detail"]')?.className).toContain("text-[11px]");
-      expect(shell.className).toContain("pointer-coarse:min-h-26");
+      expect(shell.className).toContain("pointer-coarse:min-h-24");
+      expect(shell.className).toContain("px-3");
+      expect(row.querySelector('[data-slot="native-agent-row-title"]')?.parentElement?.className).toContain("gap-1.5");
     }
   });
 
@@ -197,8 +199,8 @@ describe("NativeAgentRail", () => {
 
     const row = rows()[0]!;
     const age = within(row).getByText(/^(now|\d+[mhd])$/);
-    // One column reserves 48px, with a larger reserve for coarse pointers.
-    expect(row.firstElementChild!.firstElementChild!.className).toMatch(/\bpr-12\b/u);
+    // One column reserves 40px, with a larger reserve for coarse pointers.
+    expect(row.firstElementChild!.firstElementChild!.className).toMatch(/\bpr-10\b/u);
     expect(age.parentElement?.getAttribute("data-slot")).toBe("native-agent-row-detail");
     const star = within(row).getByRole("button", { name: /pin/i });
     expect(star.className).toMatch(/\bsize-7\b/u);
@@ -206,6 +208,7 @@ describe("NativeAgentRail", () => {
     expect(star.className).toContain("pointer-coarse:size-11");
     expect(star.parentElement?.getAttribute("data-slot")).toBe("native-agent-actions");
     expect(star.parentElement?.className).toContain("flex-col");
+    expect(star.parentElement?.className).toContain("right-1 top-1");
     expect(star.querySelector("svg")?.getAttribute("class")).toContain("size-3.5");
     // Full muted ink at rest: the half-strength ink it had failed 3:1 on the chrome ground.
     expect(star.className).toMatch(/(^|\s)text-muted-foreground(\s|$)/u);

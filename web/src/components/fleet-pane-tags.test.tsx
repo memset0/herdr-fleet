@@ -73,7 +73,8 @@ it("shows all assigned tags in order, and removing the last leaves no reserved l
   const line = container.querySelector('[data-slot="pane-tag-line"]')!;
   expect(line.textContent).toBe("SecondFirst");
   expect(line.className).toContain("flex-wrap");
-  expect(line.className).toContain("pr-12");
+  expect(line.className).toContain("pr-10");
+  expect(line.className).toContain("px-3 pb-1");
   for (const badge of line.querySelectorAll('[data-slot="pane-tag"]')) {
     expect(badge.className).toContain("text-[10px]");
     expect(badge.className).toContain("whitespace-normal");

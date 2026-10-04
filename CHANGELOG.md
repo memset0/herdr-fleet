@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent rows use tighter edge spacing.** Preserve internal line gaps and independent touch targets.
+
 ## [3.7.4] - 2026-10-04
 
 **Lead-only frontend update; members do not redeploy.**
