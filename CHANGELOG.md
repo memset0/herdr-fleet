@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.7.5] - 2026-10-04
+
+**Lead-only frontend update; members do not redeploy.**
+
 ### Changed
 
-- **Agent rows use tighter edge spacing.** Preserve internal line gaps and independent touch targets.
+- **Agent rows use tighter edge spacing.** Preserve internal line gaps and independent touch targets. ([b9cccb21](https://github.com/memset0/herdr-fleet/commit/b9cccb21))
 
 ## [3.7.4] - 2026-10-04
 
