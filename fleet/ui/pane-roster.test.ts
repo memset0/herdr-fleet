@@ -70,12 +70,57 @@ describe("deriving the roster", () => {
     ]);
   });
 
-  test("a section keeps the order it arrived in", () => {
+  test("a section with no timestamps keeps the order it arrived in", () => {
     const roster = derivePaneRoster({
       triaged: [{ key: "recent", entries: [agent("x"), agent("y"), agent("z")] }],
       shellPanes: [],
     });
     expect(roster.entries.map((e) => e.paneId)).toEqual(["x", "y", "z"]);
+  });
+
+  test.each(["recent", "ready", "working"] as const)("%s uses its own timestamp and leaves ties stable", (key) => {
+    const field = key === "recent" ? "lastSeenAt" : "lastActiveAt";
+    const other = key === "recent" ? "lastActiveAt" : "lastSeenAt";
+    const input = [
+      agent("missing-first"),
+      agent("old", { [field]: 2, [other]: 100 }),
+      agent("new-first", { [field]: 9, [other]: 1 }),
+      agent("zero", { [field]: 0 }),
+      agent("new-second", { [field]: 9 }),
+      agent("missing-second"),
+    ];
+    const roster = derivePaneRoster({ triaged: [{ key, entries: input }], shellPanes: [] });
+    expect(roster.entries.map((entry) => entry.paneId)).toEqual([
+      "new-first", "new-second", "old", "zero", "missing-first", "missing-second",
+    ]);
+    expect(input.map((entry) => entry.paneId)).toEqual([
+      "missing-first", "old", "new-first", "zero", "new-second", "missing-second",
+    ]);
+  });
+
+  test("Needs and Pinned keep input order while navigation shares the sorted groups", () => {
+    const oldestPin = agent("pin-first", { lastSeenAt: 0 });
+    const newestPin = agent("pin-second", { lastSeenAt: 100 });
+    const needs = [agent("needs-old", { lastActiveAt: 1 }), agent("needs-new", { lastActiveAt: 9 })];
+    const roster = derivePaneRoster({
+      pinned: [oldestPin, newestPin],
+      triaged: [
+        { key: "needs", entries: needs },
+        { key: "ready", entries: [agent("ready-old", { lastActiveAt: 1 }), agent("ready-new", { lastActiveAt: 9 })] },
+        { key: "working", entries: [agent("working-old", { lastActiveAt: 1 }), agent("working-new", { lastActiveAt: 9 })] },
+        { key: "recent", entries: [oldestPin, agent("recent-old", { lastSeenAt: 1 }), newestPin, agent("recent-new", { lastSeenAt: 9 })] },
+      ],
+      shellPanes: [],
+    });
+    expect(roster.sections.map((section) => section.key)).toEqual(["pinned", "needs", "ready", "working", "recent"]);
+    const order = ["pin-first", "pin-second", "needs-old", "needs-new", "ready-new", "ready-old", "working-new", "working-old", "recent-new", "recent-old"];
+    expect(roster.entries.map((entry) => entry.paneId)).toEqual(order);
+    expect(agentSections(roster).flatMap((section) => section.entries)).toEqual([...roster.entries]);
+    for (const [index, entry] of roster.entries.entries()) {
+      expect(rosterOrdinal(roster.entries, index + 1)).toBe(entry);
+      expect(stepRoster(roster.entries, rosterEntryKey(entry), 1)?.paneId).toBe(order[(index + 1) % order.length]);
+      expect(stepRoster(roster.entries, rosterEntryKey(entry), -1)?.paneId).toBe(order[(index + order.length - 1) % order.length]);
+    }
   });
 
   test("shell Panes order by last seen, most recent first", () => {

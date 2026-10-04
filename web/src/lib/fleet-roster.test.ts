@@ -69,6 +69,36 @@ describe("naming the machine a pane is on", () => {
   });
 });
 
+describe("mapping time ordering into the shared roster", () => {
+  it("carries both timestamps, including zero, and leaves absent values absent", () => {
+    expect(toRosterEntry(pane({ lastSeenAt: 0, lastActiveAt: 8 }))).toMatchObject({ lastSeenAt: 0, lastActiveAt: 8 });
+    expect(toRosterEntry(pane()).lastSeenAt).toBeUndefined();
+    expect(toRosterEntry(pane()).lastActiveAt).toBeUndefined();
+  });
+
+  it("sorts each timed bucket by the right clock after removing pins", () => {
+    const olderSeen = pane({ paneId: "older-seen", lastSeenAt: 1, lastActiveAt: 90 });
+    const newerSeen = pane({ paneId: "newer-seen", lastSeenAt: 9, lastActiveAt: 10 });
+    const pinned = pane({ paneId: "pinned", lastSeenAt: 0, lastActiveAt: 0 });
+    const olderActive = pane({ paneId: "older-active", lastSeenAt: 90, lastActiveAt: 1 });
+    const newerActive = pane({ paneId: "newer-active", lastSeenAt: 10, lastActiveAt: 9 });
+    const roster = paneRosterFrom([
+      { key: "ready", label: "Ready", dot: "", agents: [olderActive, newerActive] },
+      { key: "working", label: "Working", dot: "", agents: [
+        pane({ paneId: "working-old", lastSeenAt: 90, lastActiveAt: 1 }),
+        pane({ paneId: "working-new", lastSeenAt: 10, lastActiveAt: 9 }),
+      ] },
+      { key: "recent", label: "Recent", dot: "", agents: [olderSeen, pinned, newerSeen] },
+    ], [], undefined, [pinned]);
+    expect(roster.sections.map((section) => [section.key, section.entries.map((entry) => entry.paneId)])).toEqual([
+      ["pinned", ["pinned"]],
+      ["ready", ["newer-active", "older-active"]],
+      ["working", ["working-new", "working-old"]],
+      ["recent", ["newer-seen", "older-seen"]],
+    ]);
+  });
+});
+
 describe("the star is Collie's pin", () => {
   const LEGACY = "herdr-fleet:agent-favorites:v1";
   beforeEach(() => {

@@ -35,6 +35,7 @@ interface RosterEntryDraft {
   tabLabel?: string;
   hostLabel?: string;
   lastSeenAt?: number;
+  lastActiveAt?: number;
 }
 
 /**
@@ -67,6 +68,7 @@ export function toRosterEntry(pane: AgentView, servers?: readonly ServerSummary[
   if (pane.session !== undefined) entry.session = pane.session;
   if (pane.kind !== "shell") entry.agent = pane.agent;
   if (pane.lastSeenAt !== undefined) entry.lastSeenAt = pane.lastSeenAt;
+  if (pane.lastActiveAt !== undefined) entry.lastActiveAt = pane.lastActiveAt;
   return entry;
 }
 
@@ -76,8 +78,8 @@ export function toRosterEntry(pane: AgentView, servers?: readonly ServerSummary[
  *
  * `triaged` arrives already bucketed because bucketing is Collie's rule, and `pinned` already in
  * Collie's pinned order (see {@link pinnedAgents}); this adds the fork's part — the Pinned section
- * first, each pinned pane listed once, the shell section, the empty-section removal and the
- * flattening.
+ * first, each pinned pane listed once, within-group time ordering, the shell section, empty-section
+ * removal and the flattening.
  */
 export function paneRosterFrom(
   triaged: readonly TriageSection[],

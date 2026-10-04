@@ -8,7 +8,8 @@
 // **This module does not bucket, and it does not pin.** It takes the sections Collie's own triage
 // already produced and the panes Collie's own pin store holds, in Collie's own pinned order, and adds
 // what the fork owns on top: a Pinned section first, each pinned pane listed there once and taken out
-// of its triage section, the shell section, the removal of empty sections, and the flattening. Two reasons, and both are load-bearing. `fleet/ui`
+// of its triage section, time ordering inside Recent/Ready/Working, the shell section, the removal of
+// empty sections, and the flattening. Two reasons, and both are load-bearing. `fleet/ui`
 // imports downward only — never from `web/src` — which is what lets the root suite run it with no
 // browser; and bucketing is Collie's rule, so a copy of it here would be a second answer to "which
 // section is this Pane in" that drifts the first time upstream changes its mind.
@@ -57,8 +58,10 @@ export interface RosterEntry {
   readonly context?: string;
   /** The Tab this Pane sits in, where the Tab says anything. Searchable, and shown when matched. */
   readonly tabLabel?: string;
-  /** When this Pane was last seen, used to order the shell section. */
+  /** When this Pane was last seen, used to order Recent and the shell section. */
   readonly lastSeenAt?: number;
+  /** When the agent last changed status, used to order Ready and Working. */
+  readonly lastActiveAt?: number;
 }
 
 /**
@@ -106,8 +109,8 @@ export interface PaneRoster {
 
 export interface PaneRosterInput {
   /**
-   * Collie's triage output, already bucketed and already in its own within-section order, in the
-   * order triage returns them. Empty sections may be included; they are dropped here.
+   * Collie's triage output, already bucketed, in the group order triage returns. Fleet orders
+   * Recent/Ready/Working by time; Needs keeps its input order. Empty sections are dropped here.
    */
   readonly triaged: readonly { readonly key: TriageSectionKey; readonly entries: readonly RosterEntry[] }[];
   /**
@@ -130,6 +133,20 @@ function byLastSeenDescending(entries: readonly RosterEntry[]): readonly RosterE
   return entries.toSorted((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0));
 }
 
+/** Newest first, with stable ties and absent timestamps after every present timestamp. */
+function byTimeDescending(
+  entries: readonly RosterEntry[],
+  field: "lastSeenAt" | "lastActiveAt",
+): readonly RosterEntry[] {
+  return entries.toSorted((a, b) => {
+    const first = a[field];
+    const second = b[field];
+    if (first === undefined) return second === undefined ? 0 : 1;
+    if (second === undefined) return -1;
+    return second - first;
+  });
+}
+
 export function derivePaneRoster(input: PaneRosterInput): PaneRoster {
   const sections: RosterSection[] = [];
   const pinned = input.pinned ?? [];
@@ -138,10 +155,15 @@ export function derivePaneRoster(input: PaneRosterInput): PaneRoster {
   if (pinned.length > 0) sections.push({ key: "pinned", entries: pinned });
 
   for (const section of input.triaged) {
-    // A pinned pane is listed once, in Pinned; whatever order is left is triage's own.
+    // A pinned pane is listed once, in Pinned; time ordering applies only to the remaining rows.
     const entries = section.entries.filter((entry) => !pinnedKeys.has(rosterEntryKey(entry)));
     if (entries.length === 0) continue;
-    sections.push({ key: section.key, entries });
+    sections.push({
+      key: section.key,
+      entries: section.key === "needs"
+        ? entries
+        : byTimeDescending(entries, section.key === "recent" ? "lastSeenAt" : "lastActiveAt"),
+    });
   }
 
   if (input.shellPanes.length > 0) {

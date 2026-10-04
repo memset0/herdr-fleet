@@ -22,6 +22,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Changed
 
 - **Agent cards give text more room beside stacked controls.** Shrink titles and tags, place the favorite above tag editing, and omit prompt-cache readings from the rail.
+- **Agent groups put the newest work first.** Recent follows last-seen time; Ready and Working follow last activity, with stable ties and unchanged native pin order.
 
 ## [3.7.3] - 2026-10-04
 
