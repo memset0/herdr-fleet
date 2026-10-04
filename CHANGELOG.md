@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.7.8] - 2026-10-04
+
+**Lead-only frontend update; members do not redeploy.**
+
 ### Fixed
 
-- **Agent tags sit closer to the text.** Reclaim the empty lower band while keeping tag transitions and controls aligned.
+- **Agent tags sit closer to the text.** Reclaim the empty lower band while keeping tag transitions and controls aligned. ([a3cc59f7](https://github.com/memset0/herdr-fleet/commit/a3cc59f7))
 
 ## [3.7.7] - 2026-10-04
 
