@@ -64,7 +64,11 @@ export function PaneTagLine({ agent }: { agent: AgentView }) {
   const context = useContext(TagContext);
   const tags = context?.state.snapshot ? tagsForPane(context.state.snapshot.document, tagPanePlace(agent)) : [];
   return (
-    <Collapse open={tags.length > 0}>
+    <Collapse
+      open={tags.length > 0}
+      // Reclaim the body's empty lower band in step with Collapse's own height animation.
+      className="data-[state=open]:-mt-2 pointer-coarse:data-[state=open]:-mt-6"
+    >
       {tags.length > 0 && <div data-slot="pane-tag-line" className="flex min-w-0 flex-wrap gap-1 px-3 pb-2 pt-0.5 pr-10 pointer-coarse:pr-14">
         {tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}
       </div>}

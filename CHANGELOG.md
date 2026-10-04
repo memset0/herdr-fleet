@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agent tags sit closer to the text.** Reclaim the empty lower band while keeping tag transitions and controls aligned.
+
 ## [3.7.7] - 2026-10-04
 
 **Lead-only frontend update; members do not redeploy.**
