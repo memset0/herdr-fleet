@@ -521,6 +521,7 @@ export function AgentChat({
     "fit-pane-width": () => fitPaneToMirror(),
     "send-escape": () => sendFixedKeys(["Escape"]),
     "send-enter": () => sendFixedKeys(["Enter"]),
+    "send-alt-up": () => sendFixedKeys(["alt+Up"]),
     "send-up-arrow": () => sendFixedKeys(["Up"]),
     "send-down-arrow": () => sendFixedKeys(["Down"]),
     "send-left-arrow": () => sendFixedKeys(["Left"]),

@@ -94,6 +94,14 @@ describe("the command catalog", () => {
     for (const id of unbound) expect(defaultBindings().get(id)).toEqual([]);
   });
 
+  test("Send Alt+Up is a stable unbound Pane command", () => {
+    expect(isCommandId("send-alt-up")).toBe(true);
+    expect(commandById("send-alt-up")).toEqual({
+      id: "send-alt-up", name: "Send Alt+Up", scope: "pane", defaults: [],
+    });
+    expect(defaultBindings().get("send-alt-up")).toEqual([]);
+  });
+
   test("the shipped prefix is a valid direct chord", () => {
     const result = parseBinding(DEFAULT_COMMAND_PREFIX);
     expect(result.ok && result.binding.kind).toBe("direct");

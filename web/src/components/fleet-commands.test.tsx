@@ -513,3 +513,26 @@ describe("the caret while a prefix is armed", () => {
     expect(document.activeElement).toBe(draft);
   });
 });
+
+describe("Send Alt+Up binding", () => {
+  it("dispatches the operator binding once and keeps it out of the composer", async () => {
+    const user = userEvent.setup();
+    const send = vi.fn();
+    const composerKey = vi.fn();
+    const { container } = render(
+      <FleetCommandsProvider
+        adapters={{ "send-alt-up": send }}
+        available={() => true}
+        roster={derivePaneRoster({ triaged: [], shellPanes: [] })}
+        onOpenPane={vi.fn()}
+        overrides={new Map<CommandId, readonly Binding[]>([["send-alt-up", parsed("Alt+Up")]])}
+      >
+        <FakeComposer onKey={composerKey} />
+      </FleetCommandsProvider>,
+    );
+    container.querySelector("textarea")?.focus();
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(composerKey).not.toHaveBeenCalled();
+  });
+});

@@ -298,6 +298,7 @@ makes the command unfindable by the word the operator would use for it.
 | `copy-fleet-pane-link` | Copy Fleet Pane Link | `[]` |
 | `toggle-type-mode` | Toggle Type Mode | `[]` |
 | `send-escape` / `send-enter` | Send Escape / Send Enter | `[]` |
+| `send-alt-up` | Send Alt+Up | `[]` |
 | `send-up-arrow` / `send-down-arrow` | Send Up Arrow / Send Down Arrow | `[]` |
 | `send-left-arrow` / `send-right-arrow` | Send Left Arrow / Send Right Arrow | `[]` |
 | `send-space` | Send Space | `[]` |
@@ -440,8 +441,8 @@ fit control, and SHALL not compute columns or call a node resize API of its own.
 `toggle-type-mode` SHALL drive the same activate and deactivate transition as the composer's visible
 direct-typing control, so there is one armed state and one cleanup path.
 
-The eight fixed key commands SHALL send exactly these constant sequences through Collie's existing
-authorised Pane key path: `send-escape` → `["Escape"]`, `send-enter` → `["Enter"]`, `send-up-arrow` →
+The nine fixed key commands SHALL send exactly these constant sequences through Collie's existing
+authorised Pane key path: `send-escape` → `["Escape"]`, `send-enter` → `["Enter"]`, `send-alt-up` → `["alt+Up"]`, `send-up-arrow` →
 `["Up"]`, `send-down-arrow` → `["Down"]`, `send-left-arrow` → `["Left"]`, `send-right-arrow` →
 `["Right"]`, `send-space` → `["Space"]`, `send-ctrl-c` → `["ctrl+c"]`. They MUST NOT infer a prompt,
 append a submit key, accept a caller-supplied sequence, retry a failed write, or enter direct-typing
@@ -456,7 +457,7 @@ mode. Existing write authorisation, read-only refusal and audit attribution SHAL
 - **THEN** the composer's visible control reflects the same armed and disarmed states, with the same focus and cleanup behavior
 
 #### Scenario: A fixed key is sent
-- **WHEN** any of the eight key commands is invoked on a writable Pane
+- **WHEN** any of the nine key commands is invoked on a writable Pane
 - **THEN** exactly its declared sequence is sent once, and nothing else is written
 
 #### Scenario: The Pane is read-only

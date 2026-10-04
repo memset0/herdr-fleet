@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Send Alt+Up joins the command bar.** The unbound Pane command sends one fixed chord through the existing guarded writer.
+
 ## [3.7.2] - 2026-10-04
 
 **Lead-only frontend update; members do not redeploy.**

@@ -65,6 +65,7 @@ export type CommandId =
   | "toggle-type-mode"
   | "send-escape"
   | "send-enter"
+  | "send-alt-up"
   | "send-up-arrow"
   | "send-down-arrow"
   | "send-left-arrow"
@@ -163,6 +164,7 @@ const DEFINITIONS: readonly CommandDefinition[] = [
   // operator should choose deliberately.
   { id: "send-escape", name: "Send Escape", scope: "pane", defaults: [] },
   { id: "send-enter", name: "Send Enter", scope: "pane", defaults: [] },
+  { id: "send-alt-up", name: "Send Alt+Up", scope: "pane", defaults: [] },
   { id: "send-up-arrow", name: "Send Up Arrow", scope: "pane", defaults: [] },
   { id: "send-down-arrow", name: "Send Down Arrow", scope: "pane", defaults: [] },
   { id: "send-left-arrow", name: "Send Left Arrow", scope: "pane", defaults: [] },

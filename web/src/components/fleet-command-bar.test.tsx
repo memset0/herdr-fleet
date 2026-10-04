@@ -85,8 +85,9 @@ const ROWS = [
   row("open-fleet-settings", ["Prefix+S"], ["Ctrl+B S"]),
   row("next-tab", ["Prefix+N"], ["Ctrl+B N"]),
   row("fit-pane-width", ["Prefix+R"], ["Ctrl+B R"]),
-  // LAST, and a test below depends on it: the unbound row is the one that must show "No binding".
+  // The final rows ship unbound and must show "No binding".
   row("toggle-type-mode"),
+  row("send-alt-up"),
 ];
 
 function options(container: HTMLElement) {
@@ -148,6 +149,18 @@ describe("FleetCommandBar", () => {
     await user.keyboard("{Enter}");
     expect(onRun).toHaveBeenCalledWith("next-tab");
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("finds and invokes the unbound Send Alt+Up command", async () => {
+    const user = userEvent.setup();
+    const { container, onRun, onClose } = setup("command");
+    await user.type(within(container).getByRole("combobox"), "alt+up");
+    expect(options(container)).toHaveLength(1);
+    expect(options(container)[0]).toHaveTextContent("Send Alt+Up");
+    expect(options(container)[0]).toHaveTextContent("No binding");
+    await user.keyboard("{Enter}");
+    expect(onRun).toHaveBeenCalledExactlyOnceWith("send-alt-up");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("starts pane mode empty and lists every pane, shell last", () => {
