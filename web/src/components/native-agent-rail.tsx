@@ -61,7 +61,7 @@ const AGE_BY_SECTION = new Map<TriageKey, "seen" | "active">([
  * caption, with no dot and no count; the bucket headings take Collie's workspace-heading voice.
  *
  * THE EMPHASIS IS COLLIE'S ALERT MARK, read rather than copied: the section triage marks with
- * `accent` (needs you) is drawn as cards with air between them; every other row is a flat 44px row
+ * `accent` (needs you) is drawn as cards with air between them; every other row is a flat row
  * in one bordered group. An unseen reply is marked by Collie's square, not by a card.
  *
  * The shortcut ordinal is numbered across the WHOLE rail rather than per section, because a key the
@@ -97,7 +97,7 @@ export function NativeAgentRail({
     if (key === null) return;
     refocus.current = null;
     for (const row of container.current?.querySelectorAll<HTMLElement>('[data-slot="native-agent-card"]') ?? []) {
-      if (row.dataset.rowKey === key) row.querySelector<HTMLElement>(":scope > button[aria-pressed]")?.focus();
+      if (row.dataset.rowKey === key) row.querySelector<HTMLElement>('[data-slot="agent-pin"]')?.focus();
     }
   });
 

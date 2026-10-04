@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent cards give text more room beside stacked controls.** Shrink titles and tags, place the favorite above tag editing, and omit prompt-cache readings from the rail.
+
 ## [3.7.3] - 2026-10-04
 
 **Lead-only frontend update; members do not redeploy.**

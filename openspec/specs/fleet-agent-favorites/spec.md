@@ -46,9 +46,7 @@ does MAY send pin state to the Gateway, Collie bridge, Herdr, or another browser
 - **THEN** no star is pressed and no pin is inferred from account, Gateway, Collie, or Herdr state
 
 ### Requirement: Native Agent rows expose an independent favorite control
-Every native Agent row rendered by the shared Agent list and by the Agent rail SHALL expose the star
-control, drawn as Collie's round icon button: a 36px circle with a 16px glyph, muted ink at rest at
-no less than 3:1 against the row's ground, a muted hover fill and a press scale. The row SHALL
+Every native Agent row rendered by the shared Agent list and by the Agent rail SHALL expose an independent star control with muted ink at rest at no less than 3:1 against the row's ground, a muted hover fill and a press scale. The shared list SHALL retain its existing round icon button. In the rail and its phone switcher, a smaller star SHALL occupy the top position in a fixed trailing column above the tag action, with a smaller glyph, a visible keyboard focus indicator and enlarged targets for coarse pointers. The row SHALL
 reserve the control's width at its trailing end so the row's text never runs under it. Shell rows
 MUST NOT expose the control. Activating it SHALL toggle `aria-pressed` and toggle the pane's pin.
 
@@ -75,6 +73,10 @@ available independently from the control.
 #### Scenario: A shell row is rendered
 - **WHEN** the native list contains a row whose kind is `shell`
 - **THEN** the row retains its existing presentation and has no star
+
+#### Scenario: The rail shows both actions
+- **WHEN** an Agent rail row offers pinning and tag editing
+- **THEN** the star stays above the tag action in one trailing column and neither action overlaps the row text or the other target
 
 ### Requirement: Stored favourites become pins once
 A browser that still holds the retired Fleet favourite record SHALL have it migrated exactly once:

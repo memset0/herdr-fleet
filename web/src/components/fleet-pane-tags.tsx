@@ -50,11 +50,11 @@ export function FleetPaneTagsProvider({ children, client: supplied }: { children
   );
 }
 
-export function TagBadge({ tag }: { tag: PaneTag }) {
+export function TagBadge({ tag, compact = false }: { tag: PaneTag; compact?: boolean }) {
   return (
-    <Badge variant="outline" data-slot="pane-tag" className="max-w-full shrink whitespace-normal gap-1.5 px-1.5 font-normal leading-4"
+    <Badge variant="outline" data-slot="pane-tag" className={`max-w-full shrink whitespace-normal gap-1.5 px-1.5 font-normal leading-4 ${compact ? "py-0 text-[10px]" : ""}`}
       style={{ borderColor: `color-mix(in srgb, ${tag.color} 60%, transparent)`, backgroundColor: `color-mix(in srgb, ${tag.color} 12%, transparent)` }}>
-      <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: tag.color }} />
+      <span aria-hidden className={`${compact ? "size-1.5" : "size-2"} shrink-0 rounded-full`} style={{ backgroundColor: tag.color }} />
       <span className="min-w-0 break-all">{tag.name}</span>
     </Badge>
   );
@@ -65,8 +65,8 @@ export function PaneTagLine({ agent }: { agent: AgentView }) {
   const tags = context?.state.snapshot ? tagsForPane(context.state.snapshot.document, tagPanePlace(agent)) : [];
   return (
     <Collapse open={tags.length > 0}>
-      {tags.length > 0 && <div data-slot="pane-tag-line" className="flex min-w-0 flex-wrap gap-1 px-3.5 pb-2 pt-0.5">
-        {tags.map((tag) => <TagBadge key={tag.id} tag={tag} />)}
+      {tags.length > 0 && <div data-slot="pane-tag-line" className="flex min-w-0 flex-wrap gap-1 px-4 pb-2 pt-0.5 pr-12 pointer-coarse:pr-16">
+        {tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}
       </div>}
     </Collapse>
   );
@@ -76,10 +76,10 @@ export function PaneTagButton({ agent }: { agent: AgentView }) {
   useLocale();
   const context = useContext(TagContext);
   if (!context || agent.kind === "shell") return null;
-  return <button type="button" aria-label={t("fleet.tags.assign")} onClick={() => context.open(tagPanePlace(agent))}
-    className="absolute right-10 top-1 flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring active:scale-95">
-    <Tags className="size-4" aria-hidden />
-  </button>;
+  return <Button type="button" variant="ghost" size="icon" data-slot="agent-tag-action" aria-label={t("fleet.tags.assign")} onClick={() => context.open(tagPanePlace(agent))}
+    className="size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 pointer-coarse:size-11">
+    <Tags className="size-3.5" aria-hidden />
+  </Button>;
 }
 
 export function ManagePaneTags({ settings = false }: { settings?: boolean }) {

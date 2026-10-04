@@ -70,7 +70,17 @@ it("shows all assigned tags in order, and removing the last leaves no reserved l
   const { container, client } = setup(document);
   const q = within(container), user = userEvent.setup();
   await waitFor(() => expect(client.getSnapshot().available).toBe(true));
-  expect(container.querySelector('[data-slot="pane-tag-line"]')?.textContent).toBe("SecondFirst");
+  const line = container.querySelector('[data-slot="pane-tag-line"]')!;
+  expect(line.textContent).toBe("SecondFirst");
+  expect(line.className).toContain("flex-wrap");
+  expect(line.className).toContain("pr-12");
+  for (const badge of line.querySelectorAll('[data-slot="pane-tag"]')) {
+    expect(badge.className).toContain("text-[10px]");
+    expect(badge.className).toContain("whitespace-normal");
+  }
+  const actions = container.querySelector('[data-slot="native-agent-actions"]')!;
+  expect(actions.children[0]?.getAttribute("data-slot")).toBe("agent-pin");
+  expect(actions.children[1]?.getAttribute("data-slot")).toBe("agent-tag-action");
   await user.click(q.getAllByRole("button", { name: "Edit pane tags" })[0]!);
   const dialog = within(q.getByRole("dialog"));
   await user.click(dialog.getByRole("checkbox", { name: "First" }));
