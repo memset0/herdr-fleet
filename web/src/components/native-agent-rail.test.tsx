@@ -94,12 +94,27 @@ describe("NativeAgentRail", () => {
     // Where first, what second — the order this rail reads in, and the reverse of the dashboard's.
     expect(project.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(name.compareDocumentPosition(doing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The project gives up width first; the name is the only thing telling two rows apart.
+    // The phrase keeps its distinct Space and work-name styling.
     expect(project.className).toContain("text-muted-foreground");
     expect(name.className).toContain("text-foreground");
     // Compact rail type keeps the name weighted and the detail smaller.
     expect(name.className).toContain("font-medium");
     expect(doing.closest('[data-slot="native-agent-row-detail"]')?.className).toContain("text-[11px]");
+  });
+
+  it("truncates Space and work name together with one trailing ellipsis", () => {
+    const space = "A long workspace name without a separate width cap";
+    const work = "A long work name";
+    render(<NativeAgentRail agents={[agent("p1", { workspaceLabel: space, tabLabel: work })]} onOpen={vi.fn()} />);
+    const row = rows()[0]!;
+    const heading = row.querySelector('[data-slot="native-agent-heading"]')!;
+    expect(heading.textContent).toBe(`${space} · ${work}`);
+    expect(heading.className).toContain("truncate");
+    expect(heading.className).toContain("flex-1");
+    expect(heading.querySelectorAll(".truncate")).toHaveLength(0);
+    expect(within(row).getByText(space).className).not.toContain("max-w");
+    expect(heading.contains(row.querySelector('[data-glide="tile"]'))).toBe(false);
+    expect(heading.contains(row.querySelector('[data-slot="agent-pin"]'))).toBe(false);
   });
 
   it("names a row by its Tab when the multiplexer numbered the Pane", () => {

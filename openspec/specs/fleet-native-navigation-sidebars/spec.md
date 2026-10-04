@@ -250,6 +250,7 @@ the work in the plain one at 12px and medium weight, with Collie's unseen mark a
 in 11px muted type, Collie's pane meta, then what the Pane is doing, with the row's age at that line's
 trailing end. The name SHALL follow the same rule the hierarchy uses —
 the operator's own Pane name, else the Tab's, never a number the multiplexer assigned. The row SHALL
+present the Space, separator and work name as one single-line phrase, applying ellipsis only at the trailing end of that entire phrase when it does not fit. The Space MUST NOT be separately truncated or allocated a smaller fixed share. Ordinal, status, Agent and unseen marks SHALL retain their own space outside that phrase, and the phrase MUST NOT overlap the actions. The row SHALL
 carry the `data-glide` part names Collie's own rows carry for the dot, the mark and the name.
 
 Collie's own Agent list and card MUST remain unchanged apart from the star port, so every other
@@ -299,6 +300,10 @@ alter triage classification, change manual Pane fit, or create a separate Agent 
 #### Scenario: Navigation reads the reordered roster
 - **WHEN** the operator cycles next or previous, selects a numbered row, or opens the command bar
 - **THEN** those surfaces use the Agent rail's same timestamp-ordered roster
+
+#### Scenario: The combined heading is wider than the row
+- **WHEN** the Space and work name together exceed the title area
+- **THEN** one trailing ellipsis shortens the combined phrase, with no separate Space ellipsis, while its fixed marks and actions remain visible
 
 ### Requirement: Navigation preferences are bounded and fail safe
 Sidebar preferred widths and hierarchy disclosure state SHALL be independent, versioned

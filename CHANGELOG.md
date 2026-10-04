@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Agent headings truncate as one phrase.** Keep Space and work name together with one trailing ellipsis.
+
 ## [3.7.5] - 2026-10-04
 
 **Lead-only frontend update; members do not redeploy.**

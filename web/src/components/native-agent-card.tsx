@@ -131,12 +131,11 @@ export function NativeAgentCard({
                 glide="dot"
               />
               <AgentIcon agent={agent.agent} className="size-3.5" glide="tile" />
-              {/* The Space gives up width first: it is the run every sibling row repeats, and the
-                  name beside it is the only thing telling two rows apart. */}
-              <span className="flex min-w-0 items-baseline gap-1 self-baseline">
-                <span className="min-w-0 max-w-[45%] shrink truncate text-muted-foreground">{project}</span>
-                <span className="shrink-0 text-muted-foreground">·</span>
-                <span data-glide="name" className="min-w-0 truncate font-medium text-foreground">
+              {/* Space and work name form one phrase: only its trailing end gives up width. */}
+              <span data-slot="native-agent-heading" className="min-w-0 flex-1 truncate self-baseline">
+                <span className="text-muted-foreground">{project}</span>
+                <span className="text-muted-foreground">{" · "}</span>
+                <span data-glide="name" className="font-medium text-foreground">
                   {name}
                 </span>
               </span>
