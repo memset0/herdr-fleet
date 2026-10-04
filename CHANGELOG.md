@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.7.7] - 2026-10-04
+
+**Lead-only frontend update; members do not redeploy.**
+
 ### Fixed
 
-- **Agent tags share the card surface.** Keep assigned tags on an aligned lower line inside the same background, border and state treatment.
+- **Agent tags share the card surface.** Keep assigned tags on an aligned lower line inside the same background, border and state treatment. ([f7983a5c](https://github.com/memset0/herdr-fleet/commit/f7983a5c))
 
 ## [3.7.6] - 2026-10-04
 
