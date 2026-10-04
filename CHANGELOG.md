@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.7.6] - 2026-10-04
+
+**Lead-only frontend update; members do not redeploy.**
+
 ### Fixed
 
-- **Agent headings truncate as one phrase.** Keep Space and work name together with one trailing ellipsis.
+- **Agent headings truncate as one phrase.** Keep Space and work name together with one trailing ellipsis. ([e3bc31c4](https://github.com/memset0/herdr-fleet/commit/e3bc31c4))
 
 ## [3.7.5] - 2026-10-04
 
