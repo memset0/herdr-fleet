@@ -11,8 +11,7 @@ routing, polling, and backend behavior.
 ### Requirement: Agent favorites use stable browser-local identity
 Herdr Fleet SHALL keep no favourite state of its own. A "favourite" is the adopted Collie's own
 per-device pin: the star a row carries reads and writes Collie's pin store, so pinning from the star
-and pinning from Collie's own hold or actions sheet are one mechanism with two entry points. Pin
-identity, bounds, dormancy and pruning are Collie's, unchanged.
+and pinning from Collie's own hold or actions sheet are one mechanism with two entry points. Bounds, browser locality and native entrypoints remain Collie's. For stable terminal identities, pin matching SHALL delegate to the Fleet terminal-binding contract and remain independent of layout and workspace names. Legacy rows SHALL migrate only under that contract; unsupported rows retain their existing place behavior.
 
 The star SHALL be pressed exactly when Collie would list the row in its Pinned group. Nothing Fleet
 does MAY send pin state to the Gateway, Collie bridge, Herdr, or another browser.
@@ -23,7 +22,7 @@ does MAY send pin state to the Gateway, Collie bridge, Herdr, or another browser
 
 #### Scenario: Pane identity is reused by another implementation
 - **WHEN** the same Host/session/Pane later reports a different Agent implementation in the same workspace
-- **THEN** the star follows Collie's pin identity, which is the row and its workspace, and Fleet adds no identity rule of its own
+- **THEN** the star stays pressed if the original stable terminal identity is unchanged, and a replacement terminal does not inherit the pin
 
 #### Scenario: The same pane id appears in another scope
 - **WHEN** two Agent rows share a Pane id but differ by Host or Herdr session

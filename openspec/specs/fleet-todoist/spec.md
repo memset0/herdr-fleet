@@ -1,8 +1,10 @@
+# fleet-todoist Specification
+
 ## Purpose
 
 Let operators manage tasks across all accessible Todoist projects beside their terminals and deliver tasks through the existing agent composer.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: OAuth connection is private and account-scoped
 Fleet SHALL connect through Todoist OAuth and keep credentials server-side. OAuth state SHALL be expiring, single-use and bound to the initiating Fleet session. The connection SHALL expose all accessible projects and their tasks with a shared Settings/sidebar display selector for All, one project or one saved filter; display selection SHALL NOT redefine OAuth authorization. Every mutation SHALL validate the active account generation, actual project membership and same-project parent relationships. Reconnection SHALL reject stale-view writes and retain account-qualified historical associations.
@@ -79,7 +81,7 @@ A task send SHALL require an explicit confirmation dialog showing the task title
 - **THEN** no message preparation, terminal submission or binding request occurs
 
 ### Requirement: Task details expand in place
-Selecting a task SHALL expand its description and actions immediately below that task inside one highlighted card, never at the bottom of the full list. The complete selected card SHALL have a visible background and border. Only one card SHALL be expanded at a time across task results and the bound-task area. Re-selecting it SHALL collapse it. Expansion and collapse SHALL animate downward in normal document flow using the existing Collapse primitive and respect reduced-motion preferences; hidden actions SHALL not remain focusable.
+Selecting a task SHALL expand its description and actions immediately below that task inside one highlighted card, never at the bottom of the full list. The complete selected card SHALL have a visible background and border. Only one card SHALL be expanded at a time across task results and the bound-task area. Re-selecting it SHALL collapse it. Expansion and collapse SHALL animate downward in normal document flow and respect reduced-motion preferences; hidden actions SHALL not remain focusable.
 
 #### Scenario: The operator opens a task in the middle of the list
 - **WHEN** the operator selects that task's title

@@ -7,14 +7,14 @@ Provide shared colored labels for panes, maintained on the lead and available co
 ## Requirements
 
 ### Requirement: Tags belong to pane places and are shared by the lead
-Fleet SHALL persist a global tag catalog and pane associations on the lead. An association SHALL use the same host, multiplexer session, pane identity and workspace-name guard as native pins, not agent implementation or conversation identity. Temporary absence SHALL NOT remove associations. Favorites SHALL remain unchanged and browser-local.
+Fleet SHALL persist a global tag catalog and pane associations on the lead. Stable associations SHALL use the shared Fleet terminal-binding contract, independent of layout names and agent conversation. Existing place associations SHALL migrate only with the unique evidence required by that contract; unresolved records SHALL remain recoverable. Temporary absence SHALL NOT remove associations. Favorites SHALL remain browser-local and use the same identity contract through their native store.
 
 #### Scenario: An agent is replaced in a pane
 - **WHEN** another agent or conversation occupies the same pane in the same workspace
 - **THEN** its tags remain attached
 
 #### Scenario: A pane identity is reused in another workspace
-- **WHEN** the same host/session/pane address appears with a different workspace name
+- **WHEN** the same host/session/pane address appears with a different terminal identity
 - **THEN** the old association does not apply to it
 
 #### Scenario: The lead restarts or another browser connects
@@ -22,8 +22,12 @@ Fleet SHALL persist a global tag catalog and pane associations on the lead. An a
 - **THEN** the saved tags, names and colors are available
 
 #### Scenario: A pane temporarily disappears
-- **WHEN** a tagged pane goes offline and later returns with its original place identity
+- **WHEN** a tagged pane goes offline and later returns with its original terminal identity
 - **THEN** its tags are retained and shown again
+
+#### Scenario: A workspace is renamed or a terminal moves
+- **WHEN** the terminal keeps its identity while its layout address or workspace name changes
+- **THEN** its tags continue to apply through the shared binding layer
 
 ### Requirement: Tag names resolve to a single colored definition
 Each tag SHALL have an immutable identifier, a nonempty name and a color. Creating a new name SHALL randomly choose a color from a predefined palette once and persist it. Creating an existing name SHALL reuse its identifier and color. Name comparison SHALL trim outer whitespace and normalize Unicode NFC, then compare case-sensitively. An operator SHALL be able to rename and recolor a definition globally without changing its associations. Renaming to another existing name SHALL be rejected without merging or overwriting either tag.

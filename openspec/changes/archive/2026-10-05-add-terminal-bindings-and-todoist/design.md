@@ -56,7 +56,7 @@ Owned modules: fleet/bindings/**, fleet/todoist/**, Fleet web adapters/component
 
 ## Migration Plan
 
-Implement and validate the binding substrate first, then consumer adapters and Todoist. Preserve legacy storage until successful conversion; use atomic private writes and schema validation. Run identity/reorder/move/absence/ID-replacement and consumer tests, both typechecks, lint, full backend/frontend suites, fork/privacy checks and isolated browser checks. Never move or close a user's live terminal to test. Release assessment is MINOR because peer-executed snapshot code changes; choose the next exact version from remote tags at release time. Automated code acceptance precedes any functional checkpoint publication. A reviewed build must then be deployed to the registered callback origin before live OAuth acceptance can run. Keep the change active until that operator-assisted acceptance passes; do not archive it merely because code was published. Rollback uses the prior product build and preserved legacy data; never discard newly created relations silently.
+Implement and validate the binding substrate first, then consumer adapters and Todoist. Preserve legacy storage until successful conversion; use atomic private writes and schema validation. Run identity/reorder/move/absence/ID-replacement and consumer tests, both typechecks, lint, full backend/frontend suites, fork/privacy checks and isolated browser checks. Never move or close a user's live terminal to test. Release assessment is MINOR because peer-executed snapshot code changes; choose the next exact version from remote tags at release time. Automated code acceptance precedes any functional checkpoint publication. A reviewed build must then be deployed to the registered callback origin before live OAuth acceptance can run. The original plan kept this change active for operator-assisted acceptance. The subsequent explicit closure decision accepts the implemented functional scope for archival; preserve unexecuted live checks as deferred handoff work, not completed acceptance. Rollback uses the prior product build and preserved legacy data; never discard newly created relations silently.
 
 ## Implementation refinements
 
@@ -90,7 +90,7 @@ were repeated for the combined tree.
 - Both typechecks, full-tree lint, fork-boundary audit, product build and source privacy audit passed.
 - Real Chromium checks cover desktop/mobile Agents–Todoist switching, pins/tags/task relations after a workspace move, nested-row geometry and 44px completion targets, and the cross-site OAuth return followed by a Strict-cookie same-origin continuation.
 - Focused checks cover exact migration/recovery, provider pagination, hierarchy blockers, description editing, many-to-many backlink retries and native guarded composer delivery without overwriting drafts or sending to shells.
-- Operator-assisted provider acceptance remains outstanding. Source publication and the lead deployment make the registered callback available; archive waits for the actual authorized-project checks.
+- Operator-assisted provider acceptance remains outstanding. Source publication and the lead deployment make the registered callback available. At closure, retain the unexecuted live-write checklist in the handoff.
 
 ## Revised all-project acceptance
 
@@ -129,3 +129,31 @@ Confirmation verification passed the complete root/frontend gates (13,950 fronte
 Promote the existing bind/unbind operation from expanded task details to an always-visible compact action beside each task title, including the separate bound-task area. Reuse the same backend relation/footer mutation, never the send/prepare path. Expose pressed state and a task-specific accessible label; allow plain terminals without an agent. Without a terminal reference, keep the action visible but disabled and show the existing open-terminal guidance above the list.
 
 Direct-binding entrypoint verification passed full backend/frontend gates (13,952 frontend passes), both typechecks, lint/build, audits and four browser cases. Focused UI tests bind/unbind a plain terminal while the task remains collapsed, assert the exact terminal reference and bound-area updates, and assert no prepare/send request. The no-terminal case keeps the control visible but disabled with guidance. Existing backend relation/footer tests continue to verify the reciprocal link behavior.
+
+
+## Closure and UI handoff
+
+The functional scope was accepted for archival. Further UI refinement is a separate change, using the synchronized capability specifications. The Todoist functional series shipped through 3.9.5; continue from current main with subsequent independent changes preserved, not by reverting to that tag. Do not continue implementation inside this archive. Existing concurrent navigation/card work is outside this change's ownership.
+
+### Main entrypoints
+
+- `web/src/components/fleet-todoist.tsx`: scope picker, Tree/List/Completed views, task rows, inline details, direct binding, editors and send confirmation.
+- `web/src/components/fleet-todoist-provider.tsx` and `web/src/lib/fleet-todoist.ts`: connection/snapshot state, mutation lifecycle, typed API and acknowledged-send receipts.
+- `fleet/todoist/`: provider/store/service/routes, hierarchy guards, query scopes, managed backlink footers and English task formatting.
+- `fleet/bindings/`: stable terminal references and shared association semantics used by favorites, tags and Todoist.
+- Native navigation shell/pane switcher and the Fleet settings section host the integration. Reuse existing UI primitives and keep translations aligned across all seven dictionaries.
+
+### Behavior to preserve during UI work
+
+- Scope (All/project/saved filter) and view are independent. Filtered Tree includes descendants; List/Completed keep exact matches. Hide empty project groups except when explicitly selecting that project.
+- Lists show recent updates first; history shows recent completions first. Completion invalidates prior history. Keep parent/child safety guards, stale-generation refusal and concurrent-edit protection.
+- Direct bind/unbind is visible on collapsed task rows, supports plain terminals and never sends a message. Relations are many-to-many and follow stable terminal identity, not layout positions.
+- Details animate directly below the selected row, with a highlighted card and reduced-motion behavior. Keep keyboard focus/escape behavior and responsive access.
+- Sending requires task/destination confirmation with Cancel initially focused. A changed destination/account/scope cancels pending confirmation. Respect native drafts and send guards; retrying an acknowledged send's binding must never send again.
+- Credentials remain server-side. Use only synthetic fixtures in public tests and documentation. Environment-specific rollout details remain in ignored local operator notes.
+
+### Verification and remaining acceptance
+
+The latest functional release passed both typechecks, full lint, full backend/frontend suites (13,952 frontend passes, 32 expected failures, 47 existing todo), fork/privacy audits, four Chromium cases and live read-only checks of the displayed controls. Relevant focused coverage lives in `fleet/todoist/*.test.ts`, `fleet/bindings/*.test.ts`, `web/src/components/fleet-todoist.test.tsx`, `web/src/lib/fleet-terminal-bindings.test.ts`, composer tests and `web/e2e/fleet-todoist.spec.ts`.
+
+Deferred, **not completed**: the full controlled real-account write checklist covering create/edit, guarded complete/reopen and opening the actual provider backlink after a layout change. Synthetic tests cover those paths, but that is not equivalent to provider-side acceptance. Do not use unrelated existing tasks or send work to a live agent merely to fill this checklist. Keep any later acceptance evidence separate from UI polish and report exactly what was exercised.
