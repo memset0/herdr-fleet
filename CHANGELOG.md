@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-10-05
+
+**Every member redeploys, lead first; existing SSH configurations remain valid.** External transport is an explicit operator selection and does not change native crew authority.
+
 ### Added
 
-- **Peers can use transport maintained outside Fleet.** Select strict external projections without SSH credentials or a link child; retain native crew authority, local services and the unchanged SSH mode.
+- **Peers can use transport maintained outside Fleet.** Select strict external projections without SSH credentials or a link child; retain native crew authority, local services and the unchanged SSH mode. ([56e5cb37](https://github.com/memset0/herdr-fleet/commit/56e5cb37))
 
 ## [3.8.2] - 2026-10-05
 
