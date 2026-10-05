@@ -87,6 +87,8 @@ interface NewSpaceSheetProps {
   onOpenWorktree?: (workspaceId: string, path: string) => void;
   /** Session scope for the listing read. */
   scope?: Scope;
+  /** A caller-selected Host: never apply picker fallback or allow implicit retargeting. */
+  fixedHost?: string;
 }
 
 // Create a new space (workspace). Both fields are optional and dictation-friendly: leave the
@@ -100,6 +102,7 @@ export function NewSpaceSheet({
   onCreateWorktree,
   onOpenWorktree,
   scope,
+  fixedHost,
 }: NewSpaceSheetProps) {
   useLocale();
   const [label, setLabel] = useState("");
@@ -119,7 +122,7 @@ export function NewSpaceSheet({
   // The member id, never `?h=`'s spelling: the lead has a real id here and only becomes an absent
   // `host` on the way out (see `create`), which is what keeps a solo/lead URL bare.
   const [host, setHost] = useState<string | undefined>(undefined);
-  const chosen = multiHost ? host : undefined;
+  const chosen = fixedHost ?? (multiHost ? host : undefined);
   const chosenServer = servers.find((s) => s.id === chosen);
   // The refusal for the machine actually selected. On a solo install there is no host dimension at
   // all, so there is nothing to refuse and the button behaves exactly as it did.
@@ -127,7 +130,9 @@ export function NewSpaceSheet({
   // The scope a create would be ADDRESSED to. The lead carries no `?h=` — absent means the lead — so
   // selecting it restores the bare URL, exactly as `server-switcher.tsx` does. Solo has no picker and
   // keeps the ambient scope.
-  const target: Scope | undefined = multiHost
+  const target: Scope | undefined = fixedHost !== undefined
+    ? scope
+    : multiHost
     ? { ...scope, host: chosen === leadHost(servers) ? undefined : chosen }
     : scope;
   // That machine's own folder list (#289): read when the sheet opens and when the picker moves, never
@@ -189,7 +194,7 @@ export function NewSpaceSheet({
   function create() {
     if (refusal !== undefined) return;
     // Solo passes nothing and keeps the ambient scope, exactly as before the picker existed.
-    const at: Scope | undefined = multiHost ? target : undefined;
+    const at: Scope | undefined = fixedHost !== undefined || multiHost ? target : undefined;
     onCreate({ label: label.trim() || undefined, cwd: cwd.trim() || undefined }, at);
     onClose();
   }
@@ -220,7 +225,10 @@ export function NewSpaceSheet({
             machine the list happened to be pointed at; the one thing an operator must not have to
             guess is which terminal a new shell just opened on. Solo renders none of this — the
             predicate is `isMultiHost`, the same data-not-mode rule every host surface keeps. */}
-        {multiHost && (
+        {fixedHost !== undefined && <p className="text-xs text-muted-foreground">
+          {t("space.new.host.label")}{": "}{chosenServer?.name ?? fixedHost}
+        </p>}
+        {multiHost && fixedHost === undefined && (
           <div className="flex flex-col gap-1">
             <span id="new-space-host" className="text-xs font-medium text-muted-foreground">
               {t("space.new.host.label")}

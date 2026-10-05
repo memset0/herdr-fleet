@@ -19,6 +19,14 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Create a workspace from its Host context menu.** Reuse the native form with the selected machine fixed and its primary session addressed.
+
+### Fixed
+
+- **Show the right sidebar on ordinary desktop windows again.** Both rails and the Pane switcher now share the 1280px breakpoint.
+
 ## [3.9.5] - 2026-10-05
 
 ### Changed

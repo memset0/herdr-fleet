@@ -7,7 +7,7 @@ import { server } from "@/test/setup";
 import { createMemoryRouter, Link, Outlet, RouterProvider } from "react-router";
 import { useEffect } from "react";
 
-import { NavigationPreferenceStore } from "../../../fleet/ui/native-navigation/preferences.ts";
+import { NavigationPreferenceStore, SIDEBAR_BOUNDS } from "../../../fleet/ui/native-navigation/preferences.ts";
 import { __resetPins, currentPins, pinMatcher, setPinned } from "@/lib/pins";
 import type { HomeData } from "@/lib/loaders";
 import { NativeHierarchyToggle, useNativePaneSwitcher } from "./native-navigation-context";
@@ -167,17 +167,19 @@ describe("NativeNavigationShell", () => {
     }
   });
 
-  it("stands the hierarchy from xl, capped for the route, and the Agents rail from 2xl", () => {
+  it("stands both rails and separators from xl with room for the native route", () => {
     renderShell();
     const herds = screen.getByRole("complementary", { name: "Herds" });
     const agents = screen.getByRole("complementary", { name: "Agents / Todoist" });
     const tokens = (el: Element) => el.className.split(/\s+/u);
-    expect(tokens(herds)).toEqual(expect.arrayContaining(["xl:flex", "max-2xl:max-w-[calc(100vw-66.25rem)]"]));
-    expect(tokens(agents)).toContain("2xl:flex");
-    expect(tokens(agents)).not.toContain("xl:flex");
+    expect(tokens(herds)).toContain("xl:flex");
+    expect(tokens(herds)).not.toContain("max-2xl:max-w-[calc(100vw-66.25rem)]");
+    expect(tokens(agents)).toContain("xl:flex");
+    expect(tokens(agents)).not.toContain("2xl:flex");
     const [left, right] = document.querySelectorAll('[role="separator"]');
     expect(tokens(left!)).toContain("xl:block");
-    expect(tokens(right!)).toContain("2xl:block");
+    expect(tokens(right!)).toContain("xl:block");
+    expect(1280 - SIDEBAR_BOUNDS.left.max - SIDEBAR_BOUNDS.right.max - 2 * 4).toBeGreaterThanOrEqual(392);
     // Collie's sheet-title voice for both rail titles and the drawer's.
     for (const title of [herds, agents].map((rail) => rail.querySelector("span")!)) {
       expect(tokens(title)).toEqual(expect.arrayContaining(["text-sm", "font-semibold", "text-foreground"]));

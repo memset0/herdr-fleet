@@ -587,12 +587,11 @@ export function AgentChat({
   const hereKey = agent ? paneRowKey(agent) : null;
   const elsewhereNeedsYou = agents.some((a) => a.status === "blocked" && paneRowKey(a) !== hereKey);
   // DOWNSTREAM PORT (native-navigation-sidebars-port) — no switcher entry at the breakpoint where
-  // the Fleet shell's Agents rail stands (`2xl`, 96rem): the rail already lists every pane. Between
-  // `xl` and `2xl` only the hierarchy rail stands, so the entry is drawn and carries the Agents rail. The entry was a grip above the composer that carried `xl:hidden`; upstream moved it onto
-  // the actions belt as the Switch pill, which the belt draws only when handed a handle, so the entry
-  // stands down here by not being handed one. The sheet, the gesture and every narrower width are
-  // unchanged.
-  const railsShown = useMediaQuery("(min-width: 96rem)");
+  // the Fleet shell's Agents rail stands (`xl`, 80rem): the rail already lists every pane.
+  // Upstream moved the entry onto the actions belt as the Switch pill, which the belt draws only
+  // when handed a handle, so it stands down here by not being handed one. The sheet, the gesture
+  // and every narrower width are unchanged.
+  const railsShown = useMediaQuery("(min-width: 80rem)");
   const pullHandle =
     !railsShown && (agents.length + shellPanes.length > 0 || launchers.length > 0)
       ? {

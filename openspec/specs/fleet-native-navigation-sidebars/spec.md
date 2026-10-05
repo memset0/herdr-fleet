@@ -60,14 +60,12 @@ switcher as the wide-layout Agent rail.
 
 ### Requirement: Wide layouts expose independent local sidebars
 On a wide viewport (from 80rem) Herdr Fleet SHALL display a local Host → Space → Tab → Pane hierarchy
-to the left of the native route column. From a wider viewport (96rem) it SHALL also display a local
-Agent rail to the right. Fleet MUST NOT offer a control that permanently hides a rail that stands at
+to the left of the native route column and a local Agent/Todoist rail to the right. Fleet MUST NOT offer a control that permanently hides a rail that stands at
 the current width.
 
-Between those two widths only the hierarchy rail stands, and its drawn width SHALL be capped so the
-route column keeps at least 66rem — wider than the whole viewport the drawer layout gives the route at
-64rem — so a viewport that gains a rail never leaves the route narrower than a viewport that has
-none. From 96rem both rails stand at their preferred widths.
+Both rails and their separators SHALL appear together from 80rem at their independent preferred
+widths, without an intermediate hierarchy-only layout. At that threshold the route column SHALL
+retain at least 392 CSS pixels even when both sidebars are at their maximum supported widths.
 
 Each sidebar SHALL have an independent preferred width. Its separator SHALL be pointer-draggable and
 keyboard operable, SHALL expose separator semantics and current bounds, and SHALL clamp width to
@@ -86,7 +84,7 @@ Reduced-motion preference MUST remove non-essential sidebar and overlay animatio
 
 #### Scenario: The viewport is 80rem wide
 - **WHEN** the viewport is at least 80rem and below 96rem
-- **THEN** the hierarchy rail stands, the Agent rail does not, and the route column is wider than the route column of a 64rem viewport
+- **THEN** both rails and separators stand at their preferred widths, exposing Agents and Todoist without widening the viewport
 
 #### Scenario: The viewport is 96rem wide
 - **WHEN** the viewport is at least 96rem
@@ -95,6 +93,10 @@ Reduced-motion preference MUST remove non-essential sidebar and overlay animatio
 #### Scenario: Reduced motion is requested
 - **WHEN** the browser reports a reduced-motion preference
 - **THEN** the shell remains fully operable without non-essential rail, drawer, or overlay transition motion
+
+#### Scenario: Both sidebars have their maximum widths at the desktop threshold
+- **WHEN** the viewport is 1280 CSS pixels and both sidebars have their maximum supported widths
+- **THEN** the route column retains at least 392 CSS pixels
 
 ### Requirement: Responsive navigation surfaces are mutually exclusive and focus-safe
 Below the hierarchy rail's threshold, Herdr Fleet SHALL keep the existing route content native,
@@ -127,8 +129,8 @@ entry, and Fleet MUST NOT add a second Agent trigger or Agent drawer of its own.
 - **THEN** the responsive hierarchy surface closes, the native outlet navigates, and focus is not left inside hidden content
 
 #### Scenario: Only the hierarchy rail stands
-- **WHEN** the viewport is wide enough for the hierarchy rail and not for the Agent rail
-- **THEN** the Pane page offers its pane-switcher entry, and the entry presents the Agent rail's rows
+- **WHEN** the viewport reaches the desktop rail threshold
+- **THEN** the hierarchy rail never stands alone: the Agent/Todoist rail and both separators appear at the same threshold
 
 ### Requirement: Hierarchy is derived locally and follows native routes
 The hierarchy SHALL derive its Host, Space, Tab, and Pane structure only from the current root
@@ -834,7 +836,7 @@ fork's menu for a pointer, Collie's bottom sheet for a thumb.
 
 A Space row MUST NOT offer to rename a Space while no multiplexer capability, adapter verb, bridge
 route or client call carries that write, whatever the multiplexer underneath may support on its own —
-a row must never offer what cannot land. A Host row SHALL continue to offer nothing.
+a row must never offer what cannot land. Host workspace creation SHALL follow the separate Host action requirement.
 
 #### Scenario: Operator asks a Space row for its actions
 
@@ -951,3 +953,29 @@ batch endpoint or a client-side seen state for this.
 #### Scenario: The phone's switcher sheet
 - **WHEN** the operator opens the Pane page's switcher sheet while a pane is unseen
 - **THEN** the sheet's rail shows the same control and activating it marks the panes seen
+
+### Requirement: A Host row creates a workspace on its own machine
+
+A Host row SHALL expose a New workspace action through the existing pointer context menu and touch actions sheet, including Hosts with no workspaces. Activating the action SHALL open the existing creation form with the selected Host fixed and its primary session addressed, independently of the current route's Host or session. The form SHALL preserve optional name/directory fields and use the existing create, revalidation, fresh-pane navigation and error reporting. Closing without creating SHALL perform no write. The target MUST NOT silently fall back to a different Host.
+
+The action SHALL respect device/pairing refusals, the selected Host's write refusal and its create-space capability. Refused or incompatible Hosts SHALL show the existing refusal instead of a live create action; unsupported multiplexers SHALL show their capability note. A Host becoming unavailable while the form is open SHALL prevent creation rather than retarget it. Creating SHALL leave other row actions unchanged.
+
+#### Scenario: Operator right-clicks a Host
+- **WHEN** the operator right-clicks a writable Host
+- **THEN** the pointer menu offers New workspace without disclosing or navigating the Host row
+
+#### Scenario: Operator creates on another Host
+- **WHEN** the operator opens the form for a Host different from the route's Host and submits it
+- **THEN** creation and fresh-pane navigation address that selected Host's primary session, with no ambient scope inheritance
+
+#### Scenario: Operator long-presses an empty Host
+- **WHEN** a touch operator long-presses a Host with no workspaces
+- **THEN** its actions sheet offers the same create form and fixed target
+
+#### Scenario: Creation is refused
+- **WHEN** pairing, device authorization, the selected Host's health or its multiplexer refuses creation
+- **THEN** the relevant existing refusal is shown and no create request is sent to another Host
+
+#### Scenario: Target stops accepting writes
+- **WHEN** the fixed Host becomes unavailable while the form is open
+- **THEN** submitting creates nothing and the target never changes

@@ -82,13 +82,14 @@ export type NavigationIcon = "group" | "agent" | "shell" | "host" | "none";
 export type NavigationStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
 /**
- * What a row's own actions would act on — the Pane it stands for, or the Tab it groups.
+ * What a row's own actions act on: a Host, Space, Tab or Pane.
  *
  * Separate from {@link NavigationTarget} because the two answer different questions: a Space row can
  * be activated and has nothing to rename here, and a Tab group row can be renamed and activates
  * nothing. A row with neither offers no actions at all.
  */
 export type NavigationSubject =
+  | { kind: "host"; hostId: string; label: string }
   | { kind: "pane"; paneId: string }
   | { kind: "tab"; tabId: string }
   | { kind: "space"; workspaceId: string };
@@ -402,6 +403,7 @@ function hostRow(
     label: input.hostLabel,
     icon: "host",
     hostId,
+    subject: { kind: "host", hostId, label: input.hostLabel },
     selected: false,
     children: spaces,
   };

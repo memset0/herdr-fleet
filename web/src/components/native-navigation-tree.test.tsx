@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import {
@@ -341,4 +341,14 @@ describe("NativeNavigationTree", () => {
     });
     expect(onRowActions).toHaveBeenCalledExactlyOnceWith({ kind: "pane", paneId: "p1" });
   });
+});
+
+it("opens Host actions on an empty machine without navigation", () => {
+  const onRowActions = vi.fn(), onOpenSpace = vi.fn(), onOpenPane = vi.fn();
+  const empty = deriveNavigationTree({ hosts: [{ hostId: "example-peer", hostLabel: "Example peer", workspaces: [], tabs: [], agents: [], shellPanes: [] }] });
+  render(<NativeNavigationTree tree={empty} onRowActions={onRowActions} onOpenSpace={onOpenSpace} onOpenPane={onOpenPane} />);
+  fireEvent.contextMenu(screen.getByRole("button", { name: /Example peer/ }));
+  expect(onRowActions).toHaveBeenCalledExactlyOnceWith({ kind: "host", hostId: "example-peer", label: "Example peer" });
+  expect(onOpenSpace).not.toHaveBeenCalled();
+  expect(onOpenPane).not.toHaveBeenCalled();
 });

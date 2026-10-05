@@ -64,7 +64,7 @@ import { NativeNavigationProvider } from "@/components/native-navigation-context
 import { NativeNavigationTree } from "@/components/native-navigation-tree";
 import { FleetConfirmDialog } from "@/components/fleet-confirm-dialog";
 import { FleetRenameDialog, type RenameTarget } from "@/components/fleet-rename-dialog";
-import { FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
+import { FleetHostActions, FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
 import { useStripBandOpen } from "@/components/ui/strip-host";
 import { findPane, hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
@@ -101,10 +101,10 @@ interface NativeNavigationShellProps {
  * siblings of the column the header heads, so the header's width is the column's by construction
  * and stays correct when the prerelease strip appears or the safe-area inset changes.
  *
- * The hierarchy rail stands from `xl` and the Agents rail from `2xl` (see Rail). There is no collapse
+ * Both rails stand from `xl` (see Rail). There is no collapse
  * control, because a rail the operator keeps open is not worth a control that hides it — the widths
  * are the adjustment, and they persist. Below `xl` the hierarchy arrives as one overlay from the
- * header's leading trigger, and below `2xl` the Agent list is presented by the Pane page's own
+ * header's leading trigger, and below `xl` the Agent list is presented by the Pane page's own
  * switcher entry (components/native-navigation-context.tsx states that seam).
  */
 /**
@@ -614,7 +614,6 @@ export function NativeNavigationShell({
             name a face. Here rather than in a route because it must outlive every navigation. */}
         <FleetWebfonts />
         <Rail
-          side="left"
           title={t("fleet.navigation.hierarchy")}
           width={preferences.left.preferredWidth}
           collapsed={railsCollapsed}
@@ -648,7 +647,6 @@ export function NativeNavigationShell({
           collapsed={railsCollapsed}
         />
         <Rail
-          side="right"
           title={t("fleet.todoist.sidebar")}
           width={preferences.right.preferredWidth}
           collapsed={railsCollapsed}
@@ -733,6 +731,12 @@ export function NativeNavigationShell({
             else revalidator.revalidate();
           }}
         />
+        <FleetHostActions
+          open={actions?.kind === "host"}
+          onClose={() => setActions(null)}
+          host={actions?.kind === "host" ? { id: actions.hostId, label: actions.label } : null}
+          readOnly={readOnly}
+        />
         <FleetSpaceActions
           open={actionSpace !== null}
           onClose={() => setActions(null)}
@@ -780,14 +784,12 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
  * under a 11px label to line up with a header edge that, without a rule, nobody can see.
  */
 function Rail({
-  side,
   title,
   width,
   collapsed,
   children,
   footer,
 }: {
-  side: SidebarSide;
   title: string;
   width: number;
   collapsed: boolean;
@@ -814,11 +816,9 @@ function Rail({
       // SEPARATOR, not here — see RailSeparator.
       className={cn(
         "hidden min-h-0 shrink-0 flex-col overflow-hidden bg-chrome transition-[width,opacity] duration-200 motion-reduce:transition-none",
-        // TWO BREAKPOINTS, ONE RULE: a rail may never leave the route narrower than the drawer layout
-        // leaves it. Both rails at 1280px left the pane 672px, against 1024px on a 1024px screen. So
-        // the hierarchy stands from `xl` and is capped there so the route keeps at least 66rem, and
-        // the Agents rail stands from `2xl`; below it the Pane page's own Switch entry carries it.
-        side === "left" ? "xl:flex max-2xl:max-w-[calc(100vw-66.25rem)]" : "2xl:flex",
+        // Both rails stand from 80rem: maximum widths and two 4px separators leave the route
+        // 392px at 1280px. Waiting for 2xl hides Agents and Todoist on ordinary desktop windows.
+        "xl:flex",
         collapsed && "pointer-events-none opacity-0",
       )}
     >
@@ -910,7 +910,7 @@ function RailSeparator({
       // rule lands exactly where the ground changes, which is what a rule is for (DESIGN.md §4).
       className={cn(
         "group relative z-10 hidden shrink-0 cursor-col-resize bg-chrome outline-none transition-[width,opacity] duration-200 motion-reduce:transition-none",
-        side === "left" ? "xl:block" : "2xl:block",
+        "xl:block",
         collapsed ? "w-0 opacity-0" : "w-1",
         side === "left" ? "border-r border-rule" : "border-l border-rule",
       )}

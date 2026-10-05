@@ -9,6 +9,8 @@ import {
   FleetMenuItem,
 } from "@/components/fleet-context-menu";
 import { FleetRenameDialog } from "@/components/fleet-rename-dialog";
+import { NewSpaceSheet } from "@/components/new-space-sheet";
+import type { Scope } from "@/lib/scope";
 import { ActionRow } from "@/components/action-sheet-rows";
 import { BottomSheet } from "@/components/ui/sheet";
 import { useSpaceActions } from "@/hooks/use-spaces";
@@ -466,4 +468,58 @@ export function FleetSpaceActions({ open, onClose, space, readOnly = false }: Fl
       )}
     </BottomSheet>
   );
+}
+
+/** Host creation uses the native form, but its target is the row rather than the ambient route. */
+export function FleetHostActions({ open, onClose, host, readOnly = false }: {
+  open: boolean;
+  onClose: () => void;
+  host: { id: string; label: string } | null;
+  readOnly?: boolean;
+}) {
+  useLocale();
+  const coarse = useCoarseOnly();
+  const at = useClaimedPoint(open, coarse);
+  const [creatingOn, setCreatingOn] = useState<typeof host>(null);
+  const { lead, servers } = useCrew();
+  const selected = creatingOn ?? host;
+  // An explicit empty scope addresses the lead's primary session instead of inheriting a route.
+  const scope: Scope = { host: selected?.id && selected.id !== lead ? selected.id : undefined };
+  const hostBlock = useHostWriteBlock(scope.host);
+  const canCreate = useMuxCapability("createSpace", scope);
+  const { newSpace, creatingSpace } = useSpaceActions();
+  const targetMissing = scope.host !== undefined && servers.length > 0 && !servers.some((server) => server.id === scope.host);
+  const blocked = readOnly || hostBlock !== undefined || targetMissing;
+  const label = host?.label ?? "";
+  const add = () => {
+    if (!host || blocked || !canCreate.capable || creatingSpace) return;
+    setCreatingOn(host);
+    onClose();
+  };
+  const notice = blocked ? (
+    <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
+      {readOnly ? t("paneActions.readOnly") : t("paneActions.hostBlockSuffix", { hostBlock: hostBlock ?? t("connection.host.unreachablePlain") })}
+    </p>
+  ) : !canCreate.capable ? (
+    <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
+      {canCreate.note || t("paneActions.empty.fallback")}
+    </p>
+  ) : null;
+  return <>
+    {at !== null ? <FleetContextMenu open={open} at={at} onClose={onClose} label={label}>
+      {notice ?? <FleetMenuItem icon={<Plus className="size-3 shrink-0 text-muted-foreground" />} label={t("space.new.title")} onSelect={add} />}
+    </FleetContextMenu> : <BottomSheet open={open} onClose={onClose} title={label}>
+      {notice ?? <ActionRow icon={<Plus className="size-4 shrink-0 text-muted-foreground" />} label={t("space.new.title")} onClick={add} />}
+    </BottomSheet>}
+    <NewSpaceSheet
+      open={creatingOn !== null}
+      onClose={() => setCreatingOn(null)}
+      fixedHost={creatingOn?.id}
+      scope={scope}
+      onCreate={(opts) => {
+        if (!creatingOn || blocked || !canCreate.capable || creatingSpace) return;
+        void newSpace(opts, scope);
+      }}
+    />
+  </>;
 }
