@@ -64,6 +64,18 @@ test("right sidebar switches independently and terminal associations survive a w
   expect(new Set(heights).size).toBeGreaterThan(3);
   await expect(childCard).toHaveAttribute("data-selected", "true");
   await expect(childCard.getByRole("button", { name: "Edit task", exact: true })).toBeVisible();
+  let sendRequests = 0;
+  await page.route(/\/fleet\/api\/todoist\/(prepare|bind)$/, (route) => { sendRequests++; return route.fulfill({ json: { ok: true } }); });
+  await childCard.getByRole("button", { name: "Send to agent", exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "Send this task to the agent?" });
+  await expect(confirm).toContainText(child.title);
+  await expect(confirm).toContainText(fixtureSnapshot.agents[0]!.paneId);
+  await expect(confirm.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+  expect(sendRequests).toBe(0);
+  await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  expect(sendRequests).toBe(0);
+
   await page.screenshot({ path: test.info().outputPath("todoist-desktop.png") });
   await rail.getByRole("button", { name: "Agents", exact: true }).click();
   moved = true;

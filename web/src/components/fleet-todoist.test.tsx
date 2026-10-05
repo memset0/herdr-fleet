@@ -69,6 +69,14 @@ it("a successful native send followed by a failed link retries only the link", a
   const view = renderPane(<><ComposerPort /><FleetTodoistPane pane={pane} /></>);
   await user.click(await view.findByRole("button", { name: /^Child/ }));
   await user.click(view.getByRole("button", { name: "Send to agent" }));
+  const confirmation = await view.findByRole("dialog", { name: "Send this task to the agent?" });
+  expect(within(confirmation).getByText("Child")).toBeInTheDocument();
+  expect(confirmation).toHaveTextContent("codex · member-a · default · w1:p1");
+  expect(prepared).toBe(0); expect(bound).toBe(0); expect(submit).not.toHaveBeenCalled();
+  await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
+  expect(prepared).toBe(0); expect(bound).toBe(0);
+  await user.click(view.getByRole("button", { name: "Send to agent" }));
+  await user.click(view.getByRole("button", { name: "Confirm send" }));
   await waitFor(() => expect(bound).toBe(1));
   const retry = await view.findByRole("button", { name: "Retry binding only" });
   await waitFor(() => expect(retry).toBeEnabled());
@@ -184,4 +192,24 @@ it("a directly selected empty project still shows its empty and create state", a
   const view = renderPane();
   expect(await view.findByRole("region", { name: "Example project" })).toHaveTextContent("No tasks in this view.");
   expect(view.getByRole("button", { name: "Add task" })).toBeEnabled();
+});
+
+it("Escape and a changed terminal invalidate send confirmation without requests", async () => {
+  let attempts = 0;
+  server.use(http.post(/\/fleet\/api\/todoist\/(prepare|bind)$/, () => { attempts++; return HttpResponse.json({ ok: true }); }));
+  const user = userEvent.setup();
+  function App({ moved = false }: { moved?: boolean }) {
+    return <MemoryRouter><FleetTodoistProvider><FleetTodoistPane pane={moved ? { ...pane, paneId: "w2:p3", bindingId: "herdr:term_two" } : pane} /></FleetTodoistProvider></MemoryRouter>;
+  }
+  const view = render(<App />);
+  await user.click(await view.findByRole("button", { name: /^Child/ }));
+  await user.click(view.getByRole("button", { name: "Send to agent" }));
+  const dialog = await view.findByRole("dialog", { name: "Send this task to the agent?" });
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
+  await user.keyboard("{Escape}");
+  expect(view.queryByRole("dialog")).toBeNull();
+  await user.click(view.getByRole("button", { name: "Send to agent" }));
+  view.rerender(<App moved />);
+  await waitFor(() => expect(view.queryByRole("dialog")).toBeNull());
+  expect(attempts).toBe(0);
 });

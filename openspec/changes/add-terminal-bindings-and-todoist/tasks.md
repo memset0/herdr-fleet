@@ -15,7 +15,7 @@
 
 - [x] 3.1 Add right-rail and narrow-screen Todoist access, recent-first list/history and project-grouped tree views, display-scope labels, bound-task area and destination-aware task forms and animated inline task-detail cards; verify empty-project visibility, multiple projects, nesting, pagination and keyboard behavior.
 - [x] 3.2 Add connection settings with All/project/filter selection and translated status/blocker dialogs; verify secrets never reach browser state and account changes invalidate old actions; diagnose and verify the reported Connect interaction.
-- [x] 3.3 Add description-led English task formatting and a narrow native composer action port; verify ancestor titles, footer removal, draft protection, target changes and existing send refusal behavior.
+- [x] 3.3 Require task/destination confirmation before sending, invalidate it on target changes, and add description-led English task formatting and a narrow native composer action port; verify ancestor titles, footer removal, draft protection, target changes and existing send refusal behavior.
 - [x] 3.4 Separate send and relation outcomes so retries never resend acknowledged messages; verify partial failures and retry recovery across the composed flow.
 
 ## 4. Acceptance and publication

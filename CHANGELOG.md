@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Confirm the task and destination before sending to an agent.** Cancel or dismiss without sending; invalidate confirmation after target or scope changes, and preserve binding-only retries.
+
 ## [3.9.3] - 2026-10-05
 
 ### Fixed

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 import { useNav } from "@/hooks/use-nav";
-import { sameTerminal, terminalReference, type BindingPane } from "../../../fleet/bindings/identity.ts";
+import { sameTerminal, terminalReference, terminalKey, type BindingPane } from "../../../fleet/bindings/identity.ts";
 import { taskAncestors, taskBody, type TodoTask, type TodoProject, type TodoFilter } from "../../../fleet/todoist/model.ts";
 import { taskRows } from "../../../fleet/todoist/view.ts";
 import { FleetPanel } from "@/components/fleet-panel";
@@ -21,7 +21,7 @@ function displayBody(description: string): string {
   try { return taskBody(description); } catch { return description; }
 }
 
-type TaskPane = BindingPane & { readonly agent?: string; readonly kind?: string };
+type TaskPane = BindingPane & { readonly agent?: string; readonly kind?: string; readonly terminalTitle?: string; readonly tabLabel?: string };
 
 const FIELD = "min-h-11 w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 
@@ -39,9 +39,10 @@ function errorText(code: string): string {
   return t("fleet.todoist.failed");
 }
 
-export function TodoistDialog({ title, close, children }: { title: string; close(): void; children: ReactNode }) {
+export function TodoistDialog({ title, close, children, focusCancel = false }: { title: string; close(): void; children: ReactNode; focusCancel?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useDialogFocus(true, ref);
+  useEffect(() => { if (focusCancel) ref.current?.querySelector<HTMLButtonElement>("button[data-todoist-cancel]")?.focus(); }, [focusCancel]);
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
       if (!ref.current?.contains(document.activeElement)) return;
@@ -194,9 +195,12 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
   const [view, setView] = useState(readView), [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const [selectedFromBound, setSelectedFromBound] = useState(false);
+  const [sendRequest, setSendRequest] = useState<{ task: TodoTask; key: string; target: string } | null>(null);
   const [editor, setEditor] = useState<{ task?: TodoTask; parentId: string | null } | null>(null);
   const [history, setHistory] = useState<TodoistHistory | null>(null), [showHistory, setShowHistory] = useState(false);
   const ref = pane ? terminalReference(pane) : null;
+  const sendKey = JSON.stringify([ref ? terminalKey(ref) : null, pane?.paneId, pane?.agent, state?.accountId, state?.generation]);
+  useEffect(() => { if (sendRequest && sendRequest.key !== sendKey) setSendRequest(null); }, [sendRequest, sendKey]);
   useLocale();
   useEffect(() => {
     setHistory(null); setSelectedTask(null); setEditor(null);
@@ -253,7 +257,11 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
         <Button size="sm" variant="outline" disabled={todo.busy || task.completed} onClick={() => setEditor({ parentId: task.id })}>{t("fleet.todoist.addChild")}</Button>
         <Button size="sm" variant="outline" disabled={todo.busy || !ref} onClick={() => { if (ref) void todo.mutate(boundIds.has(task.id) ? "unbind" : "bind", { taskId: task.id, terminal: { ...ref } }); }}>{t(boundIds.has(task.id) ? "fleet.todoist.unbind" : "fleet.todoist.bind")}</Button>
         {ref && bound.some((link) => link.taskId === task.id && link.state === "pending") && !(state.accountId && hasDeliveryReceipt(deliveryReceipt(state.accountId, task.id, ref))) && <Button size="sm" variant="outline" disabled={todo.busy} onClick={() => void todo.mutate("bind", { taskId: task.id, terminal: { ...ref } })}>{t("fleet.todoist.retryBinding")}</Button>}
-        <Button size="sm" disabled={todo.busy || !ref || !pane?.agent || pane.agent === "shell" || pane.kind === "shell"} onClick={() => sendTask(task)}>{t(ref && state.accountId && hasDeliveryReceipt(deliveryReceipt(state.accountId, task.id, ref)) ? "fleet.todoist.retryBinding" : "fleet.todoist.send")}</Button>
+        <Button size="sm" disabled={todo.busy || !ref || !pane?.agent || pane.agent === "shell" || pane.kind === "shell"} onClick={() => {
+          if (!ref || !pane || !state.accountId) return;
+          if (hasDeliveryReceipt(deliveryReceipt(state.accountId, task.id, ref))) { sendTask(task); return; }
+          setSendRequest({ task, key: sendKey, target: [pane.agent, ref.host || t("fleet.navigation.thisHost"), ref.session, pane.terminalTitle || pane.tabLabel, pane.paneId].filter(Boolean).join(" · ") });
+        }}>{t(ref && state.accountId && hasDeliveryReceipt(deliveryReceipt(state.accountId, task.id, ref)) ? "fleet.todoist.retryBinding" : "fleet.todoist.send")}</Button>
         <a className="inline-flex min-h-11 items-center gap-1 px-2 text-xs underline" href={task.url} target="_blank" rel="noreferrer">Todoist<ExternalLink className="size-3" aria-hidden /></a>
       </div>
       {showHistory && task.recurring && !task.completed && <p className="text-xs text-muted-foreground">{t("fleet.todoist.recurringHistory")}</p>}
@@ -308,6 +316,18 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
       </li>;
     })}</ul></section>)}
     {showHistory && <div className="space-y-2 text-xs">{history && <p>{t("fleet.todoist.historyRange", { since: new Date(history.since).toLocaleDateString(), until: new Date(history.until).toLocaleDateString() })}</p>}<Button variant="outline" size="sm" disabled={todo.busy} onClick={loadHistory}>{t("fleet.todoist.older")}</Button></div>}
+    {sendRequest && sendRequest.key === sendKey && <TodoistDialog focusCancel title={t("fleet.todoist.confirmSend")} close={() => setSendRequest(null)}>
+      <p className="break-words font-content text-sm font-medium">{sendRequest.task.title}</p>
+      <p className="break-words text-xs text-muted-foreground">{t("fleet.todoist.sendDestination", { target: sendRequest.target })}</p>
+      <p className="text-xs">{t("fleet.todoist.sendConfirmHint")}</p>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" data-todoist-cancel="" onClick={() => setSendRequest(null)}>{t("fleet.todoist.cancel")}</Button>
+        <Button type="button" disabled={todo.busy} onClick={() => {
+          if (sendRequest.key !== sendKey) return;
+          const task = sendRequest.task; setSendRequest(null); sendTask(task);
+        }}>{t("fleet.todoist.confirmSendButton")}</Button>
+      </div>
+    </TodoistDialog>}
     {editor && <TaskEditor {...editor} close={() => setEditor(null)} />}
   </div>;
 }

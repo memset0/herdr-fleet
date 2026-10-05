@@ -662,6 +662,9 @@ Existing drafts and attachments are preserved; a blocked submission retains the 
 Bare shells, raw typing, unavailable identities and an armed override cannot receive this shortcut.
 The English message makes the description the primary requirement, includes ancestor titles without
 ancestor descriptions, omits the managed link footer, and never requests automatic task completion.
+Send to agent first asks you to confirm the task title and destination. Cancel or dismissal sends
+nothing; changing the destination or display scope invalidates the confirmation.
+
 After an acknowledged send, a failed backlink leaves a receipt: **Retry binding only** repairs the
 relation without sending again. Browser storage retains that receipt across reloads when available;
 without storage, the current page retains it in memory. Provider write failures and unverified send

@@ -64,7 +64,7 @@ Fleet SHALL use the common terminal binding contract for many-to-many task assoc
 - **THEN** both terminals highlight the task and the description exposes both stable links
 
 ### Requirement: Delivery uses the native composer and description-led English context
-A one-click task send SHALL use the same guarded submission path as the native composer and automatically associate the task with its terminal. The English message SHALL include the title, description, ancestor titles without their descriptions, and task URL. It SHALL treat the description as the primary requirement and parent titles as context, request clarification for material ambiguity, require a result and verification report, and prohibit automatic Todoist completion. Managed backlink text SHALL be omitted. Existing drafts MUST NOT be silently overwritten.
+A task send SHALL require an explicit confirmation dialog showing the task title and destination agent/terminal before any preparation, message submission or new binding. Cancel, Escape and dismissal SHALL produce no send or binding. A changed account, scope generation or terminal destination SHALL invalidate the pending confirmation. Binding-only retries after an acknowledged send SHALL not request another send confirmation or resend. A confirmed task send SHALL use the same guarded submission path as the native composer and automatically associate the task with its terminal. The English message SHALL include the title, description, ancestor titles without their descriptions, and task URL. It SHALL treat the description as the primary requirement and parent titles as context, request clarification for material ambiguity, require a result and verification report, and prohibit automatic Todoist completion. Managed backlink text SHALL be omitted. Existing drafts MUST NOT be silently overwritten.
 
 #### Scenario: Backlink writing fails after a successful send
 - **WHEN** delivery succeeded but linking remains incomplete
@@ -73,6 +73,10 @@ A one-click task send SHALL use the same guarded submission path as the native c
 #### Scenario: The composer refuses input
 - **WHEN** the target is locked, missing, or has a blocking dialog
 - **THEN** Todoist delivery follows the native refusal and does not claim a successful send
+
+#### Scenario: The operator cancels a mistaken send
+- **WHEN** Send to agent opens the confirmation and the operator cancels or dismisses it
+- **THEN** no message preparation, terminal submission or binding request occurs
 
 ### Requirement: Task details expand in place
 Selecting a task SHALL expand its description and actions immediately below that task inside one highlighted card, never at the bottom of the full list. The complete selected card SHALL have a visible background and border. Only one card SHALL be expanded at a time across task results and the bound-task area. Re-selecting it SHALL collapse it. Expansion and collapse SHALL animate downward in normal document flow using the existing Collapse primitive and respect reduced-motion preferences; hidden actions SHALL not remain focusable.
