@@ -91,14 +91,13 @@ installed operating-system service.
 A schema-1 Lead SHALL continue to run one loopback Collie child and one loopback authenticated
 Gateway child with unchanged inputs. A schema-2 Lead SHALL run the same two child kinds after native
 Lead authority validation and after its reachability mapping is validated against native membership.
-A schema-2 Peer SHALL run one local loopback Collie child plus one supervised reachability link child,
+A schema-2 Peer selecting `ssh-reverse` SHALL run one local loopback Collie child plus one supervised reachability link child,
 and MUST NOT start a Gateway, Fleet session store, browser-authentication listener, or public listener.
 
 A schema-2 Peer whose validated configuration declares a terminal endpoint SHALL additionally run one
-supervised terminal-service child, bound to that endpoint and reachable only through the link's
-terminal projection. That child SHALL be started with the Peer's own sanitized child environment and
+supervised terminal-service child, bound to that endpoint and reachable only through its declared terminal projection. That child SHALL be started with the Peer's own sanitized child environment and
 MUST NOT receive the Fleet configuration path, session state, or any browser-authentication material.
-A Peer whose configuration declares no terminal endpoint SHALL run the same two children it ran before
+A Peer selecting `ssh-reverse` whose configuration declares no terminal endpoint SHALL run the same two children it ran before
 this change and MUST NOT start a terminal-service child. The terminal-service child SHALL be permitted
 to stand itself down while idle without that being reported as a failure, and a later request SHALL
 bring it back under the same supervision.
@@ -119,15 +118,15 @@ link process, terminal server, published projection, or terminal endpoint.
 - **THEN** one loopback Gateway and one loopback Collie child become ready and status identifies the Lead role without exposing trust or browser secrets
 
 #### Scenario: Schema-2 Peer starts
-- **WHEN** Herdr starts a schema-2 Peer whose configuration and native Pack authority state agree and whose configuration declares no terminal endpoint
+- **WHEN** Herdr starts an `ssh-reverse` schema-2 Peer whose configuration and native Pack authority state agree and whose configuration declares no terminal endpoint
 - **THEN** one loopback Collie child and one reachability link child become ready, no Gateway, browser listener, or terminal service exists, and status identifies the Peer role and the link layer separately
 
 #### Scenario: Schema-2 Peer with a terminal endpoint starts
-- **WHEN** Herdr starts a schema-2 Peer whose validated configuration declares a terminal endpoint
+- **WHEN** Herdr starts an `ssh-reverse` schema-2 Peer whose validated configuration declares a terminal endpoint
 - **THEN** one loopback Collie child, one reachability link child, and one terminal-service child become ready, the terminal service holds no terminal server, no Gateway or browser listener exists, and status reports the terminal layer separately from the link
 
 #### Scenario: The link child exits while Collie is healthy
-- **WHEN** a schema-2 Peer's link child exits
+- **WHEN** an `ssh-reverse` Peer's link child exits
 - **THEN** only the link child is retried under bounded backoff, the Collie child keeps running, and status reports the Peer as not ready until the link is re-established
 
 #### Scenario: The terminal service stands down while idle
@@ -137,6 +136,10 @@ link process, terminal server, published projection, or terminal endpoint.
 #### Scenario: Startup fails after a child was created
 - **WHEN** a required child cannot become ready or configuration/authority/reachability validation fails
 - **THEN** the attempted generation is cleaned up, no unintended listener, terminal server, or published projection is left behind, and unrelated Herdr processes and panes remain untouched
+
+#### Scenario: An external peer starts
+- **WHEN** an enrolled peer selects external transport
+- **THEN** Fleet supervises only Collie and its optional terminal service, status explicitly declares external transport, and the multiplexer and operator-owned network processes remain untouched
 
 ### Requirement: Upstream Tailscale support is retained but inactive in the Fleet profile
 

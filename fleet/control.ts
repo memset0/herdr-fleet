@@ -20,7 +20,8 @@ export function formatStatus(result: ControlResponse): string {
     .map((child) => `${child.name}=${child.running ? `running(pid=${child.pid})` : posture(child)}`)
     .join(" ");
   const role = result.role === undefined ? "" : ` role=${result.role}`;
-  return `herdr-fleet: supervisor ${result.status} generation=${result.generation}${role} pid=${result.pid}${children === "" ? "" : ` ${children}`}`;
+  const transport = result.transport === "external" ? " transport=external" : "";
+  return `herdr-fleet: supervisor ${result.status} generation=${result.generation}${role}${transport} pid=${result.pid}${children === "" ? "" : ` ${children}`}`;
 }
 
 async function query(socketPath: string, operation: ControlOperation, generation: string) {
@@ -87,7 +88,9 @@ async function ensureSupervisor(): Promise<ControlResponse> {
   const config = await loadFleetConfig(paths.configPath);
   await validatePackAuthority(config, paths.collieStateDir);
   assertCollieConfigFilesCede(collieSpecEnv(config, paths, sanitizedDaemonEnv(process.env)));
-  if (config.schemaVersion === 2 && config.role === "peer") await assertLinkFiles(config.transport);
+  if (config.schemaVersion === 2 && config.role === "peer" && config.transport.mode === "ssh-reverse") {
+    await assertLinkFiles(config.transport);
+  }
   const current = await query(paths.socketPath, "ensure", paths.generation);
   if (current?.status === "running" && current.generation === paths.generation) return current;
   if (current?.status === "replacing") await waitForRelease(paths.socketPath, paths.generation);

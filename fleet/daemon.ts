@@ -45,7 +45,9 @@ async function main(): Promise<void> {
   const config = await loadFleetConfig(paths.configPath);
   await validatePackAuthority(config, paths.collieStateDir);
   assertCollieConfigFilesCede(collieSpecEnv(config, paths, process.env));
-  if (config.schemaVersion === 2 && config.role === "peer") await assertLinkFiles(config.transport);
+  if (config.schemaVersion === 2 && config.role === "peer" && config.transport.mode === "ssh-reverse") {
+    await assertLinkFiles(config.transport);
+  }
   const children = childSpecs(config, paths, process.env).map(
     (spec) =>
       new ManagedChild({
@@ -72,6 +74,7 @@ async function main(): Promise<void> {
       // projection needs no probe from here — `ExitOnForwardFailure` ends the attempt when it fails,
       // so a running link child has already bound it.
       if (!(await probeEndpoint(config.collie))) return false;
+      if (config.transport.mode === "external") return true;
       return await probeEndpoint(config.transport.peerBind);
     }
     const collie = await endpointReady(
@@ -106,7 +109,11 @@ async function main(): Promise<void> {
       children: children.map((child) => child.status()),
       message,
     };
-    return config.schemaVersion === 2 ? { ...base, role: config.role } : base;
+    if (config.schemaVersion !== 2) return base;
+    if (config.role === "peer" && config.transport.mode === "external") {
+      return { ...base, role: config.role, transport: "external" };
+    }
+    return { ...base, role: config.role };
   };
 
   const server = net.createServer((socket) => {

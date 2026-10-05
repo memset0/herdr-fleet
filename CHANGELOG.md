@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Peers can use transport maintained outside Fleet.** Select strict external projections without SSH credentials or a link child; retain native crew authority, local services and the unchanged SSH mode.
+
 ## [3.8.2] - 2026-10-05
 
 ### Changed

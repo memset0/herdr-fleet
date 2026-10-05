@@ -155,18 +155,20 @@ export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: 
   } else {
     // The link runs the platform SSH client, so it receives the ambient environment and none of
     // Fleet's own: no configuration path, no session state, no Collie state directory.
-    const linkEnv = { ...inherited };
-    for (const key of ["HERDR_FLEET_CONFIG", "HERDR_FLEET_SESSION_STATE", "HERDR_PLUGIN_STATE_DIR"]) {
-      delete linkEnv[key];
+    if (config.transport.mode === "ssh-reverse") {
+      const linkEnv = { ...inherited };
+      for (const key of ["HERDR_FLEET_CONFIG", "HERDR_FLEET_SESSION_STATE", "HERDR_PLUGIN_STATE_DIR"]) {
+        delete linkEnv[key];
+      }
+      children.push({
+        name: "link",
+        command: sshLinkCommand(config),
+        cwd: paths.pluginRoot,
+        env: linkEnv,
+        logPath: join(paths.stateDir, "link.log"),
+        maxBackoffMs: config.transport.retryMaxSeconds * 1_000,
+      });
     }
-    children.push({
-      name: "link",
-      command: sshLinkCommand(config),
-      cwd: paths.pluginRoot,
-      env: linkEnv,
-      logPath: join(paths.stateDir, "link.log"),
-      maxBackoffMs: config.transport.retryMaxSeconds * 1_000,
-    });
     if (config.terminal !== undefined) {
       // The terminal service gets the terminal table and nothing else of Fleet's: not the
       // configuration path, not the session state, not the Collie state directory. What it needs

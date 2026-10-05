@@ -102,6 +102,12 @@ export interface FleetTransportConfig {
   readonly retryMaxSeconds: number;
 }
 
+/** Projections supplied by the operator; Fleet owns no network process in this mode. */
+export interface FleetExternalTransportConfig {
+  readonly mode: "external";
+  readonly peerBind: FleetLoopbackEndpoint;
+}
+
 /**
  * The Peer's optional terminal service. Absent unless the Peer declares it, and a Peer that declares
  * nothing here runs exactly what it ran before: no endpoint, no projection, no child.
@@ -133,7 +139,7 @@ export interface FleetSchema2PeerConfig {
   readonly role: "peer";
   readonly lifecycle: FleetNativePackLifecycle;
   readonly collie: FleetLoopbackEndpoint;
-  readonly transport: FleetTransportConfig;
+  readonly transport: FleetTransportConfig | FleetExternalTransportConfig;
   /** Absent unless the Peer declared a `[terminal]` table; never defaulted into existence. */
   readonly terminal?: FleetTerminalConfig;
 }
@@ -330,8 +336,16 @@ function absolutePath(value: JsonValue | undefined, label: string): string {
   return path;
 }
 
-function transportConfig(value: JsonValue | undefined, collie: FleetLoopbackEndpoint): FleetTransportConfig {
+function transportConfig(value: JsonValue | undefined, collie: FleetLoopbackEndpoint): FleetSchema2PeerConfig["transport"] {
   const raw = table(value, "transport");
+  if (raw.mode === "external") {
+    exactKeys(raw, ["mode", "peer_bind_host", "peer_bind_port"], "transport");
+    const peerBind = loopbackEndpoint(raw, "peer_bind", "transport");
+    if (sameEndpoint(peerBind, collie)) {
+      throw new Error("transport.peer_bind and collie must use distinct endpoints");
+    }
+    return { mode: "external", peerBind };
+  }
   exactKeys(
     raw,
     [
@@ -416,7 +430,7 @@ function serverDigest(value: JsonValue | undefined): string {
 function terminalConfig(
   value: JsonValue | undefined,
   collie: FleetLoopbackEndpoint,
-  transport: FleetTransportConfig,
+  transport: FleetSchema2PeerConfig["transport"],
 ): FleetTerminalConfig | undefined {
   // Absent is the answer, not a shape to fill in: a Peer that declares no terminal table gets no
   // endpoint, no projection and no child, exactly as before this table existed.
@@ -441,10 +455,10 @@ function terminalConfig(
   // The two Lead-side endpoints are ports on one machine. A terminal projection landing on the Pack
   // projection's port would take the Lead's Pack link, and one landing on the Lead's own Collie
   // listener would take the Lead.
-  if (sameEndpoint(leadBind, transport.leadBind)) {
+  if (transport.mode === "ssh-reverse" && sameEndpoint(leadBind, transport.leadBind)) {
     throw new Error("terminal.lead_bind and transport.lead_bind must use distinct endpoints");
   }
-  if (sameEndpoint(leadBind, transport.leadCollie)) {
+  if (transport.mode === "ssh-reverse" && sameEndpoint(leadBind, transport.leadCollie)) {
     throw new Error("terminal.lead_bind and transport.lead_collie must use distinct endpoints");
   }
   // The same sentence on this machine: the service listens beside Collie and beside the Lead's own

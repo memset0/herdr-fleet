@@ -35,6 +35,7 @@ function forwardEndpoint(endpoint: FleetLoopbackEndpoint): string {
  */
 export function sshLinkCommand(config: FleetSchema2PeerConfig): readonly string[] {
   const { transport, collie } = config;
+  if (transport.mode !== "ssh-reverse") throw new Error("external transport has no SSH command");
   return [
     "ssh",
     "-N",

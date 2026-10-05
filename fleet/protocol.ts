@@ -33,6 +33,8 @@ export interface ControlResponse {
   readonly startedAt: number;
   readonly children: readonly ChildStatus[];
   readonly role?: "lead" | "peer";
+  /** Local readiness does not assert reachability through operator-owned projections. */
+  readonly transport?: "external";
   readonly message?: string;
 }
 
@@ -94,6 +96,7 @@ export function parseControlResponse(source: string): ControlResponse | null {
   const startedAt = jsonNumberField(value.startedAt);
   const message = value.message === undefined ? undefined : jsonStringField(value.message);
   const role = value.role === undefined ? undefined : jsonStringField(value.role);
+  const transport = value.transport === undefined ? undefined : jsonStringField(value.transport);
   const children = value.children.map(parseChild);
   if (
     status === null ||
@@ -104,6 +107,7 @@ export function parseControlResponse(source: string): ControlResponse | null {
     message === null ||
     role === null ||
     role !== undefined && role !== "lead" && role !== "peer" ||
+    transport !== undefined && (transport !== "external" || role !== "peer") ||
     children.some((child) => child === null)
   ) {
     return null;
@@ -118,7 +122,7 @@ export function parseControlResponse(source: string): ControlResponse | null {
       : "invalid";
   const normalizedChildren: ChildStatus[] = [];
   for (const child of children) if (child !== null) normalizedChildren.push(child);
-  return {
+  const response: ControlResponse = {
     status: normalizedStatus,
     generation,
     pid,
@@ -127,6 +131,7 @@ export function parseControlResponse(source: string): ControlResponse | null {
     role,
     message,
   };
+  return transport === "external" ? { ...response, transport } : response;
 }
 
 export function isUnavailableControlError(error: Error): boolean {

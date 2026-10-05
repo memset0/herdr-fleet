@@ -3,6 +3,7 @@ import {
   type FleetSchema1LeadConfig,
   type FleetSchema2LeadConfig,
   type FleetSchema2PeerConfig,
+  type FleetTransportConfig,
 } from "./config.ts";
 
 export function fleetTestConfig(): FleetSchema1LeadConfig {
@@ -68,7 +69,7 @@ port = 18901
   return config;
 }
 
-export function fleetTestPackPeerConfig(extra = ""): FleetSchema2PeerConfig {
+export function fleetTestPackPeerConfig(extra = ""): FleetSchema2PeerConfig & { readonly transport: FleetTransportConfig } {
   const config = parseFleetToml(`schema_version = 2
 role = "peer"
 [lifecycle]
@@ -92,8 +93,8 @@ lead_collie_host = "127.0.0.1"
 lead_collie_port = 8787
 retry_max_seconds = 60
 ${extra}`);
-  if (config.schemaVersion !== 2 || config.role !== "peer") {
+  if (config.schemaVersion !== 2 || config.role !== "peer" || config.transport.mode !== "ssh-reverse") {
     throw new Error("test configuration did not parse as schema 2 peer");
   }
-  return config;
+  return { ...config, transport: config.transport };
 }
