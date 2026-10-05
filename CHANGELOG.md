@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.8.1] - 2026-10-05
+
 ### Changed
 
-- **Show tasks from every connected Todoist project.** Group nested tasks by project, label their origin, choose the destination when creating tasks, and show saved OAuth application status without returning secrets.
+- **Show tasks from every connected Todoist project.** Group nested tasks by project, label their origin, choose the destination when creating tasks, and show saved OAuth application status without returning secrets. ([b14d82a5](https://github.com/memset0/herdr-fleet/commit/b14d82a5))
 
 ## [3.8.0] - 2026-10-05
 
