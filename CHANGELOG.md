@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.2] - 2026-10-05
+
 ### Fixed
 
-- **Filtered Todoist trees retain complete nested task branches.** Include active descendants beneath matching tasks while List keeps exact filter results, and hide empty projects in All projects.
+- **Filtered Todoist trees retain complete nested task branches.** Include active descendants beneath matching tasks while List keeps exact filter results, and hide empty projects in All projects. ([9e325cd1](https://github.com/memset0/herdr-fleet/commit/9e325cd1))
 
 ## [3.9.1] - 2026-10-05
 
