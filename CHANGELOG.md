@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Phone Agent cards keep touch controls on one row.** Remove the stacked-target height inflation and fit metadata and tags within the compact card.
+
 ## [3.9.0] - 2026-10-05
 
 **Every member redeploys, lead first; existing SSH configurations remain valid.** External transport is an explicit operator selection and does not change native crew authority.

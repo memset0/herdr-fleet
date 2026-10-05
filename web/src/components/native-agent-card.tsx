@@ -105,7 +105,7 @@ export function NativeAgentCard({
           aria-current={current ? "page" : undefined}
           className="w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
         >
-          <div data-slot="native-agent-body" className="flex min-h-16 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10 pointer-coarse:min-h-24 pointer-coarse:pr-14">
+          <div data-slot="native-agent-body" className="flex min-h-16 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10 2xl:pointer-coarse:min-h-24 2xl:pointer-coarse:pr-14 max-sm:pr-26 max-2xl:pointer-coarse:pr-26">
             <span className="flex min-w-0 flex-1 flex-col gap-1.5">
               {/* Line 1 — where, then which. */}
               <span data-slot="native-agent-row-title" className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
@@ -140,7 +140,12 @@ export function NativeAgentCard({
                     run Collie's dashboard row ends its first line with. Here it LEADS line 2: a 320px
                     rail cannot give line 1 to a name and a host tag both, and the name is the one
                     fact that tells two rows apart. It draws nothing on a solo snapshot. */}
-                <PaneMeta host={agent.host} cache={undefined} session={agent.session} />
+                <PaneMeta
+                  host={agent.host}
+                  cache={undefined}
+                  session={agent.session}
+                  className="max-sm:min-w-0 max-sm:shrink max-sm:[&>*]:min-w-0 max-sm:[&>*]:shrink max-sm:[&>span:empty]:hidden max-2xl:pointer-coarse:min-w-0 max-2xl:pointer-coarse:shrink max-2xl:pointer-coarse:[&>*]:min-w-0 max-2xl:pointer-coarse:[&>*]:shrink max-2xl:pointer-coarse:[&>span:empty]:hidden"
+                />
                 <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
                 {stamp !== undefined && <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>}
               </span>
@@ -155,7 +160,7 @@ export function NativeAgentCard({
       </Shell>
 
       {/* Sibling actions never invoke the row's open button. */}
-      <div data-slot="native-agent-actions" className="absolute right-1 top-1 flex flex-col">
+      <div data-slot="native-agent-actions" className="absolute right-1 top-1 flex flex-col max-sm:top-2 max-sm:flex-row max-sm:gap-1 max-2xl:pointer-coarse:top-2 max-2xl:pointer-coarse:flex-row max-2xl:pointer-coarse:gap-1">
         <Button
           data-slot="agent-pin"
           variant="ghost"
@@ -165,7 +170,7 @@ export function NativeAgentCard({
           aria-label={pinned ? t("home.favorite.remove", { name }) : t("home.favorite.add", { name })}
           onClick={onPinToggle}
           className={cn(
-            "size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 pointer-coarse:size-11",
+            "size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 pointer-coarse:size-11 max-sm:size-11",
             pinned && "text-foreground",
           )}
         >

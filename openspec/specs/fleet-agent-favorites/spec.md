@@ -46,7 +46,7 @@ does MAY send pin state to the Gateway, Collie bridge, Herdr, or another browser
 - **THEN** no star is pressed and no pin is inferred from account, Gateway, Collie, or Herdr state
 
 ### Requirement: Native Agent rows expose an independent favorite control
-Every native Agent row rendered by the shared Agent list and by the Agent rail SHALL expose an independent star control with muted ink at rest at no less than 3:1 against the row's ground, a muted hover fill and a press scale. The shared list SHALL retain its existing round icon button. In the rail and its phone switcher, a smaller star SHALL occupy the top position in a fixed trailing column above the tag action, with a smaller glyph, a visible keyboard focus indicator and enlarged targets for coarse pointers. The row SHALL
+Every native Agent row rendered by the shared Agent list and by the Agent rail SHALL expose an independent star control with muted ink at rest at no less than 3:1 against the row's ground, a muted hover fill and a press scale. The shared list SHALL retain its existing round icon button. In the wide-layout rail, a smaller star SHALL occupy the top position in a fixed trailing column above the tag action. In compact layouts (phone widths or a touch-operated switcher below the standing Agent-rail breakpoint), favorite and tag actions SHALL share one trailing horizontal row, with favorite first, and each SHALL retain an independent target of at least 44px at default text size. Both layouts SHALL retain smaller glyphs and visible keyboard focus indicators. The row SHALL
 reserve the control's width at its trailing end so the row's text never runs under it. Shell rows
 MUST NOT expose the control. Activating it SHALL toggle `aria-pressed` and toggle the pane's pin.
 
@@ -76,7 +76,11 @@ available independently from the control.
 
 #### Scenario: The rail shows both actions
 - **WHEN** an Agent rail row offers pinning and tag editing
-- **THEN** the star stays above the tag action in one trailing column and neither action overlaps the row text or the other target
+- **THEN** noncompact rows stack the star above the tag action and compact rows place them side by side, without either action overlapping text or the other target
+
+#### Scenario: A phone shows both actions
+- **WHEN** the Agent card is drawn in compact layouts
+- **THEN** both actions remain independently tappable without requiring the card to reserve the height of two vertically stacked touch targets
 
 ### Requirement: Stored favourites become pins once
 A browser that still holds the retired Fleet favourite record SHALL have it migrated exactly once:
