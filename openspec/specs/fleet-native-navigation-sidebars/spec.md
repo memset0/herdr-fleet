@@ -246,11 +246,12 @@ same fact in different words from the dashboard.
 The row itself is fork-owned. It SHALL lead with the shortcut ordinal a later keyboard shortcut can
 address, then the Pane's state as Collie's status dot, then the Agent's 14px mark, and it SHALL say
 WHERE the work is before WHAT it is doing: the Space in a muted style, then the name the operator gave
-the work in the plain one at 12px and medium weight, with Collie's unseen mark after it; beneath it,
+the work in the plain one at 12px and medium weight; beneath it,
 in 11px muted type, Collie's pane meta, then what the Pane is doing, with the row's age at that line's
 trailing end. The name SHALL follow the same rule the hierarchy uses —
 the operator's own Pane name, else the Tab's, never a number the multiplexer assigned. The row SHALL
-present the Space, separator and work name as one single-line phrase, applying ellipsis only at the trailing end of that entire phrase when it does not fit. The Space MUST NOT be separately truncated or allocated a smaller fixed share. Ordinal, status, Agent and unseen marks SHALL retain their own space outside that phrase, and the phrase MUST NOT overlap the actions. The row SHALL
+present the Space, separator and work name as one single-line phrase, applying ellipsis only at the trailing end of that entire phrase when it does not fit. The Space MUST NOT be separately truncated or allocated a smaller fixed share. Ordinal, status and Agent marks SHALL retain their own space outside that phrase, and the phrase MUST NOT overlap the actions. The row SHALL
+omit any additional visible per-row unseen mark and its reserved slot, while retaining accessible unseen wording; group labels and summary counts SHALL continue to express unseen state. The row SHALL
 carry the `data-glide` part names Collie's own rows carry for the dot, the mark and the name.
 
 Collie's own Agent list and card MUST remain unchanged apart from the star port, so every other
@@ -304,6 +305,10 @@ alter triage classification, change manual Pane fit, or create a separate Agent 
 #### Scenario: The combined heading is wider than the row
 - **WHEN** the Space and work name together exceed the title area
 - **THEN** one trailing ellipsis shortens the combined phrase, with no separate Space ellipsis, while its fixed marks and actions remain visible
+
+#### Scenario: A Ready unseen row is displayed
+- **WHEN** an Agent row is finished and unseen
+- **THEN** its native status remains visible but no additional visible unseen mark or blank mark slot follows its heading, while the group and summary retain their unseen information
 
 ### Requirement: Navigation preferences are bounded and fail safe
 Sidebar preferred widths and hierarchy disclosure state SHALL be independent, versioned
@@ -570,8 +575,7 @@ The card treatment SHALL be reserved for the one section Collie marks in its ale
 that need the operator now — read from Collie's own section data rather than restated. Every other
 row, the Pinned group's included, SHALL be drawn flat in ONE bordered group per section rather than an
 open-ended run of hairlines, with no radius, the hover on the row itself, and the blocked tint as the
-only cue on a flat row. A finished, unseen row SHALL carry Collie's unseen mark after its name rather
-than a card.
+only cue on a flat row. A finished, unseen row SHALL retain the flat row treatment.
 
 The row standing for the Pane currently on screen SHALL be marked `aria-current="page"` and drawn on
 the accent ground, the way Collie's own pane switcher marks it.
@@ -588,7 +592,7 @@ star port.
 
 #### Scenario: A row in a section that does not
 - **WHEN** the rail lists a row outside that section, including a Ready·unseen or a pinned row
-- **THEN** the row is flat and square with a roomier content area, the run it belongs to is one bordered group, and an unseen row carries Collie's unseen mark
+- **THEN** the row is flat and square with a roomier content area, the run it belongs to is one bordered group, including an unseen row
 
 #### Scenario: Rows stand apart
 - **WHEN** the alert section lists more than one card
@@ -930,7 +934,7 @@ batch endpoint or a client-side seen state for this.
 - **WHEN** the operator activates the control
 - **THEN** each unseen pane receives one seen read on its own host and session, the control is
   disabled until the route data has revalidated, and once the snapshot reports them seen the
-  unseen marks and the control are gone
+  summary unseen count and the control are gone
 
 #### Scenario: Nothing is unseen
 - **WHEN** no pane in the rail's roster is unseen
@@ -938,7 +942,7 @@ batch endpoint or a client-side seen state for this.
 
 #### Scenario: A pane goes unseen again later
 - **WHEN** after a mark-all a pane finishes again and the snapshot reports it unseen
-- **THEN** its unseen mark and the control, with the new count, are shown as usual
+- **THEN** the summary unseen count and the control, with the new count, are shown as usual
 
 #### Scenario: The phone's switcher sheet
 - **WHEN** the operator opens the Pane page's switcher sheet while a pane is unseen

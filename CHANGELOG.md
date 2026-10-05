@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent cards omit the extra unseen mark.** Keep unread groups, counts and accessible wording while reclaiming the heading slot.
+
 ## [3.7.8] - 2026-10-04
 
 **Lead-only frontend update; members do not redeploy.**

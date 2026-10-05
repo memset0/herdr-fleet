@@ -7,7 +7,6 @@ import { PaneMeta } from "@/components/pane-meta";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { UnseenMark } from "@/components/ui/unseen-mark";
 import { shortCwd, timeAgoShort } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { isUnseen } from "@/lib/triage";
@@ -131,7 +130,6 @@ export function NativeAgentCard({
                     {name}
                   </span>
                 </span>
-                <UnseenMark on={unseen} reserve />
               </span>
               {/* Line 2 — what, with the age at its end. Collie's 16px slot, always drawn. */}
               <span
@@ -150,6 +148,7 @@ export function NativeAgentCard({
           </div>
           {/* The dot is colour only; its word is for a screen reader, after the row's own text. */}
           <span className="sr-only">{statusLabel(agent.status)}</span>
+          {unseen && <span className="sr-only">{t("home.row.unseen")}</span>}
         </button>
 
         <PaneTagLine agent={agent} />

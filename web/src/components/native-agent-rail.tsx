@@ -62,7 +62,7 @@ const AGE_BY_SECTION = new Map<TriageKey, "seen" | "active">([
  *
  * THE EMPHASIS IS COLLIE'S ALERT MARK, read rather than copied: the section triage marks with
  * `accent` (needs you) is drawn as cards with air between them; every other row is a flat row
- * in one bordered group. An unseen reply is marked by Collie's square, not by a card.
+ * in one bordered group. Unseen replies remain in their own group, without an extra row mark.
  *
  * The shortcut ordinal is numbered across the WHOLE rail rather than per section, because a key the
  * operator presses addresses one row on screen and does not know which heading it fell under. The

@@ -149,12 +149,12 @@ describe("NativeAgentRail", () => {
   it("keeps the card for the section that needs a person and flattens the rest", () => {
     const blocked = agent("blocked", { status: "blocked" });
     // `done` with nothing seen since is Ready·unseen; `idle` with a later stamp is Recent.
-    const unseen = agent("unseen", { status: "done", lastActiveAt: 200, lastSeenAt: 100 });
+    const unseen = agent("ready", { tabLabel: "Ready work", status: "done", lastActiveAt: 200, lastSeenAt: 100 });
     const recent = agent("recent", { status: "idle", lastActiveAt: 100, lastSeenAt: 200 });
     render(<NativeAgentRail agents={[blocked, unseen, recent]} onOpen={vi.fn()} />);
 
     const [first, second, third] = rows();
-    // Only Collie's alert section is a card; an unseen reply is marked by Collie's square instead.
+    // Only the alert section is a card; unseen replies keep their native status and grouping.
     expect(first?.querySelector("[data-slot='card']")).not.toBeNull();
     expect(first?.closest("[data-slot='list-group']")).toBeNull();
     for (const flat of [second, third]) {
@@ -162,7 +162,9 @@ describe("NativeAgentRail", () => {
       // …and a run of flat rows is ONE bordered group, never an open-ended stack of hairlines.
       expect(flat?.closest("[data-slot='list-group']")).not.toBeNull();
     }
-    expect(within(second!).getByRole("img", { name: /unseen/i })).toBeInTheDocument();
+    expect(within(second!).queryByRole("img", { name: /unseen/i })).toBeNull();
+    expect(second?.querySelector('[data-glide="dot"]')).not.toBeNull();
+    expect(within(second!).getAllByRole("button")[0]).toHaveAccessibleName(/unseen/i);
     expect(within(third!).queryByRole("img", { name: /unseen/i })).toBeNull();
   });
 
