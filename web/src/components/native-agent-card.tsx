@@ -45,7 +45,7 @@ export const NATIVE_AGENT_SHORTCUT_LIMIT = 9;
  * THE RAIL'S ROW: Collie's row, with the fork's order of the two lines.
  *
  * The fork's compact type and roomier two-line content reserve one trailing action column.
- * The smaller desktop targets stack pin above tags; coarse pointers get independent 44px targets.
+ * The compact controls stack pin above tags with the same spacing on phones and desktop.
  * Host/session metadata remains native, while cache readings are omitted from this glance view.
  *
  * WHAT IS THE FORK'S IS THE ORDER. Collie's dashboard row leads with the pane's own title and puts
@@ -105,7 +105,7 @@ export function NativeAgentCard({
           aria-current={current ? "page" : undefined}
           className="w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
         >
-          <div data-slot="native-agent-body" className="flex min-h-16 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10 2xl:pointer-coarse:min-h-24 2xl:pointer-coarse:pr-14 max-sm:pr-26 max-2xl:pointer-coarse:pr-26">
+          <div data-slot="native-agent-body" className="flex min-h-16 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10">
             <span className="flex min-w-0 flex-1 flex-col gap-1.5">
               {/* Line 1 — where, then which. */}
               <span data-slot="native-agent-row-title" className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
@@ -160,7 +160,7 @@ export function NativeAgentCard({
       </Shell>
 
       {/* Sibling actions never invoke the row's open button. */}
-      <div data-slot="native-agent-actions" className="absolute right-1 top-1 flex flex-col max-sm:top-2 max-sm:flex-row max-sm:gap-1 max-2xl:pointer-coarse:top-2 max-2xl:pointer-coarse:flex-row max-2xl:pointer-coarse:gap-1">
+      <div data-slot="native-agent-actions" className="absolute right-1 top-1 flex flex-col">
         <Button
           data-slot="agent-pin"
           variant="ghost"
@@ -170,7 +170,7 @@ export function NativeAgentCard({
           aria-label={pinned ? t("home.favorite.remove", { name }) : t("home.favorite.add", { name })}
           onClick={onPinToggle}
           className={cn(
-            "size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 pointer-coarse:size-11 max-sm:size-11",
+            "size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95",
             pinned && "text-foreground",
           )}
         >

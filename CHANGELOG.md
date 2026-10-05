@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Phone Agent cards now match the compact desktop rail.** Keep vertical actions and consistent body/tag padding across pointer types.
+
 ## [3.9.2] - 2026-10-05
 
 ### Fixed

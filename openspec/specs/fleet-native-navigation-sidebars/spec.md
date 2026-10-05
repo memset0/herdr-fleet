@@ -569,7 +569,7 @@ NOT differ in what they do.
 
 ### Requirement: A rail row wears Collie's own treatment, and drops it where Collie drops it
 
-An Agent rail row SHALL use smaller title and detail type with more vertical breathing room than the former 44px row. It SHALL reserve a trailing action column on wide layouts and one trailing action row in compact layouts. Its content height SHALL have a stable minimum that fits the controls without inflating phone rows for vertical stacking. Touch targets SHALL remain independent. Narrow metadata SHALL fit inside the text region rather than intrude on controls or the time stamp. Assigned named colored tags SHALL remain below its content as specified by `fleet-pane-tags`, and text and tags MUST NOT overlap the action column. The row's background, border and hover/current/blocked treatment SHALL form one continuous surface around both its body and tag line.
+An Agent rail row SHALL use smaller title and detail type with more vertical breathing room than the former 44px row. It SHALL reserve the same compact trailing action column on every viewport and pointer type. Its content height, edge padding and action spacing SHALL match the desktop rail without pointer-specific enlargement. Targets SHALL remain independent. Narrow metadata SHALL fit inside the text region rather than intrude on controls or the time stamp. Assigned named colored tags SHALL remain below its content as specified by `fleet-pane-tags`, and text and tags MUST NOT overlap the action column. The row's background, border and hover/current/blocked treatment SHALL form one continuous surface around both its body and tag line.
 
 The card treatment SHALL be reserved for the one section Collie marks in its alert accent — the panes
 that need the operator now — read from Collie's own section data rather than restated. Every other
@@ -609,6 +609,10 @@ star port.
 #### Scenario: The dashboard changes which sections it emphasises
 - **WHEN** Collie changes which triage section carries its alert accent
 - **THEN** the rail follows, because it reads that mark rather than keeping a copy of it
+
+#### Scenario: A phone renders the rail cards
+- **WHEN** the Agent switcher shows cards on a phone
+- **THEN** their action column, content minimum, edge insets and tag spacing match desktop cards without extra mobile padding
 
 ### Requirement: Both rails present every host in the pack
 The hierarchy rail SHALL present one Host item per member the snapshot reports, each collapsible on

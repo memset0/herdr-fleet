@@ -67,9 +67,9 @@ export function PaneTagLine({ agent }: { agent: AgentView }) {
     <Collapse
       open={tags.length > 0}
       // Reclaim the body's empty lower band in step with Collapse's own height animation.
-      className="data-[state=open]:-mt-2 2xl:pointer-coarse:data-[state=open]:-mt-6"
+      className="data-[state=open]:-mt-2"
     >
-      {tags.length > 0 && <div data-slot="pane-tag-line" className="flex min-w-0 flex-wrap gap-1 px-3 pb-2 pt-0.5 pr-10 2xl:pointer-coarse:pr-14 max-sm:pr-3 max-2xl:pointer-coarse:pr-3">
+      {tags.length > 0 && <div data-slot="pane-tag-line" className="flex min-w-0 flex-wrap gap-1 px-3 pb-2 pt-0.5 pr-10">
         {tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}
       </div>}
     </Collapse>
@@ -81,7 +81,7 @@ export function PaneTagButton({ agent }: { agent: AgentView }) {
   const context = useContext(TagContext);
   if (!context || agent.kind === "shell") return null;
   return <Button type="button" variant="ghost" size="icon" data-slot="agent-tag-action" aria-label={t("fleet.tags.assign")} onClick={() => context.open(tagPanePlace(agent))}
-    className="size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 pointer-coarse:size-11 max-sm:size-11">
+    className="size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95">
     <Tags className="size-3.5" aria-hidden />
   </Button>;
 }

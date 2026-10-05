@@ -168,7 +168,7 @@ describe("NativeAgentRail", () => {
     expect(within(third!).queryByRole("img", { name: /unseen/i })).toBeNull();
   });
 
-  it("draws roomier compact rows with native marks and coarse pointer targets", () => {
+  it("draws roomier compact rows with native marks and consistent pointer spacing", () => {
     render(<NativeAgentRail agents={[agent("p1"), agent("p2", { status: "blocked" })]} onOpen={vi.fn()} />);
     for (const row of rows()) {
       const shell = row.querySelector('[data-slot="native-agent-body"]')!;
@@ -179,7 +179,7 @@ describe("NativeAgentRail", () => {
       expect(row.querySelector('[data-glide="name"]')).not.toBeNull();
       expect(row.querySelector('[data-slot="native-agent-row-title"]')?.className).toContain("text-xs");
       expect(row.querySelector('[data-slot="native-agent-row-detail"]')?.className).toContain("text-[11px]");
-      expect(shell.className).toContain("pointer-coarse:min-h-24");
+      expect(shell.className).not.toContain("pointer-coarse:");
       expect(shell.className).toContain("px-3");
       expect(row.querySelector('[data-slot="native-agent-row-title"]')?.parentElement?.className).toContain("gap-1.5");
     }
@@ -216,13 +216,13 @@ describe("NativeAgentRail", () => {
 
     const row = rows()[0]!;
     const age = within(row).getByText(/^(now|\d+[mhd])$/);
-    // One column reserves 40px, with a larger reserve for coarse pointers.
+    // One compact column reserves 40px on every pointer type.
     expect(row.querySelector('[data-slot="native-agent-body"]')!.className).toMatch(/\bpr-10\b/u);
     expect(age.parentElement?.getAttribute("data-slot")).toBe("native-agent-row-detail");
     const star = within(row).getByRole("button", { name: /pin/i });
     expect(star.className).toMatch(/\bsize-7\b/u);
     expect(star.className).toContain("rounded-full");
-    expect(star.className).toContain("pointer-coarse:size-11");
+    expect(star.className).not.toContain("pointer-coarse:");
     expect(star.parentElement?.getAttribute("data-slot")).toBe("native-agent-actions");
     expect(star.parentElement?.className).toContain("flex-col");
     expect(star.parentElement?.className).toContain("right-1 top-1");
