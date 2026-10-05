@@ -16,7 +16,7 @@ Fleet SHALL connect through Todoist OAuth and keep credentials server-side. OAut
 - **THEN** the connection is not accepted
 
 ### Requirement: Project tasks have list and tree views
-Fleet SHALL show all matching active tasks for the saved display selection (All by default, a project, or a saved Todoist filter) through complete pagination. Saved filter queries SHALL be resolved by ID and evaluated by Todoist, including for completed history. A missing or unsupported filter SHALL report an error rather than silently widening the view. Unmatched ancestors MAY supply title-only nesting context but SHALL NOT become matching task rows. Hierarchy guards SHALL inspect the full actual project regardless of display filtering. Tree view SHALL group tasks under named projects; task rows, details and bound-task entries SHALL identify their project. Empty projects SHALL remain visible in tree view. Tree view SHALL be the default with collapsible branches. List view SHALL include ancestor titles and sort all matching tasks across projects by most recent update first. Tree siblings SHALL sort by recent update while preserving hierarchy. Completed tasks SHALL have a separate history view with explicit coverage and pagination, sorted across projects by latest completion first (falling back to update time when unavailable). Completing a task SHALL invalidate cached history so it appears immediately upon opening Completed. Both views SHALL highlight current-terminal bindings and expose an additional bound-task area.
+Fleet SHALL show all matching active tasks for the saved display selection (All by default, a project, or a saved Todoist filter) through complete pagination. Saved filter queries SHALL be resolved by ID and evaluated by Todoist, including for completed history. A missing or unsupported filter SHALL report an error rather than silently widening the view. Unmatched ancestors MAY supply title-only nesting context but SHALL NOT become matching task rows. Hierarchy guards SHALL inspect the full actual project regardless of display filtering. Tree view SHALL group tasks under named projects; task rows, details and bound-task entries SHALL identify their project. All-project and filter views SHALL hide projects with no visible tasks; an explicitly selected empty project SHALL retain its empty state. Tree view SHALL be the default with collapsible branches. For a saved filter, matching tasks SHALL seed the tree and all their active descendants SHALL be included recursively, even if excluded by the filter itself. List and Completed views SHALL continue to show only provider filter matches. List view SHALL include ancestor titles and sort all matching tasks across projects by most recent update first. Tree siblings SHALL sort by recent update while preserving hierarchy. Completed tasks SHALL have a separate history view with explicit coverage and pagination, sorted across projects by latest completion first (falling back to update time when unavailable). Completing a task SHALL invalidate cached history so it appears immediately upon opening Completed. Both views SHALL highlight current-terminal bindings and expose an additional bound-task area.
 
 #### Scenario: The project spans several pages
 - **WHEN** active task retrieval returns a continuation cursor
@@ -29,6 +29,14 @@ Fleet SHALL show all matching active tasks for the saved display selection (All 
 #### Scenario: A filter hides an incomplete descendant
 - **WHEN** a matching parent is completed while a hidden descendant remains incomplete
 - **THEN** the full-project hierarchy guard still blocks completion
+
+#### Scenario: A saved filter matches only top-level tasks
+- **WHEN** the filter excludes subtasks and a matching parent has active descendants
+- **THEN** Tree includes those descendants under the parent while List retains only the matching entries
+
+#### Scenario: All projects includes an empty project
+- **WHEN** a project has no tasks in the current task view
+- **THEN** All projects omits its group while selecting that project directly retains the empty state
 
 ### Requirement: Operators can create and edit tasks
 Fleet SHALL create tasks and subtasks and edit task titles and descriptions within their actual project; new root tasks SHALL require a destination project. It SHALL preserve hierarchy and managed backlinks and report provider failures or concurrent edit conflicts without claiming success.

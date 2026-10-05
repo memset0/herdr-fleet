@@ -614,7 +614,8 @@ the recovery copies, and never replace it with a backup without reviewing newer 
 The right sidebar switches between **Agents** and **Todoist**; the native narrow-screen pane
 switcher offers the same choice. Inside Todoist, **Tree** preserves task nesting, **List** shows
 ancestor titles, and **Completed** loads history in explicit 30-day windows. The sidebar and Settings share a saved display selector: All (default), a project or a Todoist saved filter.
-Task view and display scope switch independently. Tree keeps project/parent grouping with recent updates
+Task view and display scope switch independently. All projects hides projects with no visible tasks;
+a directly selected empty project keeps its empty state and create entrypoint. Tree keeps project/parent grouping with recent updates
 first among siblings; List sorts updates across projects, and Completed sorts completion times across
 projects. Rows, details and bound-task entries carry project names.
 Bound tasks also appear in a separate current-terminal area, including outside the display scope.
@@ -666,7 +667,7 @@ relation without sending again. Browser storage retains that receipt across relo
 without storage, the current page retains it in memory. Provider write failures and unverified send
 outcomes are reported separately rather than automatically retried.
 
-Saved filters are discovered through the official Sync `filters` resource and evaluated by the provider; unavailable or unsupported filters report an error instead of switching to All. Completed history uses the same display scope. Ancestors that do not match a filter contribute title context, not extra task results. Hierarchy guards always examine the full project, including children hidden by a filter.
+Saved filters are discovered through the official Sync `filters` resource and evaluated by the provider; unavailable or unsupported filters report an error instead of switching to All. Completed history uses the same display scope. In Tree, filter matches include their complete active descendant branches; List and Completed retain exact filter results. Unmatched ancestors contribute title context, not extra root rows. Hierarchy guards always examine the full project, including children hidden by a filter.
 
 
 ## External peer transport

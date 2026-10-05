@@ -7,13 +7,13 @@
 ## 2. Todoist service
 
 - [x] 2.1 Implement OAuth configuration, session-bound state and private credential persistence; verify callback, replay, expiry, wrong-session and disconnect cases with synthetic provider responses.
-- [x] 2.2 Implement All/project/saved-filter display selection, complete pagination and project-local hierarchy lookup; verify membership, provider filter/history parameters, hidden-descendant guards and stale-selection races.
+- [x] 2.2 Implement All/project/saved-filter display selection, complete pagination and project-local hierarchy lookup; verify membership, provider filter/history parameters, complete filtered subtrees, hidden-descendant guards and stale-selection races.
 - [x] 2.3 Implement create/edit/complete/reopen with hierarchy guards and typed blockers; verify deep ancestors/descendants, incomplete reads, concurrent changes and recurring-task refresh behavior.
 - [x] 2.4 Implement many-to-many relations and description-footer backlinks through the shared layer; verify idempotency, preservation of user text, failure recovery and stable redirect after relocation.
 
 ## 3. Native UI and delivery
 
-- [x] 3.1 Add right-rail and narrow-screen Todoist access, recent-first list/history and project-grouped tree views, display-scope labels, bound-task area and destination-aware task forms and animated inline task-detail cards; verify multiple projects, nesting, pagination and keyboard behavior.
+- [x] 3.1 Add right-rail and narrow-screen Todoist access, recent-first list/history and project-grouped tree views, display-scope labels, bound-task area and destination-aware task forms and animated inline task-detail cards; verify empty-project visibility, multiple projects, nesting, pagination and keyboard behavior.
 - [x] 3.2 Add connection settings with All/project/filter selection and translated status/blocker dialogs; verify secrets never reach browser state and account changes invalidate old actions; diagnose and verify the reported Connect interaction.
 - [x] 3.3 Add description-led English task formatting and a narrow native composer action port; verify ancestor titles, footer removal, draft protection, target changes and existing send refusal behavior.
 - [x] 3.4 Separate send and relation outcomes so retries never resend acknowledged messages; verify partial failures and retry recovery across the composed flow.

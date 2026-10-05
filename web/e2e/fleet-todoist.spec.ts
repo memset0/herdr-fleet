@@ -13,7 +13,7 @@ test("right sidebar switches independently and terminal associations survive a w
   const task = { id: "task-one", projectId: "project", parentId: null, sectionId: null, title: "Implement the requirement", description: "Use the task description as the requirement.", completed: false, recurring: false, order: 1, updatedAt: "one", url: "https://app.todoist.com/app/task/task-one" };
   const child = { ...task, id: "task-child", parentId: task.id, title: "Nested requirement" };
   const link = { id: "link-one", terminal, kind: "todoist", resource: '["account","project","task-one"]', accountId: "account", projectId: "project", taskId: task.id, state: "linked" };
-  const status = { scope: { kind: "all" }, configured: true, connected: true, accountId: "account", clientId: "example-client", projects: [{ id: "project", name: "Example project" }], generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [link] };
+  const status = { scope: { kind: "filter", id: "parents", name: "Parent tasks" }, configured: true, connected: true, accountId: "account", clientId: "example-client", projects: [{ id: "project", name: "Example project" }], generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [link] };
   await page.addInitScript(({ pinRow }) => {
     localStorage.setItem("collie:pins:v1", JSON.stringify([{ row: pinRow, space: "@terminal", at: 1 }]));
   }, { pinRow: row });
@@ -28,8 +28,8 @@ test("right sidebar switches independently and terminal associations survive a w
   } }));
   await page.route("**/fleet/api/pane-tags", (route) => route.fulfill({ json: { version: "one", document: { schemaVersion: 1, tags: [{ id: "tag-one", name: "Review", color: "#64748b" }], panes: [{ row, space: "@terminal", tags: ["tag-one"] }] } } }));
   await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: status }));
-  await page.route("**/fleet/api/todoist/choices", (route) => route.fulfill({ json: { projects: status.projects, filters: [] } }));
-  await page.route("**/fleet/api/todoist/tasks*", (route) => route.fulfill({ json: { ...status, tasks: [task, child], contextTasks: [], sections: [], boundTasks: [task] } }));
+  await page.route("**/fleet/api/todoist/choices", (route) => route.fulfill({ json: { projects: status.projects, filters: [{ id: "parents", name: "Parent tasks", query: "!subtask" }] } }));
+  await page.route("**/fleet/api/todoist/tasks*", (route) => route.fulfill({ json: { ...status, tasks: [task], treeTasks: [task, child], contextTasks: [], sections: [], boundTasks: [task] } }));
   await page.route(/\/api\/pane\/w2(?:%3A|:)p77(?:\?.*)?$/, (route) => route.fulfill({ json: { paneId: "w2:p77", text: "Example output", truncated: false, revision: 1 } }));
   await page.route("**/fleet/bindings/link-one", (route) => route.fulfill({ status: 303, headers: { location: "/pane/w2%3Ap77?s=default" }, body: "" }));
   await page.goto(`/pane/${encodeURIComponent(fixtureSnapshot.agents[0]!.paneId)}`);
@@ -40,6 +40,11 @@ test("right sidebar switches independently and terminal associations survive a w
   await rail.getByRole("button", { name: "Todoist", exact: true }).click();
   await expect(rail.getByRole("region", { name: "Bound to this terminal" })).toContainText(task.title);
   expect(page.url()).toBe(originalUrl);
+  await expect(rail.getByRole("button", { name: /^Nested requirement/ })).toBeVisible();
+  await rail.getByRole("button", { name: "List", exact: true }).click();
+  await expect(rail.getByRole("button", { name: /^Nested requirement/ })).toHaveCount(0);
+  await rail.getByRole("button", { name: "Tree", exact: true }).click();
+  await expect(rail.getByRole("button", { name: /^Nested requirement/ })).toBeVisible();
   const parentBox = await rail.locator("li").filter({ hasText: task.title }).locator("button").last().boundingBox();
   const childBox = await rail.locator("li").filter({ hasText: child.title }).locator("button").last().boundingBox();
   expect(childBox!.x).toBeGreaterThan(parentBox!.x);

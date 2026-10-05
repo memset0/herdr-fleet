@@ -161,7 +161,7 @@ function TodoistSettingsBody() {
 function TaskEditor({ task, parentId, close }: { task?: TodoTask; parentId: string | null; close(): void }) {
   const todo = useTodoist();
   const [title, setTitle] = useState(task?.title ?? ""), [description, setDescription] = useState(() => task ? displayBody(task.description) : "");
-  const parent = parentId ? [...(todo.state?.tasks ?? []), ...(todo.state?.boundTasks ?? [])].find((entry) => entry.id === parentId) : undefined;
+  const parent = parentId ? [...(todo.state?.treeTasks ?? []), ...(todo.state?.tasks ?? []), ...(todo.state?.boundTasks ?? [])].find((entry) => entry.id === parentId) : undefined;
   const [projectId, setProjectId] = useState(task?.projectId ?? parent?.projectId ?? (todo.state?.scope.kind === "project" ? todo.state.scope.id : ""));
   useLocale();
   return <TodoistDialog title={t(task ? "fleet.todoist.edit" : "fleet.todoist.add")} close={close}>
@@ -215,14 +215,14 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
   }, [state?.connected, state?.generation, showHistory, history, perform]);
   if (!state) return <div className="p-3"><TodoistProblem /><Button variant="outline" onClick={() => void todo.refresh()}>{t("fleet.todoist.refresh")}</Button></div>;
   if (!state.connected) return <div className="space-y-3 p-3 text-sm"><p>{t("fleet.todoist.selectInSettings")}</p><Button variant="outline" onClick={() => nav.down("/settings")}>{t("fleet.todoist.settings")}</Button><TodoistProblem /></div>;
-  const source = showHistory ? history?.tasks ?? [] : state.tasks;
   const tree = !showHistory && view === "tree";
+  const source = showHistory ? history?.tasks ?? [] : tree ? state.treeTasks : state.tasks;
   const visibleProjects = state.scope.kind === "project" ? state.projects.filter((project) => project.id === (state.scope.kind === "project" ? state.scope.id : "")) : state.projects;
   const groups = tree
-    ? visibleProjects.filter((project) => state.scope.kind !== "filter" || source.some((task) => task.projectId === project.id)).map((project) => ({ project, rows: taskRows(source.filter((task) => task.projectId === project.id), state.sections, true, collapsed) }))
+    ? visibleProjects.filter((project) => state.scope.kind === "project" || source.some((task) => task.projectId === project.id)).map((project) => ({ project, rows: taskRows(source.filter((task) => task.projectId === project.id), state.sections, true, collapsed) }))
     : [{ project: null, rows: taskRows(source, state.sections, false, collapsed, showHistory) }];
   const projectName = (id: string) => state.projects.find((project) => project.id === id)?.name ?? id;
-  const byId = new Map([...state.tasks, ...state.contextTasks, ...state.boundTasks, ...(history?.tasks ?? [])].map((task) => [task.id, task]));
+  const byId = new Map([...state.tasks, ...state.treeTasks, ...state.contextTasks, ...state.boundTasks, ...(history?.tasks ?? [])].map((task) => [task.id, task]));
   const bound = ref ? state.links.filter((link) => sameTerminal(link.terminal, ref)) : [];
   const boundIds = new Set(bound.map((link) => link.taskId));
   const loadHistory = () => void todo.perform(async (snapshot) => {

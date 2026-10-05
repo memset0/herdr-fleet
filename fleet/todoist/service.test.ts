@@ -202,7 +202,19 @@ test("Settings selection persists project/filter scope and stale views cannot mu
 test("a filtered-out child still blocks completion of its matching parent", async () => {
   const f = fixture();
   await f.service.selectScope(0, { kind: "filter", id: "parents", name: "Parents" });
-  expect((await f.service.tasks(1)).tasks.map((entry) => entry.id)).toEqual(["parent"]);
+  const snapshot = await f.service.tasks(1);
+  expect(snapshot.tasks.map((entry) => entry.id)).toEqual(["parent"]);
+  expect(snapshot.treeTasks.map((entry) => entry.id)).toEqual(["parent", "child"]);
   await expect(f.service.complete(1, "parent", false)).rejects.toMatchObject({ code: "descendants_incomplete", blockers: [{ id: "child" }] });
   expect(f.writes).toEqual([]);
+});
+
+test("filtered trees recursively include grandchildren without pulling unrelated tasks into List", async () => {
+  const f = fixture();
+  f.tasks.set("grandchild", task("grandchild", "child"));
+  await f.service.selectScope(0, { kind: "filter", id: "parents", name: "Parents" });
+  const snapshot = await f.service.tasks(1);
+  expect(snapshot.tasks.map((entry) => entry.id)).toEqual(["parent"]);
+  expect(snapshot.treeTasks.map((entry) => entry.id)).toEqual(["parent", "child", "grandchild"]);
+  expect(snapshot.contextTasks.map((entry) => entry.id)).toEqual(["root"]);
 });

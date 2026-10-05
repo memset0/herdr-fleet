@@ -23,7 +23,7 @@ beforeEach(() => {
   server.use(
     http.get(/\/fleet\/api\/todoist\/choices$/, () => HttpResponse.json({ projects: status.projects, filters: [{ id: "focus", name: "Focus", query: "search: child" }] })),
     http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json(status)),
-    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, tasks, contextTasks: [], sections: [], boundTasks: [] })),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, tasks, treeTasks: tasks, contextTasks: [], sections: [], boundTasks: [] })),
   );
 });
 
@@ -82,13 +82,13 @@ it("shows project groups and labels, and creates in the explicitly chosen projec
   const projects = [...status.projects, { id: "second", name: "Second project" }, { id: "empty", name: "Empty project" }];
   let created: unknown;
   server.use(
-    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, projects, tasks: [...tasks, { ...tasks[0]!, id: "second-root", projectId: "second" }], contextTasks: [], sections: [], boundTasks: [] })),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, projects, tasks: [...tasks, { ...tasks[0]!, id: "second-root", projectId: "second" }], treeTasks: [...tasks, { ...tasks[0]!, id: "second-root", projectId: "second" }], contextTasks: [], sections: [], boundTasks: [] })),
     http.post(/\/fleet\/api\/todoist\/create$/, async ({ request }) => { created = await request.json(); return HttpResponse.json({ ok: true }); }),
   );
   const view = renderPane();
   const second = await view.findByRole("region", { name: "Second project" });
   expect(within(second).getByRole("button", { name: "Root · Second project" })).toBeInTheDocument();
-  expect(view.getByRole("region", { name: "Empty project" })).toHaveTextContent("No tasks in this view.");
+  expect(view.queryByRole("region", { name: "Empty project" })).toBeNull();
   await user.click(view.getByRole("button", { name: "Add task" }));
   const dialog = view.getByRole("dialog", { name: "Add task" });
   await user.selectOptions(within(dialog).getByRole("combobox", { name: "Project" }), "second");
@@ -151,7 +151,7 @@ it("sidebar display scope changes preserve the independently selected list view"
   const current = () => ({ ...status, generation, scope: scoped ? { kind: "project", id: "project", name: "Example project" } : { kind: "all" } });
   server.use(
     http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json(current())),
-    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...current(), tasks, contextTasks: [], sections: [], boundTasks: [] })),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...current(), tasks, treeTasks: tasks, contextTasks: [], sections: [], boundTasks: [] })),
     http.post(/\/fleet\/api\/todoist\/scope$/, () => { scoped = true; generation++; return HttpResponse.json(current()); }),
   );
   const user = userEvent.setup(), view = renderPane();
@@ -160,4 +160,28 @@ it("sidebar display scope changes preserve the independently selected list view"
   await user.selectOptions(view.getByRole("combobox", { name: "Display scope" }), "project:project");
   await waitFor(() => expect(view.getByRole("combobox", { name: "Display scope" })).toHaveValue("project:project"));
   expect(view.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+});
+
+it("a parent-only filter keeps nested children in Tree but not in List", async () => {
+  const filtered = { ...status, scope: { kind: "filter", id: "parents", name: "Parent tasks" } };
+  server.use(
+    http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json(filtered)),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...filtered, tasks: [tasks[0]], treeTasks: tasks, contextTasks: [], sections: [], boundTasks: [] })),
+  );
+  const user = userEvent.setup(), view = renderPane();
+  expect(await view.findByRole("button", { name: /^Child ·/ })).toBeInTheDocument();
+  await user.click(view.getByRole("button", { name: "List" }));
+  expect(view.queryByRole("button", { name: /^Child ·/ })).toBeNull();
+  expect(view.getByRole("button", { name: /^Root ·/ })).toBeInTheDocument();
+});
+
+it("a directly selected empty project still shows its empty and create state", async () => {
+  const selected = { ...status, scope: { kind: "project", id: "project", name: "Example project" } };
+  server.use(
+    http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json(selected)),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...selected, tasks: [], treeTasks: [], contextTasks: [], sections: [], boundTasks: [] })),
+  );
+  const view = renderPane();
+  expect(await view.findByRole("region", { name: "Example project" })).toHaveTextContent("No tasks in this view.");
+  expect(view.getByRole("button", { name: "Add task" })).toBeEnabled();
 });

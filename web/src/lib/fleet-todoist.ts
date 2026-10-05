@@ -13,7 +13,7 @@ export interface TodoistStatus {
   callback: string;
   links: TodoLink[];
 }
-export interface TodoistSnapshot extends TodoistStatus { projects: TodoProject[]; contextTasks: TodoTask[]; tasks: TodoTask[]; sections: TodoSection[]; boundTasks: TodoTask[] }
+export interface TodoistSnapshot extends TodoistStatus { projects: TodoProject[]; contextTasks: TodoTask[]; tasks: TodoTask[]; treeTasks: TodoTask[]; sections: TodoSection[]; boundTasks: TodoTask[] }
 export interface TodoistHistory { generation: number; since: number; until: number; tasks: TodoTask[] }
 
 export class TodoistClientError extends Error {

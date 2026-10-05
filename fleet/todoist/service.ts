@@ -167,8 +167,26 @@ export function createTodoistService(options: TodoistOptions) {
       const tasks = display.query ? await api.filteredTasks(display.query)
         : await api.tasks(state.scope.kind === "project" ? state.scope.id : undefined);
       if (tasks.some((task) => !projectIds.has(task.projectId))) throw new TodoistError("project_unavailable", 403);
-      const known = new Map(tasks.map((task) => [task.id, task]));
-      for (const task of tasks) {
+      // Filters select tree roots, not the completeness of their nested task hierarchy.
+      const treeTasks = [...tasks];
+      if (display.query && tasks.length) {
+        const children = new Map<string, TodoTask[]>();
+        for (const task of await api.tasks()) {
+          if (!task.parentId) continue;
+          const group = children.get(task.parentId) ?? [];
+          group.push(task); children.set(task.parentId, group);
+        }
+        const included = new Set(tasks.map((task) => task.id));
+        for (const parent of treeTasks) {
+          for (const child of children.get(parent.id) ?? []) {
+            if (child.projectId !== parent.projectId) throw new TodoistError("project_mismatch", 403);
+            if (included.has(child.id)) continue;
+            included.add(child.id); treeTasks.push(child);
+          }
+        }
+      }
+      const known = new Map(treeTasks.map((task) => [task.id, task]));
+      for (const task of treeTasks) {
         let parentId = task.parentId;
         const seen = new Set([task.id]);
         while (parentId !== null) {
@@ -189,7 +207,7 @@ export function createTodoistService(options: TodoistOptions) {
         const task = known.get(id) ?? await api.task(id).catch(() => null);
         if (task && projectIds.has(task.projectId)) boundTasks.push(task);
       }
-      return { ...status(state), scope: display.scope, projects, tasks, contextTasks: [...known.values()].filter((entry) => !tasks.some((match) => match.id === entry.id)), sections, boundTasks };
+      return { ...status(state), scope: display.scope, projects, tasks, treeTasks, contextTasks: [...known.values()].filter((entry) => !treeTasks.some((match) => match.id === entry.id)), sections, boundTasks };
     }),
     history: (generation: number, before: number) => store.run(async (state, save) => {
       connected(state, generation);
