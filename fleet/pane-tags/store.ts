@@ -1,3 +1,4 @@
+import { migratePlaces, type PlaceEvidence } from "../bindings/place.ts";
 import { createHash, randomInt, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { diskSettingsIo } from "../settings/store.ts";
@@ -40,6 +41,28 @@ export function createTagStore(path: string, io: TagStoreIo = disk) {
   };
   return {
     read,
+    migrate(evidence: readonly PlaceEvidence[]) {
+      const result = pending.then(async () => {
+        const current = await read();
+        const migrated = migratePlaces(current.document.panes, evidence, true);
+        if (migrated === current.document.panes) return current;
+        const byPlace = new Map<string, (typeof current.document.panes)[number]>();
+        for (const pane of migrated) {
+          const key = JSON.stringify([pane.row, pane.space]);
+          const previous = byPlace.get(key);
+          byPlace.set(key, { ...pane, tags: [...new Set([...(previous?.tags ?? []), ...pane.tags])] });
+        }
+        const document = { ...current.document, panes: [...byPlace.values()] };
+        const text = JSON.stringify(document) + "\n";
+        if (!parseTagDocument(parseJson(text)) || Buffer.byteLength(text) > MAX_DOCUMENT_BYTES) throw new Error("Invalid tag migration");
+        const backup = path + ".before-terminal-bindings";
+        if (await io.read(backup) === null) await io.write(backup, JSON.stringify(current.document) + "\n");
+        await io.write(path, text);
+        return { version: createHash("sha256").update(text).digest("hex"), document };
+      });
+      pending = result.then(() => undefined, () => undefined);
+      return result;
+    },
     mutate(version: string, command: TagCommand) {
       const result = pending.then(() => apply(version, command));
       pending = result.then(() => undefined, () => undefined);

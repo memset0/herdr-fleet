@@ -113,6 +113,9 @@ const AGENT_VIEW_KEYS = {
   // its tab. Computed on the machine the pane lives on; an older peer omits both.
   soleTabName: true,
   tabPosition: true,
+  // Fleet optional durable identity, absent from the upstream baseline fixture.
+  bindingId: true,
+  bindingSession: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -202,6 +205,9 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
     expect(AGENT_VIEW_KEYS.session).toBe(true);
     expect(Object.keys(AGENT_VIEW_KEYS).toSorted()).toEqual([
       "agent",
+      // Fleet optional identity; legacy golden bodies still omit both.
+      "bindingId",
+      "bindingSession",
       "cache",
       "cwd",
       "focused",

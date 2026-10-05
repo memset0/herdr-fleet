@@ -311,6 +311,9 @@ const PANE_WIRE_KEYS = {
   // its tab. Computed on the machine the pane lives on; an older peer omits both.
   soleTabName: true,
   tabPosition: true,
+  // Fleet optional durable identity, absent from the upstream baseline fixture.
+  bindingId: true,
+  bindingSession: true,
 } satisfies Record<keyof PaneWire, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -423,6 +426,9 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
   test("PaneWire carries the two address dimensions and nothing else", () => {
     expect(Object.keys(PANE_WIRE_KEYS).toSorted()).toEqual([
       "agent",
+      // Fleet optional identity; legacy golden bodies still omit both.
+      "bindingId",
+      "bindingSession",
       "cache",
       "cwd",
       "focused",

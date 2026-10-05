@@ -1,3 +1,4 @@
+import { bindingPlace } from "../../../fleet/bindings/place.ts";
 import {
   parseTagSnapshot, TAGS_PATH, type TagCommand, type TagSnapshot, type PanePlace,
 } from "../../../fleet/pane-tags/document.ts";
@@ -7,7 +8,7 @@ import { asJsonObject, asJsonString, parseJson } from "@/lib/json";
 import type { AgentView } from "@/lib/types";
 
 export function tagPanePlace(pane: AgentView): PanePlace {
-  return { row: paneRowKey(pane), space: panePlaceParts(pane).space };
+  return bindingPlace(pane, { row: paneRowKey(pane), space: panePlaceParts(pane).space });
 }
 export type TagError = "conflict" | "duplicate" | "limit" | "missing" | "invalid" | "unavailable";
 export interface TagClientState {

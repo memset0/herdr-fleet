@@ -1,3 +1,5 @@
+import { useFleetTaskComposer } from "@/lib/fleet-task-delivery";
+import type { BindingPane } from "../../../fleet/bindings/identity.ts";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ChangeEvent, ClipboardEvent, CSSProperties, ReactNode } from "react";
@@ -73,6 +75,8 @@ export interface ComposerHandle {
 
 interface ComposerProps {
   paneId: string;
+  /** Optional Fleet identity data for externally supplied task drafts. */
+  bindingPane?: BindingPane;
   /** Which machine + which named session the pane lives in — scopes every write to the right Herdr. */
   scope?: Scope;
   /** The pane's agent name — drives the slash-command palette and the reply-vs-shell placeholder. */
@@ -312,7 +316,7 @@ interface ClearedDraft {
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { paneId, scope, agent, isShell, gone, readOnly, hostBlock, composing, dialogPresent, dialogUnread, text, terminalDraft, rawTerminalDraft, prefs, display, onSent, pullHandle, draftNoticeSlot, changesPill },
+  { paneId, bindingPane, scope, agent, isShell, gone, readOnly, hostBlock, composing, dialogPresent, dialogUnread, text, terminalDraft, rawTerminalDraft, prefs, display, onSent, pullHandle, draftNoticeSlot, changesPill },
   ref,
 ) {
   const revalidator = useRevalidator();
@@ -1137,16 +1141,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // Gate the composer's Send through the destructive-input confirm: a matching command arms the
   // "Really send?" state instead of sending; the confirming second tap goes through. Non-destructive
   // input sends immediately (and any stray armed state is cleared).
-  function onSendClick() {
+  function submitLine(line: string): Promise<boolean> {
     // An armed override takes precedence: this tap IS the deliberate "type anyway", so it skips the
     // destructive re-confirm (already answered on the tap that got blocked) and the pre-flight.
     // The line the terminal gets: every chip's marker swapped for its path (ADR 0060). Both the
     // destructive check and the send read THIS, never the draft with its markers in it.
-    const line = composeLine(input, attachments);
     if (forceConfirm.pending === "force") {
       forceConfirm.reset();
-      send(line, true, true);
-      return;
+      return send(line, true, true);
     }
     const reason = isDestructiveInput(line);
     if (reason && !sendConfirm.confirm("send")) {
@@ -1159,11 +1161,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           : translate("composer.destructive.confirm", { reason }),
         "info",
       );
-      return;
+      return Promise.resolve(false);
     }
     sendConfirm.reset();
-    send(line, true);
+    return send(line, true);
   }
+  function onSendClick() { void submitLine(composeLine(input, attachments)); }
+
+  useFleetTaskComposer({
+    pane: bindingPane,
+    blocked: isShell || !agent || locked || sending || uploading || direct.active || input.length > 0 || attachments.length > 0 || effectiveRaw !== null || dialogPresent || forceConfirm.pending === "force" || sendConfirm.pending === "send",
+    submit: (value) => { updateInput(value); return submitLine(value); },
+  });
   const confirmingSend = sendConfirm.pending === "send";
   const forcingSend = forceConfirm.pending === "force";
 

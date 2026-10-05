@@ -3015,3 +3015,12 @@ A member that predates this amendment ignores both headers and omits the field. 
 are the closed one, and none of them refuses anything. A lead that predates it sends neither header,
 which is the state every crew is in until an operator confirms an update. The protocol integer is
 still the only thing that refuses (§7.1).
+
+## Fleet optional terminal identity extension
+
+Pane snapshot rows may carry `bindingId` and `bindingSession`, opaque strings supplied by the
+owning adapter for durable terminal associations. Both are optional and additive under section 7.1.
+The session is canonical even when display scoping removes the ordinary `session` field. Merge and
+forwarding preserve these fields and qualify rows with the authoritative member ID. Older peers
+omit them; callers must not manufacture durable references from mutable pane addresses. These are
+identifiers, not authorization or permission to invoke a terminal command.

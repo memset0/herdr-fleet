@@ -130,7 +130,7 @@ describe("NativeNavigationShell", () => {
   it("shows both rails with no control that would hide either", () => {
     renderShell();
     expect(screen.getByRole("complementary", { name: "Herds" })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Agents" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Agents / Todoist" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /sidebar$/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Collapse (Herds|Agents)/ })).toBeNull();
   });
@@ -170,7 +170,7 @@ describe("NativeNavigationShell", () => {
   it("stands the hierarchy from xl, capped for the route, and the Agents rail from 2xl", () => {
     renderShell();
     const herds = screen.getByRole("complementary", { name: "Herds" });
-    const agents = screen.getByRole("complementary", { name: "Agents" });
+    const agents = screen.getByRole("complementary", { name: "Agents / Todoist" });
     const tokens = (el: Element) => el.className.split(/\s+/u);
     expect(tokens(herds)).toEqual(expect.arrayContaining(["xl:flex", "max-2xl:max-w-[calc(100vw-66.25rem)]"]));
     expect(tokens(agents)).toContain("2xl:flex");
@@ -201,7 +201,7 @@ describe("NativeNavigationShell", () => {
     renderShell();
     await user.click(screen.getByRole("link", { name: "Open direct" }));
     expect(await screen.findByText("Pane route")).toBeInTheDocument();
-    const rail = screen.getByRole("complementary", { name: "Agents" });
+    const rail = screen.getByRole("complementary", { name: "Agents / Todoist" });
     expect(rail.querySelectorAll('[aria-current="page"]')).toHaveLength(1);
   });
 
@@ -620,7 +620,7 @@ describe("the shell's command layer", () => {
     const user = userEvent.setup();
     renderShell();
     const rail = screen.getByRole("complementary", { name: "Herds" });
-    const agents = screen.getByRole("complementary", { name: "Agents" });
+    const agents = screen.getByRole("complementary", { name: "Agents / Todoist" });
 
     await user.keyboard("{Control>}b{/Control}");
     await user.keyboard("b");
@@ -690,7 +690,7 @@ describe("the shell's command layer", () => {
     setPinned(second, true, [pane, second]);
     renderShell(new NavigationPreferenceStore(), vi.fn(), two);
 
-    const rail = screen.getByRole("complementary", { name: "Agents" });
+    const rail = screen.getByRole("complementary", { name: "Agents / Todoist" });
     const railOrder = Array.from(
       rail.querySelectorAll<HTMLElement>('[data-slot="native-agent-card"]'),
     ).map((row) => row.textContent);
@@ -980,7 +980,7 @@ describe("the rails and the strip band", () => {
   /** Every element in a rail that reserves the top inset. */
   function railReservations(): Element[] {
     const found: Element[] = [];
-    for (const name of ["Herds", "Agents"]) {
+    for (const name of ["Herds", "Agents / Todoist"]) {
       const rail = screen.getByRole("complementary", { name });
       found.push(...rail.querySelectorAll("[class*='safe-area-inset-top']"));
     }
@@ -1053,7 +1053,7 @@ describe("mark all seen from the Agents rail", () => {
       }),
     );
     const { loads } = renderWithLoader();
-    const rail = await screen.findByRole("complementary", { name: "Agents" });
+    const rail = await screen.findByRole("complementary", { name: "Agents / Todoist" });
     const sheet = screen.getByTestId("switcher-sheet");
     const inRail = within(rail).getByRole("button", { name: "Mark 2 unseen panes seen" });
     // The phone's sheet holds the same rail element, control and all.

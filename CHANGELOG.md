@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Bind terminal work to Todoist from the right sidebar.** Shared terminal identities keep pins, tags and task links through layout moves; project-scoped OAuth, task views, guarded edits and native composer delivery.
+
 ## [3.7.9] - 2026-10-05
 
 **Lead-only frontend update; members do not redeploy.**

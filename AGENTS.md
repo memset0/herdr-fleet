@@ -67,6 +67,15 @@ baseline to be its merge base, refuses a dirty tree, and reports every port the 
 every owned path it has begun to occupy. Every invasive entry is then reviewed against that release
 and records it; the boundary check fails while one lags.
 
+## Fleet terminal associations
+
+Fleet's shared binding layer owns durable terminal identity for favorites, tags and Todoist.
+For a pane carrying stable identity, associations follow the original terminal across layout
+moves and renames. This supersedes ADR 0070's place-key policy for that case only: pins remain
+in the one browser-local store and native entrypoints still agree. Exact, fresh legacy matches
+may migrate once; unresolved records are retained without guessing. Keep provider logic and
+identity policy in fork-owned modules and expose only narrow snapshot/composer/pin ports.
+
 ## Versioning and releases — MANDATORY
 
 **This product's version line is its own, beginning at `3.0.0`.** It is not Collie's.

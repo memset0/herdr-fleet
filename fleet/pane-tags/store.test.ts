@@ -101,3 +101,19 @@ test("untrusted commands and documents are bounded and reject dangling or duplic
   const full = { ...emptyTags(), tags: Array.from({ length: MAX_TAGS }, (_, i) => ({ id: `tag-${i}`, name: `Tag ${i}`, color: "#123456" })) };
   expect(changeTags(full, { kind: "attach", pane, name: "Extra" }, () => ({ id: "extra", color: "#123456" }))).toEqual({ ok: false, error: "limit" });
 });
+
+test("terminal migration merges tags atomically and keeps associations after relocation", async () => {
+  const { store, path } = await setup();
+  await store.mutate("", { kind: "attach", pane, name: "Review" });
+  const current = { row: 'fleet-terminal:v1:[1,"lead","work","herdr:term_one"]', space: "@terminal" };
+  const migrated = await store.migrate([{ legacy: pane, current }]);
+  expect(tagsForPane(migrated.document, current)).toHaveLength(1);
+  expect(JSON.parse(await readFile(path + ".before-terminal-bindings", "utf8")).panes[0].row).toBe(pane.row);
+  expect((await stat(path + ".before-terminal-bindings")).mode & 0o777).toBe(0o600);
+  expect(tagsForPane(migrated.document, pane)).toHaveLength(0);
+  const unchanged = await store.migrate([{ legacy: pane, current }]);
+  expect(unchanged.version).toBe(migrated.version);
+  expect((await createTagStore(path).read()).document).toEqual(migrated.document);
+  await store.mutate(migrated.version, { kind: "detach", pane: current, id: migrated.document.tags[0]!.id });
+  expect((await store.read()).document.panes).toEqual([]);
+});

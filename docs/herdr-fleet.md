@@ -592,3 +592,71 @@ the current browser immediately; concurrent edits report a conflict and show the
 for review. Offline browsers keep the last displayed labels and disable writes until recovery.
 Limits are 256 definitions, 4096 pane places, 32 tags per pane and 64 characters per name.
 Color-only presentation, tag filtering and global deletion are not offered.
+
+## Terminal bindings and Todoist
+
+Fleet associations follow a terminal rather than its current layout address. On a member that
+supplies stable identity, reordering tabs, swapping panes, moving a terminal to another workspace
+and renaming its workspace preserve favorites, tags and Todoist relations. A replacement terminal
+never inherits the old reference. An unavailable member retains dormant references. Members need
+the release carrying the optional identity fields before new durable Todoist links are available.
+
+The binding layer lives in `fleet/bindings/`. Consumers share reference validation, scoped identity,
+unique live resolution, idempotent relation operations and exact legacy migration. Pins still use
+the native browser-local store; tags remain shared on the lead. Legacy records migrate only when a
+fresh original host/session/pane/workspace match uniquely supplies a terminal identity. Unresolved
+records are retained; no name or working-directory heuristic relocates them. The first conversion
+keeps a browser-local `fleet:terminal-pins:legacy-backup:v1` recovery record and a private
+`pane-tags.json.before-terminal-bindings` snapshot. These are recovery copies, not live state.
+A downgrade does not understand terminal-backed associations: retain the current data as well as
+the recovery copies, and never replace it with a backup without reviewing newer associations.
+
+The right sidebar switches between **Agents** and **Todoist**; the native narrow-screen pane
+switcher offers the same choice. Inside Todoist, **Tree** preserves task nesting, **List** shows
+ancestor titles, and **Completed** loads history in explicit 30-day windows. The selected project
+changes in Fleet Settings, not in the rail. Bound tasks also appear in a separate current-terminal
+area. Task content is rendered as text.
+
+### Connect
+
+1. Register a Todoist OAuth application and copy the redirect URL displayed in Fleet Settings into
+   its allowed redirects. Enter the application's Client ID and Client Secret in Fleet Settings.
+2. Choose **Connect Todoist**, approve the provider consent, then continue from the callback page.
+   The continuation uses the original authenticated Fleet session; it does not relax its Strict cookie.
+3. Choose a project in Settings. OAuth permission is account-wide `data:read_write`, but Fleet
+   enforces the selected project on every task operation. Project discovery exposes chooser metadata
+   only. Disconnect removes the active grant and stops provider requests while preserving relations.
+
+The lead keeps `todoist.json` beside its configuration, using atomic owner-only writes. It contains
+application credentials, rotating OAuth grants, the selected project and relations. It must never
+be committed, served as an asset or returned by a browser-readable API. A malformed file is refused, never reset
+silently. API status exposes no secret. Use Application settings to replace app credentials, then reconnect and select a project. Existing
+relations remain stored; a new OAuth grant is never inferred from a credential edit.
+
+### Task actions and links
+
+Create tasks or subtasks, edit titles and descriptions, complete or reopen tasks. Completing a task
+requires every descendant to be complete; reopening requires every ancestor to be incomplete.
+Blocker dialogs name what must be handled first and never offer a force or cascading action.
+The service re-reads hierarchy before mutation and serializes Fleet actions. Todoist does not offer
+an atomic transaction spanning that check and the write, so another client can still change state
+between them; refresh after mutations and check a failure before retrying. Completed recurring
+history is an occurrence record: the next occurrence is already open and is operated in the active
+view, rather than completing it again through a historical row.
+
+Bindings are many-to-many. Fleet maintains a marked link footer at the end of the task description,
+preserving its user-authored body. A link resolves to the terminal's current native pane route;
+an unavailable or ambiguous target produces an error rather than opening another terminal.
+Text added after the managed footer remains part of the task description; the next link update
+moves the footer back to the end without dropping that text. Ambiguous or incomplete marker
+boundaries are refused rather than guessed at.
+
+**Send to agent** fills the empty native composer and uses its existing guarded submission path.
+Existing drafts and attachments are preserved; a blocked submission retains the inserted task draft.
+Bare shells, raw typing, unavailable identities and an armed override cannot receive this shortcut.
+The English message makes the description the primary requirement, includes ancestor titles without
+ancestor descriptions, omits the managed link footer, and never requests automatic task completion.
+After an acknowledged send, a failed backlink leaves a receipt: **Retry binding only** repairs the
+relation without sending again. Browser storage retains that receipt across reloads when available;
+without storage, the current page retains it in memory. Provider write failures and unverified send
+outcomes are reported separately rather than automatically retried.

@@ -25,6 +25,9 @@ export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
  * those so a freshly-created tab/space is reachable and you can launch your own agent in it.
  */
 export interface AgentView {
+  /** Optional Fleet terminal identity; independent of layout and snapshot session widening. */
+  bindingId?: string;
+  bindingSession?: string;
   paneId: string;
   workspaceId: string;
   workspaceLabel: string;

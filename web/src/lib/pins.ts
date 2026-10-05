@@ -1,3 +1,5 @@
+import { preserveLegacyPins } from "../../../fleet/bindings/backup.ts";
+import { bindingPlace, migratePlaces } from "../../../fleet/bindings/place.ts";
 import { useSyncExternalStore } from "react";
 
 import { paneRowKey } from "./hosts";
@@ -6,6 +8,9 @@ import { panePlaceParts } from "./pane-name";
 import { retirePinHint } from "./pin-hint";
 import type { AgentView } from "./types";
 
+// Fleet delegates stable terminal keys to bindingPlace and migrates exact fresh legacy matches.
+// The inherited place-key discussion below describes the fallback for rows without that identity.
+//
 // PINS: the panes this device asked to lead the dashboard and the switcher (ADR 0070).
 //
 // A pin is a place the operator chose, never a state. It moves a pane once, when the operator pins
@@ -104,10 +109,10 @@ function load(): readonly Pin[] {
 let pins: readonly Pin[] = load();
 const listeners = new Set<() => void>();
 
-function save(next: readonly Pin[]): void {
+function save(next: readonly Pin[], persist = true): void {
   pins = next;
   try {
-    storage()?.setItem(STORAGE_KEY, JSON.stringify(next));
+    if (persist) storage()?.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
     // Quota or private mode. The in-memory list still applies for this session.
   }
@@ -130,7 +135,7 @@ export function usePins(): readonly Pin[] {
 }
 
 function pinId(pane: AgentView): PinId {
-  return { row: paneRowKey(pane), space: panePlaceParts(pane).space };
+  return bindingPlace(pane, { row: paneRowKey(pane), space: panePlaceParts(pane).space });
 }
 
 const same = (a: PinId, b: PinId) => a.row === b.row && a.space === b.space;
@@ -229,4 +234,14 @@ export function __resetPins(): void {
 export function __reloadPins(): void {
   pins = load();
   for (const fn of listeners) fn();
+}
+
+/** Fleet-only identity migration; the store and every pin entrypoint remain shared. */
+export function migrateTerminalPins(herd: readonly AgentView[], fresh: boolean): void {
+  const evidence = herd.map((pane) => ({
+    legacy: { row: paneRowKey(pane), space: panePlaceParts(pane).space },
+    current: pinId(pane),
+  }));
+  const next = migratePlaces(pins, evidence, fresh);
+  if (next !== pins) save(next.filter((pin, index) => next.findIndex((other) => same(pin, other)) === index), preserveLegacyPins(pins, storage()));
 }

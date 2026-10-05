@@ -141,6 +141,7 @@ function toView(pane: MuxPane, kind: "agent" | "shell"): AgentView {
   };
   // Optional fields are ASSIGNED, never conditionally spread: absent stays absent, and each
   // condition below stays readable as the one rule it encodes.
+  if (pane.bindingId) { view.bindingId = pane.bindingId; view.bindingSession = pane.bindingSession; }
   if (pane.paneLabel) view.paneLabel = pane.paneLabel;
   // Denormalised alongside workspaceLabel so no client has to join tabs[].
   if (pane.tabLabel) view.tabLabel = pane.tabLabel;

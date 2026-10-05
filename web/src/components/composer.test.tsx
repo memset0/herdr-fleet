@@ -1,6 +1,8 @@
+import { deliverTodoistTask } from "@/lib/fleet-task-delivery";
+import { terminalReference } from "../../../fleet/bindings/identity.ts";
 import { useState } from "react";
 import type { ComponentProps } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -74,8 +76,8 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     ...overrides,
   };
   const router = createMemoryRouter([{ path: "/", element: <Composer {...props} /> }]);
-  render(<RouterProvider router={router} />);
-  return props;
+  const rendered = render(<RouterProvider router={router} />);
+  return { ...props, container: rendered.container };
 }
 
 /**
@@ -3686,5 +3688,40 @@ describe("Composer — the belt's clear control (M40 spec 04, #291)", () => {
       cleanup();
       expect(revoked).toEqual(["blob:test/1"]);
     });
+  });
+});
+
+describe("Fleet task delivery through the native composer", () => {
+  const bindingPane = { paneId: "w1:p1", bindingId: "herdr:term_example", bindingSession: "default" };
+  const terminal = terminalReference(bindingPane)!;
+
+  it("uses the native type, verify, submit path and clears its inserted draft", async () => {
+    const typed = vi.fn(), submitted = vi.fn();
+    server.use(replyHandler(typed, submitted));
+    const props = renderComposer({ bindingPane });
+    let sent = false;
+    await act(async () => { sent = await deliverTodoistTask(terminal, bindingPane.paneId, "Implement the Todoist description."); });
+    expect(sent).toBe(true);
+    expect(typed).toHaveBeenCalledExactlyOnceWith("Implement the Todoist description.");
+    expect(submitted).toHaveBeenCalledTimes(1);
+    expect(within(props.container).getByPlaceholderText(/type a reply/i)).toHaveValue("");
+    expect(props.onSent).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves an existing draft and refuses a changed target", async () => {
+    const props = renderComposer({ bindingPane });
+    const input = within(props.container).getByPlaceholderText(/type a reply/i);
+    fireEvent.change(input, { target: { value: "My existing draft" } });
+    expect(await deliverTodoistTask(terminal, bindingPane.paneId, "Task content")).toBe(false);
+    expect(input).toHaveValue("My existing draft");
+    fireEvent.change(input, { target: { value: "" } });
+    expect(await deliverTodoistTask(terminal, "w9:p7", "Task content")).toBe(false);
+    expect(props.onSent).not.toHaveBeenCalled();
+  });
+
+  it("does not submit task prose to a bare shell", async () => {
+    const props = renderComposer({ bindingPane, isShell: true, agent: "shell" });
+    expect(await deliverTodoistTask(terminal, bindingPane.paneId, "Task content")).toBe(false);
+    expect(props.onSent).not.toHaveBeenCalled();
   });
 });

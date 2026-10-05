@@ -7,6 +7,9 @@ import { t } from "@/lib/i18n";
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
 export interface AgentView {
+  /** Optional Fleet terminal identity; independent of layout and snapshot session widening. */
+  bindingId?: string;
+  bindingSession?: string;
   paneId: string;
   workspaceId: string;
   workspaceLabel: string;

@@ -1,3 +1,7 @@
+import { TODOIST_CALLBACK_SCRIPT, oauthLanding } from "./todoist/callback.ts";
+import { todoistResponse, bindingRedirect } from "./todoist/route.ts";
+import { TODOIST_API, type TodoistService } from "./todoist/service.ts";
+import { fetchBindingInventory, placeEvidence } from "./bindings/inventory.ts";
 import { isIP } from "node:net";
 import { randomBytes } from "node:crypto";
 
@@ -69,6 +73,7 @@ export const FLEET_SETTINGS_PATH = "/fleet/api/settings";
  */
 function isApiPath(pathname: string): boolean {
   if (pathname === "/api" || pathname.startsWith("/api/")) return true;
+  if (pathname.startsWith(TODOIST_API + "/")) return true;
   return pathname === TAGS_PATH || pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
 }
 
@@ -112,6 +117,7 @@ export interface GatewayOptions {
    */
   readonly settings?: SettingsStore;
   readonly tags?: TagStore;
+  readonly todoist?: TodoistService;
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
   readonly now?: () => number;
@@ -225,6 +231,13 @@ export function createGatewayHandler(options: GatewayOptions) {
       }
     }
 
+    if (options.todoist && url.pathname === "/fleet/todoist/callback.js" && request.method === "GET") {
+      return withBaseHeaders(new Response(TODOIST_CALLBACK_SCRIPT, { headers: { "content-type": "text/javascript; charset=utf-8" } }));
+    }
+    if (options.todoist && url.pathname === options.todoist.callbackPath && request.method === "GET") {
+      return withBaseHeaders(oauthLanding(url));
+    }
+
     let session: SessionClaims | null;
     try {
       session = await currentSession(request, config, sessions, now());
@@ -300,8 +313,27 @@ export function createGatewayHandler(options: GatewayOptions) {
       return text("forbidden\n", 403);
     }
 
+    if (url.pathname.startsWith(TODOIST_API + "/")) {
+      if (!options.todoist) return json({ error: "not found" }, 404);
+      return withBaseHeaders(await todoistResponse(request, options.todoist, session.sessionId,
+        () => fetchBindingInventory(request, config, options.fetcher)));
+    }
+    if (url.pathname.startsWith("/fleet/bindings/")) {
+      if (!options.todoist || request.method !== "GET") return json({ error: "not found" }, 404);
+      return withBaseHeaders(await bindingRedirect(url.pathname.slice("/fleet/bindings/".length), options.todoist,
+        () => fetchBindingInventory(request, config, options.fetcher)));
+    }
+
     if (url.pathname === TAGS_PATH) {
       if (!options.tags) return json({ error: "not found" }, 404);
+      if (request.method === "GET") {
+        // Failed inventory never destroys existing records or guesses a migration.
+        const inventory = await fetchBindingInventory(request, config, options.fetcher).catch(() => []);
+        if (inventory.length) {
+          try { await options.tags.migrate(placeEvidence(inventory)); }
+          catch { return json({ error: "unavailable" }, 503); }
+        }
+      }
       return withBaseHeaders(await tagResponse(request, options.tags), "no-store");
     }
 

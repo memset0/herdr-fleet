@@ -6,8 +6,8 @@
  * connection.
  *
  * It has to live here rather than anywhere more convenient because Collie drops `terminal_id` when it
- * builds its own Pane model, so no Collie surface — and nothing the lead receives about a peer's
- * Panes — carries it. On the lead that is a small inconvenience: read the local server's snapshot.
+ * builds its Pane model. Fleet binding fingerprints can identify a terminal but do not carry the raw
+ * command identifier, and cannot substitute for this local resolution. On the lead that is a small inconvenience: read the local server's snapshot.
  * For a peer it is the reason a peer-side service has to exist at all.
  *
  * Nothing here reads a path, a command or an account from its input. The Pane id is matched against

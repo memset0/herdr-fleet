@@ -2433,6 +2433,7 @@ export function AgentChat({
               <div data-slot="chrome-block" className="border-t border-rule bg-chrome">
                 <Composer
                   ref={composerRef}
+                  bindingPane={agent}
                   paneId={paneId}
                   scope={scope}
                   agent={agent?.agent}

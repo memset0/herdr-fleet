@@ -1,3 +1,4 @@
+import { herdrBindingId, herdrBindingSession } from "../../../fleet/bindings/herdr.ts";
 // HERDR, BEHIND THE CONTRACT — the reference adapter (M10/02).
 //
 // Everything above this file talks the mux port (../types.ts); everything below it (`client.ts`)
@@ -226,6 +227,7 @@ export class HerdrMux implements MuxAdapter {
   constructor(
     private readonly client: HerdrRpc,
     private readonly sessions: () => readonly MuxSession[],
+    private readonly bindingSession: string = "default",
   ) {}
 
   /** Reachability for the connected/disconnected banner — one cheap list call. */
@@ -246,7 +248,7 @@ export class HerdrMux implements MuxAdapter {
     const spaceById = new Map(wire.workspaces.map((w) => [w.workspace_id, w]));
     const tabById = new Map(wire.tabs.map((t) => [t.tab_id, t]));
     return {
-      panes: wire.panes.map((p) => toMuxPane(p, spaceById, tabById)),
+      panes: wire.panes.map((p) => toMuxPane(p, spaceById, tabById, this.bindingSession)),
       spaces: wire.workspaces.map(toMuxSpace),
       tabs: wire.tabs.map(toMuxTab),
     };
@@ -521,6 +523,7 @@ function toMuxPane(
   raw: WirePane,
   spaceById: Map<string, WireWorkspace>,
   tabById: Map<string, WireTab>,
+  bindingSession: string,
 ): MuxPane {
   const space = spaceById.get(raw.workspace_id);
   const spaceLabel = space?.label ?? raw.workspace_id;
@@ -544,6 +547,8 @@ function toMuxPane(
     agent,
     status: raw.agent_status,
   };
+  const bindingId = herdrBindingId(raw.terminal_id);
+  if (bindingId) { pane.bindingId = bindingId; pane.bindingSession = bindingSession; }
   // Optional fields are ASSIGNED, never conditionally spread: absent stays absent, and each
   // condition below stays readable as the one rule it encodes.
   //
@@ -641,6 +646,7 @@ export const herdrMuxFactory: MuxAdapterFactory = {
     return new HerdrMux(
       new HerdrClient(target.endpoint, target.timeoutMs || DEFAULT_TIMEOUT_MS, dialModeOf(target.options)),
       herdrSessionSource(target.endpoint),
+      herdrBindingSession(target.endpoint),
     );
   },
   describeTarget(endpoint: string) {

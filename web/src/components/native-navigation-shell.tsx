@@ -1,3 +1,6 @@
+import { FleetTodoistProvider } from "@/components/fleet-todoist-provider";
+import { FleetRightSidebar } from "@/components/fleet-todoist";
+import { migrateTerminalPins } from "@/lib/pins";
 import { X } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -63,7 +66,7 @@ import { FleetConfirmDialog } from "@/components/fleet-confirm-dialog";
 import { FleetRenameDialog, type RenameTarget } from "@/components/fleet-rename-dialog";
 import { FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
 import { useStripBandOpen } from "@/components/ui/strip-host";
-import { hostName, paneScope } from "@/lib/hosts";
+import { findPane, hostName, paneScope } from "@/lib/hosts";
 import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
 import { closePane, closeTab } from "@/lib/api";
@@ -390,7 +393,12 @@ export function NativeNavigationShell({
   useEffect(() => {
     if (data.error === true || data.agents.length === 0) return;
     migrateLegacyFavorites(data.agents);
-  }, [data.error, data.agents]);
+    const fresh = [...data.agents, ...data.shellPanes].filter((pane) => {
+      if (pane.host && data.servers?.find((server) => server.id === pane.host)?.reachable !== true) return false;
+      return data.sessions?.find((session) => session.name === pane.bindingSession && (session.host ?? "") === (pane.host ?? ""))?.reachable !== false;
+    });
+    migrateTerminalPins(fresh, data.bridge === "connected");
+  }, [data.error, data.agents, data.shellPanes, data.servers, data.sessions, data.bridge]);
 
   // Recomputed every render rather than memoised, which is what the rail beside it already does with
   // the same calls: `triage()` and the pinned partition are cheap.
@@ -573,17 +581,21 @@ export function NativeNavigationShell({
     [data.agents, data.bridge, data.error, data.lastSeenAt, tabsForPins, data.servers, currentKey, openAgent, markAllSeen],
   );
 
+  const bindingPane = paneId === undefined ? undefined : findPane(allPanes, paneId, data.scope, data.servers, data.sessions);
+  const rightSidebar = useMemo(() => <FleetRightSidebar agents={agents} pane={bindingPane} />, [agents, bindingPane]);
+
   const navigation = useMemo(
     () => ({
       hierarchyOpen,
       toggleHierarchy,
       setTrigger,
-      paneSwitcher: { title: t("fleet.navigation.agents"), content: agents },
+      paneSwitcher: { title: t("fleet.todoist.sidebar"), content: rightSidebar },
     }),
-    [hierarchyOpen, toggleHierarchy, setTrigger, agents],
+    [hierarchyOpen, toggleHierarchy, setTrigger, rightSidebar],
   );
 
   return (
+    <FleetTodoistProvider>
     <FleetPaneTagsProvider>
     <FleetCommandsProvider
       adapters={adapters}
@@ -637,11 +649,11 @@ export function NativeNavigationShell({
         />
         <Rail
           side="right"
-          title={t("fleet.navigation.agents")}
+          title={t("fleet.todoist.sidebar")}
           width={preferences.right.preferredWidth}
           collapsed={railsCollapsed}
         >
-          {agents}
+          {rightSidebar}
         </Rail>
 
         <HierarchyOverlay
@@ -740,6 +752,7 @@ export function NativeNavigationShell({
       </NativeNavigationProvider>
     </FleetCommandsProvider>
     </FleetPaneTagsProvider>
+    </FleetTodoistProvider>
   );
 }
 

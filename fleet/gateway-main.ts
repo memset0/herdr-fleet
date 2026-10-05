@@ -1,3 +1,5 @@
+import { createTodoistService } from "./todoist/service.ts";
+import { createTodoistStore } from "./todoist/store.ts";
 import { dirname, isAbsolute, join } from "node:path";
 
 import { isFleetLeadConfig, loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
@@ -35,6 +37,7 @@ async function main(): Promise<void> {
     sessions,
     // Beside the private configuration, not in the state directory: bindings are the operator's own
     // choice, and a wiped state directory must not quietly return them to stock defaults.
+    todoist: createTodoistService({ store: createTodoistStore(join(dirname(configPath), "todoist.json")), origin: config.public.origin }),
     tags: createTagStore(join(dirname(configPath), "pane-tags.json")),
     settings: createSettingsStore(settingsPathFor(dirname(configPath))),
     terminal: terminal ?? undefined,

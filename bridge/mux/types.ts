@@ -127,6 +127,9 @@ export function isUnsupported<T>(outcome: MuxOutcome<T>): boolean {
  */
 export interface MuxPane extends MuxIdentity {
   readonly paneId: string;
+  /** Optional Fleet terminal identity; independent of layout and snapshot session widening. */
+  readonly bindingId?: string;
+  readonly bindingSession?: string;
   readonly spaceId: string;
   readonly spaceLabel: string;
   /** The space's position, as the multiplexer orders them. 1-based; 0 when it has no ordering. */
