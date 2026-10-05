@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.1] - 2026-10-05
+
+**Lead-only frontend update; members do not redeploy.**
+
 ### Fixed
 
-- **Phone Agent cards keep touch controls on one row.** Remove the stacked-target height inflation and fit metadata and tags within the compact card.
+- **Phone Agent cards keep touch controls on one row.** Remove the stacked-target height inflation and fit metadata and tags within the compact card. ([c95100da](https://github.com/memset0/herdr-fleet/commit/c95100da))
 
 ## [3.9.0] - 2026-10-05
 
