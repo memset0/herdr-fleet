@@ -4,6 +4,10 @@ import type { Dictionary } from "./en";
 // match.
 
 export const zh: Dictionary = {
+  "fleet.todoist.displayScope": "显示范围",
+  "fleet.todoist.projects": "项目",
+  "fleet.todoist.filters": "过滤器",
+  "fleet.todoist.scopeUnavailable": "所选项目或过滤器不可用，请在设置中选择其他显示范围。",
   "fleet.todoist.allProjects": "所有项目",
   "fleet.todoist.secretSaved": "Client Secret 已配置，仅保存在服务器。",
   "fleet.todoist.appSettings": "修改应用凭据",

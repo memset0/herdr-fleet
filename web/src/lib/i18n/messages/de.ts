@@ -4,6 +4,10 @@ import type { Dictionary } from "./en";
 // key this file invents that English does not have is one too. Keep the `{slot}` names byte-exact.
 
 export const de: Dictionary = {
+  "fleet.todoist.displayScope": "Anzeigebereich",
+  "fleet.todoist.projects": "Projekte",
+  "fleet.todoist.filters": "Filter",
+  "fleet.todoist.scopeUnavailable": "Das gewählte Projekt oder der Filter ist nicht verfügbar. Wähle in den Einstellungen einen anderen Bereich.",
   "fleet.todoist.allProjects": "Alle Projekte",
   "fleet.todoist.secretSaved": "Das Client-Secret ist eingerichtet und bleibt auf dem Server.",
   "fleet.todoist.appSettings": "App-Einstellungen",

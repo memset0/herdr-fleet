@@ -13,7 +13,7 @@ test("right sidebar switches independently and terminal associations survive a w
   const task = { id: "task-one", projectId: "project", parentId: null, sectionId: null, title: "Implement the requirement", description: "Use the task description as the requirement.", completed: false, recurring: false, order: 1, updatedAt: "one", url: "https://app.todoist.com/app/task/task-one" };
   const child = { ...task, id: "task-child", parentId: task.id, title: "Nested requirement" };
   const link = { id: "link-one", terminal, kind: "todoist", resource: '["account","project","task-one"]', accountId: "account", projectId: "project", taskId: task.id, state: "linked" };
-  const status = { configured: true, connected: true, accountId: "account", clientId: "example-client", projects: [{ id: "project", name: "Example project" }], generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [link] };
+  const status = { scope: { kind: "all" }, configured: true, connected: true, accountId: "account", clientId: "example-client", projects: [{ id: "project", name: "Example project" }], generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [link] };
   await page.addInitScript(({ pinRow }) => {
     localStorage.setItem("collie:pins:v1", JSON.stringify([{ row: pinRow, space: "@terminal", at: 1 }]));
   }, { pinRow: row });
@@ -28,7 +28,8 @@ test("right sidebar switches independently and terminal associations survive a w
   } }));
   await page.route("**/fleet/api/pane-tags", (route) => route.fulfill({ json: { version: "one", document: { schemaVersion: 1, tags: [{ id: "tag-one", name: "Review", color: "#64748b" }], panes: [{ row, space: "@terminal", tags: ["tag-one"] }] } } }));
   await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: status }));
-  await page.route("**/fleet/api/todoist/tasks*", (route) => route.fulfill({ json: { ...status, tasks: [task, child], sections: [], boundTasks: [task] } }));
+  await page.route("**/fleet/api/todoist/choices", (route) => route.fulfill({ json: { projects: status.projects, filters: [] } }));
+  await page.route("**/fleet/api/todoist/tasks*", (route) => route.fulfill({ json: { ...status, tasks: [task, child], contextTasks: [], sections: [], boundTasks: [task] } }));
   await page.route(/\/api\/pane\/w2(?:%3A|:)p77(?:\?.*)?$/, (route) => route.fulfill({ json: { paneId: "w2:p77", text: "Example output", truncated: false, revision: 1 } }));
   await page.route("**/fleet/bindings/link-one", (route) => route.fulfill({ status: 303, headers: { location: "/pane/w2%3Ap77?s=default" }, body: "" }));
   await page.goto(`/pane/${encodeURIComponent(fixtureSnapshot.agents[0]!.paneId)}`);
@@ -45,6 +46,19 @@ test("right sidebar switches independently and terminal associations survive a w
   const checkboxTarget = await rail.getByRole("checkbox", { name: `Complete ${task.title}` }).locator("..").boundingBox();
   expect(checkboxTarget!.height).toBeGreaterThanOrEqual(44);
   expect(checkboxTarget!.width).toBeGreaterThanOrEqual(44);
+  const childCard = rail.locator('[data-slot="todoist-task-card"]').filter({ hasText: child.title });
+  const heights = await childCard.evaluate(async (card) => {
+    const values: number[] = [], start = performance.now();
+    card.querySelector<HTMLButtonElement>("button")!.click();
+    while (performance.now() - start < 400) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      values.push(Math.round(card.getBoundingClientRect().height));
+    }
+    return values;
+  });
+  expect(new Set(heights).size).toBeGreaterThan(3);
+  await expect(childCard).toHaveAttribute("data-selected", "true");
+  await expect(childCard.getByRole("button", { name: "Edit task", exact: true })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("todoist-desktop.png") });
   await rail.getByRole("button", { name: "Agents", exact: true }).click();
   moved = true;
@@ -60,7 +74,7 @@ test("right sidebar switches independently and terminal associations survive a w
 test("the narrow pane switcher also offers Todoist", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installApiStub(page);
-  await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: { configured: false, connected: false, accountId: null, clientId: null, projects: [], generation: 0, callback: "https://example.com/fleet/todoist/callback", links: [] } }));
+  await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: { scope: { kind: "all" }, configured: false, connected: false, accountId: null, clientId: null, projects: [], generation: 0, callback: "https://example.com/fleet/todoist/callback", links: [] } }));
   await page.goto(`/pane/${encodeURIComponent(fixtureSnapshot.agents[0]!.paneId)}`);
   await page.getByRole("button", { name: /^Switch pane/ }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Todoist", exact: true }).click();
@@ -103,7 +117,7 @@ test("OAuth continuation restores the Strict cookie and sends an explicit same-o
 
 test("settings shows configured app state and the Connect action reaches OAuth", async ({ page }) => {
   await installApiStub(page);
-  await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: { configured: true, connected: false, clientId: "example-client", accountId: null, generation: 0, callback: "https://example.com/fleet/todoist/callback", links: [] } }));
+  await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: { scope: { kind: "all" }, configured: true, connected: false, clientId: "example-client", accountId: null, generation: 0, callback: "https://example.com/fleet/todoist/callback", links: [] } }));
   await page.route("**/fleet/api/todoist/connect", (route) => route.fulfill({ json: { url: "https://app.todoist.com/oauth/authorize?client_id=example-client&state=example-state" } }));
   await page.route("https://app.todoist.com/**", (route) => route.fulfill({ contentType: "text/html", body: "<h1>Provider authorization</h1>" }));
   await page.goto("/settings");

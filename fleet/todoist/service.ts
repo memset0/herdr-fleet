@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { asJsonNumber, asJsonObject, asJsonString } from "../../web/src/lib/json.ts";
 import { attachRelation, detachRelation, sameTerminal, type TerminalRef } from "../bindings/identity.ts";
-import { completionBlockers, parseTask, taskDescriptionParts, taskMessage, todoId, withTaskLinks, type TodoProject, type TodoTask } from "./model.ts";
+import { completionBlockers, parseTask, taskDescriptionParts, taskMessage, todoId, withTaskLinks, type TodoProject, type TodoTask, type TodoScope } from "./model.ts";
 import { providerJson, TodoistError, TodoistProvider, type ProviderFetch } from "./provider.ts";
 import type { TodoistState, TodoistStore, TodoLink } from "./store.ts";
 
@@ -50,6 +50,14 @@ const hierarchy = async (api: TodoistProvider, projectId: string) => {
 
 const linksForTask = (state: TodoistState, taskId: string) => accountLinks(state).filter((link) => link.taskId === taskId);
 
+const displayScope = async (scope: TodoScope, api: TodoistProvider, projects: readonly TodoProject[]) => {
+  if (scope.kind === "all") return { scope, query: null };
+  const entries = scope.kind === "project" ? projects : await api.filters();
+  const entry = entries.find((item) => item.id === scope.id);
+  if (!entry) throw new TodoistError("scope_unavailable", 409);
+  return { scope: { kind: scope.kind, id: entry.id, name: entry.name }, query: "query" in entry ? String(entry.query) : null };
+};
+
 export function createTodoistService(options: TodoistOptions) {
   const { store, origin } = options;
   const now = options.now ?? Date.now;
@@ -60,6 +68,7 @@ export function createTodoistService(options: TodoistOptions) {
     if (!projects.some((project) => project.id === task.projectId)) throw new TodoistError("project_unavailable", 403);
     return task;
   };
+
 
   const callback = new URL(CALLBACK_PATH, origin).href;
 
@@ -87,7 +96,7 @@ export function createTodoistService(options: TodoistOptions) {
     return new TodoistProvider(state.grant.accessToken, options.fetcher);
   };
 
-  const status = (state: TodoistState) => ({ configured: state.app !== null, connected: state.grant !== null, accountId: state.grant?.accountId ?? null, clientId: state.app?.clientId ?? null, generation: state.generation, callback, links: accountLinks(state) });
+  const status = (state: TodoistState) => ({ configured: state.app !== null, connected: state.grant !== null, accountId: state.grant?.accountId ?? null, clientId: state.app?.clientId ?? null, generation: state.generation, scope: state.scope, callback, links: accountLinks(state) });
 
   const updateFooter = async (state: TodoistState, api: TodoistProvider, task: TodoTask, links: readonly TodoLink[]) => {
     const latest = await api.task(task.id, task.projectId);
@@ -106,7 +115,7 @@ export function createTodoistService(options: TodoistOptions) {
     configure: (clientId: string, clientSecret: string) => store.run(async (state, save) => {
       if (!clientId.trim() || !clientSecret.trim() || clientId.length > 4096 || clientSecret.length > 4096) throw new TodoistError("invalid_configuration", 400);
       state.app = { clientId: clientId.trim(), clientSecret: clientSecret.trim() };
-      state.grant = null; state.project = null; state.generation++; pending.clear();
+      state.grant = null; state.project = null; state.scope = { kind: "all" }; state.generation++; pending.clear();
       await save(); return status(state);
     }),
     begin: (session: string) => store.run(async (state) => {
@@ -128,20 +137,35 @@ export function createTodoistService(options: TodoistOptions) {
       const user = asJsonObject(await api.request("user"));
       const accountId = todoId(user?.id) ?? (asJsonNumber(user?.id) === undefined ? null : String(asJsonNumber(user?.id)));
       if (!accountId) throw new TodoistError("oauth_invalid_grant", 502);
-      if (state.grant?.accountId !== accountId) state.project = null;
+      if (state.grant?.accountId !== accountId) { state.project = null; state.scope = { kind: "all" }; }
       state.grant = { ...grant, accountId }; state.generation++;
       await save(); return status(state);
     }),
     disconnect: () => store.run(async (state, save) => {
-      state.grant = null; state.project = null; state.generation++; pending.clear();
+      state.grant = null; state.project = null; state.scope = { kind: "all" }; state.generation++; pending.clear();
       await save(); return status(state);
     }),
     projects: () => store.run(async (state, save) => projectList(await client(state, save))),
+    choices: () => store.run(async (state, save) => {
+      const api = await client(state, save);
+      return { projects: await projectList(api), filters: await api.filters() };
+    }),
+    selectScope: (generation: number, scope: TodoScope) => store.run(async (state, save) => {
+      connected(state, generation);
+      if (scope.kind !== "all") {
+        const api = await client(state, save), resolved = await displayScope(scope, api, await projectList(api));
+        if (resolved.query) await api.filteredTasks(resolved.query);
+        state.scope = resolved.scope;
+      } else state.scope = { kind: "all" };
+      state.generation++; await save(); return status(state);
+    }),
     tasks: (generation: number) => store.run(async (state, save) => {
       connected(state, generation);
       const api = await client(state, save), projects = await projectList(api);
       const projectIds = new Set(projects.map((project) => project.id));
-      const tasks = await api.tasks();
+      const display = await displayScope(state.scope, api, projects);
+      const tasks = display.query ? await api.filteredTasks(display.query)
+        : await api.tasks(state.scope.kind === "project" ? state.scope.id : undefined);
       if (tasks.some((task) => !projectIds.has(task.projectId))) throw new TodoistError("project_unavailable", 403);
       const known = new Map(tasks.map((task) => [task.id, task]));
       for (const task of tasks) {
@@ -165,14 +189,18 @@ export function createTodoistService(options: TodoistOptions) {
         const task = known.get(id) ?? await api.task(id).catch(() => null);
         if (task && projectIds.has(task.projectId)) boundTasks.push(task);
       }
-      return { ...status(state), projects, tasks: [...known.values()], sections, boundTasks };
+      return { ...status(state), scope: display.scope, projects, tasks, contextTasks: [...known.values()].filter((entry) => !tasks.some((match) => match.id === entry.id)), sections, boundTasks };
     }),
     history: (generation: number, before: number) => store.run(async (state, save) => {
       connected(state, generation);
       const api = await client(state, save), projects = await projectList(api);
       if (!Number.isFinite(before) || before > now() + 60_000 || before < 0) throw new TodoistError("invalid_history_range", 400);
       const since = Math.max(0, before - 30 * 24 * 60 * 60_000);
-      const rows = await api.pages("tasks/completed/by_completion_date", { since: new Date(since).toISOString(), until: new Date(before).toISOString() }, "items");
+      const display = await displayScope(state.scope, api, projects);
+      const params: Record<string, string> = {};
+      if (state.scope.kind === "project") params.project_id = state.scope.id;
+      if (display.query) params.filter_query = display.query;
+      const rows = await api.pages("tasks/completed/by_completion_date", { ...params, since: new Date(since).toISOString(), until: new Date(before).toISOString() }, "items");
       const tasks = api.taskRows(rows);
       if (tasks.some((task) => !projects.some((project) => project.id === task.projectId))) throw new TodoistError("project_unavailable", 403);
       return { generation, since, until: before, tasks };

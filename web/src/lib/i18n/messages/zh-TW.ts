@@ -4,6 +4,10 @@ import type { Dictionary } from "./en";
 // suffixes match.
 
 export const zhTW: Dictionary = {
+  "fleet.todoist.displayScope": "顯示範圍",
+  "fleet.todoist.projects": "專案",
+  "fleet.todoist.filters": "篩選器",
+  "fleet.todoist.scopeUnavailable": "所選專案或篩選器無法使用，請在設定中選擇其他顯示範圍。",
   "fleet.todoist.allProjects": "所有專案",
   "fleet.todoist.secretSaved": "Client Secret 已設定，僅儲存在伺服器。",
   "fleet.todoist.appSettings": "修改應用憑據",

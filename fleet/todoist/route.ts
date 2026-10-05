@@ -1,7 +1,7 @@
 import { asJsonNumber, asJsonObject, asJsonString, parseJson } from "../../web/src/lib/json.ts";
 import { parseTerminalReference, resolveTerminalReference } from "../bindings/identity.ts";
 import type { LocatedTerminal } from "../bindings/inventory.ts";
-import { todoId } from "./model.ts";
+import { parseTodoScope, todoId } from "./model.ts";
 import { TodoistError } from "./provider.ts";
 import { TODOIST_API, type TodoistService } from "./service.ts";
 
@@ -37,6 +37,7 @@ export async function todoistResponse(
     if (request.method === "GET") {
       if (action === "status") return Response.json(await service.status());
       if (action === "projects") return Response.json(await service.projects());
+      if (action === "choices") return Response.json(await service.choices());
       const generation = Number(url.searchParams.get("generation"));
       if (!url.searchParams.has("generation") || !Number.isSafeInteger(generation)) throw new TodoistError("invalid_request", 400);
       if (action === "tasks") return Response.json(await service.tasks(generation));
@@ -56,6 +57,11 @@ export async function todoistResponse(
     if (action === "disconnect") return Response.json(await service.disconnect());
     const generation = asJsonNumber(body.generation);
     if (generation === undefined || !Number.isSafeInteger(generation)) throw new TodoistError("invalid_request", 400);
+    if (action === "scope") {
+      const scope = parseTodoScope(body.scope);
+      if (!scope) throw new TodoistError("invalid_request", 400);
+      return Response.json(await service.selectScope(generation, scope));
+    }
     const title = asJsonString(body.title) ?? "", description = asJsonString(body.description) ?? "";
     if (action === "create") {
       const parent = body.parentId === null ? null : todoId(body.parentId);

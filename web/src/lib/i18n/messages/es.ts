@@ -3,6 +3,10 @@ import type { Dictionary } from "./en";
 // Spanish. See de.ts for the typing contract.
 
 export const es: Dictionary = {
+  "fleet.todoist.displayScope": "Ámbito de visualización",
+  "fleet.todoist.projects": "Proyectos",
+  "fleet.todoist.filters": "Filtros",
+  "fleet.todoist.scopeUnavailable": "El proyecto o filtro seleccionado no está disponible. Elige otro ámbito en Ajustes.",
   "fleet.todoist.allProjects": "Todos los proyectos",
   "fleet.todoist.secretSaved": "El secreto del cliente está configurado y permanece en el servidor.",
   "fleet.todoist.appSettings": "Ajustes de la aplicación",

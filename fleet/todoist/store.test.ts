@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createTodoistStore } from "./store.ts";
+import { createTodoistStore, parseTodoistState } from "./store.ts";
 
 test("runtime credentials use private atomic storage and corrupt state is never replaced", async () => {
   const root = await mkdtemp(join(tmpdir(), "fleet-todoist-state-"));
@@ -15,4 +15,10 @@ test("runtime credentials use private atomic storage and corrupt state is never 
     await expect(store.run(async (_state, save) => save())).rejects.toThrow("Invalid Todoist state");
     expect(await readFile(path, "utf8")).toBe("unfinished edit");
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a pre-selection state defaults to All without reviving the retired project restriction", () => {
+  const legacy = { schemaVersion: 1, app: null, grant: null, project: { id: "project", name: "Example" }, generation: 2, links: [] };
+  expect(parseTodoistState(legacy)?.scope).toEqual({ kind: "all" });
+  expect(parseTodoistState({ ...legacy, scope: { kind: "filter" } })).toBeNull();
 });

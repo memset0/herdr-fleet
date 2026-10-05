@@ -2,9 +2,13 @@ import type { TodoSection, TodoTask } from "./model.ts";
 
 export interface TaskRow { readonly task: TodoTask; readonly depth: number; readonly children: boolean }
 
-export function taskRows(tasks: readonly TodoTask[], sections: readonly TodoSection[], tree: boolean, collapsed: ReadonlySet<string>): TaskRow[] {
+export function taskRows(tasks: readonly TodoTask[], sections: readonly TodoSection[], tree: boolean, collapsed: ReadonlySet<string>, completed = false): TaskRow[] {
   const sectionOrder = new Map(sections.map((section) => [section.id, section.order]));
-  const ordered = tasks.toSorted((a, b) => (sectionOrder.get(a.sectionId ?? "") ?? -1) - (sectionOrder.get(b.sectionId ?? "") ?? -1) || a.order - b.order);
+  const timestamp = (task: TodoTask) => {
+    const value = Date.parse((completed && task.completedAt) || task.updatedAt);
+    return Number.isFinite(value) ? value : 0;
+  };
+  const ordered = tasks.toSorted((a, b) => timestamp(b) - timestamp(a) || (sectionOrder.get(a.sectionId ?? "") ?? -1) - (sectionOrder.get(b.sectionId ?? "") ?? -1) || a.order - b.order);
   const children = new Map<string, TodoTask[]>();
   const ids = new Set(tasks.map((task) => task.id));
   for (const task of ordered) {

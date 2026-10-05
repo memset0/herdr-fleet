@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Choose Todoist scope beside recent-first task views.** Switch All, project or saved filter independently of Tree, List and Completed; expand task actions inside animated highlighted cards and refresh completed history after writes.
+
 ## [3.8.1] - 2026-10-05
 
 ### Changed

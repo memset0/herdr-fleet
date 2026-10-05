@@ -1,5 +1,5 @@
 import { asJsonObject, asJsonString, parseJson, type JsonValue } from "../../web/src/lib/json.ts";
-import { parseTask, type TodoTask } from "./model.ts";
+import { parseTask, todoId, type TodoTask, type TodoFilter } from "./model.ts";
 
 export class TodoistError extends Error {
   constructor(readonly code: string, readonly status = 422, readonly blockers: readonly TodoTask[] = []) {
@@ -59,6 +59,28 @@ export class TodoistProvider {
       cursors.add(cursor);
     }
     throw new TodoistError("pagination_incomplete", 502);
+  }
+
+  async filters(): Promise<TodoFilter[]> {
+    const doc = asJsonObject(await providerJson("https://api.todoist.com/api/v1/sync", {
+      method: "POST", headers: { authorization: `Bearer ${this.accessToken}`, "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ sync_token: "*", resource_types: '["filters"]' }),
+      signal: AbortSignal.timeout(Math.max(1, this.deadline - Date.now())),
+    }, this.fetcher));
+    if (doc?.full_sync !== true || !Array.isArray(doc.filters)) throw new TodoistError("provider_invalid_response", 502);
+    const result: TodoFilter[] = [];
+    for (const value of doc.filters) {
+      const row = asJsonObject(value);
+      if (row?.is_deleted === true) continue;
+      const id = todoId(row?.id), name = asJsonString(row?.name), query = asJsonString(row?.query);
+      if (!id || name === undefined || !query) throw new TodoistError("provider_invalid_response", 502);
+      result.push({ id, name, query });
+    }
+    return result;
+  }
+
+  async filteredTasks(query: string): Promise<TodoTask[]> {
+    return this.taskRows(await this.pages("tasks/filter", { query }));
   }
 
   async tasks(projectId?: string): Promise<TodoTask[]> {

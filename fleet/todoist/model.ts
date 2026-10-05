@@ -11,9 +11,19 @@ export interface TodoTask {
   readonly recurring: boolean;
   readonly order: number;
   readonly updatedAt: string;
+  readonly completedAt?: string;
   readonly url: string;
 }
 export interface TodoProject { readonly id: string; readonly name: string }
+export interface TodoFilter extends TodoProject { readonly query: string }
+export type TodoScope = { readonly kind: "all" } | { readonly kind: "project" | "filter"; readonly id: string; readonly name: string };
+export function parseTodoScope(value: JsonValue | undefined): TodoScope | null {
+  const obj = asJsonObject(value);
+  if (obj?.kind === "all") return { kind: "all" };
+  const id = todoId(obj?.id), name = asJsonString(obj?.name);
+  return (obj?.kind === "project" || obj?.kind === "filter") && id && name !== undefined
+    ? { kind: obj.kind, id, name } : null;
+}
 export interface TodoSection extends TodoProject { readonly order: number }
 
 export function todoId(value: JsonValue | undefined): string | null {
@@ -33,6 +43,7 @@ export function parseTask(value: JsonValue | undefined): TodoTask | null {
   if (object.section_id !== null && !sectionId) return null;
   return {
     id, projectId, parentId, sectionId, title, description,
+    completedAt: asJsonString(object.completed_at) ?? "",
     completed: object.checked, recurring: asJsonObject(object.due)?.is_recurring === true,
     order: asJsonNumber(object.child_order) ?? 0, updatedAt: asJsonString(object.updated_at) ?? "",
     url: `https://app.todoist.com/app/task/${encodeURIComponent(id)}`,

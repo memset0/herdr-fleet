@@ -3,6 +3,10 @@ import type { Dictionary } from "./en";
 // Japanese. See de.ts for the typing contract. One plural category, so both suffixes match.
 
 export const ja: Dictionary = {
+  "fleet.todoist.displayScope": "表示範囲",
+  "fleet.todoist.projects": "プロジェクト",
+  "fleet.todoist.filters": "フィルター",
+  "fleet.todoist.scopeUnavailable": "選択したプロジェクトまたはフィルターは利用できません。設定で別の表示範囲を選択してください。",
   "fleet.todoist.allProjects": "すべてのプロジェクト",
   "fleet.todoist.secretSaved": "クライアントシークレットは設定済みで、サーバーにのみ保存されます。",
   "fleet.todoist.appSettings": "アプリの認証情報",

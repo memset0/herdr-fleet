@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { asJsonNumber, asJsonObject, asJsonString, parseJson, type JsonValue } from "../../web/src/lib/json.ts";
 import { parseTerminalReference, type TerminalRelation } from "../bindings/identity.ts";
 import { diskSettingsIo } from "../settings/store.ts";
-import { todoId } from "./model.ts";
+import { parseTodoScope, todoId, type TodoScope } from "./model.ts";
 
 export interface TodoLink extends TerminalRelation {
   readonly id: string;
@@ -18,11 +18,12 @@ export interface TodoistState {
   grant: { accessToken: string; refreshToken: string | null; expiresAt: number; accountId: string } | null;
   project: { id: string; name: string } | null;
   generation: number;
+  scope: TodoScope;
   links: TodoLink[];
 }
 
 export function emptyTodoistState(): TodoistState {
-  return { schemaVersion: 1, app: null, grant: null, project: null, generation: 0, links: [] };
+  return { schemaVersion: 1, app: null, grant: null, project: null, generation: 0, scope: { kind: "all" }, links: [] };
 }
 
 function secret(value: JsonValue | undefined): string | null {
@@ -36,6 +37,9 @@ export function parseTodoistState(value: JsonValue | undefined): TodoistState | 
   const generation = asJsonNumber(obj.generation);
   if (generation === undefined || !Number.isSafeInteger(generation) || generation < 0) return null;
   const state = emptyTodoistState(); state.generation = generation;
+  const scope = obj.scope === undefined ? { kind: "all" as const } : parseTodoScope(obj.scope);
+  if (!scope) return null;
+  state.scope = scope;
   if (obj.app !== null) {
     const app = asJsonObject(obj.app), clientId = secret(app?.clientId), clientSecret = secret(app?.clientSecret);
     if (!clientId || !clientSecret) return null;

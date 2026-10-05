@@ -1,6 +1,6 @@
 import { asJsonObject, asJsonString, parseJson, type JsonValue } from "@/lib/json";
 import { terminalKey, type TerminalRef } from "../../../fleet/bindings/identity.ts";
-import type { TodoProject, TodoSection, TodoTask } from "../../../fleet/todoist/model.ts";
+import type { TodoProject, TodoSection, TodoTask, TodoScope } from "../../../fleet/todoist/model.ts";
 import type { TodoLink } from "../../../fleet/todoist/store.ts";
 
 export interface TodoistStatus {
@@ -9,10 +9,11 @@ export interface TodoistStatus {
   accountId: string | null;
   clientId: string | null;
   generation: number;
+  scope: TodoScope;
   callback: string;
   links: TodoLink[];
 }
-export interface TodoistSnapshot extends TodoistStatus { projects: TodoProject[]; tasks: TodoTask[]; sections: TodoSection[]; boundTasks: TodoTask[] }
+export interface TodoistSnapshot extends TodoistStatus { projects: TodoProject[]; contextTasks: TodoTask[]; tasks: TodoTask[]; sections: TodoSection[]; boundTasks: TodoTask[] }
 export interface TodoistHistory { generation: number; since: number; until: number; tasks: TodoTask[] }
 
 export class TodoistClientError extends Error {

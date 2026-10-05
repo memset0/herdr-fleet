@@ -10,7 +10,7 @@ import { FleetRightSidebar, FleetTodoistPane, FleetTodoistSettings } from "./fle
 import type { TodoTask } from "../../../fleet/todoist/model.ts";
 
 const pane = { paneId: "w1:p1", host: "member-a", agent: "codex", bindingId: "herdr:term_one", bindingSession: "default" };
-const status = { configured: true, connected: true, accountId: "account", clientId: "example-client", projects: [{ id: "project", name: "Example project" }], generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [] };
+const status = { scope: { kind: "all" }, configured: true, connected: true, accountId: "account", clientId: "example-client", projects: [{ id: "project", name: "Example project" }], generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [] };
 const tasks: TodoTask[] = [
   { id: "root", title: "Root", parentId: null },
   { id: "parent", title: "Parent", parentId: "root" },
@@ -21,8 +21,9 @@ beforeEach(() => {
   localStorage.removeItem("fleet:todoist:view");
   localStorage.removeItem("fleet:todoist:collapsed:account");
   server.use(
+    http.get(/\/fleet\/api\/todoist\/choices$/, () => HttpResponse.json({ projects: status.projects, filters: [{ id: "focus", name: "Focus", query: "search: child" }] })),
     http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json(status)),
-    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, tasks, sections: [], boundTasks: [] })),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, tasks, contextTasks: [], sections: [], boundTasks: [] })),
   );
 });
 
@@ -81,7 +82,7 @@ it("shows project groups and labels, and creates in the explicitly chosen projec
   const projects = [...status.projects, { id: "second", name: "Second project" }, { id: "empty", name: "Empty project" }];
   let created: unknown;
   server.use(
-    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, projects, tasks: [...tasks, { ...tasks[0]!, id: "second-root", projectId: "second" }], sections: [], boundTasks: [] })),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, projects, tasks: [...tasks, { ...tasks[0]!, id: "second-root", projectId: "second" }], contextTasks: [], sections: [], boundTasks: [] })),
     http.post(/\/fleet\/api\/todoist\/create$/, async ({ request }) => { created = await request.json(); return HttpResponse.json({ ok: true }); }),
   );
   const view = renderPane();
@@ -96,9 +97,67 @@ it("shows project groups and labels, and creates in the explicitly chosen projec
   await waitFor(() => expect(created).toMatchObject({ projectId: "second", parentId: null, title: "New task" }));
 });
 
-it("shows the configured client ID and secret status without a project selector", async () => {
+it("shows the configured client ID and secret status with a default-All display selector", async () => {
   const view = renderPane(<FleetTodoistSettings />);
   expect(await view.findByDisplayValue("example-client")).toHaveAttribute("readonly");
   expect(view.getByText("Client secret is configured and kept on the server.")).toBeInTheDocument();
-  expect(view.queryByRole("combobox")).toBeNull();
+  expect(view.getByRole("combobox", { name: "Display scope" })).toHaveValue("all");
+});
+
+it("Settings saves a Todoist filter as display scope", async () => {
+  let selection: unknown;
+  server.use(http.post(/\/fleet\/api\/todoist\/scope$/, async ({ request }) => { selection = await request.json(); return HttpResponse.json({ ok: true }); }));
+  const user = userEvent.setup(), view = renderPane(<FleetTodoistSettings />);
+  await view.findByRole("option", { name: "Focus" });
+  await user.selectOptions(view.getByRole("combobox", { name: "Display scope" }), "filter:focus");
+  await waitFor(() => expect(selection).toMatchObject({ generation: 1, scope: { kind: "filter", id: "focus", name: "Focus" } }));
+});
+
+it("completing a task invalidates an already-loaded empty history", async () => {
+  let completed = false, historyReads = 0;
+  server.use(
+    http.get(/\/fleet\/api\/todoist\/history/, () => { historyReads++; return HttpResponse.json({ generation: 1, since: 0, until: Date.now(), tasks: completed ? [{ ...tasks[2]!, completed: true }] : [] }); }),
+    http.post(/\/fleet\/api\/todoist\/complete$/, () => { completed = true; return HttpResponse.json({ ok: true }); }),
+  );
+  const user = userEvent.setup(), view = renderPane();
+  await user.click(await view.findByRole("button", { name: "Completed" }));
+  await waitFor(() => expect(historyReads).toBe(1));
+  await waitFor(() => expect(view.getByRole("button", { name: "Tree" })).toBeEnabled());
+  await user.click(view.getByRole("button", { name: "Tree" }));
+  await user.click(view.getByRole("checkbox", { name: "Complete Child" }));
+  await waitFor(() => expect(view.getByRole("button", { name: "Completed" })).toBeEnabled());
+  await user.click(view.getByRole("button", { name: "Completed" }));
+  await waitFor(() => expect(historyReads).toBe(2));
+  expect(await view.findByRole("button", { name: /^Child/ })).toBeInTheDocument();
+});
+
+it("expands one highlighted task card in place and collapses it on a second click", async () => {
+  const user = userEvent.setup(), view = renderPane();
+  const childButton = await view.findByRole("button", { name: /^Child/ });
+  await user.click(childButton);
+  const card = childButton.closest<HTMLElement>('[data-slot="todoist-task-card"]')!;
+  expect(card).toHaveAttribute("data-selected", "true");
+  expect(card).toHaveClass("bg-primary/10", "border-primary/60");
+  expect(within(card).getByRole("button", { name: "Edit task" })).toBeInTheDocument();
+  await user.click(view.getByRole("button", { name: /^Parent ·/ }));
+  await waitFor(() => expect(within(card).queryByRole("button", { name: "Edit task" })).toBeNull());
+  expect(view.container.querySelectorAll('[data-slot="todoist-task-card"][data-selected="true"]')).toHaveLength(1);
+  await user.click(view.getByRole("button", { name: /^Parent ·/ }));
+  await waitFor(() => expect(view.queryByRole("button", { name: "Edit task" })).toBeNull());
+});
+
+it("sidebar display scope changes preserve the independently selected list view", async () => {
+  let generation = 1, scoped = false;
+  const current = () => ({ ...status, generation, scope: scoped ? { kind: "project", id: "project", name: "Example project" } : { kind: "all" } });
+  server.use(
+    http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json(current())),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...current(), tasks, contextTasks: [], sections: [], boundTasks: [] })),
+    http.post(/\/fleet\/api\/todoist\/scope$/, () => { scoped = true; generation++; return HttpResponse.json(current()); }),
+  );
+  const user = userEvent.setup(), view = renderPane();
+  await user.click(await view.findByRole("button", { name: "List" }));
+  await view.findByRole("option", { name: "Example project" });
+  await user.selectOptions(view.getByRole("combobox", { name: "Display scope" }), "project:project");
+  await waitFor(() => expect(view.getByRole("combobox", { name: "Display scope" })).toHaveValue("project:project"));
+  expect(view.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
 });

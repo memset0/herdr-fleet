@@ -5,7 +5,7 @@ Let operators manage tasks across all accessible Todoist projects beside their t
 ## ADDED Requirements
 
 ### Requirement: OAuth connection is private and account-scoped
-Fleet SHALL connect through Todoist OAuth and keep credentials server-side. OAuth state SHALL be expiring, single-use and bound to the initiating Fleet session. The connection SHALL expose all accessible projects and their tasks without a single-project selector. Every mutation SHALL validate the active account generation, actual project membership and same-project parent relationships. Reconnection SHALL reject stale-view writes and retain account-qualified historical associations.
+Fleet SHALL connect through Todoist OAuth and keep credentials server-side. OAuth state SHALL be expiring, single-use and bound to the initiating Fleet session. The connection SHALL expose all accessible projects and their tasks with a shared Settings/sidebar display selector for All, one project or one saved filter; display selection SHALL NOT redefine OAuth authorization. Every mutation SHALL validate the active account generation, actual project membership and same-project parent relationships. Reconnection SHALL reject stale-view writes and retain account-qualified historical associations.
 
 #### Scenario: A new task names a parent in another project
 - **WHEN** a caller selects a destination project different from its parent task's project
@@ -16,11 +16,19 @@ Fleet SHALL connect through Todoist OAuth and keep credentials server-side. OAut
 - **THEN** the connection is not accepted
 
 ### Requirement: Project tasks have list and tree views
-Fleet SHALL show all active tasks from every accessible project through complete pagination, preserving section and nesting relationships. Tree view SHALL group tasks under named projects; task rows, details and bound-task entries SHALL identify their project. Empty projects SHALL remain visible in tree view. Tree view SHALL be the default with collapsible branches. List view SHALL include ancestor titles. Completed tasks SHALL have a separate history view with explicit coverage and pagination. Both views SHALL highlight current-terminal bindings and expose an additional bound-task area.
+Fleet SHALL show all matching active tasks for the saved display selection (All by default, a project, or a saved Todoist filter) through complete pagination. Saved filter queries SHALL be resolved by ID and evaluated by Todoist, including for completed history. A missing or unsupported filter SHALL report an error rather than silently widening the view. Unmatched ancestors MAY supply title-only nesting context but SHALL NOT become matching task rows. Hierarchy guards SHALL inspect the full actual project regardless of display filtering. Tree view SHALL group tasks under named projects; task rows, details and bound-task entries SHALL identify their project. Empty projects SHALL remain visible in tree view. Tree view SHALL be the default with collapsible branches. List view SHALL include ancestor titles and sort all matching tasks across projects by most recent update first. Tree siblings SHALL sort by recent update while preserving hierarchy. Completed tasks SHALL have a separate history view with explicit coverage and pagination, sorted across projects by latest completion first (falling back to update time when unavailable). Completing a task SHALL invalidate cached history so it appears immediately upon opening Completed. Both views SHALL highlight current-terminal bindings and expose an additional bound-task area.
 
 #### Scenario: The project spans several pages
 - **WHEN** active task retrieval returns a continuation cursor
 - **THEN** later pages are included and the interface does not claim a complete project until retrieval completes
+
+#### Scenario: Display scope changes
+- **WHEN** the operator chooses a project or saved filter in Settings or the sidebar
+- **THEN** the sidebar shows only matching tasks, retains a separate bound-task area, and refuses stale-view writes
+
+#### Scenario: A filter hides an incomplete descendant
+- **WHEN** a matching parent is completed while a hidden descendant remains incomplete
+- **THEN** the full-project hierarchy guard still blocks completion
 
 ### Requirement: Operators can create and edit tasks
 Fleet SHALL create tasks and subtasks and edit task titles and descriptions within their actual project; new root tasks SHALL require a destination project. It SHALL preserve hierarchy and managed backlinks and report provider failures or concurrent edit conflicts without claiming success.
@@ -57,3 +65,10 @@ A one-click task send SHALL use the same guarded submission path as the native c
 #### Scenario: The composer refuses input
 - **WHEN** the target is locked, missing, or has a blocking dialog
 - **THEN** Todoist delivery follows the native refusal and does not claim a successful send
+
+### Requirement: Task details expand in place
+Selecting a task SHALL expand its description and actions immediately below that task inside one highlighted card, never at the bottom of the full list. The complete selected card SHALL have a visible background and border. Only one card SHALL be expanded at a time across task results and the bound-task area. Re-selecting it SHALL collapse it. Expansion and collapse SHALL animate downward in normal document flow using the existing Collapse primitive and respect reduced-motion preferences; hidden actions SHALL not remain focusable.
+
+#### Scenario: The operator opens a task in the middle of the list
+- **WHEN** the operator selects that task's title
+- **THEN** its actions appear beneath its own header within the highlighted card and later rows move smoothly downward

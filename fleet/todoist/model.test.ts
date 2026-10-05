@@ -1,3 +1,4 @@
+import { taskRows } from "./view.ts";
 import { expect, test } from "bun:test";
 import { completionBlockers, taskAncestors, taskBody, taskMessage, withTaskLinks, type TodoTask } from "./model.ts";
 
@@ -38,4 +39,13 @@ test("the English message uses only ancestor titles and excludes backlink metada
   expect(message).not.toContain(parent.description);
   expect(message).not.toContain("example.com");
   expect(message).toContain("Do not automatically mark");
+});
+
+test("recent updates lead flat lists and siblings while recent completions lead history", () => {
+  const older = { ...task("older"), updatedAt: "2026-01-01T00:00:00Z", completedAt: "2026-01-04T00:00:00Z" };
+  const recent = { ...task("recent"), updatedAt: "2026-01-03T00:00:00Z", completedAt: "2026-01-02T00:00:00Z" };
+  const child = { ...task("child", "older"), updatedAt: "2026-01-05T00:00:00Z" };
+  expect(taskRows([older, recent, child], [], false, new Set()).map((row) => row.task.id)).toEqual(["child", "recent", "older"]);
+  expect(taskRows([older, recent, child], [], true, new Set()).map((row) => [row.task.id, row.depth])).toEqual([["recent", 0], ["older", 0], ["child", 1]]);
+  expect(taskRows([older, recent], [], false, new Set(), true).map((row) => row.task.id)).toEqual(["older", "recent"]);
 });

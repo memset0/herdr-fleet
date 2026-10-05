@@ -4,6 +4,10 @@ import type { Dictionary } from "./en";
 // `.other` carry the same sentence — the pair still exists because `tn()` asks for it by suffix.
 
 export const ko: Dictionary = {
+  "fleet.todoist.displayScope": "표시 범위",
+  "fleet.todoist.projects": "프로젝트",
+  "fleet.todoist.filters": "필터",
+  "fleet.todoist.scopeUnavailable": "선택한 프로젝트 또는 필터를 사용할 수 없습니다. 설정에서 다른 표시 범위를 선택하세요.",
   "fleet.todoist.allProjects": "모든 프로젝트",
   "fleet.todoist.secretSaved": "클라이언트 시크릿이 설정되어 있으며 서버에만 저장됩니다.",
   "fleet.todoist.appSettings": "앱 인증 정보",

@@ -2,7 +2,7 @@
 
 ### Requirement: Fleet keeps its own settings document beside its configuration
 Fleet SHALL keep its operator-facing settings in one JSON document in the same directory as its
-private configuration file, under the same ownership and permission posture. Todoist connection state SHALL instead remain in its private integration state so changing a grant is atomic; this exception SHALL NOT move ordinary Fleet settings out of their shared document. It MUST NOT write these
+private configuration file, under the same ownership and permission posture. Todoist connection and display-selection state SHALL instead remain in its private integration state so changing a grant and its account-scoped selection is atomic; this exception SHALL NOT move ordinary Fleet settings out of their shared document. It MUST NOT write these
 settings into that configuration file, and it MUST NOT write them into any file Collie owns.
 
 The document SHALL carry an explicit schema version. An absent document SHALL mean "every shipped
@@ -24,7 +24,7 @@ favorites — SHALL remain browser-local and MUST NOT be moved into this documen
 ## ADDED Requirements
 
 ### Requirement: Todoist settings separate connection scope from presentation
-The Fleet settings group SHALL expose installation-wide Todoist connection status, connect/disconnect actions and an explicit all-projects scope description. The server SHALL store credentials privately outside the browser-readable settings document. Task view and expansion preferences SHALL remain browser-local. An unconfigured integration SHALL offer clear setup status without affecting existing Fleet features.
+The Fleet settings group SHALL expose installation-wide Todoist connection status, connect/disconnect actions and an explicit account authorization description and a persisted display selector for All (default), one accessible project, or one saved filter. The server SHALL store credentials privately outside the browser-readable settings document. List/tree and expansion preferences SHALL remain browser-local. An unconfigured integration SHALL offer clear setup status without affecting existing Fleet features.
 
 #### Scenario: The account changes
 - **WHEN** the operator reconnects a different account
@@ -33,3 +33,7 @@ The Fleet settings group SHALL expose installation-wide Todoist connection statu
 #### Scenario: The browser reads settings
 - **WHEN** the settings interface loads connection information
 - **THEN** it receives status and project metadata without client secrets or access tokens
+
+#### Scenario: A display selection is saved
+- **WHEN** the operator chooses All, a project or a saved filter
+- **THEN** the backend validates it, stores it with the connection, advances the generation and refreshes the sidebar without reconnecting OAuth

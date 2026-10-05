@@ -13,12 +13,17 @@ function fixture() {
   state.app = { clientId: "example-client", clientSecret: "example-secret" };
   state.grant = { accessToken: "example-access", refreshToken: "example-refresh", accountId: "account", expiresAt: 100_000_000 };
   state.project = { id: "project", name: "Example" };
-  let text = JSON.stringify(state), clock = 1000, tokenCalls = 0, rejectUpdate = false;
+  let text = JSON.stringify(state), clock = 1000, tokenCalls = 0, rejectUpdate = false, filtersRemoved = false;
   const tasks = new Map([task("root"), task("parent", "root"), task("child", "parent"), task("other", null, false, "other-project")].map((row) => [row.id, row]));
-  const writes: string[] = [], reads: string[] = [];
+  const writes: string[] = [], reads: string[] = [], queries: string[] = [];
   const fetcher: ProviderFetch = async (input, init) => {
     const url = new URL(String(input)), path = url.pathname.replace("/api/v1/", "");
-    if (init?.method === "GET") reads.push(path);
+    if (init?.method === "GET") { reads.push(path); queries.push(url.search); }
+    if (path === "sync") {
+      expect(new URLSearchParams(String(init?.body)).get("resource_types")).toBe('["filters"]');
+      return Response.json({ full_sync: true, filters: filtersRemoved ? [] : [{ id: "focus", name: "Focus", query: "search: child" }, { id: "parents", name: "Parents", query: "search: parent" }] });
+    }
+    if (path === "tasks/filter") return Response.json({ results: [...tasks.values()].filter((row) => !row.checked && row.id === url.searchParams.get("query")?.replace("search: ", "")), next_cursor: null });
     if (url.pathname === "/oauth/access_token") { tokenCalls++; return Response.json({ access_token: "example-refreshed", refresh_token: "example-rotated", expires_in: 3600, scope: "data:read_write" }); }
     if (path === "user") return Response.json({ id: "account" });
     if (path === "projects") return Response.json({ results: [{ id: "project", name: "Example" }, { id: "other-project", name: "Other" }], next_cursor: null });
@@ -50,7 +55,7 @@ function fixture() {
   };
   const store = createTodoistStore("unused", { read: async () => text, write: async (_path, value) => { text = value; } });
   const service = createTodoistService({ store, origin: "https://example.com", fetcher, now: () => clock });
-  return { service, store, tasks, writes, reads, setClock: (value: number) => { clock = value; }, tokenCalls: () => tokenCalls, rejectUpdate: () => { rejectUpdate = true; } };
+  return { service, store, tasks, writes, reads, queries, removeFilters: () => { filtersRemoved = true; }, setClock: (value: number) => { clock = value; }, tokenCalls: () => tokenCalls, rejectUpdate: () => { rejectUpdate = true; } };
 }
 
 test("OAuth state belongs to one session, expires and cannot be replayed; status never exposes secrets", async () => {
@@ -171,5 +176,33 @@ test("creation and edits preserve hierarchy and existing backlink text", async (
 test("historical recurring occurrences cannot accidentally complete or reopen the active next occurrence", async () => {
   const f = fixture(); f.tasks.set("repeat", task("repeat", null, false, "project", true));
   await expect(f.service.complete(0, "repeat", true)).rejects.toMatchObject({ code: "recurring_occurrence" });
+  expect(f.writes).toEqual([]);
+});
+
+test("Settings selection persists project/filter scope and stale views cannot mutate", async () => {
+  const f = fixture();
+  expect((await f.service.choices()).filters.map((entry) => entry.id)).toEqual(["focus", "parents"]);
+  await f.service.selectScope(0, { kind: "project", id: "other-project", name: "Untrusted name" });
+  expect((await f.service.status()).scope).toEqual({ kind: "project", id: "other-project", name: "Other" });
+  expect((await f.service.tasks(1)).tasks.map((entry) => entry.id)).toEqual(["other"]);
+  await expect(f.service.complete(0, "other", false)).rejects.toMatchObject({ code: "selection_changed" });
+  await f.service.selectScope(1, { kind: "filter", id: "focus", name: "Ignored" });
+  const result = await f.service.tasks(2);
+  expect(result.tasks.map((entry) => entry.id)).toEqual(["child"]);
+  expect(result.contextTasks.map((entry) => entry.id)).toEqual(["parent", "root"]);
+  expect((await f.store.read()).scope).toMatchObject({ kind: "filter", name: "Focus" });
+  await f.service.history(2, 1000);
+  expect(f.queries.some((query) => new URLSearchParams(query).get("filter_query") === "search: child")).toBe(true);
+  f.removeFilters();
+  await expect(f.service.tasks(2)).rejects.toMatchObject({ code: "scope_unavailable" });
+  await f.service.selectScope(2, { kind: "all" });
+  expect((await f.service.tasks(3)).tasks).toHaveLength(4);
+});
+
+test("a filtered-out child still blocks completion of its matching parent", async () => {
+  const f = fixture();
+  await f.service.selectScope(0, { kind: "filter", id: "parents", name: "Parents" });
+  expect((await f.service.tasks(1)).tasks.map((entry) => entry.id)).toEqual(["parent"]);
+  await expect(f.service.complete(1, "parent", false)).rejects.toMatchObject({ code: "descendants_incomplete", blockers: [{ id: "child" }] });
   expect(f.writes).toEqual([]);
 });

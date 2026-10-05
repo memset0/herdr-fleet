@@ -13,6 +13,10 @@
 // Seeded with the language-selector copy only — the full string sweep lands separately.
 
 export const en = {
+  "fleet.todoist.displayScope": "Display scope",
+  "fleet.todoist.projects": "Projects",
+  "fleet.todoist.filters": "Filters",
+  "fleet.todoist.scopeUnavailable": "The selected project or filter is unavailable. Choose another display scope in Settings.",
   "fleet.todoist.allProjects": "All projects",
   "fleet.todoist.secretSaved": "Client secret is configured and kept on the server.",
   "fleet.todoist.appSettings": "Application settings",

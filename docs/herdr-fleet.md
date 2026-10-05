@@ -613,9 +613,13 @@ the recovery copies, and never replace it with a backup without reviewing newer 
 
 The right sidebar switches between **Agents** and **Todoist**; the native narrow-screen pane
 switcher offers the same choice. Inside Todoist, **Tree** preserves task nesting, **List** shows
-ancestor titles, and **Completed** loads history in explicit 30-day windows. All accessible projects
-appear together, with project headings and project names on task rows, details and bound-task entries.
-Bound tasks also appear in a separate current-terminal area. Task content is rendered as text.
+ancestor titles, and **Completed** loads history in explicit 30-day windows. The sidebar and Settings share a saved display selector: All (default), a project or a Todoist saved filter.
+Task view and display scope switch independently. Tree keeps project/parent grouping with recent updates
+first among siblings; List sorts updates across projects, and Completed sorts completion times across
+projects. Rows, details and bound-task entries carry project names.
+Bound tasks also appear in a separate current-terminal area, including outside the display scope.
+Clicking a task expands its details/actions directly below its title inside a highlighted card.
+The native Collapse animation respects reduced motion. Task content is rendered as text.
 
 ### Connect
 
@@ -623,12 +627,12 @@ Bound tasks also appear in a separate current-terminal area. Task content is ren
    its allowed redirects. Enter the application's Client ID and Client Secret in Fleet Settings.
 2. Choose **Connect Todoist**, approve the provider consent, then continue from the callback page.
    The continuation uses the original authenticated Fleet session; it does not relax its Strict cookie.
-3. Open Todoist in the sidebar to see all projects. OAuth permission is account-wide
+3. Open Todoist in the sidebar and choose All, a project or a saved filter. OAuth permission is account-wide
    `data:read_write`; Fleet validates accessible project membership and project-local nesting.
    Disconnect removes the active grant and stops provider requests while preserving relations.
 
 The lead keeps `todoist.json` beside its configuration, using atomic owner-only writes. It contains
-application credentials, rotating OAuth grants and relations. A legacy selected-project field is
+application credentials, rotating OAuth grants, display selection and relations. A legacy selected-project field is
 accepted for storage compatibility but no longer restricts the account view. It must never
 be committed, served as an asset or returned by a browser-readable API. A malformed file is refused, never reset
 silently. API status exposes the configured Client ID and connection status, never the Client Secret or tokens. Use Application settings to replace app credentials, then reconnect. Existing
@@ -661,3 +665,5 @@ After an acknowledged send, a failed backlink leaves a receipt: **Retry binding 
 relation without sending again. Browser storage retains that receipt across reloads when available;
 without storage, the current page retains it in memory. Provider write failures and unverified send
 outcomes are reported separately rather than automatically retried.
+
+Saved filters are discovered through the official Sync `filters` resource and evaluated by the provider; unavailable or unsupported filters report an error instead of switching to All. Completed history uses the same display scope. Ancestors that do not match a filter contribute title context, not extra task results. Hierarchy guards always examine the full project, including children hidden by a filter.

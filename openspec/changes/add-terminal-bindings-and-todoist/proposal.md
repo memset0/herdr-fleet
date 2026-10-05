@@ -6,7 +6,7 @@ Fleet's pane associations currently identify a layout address and workspace name
 
 - Introduce a shared terminal-reference and association interface, scoped by member and multiplexer session, with live resolution independent of workspace, tab, position, name, or agent conversation.
 - Carry an optional opaque terminal identity through the existing snapshot path. Reuse Collie's native pins and their browser-local storage through a narrow identity adapter; retain shared tag storage on the lead. Migrate only uniquely resolved legacy associations, retaining unresolved records without guessing.
-- Add Todoist OAuth connection in Fleet settings and show tasks from all accessible projects. Identify each task's project and group tree views by project; validate account membership and same-project hierarchy on the server.
+- Add Todoist OAuth connection in Fleet settings and let Settings and the sidebar independently select All, one project or one saved Todoist filter for display. Keep account-wide authorization separate from this display preference. Identify each task's project, group tree views by project and sort recent work first; validate account membership and same-project hierarchy on the server.
 - Add a right-rail Todoist surface with list/tree views, full nested task browsing, a current-terminal bound-task area, task/subtask creation, editing, completion and reopening.
 - Support many-to-many task/terminal associations and stable Fleet backlinks in task descriptions, preserving user-authored text.
 - Reuse the native composer send flow for one-click task delivery and binding. Send an English template centered on the task description, with title, ancestor titles and Todoist URL. Do not automatically complete tasks.
