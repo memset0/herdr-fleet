@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-10-05
+
 ### Added
 
-- **Bind terminal work to Todoist from the right sidebar.** Shared terminal identities keep pins, tags and task links through layout moves; project-scoped OAuth, task views, guarded edits and native composer delivery.
+- **Bind terminal work to Todoist from the right sidebar.** Shared terminal identities keep pins, tags and task links through layout moves; project-scoped OAuth, task views, guarded edits and native composer delivery. All members must redeploy for stable terminal identity; Todoist credentials remain lead-only. ([d37c41d4](https://github.com/memset0/herdr-fleet/commit/d37c41d4))
 
 ## [3.7.9] - 2026-10-05
 
