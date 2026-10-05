@@ -28,9 +28,14 @@ export function FleetTodoistProvider({ children }: { children: ReactNode }) {
     const own = ++serial.current;
     try {
       const status = await todoistRequest<TodoistStatus>("status");
-      const snapshot = status.connected && status.project
+      if (own !== serial.current) return;
+      // Connection controls remain usable even if the provider's task inventory fails.
+      setState((previous) => previous?.generation === status.generation && previous.accountId === status.accountId
+        ? { ...previous, ...status }
+        : { ...status, projects: [], tasks: [], sections: [], boundTasks: [] });
+      const snapshot = status.connected
         ? await todoistRequest<TodoistSnapshot>(`tasks?generation=${status.generation}`)
-        : { ...status, tasks: [], sections: [], boundTasks: [] };
+        : { ...status, projects: [], tasks: [], sections: [], boundTasks: [] };
       if (own === serial.current) setState(snapshot);
     } catch (failure) { if (own === serial.current) setError(failure instanceof TodoistClientError ? failure : new TodoistClientError("integration_unavailable")); }
   }, []);

@@ -3,6 +3,8 @@ import type { Dictionary } from "./en";
 // Spanish. See de.ts for the typing contract.
 
 export const es: Dictionary = {
+  "fleet.todoist.allProjects": "Todos los proyectos",
+  "fleet.todoist.secretSaved": "El secreto del cliente está configurado y permanece en el servidor.",
   "fleet.todoist.appSettings": "Ajustes de la aplicación",
 
   "fleet.todoist.complete": "Completar",
@@ -46,12 +48,12 @@ export const es: Dictionary = {
   "fleet.todoist.retryBinding": "Reintentar solo vínculo",
   "fleet.todoist.sidebar": "Agentes / Todoist",
   "fleet.todoist.settings": "Abrir ajustes",
-  "fleet.todoist.selectInSettings": "Conecta Todoist y elige un proyecto en Ajustes.",
-  "fleet.todoist.shared": "La conexión y el proyecto se comparten en esta instalación de Fleet.",
+  "fleet.todoist.selectInSettings": "Conecta Todoist en Ajustes para ver las tareas de todos los proyectos.",
+  "fleet.todoist.shared": "Esta instalación de Fleet puede acceder a todos los proyectos de la cuenta de Todoist conectada.",
   "fleet.todoist.setup": "Registra una app OAuth de Todoist con la URL indicada e introduce sus credenciales. Los secretos se guardan en el servidor.",
   "fleet.todoist.descendants": "Completa primero todas las subtareas.",
   "fleet.todoist.ancestors": "Reabre primero las tareas superiores, desde la más externa.",
-  "fleet.todoist.conflict": "La tarea o el proyecto cambió. Actualiza e inténtalo de nuevo.",
+  "fleet.todoist.conflict": "La tarea o la conexión de la cuenta cambió. Actualiza e inténtalo de nuevo.",
   "fleet.todoist.composerBlocked": "Revisa el cuadro de mensaje. Los borradores existentes y los envíos bloqueados se conservan.",
   "fleet.todoist.terminalUnavailable": "No se encuentra el terminal original. No se eligió otro.",
   "fleet.todoist.reconnect": "Vuelve a conectar Todoist en Ajustes.",

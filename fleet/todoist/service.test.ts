@@ -29,8 +29,8 @@ function fixture() {
       created.content = asJsonString(body?.content) ?? ""; created.description = asJsonString(body?.description) ?? "";
       tasks.set(created.id, created); writes.push("tasks"); return Response.json(created);
     }
-    if (path === "tasks" && init?.method === "GET") return Response.json({ results: [...tasks.values()].filter((row) => !row.checked && row.project_id === url.searchParams.get("project_id")), next_cursor: null });
-    if (path === "tasks/completed/by_completion_date") return Response.json({ items: [...tasks.values()].filter((row) => row.checked && row.project_id === url.searchParams.get("project_id")) });
+    if (path === "tasks" && init?.method === "GET") return Response.json({ results: [...tasks.values()].filter((row) => !row.checked && (!url.searchParams.has("project_id") || row.project_id === url.searchParams.get("project_id"))), next_cursor: null });
+    if (path === "tasks/completed/by_completion_date") return Response.json({ items: [...tasks.values()].filter((row) => row.checked && (!url.searchParams.has("project_id") || row.project_id === url.searchParams.get("project_id"))) });
     const [, id, verb] = path.split("/");
     const row = id ? tasks.get(id) : undefined;
     if (!row) return new Response(null, { status: 404 });
@@ -88,14 +88,29 @@ test("deep hierarchy guards refuse provider cascades and allow explicit outer-to
   expect(f.tasks.get("child")?.checked).toBe(false);
 });
 
-test("project boundaries and stale selection are checked before mutations", async () => {
+test("all projects are listed while parent membership and stale accounts guard mutations", async () => {
   const f = fixture();
-  await expect(f.service.edit(0, "other", "Changed", "Changed", "revision-one")).rejects.toMatchObject({ code: "project_mismatch" });
-  expect(f.reads).not.toContain("tasks/other");
-  await f.service.selectProject("other-project", 0);
+  const snapshot = await f.service.tasks(0);
+  expect(snapshot.projects.map((project) => project.id)).toEqual(["project", "other-project"]);
+  expect(snapshot.tasks.map((entry) => entry.id)).toContain("other");
+  await f.service.edit(0, "other", "Changed", "Changed", "revision-one");
+  expect(f.tasks.get("other")?.description).toBe("Changed");
+  await expect(f.service.create(0, "Mismatch", "", "parent", "other-project")).rejects.toMatchObject({ code: "project_mismatch" });
+  await expect(f.service.create(0, "Missing", "", null, "absent-project")).rejects.toMatchObject({ code: "project_unavailable" });
+  await f.service.create(0, "Other root", "", null, "other-project");
+  expect(f.tasks.get("created")?.project_id).toBe("other-project");
+  await f.service.disconnect();
   await expect(f.service.complete(0, "child", false)).rejects.toMatchObject({ code: "selection_changed" });
-  expect(f.writes).toEqual([]);
-  expect(f.tasks.get("other")?.description).toBe("Requirements for other");
+});
+
+test("history and bindings include multiple projects and legacy selection does not narrow them", async () => {
+  const f = fixture(), terminal = { version: 1 as const, host: "member-a", session: "default", id: "herdr:term_one" };
+  await f.service.bind(0, "child", terminal);
+  await f.service.bind(0, "other", terminal);
+  expect((await f.service.status()).links).toHaveLength(2);
+  await f.service.complete(0, "child", false);
+  await f.service.complete(0, "other", false);
+  expect((await f.service.history(0, 1000)).tasks.map((entry) => entry.id)).toEqual(["child", "other"]);
 });
 
 test("partial backlinks remain retryable, idempotent and many-to-many without touching user text", async () => {
@@ -142,7 +157,7 @@ test("pagination reads every page and refuses a repeating cursor", async () => {
 
 test("creation and edits preserve hierarchy and existing backlink text", async () => {
   const f = fixture();
-  await f.service.create(0, "A subtask", "Its requirements", "parent");
+  await f.service.create(0, "A subtask", "Its requirements", "parent", "project");
   expect(f.tasks.get("created")).toMatchObject({ parent_id: "parent", project_id: "project", description: "Its requirements" });
   const terminal = { version: 1 as const, host: "member-a", session: "default", id: "herdr:term_one" };
   await f.service.bind(0, "created", terminal);

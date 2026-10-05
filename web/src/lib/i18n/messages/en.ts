@@ -13,6 +13,8 @@
 // Seeded with the language-selector copy only — the full string sweep lands separately.
 
 export const en = {
+  "fleet.todoist.allProjects": "All projects",
+  "fleet.todoist.secretSaved": "Client secret is configured and kept on the server.",
   "fleet.todoist.appSettings": "Application settings",
 
   "fleet.todoist.complete": "Complete",
@@ -56,12 +58,12 @@ export const en = {
   "fleet.todoist.retryBinding": "Retry binding only",
   "fleet.todoist.sidebar": "Agents / Todoist",
   "fleet.todoist.settings": "Open settings",
-  "fleet.todoist.selectInSettings": "Connect Todoist and select a project in Settings.",
-  "fleet.todoist.shared": "Connection and selected project apply to this Fleet installation.",
+  "fleet.todoist.selectInSettings": "Connect Todoist in Settings to view tasks from all projects.",
+  "fleet.todoist.shared": "This Fleet installation can access all projects in the connected Todoist account.",
   "fleet.todoist.setup": "Register a Todoist OAuth app with the redirect URL below, then enter its credentials. Secrets stay on the server.",
   "fleet.todoist.descendants": "Complete all subtasks first.",
   "fleet.todoist.ancestors": "Reopen completed parent tasks first, starting with the outermost.",
-  "fleet.todoist.conflict": "The task or selected project changed. Refresh and try again.",
+  "fleet.todoist.conflict": "The task or account connection changed. Refresh and try again.",
   "fleet.todoist.composerBlocked": "Check the native composer before sending. Existing drafts are preserved; a prepared task draft remains there if submission was blocked.",
   "fleet.todoist.terminalUnavailable": "The original terminal cannot currently be resolved. No replacement was selected.",
   "fleet.todoist.reconnect": "Reconnect Todoist in Settings.",

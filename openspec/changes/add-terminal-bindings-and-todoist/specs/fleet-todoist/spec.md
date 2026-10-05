@@ -1,32 +1,32 @@
 ## Purpose
 
-Let operators manage a selected Todoist project beside their terminals and deliver tasks through the existing agent composer.
+Let operators manage tasks across all accessible Todoist projects beside their terminals and deliver tasks through the existing agent composer.
 
 ## ADDED Requirements
 
-### Requirement: OAuth connection is private and project-restricted
-Fleet SHALL connect through Todoist OAuth and keep credentials server-side. OAuth state SHALL be expiring, single-use and bound to the initiating Fleet session. Outside project task data, only the account identity needed for the connection and project chooser metadata MAY be read; every task operation SHALL enforce the selected project on the server. Project switching SHALL reject stale-view writes and retain historical associations.
+### Requirement: OAuth connection is private and account-scoped
+Fleet SHALL connect through Todoist OAuth and keep credentials server-side. OAuth state SHALL be expiring, single-use and bound to the initiating Fleet session. The connection SHALL expose all accessible projects and their tasks without a single-project selector. Every mutation SHALL validate the active account generation, actual project membership and same-project parent relationships. Reconnection SHALL reject stale-view writes and retain account-qualified historical associations.
 
-#### Scenario: A request names a task outside the selected project
-- **WHEN** a caller submits another project's task ID
-- **THEN** Fleet refuses the operation without modifying that task or returning its content
+#### Scenario: A new task names a parent in another project
+- **WHEN** a caller selects a destination project different from its parent task's project
+- **THEN** Fleet refuses creation without modifying either project
 
 #### Scenario: OAuth state is replayed
 - **WHEN** a callback repeats a spent state or belongs to another Fleet session
 - **THEN** the connection is not accepted
 
 ### Requirement: Project tasks have list and tree views
-Fleet SHALL show all active project tasks through complete pagination, preserving section and nesting relationships. Tree view SHALL be the default with collapsible branches. List view SHALL include ancestor titles. Completed tasks SHALL have a separate history view with explicit coverage and pagination. Both views SHALL highlight current-terminal bindings and expose an additional bound-task area.
+Fleet SHALL show all active tasks from every accessible project through complete pagination, preserving section and nesting relationships. Tree view SHALL group tasks under named projects; task rows, details and bound-task entries SHALL identify their project. Empty projects SHALL remain visible in tree view. Tree view SHALL be the default with collapsible branches. List view SHALL include ancestor titles. Completed tasks SHALL have a separate history view with explicit coverage and pagination. Both views SHALL highlight current-terminal bindings and expose an additional bound-task area.
 
 #### Scenario: The project spans several pages
 - **WHEN** active task retrieval returns a continuation cursor
 - **THEN** later pages are included and the interface does not claim a complete project until retrieval completes
 
 ### Requirement: Operators can create and edit tasks
-Fleet SHALL create tasks and subtasks and edit task titles and descriptions within the selected project. It SHALL preserve hierarchy and managed backlinks and report provider failures or concurrent edit conflicts without claiming success.
+Fleet SHALL create tasks and subtasks and edit task titles and descriptions within their actual project; new root tasks SHALL require a destination project. It SHALL preserve hierarchy and managed backlinks and report provider failures or concurrent edit conflicts without claiming success.
 
 #### Scenario: A subtask is created
-- **WHEN** an operator chooses a parent in the selected project and submits a title and description
+- **WHEN** an operator chooses a parent task and submits a title and description
 - **THEN** the created task appears beneath that parent after successful provider confirmation
 
 ### Requirement: Completion and reopening cannot cascade implicitly

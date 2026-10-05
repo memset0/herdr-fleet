@@ -4,6 +4,8 @@ import type { Dictionary } from "./en";
 // `.other` carry the same sentence — the pair still exists because `tn()` asks for it by suffix.
 
 export const ko: Dictionary = {
+  "fleet.todoist.allProjects": "모든 프로젝트",
+  "fleet.todoist.secretSaved": "클라이언트 시크릿이 설정되어 있으며 서버에만 저장됩니다.",
   "fleet.todoist.appSettings": "앱 인증 정보",
 
   "fleet.todoist.complete": "완료",
@@ -47,12 +49,12 @@ export const ko: Dictionary = {
   "fleet.todoist.retryBinding": "연결만 다시 시도",
   "fleet.todoist.sidebar": "Agents / Todoist",
   "fleet.todoist.settings": "설정 열기",
-  "fleet.todoist.selectInSettings": "설정에서 Todoist를 연결하고 프로젝트를 선택하세요.",
-  "fleet.todoist.shared": "연결과 선택한 프로젝트는 이 Fleet 설치 전체에 적용됩니다.",
+  "fleet.todoist.selectInSettings": "설정에서 Todoist를 연결하여 모든 프로젝트의 작업을 확인하세요.",
+  "fleet.todoist.shared": "이 Fleet 설치는 연결된 Todoist 계정의 모든 프로젝트에 접근합니다.",
   "fleet.todoist.setup": "아래 URL로 Todoist OAuth 앱을 등록하고 인증 정보를 입력하세요. 비밀 정보는 서버에만 저장됩니다.",
   "fleet.todoist.descendants": "먼저 모든 하위 작업을 완료하세요.",
   "fleet.todoist.ancestors": "가장 바깥쪽부터 상위 작업을 다시 여세요.",
-  "fleet.todoist.conflict": "작업 또는 프로젝트가 변경되었습니다. 새로고침 후 다시 시도하세요.",
+  "fleet.todoist.conflict": "작업 또는 계정 연결이 변경되었습니다. 새로 고침 후 다시 시도하세요.",
   "fleet.todoist.composerBlocked": "기본 입력창을 확인하세요. 기존 초안과 전송이 차단된 초안은 유지됩니다.",
   "fleet.todoist.terminalUnavailable": "원래 터미널을 확인할 수 없습니다. 다른 터미널은 선택하지 않았습니다.",
   "fleet.todoist.reconnect": "설정에서 Todoist를 다시 연결하세요.",

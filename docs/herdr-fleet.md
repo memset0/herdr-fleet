@@ -613,9 +613,9 @@ the recovery copies, and never replace it with a backup without reviewing newer 
 
 The right sidebar switches between **Agents** and **Todoist**; the native narrow-screen pane
 switcher offers the same choice. Inside Todoist, **Tree** preserves task nesting, **List** shows
-ancestor titles, and **Completed** loads history in explicit 30-day windows. The selected project
-changes in Fleet Settings, not in the rail. Bound tasks also appear in a separate current-terminal
-area. Task content is rendered as text.
+ancestor titles, and **Completed** loads history in explicit 30-day windows. All accessible projects
+appear together, with project headings and project names on task rows, details and bound-task entries.
+Bound tasks also appear in a separate current-terminal area. Task content is rendered as text.
 
 ### Connect
 
@@ -623,19 +623,20 @@ area. Task content is rendered as text.
    its allowed redirects. Enter the application's Client ID and Client Secret in Fleet Settings.
 2. Choose **Connect Todoist**, approve the provider consent, then continue from the callback page.
    The continuation uses the original authenticated Fleet session; it does not relax its Strict cookie.
-3. Choose a project in Settings. OAuth permission is account-wide `data:read_write`, but Fleet
-   enforces the selected project on every task operation. Project discovery exposes chooser metadata
-   only. Disconnect removes the active grant and stops provider requests while preserving relations.
+3. Open Todoist in the sidebar to see all projects. OAuth permission is account-wide
+   `data:read_write`; Fleet validates accessible project membership and project-local nesting.
+   Disconnect removes the active grant and stops provider requests while preserving relations.
 
 The lead keeps `todoist.json` beside its configuration, using atomic owner-only writes. It contains
-application credentials, rotating OAuth grants, the selected project and relations. It must never
+application credentials, rotating OAuth grants and relations. A legacy selected-project field is
+accepted for storage compatibility but no longer restricts the account view. It must never
 be committed, served as an asset or returned by a browser-readable API. A malformed file is refused, never reset
-silently. API status exposes no secret. Use Application settings to replace app credentials, then reconnect and select a project. Existing
+silently. API status exposes the configured Client ID and connection status, never the Client Secret or tokens. Use Application settings to replace app credentials, then reconnect. Existing
 relations remain stored; a new OAuth grant is never inferred from a credential edit.
 
 ### Task actions and links
 
-Create tasks or subtasks, edit titles and descriptions, complete or reopen tasks. Completing a task
+Choose a destination project for a new root task; subtasks inherit their parent's project. Edit titles and descriptions, complete or reopen tasks. Completing a task
 requires every descendant to be complete; reopening requires every ancestor to be incomplete.
 Blocker dialogs name what must be handled first and never offer a force or cascading action.
 The service re-reads hierarchy before mutation and serializes Fleet actions. Todoist does not offer

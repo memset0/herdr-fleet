@@ -4,6 +4,8 @@ import type { Dictionary } from "./en";
 // key this file invents that English does not have is one too. Keep the `{slot}` names byte-exact.
 
 export const de: Dictionary = {
+  "fleet.todoist.allProjects": "Alle Projekte",
+  "fleet.todoist.secretSaved": "Das Client-Secret ist eingerichtet und bleibt auf dem Server.",
   "fleet.todoist.appSettings": "App-Einstellungen",
 
   "fleet.todoist.complete": "Erledigen",
@@ -47,12 +49,12 @@ export const de: Dictionary = {
   "fleet.todoist.retryBinding": "Nur Verknüpfung wiederholen",
   "fleet.todoist.sidebar": "Agents / Todoist",
   "fleet.todoist.settings": "Einstellungen öffnen",
-  "fleet.todoist.selectInSettings": "Todoist in den Einstellungen verbinden und ein Projekt wählen.",
-  "fleet.todoist.shared": "Verbindung und Projekt gelten für diese Fleet-Installation.",
+  "fleet.todoist.selectInSettings": "Verbinde Todoist in den Einstellungen, um Aufgaben aller Projekte zu sehen.",
+  "fleet.todoist.shared": "Diese Fleet-Installation kann auf alle Projekte des verbundenen Todoist-Kontos zugreifen.",
   "fleet.todoist.setup": "Eine Todoist-OAuth-App mit der URL unten registrieren und ihre Zugangsdaten eingeben. Geheimnisse bleiben auf dem Server.",
   "fleet.todoist.descendants": "Zuerst alle Unteraufgaben erledigen.",
   "fleet.todoist.ancestors": "Erledigte übergeordnete Aufgaben zuerst von außen nach innen öffnen.",
-  "fleet.todoist.conflict": "Aufgabe oder Projekt geändert. Aktualisieren und erneut versuchen.",
+  "fleet.todoist.conflict": "Aufgabe oder Kontoverbindung geändert. Aktualisiere und versuche es erneut.",
   "fleet.todoist.composerBlocked": "Vor dem Senden das Eingabefeld prüfen. Vorhandene und blockierte Entwürfe bleiben erhalten.",
   "fleet.todoist.terminalUnavailable": "Das ursprüngliche Terminal ist nicht verfügbar. Kein Ersatz wurde gewählt.",
   "fleet.todoist.reconnect": "Todoist in den Einstellungen neu verbinden.",

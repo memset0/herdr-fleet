@@ -24,7 +24,7 @@ Migrate a legacy association only with one fresh, exact host/session/pane/worksp
 
 Use the official API v1 and OAuth authorization-code flow, with `data:read_write`. OAuth app client credentials are operator-provided runtime configuration; access tokens stay in owner-only server storage and never in browser storage, URLs or logs. OAuth state is random, short-lived, single-use and bound to the initiating authenticated Fleet session. The existing Strict session cookie is not relaxed: the provider callback lands on a same-origin continuation page and completes through an authenticated same-origin fetch. Redirect targets and provider hosts are fixed, not caller-supplied.
 
-One connection and one selected project per Fleet installation. Project discovery exposes only chooser metadata; task reads/writes are restricted on the backend to the currently selected project, including task IDs, ancestors, children, backlink actions and cached data. A project switch invalidates in-flight data and prevents old-view mutations while retaining historical relations. Disconnect removes active credentials and stops provider requests without silently deleting bindings.
+One connection per Fleet installation. The operator explicitly authorizes listing all accessible projects and their tasks, replacing the earlier single-project restriction. Fetch complete active task/project/section inventories across the account. Show project names on task rows and details and group tree rows by project, preserving project-local nesting. New root tasks require an explicit destination project; subtasks inherit their parent's project. Validate accessible project membership and reject mismatched parent/project input. Connection changes invalidate stale actions and historical relations remain account-qualified. Keep reading the legacy optional project field for private state compatibility, but it no longer limits access or appears as a selector in Settings. Disconnect removes active credentials and stops requests without deleting bindings.
 
 ### Task hierarchy and guarded actions
 
@@ -42,7 +42,7 @@ Use an English template containing the task title, ancestor titles from root to 
 
 ### UI and fork boundary
 
-Add Agents/Todoist tabs to the right rail and equivalent narrow-screen access. Default to tree view; remember view and expansion locally. Reuse native controls and translated dialogs, preserve existing agents and navigation behavior. Settings contain OAuth connect/disconnect and project selection. Task edit supports title/description; task creation supports a selected parent. Surface loading, empty, unavailable, stale, busy and conflict states.
+Add Agents/Todoist tabs to the right rail and equivalent narrow-screen access. Default to tree view; remember view and expansion locally. Reuse native controls and translated dialogs, preserve existing agents and navigation behavior. Settings contain OAuth connect/disconnect and an explicit all-projects scope description. Task edit supports title/description; task creation supports a selected parent. Surface loading, empty, unavailable, stale, busy and conflict states.
 
 Owned modules: fleet/bindings/**, fleet/todoist/**, Fleet web adapters/components and their tests. Planned narrow upstream ports: bridge/mux/types.ts, bridge/mux/herdr/adapter.ts, bridge/types.ts, bridge/state-engine.ts, web/src/lib/types.ts (optional opaque identity propagation); web/src/lib/pins.ts (common identity adapter); web/src/components/composer.tsx and its owning route/context (shared send action only); the existing translation dictionaries. Any required crew decoder port must be additive-optional, documented in CREW_PROTOCOL.md and registered in FORK.toml. Business logic remains in owned modules; final exact ports and verification anchors must be reconciled with implementation before archive. ADR 0070's place-key policy is intentionally superseded only for Fleet terminals with stable identity; its local storage and interaction semantics remain.
 
@@ -85,9 +85,15 @@ were repeated for the combined tree.
 
 ## Automated validation
 
-- Full root gate: 6,421 Bun tests passed across bridge, CLI, scripts and Fleet, plus the shell lifecycle/package checks.
-- Full frontend gate: 324 files, 13,941 passed, 32 expected failures and 47 existing todo cases; command exit status zero.
+- Full root gate: 6,422 Bun tests passed across bridge, CLI, scripts and Fleet, plus the shell lifecycle/package checks.
+- Full frontend gate: 324 files, 13,943 passed, 32 expected failures and 47 existing todo cases; command exit status zero.
 - Both typechecks, full-tree lint, fork-boundary audit, product build and source privacy audit passed.
 - Real Chromium checks cover desktop/mobile Agents–Todoist switching, pins/tags/task relations after a workspace move, nested-row geometry and 44px completion targets, and the cross-site OAuth return followed by a Strict-cookie same-origin continuation.
 - Focused checks cover exact migration/recovery, provider pagination, hierarchy blockers, description editing, many-to-many backlink retries and native guarded composer delivery without overwriting drafts or sending to shells.
 - Operator-assisted provider acceptance remains outstanding. Source publication and the lead deployment make the registered callback available; archive waits for the actual authorized-project checks.
+
+## Revised all-project acceptance
+
+The operator changed the desired scope after the first deployed checkpoint. Verify multiple projects with equal task titles, project grouping/labels, destination selection, cross-project parent rejection, all-project history and bindings, and stale-account refusal. Repeat the affected backend/frontend/browser gates before a lead-only patch release. Real write probes stay within the operator-designated test project. Diagnose the reported Connect interaction against the real deployed browser before claiming it fixed.
+
+The all-project follow-up passed the full root and frontend suites, both typechecks, lint, build, and four Chromium cases. OAuth Connect was also exercised against the deployed settings page: it returns a provider authorization URL and navigates correctly. An invalid redirect response is fixed in the OAuth application registration by matching the displayed callback URL exactly. Settings now exposes the non-secret Client ID and a saved-secret indicator; it remains usable even if task retrieval fails. This follow-up is lead-only and therefore PATCH on the already released 3.8 line. Provider consent and real task acceptance remain pending.

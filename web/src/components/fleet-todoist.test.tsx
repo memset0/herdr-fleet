@@ -6,11 +6,11 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { server } from "@/test/setup";
 import { useFleetTaskComposer } from "@/lib/fleet-task-delivery";
 import { FleetTodoistProvider } from "./fleet-todoist-provider";
-import { FleetRightSidebar, FleetTodoistPane } from "./fleet-todoist";
+import { FleetRightSidebar, FleetTodoistPane, FleetTodoistSettings } from "./fleet-todoist";
 import type { TodoTask } from "../../../fleet/todoist/model.ts";
 
 const pane = { paneId: "w1:p1", host: "member-a", agent: "codex", bindingId: "herdr:term_one", bindingSession: "default" };
-const status = { configured: true, connected: true, accountId: "account", project: { id: "project", name: "Example project" }, generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [] };
+const status = { configured: true, connected: true, accountId: "account", clientId: "example-client", projects: [{ id: "project", name: "Example project" }], generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [] };
 const tasks: TodoTask[] = [
   { id: "root", title: "Root", parentId: null },
   { id: "parent", title: "Parent", parentId: "root" },
@@ -19,7 +19,7 @@ const tasks: TodoTask[] = [
 
 beforeEach(() => {
   localStorage.removeItem("fleet:todoist:view");
-  localStorage.removeItem("fleet:todoist:collapsed:project");
+  localStorage.removeItem("fleet:todoist:collapsed:account");
   server.use(
     http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json(status)),
     http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, tasks, sections: [], boundTasks: [] })),
@@ -35,12 +35,12 @@ it("switches Agents and Todoist without navigating, then preserves nested tree a
   const view = renderPane(<FleetRightSidebar agents={<div>Existing agents</div>} pane={pane} />);
   expect(view.getByText("Existing agents")).toBeInTheDocument();
   await user.click(view.getByRole("button", { name: "Todoist" }));
-  await view.findByText("Example project");
-  expect(view.getByRole("button", { name: "Child" })).toBeInTheDocument();
+  await view.findByRole("heading", { name: "Example project" });
+  expect(view.getByRole("button", { name: /^Child/ })).toBeInTheDocument();
   await user.click(view.getAllByRole("button", { name: "Collapse subtasks" })[0]!);
-  expect(view.queryByRole("button", { name: "Child" })).toBeNull();
+  expect(view.queryByRole("button", { name: /^Child/ })).toBeNull();
   await user.click(view.getByRole("button", { name: "List" }));
-  expect(view.getByText("Root / Parent")).toBeInTheDocument();
+  expect(view.getByText("Example project / Root / Parent")).toBeInTheDocument();
   await user.click(view.getByRole("button", { name: "Agents" }));
   expect(view.getByText("Existing agents")).toBeInTheDocument();
 });
@@ -66,7 +66,7 @@ it("a successful native send followed by a failed link retries only the link", a
   );
   function ComposerPort() { useFleetTaskComposer({ pane, blocked: false, submit }); return null; }
   const view = renderPane(<><ComposerPort /><FleetTodoistPane pane={pane} /></>);
-  await user.click(await view.findByRole("button", { name: "Child" }));
+  await user.click(await view.findByRole("button", { name: /^Child/ }));
   await user.click(view.getByRole("button", { name: "Send to agent" }));
   await waitFor(() => expect(bound).toBe(1));
   const retry = await view.findByRole("button", { name: "Retry binding only" });
@@ -74,4 +74,31 @@ it("a successful native send followed by a failed link retries only the link", a
   await user.click(retry);
   await waitFor(() => expect(bound).toBe(2));
   expect(prepared).toBe(1); expect(submit).toHaveBeenCalledExactlyOnceWith("Task description");
+});
+
+it("shows project groups and labels, and creates in the explicitly chosen project", async () => {
+  const user = userEvent.setup();
+  const projects = [...status.projects, { id: "second", name: "Second project" }, { id: "empty", name: "Empty project" }];
+  let created: unknown;
+  server.use(
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, projects, tasks: [...tasks, { ...tasks[0]!, id: "second-root", projectId: "second" }], sections: [], boundTasks: [] })),
+    http.post(/\/fleet\/api\/todoist\/create$/, async ({ request }) => { created = await request.json(); return HttpResponse.json({ ok: true }); }),
+  );
+  const view = renderPane();
+  const second = await view.findByRole("region", { name: "Second project" });
+  expect(within(second).getByRole("button", { name: "Root · Second project" })).toBeInTheDocument();
+  expect(view.getByRole("region", { name: "Empty project" })).toHaveTextContent("No tasks in this view.");
+  await user.click(view.getByRole("button", { name: "Add task" }));
+  const dialog = view.getByRole("dialog", { name: "Add task" });
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Project" }), "second");
+  await user.type(within(dialog).getByRole("textbox", { name: "Title" }), "New task");
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(created).toMatchObject({ projectId: "second", parentId: null, title: "New task" }));
+});
+
+it("shows the configured client ID and secret status without a project selector", async () => {
+  const view = renderPane(<FleetTodoistSettings />);
+  expect(await view.findByDisplayValue("example-client")).toHaveAttribute("readonly");
+  expect(view.getByText("Client secret is configured and kept on the server.")).toBeInTheDocument();
+  expect(view.queryByRole("combobox")).toBeNull();
 });

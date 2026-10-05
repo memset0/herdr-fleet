@@ -61,21 +61,21 @@ export class TodoistProvider {
     throw new TodoistError("pagination_incomplete", 502);
   }
 
-  async tasks(projectId: string): Promise<TodoTask[]> {
-    return this.taskRows(await this.pages("tasks", { project_id: projectId }), projectId);
+  async tasks(projectId?: string): Promise<TodoTask[]> {
+    return this.taskRows(await this.pages("tasks", projectId ? { project_id: projectId } : {}), projectId);
   }
 
-  taskRows(rows: readonly JsonValue[], projectId: string): TodoTask[] {
+  taskRows(rows: readonly JsonValue[], projectId?: string): TodoTask[] {
     return rows.map((row) => {
       const task = parseTask(row);
-      if (!task || task.projectId !== projectId) throw new TodoistError("project_mismatch", 403);
+      if (!task || (projectId !== undefined && task.projectId !== projectId)) throw new TodoistError("project_mismatch", 403);
       return task;
     });
   }
 
-  async task(id: string, projectId: string): Promise<TodoTask> {
+  async task(id: string, projectId?: string): Promise<TodoTask> {
     const task = parseTask(await this.request(`tasks/${encodeURIComponent(id)}`));
-    if (!task || task.projectId !== projectId) throw new TodoistError("project_mismatch", 403);
+    if (!task || (projectId !== undefined && task.projectId !== projectId)) throw new TodoistError("project_mismatch", 403);
     return task;
   }
 

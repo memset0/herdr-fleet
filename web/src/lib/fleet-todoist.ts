@@ -7,12 +7,12 @@ export interface TodoistStatus {
   configured: boolean;
   connected: boolean;
   accountId: string | null;
-  project: TodoProject | null;
+  clientId: string | null;
   generation: number;
   callback: string;
   links: TodoLink[];
 }
-export interface TodoistSnapshot extends TodoistStatus { tasks: TodoTask[]; sections: TodoSection[]; boundTasks: TodoTask[] }
+export interface TodoistSnapshot extends TodoistStatus { projects: TodoProject[]; tasks: TodoTask[]; sections: TodoSection[]; boundTasks: TodoTask[] }
 export interface TodoistHistory { generation: number; since: number; until: number; tasks: TodoTask[] }
 
 export class TodoistClientError extends Error {

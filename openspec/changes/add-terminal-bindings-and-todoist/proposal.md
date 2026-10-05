@@ -6,7 +6,7 @@ Fleet's pane associations currently identify a layout address and workspace name
 
 - Introduce a shared terminal-reference and association interface, scoped by member and multiplexer session, with live resolution independent of workspace, tab, position, name, or agent conversation.
 - Carry an optional opaque terminal identity through the existing snapshot path. Reuse Collie's native pins and their browser-local storage through a narrow identity adapter; retain shared tag storage on the lead. Migrate only uniquely resolved legacy associations, retaining unresolved records without guessing.
-- Add Todoist OAuth connection and project selection in Fleet settings. Enforce the selected project on the server for every task operation; account-level OAuth scope does not authorize browsing other projects' tasks.
+- Add Todoist OAuth connection in Fleet settings and show tasks from all accessible projects. Identify each task's project and group tree views by project; validate account membership and same-project hierarchy on the server.
 - Add a right-rail Todoist surface with list/tree views, full nested task browsing, a current-terminal bound-task area, task/subtask creation, editing, completion and reopening.
 - Support many-to-many task/terminal associations and stable Fleet backlinks in task descriptions, preserving user-authored text.
 - Reuse the native composer send flow for one-click task delivery and binding. Send an English template centered on the task description, with title, ancestor titles and Todoist URL. Do not automatically complete tasks.
@@ -19,14 +19,14 @@ Fleet's pane associations currently identify a layout address and workspace name
 ### New Capabilities
 
 - `fleet-terminal-bindings`: shared terminal identity, resolution, association operations and conservative legacy migration.
-- `fleet-todoist`: project-scoped OAuth client, nested tasks, guarded mutations, backlinks and composer delivery.
+- `fleet-todoist`: account-wide OAuth client, nested tasks, guarded mutations, backlinks and composer delivery.
 
 ### Modified Capabilities
 
 - `fleet-agent-favorites`: use terminal identity through the existing local pin store rather than layout identity when supported.
 - `fleet-pane-tags`: use the shared terminal binding interface while preserving lead-owned definitions and associations.
 - `fleet-native-navigation-sidebars`: add Todoist alongside Agents with responsive access.
-- `fleet-settings`: expose installation-wide Todoist connection/project configuration and browser-local view preferences.
+- `fleet-settings`: expose installation-wide Todoist connection configuration and browser-local view preferences.
 
 ## Impact
 

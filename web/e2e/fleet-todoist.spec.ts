@@ -13,7 +13,7 @@ test("right sidebar switches independently and terminal associations survive a w
   const task = { id: "task-one", projectId: "project", parentId: null, sectionId: null, title: "Implement the requirement", description: "Use the task description as the requirement.", completed: false, recurring: false, order: 1, updatedAt: "one", url: "https://app.todoist.com/app/task/task-one" };
   const child = { ...task, id: "task-child", parentId: task.id, title: "Nested requirement" };
   const link = { id: "link-one", terminal, kind: "todoist", resource: '["account","project","task-one"]', accountId: "account", projectId: "project", taskId: task.id, state: "linked" };
-  const status = { configured: true, connected: true, accountId: "account", project: { id: "project", name: "Example project" }, generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [link] };
+  const status = { configured: true, connected: true, accountId: "account", clientId: "example-client", projects: [{ id: "project", name: "Example project" }], generation: 1, callback: "https://example.com/fleet/todoist/callback", links: [link] };
   await page.addInitScript(({ pinRow }) => {
     localStorage.setItem("collie:pins:v1", JSON.stringify([{ row: pinRow, space: "@terminal", at: 1 }]));
   }, { pinRow: row });
@@ -60,11 +60,11 @@ test("right sidebar switches independently and terminal associations survive a w
 test("the narrow pane switcher also offers Todoist", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installApiStub(page);
-  await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: { configured: false, connected: false, accountId: null, project: null, generation: 0, callback: "https://example.com/fleet/todoist/callback", links: [] } }));
+  await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: { configured: false, connected: false, accountId: null, clientId: null, projects: [], generation: 0, callback: "https://example.com/fleet/todoist/callback", links: [] } }));
   await page.goto(`/pane/${encodeURIComponent(fixtureSnapshot.agents[0]!.paneId)}`);
   await page.getByRole("button", { name: /^Switch pane/ }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Todoist", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("Connect Todoist and select a project in Settings.");
+  await expect(page.getByRole("dialog")).toContainText("Connect Todoist in Settings to view tasks from all projects.");
 });
 
 test("OAuth continuation restores the Strict cookie and sends an explicit same-origin request", async ({ page, context }) => {
@@ -98,4 +98,17 @@ test("OAuth continuation restores the Strict cookie and sends an explicit same-o
   expect(postedCookie).toContain("example_session=example-value");
   expect(postedOrigin).toBe("https://example.com");
   expect(JSON.parse(postedBody)).toEqual({ state: nonce, code: "example-code" });
+});
+
+
+test("settings shows configured app state and the Connect action reaches OAuth", async ({ page }) => {
+  await installApiStub(page);
+  await page.route("**/fleet/api/todoist/status", (route) => route.fulfill({ json: { configured: true, connected: false, clientId: "example-client", accountId: null, generation: 0, callback: "https://example.com/fleet/todoist/callback", links: [] } }));
+  await page.route("**/fleet/api/todoist/connect", (route) => route.fulfill({ json: { url: "https://app.todoist.com/oauth/authorize?client_id=example-client&state=example-state" } }));
+  await page.route("https://app.todoist.com/**", (route) => route.fulfill({ contentType: "text/html", body: "<h1>Provider authorization</h1>" }));
+  await page.goto("/settings");
+  await expect(page.getByRole("textbox", { name: "Client ID", exact: true })).toHaveValue("example-client");
+  await expect(page.getByText("Client secret is configured and kept on the server.")).toBeVisible();
+  await page.getByRole("button", { name: "Connect Todoist", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Provider authorization" })).toBeVisible();
 });

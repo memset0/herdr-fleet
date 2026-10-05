@@ -4,6 +4,8 @@ import type { Dictionary } from "./en";
 // suffixes match.
 
 export const zhTW: Dictionary = {
+  "fleet.todoist.allProjects": "所有專案",
+  "fleet.todoist.secretSaved": "Client Secret 已設定，僅儲存在伺服器。",
   "fleet.todoist.appSettings": "修改應用憑據",
 
   "fleet.todoist.complete": "完成任務",
@@ -47,12 +49,12 @@ export const zhTW: Dictionary = {
   "fleet.todoist.retryBinding": "重試綁定（不再傳送）",
   "fleet.todoist.sidebar": "Agents / Todoist",
   "fleet.todoist.settings": "開啟設定",
-  "fleet.todoist.selectInSettings": "請在設定中登入 Todoist 並選擇一個專案。",
-  "fleet.todoist.shared": "連線與所選專案由本 Fleet 的所有瀏覽器共用。",
+  "fleet.todoist.selectInSettings": "請在設定中連接 Todoist，查看所有專案的任務。",
+  "fleet.todoist.shared": "此 Fleet 執行個體可存取已連接 Todoist 帳號的所有專案。",
   "fleet.todoist.setup": "請註冊 Todoist OAuth 應用，填寫下方回呼網址，再輸入應用憑據。密鑰僅儲存在伺服器。",
   "fleet.todoist.descendants": "請先完成所有子任務。",
   "fleet.todoist.ancestors": "請先從最外層開始，依序取消完成以下父任務。",
-  "fleet.todoist.conflict": "任務或所選專案已變更，請重新整理後重試。",
+  "fleet.todoist.conflict": "任務或帳號連線已變更，請重新整理後再試。",
   "fleet.todoist.composerBlocked": "請檢查原輸入框的傳送狀態。既有草稿不會覆寫；若提交受阻，已填入的任務草稿會保留。",
   "fleet.todoist.terminalUnavailable": "目前無法定位原終端，未選擇其他終端替代。",
   "fleet.todoist.reconnect": "請在設定中重新連線 Todoist。",

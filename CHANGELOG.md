@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Show tasks from every connected Todoist project.** Group nested tasks by project, label their origin, choose the destination when creating tasks, and show saved OAuth application status without returning secrets.
+
 ## [3.8.0] - 2026-10-05
 
 ### Added

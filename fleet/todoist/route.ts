@@ -56,16 +56,13 @@ export async function todoistResponse(
     if (action === "disconnect") return Response.json(await service.disconnect());
     const generation = asJsonNumber(body.generation);
     if (generation === undefined || !Number.isSafeInteger(generation)) throw new TodoistError("invalid_request", 400);
-    if (action === "project") {
-      const projectId = todoId(body.projectId);
-      if (!projectId) throw new TodoistError("invalid_request", 400);
-      return Response.json(await service.selectProject(projectId, generation));
-    }
     const title = asJsonString(body.title) ?? "", description = asJsonString(body.description) ?? "";
     if (action === "create") {
       const parent = body.parentId === null ? null : todoId(body.parentId);
       if (body.parentId !== null && !parent) throw new TodoistError("invalid_request", 400);
-      return Response.json(await service.create(generation, title, description, parent));
+      const projectId = todoId(body.projectId);
+      if (!projectId) throw new TodoistError("invalid_request", 400);
+      return Response.json(await service.create(generation, title, description, parent, projectId));
     }
     const taskId = todoId(body.taskId);
     if (!taskId) throw new TodoistError("invalid_request", 400);

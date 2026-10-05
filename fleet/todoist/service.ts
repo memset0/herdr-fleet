@@ -15,12 +15,12 @@ export interface TodoistOptions {
   readonly now?: () => number;
 }
 
-const selected = (state: TodoistState, generation: number) => {
+const connected = (state: TodoistState, generation: number) => {
   if (generation !== state.generation) throw new TodoistError("selection_changed", 409);
-  if (!state.project || !state.grant) throw new TodoistError("select_project", 409);
-  return { projectId: state.project.id, accountId: state.grant.accountId };
+  if (!state.grant) throw new TodoistError("not_connected", 409);
+  return { accountId: state.grant.accountId };
 };
-const projectLinks = (state: TodoistState) => state.links.filter((link) => link.projectId === state.project?.id && link.accountId === state.grant?.accountId);
+const accountLinks = (state: TodoistState) => state.links.filter((link) => link.accountId === state.grant?.accountId);
 const projectList = async (api: TodoistProvider): Promise<TodoProject[]> => {
   const projects = await api.pages("projects", {});
   return projects.map((value) => {
@@ -48,32 +48,17 @@ const hierarchy = async (api: TodoistProvider, projectId: string) => {
   return [...all.values()];
 };
 
-const linksForTask = (state: TodoistState, taskId: string) => projectLinks(state).filter((link) => link.taskId === taskId);
+const linksForTask = (state: TodoistState, taskId: string) => accountLinks(state).filter((link) => link.taskId === taskId);
 
 export function createTodoistService(options: TodoistOptions) {
   const { store, origin } = options;
   const now = options.now ?? Date.now;
   const pending = new Map<string, { session: string; expiresAt: number }>();
-  let knownScope = "";
-  const knownTasks = new Set<string>();
-  const scopedKnowledge = (state: TodoistState) => {
-    const key = JSON.stringify([state.grant?.accountId, state.project?.id]);
-    if (key !== knownScope) { knownScope = key; knownTasks.clear(); }
-  };
-  const remember = (state: TodoistState, tasks: readonly TodoTask[]) => {
-    scopedKnowledge(state);
-    for (const task of tasks) if (task.projectId === state.project?.id) knownTasks.add(task.id);
-    if (knownTasks.size > 100_000) { knownTasks.clear(); throw new TodoistError("project_too_large", 422); }
-  };
-  const scopedTask = async (state: TodoistState, api: TodoistProvider, id: string) => {
-    const projectId = state.project?.id;
-    if (!projectId) throw new TodoistError("select_project", 409);
-    scopedKnowledge(state);
-    const recorded = projectLinks(state).some((link) => link.taskId === id);
-    if (!knownTasks.has(id) && !recorded) remember(state, await api.tasks(projectId));
-    if (!knownTasks.has(id) && !recorded) throw new TodoistError("project_mismatch", 403);
-    // A known task can have moved since discovery; check membership again before exposing it.
-    return api.task(id, projectId);
+  const scopedTask = async (api: TodoistProvider, id: string) => {
+    const projects = await projectList(api);
+    const task = await api.task(id);
+    if (!projects.some((project) => project.id === task.projectId)) throw new TodoistError("project_unavailable", 403);
+    return task;
   };
 
   const callback = new URL(CALLBACK_PATH, origin).href;
@@ -102,7 +87,7 @@ export function createTodoistService(options: TodoistOptions) {
     return new TodoistProvider(state.grant.accessToken, options.fetcher);
   };
 
-  const status = (state: TodoistState) => ({ configured: state.app !== null, connected: state.grant !== null, accountId: state.grant?.accountId ?? null, project: state.project, generation: state.generation, callback, links: projectLinks(state) });
+  const status = (state: TodoistState) => ({ configured: state.app !== null, connected: state.grant !== null, accountId: state.grant?.accountId ?? null, clientId: state.app?.clientId ?? null, generation: state.generation, callback, links: accountLinks(state) });
 
   const updateFooter = async (state: TodoistState, api: TodoistProvider, task: TodoTask, links: readonly TodoLink[]) => {
     const latest = await api.task(task.id, task.projectId);
@@ -152,55 +137,65 @@ export function createTodoistService(options: TodoistOptions) {
       await save(); return status(state);
     }),
     projects: () => store.run(async (state, save) => projectList(await client(state, save))),
-    selectProject: (projectId: string, generation: number) => store.run(async (state, save) => {
-      if (state.generation !== generation) throw new TodoistError("selection_changed", 409);
-      const projects = await projectList(await client(state, save));
-      const project = projects.find((entry) => entry.id === projectId);
-      if (!project) throw new TodoistError("project_unavailable", 403);
-      state.project = project; state.generation++; await save(); return status(state);
-    }),
     tasks: (generation: number) => store.run(async (state, save) => {
-      const { projectId } = selected(state, generation), api = await client(state, save);
-      const tasks = await hierarchy(api, projectId);
-      remember(state, tasks);
-      const sections = (await api.pages("sections", { project_id: projectId })).map((value) => {
-        const object = asJsonObject(value), id = todoId(object?.id), name = asJsonString(object?.name);
-        if (!id || name === undefined || object?.project_id !== projectId) throw new TodoistError("project_mismatch", 403);
-        return { id, name, order: asJsonNumber(object.section_order) ?? 0 };
-      });
+      connected(state, generation);
+      const api = await client(state, save), projects = await projectList(api);
+      const projectIds = new Set(projects.map((project) => project.id));
+      const tasks = await api.tasks();
+      if (tasks.some((task) => !projectIds.has(task.projectId))) throw new TodoistError("project_unavailable", 403);
       const known = new Map(tasks.map((task) => [task.id, task]));
-      const boundTasks: TodoTask[] = [];
-      for (const id of new Set(projectLinks(state).map((link) => link.taskId))) {
-        const task = known.get(id) ?? await api.task(id, projectId).catch(() => null);
-        if (task) boundTasks.push(task);
+      for (const task of tasks) {
+        let parentId = task.parentId;
+        const seen = new Set([task.id]);
+        while (parentId !== null) {
+          if (seen.has(parentId) || seen.size > 100) throw new TodoistError("hierarchy_unavailable", 409);
+          seen.add(parentId);
+          const parent = known.get(parentId) ?? await api.task(parentId, task.projectId);
+          if (parent.projectId !== task.projectId) throw new TodoistError("project_mismatch", 403);
+          known.set(parent.id, parent); parentId = parent.parentId;
+        }
       }
-      return { ...status(state), tasks, sections, boundTasks };
+      const sections = (await api.pages("sections", {})).map((value) => {
+        const object = asJsonObject(value), id = todoId(object?.id), name = asJsonString(object?.name), projectId = todoId(object?.project_id);
+        if (!id || name === undefined || !projectId || !projectIds.has(projectId)) throw new TodoistError("project_mismatch", 403);
+        return { id, name, projectId, order: asJsonNumber(object?.section_order) ?? 0 };
+      });
+      const boundTasks: TodoTask[] = [];
+      for (const id of new Set(accountLinks(state).map((link) => link.taskId))) {
+        const task = known.get(id) ?? await api.task(id).catch(() => null);
+        if (task && projectIds.has(task.projectId)) boundTasks.push(task);
+      }
+      return { ...status(state), projects, tasks: [...known.values()], sections, boundTasks };
     }),
     history: (generation: number, before: number) => store.run(async (state, save) => {
-      const { projectId } = selected(state, generation), api = await client(state, save);
+      connected(state, generation);
+      const api = await client(state, save), projects = await projectList(api);
       if (!Number.isFinite(before) || before > now() + 60_000 || before < 0) throw new TodoistError("invalid_history_range", 400);
       const since = Math.max(0, before - 30 * 24 * 60 * 60_000);
-      const rows = await api.pages("tasks/completed/by_completion_date", { project_id: projectId, since: new Date(since).toISOString(), until: new Date(before).toISOString() }, "items");
-      const tasks = api.taskRows(rows, projectId); remember(state, tasks);
+      const rows = await api.pages("tasks/completed/by_completion_date", { since: new Date(since).toISOString(), until: new Date(before).toISOString() }, "items");
+      const tasks = api.taskRows(rows);
+      if (tasks.some((task) => !projects.some((project) => project.id === task.projectId))) throw new TodoistError("project_unavailable", 403);
       return { generation, since, until: before, tasks };
     }),
-    create: (generation: number, title: string, description: string, parentId: string | null) => store.run(async (state, save) => {
-      const { projectId } = selected(state, generation), api = await client(state, save);
+    create: (generation: number, title: string, description: string, parentId: string | null, projectId: string) => store.run(async (state, save) => {
+      connected(state, generation);
+      const api = await client(state, save);
       if (!title.trim() || title.length > 500 || description.length > 16_000) throw new TodoistError("invalid_task", 400);
+      if (!(await projectList(api)).some((project) => project.id === projectId)) throw new TodoistError("project_unavailable", 403);
       if (parentId) {
-        const parent = await scopedTask(state, api, parentId);
+        const parent = await api.task(parentId, projectId);
         const blockers = [...await api.ancestors(parent), parent].filter((entry) => entry.completed);
         if (blockers.length) throw new TodoistError("parent_completed", 409, blockers);
       }
       const body = { project_id: projectId, content: title, description, parent_id: parentId };
       const created = parseTask(await api.request("tasks", {}, body, randomUUID()));
       if (!created || created.projectId !== projectId) throw new TodoistError("project_mismatch", 403);
-      remember(state, [created]); return created;
+      return created;
     }),
     edit: (generation: number, taskId: string, title: string, description: string, expected: string, original?: { title: string; description: string }) => store.run(async (state, save) => {
-      selected(state, generation);
+      connected(state, generation);
       const api = await client(state, save);
-      const task = await scopedTask(state, api, taskId);
+      const task = await scopedTask(api, taskId);
       if (task.updatedAt !== expected || (!task.updatedAt && !original) || (original && (task.title !== original.title || task.description !== original.description))) throw new TodoistError("task_changed", 409);
       if (!title.trim() || title.length > 500 || description.length > 16_000) throw new TodoistError("invalid_task", 400);
       // Preserve the managed suffix already on the provider; editing the user body cannot remove links.
@@ -210,15 +205,16 @@ export function createTodoistService(options: TodoistOptions) {
       return { ok: true };
     }),
     complete: (generation: number, taskId: string, reopen: boolean) => store.run(async (state, save) => {
-      const { projectId } = selected(state, generation), api = await client(state, save);
-      const task = await scopedTask(state, api, taskId);
+      connected(state, generation);
+      const api = await client(state, save);
+      const task = await scopedTask(api, taskId);
       if (reopen && !task.completed && task.recurring) throw new TodoistError("recurring_occurrence", 409);
       if (reopen === !task.completed) return { ok: true };
       if (reopen) {
         const blockers = (await api.ancestors(task)).filter((entry) => entry.completed);
         if (blockers.length) throw new TodoistError("ancestors_completed", 409, blockers);
       } else {
-        const tasks = await hierarchy(api, projectId);
+        const tasks = await hierarchy(api, task.projectId);
         const blockers = completionBlockers(task, [...tasks.filter((entry) => entry.id !== taskId), task]);
         if (blockers === null) throw new TodoistError("hierarchy_unavailable", 409);
         if (blockers.length) throw new TodoistError("descendants_incomplete", 409, blockers);
@@ -227,14 +223,15 @@ export function createTodoistService(options: TodoistOptions) {
       return { ok: true };
     }),
     message: (generation: number, taskId: string) => store.run(async (state, save) => {
-      selected(state, generation);
+      connected(state, generation);
       const api = await client(state, save);
-      const task = await scopedTask(state, api, taskId);
+      const task = await scopedTask(api, taskId);
       return { text: taskMessage(task, await api.ancestors(task)) };
     }),
     bind: (generation: number, taskId: string, terminal: TerminalRef, remove = false) => store.run(async (state, save) => {
-      const { projectId, accountId } = selected(state, generation), api = await client(state, save);
-      const task = await scopedTask(state, api, taskId);
+      const { accountId } = connected(state, generation), api = await client(state, save);
+      const task = await scopedTask(api, taskId);
+      const projectId = task.projectId;
       let link = linksForTask(state, taskId).find((entry) => sameTerminal(entry.terminal, terminal));
       if (remove) {
         if (!link) return { ok: true };

@@ -3,6 +3,8 @@ import type { Dictionary } from "./en";
 // Japanese. See de.ts for the typing contract. One plural category, so both suffixes match.
 
 export const ja: Dictionary = {
+  "fleet.todoist.allProjects": "すべてのプロジェクト",
+  "fleet.todoist.secretSaved": "クライアントシークレットは設定済みで、サーバーにのみ保存されます。",
   "fleet.todoist.appSettings": "アプリの認証情報",
 
   "fleet.todoist.complete": "完了にする",
@@ -46,12 +48,12 @@ export const ja: Dictionary = {
   "fleet.todoist.retryBinding": "関連付けのみ再試行",
   "fleet.todoist.sidebar": "Agents / Todoist",
   "fleet.todoist.settings": "設定を開く",
-  "fleet.todoist.selectInSettings": "設定で Todoist に接続し、プロジェクトを選択してください。",
-  "fleet.todoist.shared": "接続と選択プロジェクトはこの Fleet 全体で共有されます。",
+  "fleet.todoist.selectInSettings": "設定で Todoist に接続すると、すべてのプロジェクトのタスクを表示できます。",
+  "fleet.todoist.shared": "この Fleet は接続した Todoist アカウントのすべてのプロジェクトにアクセスします。",
   "fleet.todoist.setup": "下の URL で Todoist OAuth アプリを登録し、認証情報を入力してください。秘密情報はサーバーに保存されます。",
   "fleet.todoist.descendants": "先にすべてのサブタスクを完了してください。",
   "fleet.todoist.ancestors": "最上位から順に親タスクを未完了に戻してください。",
-  "fleet.todoist.conflict": "タスクまたはプロジェクトが変更されました。更新して再試行してください。",
+  "fleet.todoist.conflict": "タスクまたはアカウント接続が変更されました。更新して再試行してください。",
   "fleet.todoist.composerBlocked": "送信前に入力欄を確認してください。既存の下書きと送信できなかった下書きは保持されます。",
   "fleet.todoist.terminalUnavailable": "元のターミナルを特定できません。別のターミナルは選択していません。",
   "fleet.todoist.reconnect": "設定で Todoist に再接続してください。",

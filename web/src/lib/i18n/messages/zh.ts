@@ -4,6 +4,8 @@ import type { Dictionary } from "./en";
 // match.
 
 export const zh: Dictionary = {
+  "fleet.todoist.allProjects": "所有项目",
+  "fleet.todoist.secretSaved": "Client Secret 已配置，仅保存在服务器。",
   "fleet.todoist.appSettings": "修改应用凭据",
 
   "fleet.todoist.complete": "完成任务",
@@ -47,12 +49,12 @@ export const zh: Dictionary = {
   "fleet.todoist.retryBinding": "重试绑定（不再发送）",
   "fleet.todoist.sidebar": "Agents / Todoist",
   "fleet.todoist.settings": "打开设置",
-  "fleet.todoist.selectInSettings": "请在设置中登录 Todoist 并选择一个项目。",
-  "fleet.todoist.shared": "连接和所选项目由本 Fleet 的所有浏览器共享。",
+  "fleet.todoist.selectInSettings": "请在设置中连接 Todoist，查看所有项目的任务。",
+  "fleet.todoist.shared": "此 Fleet 实例可访问已连接 Todoist 账号的所有项目。",
   "fleet.todoist.setup": "请注册 Todoist OAuth 应用，填写下方回调地址，再输入应用凭据。密钥仅保存在服务器。",
   "fleet.todoist.descendants": "请先完成所有子任务。",
   "fleet.todoist.ancestors": "请先从最外层开始，依次取消完成以下父任务。",
-  "fleet.todoist.conflict": "任务或所选项目已改变，请刷新后重试。",
+  "fleet.todoist.conflict": "任务或账号连接已变化，请刷新后重试。",
   "fleet.todoist.composerBlocked": "请检查原输入框的发送状态。已有草稿不会覆盖；若提交受阻，已填入的任务草稿会保留。",
   "fleet.todoist.terminalUnavailable": "当前无法定位原终端，未选择其他终端替代。",
   "fleet.todoist.reconnect": "请在设置中重新连接 Todoist。",
