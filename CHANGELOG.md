@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Bind a terminal directly from each Todoist task row.** Keep bind/unbind visible without expanding details or sending a message, including for plain shell terminals.
+
 ## [3.9.4] - 2026-10-05
 
 ### Added

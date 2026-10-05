@@ -48,6 +48,8 @@ export const ko: Dictionary = {
   "fleet.todoist.noDescription": "설명 없음.",
   "fleet.todoist.addChild": "하위 작업 추가",
   "fleet.todoist.unbind": "연결 해제",
+  "fleet.todoist.bindShort": "연결",
+  "fleet.todoist.unbindShort": "해제",
   "fleet.todoist.bind": "터미널 연결",
   "fleet.todoist.confirmSend": "이 작업을 에이전트에게 보낼까요?",
   "fleet.todoist.sendDestination": "전송 대상: {target}",

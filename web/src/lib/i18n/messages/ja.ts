@@ -47,6 +47,8 @@ export const ja: Dictionary = {
   "fleet.todoist.noDescription": "説明なし。",
   "fleet.todoist.addChild": "サブタスクを追加",
   "fleet.todoist.unbind": "関連付けを解除",
+  "fleet.todoist.bindShort": "関連付け",
+  "fleet.todoist.unbindShort": "解除",
   "fleet.todoist.bind": "ターミナルに関連付け",
   "fleet.todoist.confirmSend": "このタスクをエージェントに送信しますか？",
   "fleet.todoist.sendDestination": "送信先: {target}",

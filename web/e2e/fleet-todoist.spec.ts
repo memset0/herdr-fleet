@@ -45,9 +45,11 @@ test("right sidebar switches independently and terminal associations survive a w
   await expect(rail.getByRole("button", { name: /^Nested requirement/ })).toHaveCount(0);
   await rail.getByRole("button", { name: "Tree", exact: true }).click();
   await expect(rail.getByRole("button", { name: /^Nested requirement/ })).toBeVisible();
-  const parentBox = await rail.locator("li").filter({ hasText: task.title }).locator("button").last().boundingBox();
-  const childBox = await rail.locator("li").filter({ hasText: child.title }).locator("button").last().boundingBox();
+  const parentBox = await rail.locator("li").filter({ hasText: task.title }).locator("button[aria-expanded]").last().boundingBox();
+  const childBox = await rail.locator("li").filter({ hasText: child.title }).locator("button[aria-expanded]").last().boundingBox();
   expect(childBox!.x).toBeGreaterThan(parentBox!.x);
+  await expect(rail.getByRole("button", { name: `Bind terminal: ${child.title}`, exact: true })).toBeVisible();
+  await expect(rail.locator('[data-slot="todoist-task-card"]').filter({ hasText: child.title })).toHaveAttribute("data-selected", "false");
   const checkboxTarget = await rail.getByRole("checkbox", { name: `Complete ${task.title}` }).locator("..").boundingBox();
   expect(checkboxTarget!.height).toBeGreaterThanOrEqual(44);
   expect(checkboxTarget!.width).toBeGreaterThanOrEqual(44);

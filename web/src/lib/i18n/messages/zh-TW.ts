@@ -48,6 +48,8 @@ export const zhTW: Dictionary = {
   "fleet.todoist.noDescription": "沒有描述。",
   "fleet.todoist.addChild": "新增子任務",
   "fleet.todoist.unbind": "解除綁定",
+  "fleet.todoist.bindShort": "綁定",
+  "fleet.todoist.unbindShort": "解除",
   "fleet.todoist.bind": "綁定目前終端",
   "fleet.todoist.confirmSend": "確認將此任務傳送給 Agent？",
   "fleet.todoist.sendDestination": "傳送目標：{target}",

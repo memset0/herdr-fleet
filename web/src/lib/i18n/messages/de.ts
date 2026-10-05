@@ -48,6 +48,8 @@ export const de: Dictionary = {
   "fleet.todoist.noDescription": "Keine Beschreibung.",
   "fleet.todoist.addChild": "Unteraufgabe hinzufügen",
   "fleet.todoist.unbind": "Verknüpfung lösen",
+  "fleet.todoist.bindShort": "Binden",
+  "fleet.todoist.unbindShort": "Lösen",
   "fleet.todoist.bind": "Terminal verknüpfen",
   "fleet.todoist.confirmSend": "Diese Aufgabe an den Agenten senden?",
   "fleet.todoist.sendDestination": "Ziel: {target}",

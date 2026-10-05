@@ -57,6 +57,8 @@ export const en = {
   "fleet.todoist.noDescription": "No description.",
   "fleet.todoist.addChild": "Add subtask",
   "fleet.todoist.unbind": "Unbind",
+  "fleet.todoist.bindShort": "Bind",
+  "fleet.todoist.unbindShort": "Unbind",
   "fleet.todoist.bind": "Bind terminal",
   "fleet.todoist.confirmSend": "Send this task to the agent?",
   "fleet.todoist.sendDestination": "Destination: {target}",

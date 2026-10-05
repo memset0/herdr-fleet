@@ -619,7 +619,9 @@ a directly selected empty project keeps its empty state and create entrypoint. T
 first among siblings; List sorts updates across projects, and Completed sorts completion times across
 projects. Rows, details and bound-task entries carry project names.
 Bound tasks also appear in a separate current-terminal area, including outside the display scope.
-Clicking a task expands its details/actions directly below its title inside a highlighted card.
+Every task row exposes Bind/Unbind for the current terminal, including plain shell terminals;
+this creates or removes the two-way relation and managed Todoist backlink without sending a message.
+Clicking a task expands its remaining details/actions directly below its title inside a highlighted card.
 The native Collapse animation respects reduced motion. Task content is rendered as text.
 
 ### Connect

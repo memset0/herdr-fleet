@@ -47,6 +47,8 @@ export const es: Dictionary = {
   "fleet.todoist.noDescription": "Sin descripción.",
   "fleet.todoist.addChild": "Añadir subtarea",
   "fleet.todoist.unbind": "Desvincular",
+  "fleet.todoist.bindShort": "Vincular",
+  "fleet.todoist.unbindShort": "Desvincular",
   "fleet.todoist.bind": "Vincular terminal",
   "fleet.todoist.confirmSend": "¿Enviar esta tarea al agente?",
   "fleet.todoist.sendDestination": "Destino: {target}",

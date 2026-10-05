@@ -213,3 +213,38 @@ it("Escape and a changed terminal invalidate send confirmation without requests"
   await waitFor(() => expect(view.queryByRole("dialog")).toBeNull());
   expect(attempts).toBe(0);
 });
+
+it("a collapsed task binds and unbinds a plain terminal without preparing or sending a message", async () => {
+  const terminal = { version: 1, host: pane.host, session: "default", id: pane.bindingId };
+  const link = { id: "link-direct", kind: "todoist", resource: '["account","project","child"]', accountId: "account", projectId: "project", taskId: "child", terminal, state: "linked" };
+  let linked = false, prepare = 0;
+  const requests: unknown[] = [];
+  const current = () => ({ ...status, links: linked ? [link] : [] });
+  server.use(
+    http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json(current())),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...current(), tasks, treeTasks: tasks, contextTasks: [], sections: [], boundTasks: linked ? [tasks[2]] : [] })),
+    http.post(/\/fleet\/api\/todoist\/bind$/, async ({ request }) => { requests.push(await request.json()); linked = true; return HttpResponse.json({ ok: true }); }),
+    http.post(/\/fleet\/api\/todoist\/unbind$/, () => { linked = false; return HttpResponse.json({ ok: true }); }),
+    http.post(/\/fleet\/api\/todoist\/prepare$/, () => { prepare++; return HttpResponse.json({ text: "Must not send" }); }),
+  );
+  const user = userEvent.setup(), view = renderPane(<FleetTodoistPane pane={{ ...pane, agent: "shell", kind: "shell" }} />);
+  const title = await view.findByRole("button", { name: /^Child ·/ });
+  const card = title.closest<HTMLElement>('[data-slot="todoist-task-card"]')!;
+  await user.click(within(card).getByRole("button", { name: "Bind terminal: Child" }));
+  const unbind = await within(card).findByRole("button", { name: "Unbind: Child" });
+  await waitFor(() => expect(unbind).toBeEnabled());
+  expect(unbind).toHaveAttribute("aria-pressed", "true");
+  expect(requests).toEqual([{ taskId: "child", terminal, generation: 1 }]);
+  expect(card).toHaveAttribute("data-selected", "false");
+  expect(view.getByRole("region", { name: "Bound to this terminal" })).toHaveTextContent("Child");
+  await user.click(unbind);
+  await within(card).findByRole("button", { name: "Bind terminal: Child" });
+  expect(view.queryByRole("region", { name: "Bound to this terminal" })).toBeNull();
+  expect(prepare).toBe(0);
+});
+
+it("binding remains visible with guidance but disabled without a selected terminal", async () => {
+  const view = renderPane(<FleetTodoistPane />);
+  expect(await view.findByRole("button", { name: "Bind terminal: Child" })).toBeDisabled();
+  expect(view.getByText("Open a terminal with stable identity to bind or send this task.")).toBeInTheDocument();
+});

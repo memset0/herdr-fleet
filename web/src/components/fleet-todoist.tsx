@@ -249,13 +249,19 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
     catch { throw new TodoistClientError("sent_binding_pending"); }
     saveDeliveryReceipt(receipt, false);
   });
+  const taskBindingButton = (task: TodoTask) => <Button type="button" size="sm" variant="outline"
+    className="min-h-11 min-w-11 shrink-0 px-2 text-xs" disabled={todo.busy || !ref}
+    aria-pressed={boundIds.has(task.id)} title={t(boundIds.has(task.id) ? "fleet.todoist.unbind" : "fleet.todoist.bind")}
+    aria-label={`${t(boundIds.has(task.id) ? "fleet.todoist.unbind" : "fleet.todoist.bind")}: ${task.title}`}
+    onClick={() => { if (ref) void todo.mutate(boundIds.has(task.id) ? "unbind" : "bind", { taskId: task.id, terminal: { ...ref } }); }}>
+    {t(boundIds.has(task.id) ? "fleet.todoist.unbindShort" : "fleet.todoist.bindShort")}
+  </Button>;
   const taskDetails = (task: TodoTask) => <section className="space-y-2 border-t border-rule p-3" aria-label={task.title}>
       <p className="whitespace-pre-wrap break-words font-content text-xs">{displayBody(task.description) || t("fleet.todoist.noDescription")}</p>
       <div className="flex flex-wrap gap-1">
         <Button size="sm" variant="outline" disabled={todo.busy || (showHistory && task.recurring && !task.completed)} onClick={() => void toggleTask(task, showHistory || task.completed)}>{t(showHistory || task.completed ? "fleet.todoist.reopen" : "fleet.todoist.complete")}</Button>
         <Button size="sm" variant="outline" disabled={todo.busy} onClick={() => setEditor({ task: task, parentId: task.parentId })}>{t("fleet.todoist.edit")}</Button>
         <Button size="sm" variant="outline" disabled={todo.busy || task.completed} onClick={() => setEditor({ parentId: task.id })}>{t("fleet.todoist.addChild")}</Button>
-        <Button size="sm" variant="outline" disabled={todo.busy || !ref} onClick={() => { if (ref) void todo.mutate(boundIds.has(task.id) ? "unbind" : "bind", { taskId: task.id, terminal: { ...ref } }); }}>{t(boundIds.has(task.id) ? "fleet.todoist.unbind" : "fleet.todoist.bind")}</Button>
         {ref && bound.some((link) => link.taskId === task.id && link.state === "pending") && !(state.accountId && hasDeliveryReceipt(deliveryReceipt(state.accountId, task.id, ref))) && <Button size="sm" variant="outline" disabled={todo.busy} onClick={() => void todo.mutate("bind", { taskId: task.id, terminal: { ...ref } })}>{t("fleet.todoist.retryBinding")}</Button>}
         <Button size="sm" disabled={todo.busy || !ref || !pane?.agent || pane.agent === "shell" || pane.kind === "shell"} onClick={() => {
           if (!ref || !pane || !state.accountId) return;
@@ -265,12 +271,12 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
         <a className="inline-flex min-h-11 items-center gap-1 px-2 text-xs underline" href={task.url} target="_blank" rel="noreferrer">Todoist<ExternalLink className="size-3" aria-hidden /></a>
       </div>
       {showHistory && task.recurring && !task.completed && <p className="text-xs text-muted-foreground">{t("fleet.todoist.recurringHistory")}</p>}
-      {!ref && <p className="text-xs text-muted-foreground">{t("fleet.todoist.openPane")}</p>}
     </section>;
   return <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 [&_button]:min-h-11" data-slot="todoist-pane">
     <div className="flex flex-wrap items-center gap-2"><strong className="min-w-0 flex-1 truncate text-sm">{state.scope.kind === "all" ? t("fleet.todoist.allProjects") : state.scope.name}</strong><Button size="sm" variant="outline" disabled={todo.busy} onClick={() => void todo.refresh()}>{t("fleet.todoist.refresh")}</Button></div>
     <TodoistProblem />
     <TodoistScopePicker />
+    {!ref && <p className="text-xs text-muted-foreground">{t("fleet.todoist.openPane")}</p>}
     <div className="flex flex-wrap gap-1" aria-label={t("fleet.todoist.view")}>
       {(["tree", "list"] as const).map((mode) => <Button key={mode} size="sm" variant={!showHistory && view === mode ? "default" : "outline"} aria-pressed={!showHistory && view === mode} onClick={() => {
         setView(mode); setShowHistory(false); try { localStorage.setItem("fleet:todoist:view", mode); } catch { /* Browser-local preference. */ }
@@ -283,9 +289,10 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
       {bound.map((link) => {
         const task = byId.get(link.taskId), selected = selectedFromBound && selectedTask === link.taskId;
         return <div key={link.id} data-slot="todoist-bound-card" data-selected={selected} className={`overflow-hidden rounded-md border transition-colors duration-[240ms] motion-reduce:transition-none ${selected ? "border-primary/60 bg-primary/10 shadow-sm" : "border-border"}`}>
-          <Button variant="ghost" size="sm" className="h-auto w-full justify-start whitespace-normal text-left" aria-expanded={selected} onClick={() => { setSelectedFromBound(true); setSelectedTask(selected ? null : link.taskId); }}>
+          <div className="flex items-start gap-1 p-1"><Button variant="ghost" size="sm" className="h-auto min-w-0 flex-1 justify-start whitespace-normal text-left" aria-expanded={selected} onClick={() => { setSelectedFromBound(true); setSelectedTask(selected ? null : link.taskId); }}>
             {task?.title ?? t("fleet.todoist.taskUnavailable")} · {projectName(task?.projectId ?? link.projectId)}{link.state === "pending" ? ` · ${t("fleet.todoist.pending")}` : ""}
           </Button>
+          {task && taskBindingButton(task)}</div>
           <Collapse open={selected && Boolean(task)}>{selected && task ? taskDetails(task) : null}</Collapse>
         </div>;
       })}
@@ -310,6 +317,7 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
             <span className={showHistory || task.completed ? "text-muted-foreground line-through" : ""}>{task.title}</span>
             <span className="mt-1 block text-[10px] text-muted-foreground">{[projectName(task.projectId), section, ...((view === "list" || !source.some((entry) => entry.id === task.parentId)) && chain.ok ? chain.ancestors.map((ancestor) => ancestor.title) : [])].filter(Boolean).join(" / ")}</span>
           </button>
+          {taskBindingButton(task)}
         </div>
         <Collapse open={selected}>{selected ? taskDetails(task) : null}</Collapse>
         </div>

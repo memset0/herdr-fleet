@@ -57,7 +57,7 @@ Before completing a task Fleet SHALL verify that every descendant is complete. B
 - **THEN** Fleet refuses reopening and lists completed ancestors from outermost to innermost
 
 ### Requirement: Task and terminal relations are many-to-many
-Fleet SHALL use the common terminal binding contract for many-to-many task associations. Each association SHALL be reachable from Fleet and through a managed footer link in the Todoist task description. Linking and unlinking SHALL preserve user-authored text and other links; duplicate requests SHALL not duplicate links. A missing terminal SHALL never redirect to a replacement terminal.
+Fleet SHALL use the common terminal binding contract for many-to-many task associations. Each association SHALL be reachable from Fleet and through a managed footer link in the Todoist task description. Every task row and available bound-task row SHALL expose a visible bind/unbind action without expanding details or sending a message. Binding SHALL work for any terminal with stable identity, including a shell without an agent; without a terminal selection the action SHALL be disabled and the interface SHALL explain how to enable it. Linking and unlinking SHALL preserve user-authored text and other links; duplicate requests SHALL not duplicate links. A missing terminal SHALL never redirect to a replacement terminal.
 
 #### Scenario: A task is bound to two terminals
 - **WHEN** both bindings succeed

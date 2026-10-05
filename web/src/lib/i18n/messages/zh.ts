@@ -48,6 +48,8 @@ export const zh: Dictionary = {
   "fleet.todoist.noDescription": "没有描述。",
   "fleet.todoist.addChild": "添加子任务",
   "fleet.todoist.unbind": "解除绑定",
+  "fleet.todoist.bindShort": "绑定",
+  "fleet.todoist.unbindShort": "解绑",
   "fleet.todoist.bind": "绑定当前终端",
   "fleet.todoist.confirmSend": "确认将此任务发送给 Agent？",
   "fleet.todoist.sendDestination": "发送目标：{target}",
