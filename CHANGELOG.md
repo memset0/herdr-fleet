@@ -19,13 +19,15 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.6] - 2026-10-05
+
 ### Added
 
-- **Create a workspace from its Host context menu.** Reuse the native form with the selected machine fixed and its primary session addressed.
+- **Create a workspace from its Host context menu.** Reuse the native form with the selected machine fixed and its primary session addressed. ([99faf88c](https://github.com/memset0/herdr-fleet/commit/99faf88c))
 
 ### Fixed
 
-- **Show the right sidebar on ordinary desktop windows again.** Both rails and the Pane switcher now share the 1280px breakpoint.
+- **Show the right sidebar on ordinary desktop windows again.** Both rails and the Pane switcher now share the 1280px breakpoint. ([99faf88c](https://github.com/memset0/herdr-fleet/commit/99faf88c))
 
 ## [3.9.5] - 2026-10-05
 
