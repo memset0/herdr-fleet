@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.7.9] - 2026-10-05
+
+**Lead-only frontend update; members do not redeploy.**
+
 ### Changed
 
-- **Agent cards omit the extra unseen mark.** Keep unread groups, counts and accessible wording while reclaiming the heading slot.
+- **Agent cards omit the extra unseen mark.** Keep unread groups, counts and accessible wording while reclaiming the heading slot. ([75a734f2](https://github.com/memset0/herdr-fleet/commit/75a734f2))
 
 ## [3.7.8] - 2026-10-04
 
