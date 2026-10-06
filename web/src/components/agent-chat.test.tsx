@@ -2468,6 +2468,15 @@ describe("AgentChat — folding the tab and pane rows", () => {
     expect(mirror.className).toMatch(/(?:^|\s)border-t border-rule(?=\s|$)/);
   });
 
+  it("exposes optional strip-band ground and inset without changing bare upstream defaults", async () => {
+    const { container } = renderStrips();
+    await screen.findByRole("navigation", { name: "Tabs" });
+    const band = container.querySelector<HTMLElement>('[data-slot="collapse-swap"] div.pb-1')!;
+    expect(band.style.backgroundColor).toBe("var(--fleet-tab-band-ground, transparent)");
+    expect(band.style.paddingTop).toBe("var(--fleet-tab-band-inset, 0px)");
+    expect(band.className).toBe("pb-1");
+  });
+
   it("leaves nothing under the bar when folded — the page goes with the tabs", async () => {
     // THE OPERATOR'S THIRD READING: "some pixels are wasted towards the bottom still". They were.
     // The 4px above the mirror's rule is the page an OPEN FOLDER TAB sits on, and it was parked on

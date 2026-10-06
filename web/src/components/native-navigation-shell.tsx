@@ -609,7 +609,7 @@ export function NativeNavigationShell({
       <NativeNavigationProvider value={navigation}>
       <div
         data-slot="native-navigation-shell"
-        className="relative flex min-h-0 flex-1 overflow-hidden"
+        className="relative flex min-h-0 flex-1 overflow-hidden [--fleet-tab-band-ground:var(--color-chrome)] [--fleet-tab-band-inset:4px]"
       >
         {/* Renders nothing; keeps the document's webfont state matching the three settings that can
             name a face. Here rather than in a route because it must outlive every navigation. */}

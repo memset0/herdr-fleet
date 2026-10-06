@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Keep the expanded Tab strip on continuous gray chrome.** Balance the native band padding through a narrow optional style port.
+
 ### Changed
 
 - **Restore combined Agent avatars and a tag/host footer.** Corner badges share a 32px mark across two text lines; wrapping tags precede right-aligned host metadata.

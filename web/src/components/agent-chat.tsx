@@ -1948,7 +1948,7 @@ export function AgentChat({
               >
                 {/* `pb-1` — the 4px of page the open folder tab sits on, which lives HERE rather than
                     on the mirror so that it leaves with the tabs. See `mirrorGap` above. */}
-                <div className="pb-1">
+                <div className="pb-1" style={{ backgroundColor: "var(--fleet-tab-band-ground, transparent)", paddingTop: "var(--fleet-tab-band-inset, 0px)" }}>
                 {/* In-pane tab bar: the current space's tabs above the mirror — switch tab without
                     leaving the pane, or create one with +. No "All" here (you're always in a
                     specific tab). */}
