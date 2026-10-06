@@ -112,3 +112,12 @@ describe("the settings document", () => {
     ]);
   });
 });
+
+test("tag commands accept both shortcut shapes and round-trip through settings", () => {
+  const settings = accepted({ shortcuts: { bindings: {
+    "edit-pane-tags": ["Prefix+T"], "manage-pane-tags": ["Ctrl+Shift+G"],
+  } } });
+  const round = parseFleetSettingsText(serializeFleetSettings(settings));
+  expect(round.ok && round.settings.bindings.get("edit-pane-tags")?.map(formatBinding)).toEqual(["Prefix+T"]);
+  expect(round.ok && round.settings.bindings.get("manage-pane-tags")?.map(formatBinding)).toEqual(["Ctrl+Shift+G"]);
+});

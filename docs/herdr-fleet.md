@@ -565,6 +565,8 @@ authorization boundary; a retained upstream header check must not be treated as 
 
 ## Pane tags
 
+The command bar lists **Edit Pane Tags** (`edit-pane-tags`) for the current pane and **Manage Tags** (`manage-pane-tags`) for the shared catalog. Both ship unbound and accept direct chords or prefix bindings in Fleet shortcut settings. They open the same tag editors as pointer controls; opening a command makes no tag write. The assignment command is unavailable without a selected pane, while global management remains accessible.
+
 The Agent rail and the phone pane switcher offer a tag button beside each star. Search for an
 existing tag or type a new name and choose Create. A new name receives a random palette color;
 an existing name reuses its definition. Assigned names appear on a separate colored line below

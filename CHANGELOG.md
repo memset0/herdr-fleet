@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Expose tag editors in command search and shortcut settings.** Add unbound current-pane and global tag commands using the existing editors.
+
 ## [3.9.9] - 2026-10-06
 
 ### Changed

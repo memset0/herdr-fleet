@@ -41,6 +41,8 @@ export type CommandId =
   | "open-pane-switcher"
   | "open-fleet-settings"
   | "toggle-fleet-sidebars"
+  | "edit-pane-tags"
+  | "manage-pane-tags"
   | "create-tab"
   | "next-tab"
   | "previous-tab"
@@ -103,6 +105,8 @@ const DEFINITIONS: readonly CommandDefinition[] = [
   { id: "open-pane-switcher", name: "Open Pane Switcher", scope: "global", defaults: [] },
   { id: "open-fleet-settings", name: "Open Fleet Settings", scope: "global", defaults: ["Prefix+S"] },
   { id: "toggle-fleet-sidebars", name: "Toggle Fleet Sidebars", scope: "global", defaults: ["Prefix+B"] },
+  { id: "edit-pane-tags", name: "Edit Pane Tags", scope: "pane", defaults: [] },
+  { id: "manage-pane-tags", name: "Manage Tags", scope: "global", defaults: [] },
 
   // NO `rename-space` OR `close-space`, and that is a fact about the multiplexer rather than a gap
   // here: the bridge exposes creating a Space and nothing else for one. A command that cannot land is

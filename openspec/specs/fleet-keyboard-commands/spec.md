@@ -282,6 +282,8 @@ makes the command unfindable by the word the operator would use for it.
 | `open-pane-switcher` | Open Pane Switcher | `[]` |
 | `open-fleet-settings` | Open Fleet Settings | `Prefix+S` |
 | `toggle-fleet-sidebars` | Toggle Fleet Sidebars | `Prefix+B` |
+| `edit-pane-tags` | Edit Pane Tags | `[]` |
+| `manage-pane-tags` | Manage Tags | `[]` |
 | `create-tab` | Create Tab | `Prefix+C`, `Prefix+V`, `Prefix+-` |
 | `next-tab` / `previous-tab` | Next Tab / Previous Tab | `Prefix+N` / `Prefix+P` |
 | `select-tab-1` … `select-tab-9` | Select Tab 1 … Select Tab 9 | `Prefix+1` … `Prefix+9` |
@@ -324,6 +326,10 @@ reach the operator through the command bar or through their own configuration.
 #### Scenario: A command is searched for by its outcome
 - **WHEN** the operator searches command mode for `resize`
 - **THEN** `fit-pane-width` is listed, under the English name `Resize Pane`
+
+#### Scenario: Tag commands receive custom bindings
+- **WHEN** an operator configures a direct chord or prefix binding for either tag command
+- **THEN** settings accept it and the shared dispatcher invokes the command while the command bar displays its effective bindings
 
 ### Requirement: Navigation commands resolve against the current topology
 Space, Tab, Pane and Agent commands SHALL resolve their target from the validated topology at the

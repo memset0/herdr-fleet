@@ -97,6 +97,8 @@ function isSelfEvident(id: CommandId): boolean {
     id === "open-command-bar" ||
     id === "open-pane-switcher" ||
     id === "open-fleet-settings" ||
+    id === "edit-pane-tags" ||
+    id === "manage-pane-tags" ||
     id === "toggle-fleet-sidebars" ||
     id === "next-tab" ||
     id === "previous-tab" ||

@@ -5,7 +5,10 @@ import { changeTags, emptyTags, parseTagCommand, type TagDocument } from "../../
 import { asJsonObject, parseJson } from "@/lib/json";
 import { createPaneTagClient, tagPanePlace } from "@/lib/fleet-pane-tags";
 import type { AgentView } from "@/lib/types";
-import { FleetPaneTagsProvider, ManagePaneTags } from "./fleet-pane-tags";
+import { FleetCommandsProvider, useFleetCommands } from "./fleet-commands";
+import { derivePaneRoster } from "../../../fleet/ui/pane-roster.ts";
+import { parseFleetSettings } from "../../../fleet/settings/document.ts";
+import { FleetPaneTagsProvider, FleetPaneTagCommands, ManagePaneTags } from "./fleet-pane-tags";
 import { NativeAgentCard } from "./native-agent-card";
 
 const agent: AgentView = { paneId: "pane-1", host: "lead", session: "work", workspaceId: "w1", workspaceLabel: "Project", workspaceNumber: 1, tabId: "t1", tabLabel: "Work", agent: "claude", status: "working", cwd: "/repo", focused: false };
@@ -128,4 +131,71 @@ it("an open global edit cannot overwrite a newer edit received by polling", asyn
   await waitFor(() => expect(dialog.getByText("Tags changed elsewhere. Review the latest state and retry.")).toBeVisible());
   expect(current().tags[0]!.name).toBe("Other editor");
   expect(dialog.getByRole("button", { name: "Edit tag Other editor" })).toBeVisible();
+});
+
+function CommandTrigger() {
+  const commands = useFleetCommands();
+  return <button onClick={() => commands?.openBar("command")}>Open commands</button>;
+}
+
+function tagCommandSetup(initialPane?: AgentView, document: TagDocument = emptyTags()) {
+  const writes = vi.fn();
+  const client = createPaneTagClient(async (_url, init) => {
+    if (init?.method === "POST") writes(init.body);
+    return Response.json({ version: "1", document });
+  });
+  const parsed = parseFleetSettings({ shortcuts: { bindings: {
+    "edit-pane-tags": ["Prefix+T"], "manage-pane-tags": ["Ctrl+Shift+G"],
+  } } });
+  if (!parsed.ok) throw new Error(parsed.rejection.message);
+  const uiFor = (pane?: AgentView) => <FleetPaneTagsProvider client={client}>
+    <FleetCommandsProvider adapters={{}} available={(scope) => scope === "global" || pane !== undefined}
+      roster={derivePaneRoster({ triaged: [], shellPanes: [] })} onOpenPane={vi.fn()}
+      overrides={parsed.settings.bindings}>
+      <FleetPaneTagCommands pane={pane} /><CommandTrigger />
+    </FleetCommandsProvider>
+  </FleetPaneTagsProvider>;
+  const ui = render(uiFor(initialPane));
+  return { ...ui, writes, changePane: (pane?: AgentView) => ui.rerender(uiFor(pane)) };
+}
+
+it("finds tag commands in the palette and opens the existing editor without writing", async () => {
+  const user = userEvent.setup(), ui = tagCommandSetup(agent);
+  await user.click(ui.getByRole("button", { name: "Open commands" }));
+  const search = ui.getByRole("combobox", { name: "Fleet commands" });
+  await user.clear(search); await user.type(search, "/tags");
+  expect(ui.getByRole("option", { name: /Manage\s*Tags/ })).toHaveTextContent("Ctrl+Shift+G");
+  await user.click(ui.getByRole("option", { name: /Edit\s*Pane\s*Tags/ }));
+  const editor = await ui.findByRole("dialog", { name: "Edit pane tags" });
+  await waitFor(() => expect(within(editor).getByRole("textbox")).toHaveFocus());
+  expect(ui.queryByRole("combobox", { name: "Fleet commands" })).toBeNull();
+  expect(ui.writes).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(ui.getByRole("button", { name: "Open commands" })).toHaveFocus());
+});
+
+it("invokes global tag management by a direct shortcut without a pane", async () => {
+  const user = userEvent.setup(), ui = tagCommandSetup();
+  await user.keyboard("{Control>}{Shift>}G{/Shift}{/Control}");
+  const editor = await ui.findByRole("dialog", { name: "Manage tags" });
+  expect(within(editor).queryByRole("button", { name: "Create and add" })).toBeNull();
+  expect(ui.writes).not.toHaveBeenCalled();
+});
+
+it("prefix tag editing reads the latest host/session/terminal target and refuses a missing pane", async () => {
+  const first = { ...agent, bindingId: "herdr:example_one", bindingSession: "work" };
+  const second = { ...first, host: "example-member", session: "other", bindingSession: "other", bindingId: "herdr:example_two" };
+  const document: TagDocument = { ...emptyTags(), tags: [{ id: "example-tag", name: "Example tag", color: "#3b82f6" }], panes: [{ ...tagPanePlace(first), tags: ["example-tag"] }] };
+  const user = userEvent.setup(), ui = tagCommandSetup(first, document);
+  const open = async () => { await user.keyboard("{Control>}b{/Control}t"); };
+  await open();
+  expect(await ui.findByRole("checkbox", { name: "Example tag" })).toBeChecked();
+  await user.keyboard("{Escape}");
+  ui.changePane(second);
+  await open();
+  expect(await ui.findByRole("checkbox", { name: "Example tag" })).not.toBeChecked();
+  await user.keyboard("{Escape}");
+  ui.changePane(); await open();
+  expect(ui.queryByRole("dialog", { name: "Edit pane tags" })).toBeNull();
+  expect(ui.writes).not.toHaveBeenCalled();
 });

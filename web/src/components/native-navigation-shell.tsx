@@ -56,7 +56,7 @@ import {
   type CommandAdapters,
 } from "@/components/fleet-commands";
 import { usePointerMenuGestures } from "@/components/fleet-context-menu";
-import { FleetPaneTagsProvider } from "@/components/fleet-pane-tags";
+import { FleetPaneTagsProvider, FleetPaneTagCommands } from "@/components/fleet-pane-tags";
 import { FleetNavigationFooter } from "@/components/fleet-navigation-footer";
 import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
@@ -605,6 +605,7 @@ export function NativeNavigationShell({
       overrides={fleetSettings.bindings}
       prefix={fleetSettings.prefix}
     >
+      <FleetPaneTagCommands pane={bindingPane} />
       <NativeNavigationProvider value={navigation}>
       <div
         data-slot="native-navigation-shell"

@@ -113,3 +113,8 @@ describe("the command catalog", () => {
     expect(bindings?.every((binding) => binding.kind === "prefix")).toBe(true);
   });
 });
+
+test("tag commands are scoped and default-unbound", () => {
+  expect(commandById("edit-pane-tags")).toEqual({ id: "edit-pane-tags", name: "Edit Pane Tags", scope: "pane", defaults: [] });
+  expect(commandById("manage-pane-tags")).toEqual({ id: "manage-pane-tags", name: "Manage Tags", scope: "global", defaults: [] });
+});

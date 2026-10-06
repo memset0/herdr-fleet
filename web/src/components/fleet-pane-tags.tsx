@@ -2,6 +2,9 @@ import { createContext, useCallback, useContext, useMemo, useEffect, useRef, use
 import { Pencil, Tags, X } from "lucide-react";
 
 import { MAX_NAME, normalizeTagName, TAG_COLORS, tagsForPane, validTagName, type PaneTag, type PanePlace, type TagCommand } from "../../../fleet/pane-tags/document.ts";
+import { commandById } from "../../../fleet/ui/commands/catalog.ts";
+import { refuseCommand } from "../../../fleet/ui/commands/refusal.ts";
+import { useFleetCommandAdapters } from "@/components/fleet-commands";
 import { createPaneTagClient, tagPanePlace, type PaneTagClient, type TagClientState } from "@/lib/fleet-pane-tags";
 import { FleetPanel } from "@/components/fleet-panel";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +51,22 @@ export function FleetPaneTagsProvider({ children, client: supplied }: { children
       {editor && <TagEditor pane={editor.pane} state={state} client={client} onClose={() => setEditor(null)} />}
     </TagContext>
   );
+}
+
+/** Register the existing editors against the shell's host/session-aware current pane. */
+export function FleetPaneTagCommands({ pane }: { pane?: AgentView }) {
+  const context = useContext(TagContext);
+  useFleetCommandAdapters({
+    "manage-pane-tags": () => {
+      if (!context) refuseCommand(t("fleet.command.unavailable", { name: commandById("manage-pane-tags").name }));
+      context.open(null);
+    },
+    "edit-pane-tags": () => {
+      if (!context || !pane) refuseCommand(t("fleet.command.unavailable", { name: commandById("edit-pane-tags").name }));
+      context.open(tagPanePlace(pane));
+    },
+  });
+  return null;
 }
 
 export function TagBadge({ tag, compact = false }: { tag: PaneTag; compact?: boolean }) {
