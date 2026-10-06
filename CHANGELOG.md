@@ -19,13 +19,15 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.11] - 2026-10-06
+
 ### Fixed
 
-- **Keep the expanded Tab strip on continuous gray chrome.** Balance the native band padding through a narrow optional style port.
+- **Keep the expanded Tab strip on continuous gray chrome.** Balance the native band padding through a narrow optional style port. ([9f6222d1](https://github.com/memset0/herdr-fleet/commit/9f6222d1))
 
 ### Changed
 
-- **Restore combined Agent avatars and a tag/host footer.** Corner badges share a 32px mark across two text lines; wrapping tags precede right-aligned host metadata.
+- **Restore combined Agent avatars and a tag/host footer.** Corner badges share a 32px mark across two text lines; wrapping tags precede right-aligned host metadata. ([a4325bab](https://github.com/memset0/herdr-fleet/commit/a4325bab))
 
 ## [3.9.10] - 2026-10-06
 
