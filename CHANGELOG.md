@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Draw Todoist branch guides and reveal project metadata on expansion.** Replace enlarged task padding with compact connectors.
+
 ## [3.9.7] - 2026-10-06
 
 ### Changed

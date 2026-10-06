@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, ExternalLink, RefreshCw } from "lucide-react
 import { useNav } from "@/hooks/use-nav";
 import { sameTerminal, terminalReference, terminalKey, type BindingPane } from "../../../fleet/bindings/identity.ts";
 import { taskAncestors, taskBody, type TodoTask, type TodoProject, type TodoFilter } from "../../../fleet/todoist/model.ts";
-import { taskRows } from "../../../fleet/todoist/view.ts";
+import { taskRows, type TaskRow } from "../../../fleet/todoist/view.ts";
 import { FleetPanel } from "@/components/fleet-panel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -16,6 +16,17 @@ import { asJsonString, parseJson } from "@/lib/json";
 import { deliverTodoistTask } from "@/lib/fleet-task-delivery";
 import { deliveryReceipt, hasDeliveryReceipt, saveDeliveryReceipt, todoistRequest, TodoistClientError, type TodoistHistory } from "@/lib/fleet-todoist";
 import { useTodoist, useTodoistAvailable } from "./fleet-todoist-provider";
+
+function rowGuides(rows: readonly TaskRow[]): boolean[][] {
+  const nextDepth: number[] = [];
+  const result: boolean[][] = [];
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const depth = rows[index]?.depth ?? 0;
+    result[index] = Array.from({ length: Math.min(depth, 8) }, (_, level) => nextDepth[level + 1] === level + 1);
+    for (let level = depth; level <= 8; level++) nextDepth[level] = depth;
+  }
+  return result;
+}
 
 function displayBody(description: string): string {
   try { return taskBody(description); } catch { return description; }
@@ -256,7 +267,13 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
     onClick={() => { if (ref) void todo.mutate(boundIds.has(task.id) ? "unbind" : "bind", { taskId: task.id, terminal: { ...ref } }); }}>
     {t(boundIds.has(task.id) ? "fleet.todoist.unbindShort" : "fleet.todoist.bindShort")}
   </Button>;
+  const taskMetadata = (task: TodoTask) => {
+    const chain = taskAncestors(task, byId);
+    const section = state.sections.find((entry) => entry.id === task.sectionId)?.name;
+    return [projectName(task.projectId), section, ...(chain.ok ? chain.ancestors.map((ancestor) => ancestor.title) : [])].filter(Boolean).join(" / ");
+  };
   const taskDetails = (task: TodoTask) => <section className="space-y-2 border-t border-rule p-3" aria-label={task.title}>
+      <p data-slot="todoist-task-metadata" className="break-words text-[10px] text-muted-foreground">{taskMetadata(task)}</p>
       <p className="whitespace-pre-wrap break-words font-content text-xs">{displayBody(task.description) || t("fleet.todoist.noDescription")}</p>
       <div className="flex flex-wrap gap-1">
         <Button size="sm" variant="outline" disabled={todo.busy || (showHistory && task.recurring && !task.completed)} onClick={() => void toggleTask(task, showHistory || task.completed)}>{t(showHistory || task.completed ? "fleet.todoist.reopen" : "fleet.todoist.complete")}</Button>
@@ -290,7 +307,7 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
         const task = byId.get(link.taskId), selected = selectedFromBound && selectedTask === link.taskId;
         return <div key={link.id} data-slot="todoist-bound-card" data-selected={selected} className={`overflow-hidden rounded-md border transition-colors duration-[240ms] motion-reduce:transition-none ${selected ? "border-primary/60 bg-primary/10 shadow-sm" : "border-border"}`}>
           <div className="flex items-start gap-1 p-1"><Button variant="ghost" size="sm" className="h-auto min-w-0 flex-1 justify-start whitespace-normal text-left" aria-expanded={selected} onClick={() => { setSelectedFromBound(true); setSelectedTask(selected ? null : link.taskId); }}>
-            {task?.title ?? t("fleet.todoist.taskUnavailable")} · {projectName(task?.projectId ?? link.projectId)}{link.state === "pending" ? ` · ${t("fleet.todoist.pending")}` : ""}
+            {task?.title ?? t("fleet.todoist.taskUnavailable")}{link.state === "pending" ? ` · ${t("fleet.todoist.pending")}` : ""}
           </Button>
           {task && taskBindingButton(task)}</div>
           <Collapse open={selected && Boolean(task)}>{selected && task ? taskDetails(task) : null}</Collapse>
@@ -298,30 +315,35 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
       })}
     </section>}
     {source.length === 0 && <p className="text-xs text-muted-foreground">{t("fleet.todoist.empty")}</p>}
-    {groups.map(({ project, rows }) => <section key={project?.id ?? "all"} className="space-y-1" aria-label={project?.name ?? t("fleet.todoist.allProjects")}>
+    {groups.map(({ project, rows }) => { const guidesByRow = rowGuides(rows); return <section key={project?.id ?? "all"} className="space-y-1" aria-label={project?.name ?? t("fleet.todoist.allProjects")}>
       {project && <h3 className="border-b border-rule py-2 text-xs font-medium">{project.name}</h3>}
       {rows.length === 0 && <p className="py-2 text-xs text-muted-foreground">{t("fleet.todoist.empty")}</p>}
-      <ul className="space-y-1">{rows.map(({ task, depth, children }) => {
-      const chain = taskAncestors(task, byId);
-      const section = state.sections.find((entry) => entry.id === task.sectionId)?.name;
+      <ul className="space-y-0">{rows.map(({ task, depth, children }, index) => {
+      const guides = guidesByRow[index] ?? [];
       const selected = !selectedFromBound && selectedTask === task.id;
-      return <li key={task.id} style={{ paddingInlineStart: `min(${Math.min(depth, 8) * 24}px, 40%)` }}>
-        <div data-slot="todoist-task-card" data-selected={selected} className={`overflow-hidden rounded-md border transition-colors duration-[240ms] motion-reduce:transition-none ${selected ? "border-primary/60 bg-primary/10 shadow-sm" : boundIds.has(task.id) ? "border-primary/30 bg-primary/5" : "border-transparent"}`}>
-        <div className="flex items-start gap-1 p-1">
+      return <li key={task.id} className="relative flex pb-1">
+        {depth > 0 && <span data-slot="todoist-tree-guides" aria-hidden="true" className="pointer-events-none relative flex shrink-0" style={{ width: `min(${Math.min(depth, 8) * 12}px, 35%)` }}>
+          {guides.map((continuing, level) => <span key={level} data-continuing={continuing} className="relative min-w-0 flex-1">
+            {(continuing || level === guides.length - 1) && <span className={`absolute start-[26px] top-0 border-s border-rule ${continuing ? "bottom-0" : "h-[27px]"}`} />}
+            {level === guides.length - 1 && <span className="absolute start-[26px] top-[27px] w-full border-t border-rule" />}
+          </span>)}
+        </span>}
+        <div data-slot="todoist-task-card" data-selected={selected} className={`relative min-w-0 flex-1 overflow-hidden rounded-md border transition-colors duration-[240ms] motion-reduce:transition-none ${selected ? "border-primary/60 bg-primary/10 shadow-sm" : boundIds.has(task.id) ? "border-primary/30 bg-primary/5" : "border-transparent"}`}>
+        {tree && children && !collapsed.has(task.id) && <span data-slot="todoist-tree-stem" aria-hidden="true" className="pointer-events-none absolute start-[26px] top-[27px] h-[27px] border-s border-rule" />}
+        <div className="relative flex items-start gap-1 p-1">
           {view === "tree" && !showHistory && (children ? <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label={t(collapsed.has(task.id) ? "fleet.todoist.expand" : "fleet.todoist.collapse")} aria-expanded={!collapsed.has(task.id)} onClick={() => {
             const next = new Set(collapsed); if (next.has(task.id)) next.delete(task.id); else next.add(task.id); setCollapsed(next);
             try { localStorage.setItem(`fleet:todoist:collapsed:${state.accountId ?? ""}`, JSON.stringify([...next])); } catch { /* Browser-local preference. */ }
           }}>{collapsed.has(task.id) ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}</Button> : <span className="size-11 shrink-0" aria-hidden />)}
           <button type="button" className="min-h-11 min-w-0 flex-1 break-words px-1 text-left font-content text-xs focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setSelectedFromBound(false); setSelectedTask(selected ? null : task.id); }} aria-expanded={selected} aria-label={`${task.title} · ${projectName(task.projectId)}`}>
             <span className={showHistory || task.completed ? "text-muted-foreground line-through" : ""}>{task.title}</span>
-            <span className="mt-1 block text-[10px] text-muted-foreground">{[projectName(task.projectId), section, ...((view === "list" || !source.some((entry) => entry.id === task.parentId)) && chain.ok ? chain.ancestors.map((ancestor) => ancestor.title) : [])].filter(Boolean).join(" / ")}</span>
           </button>
           {taskBindingButton(task)}
         </div>
         <Collapse open={selected}>{selected ? taskDetails(task) : null}</Collapse>
         </div>
       </li>;
-    })}</ul></section>)}
+    })}</ul></section>; })}
     {showHistory && <div className="space-y-2 text-xs">{history && <p>{t("fleet.todoist.historyRange", { since: new Date(history.since).toLocaleDateString(), until: new Date(history.until).toLocaleDateString() })}</p>}<Button variant="outline" size="sm" disabled={todo.busy} onClick={loadHistory}>{t("fleet.todoist.older")}</Button></div>}
     {sendRequest && sendRequest.key === sendKey && <TodoistDialog focusCancel title={t("fleet.todoist.confirmSend")} close={() => setSendRequest(null)}>
       <p className="break-words font-content text-sm font-medium">{sendRequest.task.title}</p>

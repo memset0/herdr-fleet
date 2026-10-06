@@ -41,6 +41,7 @@ it("switches Agents and Todoist without navigating, then preserves nested tree a
   await user.click(view.getAllByRole("button", { name: "Collapse subtasks" })[0]!);
   expect(view.queryByRole("button", { name: /^Child/ })).toBeNull();
   await user.click(view.getByRole("button", { name: "List" }));
+  await user.click(view.getByRole("button", { name: "Child · Example project" }));
   expect(view.getByText("Example project / Root / Parent")).toBeInTheDocument();
   await user.click(view.getByRole("button", { name: "Agents" }));
   expect(view.getByText("Existing agents")).toBeInTheDocument();
@@ -275,4 +276,30 @@ it("requires expanded details for completion and reopening without row checkboxe
   expect(reopened).toBe(0);
   await user.click(view.getByRole("button", { name: "Reopen" }));
   await waitFor(() => expect(reopened).toBe(1));
+});
+
+it("draws compact tree guides and reveals project metadata only in details", async () => {
+  const user = userEvent.setup();
+  const view = renderPane();
+  const child = await view.findByRole("button", { name: "Child · Example project" });
+  const card = child.closest('[data-slot="todoist-task-card"]')!;
+  expect(card).not.toHaveTextContent("Example project");
+  expect(view.container.querySelectorAll('[data-slot="todoist-tree-guides"]')).toHaveLength(2);
+  expect(view.container.querySelectorAll('[data-slot="todoist-tree-stem"]')).toHaveLength(2);
+  await user.click(child);
+  expect(card).toHaveTextContent("Example project / Root / Parent");
+  await user.click(view.getAllByRole("button", { name: "Collapse subtasks" })[0]!);
+  expect(view.container.querySelector('[data-slot="todoist-tree-guides"]')).toBeNull();
+});
+
+it("continues ancestor guides through descendants and stops at the last sibling", async () => {
+  const treeTasks = [...tasks, { ...tasks[1]!, id: "sibling", title: "Sibling" }];
+  server.use(http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, tasks: treeTasks, treeTasks, contextTasks: [], sections: [], boundTasks: [] })));
+  const view = renderPane();
+  const child = await view.findByRole("button", { name: "Child · Example project" });
+  const childGuides = child.closest("li")!.querySelector('[data-slot="todoist-tree-guides"]')!;
+  expect(childGuides.children[0]).toHaveAttribute("data-continuing", "true");
+  expect(childGuides.children[1]).toHaveAttribute("data-continuing", "false");
+  const sibling = view.getByRole("button", { name: "Sibling · Example project" });
+  expect(sibling.closest("li")!.querySelector('[data-slot="todoist-tree-guides"]')!.children[0]).toHaveAttribute("data-continuing", "false");
 });

@@ -11,3 +11,9 @@ Keep this change active until explicit owner acceptance. Spec sync and archive a
 ## Verification
 
 First iteration shipped as v3.9.7. Fifteen Todoist component tests, both typechecks, scoped lint, fork/privacy audits and strict change validation passed. Local and served Chromium verified 24px hierarchy steps, no row checkboxes, expanded completion actions and no horizontal overflow at 280px sidebar width. No full suite was run. Owner acceptance is pending; the change remains active.
+
+## 2. Guide and metadata iteration
+
+- [x] 2.1 Replace enlarged padding with branch guides and move project metadata into details; verify focused component tests and browser branch geometry.
+- [x] 2.2 Run focused tests, typechecks, scoped lint, privacy/fork audits and strict change validation.
+- [ ] 2.3 Publish and deploy a lead-only PATCH; verify served UI and unchanged configuration.

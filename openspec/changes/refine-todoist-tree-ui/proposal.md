@@ -4,7 +4,8 @@ Tree nesting is hard to distinguish, and inline completion controls invite accid
 
 ## What Changes
 
-- Make tree indentation more visible.
+- Show compact tree connector guides instead of enlarged row padding.
+- Show per-task project metadata only inside expanded details; retain project group headings.
 - Remove row completion checkboxes; completing and reopening require opening task details first.
 - Publish verified iterations while keeping this change active until the owner accepts the UI.
 - Non-goals: provider behavior, hierarchy guards, ordering, binding and delivery changes.
