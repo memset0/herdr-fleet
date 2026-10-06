@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { isLocked, useLocked } from "@/lib/idle";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Collapse } from "@/components/ui/collapse";
+import { PaneMeta } from "@/components/pane-meta";
 import { useDialogFocus } from "@/components/ui/sheet";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
@@ -82,17 +82,13 @@ export function TagBadge({ tag, compact = false }: { tag: PaneTag; compact?: boo
 export function PaneTagLine({ agent }: { agent: AgentView }) {
   const context = useContext(TagContext);
   const tags = context?.state.snapshot ? tagsForPane(context.state.snapshot.document, tagPanePlace(agent)) : [];
-  return (
-    <Collapse
-      open={tags.length > 0}
-      // Reclaim the body's empty lower band in step with Collapse's own height animation.
-      className="data-[state=open]:-mt-2"
-    >
-      {tags.length > 0 && <div data-slot="pane-tag-line" className="flex min-w-0 flex-wrap gap-1 px-3 pb-2 pt-0.5 pr-10">
-        {tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}
-      </div>}
-    </Collapse>
-  );
+  return <div data-slot="native-agent-footer" className="flex min-h-6 min-w-0 flex-wrap items-center gap-1 px-3 pb-2 pt-0.5 pr-10">
+    {tags.length > 0 && <span data-slot="pane-tag-line" className="contents">{tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}</span>}
+    <span data-slot="native-agent-host" className="ml-auto min-w-0 max-w-full">
+      <PaneMeta host={agent.host} cache={undefined} session={agent.session}
+        className="min-w-0 max-w-full shrink [&>*]:min-w-0 [&>*]:shrink [&>span:empty]:hidden" />
+    </span>
+  </div>;
 }
 
 export function PaneTagButton({ agent }: { agent: AgentView }) {

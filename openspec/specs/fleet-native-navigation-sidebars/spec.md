@@ -245,14 +245,12 @@ wording SHALL appear exactly when the dashboard's would — when no pane needs t
 finished and unseen — and otherwise the same counts with their words. The rail MUST NOT spell the
 same fact in different words from the dashboard.
 
-The row itself is fork-owned. It SHALL lead with the shortcut ordinal a later keyboard shortcut can
-address, then the Pane's state as Collie's status dot, then the Agent's 14px mark, and it SHALL say
+The row itself is fork-owned. It SHALL lead with one integrated 32px Agent mark, with its shortcut ordinal at the lower-left corner and the Pane's state dot at the lower-right corner, and it SHALL say
 WHERE the work is before WHAT it is doing: the Space in a muted style, then the name the operator gave
 the work in the plain one at 12px and medium weight; beneath it,
-in 11px muted type, Collie's pane meta, then what the Pane is doing, with the row's age at that line's
-trailing end. The name SHALL follow the same rule the hierarchy uses —
+in 11px muted type, what the Pane is doing, with the row's age at that line's trailing end. A reserved third line SHALL place tags first and host/session metadata at the trailing right edge. The avatar SHALL span only the first two text lines. Tags MAY wrap onto additional lines, with host metadata right-aligned on the last line. The name SHALL follow the same rule the hierarchy uses —
 the operator's own Pane name, else the Tab's, never a number the multiplexer assigned. The row SHALL
-present the Space, separator and work name as one single-line phrase, applying ellipsis only at the trailing end of that entire phrase when it does not fit. The Space MUST NOT be separately truncated or allocated a smaller fixed share. Ordinal, status and Agent marks SHALL retain their own space outside that phrase, and the phrase MUST NOT overlap the actions. The row SHALL
+present the Space, separator and work name as one single-line phrase, applying ellipsis only at the trailing end of that entire phrase when it does not fit. The Space MUST NOT be separately truncated or allocated a smaller fixed share. The integrated avatar cluster SHALL retain its own space beside both text lines, outside that phrase, and the phrase MUST NOT overlap the actions. The row SHALL
 omit any additional visible per-row unseen mark and its reserved slot, while retaining accessible unseen wording; group labels and summary counts SHALL continue to express unseen state. The row SHALL
 carry the `data-glide` part names Collie's own rows carry for the dot, the mark and the name.
 
@@ -278,7 +276,7 @@ alter triage classification, change manual Pane fit, or create a separate Agent 
 
 #### Scenario: A rail row is drawn
 - **WHEN** a row stands for a Pane
-- **THEN** it leads with its ordinal, its status dot and the Agent's 14px mark, the Space precedes the work's name on the first line in 12px type, and what the Pane is doing follows beneath in 11px type
+- **THEN** it leads with one 32px Agent mark carrying the ordinal and state at its lower corners, the Space precedes the work's name on the first line in 12px type, and what the Pane is doing follows beneath in 11px type
 
 #### Scenario: More rows than a single key can address
 - **WHEN** the rail holds more rows than one keypress can reach
@@ -671,14 +669,13 @@ the same order, and no host marker anywhere.
 Each Agent row SHALL carry the host it belongs to through Collie's own pane meta — the borderless
 host marker and session marker Collie's dashboard rows end their first line with — so
 the vocabulary and the styling are the ones every other host-aware Collie row already uses. In the
-rail it SHALL lead the row's second line, because the rail's width cannot give its first line to the
-name and the meta both, and the name is what tells two rows apart. The host
+rail it SHALL occupy the right edge of the third-row footer alongside wrapping tag badges, moving to the last footer line when preceding tags fill a line. The host
 marker SHALL be absent on a snapshot with a single host, by the marker's own rule, and the rail MUST
 NOT introduce a second way of naming a host. The rail SHALL omit prompt-cache readings, including cold/warm labels and cache-expiry timers, without changing those readings on other surfaces.
 
 #### Scenario: Agents from two members are listed
 - **WHEN** the rail lists rows from more than one member
-- **THEN** each row's second line leads with Collie's pane meta naming its host, in the borderless form the dashboard row uses
+- **THEN** each row's footer ends with right-aligned Collie's pane meta naming its host, in the borderless form the dashboard row uses
 
 #### Scenario: A solo snapshot is listed
 - **WHEN** the rail lists rows from one host only

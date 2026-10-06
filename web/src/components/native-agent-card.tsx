@@ -3,7 +3,6 @@ import { Star } from "lucide-react";
 
 import { operatorChosenName } from "../../../fleet/ui/pane-naming.ts";
 import { AgentIcon } from "@/components/agent-icon";
-import { PaneMeta } from "@/components/pane-meta";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,7 +21,7 @@ interface NativeAgentCardProps {
   onPinToggle: () => void;
   /**
    * The ordinal a keyboard shortcut will reach this row by. Omitted past the range a shortcut can
-   * address, where a number names nothing the operator can type; the slot stays, so names align.
+   * address, where a number names nothing the operator can type; the avatar stays, so names align.
    */
   index?: number;
   /** Which timestamp the row dates itself by, or none — the same rule the herd list uses. */
@@ -52,7 +51,7 @@ export const NATIVE_AGENT_SHORTCUT_LIMIT = 9;
  * the address beneath it, which is right for a full-width list read as the page. This rail is chrome
  * beside the work, read at a glance, and there the lines answer the other way round: WHERE first —
  * the Space, then the name the operator gave this piece of work — and WHAT it is doing second. The
- * shortcut ordinal leads, because a key addresses a row on screen, not a heading.
+ * avatar carries the ordinal, because a key addresses a row on screen, not a heading.
  *
  * THE NAME ON LINE 1 is the same rule the hierarchy uses (fleet/ui/pane-naming.ts): the operator's
  * own name for the pane when they gave it one, and the Tab's otherwise — never a number the
@@ -105,23 +104,17 @@ export function NativeAgentCard({
           aria-current={current ? "page" : undefined}
           className="w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
         >
-          <div data-slot="native-agent-body" className="flex min-h-16 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10">
+          <div data-slot="native-agent-body" className="flex min-h-14 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10">
+            <span data-slot="native-agent-avatar" className="relative size-8 shrink-0">
+              <AgentIcon agent={agent.agent} className="size-8" glide="tile" />
+              <StatusDot status={agent.status} surface={current ? "bg-accent" : flat ? "bg-chrome" : "bg-card"}
+                className="absolute -bottom-0.5 -right-0.5 size-2.5" glide="dot" />
+              {badge !== null && <span data-slot="native-agent-ordinal" aria-hidden
+                className="absolute -bottom-1.5 -left-1 text-[9px] font-medium leading-none tabular-nums text-muted-foreground">{badge}</span>}
+            </span>
             <span className="flex min-w-0 flex-1 flex-col gap-1.5">
               {/* Line 1 — where, then which. */}
               <span data-slot="native-agent-row-title" className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
-                <span
-                  aria-hidden
-                  className="w-3 shrink-0 text-center text-xs leading-none tabular-nums text-muted-foreground"
-                >
-                  {badge}
-                </span>
-                <StatusDot
-                  status={agent.status}
-                  // A hollow resting ring is filled with the ground it actually sits on.
-                  surface={current ? "bg-accent" : flat ? "bg-chrome" : "bg-card"}
-                  glide="dot"
-                />
-                <AgentIcon agent={agent.agent} className="size-3.5" glide="tile" />
                 {/* Space and work name form one phrase: only its trailing end gives up width. */}
                 <span data-slot="native-agent-heading" className="min-w-0 flex-1 truncate self-baseline">
                   <span className="text-muted-foreground">{project}</span>
@@ -136,16 +129,6 @@ export function NativeAgentCard({
                 data-slot="native-agent-row-detail"
                 className="flex min-h-4 min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
               >
-                {/* WHICH MACHINE, in Collie's own pane meta (host · session, borderless) — the
-                    run Collie's dashboard row ends its first line with. Here it LEADS line 2: a 320px
-                    rail cannot give line 1 to a name and a host tag both, and the name is the one
-                    fact that tells two rows apart. It draws nothing on a solo snapshot. */}
-                <PaneMeta
-                  host={agent.host}
-                  cache={undefined}
-                  session={agent.session}
-                  className="max-sm:min-w-0 max-sm:shrink max-sm:[&>*]:min-w-0 max-sm:[&>*]:shrink max-sm:[&>span:empty]:hidden max-2xl:pointer-coarse:min-w-0 max-2xl:pointer-coarse:shrink max-2xl:pointer-coarse:[&>*]:min-w-0 max-2xl:pointer-coarse:[&>*]:shrink max-2xl:pointer-coarse:[&>span:empty]:hidden"
-                />
                 <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
                 {stamp !== undefined && <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>}
               </span>

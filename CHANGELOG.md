@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Restore combined Agent avatars and a tag/host footer.** Corner badges share a 32px mark across two text lines; wrapping tags precede right-aligned host metadata.
+
 ## [3.9.10] - 2026-10-06
 
 ### Fixed

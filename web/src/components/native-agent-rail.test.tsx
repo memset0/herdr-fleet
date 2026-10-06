@@ -172,10 +172,10 @@ describe("NativeAgentRail", () => {
     render(<NativeAgentRail agents={[agent("p1"), agent("p2", { status: "blocked" })]} onOpen={vi.fn()} />);
     for (const row of rows()) {
       const shell = row.querySelector('[data-slot="native-agent-body"]')!;
-      expect(shell.className).toMatch(/\bmin-h-16\b/u);
+      expect(shell.className).toMatch(/\bmin-h-14\b/u);
       expect(shell.className).toMatch(/\bpy-2\b/u);
       expect(row.querySelector('[data-glide="dot"]')).not.toBeNull();
-      expect(row.querySelector('[data-glide="tile"]')?.getAttribute("class")).toContain("size-3.5");
+      expect(row.querySelector('[data-glide="tile"]')?.getAttribute("class")).toContain("size-8");
       expect(row.querySelector('[data-glide="name"]')).not.toBeNull();
       expect(row.querySelector('[data-slot="native-agent-row-title"]')?.className).toContain("text-xs");
       expect(row.querySelector('[data-slot="native-agent-row-detail"]')?.className).toContain("text-[11px]");
@@ -367,4 +367,18 @@ describe("mark all seen", () => {
     );
     expect(control()).toHaveAccessibleName("Mark 1 unseen pane seen");
   });
+});
+
+it("keeps avatar corner badges together and host metadata in the footer", () => {
+  render(<CrewProvider servers={PACK}><NativeAgentRail agents={[agent("p1", { host: "peer-a" })]} onOpen={vi.fn()} /></CrewProvider>);
+  const row = rows()[0]!;
+  const avatar = row.querySelector('[data-slot="native-agent-avatar"]')!;
+  expect(avatar.querySelector('[data-glide="tile"]')).not.toBeNull();
+  expect(avatar.querySelector('[data-glide="dot"]')).not.toBeNull();
+  expect(avatar.querySelector('[data-slot="native-agent-ordinal"]')).toHaveTextContent("1");
+  const title = row.querySelector('[data-slot="native-agent-row-title"]')!;
+  expect(title.contains(avatar)).toBe(false);
+  const footer = row.querySelector('[data-slot="native-agent-footer"]')!;
+  expect(footer).toHaveTextContent("attic");
+  expect(row.querySelector('[data-slot="native-agent-row-detail"]')).not.toHaveTextContent("attic");
 });
