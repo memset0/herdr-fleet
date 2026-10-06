@@ -6,7 +6,7 @@ import { AgentIcon } from "@/components/agent-icon";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { shortCwd, timeAgoShort } from "@/lib/format";
+import { shortCwd } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { isUnseen } from "@/lib/triage";
 import { statusLabel, type AgentView } from "@/lib/types";
@@ -124,13 +124,12 @@ export function NativeAgentCard({
                   </span>
                 </span>
               </span>
-              {/* Line 2 — what, with the age at its end. Collie's 16px slot, always drawn. */}
+              {/* Line 2 — what. Its 16px slot stays even when empty. */}
               <span
                 data-slot="native-agent-row-detail"
                 className="flex min-h-4 min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground"
               >
                 <span className="min-w-0 flex-1 truncate">{doing ?? ""}</span>
-                {stamp !== undefined && <span className="shrink-0 tabular-nums">{timeAgoShort(stamp)}</span>}
               </span>
             </span>
           </div>
@@ -139,7 +138,7 @@ export function NativeAgentCard({
           {unseen && <span className="sr-only">{t("home.row.unseen")}</span>}
         </button>
 
-        <PaneTagLine agent={agent} />
+        <PaneTagLine agent={agent} stamp={stamp} />
       </Shell>
 
       {/* Sibling actions never invoke the row's open button. */}

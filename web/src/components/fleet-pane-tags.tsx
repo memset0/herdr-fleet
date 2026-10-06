@@ -15,6 +15,7 @@ import { PaneMeta } from "@/components/pane-meta";
 import { useDialogFocus } from "@/components/ui/sheet";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
+import { timeAgoShort } from "@/lib/format";
 import type { AgentView } from "@/lib/types";
 
 interface TagContextValue {
@@ -79,15 +80,16 @@ export function TagBadge({ tag, compact = false }: { tag: PaneTag; compact?: boo
   );
 }
 
-export function PaneTagLine({ agent }: { agent: AgentView }) {
+export function PaneTagLine({ agent, stamp }: { agent: AgentView; stamp?: number }) {
   const context = useContext(TagContext);
   const tags = context?.state.snapshot ? tagsForPane(context.state.snapshot.document, tagPanePlace(agent)) : [];
   return <div data-slot="native-agent-footer" className="flex min-h-6 min-w-0 flex-wrap items-center gap-1 px-3 pb-2 pt-1">
-    {tags.length > 0 && <span data-slot="pane-tag-line" className="contents">{tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}</span>}
-    <span data-slot="native-agent-host" className="ml-auto min-w-0 max-w-full">
+    <span data-slot="native-agent-host" className="min-w-0 max-w-full">
       <PaneMeta host={agent.host} cache={undefined} session={agent.session}
         className="min-w-0 max-w-full shrink [&>*]:min-w-0 [&>*]:shrink [&>span:empty]:hidden" />
     </span>
+    {tags.length > 0 && <span data-slot="pane-tag-line" className="contents">{tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}</span>}
+    {stamp !== undefined && <span data-slot="native-agent-age" className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">{timeAgoShort(stamp)}</span>}
   </div>;
 }
 

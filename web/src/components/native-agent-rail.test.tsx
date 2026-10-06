@@ -211,14 +211,15 @@ describe("NativeAgentRail", () => {
     expect(screen.getByText("Nothing needs you")).toBeInTheDocument();
   });
 
-  it("ends line 2 with the age before a fixed compact action column", () => {
+  it("ends the footer with age while keeping the body action column", () => {
     render(<NativeAgentRail agents={[agent("p1", { tabLabel: "workshop", lastSeenAt: Date.now() })]} onOpen={vi.fn()} />);
 
     const row = rows()[0]!;
     const age = within(row).getByText(/^(now|\d+[mhd])$/);
     // One compact column reserves 40px on every pointer type.
     expect(row.querySelector('[data-slot="native-agent-body"]')!.className).toMatch(/\bpr-10\b/u);
-    expect(age.parentElement?.getAttribute("data-slot")).toBe("native-agent-row-detail");
+    expect(age.parentElement?.getAttribute("data-slot")).toBe("native-agent-footer");
+    expect(age.parentElement?.lastElementChild).toBe(age);
     const star = within(row).getByRole("button", { name: /pin/i });
     expect(star.className).toMatch(/\bsize-7\b/u);
     expect(star.className).toContain("rounded-full");

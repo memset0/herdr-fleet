@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Lead Agent footers with hosts and end with time.** Keep wrapping tags between native host metadata and the right-aligned age.
+
 ## [3.9.13] - 2026-10-06
 
 ### Fixed

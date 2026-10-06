@@ -248,7 +248,7 @@ same fact in different words from the dashboard.
 The row itself is fork-owned. It SHALL lead with one integrated 32px Agent mark, with its shortcut ordinal at the lower-left corner and the Pane's state dot at the lower-right corner, and it SHALL say
 WHERE the work is before WHAT it is doing: the Space in a muted style, then the name the operator gave
 the work in the plain one at 12px and medium weight; beneath it,
-in 11px muted type, what the Pane is doing, with the row's age at that line's trailing end. A reserved third line SHALL place tags first and host/session metadata at the trailing right edge. The avatar SHALL span only the first two text lines. Tags MAY wrap onto additional lines, with host metadata right-aligned on the last line. The name SHALL follow the same rule the hierarchy uses —
+in 11px muted type, what the Pane is doing. A reserved third line SHALL lead with host/session metadata, followed by tags, with the row's age at the trailing right edge. The avatar SHALL span only the first two text lines. Tags MAY wrap onto additional lines, with the age right-aligned on the last line. The name SHALL follow the same rule the hierarchy uses —
 the operator's own Pane name, else the Tab's, never a number the multiplexer assigned. The row SHALL
 present the Space, separator and work name as one single-line phrase, applying ellipsis only at the trailing end of that entire phrase when it does not fit. The Space MUST NOT be separately truncated or allocated a smaller fixed share. The integrated avatar cluster SHALL retain its own space beside both text lines, outside that phrase, and the phrase MUST NOT overlap the actions. The row SHALL
 omit any additional visible per-row unseen mark and its reserved slot, while retaining accessible unseen wording; group labels and summary counts SHALL continue to express unseen state. The row SHALL
@@ -475,9 +475,8 @@ its keyboard, touch, or narrow-screen access.
 - **THEN** the footer's page build remains unchanged and both selector choices remain usable
 
 ### Requirement: A rail row's controls and facts sit at opposite corners
-An Agent rail row SHALL place its star at its trailing end, centred on the row, and SHALL reserve that
-width on the row so neither line runs under it; the age SHALL end the row's second line, immediately
-inside that reserve. The star SHALL be drawn whether or not the row is pinned, because a control that
+An Agent rail row SHALL place its star at the trailing end of the two-line body, and SHALL reserve that
+width on the row so neither line runs under it; the age SHALL end the footer's final line at the card's standard right content inset without reserving that control width. The star SHALL be drawn whether or not the row is pinned, because a control that
 appears only on hover is a control a touch device does not have.
 
 #### Scenario: A row is drawn on a touch device
@@ -486,7 +485,7 @@ appears only on hover is a control a touch device does not have.
 
 #### Scenario: A row carries an age
 - **WHEN** the row's section dates its rows
-- **THEN** the age ends the second line, beside the star's reserve rather than under the star
+- **THEN** the age ends the footer's final line, outside the two-line body's action reserve
 
 ### Requirement: The hierarchy has one density at every width
 The hierarchy SHALL draw its rows at one compact height and one type size at every viewport width,
@@ -669,13 +668,13 @@ the same order, and no host marker anywhere.
 Each Agent row SHALL carry the host it belongs to through Collie's own pane meta — the borderless
 host marker and session marker Collie's dashboard rows end their first line with — so
 the vocabulary and the styling are the ones every other host-aware Collie row already uses. In the
-rail it SHALL occupy the right edge of the third-row footer alongside wrapping tag badges, moving to the last footer line when preceding tags fill a line. The host
+rail it SHALL lead the third-row footer before all tag badges, while the age occupies the final right edge. The host
 marker SHALL be absent on a snapshot with a single host, by the marker's own rule, and the rail MUST
 NOT introduce a second way of naming a host. The rail SHALL omit prompt-cache readings, including cold/warm labels and cache-expiry timers, without changing those readings on other surfaces.
 
 #### Scenario: Agents from two members are listed
 - **WHEN** the rail lists rows from more than one member
-- **THEN** each row's footer ends with right-aligned Collie's pane meta naming its host, in the borderless form the dashboard row uses
+- **THEN** each row's footer begins with Collie's pane meta naming its host, in the borderless form the dashboard row uses
 
 #### Scenario: A solo snapshot is listed
 - **WHEN** the rail lists rows from one host only
