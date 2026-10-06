@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.9] - 2026-10-06
+
 ### Changed
 
-- **Compact Todoist headers and keep tree connectors continuous.** Show binding actions only in expanded details.
+- **Compact Todoist headers and keep tree connectors continuous.** Show binding actions only in expanded details. ([a3c3238f](https://github.com/memset0/herdr-fleet/commit/a3c3238f))
 
 ## [3.9.8] - 2026-10-06
 
