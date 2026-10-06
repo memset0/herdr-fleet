@@ -25,4 +25,6 @@ Second iteration shipped as v3.9.8: seventeen focused Todoist component tests, b
 - [x] 3.1 Move binding actions into details and compact collapsed headers; verify binding-only and disabled-target component cases.
 - [x] 3.2 Move connectors into independent gutters; verify continuous browser geometry across siblings, expanded details and collapsed branches.
 - [x] 3.3 Run focused Todoist tests, typechecks, scoped lint, fork/privacy audits and strict change validation.
-- [ ] 3.4 Publish and deploy a lead-only PATCH; verify served UI and configuration preservation.
+- [x] 3.4 Publish and deploy a lead-only PATCH; verify served UI and configuration preservation.
+
+Third iteration shipped as v3.9.9. Eighteen focused component tests, both typechecks, scoped lint, fork/privacy audits and strict change validation passed. Local desktop/touch and served Chromium verified detail-only binding, 34px desktop headers, 44px touch controls, zero-pixel parent/child/sibling guide gaps across expanded details, branch collapse and 280px rail geometry. Browser checks made no mutation requests; no full suite ran. Owner acceptance remains pending.
