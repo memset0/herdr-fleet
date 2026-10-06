@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Align Agent footer hosts with the whole card edge.** Remove the footer action reserve and keep wrapped tags clear of controls.
+
 ## [3.9.12] - 2026-10-06
 
 ### Changed

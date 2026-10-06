@@ -82,7 +82,7 @@ export function TagBadge({ tag, compact = false }: { tag: PaneTag; compact?: boo
 export function PaneTagLine({ agent }: { agent: AgentView }) {
   const context = useContext(TagContext);
   const tags = context?.state.snapshot ? tagsForPane(context.state.snapshot.document, tagPanePlace(agent)) : [];
-  return <div data-slot="native-agent-footer" className="flex min-h-6 min-w-0 flex-wrap items-center gap-1 px-3 pb-2 pt-0.5 pr-10">
+  return <div data-slot="native-agent-footer" className="flex min-h-6 min-w-0 flex-wrap items-center gap-1 px-3 pb-2 pt-1">
     {tags.length > 0 && <span data-slot="pane-tag-line" className="contents">{tags.map((tag) => <TagBadge key={tag.id} tag={tag} compact />)}</span>}
     <span data-slot="native-agent-host" className="ml-auto min-w-0 max-w-full">
       <PaneMeta host={agent.host} cache={undefined} session={agent.session}

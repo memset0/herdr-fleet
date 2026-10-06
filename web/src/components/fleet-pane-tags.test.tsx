@@ -76,7 +76,7 @@ it("shows all assigned tags in order, and removing the last leaves the metadata 
   const line = container.querySelector('[data-slot="pane-tag-line"]')!;
   expect(line.textContent).toBe("SecondFirst");
   expect(line.parentElement?.className).toContain("flex-wrap");
-  expect(line.parentElement?.className).toContain("pr-10");
+  expect(line.parentElement?.className).not.toContain("pr-10");
   expect(line.parentElement?.className).toContain("px-3 pb-2");
   const surface = line.closest('[data-agent-surface]')!;
   expect(surface).not.toBeNull();
