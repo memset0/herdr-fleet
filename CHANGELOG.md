@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.10] - 2026-10-06
+
 ### Fixed
 
-- **Expose tag editors in command search and shortcut settings.** Add unbound current-pane and global tag commands using the existing editors.
+- **Expose tag editors in command search and shortcut settings.** Add unbound current-pane and global tag commands using the existing editors. ([00b561fd](https://github.com/memset0/herdr-fleet/commit/00b561fd))
 
 ## [3.9.9] - 2026-10-06
 
