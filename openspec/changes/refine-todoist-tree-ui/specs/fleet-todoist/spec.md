@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Tree hierarchy has visible guides
-Tree rows SHALL distinguish parent-child hierarchy with visible connector guides and compact gutters rather than enlarged left padding. Guides SHALL respect visible branch boundaries and remain decorative while preserving branch controls and readable task titles in narrow sidebars.
+Tree rows SHALL distinguish parent-child hierarchy with visible connector guides and compact gutters rather than enlarged left padding. Guides SHALL be continuous across row spacing and expanded details, respect visible branch boundaries and remain decorative while preserving branch controls and readable task titles in narrow sidebars.
 
 #### Scenario: Three task levels are visible
 - **WHEN** a parent, child and grandchild are shown in Tree
@@ -17,6 +17,13 @@ Task headers SHALL NOT expose completion checkboxes or other direct completion c
 #### Scenario: A completed task is reopened
 - **WHEN** the operator opens a completed task and chooses Reopen
 - **THEN** the existing guarded reopening flow handles the request
+
+### Requirement: Collapsed task headers are compact
+Task headers SHALL omit binding controls and metadata until expanded. Desktop task rows SHALL use a compact single-line height while allowing long titles to wrap. Touch controls SHALL retain an adequate hit area.
+
+#### Scenario: Task details are collapsed
+- **WHEN** a task is displayed without expanded details
+- **THEN** its compact header shows no Bind or Unbind action
 
 ## MODIFIED Requirements
 
@@ -47,3 +54,10 @@ Fleet SHALL show all matching active tasks for the saved display selection (All 
 #### Scenario: Task project metadata is expanded
 - **WHEN** an operator opens a task
 - **THEN** its details reveal project metadata omitted from its collapsed header
+
+### Requirement: Task and terminal relations are many-to-many
+Fleet SHALL use the common terminal binding contract for many-to-many task associations. Each association SHALL be reachable from Fleet and through a managed footer link in the Todoist task description. Every task row and available bound-task row SHALL expose bind/unbind actions only within expanded details, without requiring a message send. Binding SHALL work for any terminal with stable identity, including a shell without an agent; without a terminal selection the action SHALL be disabled and the interface SHALL explain how to enable it. Linking and unlinking SHALL preserve user-authored text and other links; duplicate requests SHALL not duplicate links. A missing terminal SHALL never redirect to a replacement terminal.
+
+#### Scenario: A task is bound to two terminals
+- **WHEN** both bindings succeed
+- **THEN** both terminals highlight the task and the description exposes both stable links

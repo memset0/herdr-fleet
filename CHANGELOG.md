@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Compact Todoist headers and keep tree connectors continuous.** Show binding actions only in expanded details.
+
 ## [3.9.8] - 2026-10-06
 
 ### Changed

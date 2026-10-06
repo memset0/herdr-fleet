@@ -4,11 +4,12 @@ Tree nesting is hard to distinguish, and inline completion controls invite accid
 
 ## What Changes
 
-- Show compact tree connector guides instead of enlarged row padding.
+- Show continuous tree connector guides in independent gutters instead of enlarged row padding.
+- Keep collapsed task headers compact and expose Bind/Unbind only after expansion.
 - Show per-task project metadata only inside expanded details; retain project group headings.
 - Remove row completion checkboxes; completing and reopening require opening task details first.
 - Publish verified iterations while keeping this change active until the owner accepts the UI.
-- Non-goals: provider behavior, hierarchy guards, ordering, binding and delivery changes.
+- Non-goals: provider behavior, hierarchy guards, ordering, binding identity and delivery changes.
 
 ## Capabilities
 

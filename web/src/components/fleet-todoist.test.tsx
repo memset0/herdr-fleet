@@ -217,7 +217,7 @@ it("Escape and a changed terminal invalidate send confirmation without requests"
   expect(attempts).toBe(0);
 });
 
-it("a collapsed task binds and unbinds a plain terminal without preparing or sending a message", async () => {
+it("an expanded task binds and unbinds a plain terminal without preparing or sending a message", async () => {
   const terminal = { version: 1, host: pane.host, session: "default", id: pane.bindingId };
   const link = { id: "link-direct", kind: "todoist", resource: '["account","project","child"]', accountId: "account", projectId: "project", taskId: "child", terminal, state: "linked" };
   let linked = false, prepare = 0;
@@ -233,12 +233,14 @@ it("a collapsed task binds and unbinds a plain terminal without preparing or sen
   const user = userEvent.setup(), view = renderPane(<FleetTodoistPane pane={{ ...pane, agent: "shell", kind: "shell" }} />);
   const title = await view.findByRole("button", { name: /^Child ·/ });
   const card = title.closest<HTMLElement>('[data-slot="todoist-task-card"]')!;
+  expect(within(card).queryByRole("button", { name: "Bind terminal: Child" })).toBeNull();
+  await user.click(title);
   await user.click(within(card).getByRole("button", { name: "Bind terminal: Child" }));
   const unbind = await within(card).findByRole("button", { name: "Unbind: Child" });
   await waitFor(() => expect(unbind).toBeEnabled());
   expect(unbind).toHaveAttribute("aria-pressed", "true");
   expect(requests).toEqual([{ taskId: "child", terminal, generation: 1 }]);
-  expect(card).toHaveAttribute("data-selected", "false");
+  expect(card).toHaveAttribute("data-selected", "true");
   expect(view.getByRole("region", { name: "Bound to this terminal" })).toHaveTextContent("Child");
   await user.click(unbind);
   await within(card).findByRole("button", { name: "Bind terminal: Child" });
@@ -246,8 +248,10 @@ it("a collapsed task binds and unbinds a plain terminal without preparing or sen
   expect(prepare).toBe(0);
 });
 
-it("binding remains visible with guidance but disabled without a selected terminal", async () => {
+it("expanded binding shows guidance and remains disabled without a selected terminal", async () => {
   const view = renderPane(<FleetTodoistPane />);
+  const user = userEvent.setup();
+  await user.click(await view.findByRole("button", { name: "Child · Example project" }));
   expect(await view.findByRole("button", { name: "Bind terminal: Child" })).toBeDisabled();
   expect(view.getByText("Open a terminal with stable identity to bind or send this task.")).toBeInTheDocument();
 });
@@ -284,12 +288,13 @@ it("draws compact tree guides and reveals project metadata only in details", asy
   const child = await view.findByRole("button", { name: "Child · Example project" });
   const card = child.closest('[data-slot="todoist-task-card"]')!;
   expect(card).not.toHaveTextContent("Example project");
-  expect(view.container.querySelectorAll('[data-slot="todoist-tree-guides"]')).toHaveLength(2);
+  expect(view.container.querySelectorAll('[data-slot="todoist-tree-guides"]')).toHaveLength(3);
   expect(view.container.querySelectorAll('[data-slot="todoist-tree-stem"]')).toHaveLength(2);
   await user.click(child);
   expect(card).toHaveTextContent("Example project / Root / Parent");
   await user.click(view.getAllByRole("button", { name: "Collapse subtasks" })[0]!);
-  expect(view.container.querySelector('[data-slot="todoist-tree-guides"]')).toBeNull();
+  expect(view.container.querySelectorAll('[data-slot="todoist-tree-guides"]')).toHaveLength(1);
+  expect(view.container.querySelector('[data-slot="todoist-tree-stem"]')).toBeNull();
 });
 
 it("continues ancestor guides through descendants and stops at the last sibling", async () => {
@@ -302,4 +307,18 @@ it("continues ancestor guides through descendants and stops at the last sibling"
   expect(childGuides.children[1]).toHaveAttribute("data-continuing", "false");
   const sibling = view.getByRole("button", { name: "Sibling · Example project" });
   expect(sibling.closest("li")!.querySelector('[data-slot="todoist-tree-guides"]')!.children[0]).toHaveAttribute("data-continuing", "false");
+});
+
+it("bound-task entries expose unbinding only after expansion", async () => {
+  const terminal = { version: 1, host: pane.host, session: "default", id: pane.bindingId };
+  const link = { id: "link-expanded", kind: "todoist", resource: '["account","project","child"]', accountId: "account", projectId: "project", taskId: "child", terminal, state: "linked" };
+  server.use(
+    http.get(/\/fleet\/api\/todoist\/status$/, () => HttpResponse.json({ ...status, links: [link] })),
+    http.get(/\/fleet\/api\/todoist\/tasks/, () => HttpResponse.json({ ...status, links: [link], tasks, treeTasks: tasks, contextTasks: [], sections: [], boundTasks: [tasks[2]] })),
+  );
+  const user = userEvent.setup(), view = renderPane();
+  const bound = await view.findByRole("region", { name: "Bound to this terminal" });
+  expect(within(bound).queryByRole("button", { name: "Unbind: Child" })).toBeNull();
+  await user.click(within(bound).getByRole("button", { name: "Child" }));
+  expect(within(bound).getByRole("button", { name: "Unbind: Child" })).toBeEnabled();
 });

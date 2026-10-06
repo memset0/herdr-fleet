@@ -272,10 +272,11 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
     const section = state.sections.find((entry) => entry.id === task.sectionId)?.name;
     return [projectName(task.projectId), section, ...(chain.ok ? chain.ancestors.map((ancestor) => ancestor.title) : [])].filter(Boolean).join(" / ");
   };
-  const taskDetails = (task: TodoTask) => <section className="space-y-2 border-t border-rule p-3" aria-label={task.title}>
+  const taskDetails = (task: TodoTask) => <section className="space-y-2 border-t border-rule p-3 [&_button]:min-h-11" aria-label={task.title}>
       <p data-slot="todoist-task-metadata" className="break-words text-[10px] text-muted-foreground">{taskMetadata(task)}</p>
       <p className="whitespace-pre-wrap break-words font-content text-xs">{displayBody(task.description) || t("fleet.todoist.noDescription")}</p>
       <div className="flex flex-wrap gap-1">
+        {taskBindingButton(task)}
         <Button size="sm" variant="outline" disabled={todo.busy || (showHistory && task.recurring && !task.completed)} onClick={() => void toggleTask(task, showHistory || task.completed)}>{t(showHistory || task.completed ? "fleet.todoist.reopen" : "fleet.todoist.complete")}</Button>
         <Button size="sm" variant="outline" disabled={todo.busy} onClick={() => setEditor({ task: task, parentId: task.parentId })}>{t("fleet.todoist.edit")}</Button>
         <Button size="sm" variant="outline" disabled={todo.busy || task.completed} onClick={() => setEditor({ parentId: task.id })}>{t("fleet.todoist.addChild")}</Button>
@@ -289,12 +290,12 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
       </div>
       {showHistory && task.recurring && !task.completed && <p className="text-xs text-muted-foreground">{t("fleet.todoist.recurringHistory")}</p>}
     </section>;
-  return <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 [&_button]:min-h-11" data-slot="todoist-pane">
-    <div className="flex flex-wrap items-center gap-2"><strong className="min-w-0 flex-1 truncate text-sm">{state.scope.kind === "all" ? t("fleet.todoist.allProjects") : state.scope.name}</strong><Button size="sm" variant="outline" disabled={todo.busy} onClick={() => void todo.refresh()}>{t("fleet.todoist.refresh")}</Button></div>
+  return <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3" data-slot="todoist-pane">
+    <div className="flex flex-wrap items-center gap-2 [&_button]:min-h-11"><strong className="min-w-0 flex-1 truncate text-sm">{state.scope.kind === "all" ? t("fleet.todoist.allProjects") : state.scope.name}</strong><Button size="sm" variant="outline" disabled={todo.busy} onClick={() => void todo.refresh()}>{t("fleet.todoist.refresh")}</Button></div>
     <TodoistProblem />
     <TodoistScopePicker />
     {!ref && <p className="text-xs text-muted-foreground">{t("fleet.todoist.openPane")}</p>}
-    <div className="flex flex-wrap gap-1" aria-label={t("fleet.todoist.view")}>
+    <div className="flex flex-wrap gap-1 [&_button]:min-h-11" aria-label={t("fleet.todoist.view")}>
       {(["tree", "list"] as const).map((mode) => <Button key={mode} size="sm" variant={!showHistory && view === mode ? "default" : "outline"} aria-pressed={!showHistory && view === mode} onClick={() => {
         setView(mode); setShowHistory(false); try { localStorage.setItem("fleet:todoist:view", mode); } catch { /* Browser-local preference. */ }
       }}>{t(mode === "tree" ? "fleet.todoist.tree" : "fleet.todoist.list")}</Button>)}
@@ -306,10 +307,10 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
       {bound.map((link) => {
         const task = byId.get(link.taskId), selected = selectedFromBound && selectedTask === link.taskId;
         return <div key={link.id} data-slot="todoist-bound-card" data-selected={selected} className={`overflow-hidden rounded-md border transition-colors duration-[240ms] motion-reduce:transition-none ${selected ? "border-primary/60 bg-primary/10 shadow-sm" : "border-border"}`}>
-          <div className="flex items-start gap-1 p-1"><Button variant="ghost" size="sm" className="h-auto min-w-0 flex-1 justify-start whitespace-normal text-left" aria-expanded={selected} onClick={() => { setSelectedFromBound(true); setSelectedTask(selected ? null : link.taskId); }}>
+          <div className="flex items-start gap-1 p-0.5"><Button variant="ghost" size="sm" className="h-auto min-h-7 min-w-0 flex-1 justify-start whitespace-normal text-left [@media(pointer:coarse)]:min-h-11" aria-expanded={selected} onClick={() => { setSelectedFromBound(true); setSelectedTask(selected ? null : link.taskId); }}>
             {task?.title ?? t("fleet.todoist.taskUnavailable")}{link.state === "pending" ? ` · ${t("fleet.todoist.pending")}` : ""}
           </Button>
-          {task && taskBindingButton(task)}</div>
+          </div>
           <Collapse open={selected && Boolean(task)}>{selected && task ? taskDetails(task) : null}</Collapse>
         </div>;
       })}
@@ -321,24 +322,23 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
       <ul className="space-y-0">{rows.map(({ task, depth, children }, index) => {
       const guides = guidesByRow[index] ?? [];
       const selected = !selectedFromBound && selectedTask === task.id;
-      return <li key={task.id} className="relative flex pb-1">
-        {depth > 0 && <span data-slot="todoist-tree-guides" aria-hidden="true" className="pointer-events-none relative flex shrink-0" style={{ width: `min(${Math.min(depth, 8) * 12}px, 35%)` }}>
+      return <li key={task.id} className="relative flex pb-1 [--todoist-row-center:17px] [@media(pointer:coarse)]:[--todoist-row-center:25px]">
+        {tree && <span data-slot="todoist-tree-guides" aria-hidden="true" className="pointer-events-none relative flex shrink-0" style={{ width: `min(${(Math.min(depth, 8) + 1) * 12}px, 35%)` }}>
           {guides.map((continuing, level) => <span key={level} data-continuing={continuing} className="relative min-w-0 flex-1">
-            {(continuing || level === guides.length - 1) && <span className={`absolute start-[26px] top-0 border-s border-rule ${continuing ? "bottom-0" : "h-[27px]"}`} />}
-            {level === guides.length - 1 && <span className="absolute start-[26px] top-[27px] w-full border-t border-rule" />}
+            {(continuing || level === guides.length - 1) && <span data-slot="todoist-tree-line" className={`absolute start-1/2 top-0 border-s border-rule ${continuing ? "-bottom-1" : "h-[var(--todoist-row-center)]"}`} />}
+            {level === guides.length - 1 && <span data-slot="todoist-tree-elbow" className="absolute start-1/2 top-[var(--todoist-row-center)] w-[150%] border-t border-rule" />}
           </span>)}
+          <span className="relative min-w-0 flex-1">{children && !collapsed.has(task.id) && <span data-slot="todoist-tree-stem" className="absolute -bottom-1 start-1/2 top-[var(--todoist-row-center)] border-s border-rule" />}</span>
         </span>}
         <div data-slot="todoist-task-card" data-selected={selected} className={`relative min-w-0 flex-1 overflow-hidden rounded-md border transition-colors duration-[240ms] motion-reduce:transition-none ${selected ? "border-primary/60 bg-primary/10 shadow-sm" : boundIds.has(task.id) ? "border-primary/30 bg-primary/5" : "border-transparent"}`}>
-        {tree && children && !collapsed.has(task.id) && <span data-slot="todoist-tree-stem" aria-hidden="true" className="pointer-events-none absolute start-[26px] top-[27px] h-[27px] border-s border-rule" />}
-        <div className="relative flex items-start gap-1 p-1">
-          {view === "tree" && !showHistory && (children ? <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label={t(collapsed.has(task.id) ? "fleet.todoist.expand" : "fleet.todoist.collapse")} aria-expanded={!collapsed.has(task.id)} onClick={() => {
+        <div data-slot="todoist-task-header" className="relative flex items-start gap-1 p-0.5">
+          {view === "tree" && !showHistory && (children ? <Button variant="ghost" size="icon" className="size-7 shrink-0 [@media(pointer:coarse)]:size-11" aria-label={t(collapsed.has(task.id) ? "fleet.todoist.expand" : "fleet.todoist.collapse")} aria-expanded={!collapsed.has(task.id)} onClick={() => {
             const next = new Set(collapsed); if (next.has(task.id)) next.delete(task.id); else next.add(task.id); setCollapsed(next);
             try { localStorage.setItem(`fleet:todoist:collapsed:${state.accountId ?? ""}`, JSON.stringify([...next])); } catch { /* Browser-local preference. */ }
-          }}>{collapsed.has(task.id) ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}</Button> : <span className="size-11 shrink-0" aria-hidden />)}
-          <button type="button" className="min-h-11 min-w-0 flex-1 break-words px-1 text-left font-content text-xs focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setSelectedFromBound(false); setSelectedTask(selected ? null : task.id); }} aria-expanded={selected} aria-label={`${task.title} · ${projectName(task.projectId)}`}>
+          }}>{collapsed.has(task.id) ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}</Button> : <span className="size-7 shrink-0 [@media(pointer:coarse)]:size-11" aria-hidden />)}
+          <button type="button" className="min-h-7 min-w-0 flex-1 break-words px-1 text-left font-content text-xs focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:min-h-11" onClick={() => { setSelectedFromBound(false); setSelectedTask(selected ? null : task.id); }} aria-expanded={selected} aria-label={`${task.title} · ${projectName(task.projectId)}`}>
             <span className={showHistory || task.completed ? "text-muted-foreground line-through" : ""}>{task.title}</span>
           </button>
-          {taskBindingButton(task)}
         </div>
         <Collapse open={selected}>{selected ? taskDetails(task) : null}</Collapse>
         </div>
