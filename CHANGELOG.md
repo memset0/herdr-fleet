@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.8] - 2026-10-06
+
 ### Changed
 
-- **Draw Todoist branch guides and reveal project metadata on expansion.** Replace enlarged task padding with compact connectors.
+- **Draw Todoist branch guides and reveal project metadata on expansion.** Replace enlarged task padding with compact connectors. ([2ecda2fa](https://github.com/memset0/herdr-fleet/commit/2ecda2fa))
 
 ## [3.9.7] - 2026-10-06
 
