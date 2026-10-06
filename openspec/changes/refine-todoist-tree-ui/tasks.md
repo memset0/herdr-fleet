@@ -33,4 +33,6 @@ Third iteration shipped as v3.9.9. Eighteen focused component tests, both typech
 
 - [x] 4.1 Remove branch controls and their empty leading slots, and ignore old collapsed preferences; verify focused task and hierarchy tests.
 - [x] 4.2 Verify guide continuity, details/completion/binding access, narrow layout, scoped lint, typechecks and strict change validation.
-- [ ] 4.3 Publish and deploy a lead-only PATCH, verify served behavior and leave this change active.
+- [x] 4.3 Publish and deploy a lead-only PATCH, verify served behavior and leave this change active.
+
+Fourth iteration shipped as v3.9.12. Nineteen focused Todoist component tests, frontend typecheck, scoped lint and strict change validation passed. Local and served Chromium verified ignored old collapse preferences, all descendants visible, no disclosure controls or title padding, zero guide gaps, retained detail actions and no writes. The change remains active pending owner acceptance; no full suite ran.
