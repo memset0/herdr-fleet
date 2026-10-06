@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.14] - 2026-10-06
+
 ### Changed
 
-- **Lead Agent footers with hosts and end with time.** Keep wrapping tags between native host metadata and the right-aligned age.
+- **Lead Agent footers with hosts and end with time.** Keep wrapping tags between native host metadata and the right-aligned age. ([d7547f9a](https://github.com/memset0/herdr-fleet/commit/d7547f9a))
 
 ## [3.9.13] - 2026-10-06
 
