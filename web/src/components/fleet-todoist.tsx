@@ -305,14 +305,13 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
       const chain = taskAncestors(task, byId);
       const section = state.sections.find((entry) => entry.id === task.sectionId)?.name;
       const selected = !selectedFromBound && selectedTask === task.id;
-      return <li key={task.id} style={{ paddingInlineStart: Math.min(depth, 8) * 12 }}>
+      return <li key={task.id} style={{ paddingInlineStart: `min(${Math.min(depth, 8) * 24}px, 40%)` }}>
         <div data-slot="todoist-task-card" data-selected={selected} className={`overflow-hidden rounded-md border transition-colors duration-[240ms] motion-reduce:transition-none ${selected ? "border-primary/60 bg-primary/10 shadow-sm" : boundIds.has(task.id) ? "border-primary/30 bg-primary/5" : "border-transparent"}`}>
         <div className="flex items-start gap-1 p-1">
           {view === "tree" && !showHistory && (children ? <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label={t(collapsed.has(task.id) ? "fleet.todoist.expand" : "fleet.todoist.collapse")} aria-expanded={!collapsed.has(task.id)} onClick={() => {
             const next = new Set(collapsed); if (next.has(task.id)) next.delete(task.id); else next.add(task.id); setCollapsed(next);
             try { localStorage.setItem(`fleet:todoist:collapsed:${state.accountId ?? ""}`, JSON.stringify([...next])); } catch { /* Browser-local preference. */ }
           }}>{collapsed.has(task.id) ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}</Button> : <span className="size-11 shrink-0" aria-hidden />)}
-          <label className="flex size-11 shrink-0 items-center justify-center"><input type="checkbox" className="size-4" checked={showHistory || task.completed} disabled={todo.busy || (showHistory && task.recurring && !task.completed)} aria-label={t(task.completed ? "fleet.todoist.reopenTask" : "fleet.todoist.completeTask", { title: task.title })} onChange={() => void toggleTask(task, showHistory || task.completed)} /></label>
           <button type="button" className="min-h-11 min-w-0 flex-1 break-words px-1 text-left font-content text-xs focus-visible:outline-2 focus-visible:outline-ring" onClick={() => { setSelectedFromBound(false); setSelectedTask(selected ? null : task.id); }} aria-expanded={selected} aria-label={`${task.title} · ${projectName(task.projectId)}`}>
             <span className={showHistory || task.completed ? "text-muted-foreground line-through" : ""}>{task.title}</span>
             <span className="mt-1 block text-[10px] text-muted-foreground">{[projectName(task.projectId), section, ...((view === "list" || !source.some((entry) => entry.id === task.parentId)) && chain.ok ? chain.ancestors.map((ancestor) => ancestor.title) : [])].filter(Boolean).join(" / ")}</span>

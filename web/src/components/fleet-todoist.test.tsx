@@ -50,7 +50,8 @@ it("a hierarchy refusal opens a blocker dialog with no force or cascade control"
   const user = userEvent.setup();
   server.use(http.post(/\/fleet\/api\/todoist\/complete$/, () => HttpResponse.json({ error: "descendants_incomplete", blockers: [{ id: "child", title: "Child" }] }, { status: 409 })));
   const view = renderPane();
-  await user.click(await view.findByRole("checkbox", { name: "Complete Root" }));
+  await user.click(await view.findByRole("button", { name: "Root · Example project" }));
+  await user.click(view.getByRole("button", { name: "Complete" }));
   const dialog = await view.findByRole("dialog", { name: "Complete all subtasks first." });
   expect(within(dialog).getByText("Child")).toBeInTheDocument();
   expect(within(dialog).getAllByRole("button")).toHaveLength(1);
@@ -132,7 +133,8 @@ it("completing a task invalidates an already-loaded empty history", async () => 
   await waitFor(() => expect(historyReads).toBe(1));
   await waitFor(() => expect(view.getByRole("button", { name: "Tree" })).toBeEnabled());
   await user.click(view.getByRole("button", { name: "Tree" }));
-  await user.click(view.getByRole("checkbox", { name: "Complete Child" }));
+  await user.click(view.getByRole("button", { name: "Child · Example project" }));
+  await user.click(view.getByRole("button", { name: "Complete" }));
   await waitFor(() => expect(view.getByRole("button", { name: "Completed" })).toBeEnabled());
   await user.click(view.getByRole("button", { name: "Completed" }));
   await waitFor(() => expect(historyReads).toBe(2));
@@ -247,4 +249,30 @@ it("binding remains visible with guidance but disabled without a selected termin
   const view = renderPane(<FleetTodoistPane />);
   expect(await view.findByRole("button", { name: "Bind terminal: Child" })).toBeDisabled();
   expect(view.getByText("Open a terminal with stable identity to bind or send this task.")).toBeInTheDocument();
+});
+
+it("requires expanded details for completion and reopening without row checkboxes", async () => {
+  const user = userEvent.setup();
+  let completed = 0, reopened = 0;
+  server.use(
+    http.post(/\/fleet\/api\/todoist\/complete$/, () => { completed++; return HttpResponse.json({ ok: true }); }),
+    http.post(/\/fleet\/api\/todoist\/reopen$/, () => { reopened++; return HttpResponse.json({ ok: true }); }),
+    http.get(/\/fleet\/api\/todoist\/history/, () => HttpResponse.json({ generation: 1, since: 0, until: Date.now(), tasks: [{ ...tasks[2]!, completed: true }] })),
+  );
+  const view = renderPane();
+  await view.findByRole("button", { name: "Child · Example project" });
+  expect(view.queryByRole("checkbox")).toBeNull();
+  expect(view.queryByRole("button", { name: "Complete" })).toBeNull();
+  await user.click(view.getByRole("button", { name: "Child · Example project" }));
+  expect(completed).toBe(0);
+  await user.click(view.getByRole("button", { name: "Complete" }));
+  await waitFor(() => expect(completed).toBe(1));
+  await waitFor(() => expect(view.getByRole("button", { name: "Completed" })).toBeEnabled());
+  await user.click(view.getByRole("button", { name: "Completed" }));
+  await view.findByRole("button", { name: "Child · Example project" });
+  expect(view.queryByRole("checkbox")).toBeNull();
+  await user.click(view.getByRole("button", { name: "Child · Example project" }));
+  expect(reopened).toBe(0);
+  await user.click(view.getByRole("button", { name: "Reopen" }));
+  await waitFor(() => expect(reopened).toBe(1));
 });

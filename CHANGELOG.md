@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Clarify Todoist tree nesting and move completion into details.** Increase hierarchy indentation and remove task-row checkboxes.
+
 ## [3.9.6] - 2026-10-05
 
 ### Added
