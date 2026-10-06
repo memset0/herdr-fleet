@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.9.12] - 2026-10-06
+
 ### Changed
 
-- **Keep the Todoist tree open and remove disclosure space.** Always show descendants and retain inline task details and continuous guides.
+- **Keep the Todoist tree open and remove disclosure space.** Always show descendants and retain inline task details and continuous guides. ([287501ac](https://github.com/memset0/herdr-fleet/commit/287501ac))
 
 ## [3.9.11] - 2026-10-06
 
