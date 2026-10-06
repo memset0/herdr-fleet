@@ -28,3 +28,9 @@ Second iteration shipped as v3.9.8: seventeen focused Todoist component tests, b
 - [x] 3.4 Publish and deploy a lead-only PATCH; verify served UI and configuration preservation.
 
 Third iteration shipped as v3.9.9. Eighteen focused component tests, both typechecks, scoped lint, fork/privacy audits and strict change validation passed. Local desktop/touch and served Chromium verified detail-only binding, 34px desktop headers, 44px touch controls, zero-pixel parent/child/sibling guide gaps across expanded details, branch collapse and 280px rail geometry. Browser checks made no mutation requests; no full suite ran. Owner acceptance remains pending.
+
+## 4. Always-open Tree hierarchy
+
+- [x] 4.1 Remove branch controls and their empty leading slots, and ignore old collapsed preferences; verify focused task and hierarchy tests.
+- [x] 4.2 Verify guide continuity, details/completion/binding access, narrow layout, scoped lint, typechecks and strict change validation.
+- [ ] 4.3 Publish and deploy a lead-only PATCH, verify served behavior and leave this change active.

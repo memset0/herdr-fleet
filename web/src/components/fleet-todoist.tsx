@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import { useNav } from "@/hooks/use-nav";
 import { sameTerminal, terminalReference, terminalKey, type BindingPane } from "../../../fleet/bindings/identity.ts";
 import { taskAncestors, taskBody, type TodoTask, type TodoProject, type TodoFilter } from "../../../fleet/todoist/model.ts";
@@ -12,7 +12,6 @@ import { Notice } from "@/components/ui/notice";
 import { useDialogFocus } from "@/components/ui/sheet";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
-import { asJsonString, parseJson } from "@/lib/json";
 import { deliverTodoistTask } from "@/lib/fleet-task-delivery";
 import { deliveryReceipt, hasDeliveryReceipt, saveDeliveryReceipt, todoistRequest, TodoistClientError, type TodoistHistory } from "@/lib/fleet-todoist";
 import { useTodoist, useTodoistAvailable } from "./fleet-todoist-provider";
@@ -203,7 +202,7 @@ function readView(): "tree" | "list" {
 export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
   const todo = useTodoist(), state = todo.state, perform = todo.perform;
   const nav = useNav();
-  const [view, setView] = useState(readView), [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [view, setView] = useState(readView);
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const [selectedFromBound, setSelectedFromBound] = useState(false);
   const [sendRequest, setSendRequest] = useState<{ task: TodoTask; key: string; target: string } | null>(null);
@@ -215,10 +214,7 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
   useLocale();
   useEffect(() => {
     setHistory(null); setSelectedTask(null); setEditor(null);
-    try {
-      const value = parseJson(localStorage.getItem(`fleet:todoist:collapsed:${state?.accountId ?? ""}`) ?? "[]");
-      setCollapsed(new Set(Array.isArray(value) ? value.flatMap((item) => { const text = asJsonString(item); return text === undefined ? [] : [text]; }) : []));
-    } catch { setCollapsed(new Set()); }
+
   }, [state?.generation, state?.accountId]);
   useEffect(() => { setShowHistory(false); }, [state?.accountId]);
   useEffect(() => {
@@ -234,8 +230,8 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
   const source = showHistory ? history?.tasks ?? [] : tree ? state.treeTasks : state.tasks;
   const visibleProjects = state.scope.kind === "project" ? state.projects.filter((project) => project.id === (state.scope.kind === "project" ? state.scope.id : "")) : state.projects;
   const groups = tree
-    ? visibleProjects.filter((project) => state.scope.kind === "project" || source.some((task) => task.projectId === project.id)).map((project) => ({ project, rows: taskRows(source.filter((task) => task.projectId === project.id), state.sections, true, collapsed) }))
-    : [{ project: null, rows: taskRows(source, state.sections, false, collapsed, showHistory) }];
+    ? visibleProjects.filter((project) => state.scope.kind === "project" || source.some((task) => task.projectId === project.id)).map((project) => ({ project, rows: taskRows(source.filter((task) => task.projectId === project.id), state.sections, true, new Set()) }))
+    : [{ project: null, rows: taskRows(source, state.sections, false, new Set(), showHistory) }];
   const projectName = (id: string) => state.projects.find((project) => project.id === id)?.name ?? id;
   const byId = new Map([...state.tasks, ...state.treeTasks, ...state.contextTasks, ...state.boundTasks, ...(history?.tasks ?? [])].map((task) => [task.id, task]));
   const bound = ref ? state.links.filter((link) => sameTerminal(link.terminal, ref)) : [];
@@ -328,15 +324,11 @@ export function FleetTodoistPane({ pane }: { pane?: TaskPane }) {
             {(continuing || level === guides.length - 1) && <span data-slot="todoist-tree-line" className={`absolute start-1/2 top-0 border-s border-rule ${continuing ? "-bottom-1" : "h-[var(--todoist-row-center)]"}`} />}
             {level === guides.length - 1 && <span data-slot="todoist-tree-elbow" className="absolute start-1/2 top-[var(--todoist-row-center)] w-[150%] border-t border-rule" />}
           </span>)}
-          <span className="relative min-w-0 flex-1">{children && !collapsed.has(task.id) && <span data-slot="todoist-tree-stem" className="absolute -bottom-1 start-1/2 top-[var(--todoist-row-center)] border-s border-rule" />}</span>
+          <span className="relative min-w-0 flex-1">{children && <span data-slot="todoist-tree-stem" className="absolute -bottom-1 start-1/2 top-[var(--todoist-row-center)] border-s border-rule" />}</span>
         </span>}
         <div data-slot="todoist-task-card" data-selected={selected} className={`relative min-w-0 flex-1 overflow-hidden rounded-md border transition-colors duration-[240ms] motion-reduce:transition-none ${selected ? "border-primary/60 bg-primary/10 shadow-sm" : boundIds.has(task.id) ? "border-primary/30 bg-primary/5" : "border-transparent"}`}>
         <div data-slot="todoist-task-header" className="relative flex items-start gap-1 p-0.5">
-          {view === "tree" && !showHistory && (children ? <Button variant="ghost" size="icon" className="size-7 shrink-0 [@media(pointer:coarse)]:size-11" aria-label={t(collapsed.has(task.id) ? "fleet.todoist.expand" : "fleet.todoist.collapse")} aria-expanded={!collapsed.has(task.id)} onClick={() => {
-            const next = new Set(collapsed); if (next.has(task.id)) next.delete(task.id); else next.add(task.id); setCollapsed(next);
-            try { localStorage.setItem(`fleet:todoist:collapsed:${state.accountId ?? ""}`, JSON.stringify([...next])); } catch { /* Browser-local preference. */ }
-          }}>{collapsed.has(task.id) ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}</Button> : <span className="size-7 shrink-0 [@media(pointer:coarse)]:size-11" aria-hidden />)}
-          <button type="button" className="min-h-7 min-w-0 flex-1 break-words px-1 text-left font-content text-xs focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:min-h-11" onClick={() => { setSelectedFromBound(false); setSelectedTask(selected ? null : task.id); }} aria-expanded={selected} aria-label={`${task.title} · ${projectName(task.projectId)}`}>
+          <button type="button" className="min-h-7 min-w-0 flex-1 break-words px-0 text-left font-content text-xs focus-visible:outline-2 focus-visible:outline-ring [@media(pointer:coarse)]:min-h-11" onClick={() => { setSelectedFromBound(false); setSelectedTask(selected ? null : task.id); }} aria-expanded={selected} aria-label={`${task.title} · ${projectName(task.projectId)}`}>
             <span className={showHistory || task.completed ? "text-muted-foreground line-through" : ""}>{task.title}</span>
           </button>
         </div>

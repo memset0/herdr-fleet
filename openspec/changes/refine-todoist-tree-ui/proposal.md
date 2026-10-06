@@ -5,6 +5,7 @@ Tree nesting is hard to distinguish, and inline completion controls invite accid
 ## What Changes
 
 - Show continuous tree connector guides in independent gutters instead of enlarged row padding.
+- Always display Tree descendants; remove branch collapse controls and the empty leading control column.
 - Keep collapsed task headers compact and expose Bind/Unbind only after expansion.
 - Show per-task project metadata only inside expanded details; retain project group headings.
 - Remove row completion checkboxes; completing and reopening require opening task details first.

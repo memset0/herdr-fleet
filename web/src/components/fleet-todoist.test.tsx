@@ -38,8 +38,8 @@ it("switches Agents and Todoist without navigating, then preserves nested tree a
   await user.click(view.getByRole("button", { name: "Todoist" }));
   await view.findByRole("heading", { name: "Example project" });
   expect(view.getByRole("button", { name: /^Child/ })).toBeInTheDocument();
-  await user.click(view.getAllByRole("button", { name: "Collapse subtasks" })[0]!);
-  expect(view.queryByRole("button", { name: /^Child/ })).toBeNull();
+  expect(view.queryByRole("button", { name: "Collapse subtasks" })).toBeNull();
+  expect(view.getByRole("button", { name: /^Child/ })).toBeInTheDocument();
   await user.click(view.getByRole("button", { name: "List" }));
   await user.click(view.getByRole("button", { name: "Child · Example project" }));
   expect(view.getByText("Example project / Root / Parent")).toBeInTheDocument();
@@ -292,9 +292,8 @@ it("draws compact tree guides and reveals project metadata only in details", asy
   expect(view.container.querySelectorAll('[data-slot="todoist-tree-stem"]')).toHaveLength(2);
   await user.click(child);
   expect(card).toHaveTextContent("Example project / Root / Parent");
-  await user.click(view.getAllByRole("button", { name: "Collapse subtasks" })[0]!);
-  expect(view.container.querySelectorAll('[data-slot="todoist-tree-guides"]')).toHaveLength(1);
-  expect(view.container.querySelector('[data-slot="todoist-tree-stem"]')).toBeNull();
+  expect(view.queryByRole("button", { name: "Collapse subtasks" })).toBeNull();
+  expect(view.getByRole("button", { name: "Root · Example project" })).toBeInTheDocument();
 });
 
 it("continues ancestor guides through descendants and stops at the last sibling", async () => {
@@ -321,4 +320,14 @@ it("bound-task entries expose unbinding only after expansion", async () => {
   expect(within(bound).queryByRole("button", { name: "Unbind: Child" })).toBeNull();
   await user.click(within(bound).getByRole("button", { name: "Child" }));
   expect(within(bound).getByRole("button", { name: "Unbind: Child" })).toBeEnabled();
+});
+
+it("ignores saved branch collapse preferences and retains descendants without disclosure space", async () => {
+  localStorage.setItem("fleet:todoist:collapsed:account", '["root","parent"]');
+  const view = renderPane();
+  const child = await view.findByRole("button", { name: "Child · Example project" });
+  expect(view.getByRole("button", { name: "Parent · Example project" })).toBeInTheDocument();
+  expect(view.queryByRole("button", { name: "Expand subtasks" })).toBeNull();
+  expect(view.queryByRole("button", { name: "Collapse subtasks" })).toBeNull();
+  expect(child.parentElement?.children).toHaveLength(1);
 });
