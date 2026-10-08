@@ -6,6 +6,7 @@ import { vi } from "vitest";
 
 import { CrewProvider } from "@/components/crew-provider";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
+import { setPinned } from "@/lib/pins";
 import {
   fixtureAgents,
   fixtureCrewAgents,
@@ -29,6 +30,9 @@ import { HomeRoute } from "./home";
 // the same screen with labels — never a per-host split, never a second list.
 
 vi.mock("@/hooks/use-loading-stalled", () => ({ useLoadingStalled: () => false }));
+// The Crew tab's body is another component's business (components/crew-tab.tsx); here it is a marker,
+// so these tests check that the tab mounts it and only while selected.
+vi.mock("@/components/crew-tab", () => ({ CrewTab: () => <div data-testid="crew-tab" /> }));
 
 const homeData = (snap: Partial<SnapshotResponse>, scope: HomeData["scope"] = {}): HomeData => ({
   bridge: "connected",
@@ -374,37 +378,123 @@ describe("the dashboard fills the route column", () => {
   });
 });
 
-describe("the dashboard's footer (ADR 0066)", () => {
+describe("the dashboard's footer (ADR 0066, ADR 0085)", () => {
   const footer = () => screen.getByRole("navigation", { name: "Dashboard views" });
   const tab = (name: RegExp) => within(footer()).getByRole("button", { name });
+  const tabNames = () => within(footer()).getAllByRole("button").map((b) => b.textContent);
+  const NEEDS = { name: "Show only panes that need you" };
+  const needsSwitch = () => screen.getByRole("button", NEEDS);
+  const stored = () => JSON.parse(localStorage.getItem("collie:dash-prefs:v1")!);
 
-  it("opens on Panes, with every workspace listed", async () => {
+  it("opens on Dashboard, with every workspace listed and the switch off", async () => {
     renderHome(solo());
     await settled();
-    expect(tab(/^Panes$/)).toHaveAttribute("aria-current", "page");
+    expect(tab(/^Dashboard/)).toHaveAttribute("aria-current", "page");
+    expect(needsSwitch()).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "collie" })).toBeInTheDocument();
   });
 
-  it("opens on Focus when a device's stored dashView pre-dates the rename (ADR 0068)", async () => {
-    // "needs" is what the tab's internal name was before ADR 0068 renamed the label to Focus;
-    // "attention" is handled the same way in case any build ever wrote the label instead.
-    for (const stored of ["needs", "attention"]) {
-      localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ dashView: stored }));
+  it("a solo Collie has two tabs, Dashboard and Files, and no Crew", async () => {
+    renderHome(solo());
+    await settled();
+    expect(tabNames()).toHaveLength(2);
+    expect(tab(/^Dashboard/)).toBeInTheDocument();
+    expect(tab(/^Files$/)).toBeInTheDocument();
+    expect(within(footer()).queryByRole("button", { name: /^Crew/ })).not.toBeInTheDocument();
+  });
+
+  it("a crew has three: Crew, Dashboard, Files, in that order, and Dashboard stays the default", async () => {
+    renderHome(packed());
+    await settled();
+    // The word is the tab's one truncated line; the mark and its screen-reader text sit beside it.
+    expect(within(footer()).getAllByRole("button").map((b) => b.querySelector("span.truncate")?.textContent)).toEqual([
+      "Crew",
+      "Dashboard",
+      "Files",
+    ]);
+    expect(tab(/^Dashboard/)).toHaveAttribute("aria-current", "page");
+  });
+
+  it("the Crew tab mounts its body only while it is selected", async () => {
+    renderHome(packed());
+    await settled();
+    expect(screen.queryByTestId("crew-tab")).not.toBeInTheDocument();
+    await userEvent.click(tab(/^Crew$/));
+    expect(tab(/^Crew$/)).toHaveAttribute("aria-current", "page");
+    expect(screen.getByTestId("crew-tab")).toBeInTheDocument();
+    expect(stored().dashView).toBe("crew");
+    await userEvent.click(tab(/^Dashboard/));
+    expect(screen.queryByTestId("crew-tab")).not.toBeInTheDocument();
+  });
+
+  it("the Crew tab draws none of the pane chrome: no space strip, no summary line, no Pinned group", async () => {
+    const data = packed();
+    setPinned(data.agents[0]!, true, data.agents);
+    renderHome(data);
+    await settled();
+    // The Dashboard has all three, so the absence below is the tab's doing and not the fixture's.
+    expect(screen.getByRole("navigation", { name: "Spaces" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Pinned" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /need you/i })).toBeInTheDocument();
+
+    await userEvent.click(tab(/^Crew$/));
+    expect(screen.getByTestId("crew-tab")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Spaces" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Pinned" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /need you/i })).not.toBeInTheDocument();
+    // The body is the first thing in the page's main: nothing sits above the machine cards.
+    expect(screen.getByRole("main").firstElementChild?.firstElementChild).toBe(screen.getByTestId("crew-tab"));
+
+    // Back on the Dashboard the chrome is as it was left.
+    await userEvent.click(tab(/^Dashboard/));
+    expect(screen.getByRole("navigation", { name: "Spaces" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Pinned" })).toBeInTheDocument();
+  });
+
+  it("the Crew tab still draws its body when the crew has no pane anywhere", async () => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ dashView: "crew" }));
+    renderHome(homeData({ servers: fixtureServers, sessions: [] }));
+    expect(await screen.findByTestId("crew-tab")).toBeInTheDocument();
+  });
+
+  it("a stored crew tab with no crew shows the Dashboard and leaves the stored value alone", async () => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ dashView: "crew" }));
+    renderHome(solo());
+    await settled();
+    expect(tab(/^Dashboard/)).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
+    expect(stored()).toEqual({ dashView: "crew" });
+  });
+
+  it("opens on the Dashboard with the switch on when a device's stored tab was Focus (ADR 0085)", async () => {
+    // "focus" is the tab's name since ADR 0068; "needs" and "attention" are the names before it.
+    for (const old of ["focus", "needs", "attention"]) {
+      localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ dashView: old }));
       renderHome(solo());
       await settled();
-      expect(tab(/^Focus/)).toHaveAttribute("aria-current", "page");
+      expect(tab(/^Dashboard/)).toHaveAttribute("aria-current", "page");
+      expect(needsSwitch()).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
+      expect(stored()).toMatchObject({ dashView: "dashboard", needsYouOnly: true });
       cleanup();
     }
   });
 
-  it("badges Focus with the count of blocked panes, and only that tab", async () => {
+  it("opens on the Dashboard when a device's stored tab was the old Panes", async () => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ dashView: "panes" }));
     renderHome(solo());
     await settled();
-    expect(tab(/^Focus/)).toHaveAccessibleName("Focus, 1 blocked");
-    expect(tab(/^Focus/).querySelector('[data-slot="tab-badge"]')).toHaveTextContent("1");
-    expect(tab(/^Panes$/)).toHaveTextContent(/^Panes$/);
-    expect(tab(/^Changes$/)).toHaveTextContent(/^Changes$/);
+    expect(tab(/^Dashboard/)).toHaveAttribute("aria-current", "page");
+    expect(needsSwitch()).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("marks the Dashboard tab with the count of blocked panes, and only that tab", async () => {
+    renderHome(solo());
+    await settled();
+    expect(tab(/^Dashboard/)).toHaveAccessibleName("Dashboard, 1 blocked");
+    expect(tab(/^Dashboard/).querySelector('[data-slot="tab-badge"]')).toHaveTextContent("1");
+    expect(tab(/^Files$/)).toHaveTextContent(/^Files$/);
   });
 
   // The red count means something waits on you. A finished pane you have not opened is news, not a
@@ -417,55 +507,110 @@ describe("the dashboard's footer (ADR 0066)", () => {
   it("counts only the blocked panes when finished-unseen ones are there too", async () => {
     renderHome(withAgents([fixtureAgents[0]!, unseen]));
     await settled();
-    expect(tab(/^Focus/)).toHaveAccessibleName("Focus, 1 blocked");
-    expect(tab(/^Focus/).querySelector('[data-slot="tab-dot"]')).toBeNull();
+    expect(tab(/^Dashboard/)).toHaveAccessibleName("Dashboard, 1 blocked");
+    expect(tab(/^Dashboard/).querySelector('[data-slot="tab-dot"]')).toBeNull();
   });
 
   it("shows the quiet dot and no number when only finished-unseen panes wait", async () => {
     renderHome(withAgents([quiet[0]!, unseen]));
     await settled();
-    expect(tab(/^Focus/)).toHaveAccessibleName("Focus, finished panes unseen");
-    expect(tab(/^Focus/).querySelector('[data-slot="tab-dot"]')).not.toBeNull();
-    expect(tab(/^Focus/).querySelector('[data-slot="tab-badge"]')).toBeNull();
+    expect(tab(/^Dashboard/)).toHaveAccessibleName("Dashboard, finished panes unseen");
+    expect(tab(/^Dashboard/).querySelector('[data-slot="tab-dot"]')).not.toBeNull();
+    expect(tab(/^Dashboard/).querySelector('[data-slot="tab-badge"]')).toBeNull();
   });
 
   it("marks nothing when no pane is blocked or unseen", async () => {
     renderHome(withAgents(quiet));
     await settled();
-    expect(tab(/^Focus/)).toHaveAccessibleName("Focus");
-    expect(tab(/^Focus/).querySelector('[data-slot="tab-dot"], [data-slot="tab-badge"]')).toBeNull();
+    expect(tab(/^Dashboard/)).toHaveAccessibleName("Dashboard");
+    expect(tab(/^Dashboard/).querySelector('[data-slot="tab-dot"], [data-slot="tab-badge"]')).toBeNull();
   });
 
-  it("Focus drops the quiet workspace, keeps the heading's full counts, and is remembered", async () => {
+  it("keeps the mark on the Dashboard tab with the switch on, and on Files", async () => {
     renderHome(solo());
     await settled();
-    await userEvent.click(tab(/^Focus/));
-    expect(tab(/^Focus/)).toHaveAttribute("aria-current", "page");
+    await userEvent.click(needsSwitch());
+    expect(tab(/^Dashboard/)).toHaveAccessibleName("Dashboard, 1 blocked");
+    await userEvent.click(tab(/^Files$/));
+    expect(tab(/^Dashboard/)).toHaveAccessibleName("Dashboard, 1 blocked");
+  });
+
+  it("the switch drops the quiet workspace, keeps the heading's full counts, and is remembered", async () => {
+    renderHome(solo());
+    await settled();
+    await userEvent.click(needsSwitch());
+    expect(needsSwitch()).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
     // The strip still offers every workspace: the filter removes rows, never places.
     const strip = screen.getByRole("navigation", { name: /spaces/i });
     expect(within(strip).getByRole("button", { name: /collie/ })).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem("collie:dash-prefs:v1")!).dashView).toBe("focus");
+    expect(stored().needsYouOnly).toBe(true);
+    // A new mount reads it back.
+    cleanup();
+    renderHome(solo());
+    await settled();
+    expect(needsSwitch()).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
+    // And off again brings the workspace back.
+    await userEvent.click(needsSwitch());
+    expect(screen.getByRole("heading", { name: "collie" })).toBeInTheDocument();
+    expect(stored().needsYouOnly).toBe(false);
   });
 
-  it("Focus with nothing urgent shows the all-clear line and no list", async () => {
+  it("the switch with nothing urgent shows the all-clear line and no list", async () => {
     const calm = fixtureAgents.map((a) => Object.assign(structuredClone(a), { status: "working" as const }));
     renderHome(homeData({ agents: calm, shellPanes: fixtureShellPanes, sessions: fixtureSessions }));
     await settled();
-    await userEvent.click(tab(/^Focus/));
+    await userEvent.click(needsSwitch());
     expect(screen.getByText("Nothing needs you")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "webapp" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
   });
 
-  it("Changes lists each workspace with its counts, says No folder, and opens the workspace's Changes", async () => {
+  it("the Order toggle stays beside the switch in both states", async () => {
+    renderHome(solo());
+    await settled();
+    expect(screen.getByRole("radiogroup", { name: "Pane order" })).toBeInTheDocument();
+    await userEvent.click(needsSwitch());
+    expect(screen.getByRole("radiogroup", { name: "Pane order" })).toBeInTheDocument();
+  });
+
+  it("the launch strip, the Spaces navigator and the pin hint show only while the switch is off", async () => {
+    renderHome(solo());
+    await settled();
+    expect(screen.getByRole("heading", { name: /^Spaces/ })).toBeInTheDocument();
+    expect(screen.getByText(/pin it here/)).toBeInTheDocument();
+    await userEvent.click(needsSwitch());
+    expect(screen.queryByRole("heading", { name: /^Spaces/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/pin it here/)).not.toBeInTheDocument();
+    await userEvent.click(needsSwitch());
+    expect(screen.getByRole("heading", { name: /^Spaces/ })).toBeInTheDocument();
+  });
+
+  it("Files draws no switch, and keeps an invisible slot so the summary line does not jump", async () => {
+    renderHome(packed());
+    await settled();
+    await userEvent.click(tab(/^Files$/));
+    expect(screen.queryByRole("button", NEEDS)).not.toBeInTheDocument();
+    expect(document.querySelector(".invisible[aria-hidden='true']")).not.toBeNull();
+  });
+
+  it("Crew draws no switch and no slot at all: it lists machines, so the summary line is not there to jump", async () => {
+    renderHome(packed());
+    await settled();
+    await userEvent.click(tab(/^Crew$/));
+    expect(screen.queryByRole("button", NEEDS)).not.toBeInTheDocument();
+    expect(document.querySelector(".invisible[aria-hidden='true']")).toBeNull();
+  });
+
+  it("Files lists each workspace with its counts, says No folder, and opens the workspace's Files screen", async () => {
     server.use(
       http.get(/\/api\/workspace\/w2\/changes/, () => HttpResponse.json({ workspaceId: "w2", available: false, reason: "no-folder" })),
     );
     const router = renderHome(solo());
     await settled();
-    await userEvent.click(tab(/^Changes$/));
+    await userEvent.click(tab(/^Files$/));
     const list = await screen.findByRole("list", { name: "Changes by workspace" });
     // fixtureChanges: 3 files in webapp's root repo and 2 in packages/api, +10 −2 over all five.
     await within(list).findByText("5 files");

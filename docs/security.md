@@ -33,7 +33,8 @@ The two device gates answer different questions, and you can run either, both, o
 Pairing requires no extra infrastructure. It fits a direct `tailscale serve` setup where no proxy
 exists to inject headers.
 
-Both options gate write access only. Read requests remain open to anything that passes the
+Both options gate write access, and one read: the [Files view](changes.md#files), which can show
+every file under a workspace's folder. Every other read remains open to anything that passes the
 same-origin check.
 
 ```bash
@@ -69,6 +70,17 @@ Key security boundaries and risks:
   restricts write access, but read operations remain accessible to all local users. This limits
   execution risks but does not prevent data disclosure
   ([ARCHITECTURE.md §6](../ARCHITECTURE.md#6-security-model)).
+- **The Files view reads files off your disk.** It shows any file under a workspace's folder, except
+  a `.git` folder, Collie's own state and config folders, and files named like a Collie state
+  secret. So it asks for an authorised device, like a write
+  ([ADR 0083](../.adr/0083-the-files-view-reads-the-changes-root.md)).
+- **Files is gated only when a device is paired or `COLLIE_DEVICE_HEADER` is set.** Until then,
+  every device that can read panes can browse and read files under the workspace's folder, `.env`
+  files included. Pair your phone to close it.
+- **Credential files under a workspace's folder are readable.** A workspace opened in `~/.claude`,
+  `~/.codex`, `~/.config/gh` or `~/.ssh` shows what is there. So does the `.env` of a second Collie
+  whose config folder sits under the workspace. A hard link inside the folder to a file outside it is
+  not caught either.
 - **A single instance exposes all sessions.** By default, one Collie process fronts every
   multiplexer session discovered under Herdr's configuration root, including sandbox sessions
   ([Multi-session](configure.md#multi-session)).
@@ -90,6 +102,7 @@ Key security boundaries and risks:
 | `COLLIE_ALLOW_ANY_HOST=1` | Disables host-header validation, which is otherwise on by default and fails closed. |
 | `COLLIE_TRUSTED_USER` | Rejects a request whose `Tailscale-User-Login` header is missing or does not match. |
 | `COLLIE_TRUSTED_USER_OPTIONAL=1` | Permits a missing `Tailscale-User-Login` header (tagged nodes never send one). |
+| `COLLIE_ACCESS_TEAM` + `COLLIE_ACCESS_AUD` | Cloudflare Tunnel only. Rejects every remote request unless its `Cf-Access-Jwt-Assertion` verifies for this Access app. Only a local process on loopback, `/api/health` and the crew links skip it, and pairing still applies. Other front doors, such as `tailscale serve`, are refused too ([Cloudflare Tunnel](deployment.md#cloudflare-tunnel)). |
 | `COLLIE_DEVICE_HEADER` | Name of the header your proxy injects with a device id. |
 | `COLLIE_DEVICE_ALLOWLIST` | Comma-separated device ids allowed to write; every other device stays read-only ([`docs/deployment.md`](deployment.md)). |
 
@@ -100,6 +113,37 @@ Key security boundaries and risks:
 Restrict access further with Tailscale ACLs and `COLLIE_TRUSTED_USER`. Provided as-is, without
 warranty.
 
+## Secret files on Windows
+
+On Windows (experimental), Collie keeps its secret files private to your account, SYSTEM and
+Administrators. "Your account" is the Windows account that runs Collie.
+
+NTFS has no `0600` mode, so Collie uses the access control list (ACL) of its state folder and its
+config folder. Each file that Collie writes there gets the same list. The default folders in your
+user profile are already closed to other standard users. The check matters most when you move a
+folder with `COLLIE_STATE_DIR` or another setting.
+
+At start, the bridge checks both folders and their secret files. If other accounts can read one,
+the bridge repairs it, but only in Collie's own folders. It saves the old list first, in
+`acl-backups` in the state folder, and prints the `icacls /restore` command that puts it back.
+Run that command in a terminal run as administrator. A
+folder that also holds other files is checked, not changed: Collie prints the `icacls` command
+for you to run. Other commands, such as `collie version`, only check and warn.
+
+`collie doctor` shows the result as `secrets-private`. A folder that other accounts can read is an
+error, with the fix. A folder that Collie cannot check is a warning: `cannot confirm`.
+
+| Case | What happens |
+| --- | --- |
+| You copy, restore or sync the folder (zip, `robocopy` without `/SEC`, OneDrive, File History, a USB drive) | The copy can lose the list. Collie checks again at the next start. |
+| Antivirus or Controlled folder access blocks the change | Collie says that it could not make the folder private, and gives the fix. |
+| The folder is on FAT, exFAT or a network share | There is no list that Collie can use. Collie says `cannot confirm`. Move the state folder to an NTFS drive on this PC. |
+| `COLLIE_NO_ACL_REPAIR=1` | Collie changes no list. It still checks and warns, and `doctor` still reports. |
+
+> **Note.** This is not protection from an administrator. Administrators can still read the files.
+> It also does not cover other programs that run as your account, hard links inside the folder,
+> agent backups in `~/.claude`, or a state folder inside OneDrive or Documents.
+
 ## What leaves your machine
 
 Nothing, by default and by policy. Collie sends no install events, no usage statistics, no crash
@@ -108,6 +152,9 @@ reports and no analytics. There is no flag that enables them.
 The one unprompted outbound call is the update check: an anonymous HTTPS `GET` to GitHub's public
 tags API (`bridge/update.ts`) that compares your version to the newest tag. It carries no data about
 you or your machine, only the static user-agent `collie-update-check`.
+
+If you set `COLLIE_ACCESS_TEAM`, Collie also fetches that Cloudflare Access team's public keys, at
+start and once an hour. That call is yours to turn on, and it sends nothing about you either.
 
 If collection is ever added, explicit opt-in is the ceiling — off by default, asked as a visible
 question, never carried by a flag or a default. Removing that promise would be a breaking change

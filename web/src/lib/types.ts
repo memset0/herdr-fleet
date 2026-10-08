@@ -467,6 +467,106 @@ export interface CrewMemberStatus {
 }
 
 /**
+ * One reading of a machine's load (mirrors `MachineSample` in the bridge's machine-stats module).
+ * Fractions run 0 to 1, bytes are plain numbers, and the optional fields are absent where the
+ * platform gives no counter: `load1` on Windows, `rxBps` and `txBps` where there are no interface
+ * counters. Absent means "not reported", never zero.
+ */
+export interface MachineSample {
+  /** Busy fraction of all cores since the previous sample. */
+  cpu: number;
+  cores: number;
+  /** Bytes in use, not counting reclaimable cache where the platform says so. */
+  memUsed: number;
+  memTotal: number;
+  load1?: number;
+  rxBps?: number;
+  txBps?: number;
+  /** The filesystems holding home, the root and the state folder, one per device. Absent: not reported. */
+  disks?: MachineDisk[];
+}
+
+/**
+ * One filesystem, in bytes. `used / total` is `df`'s Use%, and `total - used` is what a normal process
+ * can still write. `mount` is the label to show: `/var/home`, `/`, `C:`.
+ */
+export interface MachineDisk {
+  mount: string;
+  used: number;
+  total: number;
+}
+
+/** One alert rule: fire when the value stays at or above `above` (0.5 to 0.99) for `forMin` minutes (5 to 120). */
+export interface MachineAlertRule {
+  above: number;
+  forMin: number;
+}
+
+/** The rules of one machine. A missing key means no rule for that metric. */
+export interface MachineAlerts {
+  cpu?: MachineAlertRule;
+  mem?: MachineAlertRule;
+  disk?: MachineAlertRule;
+}
+
+/** The metrics an alert can watch. Disk is judged on the fullest filesystem. */
+export type MachineMetric = "cpu" | "mem" | "disk";
+
+/**
+ * One machine in `GET /api/machines`. `sample` is absent for a machine that does not report load
+ * yet (an older member) and for one that has not answered; `sampledAt` is stamped by the lead on
+ * receipt, on the same clock as the answer's `ts`.
+ */
+export interface MachineRow {
+  id: string;
+  name: string;
+  isLead: boolean;
+  health: "reachable" | "unreachable" | "incompatible" | "conflicted";
+  sample?: MachineSample;
+  sampledAt?: number;
+  alerts: MachineAlerts;
+  /** Episodes open now. */
+  firing: MachineMetric[];
+  /** The last complete minutes for the small charts; only when asked for with `?spark=N`. */
+  spark?: MachineSpark;
+}
+
+/**
+ * One value per complete minute, oldest first; the newest is the minute before the one the answer's
+ * `ts` falls in. Fractions to two places, `null` for a minute with no reading.
+ */
+export interface MachineSpark {
+  stepMs: number;
+  cpu: (number | null)[];
+  mem: (number | null)[];
+}
+
+/**
+ * The machines census. Served by a lead and by a solo collie (one row, `isLead` true); a peer
+ * answers 404 `crew.not_lead`. `ts` is the answering bridge's clock: every age on the page is
+ * measured against it, never against `Date.now()`.
+ */
+export interface MachinesResponse {
+  ts: number;
+  machines: MachineRow[];
+}
+
+/**
+ * One minute of history: `[t, cpuAvg, cpuMax, memFrac, rxBps | null, txBps | null, diskFrac | null]`.
+ * `t` is epoch ms on the answering bridge's clock. The network pair is `null` where the platform gave
+ * no counters. `diskFrac` is the fullest filesystem's fraction: `null` for a minute with no disk
+ * reading, and absent from a bridge older than the field.
+ */
+export type MachineHistoryPoint = [number, number, number, number, number | null, number | null, (number | null)?];
+
+/** `GET /api/machines/:id/history`: oldest first, at most 1440 points, a gap is a missing minute. */
+export interface MachineHistoryResponse {
+  ts: number;
+  stepMs: number;
+  points: MachineHistoryPoint[];
+}
+
+/**
  * Version / upgrade status for the running Collie (mirrors UpdateInfo in bridge/types.ts). Optional
  * on the snapshot — an older bridge omits it entirely, which the client treats as "no info" (the
  * update banner renders nothing). `latest` is null when the newest upstream release isn't known.
@@ -842,6 +942,17 @@ export interface Hunk {
 }
 
 /**
+ * One question an agent put to the operator. Mirrors `bridge/journal/tool-call.ts`. Field names
+ * follow opencode's `question` tool; Claude Code's `multiSelect` arrives here as `multiple`.
+ */
+export interface ToolQuestion {
+  header?: string;
+  question: string;
+  multiple: boolean;
+  options: readonly { label: string; description?: string }[];
+}
+
+/**
  * What a tool call did, in the shape the thing it did suggests. Mirrors
  * `bridge/journal/tool-call.ts`, where the reasoning for the nine kinds lives.
  *
@@ -857,6 +968,8 @@ export type ToolCall =
   | { kind: "fetch"; url: string }
   | { kind: "delete" | "move"; path: string; to?: string }
   | { kind: "task"; agent: string; summary: string }
+  /** The agent asked the operator to choose. One entry per question the call carried. `answers[i]` is the list of chosen labels for question `i`, present only once the call completed with answers. */
+  | { kind: "question"; name: string; summary: string; questions: readonly ToolQuestion[]; answers?: readonly (readonly string[])[] }
   | { kind: "other"; name: string; summary: string };
 
 /**
@@ -1023,6 +1136,42 @@ export type ChangeCommitResponse = ChangesWorkspace & ChangeCommit;
 /** GET …/changes?view=commit&repo=&path= — one file of that commit. */
 export type ChangeCommitDiffResponse = ChangesWorkspace & ChangeCommitDiff;
 
+/** What one row of a folder listing is. `link` is any symlink: listed, never followed (ADR 0083). */
+export type FileEntryKind = "dir" | "file" | "link";
+
+/**
+ * One row of a folder listing. `size` is in bytes and present for files only. `ignored` is `true`
+ * when git ignores the entry; absent means not ignored or not known, and a member that predates the
+ * field never sends it. Mirrors bridge/types.ts.
+ */
+export interface FileEntry {
+  name: string;
+  kind: FileEntryKind;
+  size?: number;
+  ignored?: true;
+}
+
+/**
+ * One folder of the Changes root, not recursive (ADR 0083). `dir` and every path below use `/`, never
+ * start with `/`, and `""` is the root. `truncated`: the folder held more entries than the cap.
+ */
+export type FilesListing =
+  | { available: false; reason: ChangesUnavailableReason }
+  | { available: true; root: string; dir: string; entries: FileEntry[]; truncated: boolean };
+
+/**
+ * One text file under the Changes root. `text` is `""` when `binary`; it is cut at the cap with
+ * `truncated: true`, and `size` is the whole file's bytes either way.
+ */
+export type FileRead =
+  | { available: false; reason: ChangesUnavailableReason }
+  | { available: true; root: string; path: string; size: number; binary: boolean; truncated: boolean; text: string };
+
+/** GET …/files and GET …/files?dir= — a folder, asked by pane or by workspace. */
+export type FilesListResponse = ChangesWorkspace & FilesListing;
+/** GET …/files?path= — one file, asked by pane or by workspace. */
+export type FileReadResponse = ChangesWorkspace & FileRead;
+
 /**
  * GET /api/pane/:id/history — real conversation history, read from the agent's own session log.
  *
@@ -1143,6 +1292,8 @@ export type ActionResponse =
       textDelivered?: boolean;
       code?: ApiErrorCode;
       detail?: ApiErrorDetail;
+      /** On a 409 `prompt_changed` only: the bridge's reason code for the refusal. */
+      reason?: string;
     };
 
 export type PaneResizeResponse =
@@ -1473,6 +1624,9 @@ export interface NotifyPrefs {
   /** Push before an agent pane's prompt cache expires. Default off, and it covers EVERY pane — the
    *  panes watched one by one from their own settings sheet keep warning either way (ADR 0042). */
   cache: boolean;
+  /** Push when a machine's CPU or memory stays above one of its alert rules (ADR 0084). Default on:
+   *  a rule is something the operator set on purpose, so this switch only silences them all at once. */
+  machines: boolean;
 }
 
 /**

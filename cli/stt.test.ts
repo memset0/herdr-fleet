@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { STT_ENV_KEYS, STT_FILENAME, type SttSettings } from "../bridge/stt/config.ts";
 import { CODEX_TRANSCRIBE_URL } from "../bridge/stt/codex.ts";
+import { LocalCliEmptyTranscriptError } from "../bridge/stt/local-cli.ts";
 import { SttError, type SttAudio, type SttProvider, type SttResult } from "../bridge/stt/provider.ts";
 import { capture, context, type FakeFiles, fakeFiles, fakeExec, STATE } from "./fakes.ts";
 import { EXIT } from "./io.ts";
-import { cmdStt, cmdSttOff, cmdSttSetup, cmdSttStatus, cmdSttTest, type SttDeps } from "./stt.ts";
+import { cmdStt, cmdSttOff, cmdSttSetup, cmdSttStatus, cmdSttTest, parseArgList, type SttDeps } from "./stt.ts";
 
 // The four `stt` verbs against fake seams. What is asserted here is what only these verbs own: the
 // file that lands under the state dir, the consent gate in front of the codex probe, and the words
@@ -27,6 +28,7 @@ function deps(
     probe?: SttDeps["probe"];
     create?: SttDeps["create"];
     absent?: string[];
+    commandProblem?: SttDeps["commandProblem"];
   } = {},
 ): Deps {
   const io = capture();
@@ -41,6 +43,9 @@ function deps(
     interactive: queued.length > 0,
     prompt: () => queued.shift() ?? null,
     now: () => 0,
+    // Every command file reads as runnable unless a test says otherwise: the fake paths
+    // (`/fake/<tool>`, `/opt/engine`) do not exist on the real disk the production check reads.
+    commandProblem: over.commandProblem ?? (() => null),
   };
   if (over.probe !== undefined) built.probe = over.probe;
   if (over.create !== undefined) built.create = over.create;
@@ -55,6 +60,8 @@ interface SttDocument {
   apiKey?: string;
   codexBin?: string;
   wireIdentity?: string;
+  command?: string;
+  args?: string[];
 }
 
 function written(d: Deps): SttDocument {
@@ -503,5 +510,143 @@ describe("collie stt (bare)", () => {
     const d = deps();
     expect(await cmdStt(d, ["setpu"])).toBe(EXIT.USAGE);
     expect(d.io.stderr.join("\n")).toContain("unknown stt subcommand `setpu`");
+  });
+});
+
+describe("collie stt — the local-cli provider (#227)", () => {
+  test("setup by flag resolves a bare command on PATH and writes the absolute path", async () => {
+    const d = deps();
+    expect(
+      await cmdSttSetup(d, ["--provider", "local-cli", "--command", "muesli-cli", "--args", "transcribe --json"]),
+    ).toBe(EXIT.OK);
+    expect(written(d)).toEqual({ provider: "local-cli", command: "/fake/muesli-cli", args: ["transcribe", "--json"] });
+    expect(said(d)).toContain("/fake/muesli-cli transcribe --json <recording>");
+    expect(said(d)).toContain("No shell is involved");
+  });
+
+  test("no args leaves the field absent, not an empty list", async () => {
+    // An absolute command must exist on the fake disk; the file check itself is stubbed to pass.
+    const e = deps({ seed: { "/opt/engine": "" } });
+    expect(await cmdSttSetup(e, ["--provider", "local-cli", "--command", "/opt/engine"])).toBe(EXIT.OK);
+    expect(written(e)).toEqual({ provider: "local-cli", command: "/opt/engine" });
+  });
+
+  test("a relative command and a command missing from PATH are refused, and nothing is written", async () => {
+    const relative = deps();
+    expect(await cmdSttSetup(relative, ["--provider", "local-cli", "--command", "./engine"])).toBe(EXIT.FAIL);
+    expect(said(relative)).toContain("relative path");
+    expect(relative.files.entries.has(CONFIG_PATH)).toBe(false);
+
+    const missing = deps({ absent: ["engine"] });
+    expect(await cmdSttSetup(missing, ["--provider", "local-cli", "--command", "engine"])).toBe(EXIT.FAIL);
+    expect(said(missing)).toContain("was not found on PATH");
+    expect(missing.files.entries.has(CONFIG_PATH)).toBe(false);
+  });
+
+  test("an unattended run with no command refuses and names the flag", async () => {
+    const d = deps();
+    expect(await cmdSttSetup(d, ["--provider", "local-cli"])).toBe(EXIT.FAIL);
+    expect(said(d)).toContain("--command");
+  });
+
+  test("interactive setup asks for the command and the arguments", async () => {
+    const d = deps({ answers: ["local-cli", "whisper-cli", '["-m", "/my models/base.bin", "-nt"]'] });
+    expect(await cmdSttSetup(d, [])).toBe(EXIT.OK);
+    expect(written(d)).toEqual({
+      provider: "local-cli",
+      command: "/fake/whisper-cli",
+      args: ["-m", "/my models/base.bin", "-nt"],
+    });
+  });
+
+  test("parseArgList takes words or a JSON array of strings, and refuses anything else", () => {
+    expect(parseArgList("")).toEqual([]);
+    expect(parseArgList("  transcribe   --lang en ")).toEqual(["transcribe", "--lang", "en"]);
+    expect(parseArgList('["a b", "c"]')).toEqual(["a b", "c"]);
+    expect(parseArgList("[1, 2]")).toBeNull();
+    expect(parseArgList("[not json")).toBeNull();
+    expect(parseArgList(Array.from({ length: 40 }, () => "x").join(" "))).toBeNull();
+  });
+
+  test("stt test counts an empty transcript from silence as the pass it is", async () => {
+    const provider: SttProvider = {
+      id: "local-cli",
+      status: async () => ({ available: true }),
+      transcribe: async () => {
+        throw new LocalCliEmptyTranscriptError();
+      },
+    };
+    const d = deps({
+      seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"/opt/engine","args":["transcribe"]}' },
+      create: () => provider,
+    });
+    expect(await cmdSttTest(d)).toBe(EXIT.OK);
+    expect(said(d)).toContain("local-cli (/opt/engine, 1 argument(s) before the recording)");
+    expect(said(d)).toContain("(empty)");
+  });
+
+  test("stt test still fails on a real refusal", async () => {
+    const provider: SttProvider = {
+      id: "local-cli",
+      status: async () => ({ available: true }),
+      transcribe: async () => {
+        throw new SttError("refused", "the local transcription command exited with status 2");
+      },
+    };
+    const d = deps({ seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"/opt/engine"}' }, create: () => provider });
+    expect(await cmdSttTest(d)).toBe(EXIT.FAIL);
+    expect(said(d)).toContain("exited with status 2");
+  });
+
+  test("status names the command, the arguments and where each came from", () => {
+    const d = deps({
+      seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"/opt/engine","args":["transcribe"]}' },
+      env: { [STT_ENV_KEYS.command]: "/env/engine" },
+    });
+    expect(cmdSttStatus(d)).toBe(EXIT.OK);
+    const heard = said(d);
+    expect(heard).toContain("/env/engine");
+    expect(heard).toContain(`(${STT_ENV_KEYS.command})`);
+    expect(heard).toContain('["transcribe"]');
+    expect(heard).toContain(`(${STT_FILENAME})`);
+    expect(heard).toContain("no shell");
+  });
+
+  test("setup refuses a command file that is not a regular executable, and says why", async () => {
+    const seen: string[] = [];
+    const d = deps({
+      seed: { "/opt/engine": "" },
+      commandProblem: (p) => {
+        seen.push(p);
+        return "is not executable by this user (chmod +x it)";
+      },
+    });
+    expect(await cmdSttSetup(d, ["--provider", "local-cli", "--command", "/opt/engine"])).toBe(EXIT.FAIL);
+    expect(said(d)).toContain("/opt/engine is not executable by this user");
+    expect(said(d)).toContain("Nothing was written");
+    expect(d.files.entries.has(CONFIG_PATH)).toBe(false);
+
+    // A bare name is checked at the path PATH resolved it to, which is the path that gets written.
+    const bare = deps({ commandProblem: (p) => (seen.push(p), "is a directory, not a program") });
+    expect(await cmdSttSetup(bare, ["--provider", "local-cli", "--command", "engine"])).toBe(EXIT.FAIL);
+    expect(seen).toEqual(["/opt/engine", "/fake/engine"]);
+    expect(said(bare)).toContain("/fake/engine is a directory, not a program");
+  });
+
+  test("status fails on a command the bridge cannot run, with the host-side reason", () => {
+    const d = deps({
+      seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"/opt/engine"}' },
+      commandProblem: () => "is not a regular file",
+    });
+    expect(cmdSttStatus(d)).toBe(EXIT.FAIL);
+    expect(said(d)).toContain("the command cannot be run: /opt/engine is not a regular file.");
+    expect(said(d)).toContain("microphone as unavailable");
+
+    const gone = deps({
+      seed: { [CONFIG_PATH]: '{"provider":"local-cli","command":"engine"}' },
+      absent: ["engine"],
+    });
+    expect(cmdSttStatus(gone)).toBe(EXIT.FAIL);
+    expect(said(gone)).toContain("was not found on this shell's PATH");
   });
 });

@@ -1,4 +1,5 @@
 import { normaliseBasePath } from "../bridge/config.ts";
+import type { Host } from "../bridge/host.ts";
 import { type OpsRecord, CrewOpsStore } from "../bridge/crew/ops-store.ts";
 import { emptyConfigLayer } from "../bridge/config-source.ts";
 import type { CliContext, Environment } from "./context.ts";
@@ -21,6 +22,46 @@ export const HOME = "/home/pat";
 export const HANDLER_FILE = `${CONFIG}/tailscale-managed-handler`;
 export const STATE = "/state";
 
+/**
+ * The key a fake filesystem stores a path under: POSIX, no drive. On Windows `join` and `resolve`
+ * return `C:\opt\collie\bin\collie`; the fakes model a POSIX box, so that folds back to
+ * `/opt/collie/bin/collie`. Without a host the fold always runs, because a test that pins a Windows
+ * host on Linux hands the fakes Windows spellings too. Pass a host to ask what that host would do:
+ * only `win32` folds.
+ */
+export function posixKey(p: string, host?: Host): string {
+  return host === undefined || host.platform === "win32" ? p.replace(/^[A-Za-z]:/, "").replaceAll("\\", "/") : p;
+}
+
+/** A map that folds its keys with {@link posixKey}, so a test may name a path in either spelling. */
+class PathMap<V> extends Map<string, V> {
+  override get(key: string): V | undefined {
+    return super.get(posixKey(key));
+  }
+  override set(key: string, value: V): this {
+    return super.set(posixKey(key), value);
+  }
+  override has(key: string): boolean {
+    return super.has(posixKey(key));
+  }
+  override delete(key: string): boolean {
+    return super.delete(posixKey(key));
+  }
+}
+
+/** A set of paths that folds its members the same way. */
+class PathSet extends Set<string> {
+  override add(value: string): this {
+    return super.add(posixKey(value));
+  }
+  override has(value: string): boolean {
+    return super.has(posixKey(value));
+  }
+  override delete(value: string): boolean {
+    return super.delete(posixKey(value));
+  }
+}
+
 export interface FakeExec extends Exec {
   /**
    * `<tool> <args…>` for every call, in order. A {@link Exec.runIn} call is recorded with its
@@ -30,6 +71,10 @@ export interface FakeExec extends Exec {
    */
   calls: string[];
   killed: number[];
+  /** Every {@link Exec.processCommand} probe, with the bound it asked for (absent = the default). */
+  probed: { pid: number; timeoutMs?: number }[];
+  /** Every {@link Exec.listProcesses} call, by the executable names it asked for. */
+  listed: string[][];
   spawned: { command: string[]; env: Record<string, string>; logPath: string }[];
   /**
    * Every {@link Exec.runLogged} call — the command, its log path and the bound it was given. The
@@ -66,6 +111,12 @@ export interface Scripted {
   answers?: [prefix: string, answer: Partial<ExecResult> | PerCallAnswer][];
   /** The process table, for `ps -p <pid> -o command=`. */
   ps?: Record<number, string>;
+  /** Pids whose {@link Exec.processLookup} cannot be answered: a process table that did not answer in time. */
+  psUnknown?: number[];
+  /** {@link Exec.listProcesses} does not answer (`null`): PowerShell failed or ran past its bound. */
+  listUnknown?: true;
+  /** Pids a kill does not end: access denied (another account's, or an elevated, process). */
+  unkillable?: number[];
   /** pid handed back by a detached spawn. */
   spawnPid?: number | null;
   /**
@@ -84,6 +135,8 @@ export interface Scripted {
 export function fakeExec(scripted: Scripted = {}): FakeExec {
   const calls: string[] = [];
   const killed: number[] = [];
+  const probed: { pid: number; timeoutMs?: number }[] = [];
+  const listed: string[][] = [];
   const timeouts: { call: string; ms: number }[] = [];
   const spawned: { command: string[]; env: Record<string, string>; logPath: string }[] = [];
   const ran: {
@@ -124,6 +177,8 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
   return {
     calls,
     killed,
+    probed,
+    listed,
     spawned,
     ran,
     timeouts,
@@ -161,7 +216,34 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
       spawned.push({ command: [...command], env: opts.env, logPath: opts.logPath });
       return scripted.spawnPid === undefined ? 4242 : scripted.spawnPid;
     },
-    processCommand: (pid) => scripted.ps?.[pid] ?? null,
+    processCommand: (pid, timeoutMs) => {
+      probed.push(timeoutMs === undefined ? { pid } : { pid, timeoutMs });
+      return scripted.ps?.[pid] ?? null;
+    },
+    // The same table, three answers: a scripted row runs, a `psUnknown` pid cannot be asked about,
+    // and anything else is gone. Recorded in `probed` like `processCommand`, for the same bound checks.
+    processLookup: (pid, timeoutMs) => {
+      probed.push(timeoutMs === undefined ? { pid } : { pid, timeoutMs });
+      if (scripted.psUnknown?.includes(pid) === true) return { kind: "unknown", why: "PowerShell did not answer within 60s" };
+      const command = scripted.ps?.[pid];
+      // A killed process is gone from the next lookup, as from the next listing, unless it is unkillable.
+      const ended = killed.includes(pid) && scripted.unkillable?.includes(pid) !== true;
+      return command === undefined || ended ? { kind: "gone" } : { kind: "running", command };
+    },
+    // The scripted process table, minus what this fake has killed, and only the rows whose command
+    // names one of the executables asked for: a killed process is gone from the next listing.
+    listProcesses: (names) => {
+      listed.push([...names]);
+      if (scripted.listUnknown === true) return null;
+      const stems = names.map((n) => n.replace(/\.exe$/i, "").toLowerCase());
+      return Object.entries(scripted.ps ?? {})
+        .map(([pid, command]) => ({ pid: Number(pid), command }))
+        .filter(
+          (row) =>
+            (!killed.includes(row.pid) || scripted.unkillable?.includes(row.pid) === true) &&
+            stems.some((st) => row.command.toLowerCase().includes(st)),
+        );
+    },
     kill: (pid) => void killed.push(pid),
   };
 }
@@ -206,25 +288,25 @@ export interface FakeFiles extends Files {
 }
 
 export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
-  const entries = new Map<string, { text: string; mode?: number }>();
+  const entries = new PathMap<{ text: string; mode?: number }>();
   for (const [p, text] of Object.entries(seed)) entries.set(p, { text });
-  const undeletable = new Set<string>();
-  const rootOwned = new Set<string>();
-  const readOnly = new Set<string>();
-  const notExecutable = new Set<string>();
-  const stats = new Map<string, { inode: number; mtimeMs: number }>();
-  const links = new Map<string, string>();
-  const entryTypes = new Map<string, "directory" | "symlink" | "other">();
-  const realPaths = new Map<string, string>();
-  const unlistable = new Set<string>();
-  const unrenamable = new Set<string>();
+  const undeletable = new PathSet();
+  const rootOwned = new PathSet();
+  const readOnly = new PathSet();
+  const notExecutable = new PathSet();
+  const stats = new PathMap<{ inode: number; mtimeMs: number }>();
+  const links = new PathMap<string>();
+  const entryTypes = new PathMap<"directory" | "symlink" | "other">();
+  const realPaths = new PathMap<string>();
+  const unlistable = new PathSet();
+  const unrenamable = new PathSet();
   const ops: string[] = [];
   let tempDirs = 0;
   // Paths are a flat set, so a "directory" is whatever entries sit under it — enough to model the
   // staging swap, whose whole content is `web/dist/**`.
   const under = (p: string): string[] =>
     [...new Set([...entries.keys(), ...entryTypes.keys()])].filter((k) => k === p || k.startsWith(`${p}/`));
-  return {
+  const raw: FakeFiles = {
     entries,
     undeletable,
     rootOwned,
@@ -242,6 +324,10 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
     exists: (p) => under(p).length > 0,
     executable: (p) => under(p).length > 0 && !notExecutable.has(p),
     read: (p) => entries.get(p)?.text ?? null,
+    digest: (p) => {
+      const text = entries.get(p)?.text;
+      return text === undefined ? null : new Bun.CryptoHasher("sha256").update(text).digest("hex");
+    },
     entryType: (p) =>
       entryTypes.get(p) ?? (entries.has(p) ? "file" : under(p).some((k) => k !== p) ? "directory" : null),
     list: (p) => [
@@ -297,12 +383,40 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
       }
     },
   };
+  // The seeded keys are POSIX. Code under test builds paths with `join` and `resolve`, which hand
+  // back `C:\opt\collie\bin` on Windows, so every path that comes in is folded to the key a test wrote.
+  const one = <A extends unknown[], R>(f: (p: string, ...rest: A) => R) =>
+    (p: string, ...rest: A): R => f(posixKey(p), ...rest);
+  return {
+    ...raw,
+    ownerUid: one(raw.ownerUid),
+    writable: one(raw.writable),
+    exists: one(raw.exists),
+    executable: one(raw.executable),
+    read: one(raw.read),
+    digest: one(raw.digest),
+    entryType: one(raw.entryType),
+    list: one(raw.list),
+    listStrict: one(raw.listStrict),
+    // These two RETURN a path the code under test then compares with one it built itself (`compilePaths`:
+    // `realpath(bin) !== bin`; `createOwnedDirectory`: `dirname(mkdtemp(prefix)) !== bin`), so the answer
+    // keeps the caller's spelling; only the lookup is folded.
+    realpath: (p) => (raw.realpath(posixKey(p)) === null ? null : (raw.realPaths.get(p) ?? p)),
+    mkdtemp: (prefix) => `${prefix}${raw.mkdtemp(posixKey(prefix)).slice(posixKey(prefix).length)}`,
+    write: one(raw.write),
+    mkdirp: one(raw.mkdirp),
+    remove: one(raw.remove),
+    removeTree: one(raw.removeTree),
+    stat: one(raw.stat),
+    readlink: one(raw.readlink),
+    rename: (from, to) => raw.rename(posixKey(from), posixKey(to)),
+  };
 }
 
 export interface FakeLinkFs extends LinkWriter {
   /** The destination, as this fake models it: absolute path → what is there. */
   entries: Map<string, LinkProbe>;
-  /** `mkdirp <p>` / `symlink <target> <at>` / `rm <at>`, in order. */
+  /** `mkdirp <p>` / `symlink <target> <at>` / `rm <at>` / `junction <target> <at>`, in order. */
   ops: string[];
   /** Paths whose write fails — the `~/.local/bin` an operator cannot write to. */
   readonly: Set<string>;
@@ -313,24 +427,34 @@ export interface FakeLinkFs extends LinkWriter {
  * because every decision this seam feeds is made from the destination alone.
  */
 export function fakeLinkFs(seed: Record<string, LinkProbe> = {}): FakeLinkFs {
-  const entries = new Map<string, LinkProbe>(Object.entries(seed));
+  // Keys fold through `posixKey` like every other fake path (see `fakeFiles`): a seed or a probe may
+  // spell a path either way. A link TARGET is stored as written, because the code under test compares
+  // it against a path it built itself (`classifyLink`: `probe.target === own`) and a folded target
+  // would never match on Windows.
+  const entries = new PathMap<LinkProbe>();
+  for (const [p, probe] of Object.entries(seed)) entries.set(p, probe);
   const ops: string[] = [];
-  const readonlyPaths = new Set<string>();
+  const readonlyPaths = new PathSet();
   return {
     entries,
     ops,
     readonly: readonlyPaths,
     probe: (p) => entries.get(p) ?? { kind: "absent" },
-    mkdirp: (p) => void ops.push(`mkdirp ${p}`),
+    mkdirp: (p) => void ops.push(`mkdirp ${posixKey(p)}`),
     symlink(target, at) {
-      ops.push(`symlink ${target} ${at}`);
+      ops.push(`symlink ${posixKey(target)} ${posixKey(at)}`);
       if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
       entries.set(at, { kind: "symlink", target });
     },
     remove(at) {
-      ops.push(`rm ${at}`);
+      ops.push(`rm ${posixKey(at)}`);
       if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
       entries.delete(at);
+    },
+    junction(target, at) {
+      ops.push(`junction ${posixKey(target)} ${posixKey(at)}`);
+      if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
+      entries.set(at, { kind: "symlink", target });
     },
   };
 }

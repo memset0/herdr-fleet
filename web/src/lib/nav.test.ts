@@ -1,16 +1,25 @@
 import {
+  readPreviewAsked,
   ancestorsOf,
   changesCommitPath,
+  filesFolders,
+  filesParent,
+  filesPath,
   homePath,
   isAncestor,
+  machinePath,
+  machinesPath,
+  machineTabOf,
   pairLandingPath,
   panePath,
   parentChain,
   readFrom,
   resolveUp,
   resolveUpTo,
+  resolveUpToExact,
   settingsPath,
   spaceChangesCommitPath,
+  spaceFilesPath,
   updatesPath,
   upTarget,
 } from "./nav";
@@ -20,6 +29,51 @@ describe("the commit view's paths", () => {
     expect(changesCommitPath("w1:p1", undefined, ".")).toBe("/pane/w1%3Ap1/changes/commit?repo=.");
     expect(changesCommitPath("w1:p1", undefined, "one", "a b.ts")).toBe("/pane/w1%3Ap1/changes/commit?repo=one&path=a+b.ts");
     expect(spaceChangesCommitPath("w1", undefined, ".")).toBe("/space/w1/changes/commit?repo=.");
+  });
+});
+
+describe("the machines paths", () => {
+  it("names the list and one machine, and carries the scope", () => {
+    expect(machinesPath()).toBe("/machines");
+    expect(machinePath("bluefin")).toBe("/machines/bluefin");
+    expect(machinePath("a b/c")).toBe("/machines/a%20b%2Fc");
+    expect(machinesPath({ host: "badger", session: undefined })).toBe("/machines?h=badger");
+  });
+
+  it("names the Alerts view in the query, after the scope, and Status with no parameter", () => {
+    expect(machinePath("bluefin", undefined, "alerts")).toBe("/machines/bluefin?tab=alerts");
+    expect(machinePath("bluefin", undefined, "status")).toBe("/machines/bluefin");
+    expect(machinePath("bluefin", { host: "badger", session: undefined }, "alerts")).toBe("/machines/bluefin?h=badger&tab=alerts");
+    expect(machineTabOf("?tab=alerts")).toBe("alerts");
+    expect(machineTabOf("?h=badger&tab=alerts")).toBe("alerts");
+    expect(machineTabOf("")).toBe("status");
+    expect(machineTabOf("?tab=charts")).toBe("status");
+  });
+
+  it("keeps both views one level: their parents are the same, so a switch is a side move", () => {
+    expect(ancestorsOf("/machines/bluefin")).toContain("/");
+    expect(isAncestor("/machines/bluefin?tab=alerts", "/machines/bluefin")).toBe(false);
+  });
+});
+
+describe("back from the machines pages", () => {
+  it("goes up one level at a time: machine, Machines, Settings", () => {
+    expect(resolveUp("/machines/bluefin", "/machines", "/machines")).toEqual({ kind: "back" });
+    expect(resolveUp("/machines", "/settings", "/settings")).toEqual({ kind: "back" });
+  });
+
+  it("replaces onto the structural parent on a cold entry, never pushes a parent", () => {
+    expect(resolveUp("/machines/bluefin", undefined, "/machines")).toEqual({ kind: "replace", to: "/machines" });
+  });
+
+  it("steps back onto the dashboard from a machine the Crew tab opened (ADR 0085)", () => {
+    // The dashboard stores its tab per device, so stepping back lands on the Crew tab again.
+    expect(resolveUp("/machines/bluefin", "/", "/machines")).toEqual({ kind: "back" });
+    expect(resolveUp("/machines/bluefin", "/?h=workshop", "/machines")).toEqual({ kind: "back" });
+    // A cold link has nothing behind it, so it still goes up to the list.
+    expect(resolveUp("/machines/bluefin", "/", "/machines", false)).toEqual({ kind: "replace", to: "/machines" });
+    expect(resolveUp("/machines", undefined, "/settings")).toEqual({ kind: "replace", to: "/settings" });
+    expect(resolveUp("/machines/bluefin", "/pane/w1%3Ap1", "/machines")).toEqual({ kind: "replace", to: "/machines" });
   });
 });
 
@@ -152,6 +206,18 @@ describe("ancestorsOf / isAncestor: the level tree", () => {
     ["/", "/settings/updates", true],
     ["/", "/crew", true],
     ["/settings", "/crew", true],
+    // Machines: Settings above it, and a machine above that. The crew census and the System card
+    // open both, so each is a legitimate parent there too.
+    ["/settings", "/machines", true],
+    ["/settings/system", "/machines", true],
+    ["/", "/machines", true],
+    ["/crew", "/machines", false],
+    ["/machines", "/machines/bluefin", true],
+    ["/machines?h=workshop", "/machines/bluefin", true],
+    ["/crew", "/machines/bluefin", true],
+    ["/settings", "/machines/bluefin", true],
+    ["/machines/workshop", "/machines/bluefin", false],
+    ["/pane/w1%3Ap1", "/machines/bluefin", false],
     ["/", "/nowhere", false],
   ])("%s above %s: %s", (from, here, expected) => {
     expect(isAncestor(from, here)).toBe(expected);
@@ -228,14 +294,120 @@ describe("parentChain: what a cold deep link gets behind it", () => {
       ["/?h=badger", "/pane/w1%3Ap1?h=badger", "/pane/w1%3Ap1/changes?h=badger", "/pane/w1%3Ap1/changes/commit?h=badger&repo=one"],
     ],
     ["/space/w1/changes/commit", "?repo=.&path=a.ts", ["/", "/space/w1", "/space/w1/changes", "/space/w1/changes/commit?repo=."]],
+    // The Changes tree: every folder above the target sits behind it, then the Changes screen that
+    // is the tree's root, then that screen's own way up (ADR 0083). With neither `?dir=` nor `?path=`
+    // the address is the root itself, spelled the way it was before 2026-10-06.
+    ["/pane/w1%3Ap1/changes/files", "", ["/", "/pane/w1%3Ap1"]],
+    ["/pane/w1%3Ap1/changes/files", "?dir=a", ["/", "/pane/w1%3Ap1", "/pane/w1%3Ap1/changes"]],
+    [
+      "/pane/w1%3Ap1/changes/files",
+      "?h=badger&dir=a%2Fb",
+      ["/?h=badger", "/pane/w1%3Ap1?h=badger", "/pane/w1%3Ap1/changes?h=badger", "/pane/w1%3Ap1/changes/files?h=badger&dir=a"],
+    ],
+    [
+      "/space/w1/changes/files",
+      "?path=a%2Fb%2Fc.md",
+      ["/", "/space/w1", "/space/w1/changes", "/space/w1/changes/files?dir=a", "/space/w1/changes/files?dir=a%2Fb"],
+    ],
+    ["/space/w1/changes/files", "?path=README.md", ["/", "/space/w1", "/space/w1/changes"]],
     ["/settings", "", ["/"]],
     // Both are opened from the System section now, so a cold deep link gets the index AND that
     // section behind it — two taps back to home, matching the two pushes that would have got here.
     ["/settings/updates", "", ["/", "/settings", "/settings/system"]],
     ["/settings/device", "", ["/", "/settings"]],
     ["/crew", "", ["/", "/settings", "/settings/system"]],
+    // Machines sits under Settings, and one machine under Machines: a cold deep link gets both behind it.
+    ["/machines", "", ["/", "/settings"]],
+    ["/machines/bluefin", "", ["/", "/settings", "/machines"]],
+    ["/machines/bluefin", "?h=badger", ["/?h=badger", "/settings?h=badger", "/machines?h=badger"]],
     ["/nowhere", "", []],
   ])("%s%s → %j", (pathname, search, expected) => {
     expect(parentChain(pathname, search)).toEqual(expected);
+  });
+});
+
+describe("the Changes tree's paths", () => {
+  it("is the Changes screen's child route, with a folder or a file in the query", () => {
+    expect(filesPath("w1:p1", undefined, { dir: "src/lib" })).toBe("/pane/w1%3Ap1/changes/files?dir=src%2Flib");
+    expect(filesPath("w1:p1", undefined, { path: "a b.md" })).toBe("/pane/w1%3Ap1/changes/files?path=a+b.md");
+    expect(spaceFilesPath("w1", undefined, { dir: "docs" })).toBe("/space/w1/changes/files?dir=docs");
+  });
+
+  it("keeps the machine and session in front of the folder", () => {
+    expect(filesPath("w1:p1", { host: "badger" }, { dir: "a" })).toBe("/pane/w1%3Ap1/changes/files?h=badger&dir=a");
+  });
+
+  it("names the root as the Changes screen itself", () => {
+    expect(filesPath("w1:p1")).toBe("/pane/w1%3Ap1/changes");
+    expect(filesPath("w1:p1", undefined, {})).toBe("/pane/w1%3Ap1/changes");
+    expect(filesPath("w1:p1", undefined, { dir: "" })).toBe("/pane/w1%3Ap1/changes");
+    expect(spaceFilesPath("w1", { host: "badger" })).toBe("/space/w1/changes?h=badger");
+  });
+});
+
+describe("filesParent: one level up inside the Changes tree", () => {
+  it("takes a file to its folder, a folder to its parent, and a top-level folder to the root", () => {
+    expect(filesParent({ path: "a/b/c.md" })).toEqual({ dir: "a/b" });
+    expect(filesParent({ dir: "a/b" })).toEqual({ dir: "a" });
+    expect(filesParent({ dir: "a" })).toEqual({});
+    expect(filesParent({ path: "README.md" })).toEqual({});
+  });
+
+  it("has none at the root, where the way up is the list's own", () => {
+    expect(filesParent({})).toBeNull();
+    expect(filesParent({ dir: "" })).toBeNull();
+  });
+});
+
+describe("filesFolders", () => {
+  it("lists every folder above a file, and every folder down to a folder", () => {
+    expect(filesFolders({ path: "a/b/c.md" })).toEqual(["a", "a/b"]);
+    expect(filesFolders({ dir: "a/b" })).toEqual(["a", "a/b"]);
+    expect(filesFolders({ path: "c.md" })).toEqual([]);
+  });
+});
+
+describe("the Changes tree in the level tree", () => {
+  it("sits below the Changes screen, then shares its parents", () => {
+    expect(ancestorsOf("/pane/w1/changes/files")).toEqual(["/pane/w1/changes", "/pane/w1", "/space/*", "/"]);
+    expect(ancestorsOf("/space/w1/changes/files")).toEqual(["/space/w1/changes", "/space/w1", "/"]);
+    expect(isAncestor("/pane/w1/changes?h=badger", "/pane/w1/changes/files")).toBe(true);
+    expect(isAncestor("/", "/space/w1/changes/files")).toBe(true);
+    expect(isAncestor("/space/w2", "/space/w1/changes/files")).toBe(false);
+    expect(isAncestor("/space/w2/changes", "/space/w1/changes/files")).toBe(false);
+  });
+});
+
+describe("resolveUpToExact: a folder level of the Files view", () => {
+  const parent = "/pane/w1/changes/files?dir=a";
+
+  it("steps back only onto that very folder", () => {
+    expect(resolveUpToExact(parent, parent)).toEqual({ kind: "back" });
+    expect(resolveUpToExact("/pane/w1/changes/files?dir=a#top", parent)).toEqual({ kind: "back" });
+  });
+
+  it("does not take another folder of the same pathname for the parent", () => {
+    expect(resolveUpToExact("/pane/w1/changes/files?dir=b", parent)).toEqual({ kind: "replace", to: parent });
+    expect(resolveUpToExact("/pane/w1/changes/files", parent)).toEqual({ kind: "replace", to: parent });
+  });
+
+  it("replaces on a cold entry and never steps back from the first entry", () => {
+    expect(resolveUpToExact(undefined, parent)).toEqual({ kind: "replace", to: parent });
+    expect(resolveUpToExact(parent, parent, false)).toEqual({ kind: "replace", to: parent });
+  });
+
+  it("reads the same query in any order", () => {
+    expect(resolveUpToExact("/pane/w1/changes/files?dir=a&h=badger", "/pane/w1/changes/files?h=badger&dir=a")).toEqual({
+      kind: "back",
+    });
+  });
+});
+
+describe("readPreviewAsked: the diff's Preview offer", () => {
+  it("is true only for the one value the offer writes", () => {
+    expect(readPreviewAsked({ from: "/pane/w1/changes", fileView: "preview" })).toBe(true);
+    expect(readPreviewAsked({ fileView: "source" })).toBe(false);
+    expect(readPreviewAsked(null)).toBe(false);
+    expect(readPreviewAsked(undefined)).toBe(false);
   });
 });

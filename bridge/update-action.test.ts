@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -360,6 +360,25 @@ describe("update hands off — the command that leaves this process's cgroup", (
     });
   });
 
+  test("a rehearsal mirror reaches the transient unit's bare environment; the other tiers inherit it", () => {
+    // The transient unit starts `collie update` with a bare environment. Without this the CLI there
+    // would not see a mirror the bridge was started with and would ask GitHub instead.
+    for (const value of ["http://127.0.0.1:47321", "http://10.0.0.5:1"]) {
+      expect(updateStartCommand({ ...base, major: false, hasSystemdRun: true, hasSetsid: true, mirror: value }).command).toEqual([
+        "systemd-run", "--user", "--collect", "--unit", "collie-api-update-42",
+        `--setenv=COLLIE_UPDATE_MIRROR=${value}`, "/opt/collie/bin/collie", "update",
+      ]);
+    }
+    // No mirror: the command is the one it always was. Other tiers: the child inherits the variable.
+    expect(updateStartCommand({ ...base, major: false, hasSystemdRun: true, hasSetsid: true, mirror: null }).command).not.toContain(
+      "--setenv=COLLIE_UPDATE_MIRROR=",
+    );
+    expect(updateStartCommand({ ...base, platform: "win32", major: false, hasSystemdRun: false, hasSetsid: false, mirror: "http://127.0.0.1:1" })).toEqual({
+      command: ["/opt/collie/bin/collie", "update"],
+      detach: true,
+    });
+  });
+
   test("a major crossing hands the CLI its own consent flag (ADR 0020)", () => {
     const plan = updateStartCommand({ ...base, major: true, hasSystemdRun: true, hasSetsid: true });
     expect(plan.command.slice(-2)).toEqual(["update", "--major"]);
@@ -495,13 +514,15 @@ describe("the runner's own output is kept (#283)", () => {
   test("a log that cannot be opened is null, and the launch goes ahead with the streams ignored", () => {
     const dir = mkdtempSync(join(tmpdir(), "collie-runner-log-"));
     try {
-      chmodSync(dir, 0o500);
-      expect(openRunnerLog(dir, "header")).toBeNull();
+      // A state dir that is really a file: no log can be created under it, whatever the platform's
+      // permission model is (a read-only dir, `chmod 0o500`, stops nothing on NTFS and nothing as root).
+      const notADir = join(dir, "a-file");
+      writeFileSync(notADir, "");
+      expect(openRunnerLog(join(notADir, "state"), "header")).toBeNull();
       const seen: UpdateRunnerSpawnOptions[] = [];
       launchUpdateRunner(plan(), { cwd: "/x", spawn: (_c, o) => (seen.push(o), { unref: () => {} }), log: null });
       expect(seen[0]?.stdout).toBe("ignore");
     } finally {
-      chmodSync(dir, 0o700);
       rmSync(dir, { recursive: true, force: true });
     }
   });

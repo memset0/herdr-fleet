@@ -1,9 +1,9 @@
 import { basename, dirname, join, resolve } from "node:path";
 
+import { collieBinary, HOST, type Host } from "../bridge/host.ts";
 import type { CliContext } from "./context.ts";
 import { EXIT, type Io } from "./io.ts";
 import type { Exec, Files } from "./sys.ts";
-import { collieBinary } from "./unit.ts";
 
 // `build` and the lazy `ensure_build`, ported from the pre-shim `collie-ctl.sh`. The five ordered
 // steps and their reasons come along with the code, because every one of them is a production
@@ -31,8 +31,8 @@ export interface BuildDeps {
   io: Io;
   exec: Exec;
   files: Files;
-  /** Defaults to `process.platform`; injected so the Windows swap is testable on any host. */
-  platform?: string;
+  /** Defaults to the running host; injected so the Windows swap is testable on any host. */
+  host?: Host;
 }
 
 /** The narrow seam shared by the full build and `bun run build:cli`. */
@@ -42,8 +42,8 @@ export interface CliCompileDeps {
   io: Io;
   exec: Exec;
   files: Files;
-  /** Defaults to `process.platform`; injected so the Windows swap is testable on any host. */
-  platform?: string;
+  /** Defaults to the running host; injected so the Windows swap is testable on any host. */
+  host?: Host;
 }
 
 /** Optional release inputs; ordinary source builds use the local Bun, target and live binary. */
@@ -66,7 +66,7 @@ export const webStaging = (root: string): string => join(root, "web", "dist-stag
  * Writing into the live path instead can corrupt a running process mid-read: a Bun single-file
  * executable carries its payload INSIDE the file.
  */
-export const collieBinaryStaging = (root: string): string => `${collieBinary(root)}.new`;
+export const collieBinaryStaging = (root: string): string => join(root, "bin", "collie.new");
 
 /**
  * The file `bun build --compile --outfile <path>` actually writes. On Windows Bun appends `.exe` to
@@ -75,9 +75,109 @@ export const collieBinaryStaging = (root: string): string => `${collieBinary(roo
  * `bin/collie.exe` for the same reason, and that is also the file `bin/collie` resolves to when
  * Windows spawns it. Everywhere else the path is returned unchanged.
  */
-export function compiledPath(outfile: string, platform: string = process.platform): string {
-  if (platform !== "win32" || outfile.toLowerCase().endsWith(".exe")) return outfile;
-  return `${outfile}.exe`;
+export function compiledPath(outfile: string, host: Host = HOST): string {
+  if (host.exeSuffix === "" || outfile.toLowerCase().endsWith(host.exeSuffix)) return outfile;
+  return `${outfile}${host.exeSuffix}`;
+}
+
+/**
+ * Put a freshly compiled binary at `live`. Everywhere but Windows this is one rename: the new file
+ * gets a new inode and a process still executing the old one keeps reading it.
+ *
+ * Windows refuses to rename ONTO an executable that is running (EPERM), and during `collie update`
+ * the running executable is `bin/collie.exe` itself, the updater. It does allow renaming the running
+ * file AWAY, so the live binary steps aside first and the new one takes its place. The old file can
+ * only be deleted once nothing runs it, so that is tried, and a failure is left for a later sweep.
+ *
+ * The aside name is new for every swap (`<live>.old-<pid>-<time>`). With one fixed name, a second
+ * swap while the first old process still ran met a file it could not remove, and the rename onto it
+ * failed with EPERM. Every aside that nothing runs any more is removed before the step aside, and
+ * again when a bridge starts ({@link sweepAsides}).
+ *
+ * The live binary is the one working copy, so it never steps aside for a staged file that is not
+ * there (the rename then fails exactly as it always did, with the live binary untouched), and it
+ * goes back into place if the staged file cannot take its place. Each of the three renames on Windows
+ * is tried again on EPERM or EBUSY ({@link renameSoon}): Defender often holds a freshly written exe
+ * for a moment.
+ */
+export function swapBinary(
+  files: Files,
+  staged: string,
+  live: string,
+  host: Host = HOST,
+  tag: string = `${process.pid}-${Date.now().toString(36)}`,
+  pause: (ms: number) => void = pauseSync,
+): void {
+  if (host.platform !== "win32" || !files.exists(live) || !files.exists(staged)) {
+    files.rename(staged, live);
+    return;
+  }
+  sweepAsides(files, live, host);
+  const aside = asidePath(live, tag);
+  renameSoon(files, live, aside, pause);
+  try {
+    renameSoon(files, staged, live, pause);
+  } catch (err) {
+    renameSoon(files, aside, live, pause);
+    throw err;
+  }
+  tryRemove(files, aside);
+}
+
+/** The pauses between the tries of one Windows rename: five tries in about four seconds. */
+export const SWAP_RENAME_PAUSES_MS = [250, 500, 1_000, 2_000] as const;
+
+/**
+ * `rename`, tried again after each pause in {@link SWAP_RENAME_PAUSES_MS} while Windows answers EPERM,
+ * EBUSY or EACCES. Any other error, or the last one, is thrown. Windows only: the caller is the
+ * Windows branch of {@link swapBinary}.
+ */
+function renameSoon(files: Pick<Files, "rename">, from: string, to: string, pause: (ms: number) => void): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      files.rename(from, to);
+      return;
+    } catch (err) {
+      // SAFETY: the assertion asserts nothing. `catch` binds `unknown`; a Node errno error carries a
+      // string `code`, and any other value reads `undefined` here, which is the "not busy" answer.
+      const code = (err as { code?: string }).code;
+      const busy = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+      const wait = SWAP_RENAME_PAUSES_MS[attempt];
+      if (!busy || wait === undefined) throw err;
+      pause(wait);
+    }
+  }
+}
+
+/** A synchronous pause: `build` is synchronous, and these waits are a few seconds at most. */
+function pauseSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Where the live binary steps aside to for one swap. `tag` makes the name unique to that swap. */
+export const asidePath = (live: string, tag: string): string => `${live}.old-${tag}`;
+
+/**
+ * Remove every aside of `live` that nothing runs any more: `<live>.old-*`, and the one fixed
+ * `<live>.old` that builds before this name used. A file a process still executes cannot be removed
+ * on Windows, so it stays for the next sweep. Never throws, and does nothing off Windows.
+ */
+export function sweepAsides(files: Pick<Files, "list" | "remove">, live: string, host: Host = HOST): void {
+  if (host.platform !== "win32") return;
+  const prefix = `${host.path.basename(live)}.old`;
+  const dir = host.path.dirname(live);
+  for (const name of files.list(dir)) {
+    if (name === prefix || name.startsWith(`${prefix}-`)) tryRemove(files, host.path.join(dir, name));
+  }
+}
+
+/** Remove `p` if it can be removed. A file some process still executes cannot be, on Windows. */
+function tryRemove(files: Pick<Files, "remove">, p: string): void {
+  try {
+    files.remove(p);
+  } catch {
+    // Still running: a later sweep clears it.
+  }
 }
 
 /** Prefixes for private, atomically-created directories under the checkout's real `bin`. */
@@ -233,7 +333,7 @@ export function compileCli(deps: CliCompileDeps, options: CliCompileOptions = {}
 
   const bun = options.bun ?? "bun";
   const target = options.target ?? "bun";
-  const output = resolve(options.outfile ?? collieBinary(paths.root));
+  const output = resolve(options.outfile ?? collieBinary(paths.root, deps.host));
   let compiled = false;
   try {
     compiled = step(
@@ -281,8 +381,8 @@ export function compileCliToLive(
   }
 
   try {
-    const live = compiledPath(collieBinary(paths.root), deps.platform);
-    deps.files.rename(compiledPath(output, deps.platform), live);
+    const live = collieBinary(paths.root, deps.host);
+    swapBinary(deps.files, compiledPath(output, deps.host), live, deps.host);
   } catch (err) {
     deps.io.err(`error: could not publish the compiled collie binary (${String(err)})`);
     cleanOwnedDirectory(deps, staging, "CLI output staging directory");
@@ -345,11 +445,11 @@ export function cmdBuild(deps: BuildDeps): number {
   // 4. The CLI, into its staging path. `compileCli` also serves `bun run build:cli`, so neither
   // supported route can run Bun from the checkout root before Vite samples its Git identity.
   const binaryStaging = collieBinaryStaging(root);
-  const binaryWritten = compiledPath(binaryStaging, deps.platform);
+  const binaryWritten = compiledPath(binaryStaging, deps.host);
   deps.files.remove(binaryWritten);
   if (
     !compileCli(
-      { root, io: deps.io, exec: deps.exec, files: deps.files, platform: deps.platform },
+      { root, io: deps.io, exec: deps.exec, files: deps.files, host: deps.host },
       { outfile: binaryStaging },
     )
   ) {
@@ -375,7 +475,7 @@ export function cmdBuild(deps: BuildDeps): number {
   }
 
   // 6. The swaps, last. The binary first because it is the smaller window, then the served bundle.
-  deps.files.rename(binaryWritten, compiledPath(collieBinary(root), deps.platform));
+  swapBinary(deps.files, binaryWritten, collieBinary(root, deps.host), deps.host);
   deps.files.removeTree(webDist(root));
   deps.files.rename(staging, webDist(root));
   return EXIT.OK;

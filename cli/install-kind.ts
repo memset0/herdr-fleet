@@ -1,9 +1,7 @@
-import { basename, dirname, join, resolve } from "node:path";
-
+import { collieBinary, HOST, type Host, isBelow, isSameOrInside } from "../bridge/host.ts";
 import type { CliContext } from "./context.ts";
 import type { LinkReader } from "./link.ts";
 import type { Exec, Files } from "./sys.ts";
-import { collieBinary } from "./unit.ts";
 
 // HOW THIS COLLIE GOT HERE, and where its updates come from — the two questions `update` and
 // `doctor` must answer the same way, so they are answered once, here.
@@ -120,7 +118,7 @@ export interface InstallProbe {
    * free to claim it. This is the Nix store's fact.
    */
   readonly rootIsReadOnly: boolean;
-  /** `!root.startsWith(ctx.home + "/")` — the root sits outside the operator's home. Homebrew's fact. */
+  /** The root is not under `ctx.home` — it sits outside the operator's home. Homebrew's fact. */
   readonly rootOutsideHome: boolean;
 }
 
@@ -208,6 +206,15 @@ export function classifyInstall(p: InstallProbe): InstallKind {
  */
 export const PACKAGED_SENTENCE = "updates come from your package manager";
 
+/**
+ * The one sentence for a source checkout on Windows (M43 spec 08). There `collie update` takes a
+ * release install only: a checkout's update needs `bash` to build (spec 03), and its task runs the
+ * clone's own `bin\collie.exe`, so the restart after a staged update relaunched the old build (VM,
+ * 2026-10-02). `collie update` and its preflight (so the phone's button) print exactly this.
+ */
+export const WINDOWS_CHECKOUT_SENTENCE =
+  "On Windows, collie updates a release install. A source checkout is not supported for updates; install the release zip with install.ps1.";
+
 // ── The probe, and what a binary install's paths are ─────────────────────────
 
 /** The paths of a binary install, all derived from the version directory the process runs from. */
@@ -223,7 +230,28 @@ export interface BinaryLayout {
   readonly version: string;
 }
 
-export function binaryLayout(root: string): BinaryLayout {
+/**
+ * Is `child` under `parent`, however either is spelled? A string prefix test with a `/` never matches
+ * on Windows: `resolve` hands back `C:\inst\versions\1.1.0`, `dirname` of a forward-slash root keeps
+ * its slashes, and the drive letter and case may differ. The host's own comparison (`bridge/host.ts`)
+ * folds all of that. Both paths are resolved first, which is what `path.relative` did before: a `..`
+ * or `.` segment, or a relative path, answers as it always did. `host` picks the path rules, so a
+ * Linux test pins the Windows answer.
+ */
+const resolved = (host: Host, path: string): string => host.path.resolve(path);
+
+/** `child` is strictly below `parent`. */
+export function isUnder(host: Host, parent: string, child: string): boolean {
+  return isBelow(host, resolved(host, parent), resolved(host, child));
+}
+
+/** `child` is `parent` or below it. */
+export function isSameOrUnder(host: Host, parent: string, child: string): boolean {
+  return isSameOrInside(host, resolved(host, parent), resolved(host, child));
+}
+
+export function binaryLayout(root: string, host: Host = HOST): BinaryLayout {
+  const { dirname, basename, join } = host.path;
   const versionsDir = dirname(root);
   const installRoot = dirname(versionsDir);
   return {
@@ -248,39 +276,55 @@ export function binaryLayout(root: string): BinaryLayout {
  * Structural and git-free — only the layout decides, so a checkout keeps pointing at its own
  * `bin/collie` exactly as before.
  */
-export function publishedBinary(root: string, link: LinkReader): string {
-  const layout = binaryLayout(root);
-  if (basename(layout.versionsDir) !== "versions") return collieBinary(root);
+export function publishedBinary(root: string, link: LinkReader, host: Host = HOST): string {
+  return collieBinary(publishedRoot(root, link, host), host);
+}
+
+/**
+ * The folder {@link publishedBinary} sits under: `<install-root>/current` on a binary install whose
+ * `current` names a version under `versions/`, and `root` itself everywhere else. The Windows task is
+ * registered on this folder (`cli/lifecycle.ts`), so the task, the PATH name and `doctor` read one
+ * answer and cannot drift apart.
+ */
+export function publishedRoot(root: string, link: LinkReader, host: Host = HOST): string {
+  const layout = binaryLayout(root, host);
+  if (host.path.basename(layout.versionsDir) !== "versions") return root;
   const probe = link.probe(layout.currentLink);
-  if (probe.kind !== "symlink") return collieBinary(root);
-  const target = resolve(layout.installRoot, probe.target);
-  const inLayout = target === layout.versionsDir || target.startsWith(`${layout.versionsDir}/`);
-  return inLayout ? join(layout.currentLink, "bin", "collie") : collieBinary(root);
+  if (probe.kind !== "symlink") return root;
+  const target = host.path.resolve(layout.installRoot, probe.target);
+  return isSameOrUnder(host, layout.versionsDir, target) ? layout.currentLink : root;
 }
 
 /** What the world says about `root` — one `git` call, one `lstat`, one `readlink`. All reads. */
 export function probeInstall(
-  deps: { readonly ctx: Pick<CliContext, "home">; readonly exec: Exec; readonly files: Files; readonly link: LinkReader },
+  deps: {
+    readonly ctx: Pick<CliContext, "home">;
+    readonly exec: Exec;
+    readonly files: Files;
+    readonly link: LinkReader;
+    /** Which path rules compare the layout; the running host's when absent. */
+    readonly host?: Host;
+  },
   root: string,
 ): InstallProbe {
+  const host = deps.host ?? HOST;
   const git = isGitCheckout(deps.exec, root);
-  const layout = binaryLayout(root);
+  const layout = binaryLayout(root, host);
   const probe = deps.link.probe(layout.currentLink);
-  const target = probe.kind === "symlink" ? resolve(layout.installRoot, probe.target) : null;
+  const target = probe.kind === "symlink" ? host.path.resolve(layout.installRoot, probe.target) : null;
   return {
     isGitCheckout: git,
     isDetached: git && isManagedCheckout(deps.exec, root),
     // `exists` answers for a directory and for the one-line file a worktree or submodule uses.
-    hasGitEntry: deps.files.exists(join(root, ".git")),
-    parentIsVersions: basename(layout.versionsDir) === "versions",
+    hasGitEntry: deps.files.exists(host.path.join(root, ".git")),
+    parentIsVersions: host.path.basename(layout.versionsDir) === "versions",
     currentIsSymlink: probe.kind === "symlink",
-    currentResolvesHere:
-      target !== null && (target === layout.versionsDir || target.startsWith(`${layout.versionsDir}/`)),
-    hasMarker: deps.files.exists(join(root, "herdr-plugin.toml")),
+    currentResolvesHere: target !== null && isSameOrUnder(host, layout.versionsDir, target),
+    hasMarker: deps.files.exists(host.path.join(root, "herdr-plugin.toml")),
     rootOwnerUid: deps.files.ownerUid(root),
     // `null` — the probe could not reach the question — is NOT read-only. See the field's comment.
     rootIsReadOnly: deps.files.writable(root) === false,
-    rootOutsideHome: !root.startsWith(`${deps.ctx.home}/`),
+    rootOutsideHome: !isUnder(host, deps.ctx.home, root),
   };
 }
 
@@ -290,6 +334,7 @@ export function detectInstall(deps: {
   readonly exec: Exec;
   readonly files: Files;
   readonly link: LinkReader;
+  readonly host?: Host;
 }): InstallKind {
   return classifyInstall(probeInstall(deps, deps.ctx.root));
 }

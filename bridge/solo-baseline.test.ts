@@ -12,6 +12,9 @@ import { computeEtag } from "./http-cache.ts";
 import { muxOk } from "./mux/types.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { FolderStore } from "./folders.ts";
+import { MachineAlertStore } from "./machine-alerts.ts";
+import { loadMachineHistory, saveMachineHistory } from "./machine-history.ts";
+import { machineRosterOf, MachineWatch, SOLO_MACHINE_ID } from "./machines.ts";
 import type { PushMessage } from "./push.ts";
 import { TrustStore } from "./crew/trust-store.ts";
 import { Snooze } from "./snooze.ts";
@@ -64,7 +67,9 @@ const FIXTURES = join(import.meta.dir, "fixtures", "solo-baseline");
 const REGEN = process.env.COLLIE_REGEN_SOLO_BASELINE === "1";
 
 function golden(name: string): string {
-  return readFileSync(join(FIXTURES, name), "utf8");
+  // A Windows checkout may turn the committed LF into CRLF (core.autocrlf); the bytes the code
+  // produces are LF, so the fixture is read as the LF text that was committed.
+  return readFileSync(join(FIXTURES, name), "utf8").replace(/\r\n/g, "\n");
 }
 
 /** Compare against a committed golden, or rewrite it under COLLIE_REGEN_SOLO_BASELINE=1. */
@@ -607,16 +612,25 @@ describe("solo zero-tax — routes", () => {
       // read-gated like the pane read beside it, so a `?host=` call forwards to the member whose
       // journal named the file (CREW_PROTOCOL.md §9.1).
       "/^\\/api\\/blobs\\/([^/]+)$/",
+      // Machines (ADR 0084): one machine's day of minutes, and its alert rules. A lead and a solo
+      // collie answer for every machine they keep watch over; a peer 404s (`crew.not_lead`), and none
+      // is forwardable — `bridge/crew/router.test.ts` pins all three as 404 across a link.
+      "/^\\/api\\/machines\\/([^/]+)\\/(history|alerts)$/",
       // `changes` is the Changes view (ADR 0065): read-only git over the pane's folder, read-gated
       // like `history` beside it and forwarded to the member that owns the pane. `chat` is the live
       // half of `history` (journal/live.ts): the same log, asked "anything after this?" — a read, on
       // the poll path, forwarded to the owning member and taxing a solo instance with nothing.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|focus))?$/",
+      // `files` is the Files view (ADR 0083): one folder or one file under the Changes root, a read
+      // gated on an authorised device and forwarded to the owning member like `changes`.
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/",
       "/^\\/api\\/pane\\/([^/]+)\\/resize$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       // The Changes view asked by workspace (ADR 0065): the same read as the pane route's `changes`,
       // read-gated and forwarded with `?host=` to the member that owns the space.
       "/^\\/api\\/workspace\\/([^/]+)\\/changes$/",
+      // The Files view asked by workspace (ADR 0083): the pane route's `files`, by space, gated and
+      // forwarded the same way.
+      "/^\\/api\\/workspace\\/([^/]+)\\/files$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktree(?:\\/(open))?$/",
       "/^\\/api\\/workspace\\/([^/]+)\\/worktrees$/",
       // The prompt-cache rule catalog (M28/02). A process-scoped READ, gated exactly as `/api/config`
@@ -655,6 +669,8 @@ describe("solo zero-tax — routes", () => {
       // read-gated through the same closure `/api/launch` rides, so a `?host=` call forwards to
       // the peer that runs the rows rather than reading the lead's own file.
       "/api/launchers",
+      // Machines (ADR 0084): the list with each machine's latest sample. A read, gated as one.
+      "/api/machines",
       // The prompt-cache watch list (M28/03, ADR 0042). Three SOLO routes in the notifications family,
       // named here rather than exempted: the preference lives on the collie holding the subscription, so
       // none of the three is forwardable and `bridge/crew/router.test.ts` pins all three as 404 across a
@@ -723,6 +739,7 @@ const CONFIG_KEYS = {
   muxEndpoint: true,
   tmuxBin: true,
   zellijBin: true,
+  ternBin: true,
   socketPath: true,
   dialMode: true,
   auditContent: true,
@@ -761,12 +778,16 @@ const CONFIG_KEYS = {
   basePath: true,
   uploadExtraTypes: true,
   cacheWarnSeconds: true,
+  accessTeam: true,
+  accessAud: true,
 } satisfies Record<keyof Config, true>;
 
 describe("solo zero-tax — config", () => {
   test("Config carries no crew/peer/lead key", () => {
     const keys = Object.keys(CONFIG_KEYS).toSorted();
     expect(keys).toEqual([
+      "accessAud",
+      "accessTeam",
       "allowAnyHost",
       "allowNonLoopbackBind",
       "allowedOrigins",
@@ -799,6 +820,7 @@ describe("solo zero-tax — config", () => {
       "stateDir",
       "submitKeys",
       "tailscaleHosts",
+      "ternBin",
       "themeFile",
       "tmuxBin",
       "transcript",
@@ -832,7 +854,7 @@ describe("solo zero-tax — config", () => {
   // Read from `bridge/config-schema.ts` rather than by grepping `config.ts`'s source, because the
   // schema is now the single declaration of what every setting is (ADR 0040). The rows that carry a
   // `configField` are exactly the settings `loadConfig` resolves, which is the list §11 pins. A
-  // CONFIG FILE ADDS NO ENV KEY, so this list is the 38 names it has always been plus `COLLIE_BASE_PATH` (ADR 0052) — the two
+  // CONFIG FILE ADDS NO ENV KEY, so this list is the 38 names it has always been plus `COLLIE_BASE_PATH` (ADR 0052), `COLLIE_MUSE_ROOT` and the two `COLLIE_ACCESS_*` keys (ADR 0081) — the two
   // `COLLIE_MUX_ENDPOINT_<NAME>` rows collapse back to the prefix the old grep saw, because the env
   // name is built at the call site and the file key must not be.
   test("the schema names exactly today's COLLIE_* env keys — no crew enrollment key", () => {
@@ -844,6 +866,8 @@ describe("solo zero-tax — config", () => {
       ),
     ].toSorted();
     expect(keys).toEqual([
+      "COLLIE_ACCESS_AUD",
+      "COLLIE_ACCESS_TEAM",
       "COLLIE_ALLOWED_ORIGINS",
       "COLLIE_ALLOW_ANY_HOST",
       "COLLIE_ALLOW_NON_LOOPBACK_BIND",
@@ -859,6 +883,7 @@ describe("solo zero-tax — config", () => {
       "COLLIE_HOST",
       "COLLIE_MAX_UPLOAD_MB",
       "COLLIE_MULTI_SESSION",
+      "COLLIE_MUSE_ROOT",
       "COLLIE_MUX",
       "COLLIE_MUX_ENDPOINT_",
       "COLLIE_NOTIFY_DELAY_MS",
@@ -873,6 +898,7 @@ describe("solo zero-tax — config", () => {
       "COLLIE_STATE_DIR",
       "COLLIE_SUBMIT_KEYS",
       "COLLIE_TAILSCALE_HOSTS",
+      "COLLIE_TERN_BIN",
       "COLLIE_TMUX_BIN",
       "COLLIE_TRANSCRIPT",
       "COLLIE_TRANSCRIPT_ROOT",
@@ -894,6 +920,10 @@ describe("solo zero-tax — config", () => {
 
 /** Every `<stateDir>/…` path any bridge module names. `uploads` is a directory, the rest are files. */
 const STATE_DIR_ENTRIES = [
+  // Windows only (M43 spec 04): the access lists Collie saved before it changed one, so the change can
+  // be undone with `icacls /restore`. Absent until the bridge actually repaired a loose folder or file;
+  // never on Linux or macOS, and never on a Windows install whose folders were private already.
+  "acl-backups",
   "activity.json",
   "audit.log",
   // Agent beacons (M11/01) — a directory, and one no bridge module ever writes: the bridge only ever
@@ -910,6 +940,12 @@ const STATE_DIR_ENTRIES = [
   // bridge that is only started, only read, or only ever asked for spaces in home writes none of it,
   // so the four entries asserted below hold. Driven in "the folder list appears only on use".
   "folders.json",
+  // Machines (ADR 0084), a §11 row RENEGOTIATED ON PURPOSE. The alert rules are absent until the
+  // operator sets the first one. The history is written from the tick at most once every five minutes,
+  // and only once a minute has been recorded — so a solo collie that runs for five minutes writes it,
+  // and a bridge only started and stopped does not. Both are driven in "the machine files appear …".
+  "machine-alerts.json",
+  "machine-history.json",
   "notify-prefs.json",
   // Device pairing. Both are absent until the operator runs `collie pair`, and an install that
   // never does keeps writing exactly the six entries above it.
@@ -1064,6 +1100,53 @@ describe("solo zero-tax — the filesystem", () => {
   });
 });
 
+// §11's "Files written" row, amended on purpose by ADR 0084, and driven like the folder list above:
+// the watch exactly as index.ts builds it on a solo collie, over a temp state folder.
+describe("solo zero-tax — the machine files", () => {
+  test("the history appears on the first save after five minutes of samples; the rules only on a rule", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "collie-solo-baseline-"));
+    try {
+      let now = TS;
+      const watch = new MachineWatch({
+        now: () => now,
+        roster: () => machineRosterOf(null, { id: SOLO_MACHINE_ID, name: "solo" }),
+        history: await loadMachineHistory(stateDir, now),
+        alerts: await MachineAlertStore.load(stateDir),
+        saveHistory: (history, at) => saveMachineHistory(stateDir, history, at),
+        muted: () => false,
+        enabled: () => true,
+        send: () => {},
+      });
+      // Started, ticked, and stopped with nothing sampled: nothing on disk.
+      watch.tick();
+      await watch.flush();
+      expect(await readdir(stateDir)).toEqual([]);
+
+      // Sampled for a while, but inside the five-minute save interval: still nothing.
+      const sample = { cpu: 0.2, cores: 4, memUsed: 1e9, memTotal: 8e9 };
+      for (let i = 0; i < 4; i++) {
+        watch.observe(SOLO_MACHINE_ID, sample, now);
+        now += 60_000;
+        watch.tick();
+      }
+      await Bun.sleep(5);
+      expect(await readdir(stateDir)).toEqual([]);
+
+      now += 60_000;
+      watch.observe(SOLO_MACHINE_ID, sample, now);
+      watch.tick();
+      await Bun.sleep(5);
+      expect(await readdir(stateDir)).toEqual(["machine-history.json"]);
+
+      await watch.setAlerts(SOLO_MACHINE_ID, { cpu: { above: 0.9, forMin: 10 } });
+      expect((await readdir(stateDir)).toSorted()).toEqual(["machine-alerts.json", "machine-history.json"]);
+      expect((await readdir(stateDir)).filter((f) => !STATE_DIR_ENTRIES.includes(f))).toEqual([]);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── 7. Notification tags and push payload ────────────────────────────────────
 
 describe("solo zero-tax — notifications", () => {
@@ -1090,7 +1173,7 @@ describe("solo zero-tax — notifications", () => {
     expect(src).toContain("if (msg.session !== undefined) data.session = msg.session;");
     expect(src).toContain("if (msg.host !== undefined) data.host = msg.host;");
     // Never stamped unconditionally: an unguarded assignment is what would change the solo payload.
-    const stamps = src.split("\n").filter((l) => l.includes("data.host"));
+    const stamps = src.split(/\r?\n/).filter((l) => l.includes("data.host"));
     expect(stamps).toEqual(["    if (msg.host !== undefined) data.host = msg.host;"]);
   });
 

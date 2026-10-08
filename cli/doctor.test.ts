@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 
 import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
 import { leadStore, member, CREW, peerStore, T0 } from "../bridge/crew/fixtures.ts";
+import { HOST, hostFor } from "../bridge/host.ts";
 import { markerFor } from "../bridge/crew/staleness.ts";
 import { serializeTrustStore, TrustStore, type TrustStoreData, type TrustStoreIo } from "../bridge/crew/trust-store.ts";
 import { fakeBeaconReader, FAKE_BEACON_NOW, type FakeBeacon } from "../bridge/beacon/fake.ts";
@@ -10,7 +12,17 @@ import { BEACON_SCHEMA_VERSION } from "../bridge/beacon/types.ts";
 import type { JsonObject } from "../bridge/json.ts";
 import { BEACON_HOOKS } from "./beacon.ts";
 import type { CliContext } from "./context.ts";
-import { cmdDoctor, type DoctorDeps, type Finding } from "./doctor.ts";
+import {
+  cmdDoctor,
+  type DoctorDeps,
+  type Finding,
+  LONG_PATHS_KEY,
+  secretsPrivate,
+  windowsLongPaths,
+  windowsTask,
+} from "./doctor.ts";
+import type { AclTool, SaveResult } from "../bridge/icacls.ts";
+import type { OwnerOnlyDeps } from "../bridge/owner-only.ts";
 import { HOOK_MARKER, HOOK_MARKER_PREFIX } from "./hooks.ts";
 import type { LinkProbe } from "./link.ts";
 import type { DoctorView, Ui } from "./render.ts";
@@ -28,6 +40,8 @@ import {
   STATE,
 } from "./fakes.ts";
 import { EXIT } from "./io.ts";
+import { POWERSHELL_UTF8 } from "./sys.ts";
+import { collieBinary } from "./unit.ts";
 import {
   configFilePaths,
   readConfigFilesSync,
@@ -43,9 +57,11 @@ import {
 // this verb is safe to run on a machine that is already misbehaving.
 
 const HANDLER = `${CONFIG}/tailscale-managed-handler`;
-/** The name `collie link` publishes, and the directory it lives in (ADR 0021). */
-const LINK_DIR = `${HOME}/.local/bin`;
-const LINK_AT = `${LINK_DIR}/collie`;
+/** The name `collie link` publishes, and the directory it lives in (ADR 0021). Built with `join`, as the code builds it. */
+const LINK_DIR = join(HOME, ".local", "bin");
+const LINK_AT = join(LINK_DIR, "collie");
+/** This checkout's compiled binary: `bin/collie` on POSIX, `bin/collie.exe` on Windows. */
+const OWN_BINARY = collieBinary(ROOT);
 const SOCKET = "/home/pat/.config/herdr/herdr.sock";
 const HOSTPORT = "laptop.tail.ts.net:443";
 const PROXY = "http://127.0.0.1:8787";
@@ -80,7 +96,9 @@ const INTEGRATION_OK = [
 ].join("\n");
 
 const HEALTHY_ANSWERS: Scripted["answers"] = [
-  ["herdr --version", { stdout: "herdr 0.8.2\n" }],
+  // At or above the Windows minimum (`HERDR_MIN_WINDOWS`), because this suite runs on the real host
+  // and a Windows run would otherwise warn on a healthy fixture.
+  ["herdr --version", { stdout: "herdr 0.9.3\n" }],
   // A healthy checkout can say where it came from: `update` asserts `origin` against the configured
   // update source before it fetches, so an origin-less checkout is a real (reported) problem.
   [`git -C ${ROOT} remote get-url origin`, { stdout: "https://github.com/AltanS/collie.git\n" }],
@@ -122,6 +140,53 @@ function healthyFiles(): SeededFiles {
     [`${HOME}/.claude/projects/-home-pat-repo/9f3c.jsonl`]: "{}",
   };
 }
+
+/**
+ * The owner-only seams with no disk and no `icacls`. `trees[path]` is what `icacls /save /T` wrote
+ * for that folder (lines captured on the VM); a folder not named reads as a private profile folder.
+ * `absent` paths do not exist; a name ending in `.env`, `.json` or `.toml` is a file. `owners` is
+ * what one `Get-Acl` would answer. The repair and mkdir seams throw: doctor changes nothing.
+ */
+/** A `/save` that ran out of time, as the fake's answer for a folder. */
+const ACL_TIMED_OUT = "\u0000timed-out";
+/** A `/save` that wrote no list (FAT, exFAT, a share: simulated). */
+const ACL_NO_LIST = "\u0000no-list";
+
+function fakeOwnerOnly(
+  trees: Record<string, string>,
+  over: { absent?: readonly string[]; owners?: Record<string, string>; lists?: Record<string, string[]> } = {},
+): OwnerOnlyDeps {
+  const fail = (): never => {
+    throw new Error("doctor must never change an access list");
+  };
+  const acl: AclTool = {
+    save: (path) => {
+      const answer = trees[path] ?? `x\r\nD:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;${WIN_SID})\r\n`;
+      if (answer === ACL_TIMED_OUT) return { kind: "timed-out" } satisfies SaveResult;
+      return { kind: "ok", code: answer === ACL_NO_LIST ? 1 : 0, text: answer === ACL_NO_LIST ? "" : answer } satisfies SaveResult;
+    },
+    icacls: fail,
+    reset: fail,
+    whoami: () => ({ code: 0, stdout: `"pc\\pat","${WIN_SID}"\r\n`, timedOut: false }),
+    descriptors: (paths) => new Map(paths.flatMap((p) => (over.owners?.[p] === undefined ? [] : [[p, over.owners[p]!] as const]))),
+  };
+  return {
+    acl,
+    stat: (path) => ((over.absent ?? []).includes(path) ? null : { dir: !/(\.env|\.json|\.toml)$/.test(path), mode: 0o600, nlink: 1 }),
+    isLink: () => false,
+    realpath: (path) => path,
+    list: (path) => over.lists?.[path] ?? [],
+    mkdir: fail,
+    writeBackup: fail,
+    removeFile: fail,
+    env: { USERPROFILE: WIN_HOME, APPDATA: `${WIN_HOME}\\AppData\\Roaming`, LOCALAPPDATA: `${WIN_HOME}\\AppData\\Local`, SystemRoot: "C:\\Windows" },
+    home: WIN_HOME,
+    now: () => T0,
+  };
+}
+
+const WIN_HOME = "C:\\Users\\Rehearse Ünal";
+const WIN_SID = "S-1-5-21-1678274354-1849132225-3673151578-1000";
 
 interface Harness {
   deps: DoctorDeps;
@@ -207,6 +272,7 @@ function harness(
       // As in cli/crew.test.ts: the peer client races the fake fetch against a REAL timer, so the
       // budget is set far above anything this process could stall for.
       ctx: context({ COLLIE_CREW_TIMEOUT_MS: "60000", ...over.env }, contextOver(over)),
+      host: HOST,
       io: out,
       exec,
       files,
@@ -224,6 +290,8 @@ function harness(
       // and — the point of the seam — nothing `doctor` could write even if it tried.
       beacons: fakeBeaconReader(over.beacons ?? []),
       now: () => T0,
+      // Every secret path present and owner-only. The `secrets-private` cases build their own.
+      ownerOnly: fakeOwnerOnly({}),
     },
     io: out,
     files,
@@ -308,6 +376,8 @@ describe("collie doctor — the contract", () => {
       "acl",
       "front-door",
       "mux",
+      // Windows only, and this suite runs on the real host.
+      ...(HOST.platform === "win32" ? ["windows-task", "windows-long-paths", "secrets-private"] : []),
       "beacon-hooks-claude",
       "beacons",
       "herdr-version",
@@ -315,9 +385,12 @@ describe("collie doctor — the contract", () => {
       "integration-codex",
       "integration-grok",
       "integration-hermes",
+      "integration-muse",
       "integration-opencode",
       "integration-pi",
-      "hook-python3",
+      "integration-omp",
+      // Not on Windows: Herdr's hooks there are PowerShell (M43 spec 08).
+      ...(HOST.platform === "win32" ? [] : ["hook-python3"]),
       "agent-sessions",
       "journal-roots",
       "cache-claims",
@@ -335,14 +408,14 @@ describe("collie doctor — the contract", () => {
     expect(raw[0]?.check).toBe("collie");
     expect(raw[0]?.status).toBe("ok");
     expect(raw[0]?.remedy).toBeNull();
-    // "v1.0.0-beta.49 · linux-x64" — a version and a platform, nothing else.
-    expect(raw[0]?.detail).toMatch(/^v\S+ · [a-z]+-[a-z0-9]+$/);
+    // "v1.0.0-beta.49 · linux-x64" (or "win32-x64") — a version and a platform, nothing else.
+    expect(raw[0]?.detail).toMatch(/^v\S+ · [a-z0-9]+-[a-z0-9]+$/);
 
     const code = await cmdDoctor(h.deps, []);
     expect(code).toBe(EXIT.OK);
     const first = h.io.stdout.find((l) => l.includes("collie") && l.trim().startsWith("✓"));
     expect(first).toBeDefined();
-    expect(first).toMatch(/v\S+ · [a-z]+-[a-z0-9]+/);
+    expect(first).toMatch(/v\S+ · [a-z0-9]+-[a-z0-9]+/);
   });
 
   test("`remedy` is null EXACTLY when the status is ok — including for a skipped check", async () => {
@@ -467,7 +540,8 @@ describe("collie doctor — the section sets", () => {
   // warn-only checks grows a `bad(` — which is the point where ADR 0050 asks for a fresh argument,
   // not a silent downgrade to amber. The positive half keeps it from passing by extracting nothing.
   test("`secret-generation` and `member-versions` cannot return an error", async () => {
-    const source = await Bun.file(new URL("./doctor.ts", import.meta.url)).text();
+    // A Windows checkout may carry CRLF line endings; the body's closing brace is found on `\n}\n`.
+    const source = (await Bun.file(new URL("./doctor.ts", import.meta.url)).text()).replaceAll("\r\n", "\n");
     const bodyOf = (name: string): string => {
       const start = source.indexOf(`function ${name}(`);
       expect(start, `${name} not found`).toBeGreaterThan(-1);
@@ -526,8 +600,8 @@ describe("collie doctor — the local checks", () => {
 
   test("path-link: linked here, with the directory on PATH, is ok", async () => {
     const h = harness(null, [], {
-      env: { PATH: `/usr/bin:${LINK_DIR}` },
-      link: { [LINK_AT]: { kind: "symlink", target: `${ROOT}/bin/collie` } },
+      env: { PATH: ["/usr/bin", LINK_DIR].join(delimiter) },
+      link: { [LINK_AT]: { kind: "symlink", target: OWN_BINARY } },
     });
     const f = (await findings(h)).byCheck.get("path-link");
     expect(f?.status).toBe("ok");
@@ -537,7 +611,7 @@ describe("collie doctor — the local checks", () => {
   test("path-link: linked here but the directory is off PATH warns — the shell cannot find it", async () => {
     const h = harness(null, [], {
       env: { PATH: "/usr/bin" },
-      link: { [LINK_AT]: { kind: "symlink", target: `${ROOT}/bin/collie` } },
+      link: { [LINK_AT]: { kind: "symlink", target: OWN_BINARY } },
     });
     const f = (await findings(h)).byCheck.get("path-link");
     expect(f?.status).toBe("warn");
@@ -717,19 +791,128 @@ describe("collie doctor — the local checks", () => {
     expect(byCheck.get("front-door")?.remedy).toContain("https://login.tailscale.com/admin/dns");
   });
 
+  test("front-door: on a Windows host the no-certificates remedy names the by-hand command, not `collie serve` (#172)", async () => {
+    const answers: NonNullable<Scripted["answers"]> = [
+      ["tailscale status --json", { stdout: JSON.stringify({ Self: { DNSName: "laptop.tail.ts.net." } }) }],
+      ["tailscale serve status --json", { stdout: SERVE_OK }],
+      ...netmapAnswers(NETMAP_OPEN),
+    ];
+    const win = harness(null, [], { answers });
+    win.deps = { ...win.deps, host: hostFor("win32") };
+    const winFinding = (await findings(win)).byCheck.get("front-door")!;
+    expect(winFinding.status).toBe("warn");
+    expect(winFinding.detail).toContain("no HTTPS certificates");
+    expect(winFinding.remedy).toContain("https://login.tailscale.com/admin/dns");
+    expect(winFinding.remedy).toContain(`tailscale serve --bg --set-path=/ ${win.deps.ctx.port}`);
+    expect(winFinding.remedy).toContain(`tailscale serve --bg --http=80 --set-path=/ ${win.deps.ctx.port}`);
+    expect(winFinding.remedy).toContain("pair a device");
+    expect(winFinding.remedy).toContain("docs/windows.md");
+    expect(winFinding.remedy).not.toContain("collie serve");
+
+    const posix = harness(null, [], { answers });
+    posix.deps = { ...posix.deps, host: hostFor("linux") };
+    const posixFinding = (await findings(posix)).byCheck.get("front-door")!;
+    expect(posixFinding.remedy).toContain("collie serve");
+    expect(posixFinding.remedy).not.toContain("tailscale serve --bg");
+  });
+
+  test("front-door: on a Windows host a solo collie with no mapping is told the by-hand command, not `collie serve`", async () => {
+    const files = healthyFiles();
+    delete files[HANDLER];
+    const answers: NonNullable<Scripted["answers"]> = [
+      ["tailscale status --json", { stdout: CERTS_ONLY }],
+      ["tailscale serve status --json", { stdout: "{}" }],
+      ...netmapAnswers(NETMAP_OPEN),
+    ];
+    const win = harness(null, [], { files, answers });
+    win.deps = { ...win.deps, host: hostFor("win32") };
+    const winFinding = (await findings(win)).byCheck.get("front-door")!;
+    expect(winFinding.status).toBe("warn");
+    expect(winFinding.remedy).toContain(`tailscale serve --bg --set-path=/ ${win.deps.ctx.port}`);
+    expect(winFinding.remedy).toContain("pair a device");
+    expect(winFinding.remedy).toContain("COLLIE_SKIP_SERVE=1");
+    expect(winFinding.remedy).not.toContain("collie serve");
+
+    const posix = harness(null, [], { files, answers });
+    posix.deps = { ...posix.deps, host: hostFor("linux") };
+    expect((await findings(posix)).byCheck.get("front-door")?.remedy).toContain("`collie serve` here");
+  });
+
+  test("front-door: on a Windows host a hand-made root mount that proxies to this collie passes; a POSIX host still warns", async () => {
+    const files = healthyFiles();
+    delete files[HANDLER];
+    const answers: NonNullable<Scripted["answers"]> = [
+      ["tailscale status --json", { stdout: CERTS_ONLY }],
+      ["tailscale serve status --json", { stdout: SERVE_OK }],
+      ...netmapAnswers(NETMAP_OPEN),
+    ];
+    const win = harness(null, [], { files, answers });
+    win.deps = { ...win.deps, host: hostFor("win32") };
+    const winFinding = (await findings(win)).byCheck.get("front-door")!;
+    expect(winFinding.status).toBe("ok");
+    expect(winFinding.detail).toContain(`proxies to http://127.0.0.1:${win.deps.ctx.port}`);
+    expect(winFinding.detail).toContain("published by hand");
+
+    const posix = harness(null, [], { files, answers });
+    posix.deps = { ...posix.deps, host: hostFor("linux") };
+    const posixFinding = (await findings(posix)).byCheck.get("front-door")!;
+    expect(posixFinding.status).toBe("warn");
+    expect(posixFinding.remedy).toContain("`collie serve` here");
+  });
+
+  test("front-door: on a Windows host a hand-made HTTP mount on :80 passes on a tailnet with no certificates (Headscale)", async () => {
+    const files = healthyFiles();
+    delete files[HANDLER];
+    const serveHttp80 = JSON.stringify({
+      TCP: { "80": { HTTP: true } },
+      Web: { "laptop.tail.ts.net:80": { Handlers: { "/": { Proxy: PROXY } } } },
+    });
+    const answers: NonNullable<Scripted["answers"]> = [
+      ["tailscale status --json", { stdout: JSON.stringify({ Self: { DNSName: "laptop.tail.ts.net." } }) }],
+      ["tailscale serve status --json", { stdout: serveHttp80 }],
+      ...netmapAnswers(NETMAP_OPEN),
+    ];
+    const win = harness(null, [], { files, answers });
+    win.deps = { ...win.deps, host: hostFor("win32") };
+    const winFinding = (await findings(win)).byCheck.get("front-door")!;
+    expect(winFinding.status).toBe("ok");
+    expect(winFinding.detail).toContain(`:80 proxies to http://127.0.0.1:${win.deps.ctx.port}`);
+
+    // A mount on :80 that proxies somewhere else is not ours: the certificate warning stays.
+    const elsewhere = harness(null, [], {
+      files,
+      answers: [
+        answers[0]!,
+        ["tailscale serve status --json", { stdout: serveHttp80.replace(PROXY, "http://127.0.0.1:9999") }],
+        ...netmapAnswers(NETMAP_OPEN),
+      ],
+    });
+    elsewhere.deps = { ...elsewhere.deps, host: hostFor("win32") };
+    const elsewhereFinding = (await findings(elsewhere)).byCheck.get("front-door")!;
+    expect(elsewhereFinding.status).toBe("warn");
+    expect(elsewhereFinding.detail).toContain("no HTTPS certificates");
+
+    const posix = harness(null, [], { files, answers });
+    posix.deps = { ...posix.deps, host: hostFor("linux") };
+    const posixFinding = (await findings(posix)).byCheck.get("front-door")!;
+    expect(posixFinding.status).toBe("warn");
+    expect(posixFinding.detail).toContain("no HTTPS certificates");
+  });
+
   test("front-door: a LEAD with no mapping and no COLLIE_SKIP_SERVE is an error", async () => {
     const files = { ...healthyFiles(), ...markerFile(LEAD) };
     delete files[HANDLER];
-    const { code, byCheck } = await findings(
-      harness(LEAD, [hello()], {
-        files,
-        answers: [
-          ["tailscale status --json", { stdout: CERTS_ONLY }],
-          ["tailscale serve status --json", { stdout: "{}" }],
-          ...netmapAnswers(NETMAP_OPEN),
-        ],
-      }),
-    );
+    const lead = harness(LEAD, [hello()], {
+      files,
+      answers: [
+        ["tailscale status --json", { stdout: CERTS_ONLY }],
+        ["tailscale serve status --json", { stdout: "{}" }],
+        ...netmapAnswers(NETMAP_OPEN),
+      ],
+    });
+    // The remedy names `collie serve` on a POSIX host only; a Windows host is told the by-hand command.
+    lead.deps = { ...lead.deps, host: hostFor("linux") };
+    const { code, byCheck } = await findings(lead);
     expect(byCheck.get("front-door")?.status).toBe("error");
     expect(byCheck.get("front-door")?.remedy).toContain("collie serve");
     expect(code).toBe(EXIT.FAIL);
@@ -994,15 +1177,55 @@ describe("collie doctor — the crew checks", () => {
     expect(CREW.secretGeneration).toBe(1);
   });
 
-  test("member-reach: an unreachable member is an error naming `collie reconnect`", async () => {
+  test("member-reach: an unreachable member is an error naming `collie crew set-address`", async () => {
     const { code, byCheck } = await findings(
       harness(LEAD, [new Error("connection refused")], { files: { ...healthyFiles(), ...markerFile(LEAD) } }),
     );
     const f = byCheck.get("member-reach");
     expect(f?.status).toBe("error");
     expect(f?.detail).toContain("laptop");
-    expect(f?.remedy).toContain("collie reconnect");
+    // The lead's verb: it refuses an address the crew cannot dial, where `reconnect` takes anything.
+    expect(f?.remedy).toContain("collie crew set-address <member> <host:port>");
+    expect(f?.remedy).not.toContain("collie reconnect");
     expect(code).toBe(EXIT.FAIL);
+  });
+
+  test("member-reach: a silent peer with a portless address gets the exact set-address command", async () => {
+    const portless = leadStore({ peers: [member({ memberId: "laptop", address: "100.64.0.9" })] });
+    const { byCheck } = await findings(
+      harness(portless, [new Error("connection refused")], { files: { ...healthyFiles(), ...markerFile(portless) } }),
+    );
+    const f = byCheck.get("member-reach");
+    expect(f?.detail).toContain(
+      "laptop at 100.64.0.9 — ",
+    );
+    expect(f?.detail).toContain("→ `collie crew set-address laptop 100.64.0.9:8787` (8787 unless that machine set COLLIE_PORT)");
+    // The generic remedy is still there for the rest.
+    expect(f?.remedy).toContain("collie crew set-address <member> <host:port>");
+  });
+
+  test("member-reach: a silent peer at host:port, with a scheme or an IPv6 literal gets no suggestion", async () => {
+    for (const address of ["laptop.example:8787", "https://laptop.example", "fd7a:115c::9"]) {
+      const store = leadStore({ peers: [member({ memberId: "laptop", address })] });
+      const { byCheck } = await findings(
+        harness(store, [new Error("connection refused")], { files: { ...healthyFiles(), ...markerFile(store) } }),
+      );
+      expect(byCheck.get("member-reach")?.detail).not.toContain("→");
+    }
+  });
+
+  test("lead-reach: an unreachable lead keeps `collie reconnect`, the verb that runs on a peer", async () => {
+    const peer = peerStore();
+    const { byCheck } = await findings(
+      harness(peer, [new Error("connection refused")], {
+        env: { COLLIE_HOST: "laptop.tail.ts.net" },
+        files: without({ ...healthyFiles(), ...markerFile(peer) }, HANDLER),
+      }),
+    );
+    const f = byCheck.get("lead-reach");
+    expect(f?.status).toBe("error");
+    expect(f?.remedy).toContain("collie reconnect <address>");
+    expect(f?.remedy).not.toContain("set-address");
   });
 
   test("member-reach: a member that answers `hello` and then starves is an error about the BUDGET", async () => {
@@ -1123,8 +1346,6 @@ describe("collie doctor — the crew checks", () => {
 
 /** The Claude settings file `hooks install claude` writes on a default host. */
 const SETTINGS = `${HOME}/.claude/settings.json`;
-/** The binary an install pins to when nothing is linked: this checkout's own. */
-const OWN_BINARY = `${ROOT}/bin/collie`;
 
 /** A settings document carrying our entry on every registered event, at `version`. */
 function settingsWith(command: string): string {
@@ -1212,7 +1433,7 @@ describe("mux", () => {
     const finding = byCheck.get("mux")!;
     expect(finding.status).toBe("error");
     expect(finding.detail).toContain("no multiplexers are running");
-    expect(finding.remedy).toContain("COLLIE_MUX=<herdr|tmux|tuios|zellij> collie start");
+    expect(finding.remedy).toContain("COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start");
   });
 
   test("nothing configured and two multiplexers running is an error naming both", async () => {
@@ -1340,6 +1561,7 @@ describe("the finding set is scoped by the chosen multiplexer", () => {
       "acl",
       "front-door",
       "mux",
+      ...(HOST.platform === "win32" ? ["windows-task", "windows-long-paths", "secrets-private"] : []),
       "beacon-hooks-claude",
       "beacons",
       "agent-sessions",
@@ -1404,7 +1626,8 @@ describe("the finding set is scoped by the chosen multiplexer", () => {
     expect(byCheck.get("herdr-socket")?.status).toBe("error");
     expect(byCheck.get("herdr-version")).toBeDefined();
     expect(byCheck.get("integration-claude")).toBeDefined();
-    expect(byCheck.get("hook-python3")).toBeDefined();
+    // Not on Windows: Herdr's hooks there are PowerShell (M43 spec 08), and this suite runs on the real host.
+    if (HOST.platform !== "win32") expect(byCheck.get("hook-python3")).toBeDefined();
     expect(code).toBe(EXIT.FAIL);
   });
 });
@@ -1610,7 +1833,7 @@ describe("collie doctor — a packaged install", () => {
     const h = systemOwned();
     // `/opt/collie` is the fake's root; a PATH name pointing into it is what a package installs.
     expect((await findings(h)).byCheck.get("install")?.detail ?? "").toContain("no PATH name points at it");
-    const linked = systemOwned({ "/usr/bin/collie": { kind: "symlink", target: `${ROOT}/bin/collie` } });
+    const linked = systemOwned({ "/usr/bin/collie": { kind: "symlink", target: OWN_BINARY } });
     expect((await findings(linked)).byCheck.get("install")?.detail ?? "").toContain("via /usr/bin/collie");
   });
 
@@ -1637,7 +1860,7 @@ describe("collie doctor — a packaged install", () => {
   const MAIN_PID = "systemctl --user show collie --property=MainPID --value";
   const PID = 4242;
   const EXE = `/proc/${String(PID)}/exe`;
-  const BINARY = `${ROOT}/bin/collie`;
+  const BINARY = OWN_BINARY;
   const supervised = (link: Record<string, LinkProbe> = {}) =>
     systemOwned(link, [[MAIN_PID, { stdout: `${String(PID)}\n` }]]);
 
@@ -1802,11 +2025,12 @@ describe("the config-file finding", () => {
   });
 
   test("config-file is bad when a secret was dropped for permissions", async () => {
-    const { code, byCheck } = await findings(
-      harness(null, [], {
-        configLayer: layer({ [HOME_FILE]: '[push]\nvapid_private = "x"\n' }, false),
-      }),
-    );
+    const h = harness(null, [], {
+      configLayer: layer({ [HOME_FILE]: '[push]\nvapid_private = "x"\n' }, false),
+    });
+    // The POSIX remedy, pinned: on a Windows test host the line below would name icacls instead.
+    h.deps = { ...h.deps, host: hostFor("linux") };
+    const { code, byCheck } = await findings(h);
     const f = byCheck.get("config-file")!;
     expect(f.status).toBe("error");
     expect(f.detail).toContain("COLLIE_VAPID_PRIVATE");
@@ -1814,6 +2038,36 @@ describe("the config-file finding", () => {
     expect(f.remedy).toContain("chmod 600");
     // A dropped secret is a real failure, so the verb's exit code says so.
     expect(code).not.toBe(EXIT.OK);
+  });
+
+  test("on Windows the dropped-secret remedy names icacls, never chmod (M43 spec 04)", async () => {
+    const h = harness(null, [], {
+      configLayer: layer({ [HOME_FILE]: '[push]\nvapid_private = "x"\n' }, false),
+    });
+    h.deps = { ...h.deps, host: hostFor("win32") };
+    const f = (await findings(h)).byCheck.get("config-file")!;
+    expect(f.status).toBe("error");
+    expect(f.remedy).toBe("run the `icacls` line the warning above names for that file, then `collie restart`");
+  });
+
+  test("solo on a Windows host says it cannot join or lead, and suggests no verb that refuses", async () => {
+    const h = harness(null);
+    h.deps = { ...h.deps, host: hostFor("win32") };
+    await cmdDoctor(h.deps, []);
+    const lines = h.io.stdout;
+    const at = lines.indexOf("crew: none — this collie is not in a crew.");
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 1]).toBe("  A Windows machine cannot join or lead a crew in this release.");
+    expect(lines.join("\n")).not.toContain("crew invite");
+  });
+
+  test("solo on a POSIX host still names both ways into a crew", async () => {
+    const h = harness(null);
+    h.deps = { ...h.deps, host: hostFor("linux") };
+    await cmdDoctor(h.deps, []);
+    const lines = h.io.stdout;
+    const at = lines.indexOf("crew: none — this collie is not in a crew.");
+    expect(lines[at + 1]).toBe("  `collie crew invite` here makes it a lead; `collie join …` makes it a peer.");
   });
 
   test("a typo'd COLLIE_CONFIG shows as an absent path rather than as silence", async () => {
@@ -1828,5 +2082,255 @@ describe("the config-file finding", () => {
       harness(null, [], { configLayer: typo, env: { COLLIE_CONFIG: "/etc/collie-tpyo.toml" } }),
     );
     expect(byCheck.get("config-file")!.detail).toContain("/etc/collie-tpyo.toml (absent)");
+  });
+});
+
+// ── Windows: who the Task Scheduler task belongs to (M43 spec 05) ─────────────
+
+describe("hook-python3 on Windows (M43 spec 08)", () => {
+  // The rehearsal found `collie doctor` exiting 1 on every fresh Windows install without Python, and
+  // `collie update --check` red with it, which turned the phone's Update button off.
+  test("is no finding at all on Windows, where Herdr's hooks are PowerShell; elsewhere still an error", async () => {
+    const win = harness(null, [], { absent: ["python3"] });
+    win.deps = { ...win.deps, host: hostFor("win32") };
+    const { byCheck } = await findings(win);
+    expect(byCheck.has("hook-python3")).toBe(false);
+    expect(byCheck.has("windows-long-paths")).toBe(true);
+
+    const linux = harness(null, [], { absent: ["python3"] });
+    linux.deps = { ...linux.deps, host: hostFor("linux") };
+    const { byCheck: onLinux, code } = await findings(linux);
+    expect(onLinux.get("hook-python3")?.status).toBe("error");
+    expect(onLinux.has("windows-long-paths")).toBe(false);
+    expect(code).toBe(EXIT.FAIL);
+  });
+});
+
+describe("windows-long-paths", () => {
+  const reg = (value: string | null): Scripted["answers"] => [
+    [
+      `reg query ${LONG_PATHS_KEY} /v LongPathsEnabled`,
+      value === null
+        ? { code: 1, stderr: "ERROR: The system was unable to find the specified registry key or value." }
+        : { stdout: `\r\n${LONG_PATHS_KEY}\r\n    LongPathsEnabled    REG_DWORD    ${value}\r\n\r\n` },
+    ],
+  ];
+  const SHORT = "C:\\Users\\pat\\AppData\\Local\\collie\\versions\\1.16.0";
+  const run = (value: string | null, root = SHORT) =>
+    windowsLongPaths({ ctx: context({}, { root }), exec: fakeExec({ answers: reg(value) }) });
+
+  test("ok when long paths are on and the install folder is short", () => {
+    const f = run("0x1");
+    expect(f.status).toBe("ok");
+    expect(f.detail).toBe(`LongPathsEnabled is 1, and the install folder is ${SHORT.length} characters long`);
+  });
+
+  test("warns, never errors, when long paths are off, with the one line that turns them on", () => {
+    const f = run("0x0");
+    expect(f.status).toBe("warn");
+    expect(f.detail).toBe(
+      "Herdr cannot start a pane in a folder whose path is longer than 260 characters (os error 267). Keep your work folders short. LongPathsEnabled is 0 on this machine.",
+    );
+    expect(f.remedy).toContain("Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\FileSystem' -Name LongPathsEnabled -Value 1");
+  });
+
+  test("warns when the install folder itself is long, whatever the switch says", () => {
+    const deep = `C:\\${"a".repeat(210)}\\versions\\1.16.0`;
+    const f = run("0x1", deep);
+    expect(f.status).toBe("warn");
+    expect(f.detail).toContain(`is ${deep.length} characters long`);
+    expect(f.remedy).toContain("COLLIE_DIR");
+  });
+
+  test("a value it cannot read is skipped, never a failure", () => {
+    expect(run(null).status).toBe("skipped");
+  });
+});
+
+describe("secrets-private (M43 spec 04)", () => {
+  const WIN = hostFor("win32");
+  const WIN_STATE = `${WIN_HOME}\\.local\\state\\collie`;
+  const WIN_CONFIG = `${WIN_HOME}\\AppData\\Roaming\\herdr\\plugins\\config\\herdr.collie`;
+  const ENV = `${WIN_CONFIG}\\.env`;
+  // A folder made under C:\ (VM): Users read it, Authenticated Users change it.
+  const DRIVE = (name: string) =>
+    `${name}\r\nD:AI(A;OICIID;FA;;;BA)(A;OICIID;FA;;;SY)(A;OICIID;0x1200a9;;;BU)(A;ID;0x1301bf;;;AU)(A;OICIIOID;SDGXGWGR;;;AU)\r\n`;
+  const PRIVATE = (name: string) => `${name}\r\nD:PAI(A;OICI;FA;;;${WIN_SID})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)\r\n`;
+  const run = (trees: Record<string, string>, over: Parameters<typeof fakeOwnerOnly>[1] = {}, stateDir = WIN_STATE) =>
+    secretsPrivate({ ctx: context({}, { stateDir, configDir: WIN_CONFIG }), host: WIN, ownerOnly: fakeOwnerOnly(trees, over) });
+
+  test("ok: both folders private, in the words a person reads", () => {
+    const f = run({});
+    expect(f.status).toBe("ok");
+    expect(f.detail).toBe("the Collie state folder and the Collie config folder are private to your account, SYSTEM and Administrators");
+  });
+
+  test("a loose state folder is an error: who, the path on its own line, and the fix", () => {
+    const f = run({ [WIN_STATE]: DRIVE("collie") });
+    expect(f.status).toBe("error");
+    expect(f.detail).toBe(
+      `the Collie state folder can be read by other accounts (Users [S-1-5-32-545], Authenticated Users [S-1-5-11]).\n${WIN_STATE}`,
+    );
+    expect(f.remedy).toBe(
+      `Fix: restart Collie, or run: icacls "${WIN_STATE}" /grant:r "*${WIN_SID}:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" ` +
+        `"*S-1-5-32-544:(OI)(CI)F" /inheritance:r /remove:g *S-1-5-32-545 *S-1-5-11`,
+    );
+  });
+
+  test("an Everyone grant on .env names the file inside the folder, and the one reset that fixes it", () => {
+    const tree = `${PRIVATE("herdr.collie")}herdr.collie\\.env\r\nD:AI(A;;FR;;;WD)(A;ID;FA;;;BA)(A;ID;FA;;;SY)(A;ID;FA;;;${WIN_SID})\r\n`;
+    const f = run({ [WIN_CONFIG]: tree });
+    expect(f.status).toBe("error");
+    expect(f.detail).toBe(`the Collie config folder holds files other accounts can read (Everyone [S-1-1-0]): .env.\n${WIN_CONFIG}`);
+    expect(f.remedy).toBe(`Fix: restart Collie, or run: icacls "${ENV}" /reset`);
+  });
+
+  test("a custom folder Collie does not own: the fix is the icacls line alone, never 'restart'", () => {
+    const custom = "D:\\Projects";
+    const f = run({ [custom]: DRIVE("Projects") }, { lists: { [custom]: ["src", "crew-trust.json"] } }, custom);
+    expect(f.status).toBe("error");
+    expect(f.remedy).toStartWith(`Fix: run: icacls "${custom}" /grant:r`);
+  });
+
+  test("a folder that cannot be checked is a warning, 'cannot confirm', never ok and never an error", () => {
+    const f = run({ [WIN_STATE]: ACL_TIMED_OUT });
+    expect(f.status).toBe("warn");
+    expect(f.detail).toBe(
+      `cannot confirm who can read the Collie state folder: icacls did not answer within 10 seconds\n${WIN_STATE}`,
+    );
+    // FAT, exFAT or a share (simulated: icacls writes no list there).
+    expect(run({ [WIN_STATE]: ACL_NO_LIST }).detail).toContain("FAT, exFAT and network drives have none");
+  });
+
+  test("a foreign owner is an error even when the list is private: an owner can always change it", () => {
+    const f = run({}, { owners: { [`${WIN_STATE}\\crew-trust.json`]: "O:S-1-5-21-1-2-3-1002G:S-1-5-21-1-2-3-513D:(A;;FA;;;SY)" } });
+    expect(f.status).toBe("error");
+    expect(f.detail).toBe(
+      `crew-trust.json is owned by another account [S-1-5-21-1-2-3-1002], who can always change its permissions.\n${WIN_STATE}\\crew-trust.json`,
+    );
+    expect(f.remedy).toBe(`Fix: in an Administrator PowerShell, icacls "${WIN_STATE}\\crew-trust.json" /setowner "*${WIN_SID}"`);
+  });
+
+  test("nothing there yet is skipped", () => {
+    expect(run({}, { absent: [WIN_STATE, WIN_CONFIG] }).status).toBe("skipped");
+  });
+
+  test("is a line on Windows only, with the path printed on its own line", async () => {
+    const win = harness(null);
+    win.deps = { ...win.deps, host: WIN };
+    expect((await findings(win)).byCheck.get("secrets-private")?.status).toBe("ok");
+    const linux = harness(null);
+    linux.deps = { ...linux.deps, host: hostFor("linux") };
+    expect((await findings(linux)).byCheck.has("secrets-private")).toBe(false);
+    const loose = harness(null);
+    loose.deps = {
+      ...loose.deps,
+      host: WIN,
+      ctx: { ...loose.deps.ctx, stateDir: WIN_STATE, configDir: WIN_CONFIG },
+      ownerOnly: fakeOwnerOnly({ [WIN_STATE]: DRIVE("collie") }),
+    };
+    await cmdDoctor(loose.deps, []);
+    const out = loose.io.stdout.join("\n");
+    expect(out).toContain(`secrets-private       the Collie state folder can be read by other accounts`);
+    expect(out).toContain(`\n${" ".repeat(33)}${WIN_STATE} → Fix: restart Collie, or run: icacls`);
+  });
+});
+
+describe("windows-task", () => {
+  const WIN = hostFor("win32");
+  // The query opens with the UTF-8 line (`POWERSHELL_UTF8`), so a non-ASCII path comes back whole.
+  const QUERY = `powershell -NoProfile -NonInteractive -Command ${POWERSHELL_UTF8}$t = Get-ScheduledTask`;
+  const BIN = collieBinary(ROOT, WIN);
+  const answer = (args: string): Scripted["answers"] => [
+    [QUERY, { stdout: `Running\r\nC:\\WINDOWS\\system32\\conhost.exe\r\n${args}\r\n` }],
+  ];
+  const run = (answers: Scripted["answers"], absent: string[] = []) =>
+    windowsTask({ ctx: context(), exec: fakeExec({ answers, absent }), host: WIN, link: fakeLinkFs() });
+
+  test("names the program the task runs when it is this install's launcher", () => {
+    const f = run(answer(`--headless ${BIN} _supervise COLLIE_PORT=8787`));
+    expect(f.status).toBe("ok");
+    expect(f.detail).toBe(`Task herdr.collie runs ${BIN} (Running)`);
+  });
+
+  test("a task that still runs the old script says so in one line, with the one command that fixes it", () => {
+    const f = run(answer(`--headless "C:\\ps\\powershell.exe" -File "${ROOT}\\contrib\\windows\\collie-ctl.ps1" _exec-bridge`));
+    expect(f.status).toBe("warn");
+    expect(f.detail).toContain("Task herdr.collie still runs the old script");
+    expect(f.remedy).toBe("Run: collie restart");
+  });
+
+  // The gate for M43 spec 06/08: a binary install's task registered on a version folder keeps
+  // relaunching that version after an update moves `current`.
+  test("a binary install whose task runs a version folder, not `current`, is a warning", () => {
+    const install = "C:\\Users\\pat\\.collie";
+    const root = `${install}\\versions\\1.16.0`;
+    const link = fakeLinkFs({ [`${install}\\current`]: { kind: "symlink", target: `${install}\\versions\\1.16.0` } });
+    const exec = fakeExec({
+      answers: [[QUERY, { stdout: `Running\r\nC:\\conhost.exe\r\n--headless ${collieBinary(root, WIN)} _supervise\r\n` }]],
+    });
+    const f = windowsTask({ ctx: context({}, { root }), exec, host: WIN, link });
+    expect(f.status).toBe("warn");
+    expect(f.detail).toContain(`runs ${collieBinary(root, WIN)}, not ${install}\\current\\bin\\collie.exe`);
+    expect(f.remedy).toBe("run `collie start` once: it registers the task on `current`");
+  });
+
+  test("a binary install whose task runs `current\\bin\\collie.exe` reads ok, whichever version runs", () => {
+    const install = "C:\\Users\\pat\\.collie";
+    const root = `${install}\\versions\\1.16.0`;
+    const link = fakeLinkFs({ [`${install}\\current`]: { kind: "symlink", target: `${install}\\versions\\1.16.0` } });
+    const program = `${install}\\current\\bin\\collie.exe`;
+    const exec = fakeExec({
+      answers: [[QUERY, { stdout: `Running\r\nC:\\conhost.exe\r\n--headless ${program} _supervise "COLLIE_PLUGIN_ROOT=${install}\\current"\r\n` }]],
+    });
+    const f = windowsTask({ ctx: context({}, { root }), exec, host: WIN, link });
+    expect(f.status).toBe("ok");
+    expect(f.detail).toBe(`Task herdr.collie runs ${program} (Running)`);
+  });
+
+  test("another install's task is named, and no task or no PowerShell is a skip", () => {
+    const other = run(answer('--headless "D:\\other\\bin\\collie.exe" _supervise'));
+    expect(other.status).toBe("warn");
+    expect(other.detail).toContain("D:\\other\\bin\\collie.exe, another Collie install");
+    expect(run([[QUERY, { code: 1 }]]).status).toBe("skipped");
+    expect(run([], ["powershell"]).status).toBe("skipped");
+  });
+});
+
+// ── POSIX parity (M43 spec 04) ──────────────────────────────────────────────
+describe("POSIX parity (M43 spec 04)", () => {
+  const GOLDEN = join(import.meta.dir, "testdata", "doctor-posix.golden.txt");
+  // The identity line names the machine the suite runs on, so it is the one line normalised.
+  const render = async (over: Parameters<typeof harness>[2] = {}): Promise<string> => {
+    const h = harness(null, [], over);
+    h.deps = { ...h.deps, host: hostFor("linux") };
+    await cmdDoctor(h.deps, []);
+    // Two lines are normalised: the machine's identity, and the age of the oldest cache claim, which
+    // grows by one every day and must not fail this test on the day after it was written.
+    const text = h.io.stdout.join("\n").replace(/ · [a-z0-9]+-[a-z0-9]+$/m, " · <platform>");
+    return `${text.replace(/the oldest was checked \d+ days? ago/g, "the oldest was checked <N> days ago")}\n`;
+  };
+  // A config.toml secret that could not be made private: the POSIX `config-file` remedy is pinned too.
+  const blocked = (): Parameters<typeof harness>[2] => ({
+    configLayer: readConfigFilesSync(
+      { read: (p) => ({ text: p === join(HOME, ".collie", "config.toml") ? '[push]\nvapid_private = "x"\n' : null, error: null }) },
+      configFilePaths({}, HOME, CONFIG),
+      () => {},
+      { home: HOME, perms: { mode: () => 0o644, tighten: () => false } },
+    ),
+  });
+
+  // The golden was written by this same block run before spec 04, then gained the integration-omp row from main (the
+  // healthy solo fixture, then a config.toml secret the mode rule could not tighten). The
+  // `secrets-private` line is Windows-only: on a POSIX host it does not exist at all.
+  test("the plain doctor output on a POSIX host is byte-identical to the one before spec 04", async () => {
+    const out = `${await render()}---\n${await render(blocked())}`;
+    const golden = readFileSync(GOLDEN, "utf8");
+    // Paths in the output are joined with the machine's own separator, so the byte comparison runs
+    // where the golden was made (POSIX). Windows compares the check ids and statuses line by line.
+    if (process.platform !== "win32") expect(out).toBe(golden);
+    const ids = (text: string) => text.split("\n").map((l) => /^\s+(\S+)\s+(\S+)/.exec(l)?.slice(1, 3).join(" ")).filter(Boolean);
+    expect(ids(out)).toEqual(ids(golden));
+    expect(out).not.toContain("secrets-private");
   });
 });

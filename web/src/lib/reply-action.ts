@@ -20,7 +20,7 @@
 import { fetchPane, sendReply } from "./api";
 import { describeApiError, describeThrownError } from "./api-error-message";
 import { parseAnsi } from "./ansi";
-import { splitLines } from "./blocks";
+import { splitLines, type StyledLine } from "./blocks";
 import { t } from "./i18n";
 import { graphemeSegmenter } from "./env";
 import { adapterFor, type HarnessAdapter } from "./harness";
@@ -283,6 +283,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   const aborted = await runPreType?.();
   if (aborted) return aborted;
 
+  const onWire = (part: string): string => (adapter.bracketedPaste?.(part) ? bracketPaste(part) : part);
   const chunks = adapter.replyChunks?.(args.text) ?? [args.text];
   if (chunks.length === 0 || chunks.join("") !== args.text) {
     return { status: "error", error: t("reply.stalled.generic") };
@@ -294,6 +295,8 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
       const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
       const lines = splitLines(parseAnsi(fresh.text));
       if (!adapter.composerReady?.(lines)) return { status: "blocked", error: noBoxMessage() };
+      const split = newlineRefusal(adapter, args.text, lines);
+      if (split !== null) return split;
       previousDraft = adapter.extractInputDraft(lines);
     } catch (e) {
       return { status: "error", error: message(e) };
@@ -302,7 +305,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   for (let i = 0; i < chunks.length - 1; i++) {
     let part;
     try {
-      part = await sendReply(args.paneId, chunks[i]!, false, args.scope);
+      part = await sendReply(args.paneId, onWire(chunks[i]!), false, args.scope);
     } catch (e) {
       return { status: "error", error: message(e) };
     }
@@ -314,6 +317,11 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
       try {
         const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
         const lines = splitLines(parseAnsi(fresh.text));
+        // A screen that changed under the send must not unlock a later chunk carrying a `\n` into
+        // an input that submits on it. The earlier chunks are already in the pane, so say so.
+        if (newlineRefusal(adapter, args.text, lines) !== null) {
+          return { status: "error", error: t("reply.refused.multilineMidway"), textDelivered: true };
+        }
         const draft = adapter.extractInputDraft(lines);
         if (draft !== previousDraft && adapter.composerReady?.(lines) && draftCarriesSend(delivered, draft) && carriesReplyTail(delivered, draft)) {
           verified = true;
@@ -329,7 +337,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
 
   let typed;
   try {
-    typed = await sendReply(args.paneId, chunks[chunks.length - 1]!, false, args.scope);
+    typed = await sendReply(args.paneId, onWire(chunks[chunks.length - 1]!), false, args.scope);
   } catch (e) {
     return { status: "error", error: message(e) };
   }
@@ -408,6 +416,33 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   };
 }
 
+const PASTE_START = "\x1b[200~";
+const PASTE_END = "\x1b[201~";
+/** Both paste markers in the 7-bit form (`ESC [`) and the 8-bit CSI form (`\x9b`). */
+const PASTE_MARKERS = [PASTE_START, PASTE_END, "\x9b200~", "\x9b201~"] as const;
+
+function withoutPasteMarkers(text: string): string {
+  return PASTE_MARKERS.reduce((out, marker) => out.replaceAll(marker, ""), text);
+}
+
+/**
+ * One reply part framed as a single bracketed paste, for a harness whose `bracketedPaste` asks. Any
+ * paste marker already inside the text is dropped, and the drop repeats until the text stops
+ * changing: one pass can join the pieces on either side of a removed marker into a new one
+ * (`ESC[2` + `ESC[201~` + `01~`), so no sequence of removals may leave a marker behind. An end marker
+ * left in would close the paste early and the rest, newlines included, would arrive as keystrokes.
+ * Every other byte of the reply is kept as it is.
+ */
+export function bracketPaste(text: string): string {
+  let body = text;
+  let next = withoutPasteMarkers(body);
+  while (next !== body) {
+    body = next;
+    next = withoutPasteMarkers(body);
+  }
+  return `${PASTE_START}${body}${PASTE_END}`;
+}
+
 function noBoxMessage(): string {
   return t("reply.blocked.noBox");
 }
@@ -417,6 +452,19 @@ function noBoxMessage(): string {
  *  help. */
 function noEchoMessage(): string {
   return t("reply.blocked.noEcho");
+}
+
+/**
+ * The refusal for a multi-line message on an input that SUBMITS on a raw newline, or null.
+ * `pane.send_text` types each `\n` as a keypress, so there the message would be answered at its first
+ * line break and the rest typed into whatever comes next. Asked of every read that clears the text to
+ * go out — the pre-flight, the re-check after the pre-clear sweep, the read before a chunked send —
+ * because each can land on a different input than the read before it. No override fixes this, so it
+ * is an `error`, not a `blocked` that would offer "type anyway": the caller keeps the draft.
+ */
+function newlineRefusal(adapter: HarnessAdapter, text: string, lines: StyledLine[]): ReplyOutcome | null {
+  if (!/[\r\n]/.test(text) || !adapter.newlineSubmits?.(lines)) return null;
+  return { status: "error", error: t("reply.refused.multiline") };
 }
 
 /**
@@ -481,6 +529,9 @@ async function preflight(adapter: HarnessAdapter, args: GuardedReplyArgs): Promi
     return blind({ status: "blocked", error: noBoxMessage() });
   }
 
+  const split = newlineRefusal(adapter, args.text, seen);
+  if (split !== null) return blind(split);
+
   // The region the read's `true` was true OF. Computed here, from the same parse `composerReady` just
   // answered about, so the caller cannot bind its keys to anything but the screen that authorised
   // them — and cannot forget to, since it arrives as the argument.
@@ -505,7 +556,8 @@ async function preflight(adapter: HarnessAdapter, args: GuardedReplyArgs): Promi
       // the reply instead. Still fail-open on a throw: the submit key is guarded downstream.
       try {
         const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
-        if (composerReady(splitLines(parseAnsi(fresh.text)))) return null;
+        const lines = splitLines(parseAnsi(fresh.text));
+        if (composerReady(lines)) return newlineRefusal(adapter, args.text, lines);
       } catch {
         return null;
       }

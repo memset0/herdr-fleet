@@ -54,10 +54,13 @@ const BOX_COMPOSER_FIXTURES = [
   "omp--draft-ghost-suggestion-busy.txt",
   "omp--draft-single.txt",
   "omp--draft-wrapped.txt",
+  "omp--fresh-agents-hint.txt",
+  "omp--fresh-effort-hint.txt",
   "omp--fresh-idle.txt",
   "omp--menu-dismissed.txt",
   "omp--slash-palette--filtered.txt",
   "omp--slash-palette.txt",
+  "omp--v18-4-composer-idle.txt",
   "omp--working.txt",
 ];
 
@@ -70,6 +73,12 @@ const NON_BOX_COMPOSER_FIXTURES = ALL_OMP_FIXTURES.filter((f) => !BOX_COMPOSER_F
 describe("locateComposer — the real corpus, pinned so any change to the walk shows up as a diff", () => {
   const PINNED: { fixture: string; top: number; bottom: number; suggestEnd: number }[] = [
     { fixture: "omp--fresh-idle.txt", top: 26, bottom: 27, suggestEnd: 28 },
+    // omp 18.4's empty-composer hint (`⇧⇥ to change thinking effort`) sits right-aligned in the
+    // bottom border: it changes what the row SAYS, never where the box is.
+    { fixture: "omp--fresh-effort-hint.txt", top: 1, bottom: 2, suggestEnd: 3 },
+    // The same border with the higher-priority hint, `← ← to see 1 running agent`: a background
+    // subagent was running. Its key run is two glyphs with a space between them.
+    { fixture: "omp--fresh-agents-hint.txt", top: 1, bottom: 2, suggestEnd: 3 },
     { fixture: "omp--draft-single.txt", top: 26, bottom: 27, suggestEnd: 28 },
     // The same screen with omp's inline suggestion painted after the draft: the ghost changes what
     // the row SAYS, never where the box is.
@@ -84,6 +93,9 @@ describe("locateComposer — the real corpus, pinned so any change to the walk s
     { fixture: "omp--done--tool-result.txt", top: 49, bottom: 50, suggestEnd: 51 },
     { fixture: "omp--working.txt", top: 32, bottom: 33, suggestEnd: 34 },
     { fixture: "omp--menu-dismissed.txt", top: 26, bottom: 27, suggestEnd: 28 },
+    // omp 18.4.10 after `/resume` forked a session: a 177-row buffer whose boxed composer is empty and
+    // whose top border carries the 18.4 powerline (`… ▶─2%───┃─1.1M─`, no branch named `master`).
+    { fixture: "omp--v18-4-composer-idle.txt", top: 175, bottom: 176, suggestEnd: 177 },
     // The slash palette renders BELOW the box — so `suggestEnd` runs past `bottom + 1` and the strip
     // takes the palette with the box.
     { fixture: "omp--slash-palette.txt", top: 26, bottom: 27, suggestEnd: 31 },
@@ -143,13 +155,18 @@ describe("extractInputDraft", () => {
     // A slash command mid-typing is a draft like any other — the palette below the box is chrome.
     { fixture: "omp--slash-palette.txt", draft: "/" },
     { fixture: "omp--slash-palette--filtered.txt", draft: "/new" },
-    // Empty composers. omp paints NO placeholder in an empty box, which is why this adapter ships no
-    // INPUT_PLACEHOLDERS allow-list — there is nothing to filter out.
+    // Empty composers. omp 17/18.1 painted nothing in an empty box; omp 18.4 paints a right-aligned
+    // key hint there (`⇧⇥ to change thinking effort`), which is placeholder text, not a draft.
+    // Reading it as one showed "Draft in terminal" on every fresh session (markers.ts
+    // `draftPlaceholder`).
+    { fixture: "omp--fresh-effort-hint.txt", draft: null },
+    { fixture: "omp--fresh-agents-hint.txt", draft: null },
     { fixture: "omp--fresh-idle.txt", draft: null },
     { fixture: "omp--done.txt", draft: null },
     { fixture: "omp--done--tool-result.txt", draft: null },
     { fixture: "omp--working.txt", draft: null },
     { fixture: "omp--menu-dismissed.txt", draft: null },
+    { fixture: "omp--v18-4-composer-idle.txt", draft: null },
   ];
 
   it.each(DRAFTS)("$fixture reads its draft", ({ fixture, draft }) => {
@@ -170,7 +187,18 @@ describe("extractStatusLines", () => {
     expect(rows[0]!.segments.length).toBeGreaterThan(1);
   });
 
-  it.each(BOX_COMPOSER_FIXTURES.filter((f) => f !== "omp--done.txt"))(
+  // The two omp 18.4 hint captures carry the capturing operator's own statusline template, not
+  // the `π … ▶` powerline these assertions read, and neither does the 18.4.10 idle capture, whose
+  // row runs on into a context meter (`▶─2%───┃─1.1M`) and names branch `main`.
+  it.each(
+    BOX_COMPOSER_FIXTURES.filter(
+      (f) =>
+        f !== "omp--done.txt" &&
+        f !== "omp--fresh-effort-hint.txt" &&
+        f !== "omp--fresh-agents-hint.txt" &&
+        f !== "omp--v18-4-composer-idle.txt",
+    ),
+  )(
     "%s: trims the border glyphs off both ends, keeping the whole powerline",
     (name) => {
       const text = lineText(extractStatusLines(fixtureLines(name))[0]!);

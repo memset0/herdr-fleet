@@ -6,9 +6,13 @@
 //
 // The host stays in the QUERY, never in the path: a `/host/:h/pane/:paneId` shape would fork every
 // route, break every existing deep link, and force the loaders' isPaneUrl() to grow a parser.
-import { asJsonNumber, asJsonObject, asJsonString, type JsonValue } from "./json";
+import { asJsonBoolean, asJsonNumber, asJsonObject, asJsonString, type JsonValue } from "./json";
 import { scopeFromSearchParams, scopeSearch, type Scope } from "./scope";
 import type { AgentView } from "./types";
+
+// The two Machines paths live in `machine-paths.ts` so the service worker can build them: this file
+// reads `window`, which a worker has no type for. Re-exported, so every caller still asks nav.ts.
+export { machinePath, machinesPath, machineTabOf, type MachineTab } from "./machine-paths";
 
 export function panePath(paneId: string, scope?: Scope): string {
   return `/pane/${encodeURIComponent(paneId)}${scopeSearch(scope)}`;
@@ -67,6 +71,63 @@ export function changesCommitPath(paneId: string, scope: Scope | undefined, repo
 /** A space's commit view: the same, asked by space. */
 export function spaceChangesCommitPath(spaceId: string, scope: Scope | undefined, repo: string, path?: string): string {
   return commitUnder(spaceChangesPath(spaceId, scope), repo, path);
+}
+
+/**
+ * Where the Changes screen's folder tree is, inside the Changes root (ADR 0083): `dir` names a folder,
+ * `path` a file, both relative to the root with `/` and never a leading one. Neither is the root,
+ * which is the Changes screen itself.
+ */
+export interface FilesAt {
+  dir?: string;
+  path?: string;
+}
+
+/**
+ * A folder or a file of the Changes screen's tree: `base` is the screen's path (`/pane/:id/changes`
+ * or `/space/:id/changes`, scope query included). A folder or a file is one segment below it
+ * (`…/changes/files?dir=` or `?path=`), the same route, so the router keeps one component for every
+ * level. The root is the screen itself: with no `at`, this is `base`.
+ */
+function filesUnder(base: string, at?: FilesAt): string {
+  if (!at?.dir && !at?.path) return base;
+  const cut = base.indexOf("?");
+  const [pathname, search] = cut === -1 ? [base, ""] : [base.slice(0, cut), base.slice(cut + 1)];
+  const q = new URLSearchParams(search);
+  if (at.dir) q.set("dir", at.dir);
+  else if (at.path) q.set("path", at.path);
+  return `${pathname}/files?${q.toString()}`;
+}
+
+/** A pane's Changes tree: the root (the Changes screen), or with `at` one folder or one file. */
+export function filesPath(paneId: string, scope?: Scope, at?: FilesAt): string {
+  return filesUnder(changesPath(paneId, scope), at);
+}
+
+/** A space's Changes tree: the same, asked by space. */
+export function spaceFilesPath(spaceId: string, scope?: Scope, at?: FilesAt): string {
+  return filesUnder(spaceChangesPath(spaceId, scope), at);
+}
+
+/**
+ * The level above one tree location: a file goes up to its folder, a folder to its parent, a
+ * top-level folder to the root. `null` at the root, where the way up is the Changes screen's own.
+ */
+export function filesParent(at: FilesAt): FilesAt | null {
+  const rel = at.path ?? at.dir ?? "";
+  if (rel === "") return null;
+  const cut = rel.lastIndexOf("/");
+  return cut === -1 ? {} : { dir: rel.slice(0, cut) };
+}
+
+/** Every folder above a Files location, outermost first, the root excluded: `a/b/c.md` gives `a`, `a/b`. */
+export function filesFolders(at: FilesAt): string[] {
+  const rel = at.path ?? at.dir ?? "";
+  const segments = rel.split("/").filter((s) => s !== "");
+  const upTo = at.path !== undefined ? segments.length - 1 : segments.length;
+  const folders: string[] = [];
+  for (let n = 1; n <= upTo; n++) folders.push(segments.slice(0, n).join("/"));
+  return folders;
 }
 
 /** A space's detail route (its tabs + panes). Deep-linkable; carries the scope like panePath. */
@@ -181,6 +242,17 @@ export function pairLandingPath(search: string): string | null {
 export interface NavState {
   from?: string;
   freshPane?: AgentView;
+  /**
+   * The Changes tree opened this file from a `link` row. A symlink is listed and never followed, so
+   * the row cannot say whether it points at a file or a folder, and the file read answers
+   * `unknown-path` for a folder: the one case where the view asks again as a folder.
+   */
+  viaLink?: true;
+  /**
+   * The file screen opens on its Preview rather than its default (a changed file's Diff): the diff's
+   * own "Preview" offer asked for it.
+   */
+  fileView?: "preview";
 }
 
 /** The fields a move may carry beside `from`, which the move itself writes. */
@@ -194,6 +266,16 @@ export type NavExtras = Omit<NavState, "from">;
 export function readFrom(state: JsonValue | undefined): string | undefined {
   const from = asJsonString(asJsonObject(state)?.from);
   return from?.startsWith("/") ? from : undefined;
+}
+
+/** Whether the entry this location came from was a Files `link` row (see {@link NavState.viaLink}). */
+export function readViaLink(state: JsonValue | undefined): boolean {
+  return asJsonBoolean(asJsonObject(state)?.viaLink) === true;
+}
+
+/** Whether this location was opened by a diff's "Preview" (see {@link NavState.fileView}). */
+export function readPreviewAsked(state: JsonValue | undefined): boolean {
+  return asJsonString(asJsonObject(state)?.fileView) === "preview";
 }
 
 /** A path without its query or fragment. `from` is stored with its search, the tree is pathnames. */
@@ -210,10 +292,11 @@ const ANY_SPACE = "/space/*";
  *
  *   L0 `/`
  *   L1 `/space/:id`, `/settings`, `/crew`
- *   L2 `/pane/:id`, `/space/:id/changes`, `/settings/:section`, `/settings/updates`
+ *   L2 `/pane/:id`, `/space/:id/changes`, `/settings/:section`, `/settings/updates`, `/machines`
  *   L3 `/pane/:id/history`, `/pane/:id/changes` (a file view is the same path with `?repo=&path=`),
- *      `/space/:id/changes/commit`
- *   L4 `/pane/:id/changes/commit` (the commit's file view adds `&path=`)
+ *      `/space/:id/changes/commit`, `/space/:id/changes/files` (a folder or a file of the tree, with
+ *      `?dir=` or `?path=`)
+ *   L4 `/pane/:id/changes/commit` (the commit's file view adds `&path=`), `/pane/:id/changes/files`
  *
  * A pane's parent is whichever of the dashboard or a space opened it. `/crew` also accepts
  * `/settings`, because the crew card in Settings opens it, and a step back to Settings is the only
@@ -231,6 +314,14 @@ export function ancestorsOf(pathname: string): string[] {
   if (head === "pane" && seg.length === 4 && leaf === "changes" && seg[3] === "commit") {
     return [`/pane/${id}/changes`, `/pane/${id}`, ANY_SPACE, "/"];
   }
+  // A folder or a file of the Changes tree sits below the Changes screen, its root (ADR 0083). The
+  // folders share one pathname, so a step between them is the screen's own (`filesParent`).
+  if (head === "space" && seg.length === 4 && leaf === "changes" && seg[3] === "files") {
+    return [`/space/${id}/changes`, `/space/${id}`, "/"];
+  }
+  if (head === "pane" && seg.length === 4 && leaf === "changes" && seg[3] === "files") {
+    return [`/pane/${id}/changes`, `/pane/${id}`, ANY_SPACE, "/"];
+  }
   if (head === "pane" && seg.length === 2) return [ANY_SPACE, "/"];
   if (head === "pane" && seg.length === 3 && (leaf === "history" || leaf === "changes")) {
     return [`/pane/${id}`, ANY_SPACE, "/"];
@@ -244,6 +335,12 @@ export function ancestorsOf(pathname: string): string[] {
   }
   if (head === "settings" && seg.length === 2) return ["/settings", "/"];
   if (head === "crew" && seg.length === 1) return ["/settings/system", "/settings", "/"];
+  // Machines is opened from the Settings index and from the crew card in System, so both are
+  // legitimate parents; its structural parent is Settings.
+  if (head === "machines" && seg.length === 1) return ["/settings/system", "/settings", "/"];
+  // A machine goes up to Machines. The crew census opens one too (the member sheet's "Load and
+  // alerts"), so a step back onto /crew is still a step UP and not a push.
+  if (head === "machines" && seg.length === 2) return ["/machines", "/crew", "/settings/system", "/settings", "/"];
   return [];
 }
 
@@ -305,6 +402,26 @@ export function resolveUpTo(from: string | undefined, target: string, canGoBack 
   return { kind: "replace", to: target };
 }
 
+/** A stored href as a comparable key: its pathname and its query pairs in a fixed order. */
+function locationKey(href: string): string {
+  const cut = href.search(/[?#]/);
+  const pathname = cut === -1 ? href : href.slice(0, cut);
+  const search = cut === -1 || href[cut] === "#" ? "" : href.slice(cut + 1).split("#")[0] ?? "";
+  const pairs = [...new URLSearchParams(search).entries()].map(([k, v]) => `${k}=${v}`).toSorted();
+  return `${pathname}?${pairs.join("&")}`;
+}
+
+/**
+ * An UP move to one exact LOCATION: it steps back only when the entry behind is that very pathname
+ * and query, and otherwise replaces this entry with it. `resolveUpTo` compares pathnames, which is
+ * right between screens and wrong inside the Files view, where every folder shares one pathname and
+ * only `?dir=` tells them apart (ADR 0083).
+ */
+export function resolveUpToExact(from: string | undefined, target: string, canGoBack = true): UpMove {
+  if (canGoBack && from !== undefined && locationKey(from) === locationKey(target)) return { kind: "back" };
+  return { kind: "replace", to: target };
+}
+
 /**
  * The structural parents of a deep link, root first, each carrying the link's machine and session:
  * what a cold start puts behind the entry so the first swipe goes up (lib/nav-entry.ts). Empty for
@@ -331,6 +448,17 @@ export function parentChain(pathname: string, search: string): string[] {
     const chain = [home, `/${head}/${id}${q}`, list];
     return repo !== null && params.has("path") ? [...chain, commitUnder(list, repo)] : chain;
   }
+  // The Changes tree: a folder or a file sits under every folder above it, then the Changes screen
+  // that is the tree's root, then the way up that screen has (ADR 0083). `…/changes/files` with
+  // neither `?dir=` nor `?path=` is the root itself under an older address.
+  if ((head === "space" || head === "pane") && seg.length === 4 && leaf === "changes" && seg[3] === "files") {
+    const params = new URLSearchParams(search);
+    const at: FilesAt = { dir: params.get("dir") ?? undefined, path: params.get("path") ?? undefined };
+    const list = `/${head}/${id}/changes${q}`;
+    const chain = [home, `/${head}/${id}${q}`];
+    if (filesParent(at) === null) return chain;
+    return [...chain, filesUnder(list), ...filesFolders(at).slice(0, at.path !== undefined ? undefined : -1).map((dir) => filesUnder(list, { dir }))];
+  }
   if (head === "pane" && seg.length === 2) return [home];
   if (head === "pane" && seg.length === 3 && (leaf === "history" || leaf === "changes")) {
     const pane = `/pane/${id}${q}`;
@@ -342,5 +470,7 @@ export function parentChain(pathname: string, search: string): string[] {
   }
   if (head === "settings" && seg.length === 2) return [home, `/settings${q}`];
   if (head === "crew" && seg.length === 1) return [home, `/settings${q}`, `/settings/system${q}`];
+  if (head === "machines" && seg.length === 1) return [home, `/settings${q}`];
+  if (head === "machines" && seg.length === 2) return [home, `/settings${q}`, `/machines${q}`];
   return [];
 }

@@ -4,7 +4,7 @@ import { useState, type ComponentProps } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { createMemoryRouter, RouterProvider, useParams } from "react-router";
+import { createMemoryRouter, RouterProvider, useParams, useRevalidator } from "react-router";
 
 import { __resetConnectionHealth } from "@/lib/connection-health";
 import {
@@ -20,6 +20,13 @@ vi.mock("@/lib/prompt-action", () => ({
 }));
 vi.mock("@/lib/wizard-action", () => ({
   submitWizardKeys: vi.fn(),
+}));
+// The Chat gate's one clock, the last resort, pushed past every horizon in this file (still under
+// 2^31, the most a timer takes). Each fallback the timelines below record is therefore an EVENT's:
+// none of them can be the clock's (lib/chat-gate.ts § LAST_RESORT_NO_JOURNAL_MS).
+vi.mock("@/lib/chat-gate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/chat-gate")>()),
+  LAST_RESORT_NO_JOURNAL_MS: 2_000_000_000,
 }));
 
 import { server } from "@/test/setup";
@@ -315,6 +322,32 @@ describe("AgentChat — header title block", () => {
     await user.click(screen.getByRole("button", { name: /open webapp overview/i }));
     expect(await screen.findByText("overview:w1")).toBeInTheDocument();
   });
+
+  it("opens Pane settings when the name line is tapped, and not the space", async () => {
+    const user = userEvent.setup();
+    renderChat();
+    await user.click(screen.getByRole("button", { name: /^Pane settings for / }));
+    expect(await screen.findByRole("dialog", { name: "Pane settings" })).toBeInTheDocument();
+    expect(screen.queryByText("overview:w1")).toBeNull();
+  });
+
+  it("names the pane in the name button's label", () => {
+    renderChat();
+    const name = document.querySelector('[data-slot="pane-name"]')?.textContent ?? "";
+    expect(name).not.toBe("");
+    expect(screen.getByRole("button", { name: `Pane settings for ${name}` })).toBeInTheDocument();
+  });
+
+  it("carries a Rename row in Pane settings that opens the rename view of the ⋮ sheet", async () => {
+    const user = userEvent.setup();
+    renderChat();
+    await user.click(screen.getByRole("button", { name: /^Pane settings for / }));
+    const dialog = await screen.findByRole("dialog", { name: "Pane settings" });
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    // The settings sheet is gone and the rename view is the one on screen: its field and Save.
+    expect(await screen.findByRole("button", { name: "Save" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Pane settings" })).toBeNull();
+  });
 });
 
 // THE PANE HEADER'S IDENTITY BLOCK — TWO lines now: the name at full width, and a cwd line that only
@@ -512,22 +545,30 @@ describe("AgentChat — the pane header's identity block", () => {
     );
   });
 
-  it("gives the thing you tap a real 44px hit box, not a 39px drawn one", () => {
+  it("gives the thing you tap a real 44px block, covered by two targets that fill it", () => {
     // MEASURED, in the playground, at 390px: this button was 39.00px tall. It is the only way off the
     // pane to the space overview, and it sat under the floor in the very row that states the floor
     // for every other control in it. `min-h-11` is 44px, and it is what catches the COMMON case — the
     // two-line block (name 20 + gap 4 + path 12) is 36px and would otherwise draw at 36.
     //
-    // THE FLOOR IS ON THE BLOCK AND THE BUTTON COVERS IT. The button used to BE the block, and then
-    // the cache reading joined line 2 — a control of its own, which inside a button is neither valid
-    // markup nor reachable. So the surface became a sibling laid over the block (`absolute inset-0`)
-    // and takes the block's height by construction. Both halves are asserted: the box states 44px,
-    // and the button covers exactly it.
+    // THE FLOOR IS ON THE BLOCK AND THE TAP LAYER COVERS IT. The block used to BE the button, and
+    // then the cache reading joined line 2 — a control of its own, which inside a button is neither
+    // valid markup nor reachable. So the surface became a layer laid over the block, and since 1.17.0
+    // it holds TWO buttons, one per line, splitting it in half. The layer reaches 8px past the block
+    // top and bottom (`-inset-y-2`): that is the row's own padding plus the air around the lines, so
+    // each target is 30px, half the 60px row, and nothing outside the row is covered.
     const { container } = renderChat();
     const cls = block(container)?.className ?? "";
     expect(cls).toMatch(/(^|\s)min-h-11(?=\s|$)/);
     expect(cls).toMatch(/(^|\s)relative(?=\s|$)/);
-    expect(identity(container)?.className).toMatch(/(^|\s)absolute inset-0(?=\s|$)/);
+    const taps = slot(container, "identity-taps");
+    expect(taps?.className).toMatch(/(^|\s)absolute(?=\s|$)/);
+    expect(taps?.className).toMatch(/(^|\s)inset-x-0(?=\s|$)/);
+    expect(taps?.className).toMatch(/(^|\s)-inset-y-2(?=\s|$)/);
+    // Two siblings, equal halves, name first: the top one covers the name line.
+    const buttons = Array.from(taps?.querySelectorAll("button") ?? []);
+    expect(buttons.map((b) => b.getAttribute("data-slot"))).toEqual(["pane-identity-name", "pane-identity"]);
+    for (const b of buttons) expect(b.className).toMatch(/(^|\s)flex-1(?=\s|$)/);
     // And no vertical padding on top of it: 52px of lines plus a `py-0.5` is 56px in the row's 52px
     // content box, which grows the row to 64px on the pane route alone — exactly the route-local jump
     // `min-h-15` was stated to prevent.
@@ -1383,6 +1424,12 @@ describe("AgentChat \u2014 the pane menu in the header", () => {
 // working signal is `readableLines` (scrollback depth + viewport), and which button appears is
 // decided by what the pane can actually offer — the two are never simultaneously possible.
 describe("AgentChat — top-of-mirror history affordance", () => {
+  // These cases are about the terminal mirror, and Chat is the default body now (ADR 0082), so the
+  // device is pinned to the terminal the way an operator who chose it is.
+  beforeEach(() => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView: "terminal" }));
+  });
+
   const showHistory = () => screen.queryByRole("button", { name: /show entire history/i });
   const loadOlder = () => screen.queryByRole("button", { name: /load older/i });
 
@@ -1436,6 +1483,12 @@ describe("AgentChat — top-of-mirror history affordance", () => {
 // agent with no journal adapter has nothing to say. The line is prose, never a control — there is
 // still no transcript to open.
 describe("AgentChat — no session reported", () => {
+  // These cases are about the terminal mirror, and Chat is the default body now (ADR 0082), so the
+  // device is pinned to the terminal the way an operator who chose it is.
+  beforeEach(() => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView: "terminal" }));
+  });
+
   const noSessionNote = () => screen.queryByText(/has not reported a session to Herdr/i);
 
   it("explains the silence on an agent that could have a transcript but reported none", () => {
@@ -1765,7 +1818,7 @@ describe("AgentChat — closing the current tab", () => {
 // THE BOTTOM FITS THE SCREEN IT IS ON — and the screen is measured, never assumed.
 //
 // The operator's report: "here for example the bottom is cut off, and when the keyboard is open…".
-// It is arithmetic, not a padding bug. The route column is `h-[100dvh]` (routes/root.tsx). Inside
+// It is arithmetic, not a padding bug. The route column is `h-(--app-h)` (routes/root.tsx). Inside
 // it the mirror carries `min-h-0 flex-1`, so the mirror is the row that gives — and it gives all
 // the way to zero. Everything below it is content-sized, so once the mirror is at zero the surplus
 // paints past the bottom edge of the viewport, under the soft keyboard, and the send button becomes
@@ -2843,6 +2896,12 @@ describe("AgentChat — the Fleet shell's switcher port", () => {
 // tail, and nothing appears when the journal's newest turn is not the message on screen (a streaming
 // reply, a stale read) — presenting an older reply as the current one is the failure that matters.
 describe("AgentChat — full latest reply", () => {
+  // These cases are about the terminal mirror, and Chat is the default body now (ADR 0082), so the
+  // device is pinned to the terminal the way an operator who chose it is.
+  beforeEach(() => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView: "terminal" }));
+  });
+
   const REPLY = [
     "Short answer: approve-only. The author knows when they want it to land; your job was the",
     "approval. Enabling auto-merge makes you the actor for the merge itself, which is a materially",
@@ -3099,19 +3158,20 @@ describe("AgentChat — the terminal draft notice floats (ADR 0061)", () => {
 
 // EXPERIMENT (operator, 2026-09-23): the Changes entry (ADR 0065) moved off the ⋮ sheet onto the
 // belt's pinned block, beside the switcher mark. Still gated on the pane reporting a folder.
-describe("AgentChat — the belt's Changes pill", () => {
+// Named Files since 2026-10-06 (ADR 0083), with the list-tree glyph; same place, same gate.
+describe("AgentChat — the belt's Files pill", () => {
   it("shows on the belt when the pane has a folder, and not in the pane menu", async () => {
     const user = userEvent.setup();
     const { container } = renderChat();
     const belt = container.querySelector<HTMLElement>('[data-slot="composer-actions"]')!;
-    expect(within(belt).getByRole("button", { name: "Changes" })).toBeInTheDocument();
+    expect(within(belt).getByRole("button", { name: "Files" })).toBeInTheDocument();
     await openPaneMenu(user);
-    expect(within(screen.getByRole("dialog")).queryByRole("button", { name: "Changes" })).toBeNull();
+    expect(within(screen.getByRole("dialog")).queryByRole("button", { name: "Files" })).toBeNull();
   });
 
   it("is hidden when the pane reports no folder", () => {
     renderChat({ agent: { ...fixtureAgents[0]!, cwd: "" } });
-    expect(screen.queryByRole("button", { name: "Changes" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Files" })).toBeNull();
   });
 });
 
@@ -3269,28 +3329,39 @@ describe("AgentChat — copy the pane's output", () => {
   });
 });
 
-// ── CHAT IS A MODE YOU CHOOSE (M41/11) ──────────────────────────────────────────────────────────
+// ── CHAT IS THE DEFAULT MODE, THE TERMINAL IS ONE TAP AWAY (M41/11, ADR 0082) ──────────────────────────────────────────────────────────
 //
 // The mode is not a route: the pane view swaps the box between the mirror's top rule and the chrome
 // block, and nothing else. So these cases assert the two things that make it a mode — the chrome
 // around it does not move, and the switch is a row in the ⋮ menu rather than a second screen.
 describe("AgentChat — the chat body", () => {
-  /** Opt this device in and pick a body, the way Settings → Experiments and the ⋮ row do. */
+  /** Pick a body, the way the ⋮ row does. Chat is the default (ADR 0082), so this only pins it. */
   function chooseChat(paneView: "chat" | "terminal") {
-    localStorage.setItem(
-      "collie:dash-prefs:v1",
-      JSON.stringify({ chatExperiment: true, paneView, showToolCalls: true }),
-    );
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView, showToolCalls: true }));
   }
 
   const journalAgent = () => ({ ...fixtureAgents[0]!, hasSession: true });
 
-  it("draws the terminal and offers no switch until the device has opted in", async () => {
+  it("draws the chat on a fresh device, with no choice stored and no experiment switched on", async () => {
     const user = userEvent.setup();
     renderChat({ agent: journalAgent() });
-    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    expect(await screen.findByText("what changed today?")).toBeInTheDocument();
+    expect(screen.queryByText(/recent pane output/)).toBeNull();
     await openPaneMenu(user);
-    expect(screen.queryByRole("button", { name: /view$/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Terminal view" })).toBeInTheDocument();
+  });
+
+  it("ignores a stored chatExperiment: false and still draws the chat", async () => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ chatExperiment: false }));
+    renderChat({ agent: journalAgent() });
+    expect(await screen.findByText("what changed today?")).toBeInTheDocument();
+  });
+
+  it("keeps the terminal on a device that chose it", async () => {
+    chooseChat("terminal");
+    renderChat({ agent: journalAgent() });
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    expect(screen.queryByText("what changed today?")).toBeNull();
   });
 
   it("draws the session instead of the mirror once Chat is the standing body", async () => {
@@ -3343,5 +3414,410 @@ describe("AgentChat — the chat body", () => {
     expect(
       screen.getByText(/This pane has no agent session.*The terminal stays here\./),
     ).toBeInTheDocument();
+  });
+});
+
+// ── ONE SEQUENCE: THE BLOOM AND THE BODY SWAP (1.17.0, ADR 0082) ────────────────────────────────
+//
+// A shell becomes an agent while the pane is open. The bloom (components/agent-start.tsx) and the
+// terminal-to-Chat swap used to run on clocks that never met; hooks/use-handover.ts makes them one
+// sequence. jsdom fires no `animationend`, so the covering phase ends on its timer here, which is
+// the fallback the real thing relies on when an animation never runs.
+describe("AgentChat — the handover from a shell to an agent", () => {
+  const shell = fixtureShellPanes[0]!;
+  const agentNow: AgentView = {
+    ...shell,
+    agent: "claude",
+    kind: "agent",
+    status: "working",
+    hasSession: true,
+  };
+
+  function renderShell() {
+    let setAgent: (a: AgentView) => void = () => {};
+    function Host() {
+      const [agent, set] = useState<AgentView>(shell);
+      setAgent = set;
+      return (
+        <AgentChat
+          paneId={shell.paneId}
+          agent={agent}
+          agents={agent.kind === "shell" ? [] : [agent]}
+          shellPanes={agent.kind === "shell" ? [agent] : []}
+          tabs={[]}
+          text={paneTextWithDraft("recent pane output")}
+          onBack={vi.fn()}
+          onSelect={vi.fn()}
+        />
+      );
+    }
+    const router = createMemoryRouter([{ path: "/", element: withHeaderHost(<Host />) }]);
+    render(<RouterProvider router={router} />);
+    return { becomeAgent: () => act(() => setAgent(agentNow)) };
+  }
+
+  const wait = (ms: number) => act(() => new Promise<void>((r) => setTimeout(r, ms)));
+
+  it("holds the terminal while the layer covers, swaps to Chat under it, and the layer leaves after", async () => {
+    const { becomeAgent } = renderShell();
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+
+    becomeAgent();
+    expect(screen.getByRole("status", { name: "Handed to claude" })).toBeInTheDocument();
+
+    // The first chat answer lands within milliseconds, long before the cover is complete. The body
+    // must not change beside the animation: the terminal is still what is drawn.
+    await wait(200);
+    expect(screen.getByRole("status", { name: "Handed to claude" })).toHaveAttribute("data-phase", "covering");
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    expect(screen.queryByText("what changed today?")).toBeNull();
+
+    // At the rest the swap lands, and the layer is still up over it.
+    expect(await screen.findByText("what changed today?", {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.queryByText(/recent pane output/)).toBeNull();
+    expect(screen.getByRole("status", { name: "Handed to claude" })).toBeInTheDocument();
+
+    // And then the layer leaves with Chat drawn: the reveal uncovers the final body.
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Handed to claude" })).toBeNull(), {
+      timeout: 3000,
+    });
+    expect(screen.getByText("what changed today?")).toBeInTheDocument();
+  });
+
+  it("a tap on the layer ends it at once and applies the held swap in the same commit", async () => {
+    const { becomeAgent } = renderShell();
+    becomeAgent();
+    await wait(50);
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    act(() => screen.getByRole("status", { name: "Handed to claude" }).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
+    expect(screen.queryByRole("status", { name: "Handed to claude" })).toBeNull();
+    expect(await screen.findByText("what changed today?")).toBeInTheDocument();
+  });
+});
+
+// ── CHAT FROM THE FIRST FRAME: THE TIMELINES, WITH FAKE TIMERS (1.17.0 review) ─────────────────
+//
+// The operator's report: Codex never reached Chat, handing a pane to pi took long, and the bloom did
+// not match the swap. The rule since (lib/chat-gate.ts, ADR 0082 point 4): a NEW agent pane draws
+// Chat from the first frame, and falls back to the terminal only on an EVENT: the pane asks for
+// input, or its first turn ends with no session or no log. The handover ends when its animation
+// ends. These cases replay each harness's real order of events and record two things: every body
+// drawn, in order, and every phase the layer showed. The phases run on their timers here (jsdom
+// fires no `animationend`): covering ends at 530 ms, the rest at 910 ms, the reveal at 1700 ms. The
+// last resort is mocked out of reach (top of file), so no body below can come from a clock.
+describe("AgentChat: a new agent pane draws Chat from the first frame", () => {
+  const shell = fixtureShellPanes[0]!;
+  const layer = () => screen.queryByRole("status", { name: /^Handed to / });
+
+  // What the chat route answers. `no-log` is pi before its first reply; `live` is the fixture window.
+  let chatAnswer: "live" | "no-log" = "live";
+  beforeEach(() => {
+    vi.useFakeTimers();
+    chatAnswer = "live";
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/chat/, () =>
+        chatAnswer === "live"
+          ? undefined // fall through to the fixture window (test/handlers.ts)
+          : HttpResponse.json({ paneId: shell.paneId, available: false, reason: "no-log" }),
+      ),
+    );
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** One recorded frame: which body is drawn, and which phase the layer is in (or none). */
+  type Frame = { body: "chat" | "terminal"; phase: string };
+  function renderShell() {
+    let setAgent: (a: AgentView) => void = () => {};
+    let revalidate: () => void = () => {};
+    function Host() {
+      const [agent, set] = useState<AgentView>(shell);
+      setAgent = set;
+      const r = useRevalidator();
+      revalidate = r.revalidate;
+      return (
+        <AgentChat
+          paneId={shell.paneId}
+          agent={agent}
+          agents={agent.kind === "shell" ? [] : [agent]}
+          shellPanes={agent.kind === "shell" ? [agent] : []}
+          tabs={[]}
+          text={paneTextWithDraft("recent pane output")}
+          onBack={vi.fn()}
+          onSelect={vi.fn()}
+        />
+      );
+    }
+    // A loader that takes a beat, so a revalidation is a real poll: the chat window rides its
+    // loading→idle edge, and an instant loader would fold both into one render.
+    const loader = () => new Promise<null>((resolve) => setTimeout(() => resolve(null), 20));
+    const router = createMemoryRouter([{ path: "/", loader, element: withHeaderHost(<Host />) }]);
+    const { container } = render(<RouterProvider router={router} />);
+    const frames: Frame[] = [];
+    const look = () => {
+      const frame: Frame = {
+        body: container.querySelector('[data-slot="session-stream"]') ? "chat" : "terminal",
+        phase: layer()?.getAttribute("data-phase") ?? "none",
+      };
+      const last = frames.at(-1);
+      if (!last || last.body !== frame.body || last.phase !== frame.phase) frames.push(frame);
+    };
+    return {
+      container,
+      frames,
+      look,
+      set: (a: AgentView) => {
+        act(() => setAgent(a));
+        look();
+      },
+      poll: () =>
+        act(() => {
+          void revalidate();
+        }),
+    };
+  }
+
+  /**
+   * Advance in steps, each its own `act` (React holds effects until `act` exits, and a phase's timer
+   * is armed by an effect), and record the frame after every step.
+   */
+  async function advance(view: ReturnType<typeof renderShell>, ms: number) {
+    for (let left = ms; left > 0; left -= 50) {
+      await act(() => vi.advanceTimersByTimeAsync(Math.min(50, left)));
+      view.look();
+    }
+  }
+
+  const agentOf = (name: string, status: AgentStatus, hasSession: boolean): AgentView => ({
+    ...shell,
+    agent: name,
+    kind: "agent",
+    status,
+    hasSession,
+  });
+  /** The bodies drawn, in order, with repeats folded. */
+  const bodies = (frames: Frame[]) => frames.map((f) => f.body).filter((b, i, all) => i === 0 || all[i - 1] !== b);
+  /** The layer's phases, in order, with repeats folded. */
+  const phases = (frames: Frame[]) => frames.map((f) => f.phase).filter((p, i, all) => i === 0 || all[i - 1] !== p);
+  /** The body may change only where the cover allows it: never while covering or revealing. */
+  function swapsOnlyUnderCover(frames: Frame[]) {
+    for (let i = 1; i < frames.length; i += 1) {
+      if (frames[i]!.body !== frames[i - 1]!.body) {
+        expect(["none", "covered"]).toContain(frames[i]!.phase);
+      }
+    }
+  }
+  const startLine = () => screen.queryByText("Send a message to start.");
+
+  async function handOver(view: ReturnType<typeof renderShell>, agent: AgentView) {
+    await advance(view, 50); // the capability read lands
+    view.set(agent);
+    expect(layer()).toHaveAttribute("data-phase", "covering");
+    // The cover is gone at 1700 ms, the length of the animation and not one beat more.
+    await advance(view, 1650);
+    expect(layer()).not.toBeNull();
+    await advance(view, 100);
+    expect(layer()).toBeNull();
+    // It lifted exactly once: one covering, one rest, one reveal, then nothing.
+    expect(phases(view.frames)).toEqual(["none", "covering", "covered", "revealing", "none"]);
+  }
+
+  it("(a) Codex: Chat from the first frame, through the first prompt, to the session two seconds later", async () => {
+    const view = renderShell();
+    await handOver(view, agentOf("codex", "idle", false));
+    expect(startLine()).toBeInTheDocument();
+    expect(screen.queryByText(/first message/)).toBeNull(); // no "reports its session" note
+
+    view.set(agentOf("codex", "working", false)); // the first prompt
+    await advance(view, 2000);
+    expect(screen.getByText("Still working…")).toBeInTheDocument();
+    view.set(agentOf("codex", "working", true)); // the hook reports the session
+    await advance(view, 200);
+    expect(screen.getByText("what changed today?")).toBeInTheDocument();
+
+    // The turn ends with the session read: Chat stays.
+    view.set(agentOf("codex", "done", true));
+    view.poll();
+    await advance(view, 200);
+    expect(screen.getByText("what changed today?")).toBeInTheDocument();
+
+    expect(bodies(view.frames)).toEqual(["terminal", "chat"]);
+    swapsOnlyUnderCover(view.frames);
+  });
+
+  it("(b) pi: the session at start, no log until the first reply, and no 'no transcript' notice", async () => {
+    chatAnswer = "no-log";
+    const view = renderShell();
+    await handOver(view, agentOf("pi", "idle", true));
+    expect(startLine()).toBeInTheDocument();
+    expect(screen.queryByText(/No transcript file/)).toBeNull();
+
+    view.set(agentOf("pi", "working", true));
+    await advance(view, 3000);
+    view.poll();
+    await advance(view, 100);
+    expect(screen.getByText("Still working…")).toBeInTheDocument();
+    expect(screen.queryByText(/No transcript file/)).toBeNull();
+
+    chatAnswer = "live"; // the first reply wrote the log
+    view.poll();
+    await advance(view, 200);
+    expect(screen.getByText("what changed today?")).toBeInTheDocument();
+
+    expect(bodies(view.frames)).toEqual(["terminal", "chat"]);
+    swapsOnlyUnderCover(view.frames);
+  });
+
+  it("(c) pi with its session report one poll late: still one swap, under the cover", async () => {
+    chatAnswer = "no-log";
+    const view = renderShell();
+    await handOver(view, agentOf("pi", "idle", false));
+    expect(startLine()).toBeInTheDocument();
+
+    view.set(agentOf("pi", "idle", true)); // the report lands on the next poll
+    await advance(view, 200);
+    expect(startLine()).toBeInTheDocument();
+    expect(screen.queryByText(/No transcript file/)).toBeNull();
+
+    view.set(agentOf("pi", "working", true));
+    await advance(view, 2000);
+    chatAnswer = "live";
+    view.poll();
+    await advance(view, 200);
+    expect(screen.getByText("what changed today?")).toBeInTheDocument();
+
+    expect(bodies(view.frames)).toEqual(["terminal", "chat"]);
+    swapsOnlyUnderCover(view.frames);
+  });
+
+  it("(d) no hook installed: Chat for as long as the first turn runs, the terminal and its hint when it ends", async () => {
+    const view = renderShell();
+    await handOver(view, agentOf("claude", "idle", false));
+    expect(startLine()).toBeInTheDocument();
+
+    // A long first turn with nothing to read: no clock takes Chat away while it works.
+    view.set(agentOf("claude", "working", false));
+    await advance(view, 120_000);
+    expect(view.container.querySelector('[data-slot="session-stream"]')).not.toBeNull();
+    expect(screen.getByText("Still working…")).toBeInTheDocument();
+
+    // The EVENT: the snapshot that reports the turn's end names no session. The fallback is in that
+    // same render: the terminal, with the line that names the missing hook.
+    view.set(agentOf("claude", "done", false));
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    expect(screen.getByText(/has not reported a session to Herdr/i)).toBeInTheDocument();
+
+    // A session that arrives after all takes the pane back to Chat, in one more quiet swap.
+    view.set(agentOf("claude", "done", true));
+    await advance(view, 300);
+    expect(screen.getByText("what changed today?")).toBeInTheDocument();
+
+    expect(bodies(view.frames)).toEqual(["terminal", "chat", "terminal", "chat"]);
+    swapsOnlyUnderCover(view.frames);
+  });
+
+  it("(d) a log that never appears: the terminal says so after the read that follows the turn's end", async () => {
+    chatAnswer = "no-log";
+    const view = renderShell();
+    await handOver(view, agentOf("pi", "idle", true));
+    view.set(agentOf("pi", "working", true));
+    await advance(view, 120_000);
+    view.poll();
+    await advance(view, 100);
+    expect(screen.getByText("Still working…")).toBeInTheDocument();
+
+    // The turn ends. The snapshot that says so has a session, so the gate waits for the journal
+    // read STARTED AFTER it: every answer so far came from a read that began before the end.
+    view.set(agentOf("pi", "done", true));
+    await advance(view, 60_000); // no poll, so no new read: Chat holds, whatever the clock says
+    expect(view.container.querySelector('[data-slot="session-stream"]')).not.toBeNull();
+    view.poll(); // the next poll's read answers no-log: now the fallback
+    await advance(view, 100);
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    expect(screen.getByText("No transcript file was found for this pane's session yet.")).toBeInTheDocument();
+
+    chatAnswer = "live";
+    view.poll();
+    await advance(view, 300);
+    expect(screen.getByText("what changed today?")).toBeInTheDocument();
+    expect(bodies(view.frames)).toEqual(["terminal", "chat", "terminal", "chat"]);
+    swapsOnlyUnderCover(view.frames);
+  });
+
+  // The server cannot read at all: reading is switched off (`disabled`, COLLIE_TRANSCRIPT=0), or a
+  // member's Collie predates the chat route (404). Chat would stay empty for good, so the terminal.
+  it.each([
+    ["disabled", () => HttpResponse.json({ paneId: shell.paneId, available: false, reason: "disabled" })],
+    ["a 404 from an older member", () => new HttpResponse(null, { status: 404 })],
+  ])("(g) a server that cannot read (%s) draws the terminal, not an empty Chat", async (_name, answer) => {
+    server.use(http.get(/\/api\/pane\/[^/]+\/chat/, answer));
+    const view = renderShell();
+    await handOver(view, agentOf("claude", "idle", true));
+    await advance(view, 500);
+    view.poll();
+    await advance(view, 300);
+    expect(view.container.querySelector('[data-slot="session-stream"]')).toBeNull();
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    expect(startLine()).toBeNull();
+  });
+
+  it("(f) a question with nothing to read: the terminal at once, so the dialog is on screen", async () => {
+    const view = renderShell();
+    await handOver(view, agentOf("codex", "idle", false));
+    view.set(agentOf("codex", "working", false));
+    await advance(view, 500);
+    expect(view.container.querySelector('[data-slot="session-stream"]')).not.toBeNull();
+    view.set(agentOf("codex", "blocked", false)); // the EVENT, and the fallback in the same render
+    expect(view.container.querySelector('[data-slot="session-stream"]')).toBeNull();
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    expect(bodies(view.frames)).toEqual(["terminal", "chat", "terminal"]);
+    swapsOnlyUnderCover(view.frames);
+  });
+
+  it("(e) a device on the terminal sees the terminal throughout, and the cover still lifts once", async () => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView: "terminal" }));
+    const view = renderShell();
+    await handOver(view, agentOf("codex", "idle", false));
+    expect(screen.getByText(/reports its session to Herdr only after its first message/i)).toBeInTheDocument();
+    view.set(agentOf("codex", "working", false));
+    await advance(view, 16_000);
+    view.set(agentOf("codex", "done", false));
+    view.set(agentOf("codex", "working", true));
+    await advance(view, 300);
+    expect(screen.getByText(/recent pane output/)).toBeInTheDocument();
+    expect(bodies(view.frames)).toEqual(["terminal"]);
+  });
+
+  it("(e) on the terminal, a harness with its session at start is not drawn as Chat either", async () => {
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView: "terminal" }));
+    const view = renderShell();
+    await handOver(view, agentOf("claude", "working", true));
+    expect(bodies(view.frames)).toEqual(["terminal"]);
+  });
+
+  it("a pane first opened already working with no session keeps the terminal at once, as before", async () => {
+    const agent = agentOf("claude", "working", false);
+    const router = createMemoryRouter([
+      {
+        path: "/",
+        element: withHeaderHost(
+          <AgentChat
+            paneId={agent.paneId}
+            agent={agent}
+            agents={[agent]}
+            shellPanes={[]}
+            tabs={[]}
+            text={paneTextWithDraft("recent pane output")}
+            onBack={vi.fn()}
+            onSelect={vi.fn()}
+          />,
+        ),
+      },
+    ]);
+    const { container } = render(<RouterProvider router={router} />);
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(container.querySelector('[data-slot="session-stream"]')).toBeNull();
+    expect(screen.getByText(/has not reported a session to Herdr/i)).toBeInTheDocument();
   });
 });

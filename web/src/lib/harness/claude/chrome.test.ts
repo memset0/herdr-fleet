@@ -442,7 +442,7 @@ describe("extractInputDraft — recovers a stranded prompt-line draft", () => {
   // Bug #76 fix: the wrapped-draft scan used to be bounded by MAX_DRAFT_LINES (12), so a draft long
   // enough to wrap past that many continuation rows made locateInputBox return null — the send guard
   // then saw no draft at all and stalled forever even though the text had landed. The bound is now
-  // 100 (defense-in-depth, not a correctness bound — see the comment on MAX_DRAFT_LINES in chrome.ts),
+  // 100 (defense-in-depth, not a correctness bound — see the comment on MAX_DRAFT_LINES in markers.ts),
   // comfortably above real wraps, so a draft this long is still found.
   it("matches a box whose draft wraps past the old 12-line bound", () => {
     const many = Array.from({ length: 20 }, (_, i) => `  continuation ${i}`);
@@ -809,6 +809,7 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "done", statusRows: 2, draft: null, stripped: 28 },
     { fixture: "ghost-suggestion", statusRows: 4, draft: null, stripped: 21 },
     { fixture: "ghost-typed-over", statusRows: 4, draft: "hello real draft text", stripped: 21 },
+    { fixture: "idle-background-shell", statusRows: 1, draft: null, stripped: 5 },
     { fixture: "draft-footer-empty", statusRows: 2, draft: null, stripped: 9 },
     { fixture: "draft-footer-single", statusRows: 2, draft: "remember to update the changelo", stripped: 9 },
     { fixture: "draft-footer-wrapped", statusRows: 2, draft: "this stranded draft is long eno", stripped: 11 },
@@ -943,6 +944,11 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "v2283-plugin-marketplaces-updated--w120", statusRows: 1, draft: null, stripped: 5 },
     { fixture: "v2283-plugin-marketplaces-updated--w40", statusRows: 1, draft: null, stripped: 5 },
     { fixture: "v2283-plugin-marketplaces-updated--w82", statusRows: 1, draft: null, stripped: 5 },
+    { fixture: "v2289-switch-model-no", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "v2289-switch-model-no--w50", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "v2289-switch-model-yes", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "v2289-switch-model-yes--w50", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "v2291-permission-bash-subagent", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-checked", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-final", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-pointer-next", statusRows: 0, draft: null, stripped: 0 },
@@ -960,6 +966,7 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     // under it. All three zeros are the honest reading, not a gap.
     { fixture: "workflow-view", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "working", statusRows: 2, draft: null, stripped: 6 },
+    { fixture: "working-esc-to-interrupt", statusRows: 1, draft: null, stripped: 5 },
   ];
 
   it("pins every claude fixture on disk, so a new capture can't slip past this table", () => {

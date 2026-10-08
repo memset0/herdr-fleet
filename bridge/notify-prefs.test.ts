@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import { DEFAULT_NOTIFY_PREFS, NotifyPrefsStore, coerceNotifyPrefs } from "./notify-prefs.ts";
 import { loadConfig } from "./config.ts";
+import { HOST } from "./host.ts";
+import { ensureOwnerOnlyDir, isOwnerOnly, privateRoot } from "./owner-only.ts";
 
 // Notify-type prefs own which agent statuses push. The coercion is pure; the merge + disk round-trip
 // is verified through a throwaway temp state dir (mirrors snooze.test.ts / push.test.ts).
@@ -22,7 +24,7 @@ afterAll(async () => {
 
 describe("coerceNotifyPrefs", () => {
   test("fills missing / non-boolean keys from defaults", () => {
-    const defaults = { blocked: true, done: false, updates: true, cache: false };
+    const defaults = { blocked: true, done: false, updates: true, cache: false, machines: true };
     expect(coerceNotifyPrefs(undefined)).toEqual(defaults);
     expect(coerceNotifyPrefs(null)).toEqual(defaults);
     expect(coerceNotifyPrefs({})).toEqual(defaults);
@@ -32,7 +34,9 @@ describe("coerceNotifyPrefs", () => {
     expect(coerceNotifyPrefs({ updates: false })).toEqual({ ...defaults, updates: false });
     // `cache` is the fourth, and the one that defaults OFF: an explicit true sticks.
     expect(coerceNotifyPrefs({ cache: true })).toEqual({ ...defaults, cache: true });
-    expect(coerceNotifyPrefs({ blocked: "yes", done: 1, updates: 0, cache: "on" })).toEqual(defaults);
+    // `machines` is the fifth, and defaults ON: a rule set per machine is the opt-in (ADR 0084).
+    expect(coerceNotifyPrefs({ machines: false })).toEqual({ ...defaults, machines: false });
+    expect(coerceNotifyPrefs({ blocked: "yes", done: 1, updates: 0, cache: "on", machines: 0 })).toEqual(defaults);
   });
 });
 
@@ -57,13 +61,13 @@ describe("NotifyPrefsStore", () => {
   test("set merges a partial patch, persists, and returns the updated prefs", async () => {
     const cfg = await tempCfg();
     const store = new NotifyPrefsStore(cfg);
-    const updated = await store.set({ done: true, updates: false, cache: true });
-    expect(updated).toEqual({ blocked: true, done: true, updates: false, cache: true });
+    const updated = await store.set({ done: true, updates: false, cache: true, machines: false });
+    expect(updated).toEqual({ blocked: true, done: true, updates: false, cache: true, machines: false });
 
     // Round-trips through disk: a fresh store reloads the same values (survives a restart).
     const reloaded = new NotifyPrefsStore(cfg);
     await reloaded.load();
-    expect(reloaded.current()).toEqual({ blocked: true, done: true, updates: false, cache: true });
+    expect(reloaded.current()).toEqual({ blocked: true, done: true, updates: false, cache: true, machines: false });
   });
 
   test("current() returns a copy — callers can't mutate the store's state", async () => {
@@ -74,10 +78,17 @@ describe("NotifyPrefsStore", () => {
     expect(store.current()).toEqual(DEFAULT_NOTIFY_PREFS);
   });
 
+  // Windows: the bridge gives the state dir an owner-only access list at start (M43 spec 04), and the
+  // file the store writes inherits it. NTFS has no 0600, so the check reads that list instead.
   test("persists with owner-only (0600) permissions", async () => {
     const cfg = await tempCfg();
+    if (process.platform === "win32") ensureOwnerOnlyDir(cfg.stateDir, HOST, { root: privateRoot("state"), repair: true });
     const store = new NotifyPrefsStore(cfg);
     await store.set({ blocked: false });
+    if (process.platform === "win32") {
+      expect(isOwnerOnly(join(cfg.stateDir, "notify-prefs.json"), HOST)).toEqual({ state: "private" });
+      return;
+    }
     const mode = (await stat(join(cfg.stateDir, "notify-prefs.json"))).mode & 0o777;
     expect(mode).toBe(0o600);
   });
@@ -87,7 +98,7 @@ describe("NotifyPrefsStore", () => {
     await writeFile(join(cfg.stateDir, "notify-prefs.json"), JSON.stringify({ blocked: false }));
     const store = new NotifyPrefsStore(cfg);
     await store.load();
-    expect(store.current()).toEqual({ blocked: false, done: false, updates: true, cache: false });
+    expect(store.current()).toEqual({ blocked: false, done: false, updates: true, cache: false, machines: true });
   });
 
   test("load tolerates a missing file (keeps defaults)", async () => {

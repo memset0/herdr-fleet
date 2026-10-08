@@ -38,6 +38,65 @@
 const PLACEHOLDER = /\[Pastedtext#\d+(?:\+(\d+)lines)?\]/g;
 
 /**
+ * Claude's token for an image file whose path arrived in a paste, whitespace-stripped. Claude lifts
+ * an image path off the END of a paste, or off a line of its own, and attaches the file instead
+ * (live-probed 2026-10-03: `<1,500 chars> /x.png` → `[Image #8][Pasted text #9]`; the same path at
+ * the start or the middle stayed inside the paste).
+ */
+const IMAGE_TOKEN = /\[Image#\d+\]/g;
+
+/**
+ * The shape of the path Collie's upload route hands back (`bridge/server.ts`): an absolute
+ * `<stateDir>/uploads/<pane>-<base36 time>-<8 hex>.<ext>`, with a POSIX or a Windows root. The
+ * composer swaps a chip's marker for that path where the marker stood (`composeLine`), so it is the
+ * only image path Collie ever sends. A name merely ending `.png` in a sentence is not this shape.
+ */
+const UPLOAD_PATH_TAIL = String.raw`[\\/]uploads[\\/][A-Za-z0-9_-]+-[0-9a-z]+-[0-9a-f]{8}\.(?:png|jpe?g|gif|webp)`;
+const UPLOAD_ROOT = String.raw`(?:/|[A-Za-z]:[\\/])`;
+/** A path with no whitespace in it, as the last whitespace-separated token of a send. */
+const UPLOAD_TOKEN = new RegExp(`^${UPLOAD_ROOT}\\S*${UPLOAD_PATH_TAIL}$`, "i");
+/** A path that is a whole line on its own; the directories may hold spaces (a Windows profile name). */
+const UPLOAD_LINE = new RegExp(`^${UPLOAD_ROOT}.*${UPLOAD_PATH_TAIL}$`, "i");
+
+/**
+ * How many upload image paths in a send Claude could have lifted into an {@link IMAGE_TOKEN}: one per
+ * line that is nothing but such a path, plus the last whitespace-separated token of the text when it
+ * is one and does not already stand on a line of its own. A path in the middle of a line stays inside
+ * the paste (live-probed 2026-10-03), and a prose mention of `shot.png` is no path at all.
+ */
+export function liftableImagePaths(sent: string): number {
+  const lines = sent.split(/\r?\n/);
+  let count = lines.filter((line) => UPLOAD_LINE.test(line.trim())).length;
+  // The last NON-BLANK line: after a trailing newline the final line is empty, and a path that is
+  // already counted as a whole line above must not be counted again as the trailing token.
+  const last = (lines.findLast((line) => line.trim() !== "") ?? "").trim();
+  const lastToken = sent.trimEnd().split(/\s+/).pop() ?? "";
+  if (!UPLOAD_LINE.test(last) && UPLOAD_TOKEN.test(lastToken)) count += 1;
+  return count;
+}
+
+/**
+ * Claude collapses one paste longer than this into a token; this many or fewer insert literally.
+ * Live-probed 2026-10-03 (Claude Code 2.1.288), bracketed and bare alike: 800 literal, 801 a token.
+ */
+const PASTE_COLLAPSE_CHARS = 800;
+
+/**
+ * Whether a reply is long enough to send as ONE bracketed paste (`HarnessAdapter.bracketedPaste`).
+ *
+ * Bare, a long send reaches Claude as several PTY reads (~1 KB each on macOS); Claude makes each read
+ * over {@link PASTE_COLLAPSE_CHARS} its own token, and a short final read then wipes the earlier
+ * tokens, so only the END of the message survives, and that tail verifies, so Enter submits it.
+ * Probed 2026-10-03 (herdr 0.9.0): 12,029 chars sent bare, 787 received; framed, all 12,029.
+ *
+ * At or under the limit no read can collapse, so nothing can be lost, and the send stays bare. That
+ * keeps a short reply literal in the box, and keeps a lone image path a path rather than an image.
+ */
+export function collapsesAsPaste(text: string): boolean {
+  return text.length > PASTE_COLLAPSE_CHARS;
+}
+
+/**
  * Below this, a single-line send is short enough that Claude would have inserted it literally, so a
  * token on screen is somebody else's. Sits comfortably above the ~400-char threshold we observed —
  * that threshold is unversioned Claude-internal behaviour, so the gate is deliberately pessimistic:
@@ -70,6 +129,11 @@ interface Scan {
 
 function stripWhitespace(s: string): string {
   return s.replace(/\s+/g, "");
+}
+
+/** A whitespace-stripped draft with Claude's image tokens taken out, and how many there were. */
+function liftImages(stripped: string) {
+  return { draft: stripped.replace(IMAGE_TOKEN, ""), images: stripped.match(IMAGE_TOKEN)?.length ?? 0 };
 }
 
 /** Split a whitespace-stripped draft into its placeholder tokens and the literal text around them. */
@@ -126,11 +190,17 @@ function scan(stripped: string): Scan {
  * and rejecting a shape we cannot read would convert working sends into permanent stalls, which is the
  * worse failure of the two.
  *
+ * An `[Image #N]` token beside the paste is Claude having lifted an image path out of it. It counts
+ * only while the send holds at least that many liftable paths ({@link liftableImagePaths}: an upload
+ * path standing alone on its line or ending the text), and it may take one newline with it each,
+ * so rule 3 becomes `S − images ≤ Σ M ≤ S`.
+ *
  * Anything inconsistent returns false and the caller keeps today's behaviour: no submit key, draft
  * kept, "didn't reach the input box". Guessing here would fire Enter at a screen we cannot read.
  */
 export function pasteCarriesSend(sent: string, draft: string): boolean {
-  const d = stripWhitespace(draft);
+  const { draft: d, images } = liftImages(stripWhitespace(draft));
+  if (images > liftableImagePaths(sent)) return false;
   const s = stripWhitespace(sent);
   const { tokens, lines, fragments, trailing } = scan(d);
   if (tokens === 0) return false;
@@ -139,7 +209,7 @@ export function pasteCarriesSend(sent: string, draft: string): boolean {
   if (newlines === 0 && sent.length < MIN_COLLAPSIBLE_LENGTH) return false;
 
   if (lines > newlines) return false;
-  if (fragments.length === 0) return lines === newlines;
+  if (fragments.length === 0) return lines >= newlines - images;
 
   // The draft ends in literal text, so the last thing the screen shows IS the last thing that
   // arrived — and it therefore has to be the last thing we sent. Anything else means bytes are still
@@ -167,7 +237,7 @@ export function pasteCarriesSend(sent: string, draft: string): boolean {
  * what the screen says); only the take-over affordance stands down.
  */
 export function isPastePlaceholderOnly(draft: string): boolean {
-  const { tokens, fragments } = scan(stripWhitespace(draft));
+  const { tokens, fragments } = scan(liftImages(stripWhitespace(draft)).draft);
   return tokens > 0 && fragments.length === 0;
 }
 

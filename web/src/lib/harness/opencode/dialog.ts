@@ -29,10 +29,24 @@
 // at the pointer is `["Enter"]`, one at offset d is `["Right" × d, "Enter"]` — d ≤ options-1, so
 // every key is a single herdr-sendable step and no digit is ever synthesised (.adr/0009). The
 // pointed row's badge is therefore ⏎ and every other row's is →, as ADR 0055 draws a pointed list.
+//
+// A tap is walked, verified, then confirmed (ADR 0080): the action layer splits `["Right" × d,
+// "Enter"]` with `splitWalk` (arrows may be horizontal), sends the Rights bound to the tapped screen,
+// reads again until the tapped chip carries the plan `["Enter"]`, and only then sends Enter. The
+// pointer is a STYLE, so it is not in `signature` and not in `coreSignature`, both of which are the
+// row text alone and are equal with the pointer on any chip. The pointer is carried twice instead.
+// Each option's plan holds it for the phone, and `promptsEqual` compares those exactly, so a stale
+// tap is refused at entry. `styledSignature` holds it for the bridge: the canonical styled lines of
+// the same rows as `signature` (lib/styled-region.ts, the one function both sides use). The phone
+// sends it as `expected_styled` with every write it binds, and the bridge compares the colours of the
+// very read it is about to answer, so a keystroke at the terminal that moved the highlight refuses
+// the tap (ADR 0080 point 7). The bridge holds no opencode grammar for this: it cannot say which chip
+// is the pointer, only that the colours are the ones the phone verified.
 // A derivation that cannot see exactly one pointer chip answers null and the dialog stays on the
 // raw mirror — the fail-closed contract.
 
 import type { StyledLine } from "../../blocks";
+import { canonicalStyledLines, encodeStyledRegion } from "../../styled-region";
 import type { PromptModel, PromptOption } from "../prompt-model";
 import {
   SELECT_HINT,
@@ -49,8 +63,9 @@ import {
 // than this is not this dialog's title.
 const MAX_TITLE_GAP = 16;
 
-/** The detected dialog: the model plus `startLine`, the first row the block REPLACES (the option
- *  footer; the title and subject above stay on the mirror). */
+/** The detected dialog: the model plus `startLine`, the first row the block REPLACES (the question's
+ *  first row, or the option footer when the body goes on past the question; the title above stays
+ *  on the mirror). */
 export interface DialogRegion {
   model: PromptModel;
   startLine: number;
@@ -143,42 +158,62 @@ export function detectPermissionDialog(lines: StyledLine[]): DialogRegion | null
   //    padding, not content: they end a paragraph and never start one.
   const subject = firstParagraph(texts, titleRow + 1, optionRow);
   if (subject === null) return null;
+  // Where the block starts: the question's own first row when the card says everything the dialog
+  // says from there to the options (only padding follows the paragraph), so the mirror above does
+  // not print the question a second time. A body that goes on (the edit dialog's diff, a URL row,
+  // the always-allow pattern list) is shown by nothing but the mirror, so the block keeps starting
+  // at the option row and the mirror keeps the question beside it.
+  const bodyContinues = texts
+    .slice(subject.to + 1, optionRow)
+    .some((t) => interiorText(t).length > 0);
+  const startLine = bodyContinues ? optionRow : subject.from;
 
   // The dialog's own rows are static while it is up: the spinner and the running-command rows sit
   // ABOVE the title (measured), so the region text neither churns with the spinner frame nor moves
   // with the pointer (the chip changes the pointer option's STYLE, never the row's text). One
   // byte-faithful signature serves both the guard and the bridge binding; it ends at the footer,
-  // the buffer's last non-blank row, inside the bridge's tail window.
+  // the buffer's last non-blank row, inside the bridge's tail window. Because the pointer is not in
+  // this text, `coreSignature` has nothing of the pointer to blank and is the same string; the
+  // pointer lives in the option plans and in `styledSignature` (see the header): the same rows as
+  // `signature`, so the bridge's style check judges exactly the region its text check does.
   const signature = texts.slice(titleRow, footer + 1).join("\n");
   const model: PromptModel = {
-    question: subject,
+    question: subject.text,
     options,
     family: "permission",
     signature,
     coreSignature: signature,
+    styledSignature: encodeStyledRegion(canonicalStyledLines(lines.slice(titleRow, footer + 1))),
   };
-  return { model, startLine: optionRow };
+  return { model, startLine };
 }
 
-/** The first paragraph of interior text in rows [from, to), skipping a `# ` heading, or null. */
-function firstParagraph(texts: string[], from: number, to: number): string | null {
+/** The first paragraph of interior text in rows [from, to), skipping a `# ` heading: its joined text
+ *  and its first and last row. Null when there is none. */
+function firstParagraph(
+  texts: string[],
+  from: number,
+  to: number,
+): { text: string; from: number; to: number } | null {
   let parts: string[] = [];
+  let first = from;
   for (let i = from; i <= to; i++) {
     const text = i < to ? interiorText(texts[i]!) : "";
     if (text.length > 0) {
+      if (parts.length === 0) first = i;
       parts.push(text);
       continue;
     }
     if (parts.length === 0) continue;
     const paragraph = parts.join(" ");
-    if (!paragraph.startsWith("# ")) return paragraph;
+    if (!paragraph.startsWith("# ")) return { text: paragraph, from: first, to: i - 1 };
     parts = [];
   }
   return null;
 }
 
 /** The background of the first cell carrying `text` on `line`, or undefined when unpainted. */
-function backgroundOf(line: StyledLine, start: number, end: number): string | undefined {
+export function backgroundOf(line: StyledLine, start: number, end: number): string | undefined {
   let at = 0;
   for (const seg of line.segments) {
     const from = Math.max(at, start);

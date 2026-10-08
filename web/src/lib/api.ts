@@ -8,6 +8,7 @@ import { abortSignalAfter, abortSignalAny } from "./env";
 import { asJsonString, parseJsonObject } from "./json";
 import { authHeader, clearNotPaired, markNotPaired, NOT_PAIRED_BODY } from "./pairing";
 import { isLead, normalizeScope, paneScopeKey, type Scope } from "./scope";
+import { stampSend } from "./poll-intent";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
 import { mounted } from "./base-path";
 import { CHAT_UNCHANGED, type ChatAnswer } from "./chat-window";
@@ -30,8 +31,13 @@ import type {
   ChangeCommitResponse,
   ChangeDiffResponse,
   ChangesResponse,
+  FileReadResponse,
+  FilesListResponse,
   PaneHistoryResponse,
   CrewStatusResponse,
+  MachineAlerts,
+  MachineHistoryResponse,
+  MachinesResponse,
   PaneReadResponse,
   PaneResizeResponse,
   PairFailure,
@@ -260,7 +266,12 @@ function promptChangedResponse(detail: string): ActionResponse | null {
   if (body.ok !== false || body.code !== "prompt_changed") return null;
   const error = asJsonString(body.error);
   if (error === undefined) return null;
-  return { ok: false, error, code: "prompt_changed" };
+  const response: ActionResponse = { ok: false, error, code: "prompt_changed" };
+  // The bridge's reason code, kept only when it is a plain code: it is shown to a person with the
+  // console open and never as UI text, and a body that is not one is not forwarded.
+  const reason = asJsonString(body.reason);
+  if (reason !== undefined && /^[a-z_]{1,32}$/.test(reason)) response.reason = reason;
+  return response;
 }
 
 /**
@@ -388,6 +399,30 @@ const paneCache = new Map<string, PaneCacheEntry>();
 // pane's last body). 20 comfortably covers any panes in flight on a phone.
 const PANE_CACHE_MAX = 20;
 
+// What the client had last SEEN of each pane, and what it had seen at the moment of its most recent
+// key send. The second is the baseline `settleAfterSend` (lib/harness/guard.ts) waits to leave: a
+// tap that moves a highlight is only "on screen" once a read differs from the one the tap was made
+// against. Kept here, beside the one function that reads and the one that sends, so a multi-step
+// choreography needs no plumbing: the last key it sends snapshots whatever its last verified read
+// showed. Both are FIFO-bounded like `paneCache`, and keyed the same way.
+const lastSeenText = new Map<string, string>();
+const textBeforeSend = new Map<string, string>();
+
+function remember(map: Map<string, string>, key: string, text: string): void {
+  map.delete(key); // re-insert, so the FIFO bound evicts the pane least recently touched
+  map.set(key, text);
+  if (map.size > PANE_CACHE_MAX) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+}
+
+/** The pane text the client had seen when its latest key was sent (`undefined` = never read, or no
+ *  key sent yet). The baseline for `settleAfterSend`. */
+export function textBeforeLastSend(paneId: string, scope?: Scope): string | undefined {
+  return textBeforeSend.get(paneScopeKey(scope, paneId));
+}
+
 /**
  * Read one pane's mirror. `seen: false` leaves the pane's unseen mark alone: the read a finger
  * starts on `pointerdown` (lib/pane-prefetch.ts) may be the start of a scroll, not an open.
@@ -427,6 +462,7 @@ export async function fetchPane(
     // Unchanged — hand back the cached body (text included) so the mirror keeps its content. An
     // unchanged poll is still a live poll: stamp the connection-health anchor (a 304 counts as live).
     markLive();
+    remember(lastSeenText, cacheKey, cached.response.text);
     return { ...cached.response, notModified: true };
   }
 
@@ -451,6 +487,7 @@ export async function fetchPane(
 
   // A pane body served from Herdr is provably-live data — stamp the connection-health anchor.
   markLive();
+  remember(lastSeenText, cacheKey, data.text);
   return data;
 }
 
@@ -672,6 +709,120 @@ export function fetchChangeCommitDiff(
   return req<ChangeCommitDiffResponse>(withScope(`${changesBase(target)}?${q.toString()}`, scope), { signal });
 }
 
+// ── The Files view (ADR 0083) ─────────────────────────────────────────────────────────────────────
+// Two reads on one route: a folder (`?dir=`, or nothing for the root) and one file (`?path=`). Both
+// answer JSON only; file bytes are never served as a document. The two 404s mean different things and
+// the view must tell them apart, so this module turns each into a value instead of a throw.
+
+/**
+ * What a Files read came to. `body` is a 200. `unknown-path` is the bridge's one answer for a path
+ * that is absent, outside the root, denied, or the wrong kind. `stale` is any other 404: the route is
+ * additive-optional over a crew link, so a member one release behind has no `files` segment and
+ * answers `{ "error": "not found" }`, and the honest reading is "update this machine". The two 404s
+ * differ by the `error` value alone. `not-paired` and `not-authorised` are the two 403s: Files takes
+ * the paired-device gate that writes take, so a read can be refused too, with a plain-text body that
+ * names which gate said no (ADR 0083). No sentence here, as in {@link fetchChat}: the view resolves
+ * the words.
+ */
+export type FilesAnswer<T> =
+  | { outcome: "body"; body: T }
+  | { outcome: "unknown-path" }
+  | { outcome: "stale" }
+  | { outcome: "not-paired" }
+  | { outcome: "not-authorised" };
+
+const FILES_UNKNOWN_PATH = { outcome: "unknown-path" } as const;
+const FILES_STALE = { outcome: "stale" } as const;
+const NOT_AUTHORISED_BODY = "device not authorised";
+const FILES_NOT_PAIRED = { outcome: "not-paired" } as const;
+const FILES_NOT_AUTHORISED = { outcome: "not-authorised" } as const;
+
+type FilesRefusal =
+  | typeof FILES_UNKNOWN_PATH
+  | typeof FILES_STALE
+  | typeof FILES_NOT_PAIRED
+  | typeof FILES_NOT_AUTHORISED;
+
+/**
+ * A refusal on the files route, told apart by status and body: a 404 by its JSON `error` value, a
+ * 403 by its plain-text body (the same two bodies a refused write carries, lib/pairing.ts).
+ */
+function filesRefusal(status: number, detail: string): FilesRefusal | null {
+  if (status === 404) return parseJsonObject(detail)?.error === "unknown-path" ? FILES_UNKNOWN_PATH : FILES_STALE;
+  if (status !== 403) return null;
+  // Prefixes, not equality: a crew member answers "device not authorised on this host" and its kin,
+  // the lead's plain bodies with a clause after them (the relay keeps the member's own words).
+  const body = detail.trim();
+  if (body.startsWith(NOT_PAIRED_BODY)) {
+    // Reads were ungated until Files, so nothing on a read could ever discover an unpaired device.
+    // Latch it as a refused write does: the app's read-only strip then names the remedy, once.
+    markNotPaired();
+    return FILES_NOT_PAIRED;
+  }
+  return body.startsWith(NOT_AUTHORISED_BODY) ? FILES_NOT_AUTHORISED : null;
+}
+
+const FILES_REFUSALS: ReadonlySet<unknown> = new Set([
+  FILES_UNKNOWN_PATH,
+  FILES_STALE,
+  FILES_NOT_PAIRED,
+  FILES_NOT_AUTHORISED,
+]);
+
+/** The refusal objects above are shared constants, so identity is the whole test: a parsed body is never one. */
+function isFilesRefusal<T>(got: T | FilesRefusal): got is FilesRefusal {
+  return FILES_REFUSALS.has(got);
+}
+
+async function filesRead<T>(path: string, scope: Scope | undefined, signal: AbortSignal | undefined): Promise<FilesAnswer<T>> {
+  const got = await req<T | FilesRefusal>(withScope(path, scope), { signal }, filesRefusal);
+  if (isFilesRefusal(got)) return got;
+  return { outcome: "body", body: got };
+}
+
+function filesBase(target: ChangesTarget): string {
+  return target.kind === "pane"
+    ? `/api/pane/${encodeURIComponent(target.paneId)}/files`
+    : `/api/workspace/${encodeURIComponent(target.spaceId)}/files`;
+}
+
+/** One folder of the root (`dir` is relative, `""` the root). Fetched on open and on refresh only. */
+export function fetchFilesDir(
+  target: ChangesTarget,
+  dir: string,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<FilesAnswer<FilesListResponse>> {
+  const q = dir === "" ? "" : `?${new URLSearchParams({ dir }).toString()}`;
+  return filesRead<FilesListResponse>(`${filesBase(target)}${q}`, scope, signal);
+}
+
+/** One file under the root, as text: cut at the bridge's cap, `binary` with no text. */
+export function fetchFileText(
+  target: ChangesTarget,
+  path: string,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<FilesAnswer<FileReadResponse>> {
+  return filesRead<FileReadResponse>(`${filesBase(target)}?${new URLSearchParams({ path }).toString()}`, scope, signal);
+}
+
+/**
+ * Run a write to a pane's input under the poll burst. The burst starts when the request is ISSUED,
+ * because the operator is watching the mirror from the tap on, and again when it comes back ok, so
+ * the minimum polls it buys start counting at the moment the pane can actually have changed. A write
+ * that fails leaves no burst behind that could run forever: a burst ends itself after its minimum
+ * and two quiet polls (lib/poll-intent.ts), so the stamp on issue is the whole cost of a failure.
+ *
+ * This is the one chokepoint: every dialog tap, the key bar and the composer's typed text end in
+ * `sendKeys` or `sendReply`, so no call site has to remember to stamp.
+ */
+async function withSendBurst(paneId: string, write: Promise<ActionResponse>): Promise<ActionResponse> {
+  const res = await write;
+  if (res.ok) stampSend(paneId);
+  return res;
+}
+
 export function sendReply(
   paneId: string,
   text: string,
@@ -679,15 +830,19 @@ export function sendReply(
   scope?: Scope,
   expectedPrompt?: string,
 ): Promise<ActionResponse> {
-  return req<ActionResponse>(
-    withScope(`/api/pane/${encodeURIComponent(paneId)}/reply`, scope),
-    {
-      method: "POST",
-      // `JSON.stringify` omits an `undefined` property entirely, so an absent binding puts no
-      // `expected_prompt` on the wire — byte-identical to not naming the field at all.
-      body: JSON.stringify({ text, submit, expected_prompt: expectedPrompt }),
-    },
-    recoverPromptChanged,
+  stampSend(paneId);
+  return withSendBurst(
+    paneId,
+    req<ActionResponse>(
+      withScope(`/api/pane/${encodeURIComponent(paneId)}/reply`, scope),
+      {
+        method: "POST",
+        // `JSON.stringify` omits an `undefined` property entirely, so an absent binding puts no
+        // `expected_prompt` on the wire — byte-identical to not naming the field at all.
+        body: JSON.stringify({ text, submit, expected_prompt: expectedPrompt }),
+      },
+      recoverPromptChanged,
+    ),
   );
 }
 
@@ -696,15 +851,27 @@ export function sendKeys(
   keys: string[],
   scope?: Scope,
   expectedPrompt?: string,
+  expectedStyled?: string,
 ): Promise<ActionResponse> {
-  return req<ActionResponse>(
-    withScope(`/api/pane/${encodeURIComponent(paneId)}/keys`, scope),
-    {
-      method: "POST",
-      // As in `sendReply`: an `undefined` property is omitted by `JSON.stringify`.
-      body: JSON.stringify({ keys, expected_prompt: expectedPrompt }),
-    },
-    recoverPromptChanged,
+  stampSend(paneId);
+  // Snapshot what the client has seen NOW, before the key can change anything: `settleAfterSend`
+  // waits for a read that differs from it.
+  const key = paneScopeKey(scope, paneId);
+  const seen = lastSeenText.get(key);
+  if (seen === undefined) textBeforeSend.delete(key);
+  else remember(textBeforeSend, key, seen);
+  return withSendBurst(
+    paneId,
+    req<ActionResponse>(
+      withScope(`/api/pane/${encodeURIComponent(paneId)}/keys`, scope),
+      {
+        method: "POST",
+        // As in `sendReply`: an `undefined` property is omitted by `JSON.stringify`. The bridge honours
+        // `expected_styled` only beside `expected_prompt` (ADR 0080 point 7); an older bridge ignores it.
+        body: JSON.stringify({ keys, expected_prompt: expectedPrompt, expected_styled: expectedStyled }),
+      },
+      recoverPromptChanged,
+    ),
   );
 }
 
@@ -1175,6 +1342,40 @@ export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
  */
 export function fetchCrew(signal?: AbortSignal): Promise<CrewStatusResponse> {
   return req<CrewStatusResponse>("/api/crew", { signal });
+}
+
+/**
+ * The machines census (`GET /api/machines`): every machine's load now, its alert rules and which
+ * rules are firing. Read-level, never forwarded, and carries no scope: a lead (or a solo collie)
+ * answers for the whole crew, and a peer refuses with 404, which `machinesLoader` reads as "nothing
+ * to show here" rather than as a failure.
+ */
+export function fetchMachines(signal?: AbortSignal, opts: { spark?: number } = {}): Promise<MachinesResponse> {
+  // `?spark=N` adds each row's last N complete minutes for the small charts; without it the answer is
+  // the plain census.
+  const query = opts.spark === undefined ? "" : `?spark=${opts.spark}`;
+  return req<MachinesResponse>(`/api/machines${query}`, { signal });
+}
+
+/**
+ * One machine's last 24 hours at one point per minute (`GET /api/machines/:id/history`). With
+ * `since`, only the minutes starting at or after it: the page reads the day once, then only what it
+ * has not seen.
+ */
+export function fetchMachineHistory(id: string, signal?: AbortSignal, since?: number): Promise<MachineHistoryResponse> {
+  const query = since === undefined ? "" : `?since=${Math.max(0, Math.floor(since))}`;
+  return req<MachineHistoryResponse>(`/api/machines/${encodeURIComponent(id)}/history${query}`, { signal });
+}
+
+/**
+ * Replace one machine's alert rules. The body is the WHOLE `MachineAlerts` object: a missing key
+ * removes that rule. Returns the rules as the bridge stored them.
+ */
+export function setMachineAlerts(id: string, alerts: MachineAlerts): Promise<{ alerts: MachineAlerts }> {
+  return req<{ alerts: MachineAlerts }>(`/api/machines/${encodeURIComponent(id)}/alerts`, {
+    method: "POST",
+    body: JSON.stringify(alerts),
+  });
 }
 
 /**

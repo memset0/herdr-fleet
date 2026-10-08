@@ -1,4 +1,4 @@
-import { CircleDot, GitCompare, Rows3 } from "lucide-react";
+import { ListTree, Network, Rows3 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useRevalidator } from "react-router";
 
@@ -15,6 +15,8 @@ import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
 import { BuildStamp } from "@/components/build-stamp";
 import { CrewFooterLink } from "@/components/crew-footer-link";
+import { useCrew } from "@/components/crew-provider";
+import { CrewTab } from "@/components/crew-tab";
 import { UpdateBanner } from "@/components/update-banner";
 import { TabBar } from "@/components/ui/tab-bar";
 import { WorkspaceChangesList, type WorkspaceChangesRow } from "@/components/workspace-changes-list";
@@ -26,6 +28,7 @@ import { useNav } from "@/hooks/use-nav";
 import { usePaneOpen } from "@/hooks/use-pane-open";
 import { useScrollMemory } from "@/hooks/use-scroll-memory";
 import { useMuxCapability } from "@/lib/mux-capability";
+import { isolateSpaces } from "@/lib/spaces";
 import { ambientHost, ambientPanes, isMultiHost, paneRowKey, paneScope, sessionsOnHost } from "@/lib/hosts";
 import { setMachineHidden, useHiddenMachines } from "@/lib/hidden-machines";
 import type { ChangesLookup } from "@/lib/api";
@@ -84,13 +87,15 @@ function ChangesTabBody({
   );
 }
 
-// Dashboard home screen. Everything you might ACT on comes first — Needs you → Ready · unseen (see
-// lib/triage.ts) — then every other pane under the `space › tab` it lives in (lib/pane-groups.ts),
-// and the Spaces navigator sits last, under the thing it navigates to.
+// Dashboard home screen. Every pane sits under the workspace it lives in, in the multiplexer's own
+// order (lib/pane-groups.ts, ADR 0063); urgency is a mark on a row and a heading and one summary
+// line on top, never a position. The operator may ask for Activity or Cache order instead, with the
+// toggle beside that line (ADR 0071): one ranked list, read once and held. The Spaces navigator sits
+// last, under the thing it navigates to.
 // Launchers sit directly above Spaces: they are one-tap act-on-able actions like the herd above
-// them, but they CREATE rather than triage, so they sit under the triaged herd and above the
-// navigator their new Space will appear in. Tapping an agent opens its pane; tapping a space
-// drills into /space/:id; tapping a launcher creates a throwaway Space and types its command.
+// them, but they CREATE rather than triage, so they sit under the herd and above the navigator
+// their new Space will appear in. Tapping an agent opens its pane; tapping a space drills into
+// /space/:id; tapping a launcher creates a throwaway Space and types its command.
 export function HomeRoute() {
   const data = useRootData();
   const nav = useNav();
@@ -109,9 +114,24 @@ export function HomeRoute() {
     : [];
   const [newSpaceOpen, setNewSpaceOpen] = useState(false);
   useLocale();
-  const { prefs, setSpacesOpen, setLaunchOpen, setIsolatedSpace, toggleHiddenSpace, setDashView } = useDashPrefs();
-  const view: DashView = prefs.dashView;
-  // Focus's corner mark (ADR 0066, renamed from Attention by ADR 0068): a red count of the panes
+  const {
+    prefs,
+    setSpacesOpen,
+    setLaunchOpen,
+    setIsolatedSpace,
+    toggleHiddenSpace,
+    setDashView,
+    setNeedsYouOnly,
+    setPaneOrder,
+  } = useDashPrefs();
+  // The Crew tab exists only while a crew is configured, the condition CrewFooterLink uses. A device
+  // that stored "crew" and then lost its crew sees the Dashboard, and the stored choice is left alone,
+  // so the tab is back where it was when the crew returns (ADR 0085).
+  const { multi } = useCrew();
+  const view: DashView = prefs.dashView === "crew" && !multi ? "dashboard" : prefs.dashView;
+  // The needs-you switch filters the Dashboard list only: Crew and Changes draw their own bodies.
+  const needsYouOnly = view === "dashboard" && prefs.needsYouOnly;
+  // The Dashboard tab's corner mark (ADR 0066, carried by the Focus tab until ADR 0085 moved it): a red count of the panes
   // blocked on you, or, when none is blocked, a quiet dot for finished panes you have not opened. A
   // count means something waits on you; the dot only says there is something new. The list itself
   // still holds both kinds.
@@ -208,62 +228,77 @@ export function HomeRoute() {
         <ReadOnlyBanner device={data.device} />
 
         <main className="flex-1">
-          {/* One list: what needs you first, then every other pane under the tab it lives in
-              (components/agent-list.tsx). Bare shells go in with the agents — grouped by place they
-              sit beside the work they belong to, which is what stopped them being a pen of their
-              own at the bottom of the sheet. */}
-          <AgentList
-            agents={data.agents}
-            shellPanes={data.shellPanes}
-            bridge={data.bridge}
-            onOpen={paneOpen.open}
-            glideKeyOf={paneOpen.glideKeyOf}
-            onPress={paneOpen.press}
-            error={data.error}
-            lastSeenAt={data.lastSeenAt}
-            tabs={data.tabs}
-            servers={data.servers}
-            // Each workspace heading's "+" (M40/03): the list resolves each heading's own machine and
-            // session from these, the way a row's tap does, and sends the create there.
-            newTab={{
-              scope: data.scope,
-              sessions: data.sessions,
-              creating: creatingTab,
-              onNewTab: (workspaceId, at) => void newTab(workspaceId, at),
-            }}
-            isolated={prefs.isolatedSpace}
-            hidden={prefs.hiddenSpaces}
-            onIsolate={setIsolatedSpace}
-            onToggleHidden={toggleHiddenSpace}
-            hiddenMachines={hiddenMachines}
-            addressedHost={data.scope.host}
-            onShowMachine={(host) => setMachineHidden(host, false, data.servers)}
-            pins={pins}
-            onHold={setHeld}
-            reveal={reveal}
-            needsYouOnly={view === "focus"}
-            renderBody={
-              view === "changes"
-                ? (shown) => (
-                    <ChangesTabBody
-                      groups={shown}
-                      scope={data.scope}
-                      servers={data.servers}
-                      sessions={data.sessions}
-                      lookup={lookup}
-                    />
-                  )
-                : undefined
-            }
-          />
-          {/* Launch and the Spaces navigator belong to the whole herd, so they sit under Panes only.
-              Focus and Changes are narrower lists, and a launcher under them would read as part
-              of that list. */}
-          {view === "panes" && (
+          {/* One list: every pane under the workspace it lives in, or one ranked list in Activity and
+              Cache order (components/agent-list.tsx). Bare shells go in with the agents — grouped by
+              place they sit beside the work they belong to, which is what stopped them being a pen
+              of their own at the bottom of the sheet. */}
+          {view === "crew" ? (
+            // Crew is a different list: machines, not panes. The pane list's chrome (the space strip,
+            // the summary line with its controls slot, the Pinned group) filters and counts panes, so
+            // none of it is drawn here and the tab's body starts with the machine cards (ADR 0085).
+            // It also covers a crew with no pane anywhere, which the pane list would answer with its
+            // empty placeholder.
+            <div className="px-4 py-4">
+              <CrewTab />
+            </div>
+          ) : (
+            <AgentList
+              agents={data.agents}
+              shellPanes={data.shellPanes}
+              bridge={data.bridge}
+              onOpen={paneOpen.open}
+              glideKeyOf={paneOpen.glideKeyOf}
+              onPress={paneOpen.press}
+              error={data.error}
+              lastSeenAt={data.lastSeenAt}
+              tabs={data.tabs}
+              servers={data.servers}
+              // Each workspace heading's "+" (M40/03): the list resolves each heading's own machine and
+              // session from these, the way a row's tap does, and sends the create there.
+              newTab={{
+                scope: data.scope,
+                sessions: data.sessions,
+                creating: creatingTab,
+                onNewTab: (workspaceId, at) => void newTab(workspaceId, at),
+              }}
+              isolated={prefs.isolatedSpace}
+              hidden={prefs.hiddenSpaces}
+              onIsolate={setIsolatedSpace}
+              onToggleHidden={toggleHiddenSpace}
+              hiddenMachines={hiddenMachines}
+              addressedHost={data.scope.host}
+              onShowMachine={(host) => setMachineHidden(host, false, data.servers)}
+              pins={pins}
+              // The same per-device preference the pane switcher and Settings write (ADR 0071).
+              order={prefs.paneOrder}
+              onOrderChange={setPaneOrder}
+              onHold={setHeld}
+              reveal={reveal}
+              needsYouOnly={needsYouOnly}
+              onNeedsYouOnlyChange={setNeedsYouOnly}
+              renderBody={
+                view === "changes"
+                  ? (shown) => (
+                      <ChangesTabBody
+                        groups={shown}
+                        scope={data.scope}
+                        servers={data.servers}
+                        sessions={data.sessions}
+                        lookup={lookup}
+                      />
+                    )
+                  : undefined
+              }
+            />
+          )}
+          {/* Launch and the Spaces navigator belong to the whole herd, so they sit under the Dashboard
+              with the needs-you switch off. The filtered list and the other tabs are narrower, and
+              a launcher under them would read as part of that list. */}
+          {view === "dashboard" && !needsYouOnly && (
             <>
               <LaunchStrip open={launchOpen} onOpenChange={setLaunchOpen} scope={data.scope} />
               <SpaceOverview
-                workspaces={data.workspaces}
+                workspaces={isolateSpaces(data.workspaces, prefs.isolatedSpace)}
                 agents={navPanes.agents}
                 shellPanes={navPanes.shellPanes}
                 host={navHost}
@@ -286,26 +321,32 @@ export function HomeRoute() {
         <BuildStamp className="px-4 pt-3 pb-2" />
       </div>
 
-      {/* The dashboard's footer (ADR 0066, ADR 0068): three lists, each named for what it holds. It sits
-          OUTSIDE the scroller, so the content scrolls above it and a switch moves neither it nor the
-          strip and summary line at the top of the list. At every width: the dashboard has no
-          sidebar on a wide screen (it is one centred column), so nothing else offers these views. */}
+      {/* The dashboard's footer (ADR 0066, ADR 0085): lists, each named for what it holds. Crew
+          first while a crew is configured, then Dashboard, the default, in the middle under the
+          thumb, then Files. It sits OUTSIDE the scroller, so the content scrolls above it and a
+          switch moves neither it nor the strip and summary line at the top of the list. At every width: the dashboard has no sidebar on a wide screen (it is one
+          centred column), so nothing else offers these views. */}
       <TabBar<DashView>
         label={t("home.tabs.aria")}
         active={view}
         onSelect={setDashView}
         items={[
-          { value: "panes", label: t("home.tabs.panes"), icon: <Rows3 className="size-5" /> },
+          // Crew leads, drawn only while a crew is configured (ADR 0085). Network is the Crew icon
+          // the Settings card, the switcher sheet and the footer line wear.
+          ...(multi ? [{ value: "crew" as const, label: t("crew.title"), icon: <Network className="size-5" /> }] : []),
+          // The Dashboard tab carries the corner mark the Focus tab wore (ADR 0066 point 7), always:
+          // it is information about the herd, not a nag, so it shows with the switch on or off.
           {
-            value: "focus",
-            label: t("home.tabs.focus"),
-            icon: <CircleDot className="size-5" />,
+            value: "dashboard",
+            label: t("home.tabs.dashboard"),
+            icon: <Rows3 className="size-5" />,
             badge: blockedCount,
             dot: readyUnseen,
             badgeLabel: blockedCount > 0 ? tn("home.tabs.blocked", blockedCount) : t("home.tabs.unseen"),
           },
-          // GitCompare is the one Changes icon: the pane belt's Changes pill and the Settings row wear it.
-          { value: "changes", label: t("changes.title"), icon: <GitCompare className="size-5" /> },
+          // The Files tab (2026-10-06, ADR 0085): the stored value stays `changes`. ListTree is the
+          // one Files icon: the pane belt's pill and the Files screen's Tree toggle wear it.
+          { value: "changes", label: t("files.title"), icon: <ListTree className="size-5" /> },
         ]}
       />
 

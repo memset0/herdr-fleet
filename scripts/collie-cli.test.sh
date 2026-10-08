@@ -448,9 +448,12 @@ echo "systemctl \$*" >> "$L_CALLS"
 [ "\$2" = "is-active" ] && echo active
 exit 0
 EOF
+# `print` answers with a pid line, as launchd does for a running job: `start` reads it back after
+# `kickstart` and prints "bridge started" only when it shows.
 cat > "${L_BIN}/launchctl" <<EOF
 #!/bin/sh
 echo "launchctl \$*" >> "$L_CALLS"
+[ "\$1" = print ] && echo "	pid = 4242"
 exit 0
 EOF
 cat > "${L_BIN}/journalctl" <<EOF
@@ -547,7 +550,7 @@ firstrun HERDR_SOCKET_PATH="${F_HOME}/absent.sock" "$BIN" start \
   && fail "\`collie start\` came up with no multiplexer to mirror"
 assert_contains "$STDERR" "no COLLIE_MUX is set"
 assert_contains "$STDERR" "no multiplexers are running"
-assert_contains "$STDERR" "COLLIE_MUX=<herdr|tmux|tuios|zellij> collie start"
+assert_contains "$STDERR" "COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start"
 [ -f "${F_CONFIG}/.env" ] && fail "a refused start still wrote a config"
 
 # Exactly one found, and no terminal to ask at: auto-selected, said out loud, and written down.
@@ -652,6 +655,7 @@ CALLS="$(cat "$L_CALLS")"
 assert_contains "$CALLS" "launchctl bootout gui/$(id -u)/herdr.collie"
 assert_contains "$CALLS" "launchctl enable gui/$(id -u)/herdr.collie"
 assert_contains "$CALLS" "launchctl bootstrap gui/$(id -u) ${PLIST}"
+assert_contains "$CALLS" "launchctl kickstart gui/$(id -u)/herdr.collie"
 assert_contains "$STDOUT" "bridge started (launchd: herdr.collie)"
 if command -v plutil >/dev/null 2>&1; then
   plutil -lint "$PLIST" >/dev/null || fail "the generated plist is not a valid property list"
@@ -671,6 +675,7 @@ install_flaky_launchctl() {
   cat > "${L_BIN}/launchctl" <<EOF
 #!/bin/sh
 echo "launchctl \$*" >> "$L_CALLS"
+[ "\$1" = print ] && echo "	pid = 4242"
 [ "\$1" = bootstrap ] || exit 0
 n=0
 [ -f "${TMP_ROOT}/bootstrap.count" ] && read n < "${TMP_ROOT}/bootstrap.count"

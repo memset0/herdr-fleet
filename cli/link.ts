@@ -1,6 +1,7 @@
-import { lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, readlinkSync, rmdirSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 
+import { binaryName, dropExtendedPrefix, HOST, type Host } from "../bridge/host.ts";
 import type { CliContext } from "./context.ts";
 import { EXIT, type Io } from "./io.ts";
 import type { Files } from "./sys.ts";
@@ -54,10 +55,14 @@ export function resolveLinkTarget(linkAt: string, rawTarget: string): string {
 /**
  * Does this target name SOME collie checkout's compiled binary? That — not equality with our own —
  * is what makes a destination one Collie published and may therefore replace. Both separators are
- * accepted because the CLI runs on Windows too.
+ * accepted because the CLI runs on Windows too, and `collie.exe` there.
  */
-export function isCollieBinaryPath(target: string): boolean {
-  return /[/\\]bin[/\\]collie$/.test(target);
+export function isCollieBinaryPath(target: string, host: Host = HOST): boolean {
+  // `collieBinary` spells `bin/collie.exe` on Windows, so the bare name alone would reject our own.
+  const names = [binaryName(host), binaryName({ ...host, exeSuffix: "" })];
+  const parts = target.split(/[/\\]/);
+  // Something must sit before `bin`, even if only the empty string of a leading slash.
+  return parts.length >= 3 && parts.at(-2) === "bin" && names.includes(parts.at(-1)!);
 }
 
 export type LinkVerdict =
@@ -126,11 +131,19 @@ export interface LinkReader {
   probe(p: string): LinkProbe;
 }
 
-/** Reading it, and the three writes `link`/`unlink` need. */
+/** Reading it, the three writes `link`/`unlink` need, and the junction `current` is on Windows. */
 export interface LinkWriter extends LinkReader {
   mkdirp(p: string): void;
   symlink(target: string, at: string): void;
   remove(at: string): void;
+  /**
+   * Windows only: a directory junction at `at` that names the ABSOLUTE folder `target`. `current` is
+   * a junction there, because a plain user cannot make a symlink without Developer Mode and a junction
+   * needs no privilege at all (Windows 11 VM, 2026-10-02: a standard user got EPERM for every symlink
+   * and made the junction). `probe` reads a junction as a `symlink`, and `remove` deletes the junction
+   * and never the folder it names.
+   */
+  junction(target: string, at: string): void;
 }
 
 export interface LinkDeps {
@@ -139,6 +152,8 @@ export interface LinkDeps {
   /** Only to answer "has this checkout been built yet?". */
   readonly files: Files;
   readonly fs: LinkWriter;
+  /** Names the binary (`collie.exe` on Windows); the running machine's when absent. */
+  readonly host?: Host;
 }
 
 /** The PATH warning, printed after a successful link. A fact and a hint — never a profile edit. */
@@ -149,7 +164,7 @@ function pathNote(deps: LinkDeps, dir: string): void {
 
 /** `collie link` — publish `~/.local/bin/collie` → this checkout's `bin/collie`. */
 export function cmdLink(deps: LinkDeps): number {
-  const own = publishedBinary(deps.ctx.root, deps.fs);
+  const own = publishedBinary(deps.ctx.root, deps.fs, deps.host);
   if (!deps.files.exists(own)) {
     deps.io.err(`error: no binary at ${own} — run the build first (\`bin/collie build\`).`);
     return EXIT.FAIL;
@@ -190,7 +205,7 @@ export function cmdLink(deps: LinkDeps): number {
 
 /** `collie unlink` — remove the published name, but only when it is this checkout's. */
 export function cmdUnlink(deps: LinkDeps): number {
-  const own = publishedBinary(deps.ctx.root, deps.fs);
+  const own = publishedBinary(deps.ctx.root, deps.fs, deps.host);
   const at = linkPath(deps.ctx.home);
   const verdict = classifyUnlink(deps.fs.probe(at), own);
 
@@ -230,7 +245,9 @@ export const realLinkFs: LinkWriter = {
     }
     if (stat.isSymbolicLink()) {
       try {
-        return { kind: "symlink", target: resolveLinkTarget(p, readlinkSync(p)) };
+        // A junction reads as a symlink here, and Windows may spell its target `\\?\C:\...`.
+        const raw = readlinkSync(p);
+        return { kind: "symlink", target: resolveLinkTarget(p, HOST.platform === "win32" ? dropExtendedPrefix(raw) : raw) };
       } catch {
         // It was a symlink a moment ago and now cannot be read: report it as occupied rather than
         // absent, so nothing is replaced on the strength of a race.
@@ -241,5 +258,29 @@ export const realLinkFs: LinkWriter = {
   },
   mkdirp: (p) => void mkdirSync(p, { recursive: true }),
   symlink: (target, at) => symlinkSync(target, at),
-  remove: (at) => rmSync(at, { force: true }),
+  remove(at) {
+    if (HOST.platform !== "win32") {
+      rmSync(at, { force: true });
+      return;
+    }
+    // Windows: a junction is removed by ITSELF, never through a recursive delete, so the folder it
+    // names cannot be touched. `unlink` removes a junction; `rmdir` is the fallback for a directory
+    // symlink that refuses it. A file or a missing name takes the old path.
+    let link = false;
+    try {
+      link = lstatSync(at).isSymbolicLink();
+    } catch {
+      return;
+    }
+    if (!link) {
+      rmSync(at, { force: true });
+      return;
+    }
+    try {
+      unlinkSync(at);
+    } catch {
+      rmdirSync(at);
+    }
+  },
+  junction: (target, at) => symlinkSync(target, at, "junction"),
 };

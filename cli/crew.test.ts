@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import { AuditLog, type AuditEntry } from "../bridge/audit.ts";
 import {
@@ -32,11 +33,14 @@ import {
   cmdPromote,
   cmdReconnect,
   enrollUrl,
+  leadOrigin,
   looksLikePlaintextListener,
   CREW_SUBCOMMANDS,
   parseCrewArgs,
   readToken,
+  schemedAddressLines,
   selfAddress,
+  WINDOWS_CREW_SENTENCE,
 } from "./crew.ts";
 import {
   type AliasRow,
@@ -53,11 +57,17 @@ import type { CrewAddDeps } from "./remote.ts";
 import { mintWarrant } from "../bridge/crew/warrant.ts";
 import { leadDeputyLines } from "./crew-status-deputy.ts";
 import { dialableBridgeHost } from "./tailnet.ts";
+import { hostFor } from "../bridge/host.ts";
 
 // The crew verbs, against fakes for every seam. NOTHING here reaches a service manager, a tailnet, a
 // real trust store or a network: `restart`/`serve`/`unserve` are counters, the transport is a
 // function, and the store is an in-memory `TrustStoreIo`. That is the same safety boundary
 // cli/fakes.ts draws for the lifecycle verbs, extended one milestone.
+
+// The primary herdr socket as a real context carries it: `defaultSocketPath` joins it, so on a
+// Windows host it has backslashes. The session discovery joins the same way and compares the result
+// to this string to tell the primary from a named session, so the fixture must spell it the same way.
+const HERDR_SOCKET = join("/home/pat/.config/herdr", "herdr.sock");
 
 const TAILSCALE_JSON = JSON.stringify({ Self: { DNSName: "laptop.tail.ts.net." } });
 
@@ -103,7 +113,7 @@ function harness(initial: TrustStoreData | null, replies: Reply[] = [], over: Pa
   const auditLines: AuditEntry[] = [];
   const out = capture();
   const exec = fakeExec({ answers: [["tailscale status --json", { stdout: TAILSCALE_JSON }]] });
-  const files = fakeFiles({ "/home/pat/.config/herdr/herdr.sock": "" });
+  const files = fakeFiles({ [HERDR_SOCKET]: "" });
   const requests: Harness["requests"] = [];
   const restarts: number[] = [];
   const serves: number[] = [];
@@ -112,13 +122,15 @@ function harness(initial: TrustStoreData | null, replies: Reply[] = [], over: Pa
   let n = 0;
 
   const deps: CrewAddDeps = {
+    // A Linux host, pinned: on a Windows test run the crew-forming verbs would refuse (M43).
+    host: hostFor("linux"),
     // `clientFor` races the fake fetch (which resolves as soon as the event loop turns) against a
     // REAL `setTimeout` sized from this env var (`crewTimeoutBudget`, default ~1200ms here). Nothing
     // in this suite exercises that budget — every "unreachable" case throws synchronously instead —
     // so the only thing the default timeout can do here is misfire under a stalled event loop and
     // report a reachable fake peer as unreachable. Set it far above anything this process could stall
     // for real, so the timer never fires; it does not change what any test observes.
-    ctx: context({ COLLIE_CREW_TIMEOUT_MS: "60000" }, { socket: "/home/pat/.config/herdr/herdr.sock" }),
+    ctx: context({ COLLIE_CREW_TIMEOUT_MS: "60000" }, { socket: HERDR_SOCKET }),
     io: out,
     exec,
     files,
@@ -288,9 +300,27 @@ describe("selfAddress — the port is explicit exactly where the dial needs it",
     // The trap this closes: a bare host dials :443 (`enrollUrl`/`crewUrl` assume https), and a peer
     // publishes no front door — its listener is COLLIE_HOST:COLLIE_PORT and nothing else (§3).
     expect(selfAddress(h.deps, undefined, "crew-listener")).toBe("laptop.tail.ts.net:8787");
-    // The lead's is the published ingress, which really is on :443 — `crew add` and `crew invite`
-    // hand this string to a joiner, and it must keep dialling the front door.
-    expect(selfAddress(h.deps, undefined, "front-door")).toBe("laptop.tail.ts.net");
+    // The lead's is the published ingress, which really is on :443 — `crew add` hands this string to
+    // a joiner, and it must keep dialling the front door. It is spelled as a URL: `join` reads a bare
+    // `laptop.tail.ts.net` as the lead's listener, `https://laptop.tail.ts.net:8787` (issue 334).
+    expect(selfAddress(h.deps, undefined, "front-door")).toBe("https://laptop.tail.ts.net");
+  });
+
+  test("the derived front door dials 443 when `join` reads it — never the listener port", () => {
+    const h = harness(null);
+    const door = selfAddress(h.deps, undefined, "front-door")!;
+    expect(enrollUrl(door)).toBe("https://laptop.tail.ts.net/crew/v1/enroll");
+    expect(enrollUrl(door)).not.toContain(":8787");
+    // The regression: the bare name it used to be dials the listener, which `tailscale serve` hides.
+    expect(enrollUrl("laptop.tail.ts.net")).toBe("https://laptop.tail.ts.net:8787/crew/v1/enroll");
+    // And it is the origin a joiner stores after dialling, so the two sides agree on one spelling.
+    expect(leadOrigin(door)!.toString()).toBe("https://laptop.tail.ts.net/");
+  });
+
+  test("a front door moved off 443 keeps `name:port`, which already dials where it says", () => {
+    const h = harness(null, [], { ctx: context({ COLLIE_SERVE_PORT: "8443" }) });
+    expect(selfAddress(h.deps, undefined, "front-door")).toBe("laptop.tail.ts.net:8443");
+    expect(enrollUrl("laptop.tail.ts.net:8443")).toBe("https://laptop.tail.ts.net:8443/crew/v1/enroll");
   });
 
   test("the appended port is the instance's own, not the default", () => {
@@ -361,7 +391,7 @@ describe("selfAddress — the port is explicit exactly where the dial needs it",
 
   test("an unparseable COLLIE_PUBLIC_URL warns and falls through — a banner variable can't break enrollment", () => {
     const h = harness(null, [], { ctx: context({ COLLIE_PUBLIC_URL: "collie.example.com" }) });
-    expect(selfAddress(h.deps, undefined, "front-door")).toBe("laptop.tail.ts.net");
+    expect(selfAddress(h.deps, undefined, "front-door")).toBe("https://laptop.tail.ts.net");
     expect(text(h.io)).toContain("is not a URL");
   });
 
@@ -406,6 +436,83 @@ describe("enrollUrl", () => {
   });
 });
 
+// ── Windows runs alone (M43) ─────────────────────────────────────────────────
+
+describe("on a Windows host, the verbs that form a crew refuse and change nothing", () => {
+  const WIN = { host: hostFor("win32") };
+  // Each verb with arguments that would otherwise go a long way: a store to mint into, a lead to
+  // dial, an ssh host to reach (this harness throws on any ssh, prompt or bundle).
+  const forming: [string, (h: Harness) => Promise<number>, TrustStoreData | null][] = [
+    ["crew invite", (h) => cmdCrewInvite(h.deps, []), leadStore()],
+    ["crew invite, no store yet", (h) => cmdCrewInvite(h.deps, ["--as", "desk"]), null],
+    ["crew join", (h) => cmdJoin(h.deps, ["desk.ts.net", "-"]), null],
+    ["collie crew join", (h) => cmdCrew(h.deps, ["join", "desk.ts.net", "-"]), null],
+    ["collie crew invite", (h) => cmdCrew(h.deps, ["invite"]), leadStore()],
+    ["collie crew add", (h) => cmdCrew(h.deps, ["add", "nas.example"]), leadStore()],
+    // The verbs that change who leads: name a deputy, consent to a promotion, take the lead.
+    ["collie crew deputy", (h) => cmdCrew(h.deps, ["deputy", "peer"]), leadStore()],
+    ["collie crew deputy --revoke", (h) => cmdCrew(h.deps, ["deputy", "--revoke"]), leadStore()],
+    ["collie crew approve-promote", (h) => cmdCrew(h.deps, ["approve-promote", "peer"]), leadStore()],
+    ["collie promote", (h) => cmdPromote(h.deps, ["--force"]), peerStore()],
+  ];
+
+  for (const [name, verb, initial] of forming) {
+    test(`${name}: one sentence on stderr, exit 1, no store write, no request, no restart`, async () => {
+      const h = harness(initial, [], WIN);
+      const before = JSON.stringify(h.data());
+      expect(await verb(h)).toBe(EXIT.FAIL);
+      expect(h.io.stderr).toEqual([`error: ${WINDOWS_CREW_SENTENCE}`]);
+      expect(h.io.stdout).toEqual([]);
+      expect(JSON.stringify(h.data())).toBe(before);
+      expect(h.requests).toEqual([]);
+      expect(h.audit).toEqual([]);
+      expect(h.restarts).toEqual([]);
+      expect(h.serves).toEqual([]);
+      expect(h.unserves).toEqual([]);
+      expect(h.exec.calls).toEqual([]);
+    });
+  }
+
+  test("the sentence is the one the operator reads, word for word", () => {
+    expect(WINDOWS_CREW_SENTENCE).toBe(
+      "On Windows, Collie runs on one machine only: a Windows machine cannot join, lead or change a crew in this release, and nothing was changed. See docs/windows.md.",
+    );
+  });
+
+  test("the verbs that read or leave a crew are not refused", async () => {
+    const status = harness(leadStore(), [], WIN);
+    expect(await cmdCrewStatus(status.deps, ["--no-probe"])).toBe(EXIT.OK);
+    const leave = harness(peerStore(), [], WIN);
+    await cmdLeave(leave.deps);
+    for (const h of [status, leave]) expect(text(h.io)).not.toContain(WINDOWS_CREW_SENTENCE);
+    expect(leave.data()?.crew ?? null).toBeNull();
+  });
+
+  test("a solo crew status on Windows names no verb that refuses", async () => {
+    const h = harness(null, [], WIN);
+    expect(await cmdCrewStatus(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout).toEqual([
+      "mode: solo — this collie is not in a crew (no trust store, or an empty one).",
+      "  A Windows machine cannot join or lead a crew in this release.",
+    ]);
+    expect(text(h.io)).not.toContain("crew invite");
+    expect(text(h.io)).not.toContain("collie join");
+  });
+
+  test("a solo crew status off Windows still names both ways in", async () => {
+    const h = harness(null, [], { host: hostFor("linux") });
+    expect(await cmdCrewStatus(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout[1]).toBe("  `collie crew invite` here makes it a lead; `collie join …` makes it a peer.");
+  });
+
+  test("off Windows the same invite is minted as before", async () => {
+    const h = harness(leadStore(), [], { host: hostFor("linux") });
+    expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout[0]).toBe(`r1.${fp("desk")}`);
+    expect(text(h.io)).not.toContain("On Windows");
+  });
+});
+
 // ── crew invite ──────────────────────────────────────────────────────────────
 
 describe("collie crew invite", () => {
@@ -424,27 +531,53 @@ describe("collie crew invite", () => {
     expect(text(h.io)).toContain("expires");
   });
 
-  test("the banner leads with the short join command and keeps the stdin form under it", async () => {
+  test("https mode: the banner prints the front door, the full name, and it is a whole command", async () => {
     const h = harness(leadStore());
     await cmdCrewInvite(h.deps, []);
-    // The SHORT MagicDNS name, and no port: this lead is on 8787, which is what a bare host means.
-    expect(text(h.io)).toContain("collie crew join laptop");
-    expect(text(h.io)).toContain("collie crew join laptop -   # paste the token on stdin");
+    // A default https lead binds loopback and publishes only :443, so the joiner must dial the door.
+    // The full name, because the certificate `tailscale serve` obtains names nothing shorter.
+    expect(text(h.io)).toContain("collie crew join https://laptop.tail.ts.net\n");
+    expect(text(h.io)).toContain("collie crew join https://laptop.tail.ts.net -   # paste the token on stdin");
+    expect(text(h.io)).not.toContain("collie crew join laptop");
     expect(text(h.io)).toContain("leaves it in `ps` output");
+    // What `join` does with the printed host: 443, not the listener port (issue 334).
+    expect(enrollUrl("https://laptop.tail.ts.net")).toBe("https://laptop.tail.ts.net/crew/v1/enroll");
   });
 
-  test("a lead that moved off 8787 says so, and COLLIE_PUBLIC_URL wins with its port made explicit", async () => {
-    const moved = harness(leadStore(), [], { ctx: context({}, { port: 9001 }) });
+  test("https mode: the printed host is exactly what `crew add` hands a peer", async () => {
+    const h = harness(leadStore());
+    await cmdCrewInvite(h.deps, []);
+    expect(text(h.io)).toContain(`collie crew join ${selfAddress(h.deps, undefined, "front-door")} -`);
+  });
+
+  test("https mode: a front door moved off 443 prints name:port, and the listener port is irrelevant", async () => {
+    const h = harness(leadStore(), [], { ctx: context({ COLLIE_SERVE_PORT: "8443" }, { port: 9001 }) });
+    await cmdCrewInvite(h.deps, []);
+    expect(text(h.io)).toContain("collie crew join laptop.tail.ts.net:8443\n");
+    expect(text(h.io)).not.toContain(":9001");
+  });
+
+  test("http mode keeps the short bare name, with the port only when this lead moved off 8787", async () => {
+    const plain = harness(leadStore(), [], { ctx: context({}, { serveMode: "http" }) });
+    await cmdCrewInvite(plain.deps, []);
+    // The listener is what answers in http mode, and 8787 is what a bare host means.
+    expect(text(plain.io)).toContain("collie crew join laptop\n");
+    expect(text(plain.io)).toContain("collie crew join laptop -   # paste the token on stdin");
+    const moved = harness(leadStore(), [], { ctx: context({}, { serveMode: "http", port: 9001 }) });
     await cmdCrewInvite(moved.deps, []);
     expect(text(moved.io)).toContain("collie crew join laptop:9001");
+  });
 
+  test("COLLIE_PUBLIC_URL wins in either mode, with its port made explicit", async () => {
     // A configured front door is the ingress this machine actually publishes, so it wins — and its
     // port is spelt out, because a bare host would send the joiner to 8787 instead of to that door.
-    const published = harness(leadStore(), [], {
-      ctx: context({ COLLIE_PUBLIC_URL: "https://collie.example.com" }),
-    });
-    await cmdCrewInvite(published.deps, []);
-    expect(text(published.io)).toContain("collie crew join collie.example.com:443");
+    for (const serveMode of ["https", "http"] as const) {
+      const published = harness(leadStore(), [], {
+        ctx: context({ COLLIE_PUBLIC_URL: "https://collie.example.com" }, { serveMode }),
+      });
+      await cmdCrewInvite(published.deps, []);
+      expect(text(published.io)).toContain("collie crew join collie.example.com:443");
+    }
   });
 
   test("it materialises the store — and identity minting refusing is the whole verb failing", async () => {
@@ -477,6 +610,62 @@ describe("collie crew invite", () => {
 
 describe("collie join", () => {
   const joinArgs = ["desk.ts.net", "-"];
+
+  test("a portless --address is refused with this machine's own port, before anything is read or stored", async () => {
+    const h = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(h.deps, [...joinArgs, "--address", "100.64.0.9"])).toBe(EXIT.USAGE);
+    expect(text(h.io)).toContain('--address "100.64.0.9"');
+    expect(text(h.io)).toContain("there is no port");
+    expect(text(h.io)).toContain("try --address <host>:8787");
+    // Nothing happened: no dial, no store, no token read.
+    expect(h.requests).toHaveLength(0);
+    expect(h.data()).toBeNull();
+  });
+
+  test("the suggested port is this instance's own", async () => {
+    const h = harness(null, [], { ctx: context({}, { port: 9000 }) });
+    expect(await cmdJoin(h.deps, [...joinArgs, "--address", "nas.example"])).toBe(EXIT.USAGE);
+    expect(text(h.io)).toContain("try --address <host>:9000");
+  });
+
+  test("`--address https://host:8787` still works, and the lead receives `host:8787`", async () => {
+    // It worked in 1.15.2, so a patch must not break it: the prefix (and one trailing slash) is
+    // stripped, and the scheme form is never stored or sent.
+    for (const given of ["https://100.64.0.9:8787", "https://100.64.0.9:8787/", "HTTPS://100.64.0.9:8787"]) {
+      const h = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+      expect(await cmdJoin(h.deps, [...joinArgs, "--address", given])).toBe(EXIT.OK);
+      expect(JSON.parse(h.requests[0]!.body).address).toBe("100.64.0.9:8787");
+    }
+  });
+
+  test("an https:// address with no port, a path, or an http:// scheme is refused", async () => {
+    for (const [given, why] of [
+      ["https://100.64.0.9", "there is no port"],
+      ["https://100.64.0.9/", "there is no port"],
+      ["https://100.64.0.9:8787/x", "never a path"],
+      ["http://100.64.0.9:8787", "a scheme"],
+      ["http://100.64.0.9", "a scheme"],
+    ] as const) {
+      const h = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+      expect(await cmdJoin(h.deps, [...joinArgs, "--address", given])).toBe(EXIT.USAGE);
+      expect(text(h.io)).toContain(why);
+      expect(text(h.io)).toContain("try --address <host>:8787");
+      expect(h.requests).toHaveLength(0);
+      expect(h.data()).toBeNull();
+    }
+  });
+
+  test("a host:port --address is accepted and handed to the lead as typed", async () => {
+    const h = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(h.deps, [...joinArgs, "--address", "100.64.0.9:8787"])).toBe(EXIT.OK);
+    expect(JSON.parse(h.requests[0]!.body).address).toBe("100.64.0.9:8787");
+  });
+
+  test("no --address at all is the derived host:port, unchecked and unchanged", async () => {
+    const h = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(h.deps, [...joinArgs, "--address", ""])).toBe(EXIT.OK);
+    expect(JSON.parse(h.requests[0]!.body).address).toBe("laptop.tail.ts.net:8787");
+  });
 
   test("enrolls, pins the lead, and never puts a credential in argv or a URL", async () => {
     const h = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
@@ -1111,6 +1300,68 @@ describe("collie crew status — what an unreachable LEAD is told to do", () => 
     expect(text(h.io)).toContain("collie crew set-address nas <host:port>");
     expect(text(h.io)).not.toContain("collie reconnect <address>");
   });
+
+  test("a PEER row with no port gets the same remedy, in the refusal's own words (issue 334)", async () => {
+    const h = harness(leadStore({ peers: [member({ memberId: "nas", address: "100.64.0.9" })] }), [
+      new Error("no route to host"),
+    ]);
+    expect(await cmdCrewStatus(h.deps, [])).toBe(EXIT.OK);
+    expect(text(h.io)).toContain("there is no port");
+    expect(text(h.io)).toContain("a portless address dials :443");
+    // The port is filled in, not left as a placeholder.
+    expect(text(h.io)).toContain("collie crew set-address nas 100.64.0.9:8787");
+    expect(text(h.io)).toContain("(8787 unless that machine set COLLIE_PORT)");
+    expect(text(h.io)).not.toContain("<host:port>");
+  });
+
+  test("a scheme'd peer row keeps the placeholder text", async () => {
+    const h = harness(leadStore({ peers: [member({ memberId: "nas", address: "https://nas.example" })] }), [
+      new Error("no route to host"),
+    ]);
+    await cmdCrewStatus(h.deps, []);
+    expect(text(h.io)).toContain("an address with a scheme is a front door's");
+    expect(text(h.io)).toContain("collie crew set-address nas <host:port>");
+    expect(text(h.io)).not.toContain("8787 unless");
+  });
+
+  test("a peer row that is dialable gets no address hint, and neither does a portless LEAD row", async () => {
+    const fine = harness(leadStore({ peers: [member({ memberId: "nas", address: "nas.example:8787" })] }), [
+      new Error("no route to host"),
+    ]);
+    await cmdCrewStatus(fine.deps, []);
+    expect(text(fine.io)).not.toContain("collie crew set-address");
+    // A lead's address is its front door, and a bare one is a legitimate spelling of it.
+    const lead = harness(peerStore({ lead: member({ memberId: "desk", role: "lead", address: "desk.tailnet.ts.net" }) }), [
+      new Error("no route to host"),
+    ]);
+    await cmdCrewStatus(lead.deps, []);
+    expect(text(lead.io)).not.toContain("collie crew set-address");
+    expect(text(lead.io)).not.toContain("there is no port");
+  });
+});
+
+describe("schemedAddressLines — every refusal reason, on a peer row only", () => {
+  test("each way a crew address is undialable yields a hint naming set-address", () => {
+    for (const address of ["https://nas.example", "nas.example", "nas.example/x:8787", "nas.example:0", ":8787", ""]) {
+      const lines = schemedAddressLines("nas", address, "peer");
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.map((l) => l.text).join("\n")).toContain("`collie crew set-address nas ");
+    }
+  });
+
+  test("only the no-port reason fills the port in, and never into an IPv6 literal", () => {
+    expect(schemedAddressLines("nas", "nas.example", "peer").map((l) => l.text).join("\n")).toContain(
+      "set-address nas nas.example:8787",
+    );
+    expect(schemedAddressLines("nas", "fd7a::abcd", "peer").map((l) => l.text).join("\n")).toContain("<host:port>");
+    expect(schemedAddressLines("nas", "nas.example:0", "peer").map((l) => l.text).join("\n")).toContain("<host:port>");
+  });
+
+  test("a dialable address and any LEAD row are silent", () => {
+    expect(schemedAddressLines("nas", "nas.example:8787", "peer")).toEqual([]);
+    expect(schemedAddressLines("nas", "[fd7a::1]:8787", "peer")).toEqual([]);
+    for (const address of ["https://desk", "desk", ""]) expect(schemedAddressLines("desk", address, "lead")).toEqual([]);
+  });
 });
 
 // ── the peer→lead dial is not pinned (F10) ───────────────────────────────────
@@ -1418,7 +1669,7 @@ describe("collie crew status", () => {
     const h = harness(peerStore(), [], {
       ctx: context(
         { COLLIE_HOST: "0.0.0.0", COLLIE_CREW_TIMEOUT_MS: "60000" },
-        { socket: "/home/pat/.config/herdr/herdr.sock" },
+        { socket: HERDR_SOCKET },
       ),
     });
     await cmdCrewStatus(h.deps, ["--no-probe"]);
@@ -1835,7 +2086,7 @@ describe("collie crew remove", () => {
     });
     expect(await cmdCrewRemove(h.deps, ["nas"])).toBe(EXIT.OK);
     expect(text(h.io)).toContain("ssh op@192.168.77.2 /home/op/.collie/bin/collie leave");
-    expect(text(h.io)).toContain("/state/crew-ops.json");
+    expect(text(h.io)).toContain(join("/state", "crew-ops.json"));
     // The row survives — this is the whole finding.
     expect(await h.deps.ops.get("nas")).toMatchObject({ sshHost: "op@192.168.77.2" });
   });
@@ -2045,7 +2296,7 @@ describe("collie promote", () => {
     // used to run here could never land, and its absence is the contract.
     expect(h.requests.map((r) => r.url)).toEqual(["https://desk.example:8787/crew/v1/lead"]);
     expect(JSON.parse(h.requests[0]!.body)).toEqual({
-      lead: { memberId: "laptop", fingerprint: fp("laptop"), certPem: material("laptop").certPem, address: "laptop.tail.ts.net" },
+      lead: { memberId: "laptop", fingerprint: fp("laptop"), certPem: material("laptop").certPem, address: "https://laptop.tail.ts.net" },
     });
   });
 

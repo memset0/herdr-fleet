@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { loadConfig } from "./config.ts";
 import {
@@ -9,13 +9,16 @@ import {
   overlayConfig,
   readConfigFiles,
   sourceOf,
+  hostFilePerms,
   tightenPrivateFile,
   type ConfigFileLayer,
   type ConfigFilePath,
   type Environment,
   type FilePerms,
+  type PrivateFileVerdict,
 } from "./config-source.ts";
 import { settingByEnv } from "./config-schema.ts";
+import { hostFor } from "./host.ts";
 import type { OperatorFileIo } from "./operator-file.ts";
 
 const HOME = "/home/pat";
@@ -138,8 +141,8 @@ describe("the file's shape", () => {
     const layer = await read({
       [HOME_FILE]: '[bridge]\nstate_dir = "~/state/collie"\n\n[journal]\ntranscript_root = ["~/.claude/projects"]\n',
     });
-    expect(layer.env.COLLIE_STATE_DIR).toBe("/home/pat/state/collie");
-    expect(layer.env.COLLIE_TRANSCRIPT_ROOT).toBe("/home/pat/.claude/projects");
+    expect(layer.env.COLLIE_STATE_DIR).toBe(join(HOME, "state", "collie"));
+    expect(layer.env.COLLIE_TRANSCRIPT_ROOT).toBe(join(HOME, ".claude", "projects"));
   });
 
   test("a bool reaches the env in the spelling envBool already reads", async () => {
@@ -312,12 +315,60 @@ describe("a secret in the file is held to 0600", () => {
     });
     expect(tightenPrivateFile("/x", { mode: () => null, tighten: () => false }).ok).toBe(true);
   });
+
+  // NTFS has no mode bits: `stat` says 666 for every file and `chmod` only flips read-only, so the
+  // old line "tightened it to 600" was false on every Windows command. M43 spec 04 reads the ACL.
+  test("on Windows the access-list verdict decides and the mode is never asked; elsewhere it is unchanged", () => {
+    let tightened = 0;
+    let asked = 0;
+    const loose = {
+      mode: () => {
+        asked++;
+        return 0o666;
+      },
+      tighten: () => {
+        tightened++;
+        return true;
+      },
+    };
+    const acl: string[] = [];
+    const windows = (path: string): PrivateFileVerdict => {
+      acl.push(path);
+      return { ok: false, warning: `warn: ${path} is readable by Users (S-1-5-32-545) and could not be made owner-only` };
+    };
+    expect(tightenPrivateFile("C:\\cfg\\.env", hostFilePerms(hostFor("win32"), loose, windows))).toEqual({
+      ok: false,
+      warning: "warn: C:\\cfg\\.env is readable by Users (S-1-5-32-545) and could not be made owner-only",
+    });
+    expect(acl).toEqual(["C:\\cfg\\.env"]);
+    expect(tightened).toBe(0);
+    expect(asked).toBe(0);
+    for (const platform of ["linux", "darwin"]) {
+      expect(hostFilePerms(hostFor(platform), loose, windows)).toBe(loose);
+    }
+    expect(tightenPrivateFile("/x", hostFilePerms(hostFor("linux"), loose, windows)).warning).toContain("tightened it to 600");
+    expect(acl).toHaveLength(1);
+  });
+
+  test("a config.toml secret is withheld on Windows when the access list cannot be repaired", async () => {
+    const windows = (path: string): PrivateFileVerdict => ({ ok: false, warning: `warn: ${path} could not be made owner-only` });
+    const lines: string[] = [];
+    const layer = await readConfigFiles(
+      fakeIo({ [HOME_FILE]: '[push]\nvapid_private = "k"\n' }),
+      paths,
+      (l) => lines.push(l),
+      { home: HOME, perms: hostFilePerms(hostFor("win32"), loosePerms(true), windows) },
+    );
+    expect(layer.blocked).toEqual(["COLLIE_VAPID_PRIVATE"]);
+    expect(layer.env.COLLIE_VAPID_PRIVATE).toBeUndefined();
+    expect(lines[0]).toBe(`warn: ${HOME_FILE} could not be made owner-only`);
+  });
 });
 
 describe("no path is ever named after an instance", () => {
   test("neither resolved path carries a `config.<instance>.toml` name", () => {
     for (const entry of configFilePaths({ COLLIE_INSTANCE: "next" }, HOME, CONFIG_DIR)) {
-      expect(entry.path.endsWith(`/${CONFIG_FILENAME}`)).toBe(true);
+      expect(basename(entry.path)).toBe(CONFIG_FILENAME);
       expect(entry.path).not.toContain("config.next");
     }
   });

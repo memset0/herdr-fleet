@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopt Collie 1.17.2.** Chat as the default pane body, the Files view and the Machines page, the dashboard's Crew, Dashboard and Files tabs and its Activity and Cache orders, the Tern multiplexer, experimental Windows support, Oh My Pi and Muse harness work, a command-line speech provider, an opt-in Cloudflare Access gate, crew invite addressing fixes and upstream's reader fixes, including its own reading of Claude's `esc to interrupt` and `↓ to manage` hints (#330).
+
 ## [3.9.14] - 2026-10-06
 
 ### Changed

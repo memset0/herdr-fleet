@@ -143,7 +143,9 @@ export function SessionStream({
   feed,
   address,
   working,
+  starting = false,
   showToolCalls,
+  showCompactions,
   fontSize,
   listRef,
 }: {
@@ -156,8 +158,16 @@ export function SessionStream({
    * why this body needs telling and the mirror does not.
    */
   working: boolean;
+  /**
+   * The pane is NEW and has nothing to read yet: no session reported, or no log written (lib/chat-gate.ts).
+   * The stream then says how to begin, and never the "no session" or "no transcript file" reading,
+   * which is only true of a pane that should have one by now.
+   */
+  starting?: boolean;
   /** Settings → Appearance. Off folds every run, including a lone step, to one summary line. */
   showToolCalls: boolean;
+  /** Settings → Appearance. Off draws a compaction as a one-line marker and never builds its recap. */
+  showCompactions: boolean;
   /** The stream's own text size in px, from the belt's Display dock (`chatFontSize`). */
   fontSize: number;
   /** The pane view's one list handle: a send snaps the body it is looking at back to the tail. */
@@ -180,8 +190,8 @@ export function SessionStream({
     const entries = window.entries.filter((e) => e.abandoned !== true);
     // Tool calls off folds EVERY run, a lone step included, which is the same treatment the History
     // page gives a turn's steps. One idea, one look, two surfaces.
-    return groupRuns(entries.flatMap(itemsOf), showToolCalls ? 3 : 1);
-  }, [window.entries, showToolCalls, revision]);
+    return groupRuns(entries.flatMap((e) => itemsOf(e, showCompactions)), showToolCalls ? 3 : 1);
+  }, [window.entries, showToolCalls, showCompactions, revision]);
 
   // A PANE KEEPS ITS PLACE (ADR 0063). Switching modes unmounts this body and switching panes
   // remounts it, so neither the DOM nor the scroller remembers where the reader was — the same gap
@@ -247,8 +257,14 @@ export function SessionStream({
     el.scrollTop = held.top + (el.scrollHeight - held.height);
   }, [blocks, loadingOlder, listRef]);
 
-  const explain = chatStatusKey(window.status);
+  const status = window.status;
+  const missing =
+    status.kind === "unavailable" && (status.reason === "no-log" || status.reason === "no-session");
+  const explain = starting && missing ? null : chatStatusKey(status);
   const empty = blocks.length === 0;
+  // The window answered, or the pane is new and nothing is missing that should be there. Either way
+  // what the stream draws is the thread, and the thread may be running or empty.
+  const reading = status.kind === "live" || (starting && (status.kind === "empty" || missing));
 
   return (
     <ChatMessageList
@@ -296,7 +312,7 @@ export function SessionStream({
       {/* A turn is running. Last of the thread, because that is where its answer will arrive. Drawn
           only where the window is actually being read: a pane whose journal cannot be read is busy
           in the chrome, and saying so HERE would promise a turn this body will never show. */}
-      {working && window.status.kind === "live" && (
+      {working && reading && (
         <div data-slot="stream-live" className={LIVE_ROW}>
           {/* The same mark a running step wears inside a card (`chat-cards.tsx` § StepStatus), so
               "still going" looks the same wherever the stream says it. UNNAMED: it leads the word,
@@ -340,10 +356,13 @@ export function SessionStream({
           {t(explain)}
         </p>
       )}
-      {/* Nothing wrong, nothing said. `empty` alone is not this state: before the first answer lands
-          the window is `empty` in the other sense — nobody has asked yet — and a screen that
-          announces an absence it has not checked is a screen that was wrong for one frame. */}
-      {empty && explain === null && window.status.kind === "live" && (
+      {/* Nothing wrong, nothing said yet: one quiet line that says how to begin. `empty` alone is not
+          this state: before the first answer lands the window is `empty` in the other sense, nobody
+          has asked yet, and a screen that announces an absence it has not checked is a screen that
+          was wrong for one frame. A NEW pane is the exception, because there nothing was expected:
+          Codex has no session before its first prompt, and pi writes no log before its first reply.
+          A running turn says so on the row above instead, so the two never stand together. */}
+      {empty && explain === null && reading && !working && (
         <div className="py-16 text-center text-sm text-muted-foreground">{t("chat.stream.empty")}</div>
       )}
     </ChatMessageList>

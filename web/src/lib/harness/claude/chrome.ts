@@ -10,18 +10,19 @@
 // matched by POSITION (below the box's bottom border), never by its content strings.
 
 import type { StyledLine } from "../../blocks";
-import { namesAMenuKey } from "../menu-hints";
-import { withoutClaudeManageHint } from "../../fleet-claude-mode-line";
+import { namesAMenuKey, SEGMENT_SPLIT } from "../menu-hints";
 import { findAutocompleteRun, MAX_AUTOCOMPLETE_LINES } from "./autocomplete";
 import {
   classifyFooter,
   isBareBoxBorder,
   isBlank,
-  isBoxBorder,
   isHorizontalRule,
   isInputBoxTopBorder,
   isMultiStepHeader,
+  isPromptRow,
   lineText,
+  namesPlanDialog,
+  walkFrame,
 } from "./markers";
 import { detectMultiSelectRegion } from "./multi-select";
 import { detectPreviewSelectRegion } from "./preview-select";
@@ -44,23 +45,6 @@ const MAX_STATUS_LINES = 8;
 // Peeled is not dropped: extractAgentsFooter hands the same rows to their own chrome element (issue
 // #242). Until then they left the mirror with no home, which ADR 0048's tail model does not allow.
 const MAX_FOOTER_LINES = 8;
-
-// A long draft WRAPS inside the input box: the "❯ …" prompt line plus continuation lines (indented,
-// no leading "❯") before the bottom border. We scan up past those to find the prompt, bounded by
-// MAX_DRAFT_LINES — but as DEFENSE-IN-DEPTH, not a correctness bound. The caller's read window
-// defaults to 200 lines (COLLIE_READ_LINES, bridge/config.ts) and is client-requestable up to
-// MAX_READ_LINES (10,000, bridge/server.ts), so an unbounded walk would let a stray line that happens
-// to look like a border (see isBoxBorder in markers.ts) pair up with an unrelated quoted "❯" line
-// dozens (or thousands) of lines further up to complete a full (bogus) box shape — the cap, not the
-// border test alone, is what keeps that match from reaching all the way there. Every line the walk
-// crosses counts against this cap, blank or not: a run of blank padding is not a free pass either
-// (see the blank-line skips inside locateInputBox below, both bounded by the same counter). The OLD
-// cap (12) was simply too tight: a real 610-char/25-line CJK draft wraps to ~40 rows at a narrow
-// pane's column count (CJK glyphs are 2 cells wide), well past it, which made locateInputBox return
-// null and stalled the send guard for good (issue #76). Removing the cap entirely was considered and
-// rejected for the reason above. 100 comfortably covers the observed ~40-row case plus a worst case
-// around 70–80 rows at a 19-column pane, with margin, while still capping how far the walk can reach.
-const MAX_DRAFT_LINES = 100;
 
 // Text Claude draws on the "❯" prompt line that is NOT a real user draft — it's a hint the TUI paints
 // when the box is otherwise empty. Must never be surfaced as a recoverable draft. Kept as a set so
@@ -365,7 +349,9 @@ const MAX_TAIL_LINES = MAX_AUTOCOMPLETE_LINES;
  *     main", a "─ main ───" separator): an un-numbered "❯"-led row or a labelled rule is stepped over
  *     (isStatuslineFrameMark), but the box is then kept only when every such row sits inside a
  *     `statusline` tail's run, at most MAX_STATUS_LINES rows under the border, and no labelled rule
- *     sits directly on a "❯" row (a second box's top border and prompt).
+ *     sits directly on a "❯" row (a second box's top border and prompt). The same step-over serves
+ *     the completion popup's pointed entry ("  ❯ /model …", Claude Code 2.1.291): that row is kept
+ *     only when the tail is `autocomplete` and it is the one pointer the popup grammar read.
  *  2. THE FRAME CLOSES: a prompt line above the bottom border and a top border above that, inside
  *     the shared MAX_DRAFT_LINES budget. The prompt line carries "❯", or "!" in shell mode
  *     (isPromptRow). Only this step learned the bang; step 1's marks stay chevron-only. Both sit at
@@ -415,31 +401,22 @@ function locateInputBox(lines: StyledLine[], texts: string[], end: number): Inpu
   if (frame === null) return null;
 
   // 3. The tail is accounted for.
-  const { tail, statusEnd, agentsStart } = classifyTail(texts, { prompt: frame.prompt, bottomBorder: b }, end);
-  if (!steppedMarksAreStatusline(texts, stepped, tail, b, statusEnd)) return null;
+  const { tail, statusEnd, agentsStart, popupPointer } = classifyTail(
+    texts,
+    { prompt: frame.prompt, bottomBorder: b },
+    end,
+  );
+  if (!steppedMarksAreOwned(texts, stepped, tail, b, statusEnd, popupPointer)) return null;
 
   // 4. No modal on screen.
   for (let j = b + 1; j < end; j++) {
     if (classifyFooter(texts[j]!, texts) !== null) return null;
-    if (tail !== "autocomplete" && tailNamesAMenu(texts[j]!)) return null;
+    if (tail !== "autocomplete" && tailNamesAMenu(texts[j]!, texts)) return null;
     if (tail === "unknown" && tailLooksModal(texts[j]!)) return null;
   }
   if (dialogOnScreen(lines)) return null;
 
   return { top: frame.top, prompt: frame.prompt, bottomBorder: b, tail, statusEnd, agentsStart };
-}
-
-/** A row carrying the input box's prompt marker: "❯", or "!" in shell mode, where Claude paints
- *  the bang in place of the chevron. The bang must be followed by whitespace or end the row, so an
- *  ordinary "!important" line inside the frame is not a prompt. Step 1's frame marks (isFrameMark)
- *  deliberately do NOT learn it: shell mode's bang only ever appears INSIDE the frame, and a
- *  "!"-led transcript row below the box must stay ordinary text. ADR 0048 step 2. */
-function isPromptRow(text: string): boolean {
-  const head = text.trimStart();
-  if (head.startsWith("❯")) return true;
-  if (!head.startsWith("!")) return false;
-  const next = head[1];
-  return next === undefined || /\s/.test(next);
 }
 
 /** A row that belongs to a box or a dialog's frame, unless a statusline drew it (isStatuslineFrameMark):
@@ -461,19 +438,24 @@ function isStatuslineFrameMark(text: string): boolean {
 }
 
 /**
- * Whether the marks step 1 stepped over (`stepped`, bottom-up) all belong to the statusline run: the
- * tail is `statusline`, each mark sits inside its run (`bottomBorder + 1` to `statusEnd`) and at most
- * MAX_STATUS_LINES rows under the border, and no labelled rule sits directly on a "❯" row, the shape
- * of a second box's top border and prompt. True when nothing was stepped over.
+ * Whether the marks step 1 stepped over (`stepped`, bottom-up) all belong to a run that draws them.
+ * Under an `autocomplete` tail that is the popup's own pointed entry row (Claude Code 2.1.291 marks
+ * the selected completion with "❯", autocomplete.ts), and nothing else: the popup grammar named every
+ * row and allows exactly one pointer, so any other stepped mark refuses. Otherwise it is the statusline
+ * run: the tail is `statusline`, each mark sits inside its run (`bottomBorder + 1` to `statusEnd`) and
+ * at most MAX_STATUS_LINES rows under the border, and no labelled rule sits directly on a "❯" row, the
+ * shape of a second box's top border and prompt. True when nothing was stepped over.
  */
-function steppedMarksAreStatusline(
+function steppedMarksAreOwned(
   texts: string[],
   stepped: number[],
   tail: InputBoxTail,
   bottomBorder: number,
   statusEnd: number,
+  popupPointer: number,
 ): boolean {
   if (stepped.length === 0) return true;
+  if (tail === "autocomplete") return stepped.every((j) => j === popupPointer);
   if (tail !== "statusline") return false;
   for (const j of stepped) {
     if (j >= statusEnd || j - bottomBorder > MAX_STATUS_LINES) return false;
@@ -489,8 +471,46 @@ function steppedMarksAreStatusline(
  *  `statusline` tail as well as an `unknown` one: a dialog under a stale box can fit the statusline
  *  walk (its footer split off by a blank, like the background-agents footer), and only these rows
  *  tell it apart. A popup tail is exempt, because its grammar named every row. */
-function tailNamesAMenu(text: string): boolean {
-  return NUMBERED_OPTION_ROW.test(text) || namesAMenuKey(withoutClaudeManageHint(text));
+function tailNamesAMenu(text: string, texts: string[]): boolean {
+  return NUMBERED_OPTION_ROW.test(text) || namesAModalKey(text, texts);
+}
+
+// Claude's own status hints. They read like a modal's "<key> to <verb>" footer but belong to the
+// live composer: the default footer paints "esc to interrupt" while a turn runs and "↓ to manage"
+// while background tasks or monitors exist. A modal's footer says "Esc to cancel" / "to close" /
+// "to select", never these. The footer is clipped with "…" on a narrow pane, so "esc to inter…" is
+// the same hint cut short.
+const ESC_TO_INTERRUPT = /^esc to (?:interrupt|i(?:n(?:t(?:e(?:r(?:r(?:u(?:p)?)?)?)?)?)?)?…|…)$/i;
+const DOWN_TO_MANAGE = /^↓ to (?:manage|m(?:a(?:n(?:a(?:g)?)?)?)?…|…)$/i;
+
+// Claude Code 2.1.291 prints "ctrl+g to edit in <editor>" while the draft holds more than one line:
+// right-aligned on the statusline's row, or on a row of its own at 40 columns
+// (`claude-lab--draft-adversarial--w*.txt`). The plan dialog's footer opens with the same words, so
+// the hint is the composer's only while that dialog's own words are NOT on screen (namesPlanDialog),
+// the rule classifyFooter applies to the plan family (ADR 0053).
+const DRAFT_EDIT_HINT = /^ctrl\+g to edit\b[^·]*$/i;
+
+function isStatusHint(segment: string, draftEditHint: boolean): boolean {
+  const t = segment.trim();
+  return ESC_TO_INTERRUPT.test(t) || DOWN_TO_MANAGE.test(t) || (draftEditHint && DRAFT_EDIT_HINT.test(t));
+}
+
+/**
+ * `namesAMenuKey` for a Claude row, minus Claude's own status hints. The generic test stays loose on
+ * purpose (a lone "Esc to cancel" must refuse), so the exemption is a closed list of the hints the
+ * composer's footer prints, not a loosening of the key grammar. Shared with the adapter's
+ * `modalOnScreen` so the box locator and the unread-dialog card agree on what a modal footer is.
+ *
+ * `texts`, the screen's rows, admits the draft's "ctrl+g to edit" hint as a status hint when no plan
+ * dialog is on screen. Without it the hint still names a key, so a caller that cannot see the screen
+ * refuses rather than types.
+ */
+export function namesAModalKey(text: string, texts?: string[]): boolean {
+  const draftEditHint = texts !== undefined && !namesPlanDialog(texts);
+  const segments = text.trim().split(SEGMENT_SPLIT);
+  const kept = segments.filter((segment) => !isStatusHint(segment, draftEditHint));
+  if (kept.length === segments.length) return namesAMenuKey(text);
+  return kept.length > 0 && namesAMenuKey(kept.join(" · "));
 }
 
 /**
@@ -521,11 +541,13 @@ interface TailOwner {
   bottomBorder: number;
 }
 
-/** classifyTail's answer: the tail's label, and the statusline run's exclusive end (InputBox.statusEnd). */
+/** classifyTail's answer: the tail's label, the statusline run's exclusive end (InputBox.statusEnd),
+ *  and the popup's "❯"-pointed row when the tail is a 2.1.291 popup (-1 otherwise). */
 interface TailReading {
   tail: InputBoxTail;
   statusEnd: number;
   agentsStart: number;
+  popupPointer: number;
 }
 
 /**
@@ -536,17 +558,17 @@ interface TailReading {
  */
 function classifyTail(texts: string[], box: TailOwner, end: number): TailReading {
   const first = box.bottomBorder + 1;
-  if (first >= end) return { tail: "statusline", statusEnd: first, agentsStart: end };
+  if (first >= end) return { tail: "statusline", statusEnd: first, agentsStart: end, popupPointer: -1 };
 
   // The popup is confirmed, not assumed: Claude paints it only while the draft STARTS WITH "/".
   const popup = findAutocompleteRun(texts, end);
   if (popup !== null && popup.start === first && promptIsSlashCommand(texts, box.prompt)) {
-    return { tail: "autocomplete", statusEnd: first, agentsStart: end };
+    return { tail: "autocomplete", statusEnd: first, agentsStart: end, popupPointer: popup.pointer };
   }
 
   const run = walkStatusline(texts, box.bottomBorder, end);
-  if (run !== null) return { tail: "statusline", ...run };
-  return { tail: "unknown", statusEnd: first, agentsStart: end };
+  if (run !== null) return { tail: "statusline", ...run, popupPointer: -1 };
+  return { tail: "unknown", statusEnd: first, agentsStart: end, popupPointer: -1 };
 }
 
 /** Whether the "❯" line holds a slash command — the draft state that puts the completion popup on
@@ -605,63 +627,4 @@ function walkStatusline(
     i--;
   }
   return i === bottomBorder ? { statusEnd, agentsStart } : null;
-}
-
-/**
- * Whether a row starts in the pane's first column. Claude paints its input box's two borders and its
- * prompt row from column 0, and indents every wrapped-draft continuation row (two spaces, under the
- * text after "❯ "). So inside the frame an INDENTED row is draft text, whatever it looks like: a
- * pasted "────" rule or "❯ ls -la" shell prompt is a continuation, never the box's top border or its
- * prompt row. Measured on every box in the Claude fixture corpus (84 boxes, ADR 0048 addendum
- * 2026-09-26): each has its borders and prompt row at column 0 and every continuation row indented.
- * Only the frame walk (walkFrame) asks this; step 1's frame marks stay indent-blind, because a
- * dialog's pointer row or a statusline's own rule may be indented and must still stop that walk.
- */
-function atColumnZero(text: string): boolean {
-  return text.length > 0 && !/^\s/.test(text);
-}
-
-/** The frame above a bottom border: the "❯" prompt line and the top border, or null. */
-function walkFrame(texts: string[], bottomBorder: number): { top: number; prompt: number } | null {
-  let i = bottomBorder - 1;
-
-  // The "❯" prompt line — the FIRST line of the draft. A long draft wraps onto continuation lines
-  // (indented, no "❯") between the prompt and the bottom border, so scan up past them to the prompt.
-  // Bounded by MAX_DRAFT_LINES (see the comment above — defense-in-depth, not a correctness bound),
-  // and any box border en route aborts the match (we'd have left the box). Only a row at column 0 can
-  // be the prompt or a border (atColumnZero): an indented row is draft text, so a rule or a "❯" line
-  // the user pasted into the draft is walked past like any other continuation. Blank padding is
-  // tolerated on either side, but it draws from the SAME budget as real continuation lines — a bare
-  // `while (isBlank) i--` here used to skip an unlimited run of blank lines for free before this loop
-  // even started counting, which let a wall of blanks stand in for the non-blank filler the draft-walk
-  // cap is supposed to bound.
-  let wrapped = 0;
-  while (i >= 0 && !isFrameRow(texts[i]!) && wrapped < MAX_DRAFT_LINES) {
-    wrapped++;
-    i--;
-  }
-  if (i < 0 || !atColumnZero(texts[i]!) || !isPromptRow(texts[i]!)) return null;
-  const prompt = i;
-  i--;
-  // Blank padding between the prompt and the top border (e.g. a blank first line inside a freshly
-  // opened box) — same shared `wrapped` budget as above, for the same reason: this used to be its own
-  // unbounded `while (isBlank) i--`, so a wall of blanks here could reach an arbitrarily distant top
-  // border for free.
-  while (i >= 0 && isBlank(texts[i]!) && wrapped < MAX_DRAFT_LINES) {
-    wrapped++;
-    i--;
-  }
-
-  // The top border — the LAST anchor checked, so it alone gets the looser flank floor
-  // (isInputBoxTopBorder): the renderer can clamp a labelled top border's flank down to 1 glyph (see
-  // the comment on isInputBoxTopBorder in markers.ts), and by this point the bottom border, the "❯"
-  // line, and the draft-walk cap have already pinned the rest of the shape down, so the looser test
-  // doesn't reopen the false-positive risk a bare 1-glyph flank would elsewhere.
-  if (i < 0 || !atColumnZero(texts[i]!) || !isInputBoxTopBorder(texts[i]!)) return null;
-  return { top: i, prompt };
-}
-
-/** A row the frame walk stops on: a box border or a prompt row, painted from column 0. */
-function isFrameRow(text: string): boolean {
-  return atColumnZero(text) && (isBoxBorder(text) || isPromptRow(text));
 }

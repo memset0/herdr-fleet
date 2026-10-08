@@ -87,7 +87,7 @@ const RULE_OR_SPACE_ONLY = new RegExp(`^[${CLAUDE_RULE_GLYPH_CLASS}\\s]*$`);
  *
  * This is layer one of two: the real protection is still structural, not lexical. `locateInputBox`
  * (chrome.ts) only trusts a border when the full bottom-border → ❯ → top-border shape lines up around
- * it (plus the draft-walk cap, MAX_DRAFT_LINES in chrome.ts, bounding how far apart the pieces of that
+ * it (plus the draft-walk cap, MAX_DRAFT_LINES below, bounding how far apart the pieces of that
  * shape may sit), so a lone matching line elsewhere on screen does nothing on its own.
  */
 export function isBoxBorder(text: string): boolean {
@@ -132,7 +132,7 @@ const LOOSE_LABELLED_BORDER = /^─{1,}\s+(.+)\s+─{1,}$/;
  * `isBoxBorder`'s 2-glyph floor rejects.
  *
  * Used ONLY at `locateInputBox`'s step (e) — the LAST anchor it checks, after the bottom border, the
- * "❯" prompt line, and the draft-walk cap (MAX_DRAFT_LINES, chrome.ts) have already pinned the rest of
+ * "❯" prompt line, and the draft-walk cap (MAX_DRAFT_LINES, below) have already pinned the rest of
  * the shape down. That established structure is what pays for the looser floor here: a bare 1-glyph
  * flank would be far too permissive on its own (a bullet-adjacent "─ text" is ordinary prose), but by
  * the time step (e) runs, the only open question is whether THIS line, sitting immediately above an
@@ -158,6 +158,116 @@ export function isInputBoxTopBorder(text: string): boolean {
   const m = LOOSE_LABELLED_BORDER.exec(trimmed);
   if (m === null) return false;
   return !RULE_OR_SPACE_ONLY.test(m[1]!);
+}
+
+// A long draft WRAPS inside the input box: the "❯ …" prompt line plus continuation lines (indented,
+// no leading "❯") before the bottom border. We scan up past those to find the prompt, bounded by
+// MAX_DRAFT_LINES — but as DEFENSE-IN-DEPTH, not a correctness bound. The caller's read window
+// defaults to 200 lines (COLLIE_READ_LINES, bridge/config.ts) and is client-requestable up to
+// MAX_READ_LINES (10,000, bridge/server.ts), so an unbounded walk would let a stray line that happens
+// to look like a border (see isBoxBorder in markers.ts) pair up with an unrelated quoted "❯" line
+// dozens (or thousands) of lines further up to complete a full (bogus) box shape — the cap, not the
+// border test alone, is what keeps that match from reaching all the way there. Every line the walk
+// crosses counts against this cap, blank or not: a run of blank padding is not a free pass either
+// (see the blank-line skips inside walkFrame below, both bounded by the same counter). The OLD
+// cap (12) was simply too tight: a real 610-char/25-line CJK draft wraps to ~40 rows at a narrow
+// pane's column count (CJK glyphs are 2 cells wide), well past it, which made locateInputBox return
+// null and stalled the send guard for good (issue #76). Removing the cap entirely was considered and
+// rejected for the reason above. 100 comfortably covers the observed ~40-row case plus a worst case
+// around 70–80 rows at a 19-column pane, with margin, while still capping how far the walk can reach.
+const MAX_DRAFT_LINES = 100;
+
+/** A row carrying the input box's prompt marker: "❯", or "!" in shell mode, where Claude paints
+ *  the bang in place of the chevron. The bang must be followed by whitespace or end the row, so an
+ *  ordinary "!important" line inside the frame is not a prompt. Step 1's frame marks (isFrameMark, chrome.ts)
+ *  deliberately do NOT learn it: shell mode's bang only ever appears INSIDE the frame, and a
+ *  "!"-led transcript row below the box must stay ordinary text. ADR 0048 step 2. */
+export function isPromptRow(text: string): boolean {
+  const head = text.trimStart();
+  if (head.startsWith("❯")) return true;
+  if (!head.startsWith("!")) return false;
+  const next = head[1];
+  return next === undefined || /\s/.test(next);
+}
+
+/**
+ * Whether a row starts in the pane's first column. Claude paints its input box's two borders and its
+ * prompt row from column 0, and indents every wrapped-draft continuation row (two spaces, under the
+ * text after "❯ "). So inside the frame an INDENTED row is draft text, whatever it looks like: a
+ * pasted "────" rule or "❯ ls -la" shell prompt is a continuation, never the box's top border or its
+ * prompt row. Measured on every box in the Claude fixture corpus (84 boxes, ADR 0048 addendum
+ * 2026-09-26): each has its borders and prompt row at column 0 and every continuation row indented.
+ * Only the frame walk (walkFrame) asks this; locateInputBox's step 1 frame marks stay indent-blind, because a
+ * dialog's pointer row or a statusline's own rule may be indented and must still stop that walk.
+ */
+function atColumnZero(text: string): boolean {
+  return text.length > 0 && !/^\s/.test(text);
+}
+
+/** The frame above a bottom border: the "❯" prompt line and the top border, or null. The box
+ *  locator (locateInputBox, chrome.ts) runs it from the lowest bare border; insideInputFrame runs it
+ *  from the border under one row. */
+export function walkFrame(texts: string[], bottomBorder: number): { top: number; prompt: number } | null {
+  let i = bottomBorder - 1;
+
+  // The "❯" prompt line — the FIRST line of the draft. A long draft wraps onto continuation lines
+  // (indented, no "❯") between the prompt and the bottom border, so scan up past them to the prompt.
+  // Bounded by MAX_DRAFT_LINES (see the comment above — defense-in-depth, not a correctness bound),
+  // and any box border en route aborts the match (we'd have left the box). Only a row at column 0 can
+  // be the prompt or a border (atColumnZero): an indented row is draft text, so a rule or a "❯" line
+  // the user pasted into the draft is walked past like any other continuation. Blank padding is
+  // tolerated on either side, but it draws from the SAME budget as real continuation lines — a bare
+  // `while (isBlank) i--` here used to skip an unlimited run of blank lines for free before this loop
+  // even started counting, which let a wall of blanks stand in for the non-blank filler the draft-walk
+  // cap is supposed to bound.
+  let wrapped = 0;
+  while (i >= 0 && !isFrameRow(texts[i]!) && wrapped < MAX_DRAFT_LINES) {
+    wrapped++;
+    i--;
+  }
+  if (i < 0 || !atColumnZero(texts[i]!) || !isPromptRow(texts[i]!)) return null;
+  const prompt = i;
+  i--;
+  // Blank padding between the prompt and the top border (e.g. a blank first line inside a freshly
+  // opened box) — same shared `wrapped` budget as above, for the same reason: this used to be its own
+  // unbounded `while (isBlank) i--`, so a wall of blanks here could reach an arbitrarily distant top
+  // border for free.
+  while (i >= 0 && isBlank(texts[i]!) && wrapped < MAX_DRAFT_LINES) {
+    wrapped++;
+    i--;
+  }
+
+  // The top border — the LAST anchor checked, so it alone gets the looser flank floor
+  // (isInputBoxTopBorder): the renderer can clamp a labelled top border's flank down to 1 glyph (see
+  // the comment on isInputBoxTopBorder above), and by this point the bottom border, the "❯"
+  // line, and the draft-walk cap have already pinned the rest of the shape down, so the looser test
+  // doesn't reopen the false-positive risk a bare 1-glyph flank would elsewhere.
+  if (i < 0 || !atColumnZero(texts[i]!) || !isInputBoxTopBorder(texts[i]!)) return null;
+  return { top: i, prompt };
+}
+
+/** A row the frame walk stops on: a box border or a prompt row, painted from column 0. */
+function isFrameRow(text: string): boolean {
+  return atColumnZero(text) && (isBoxBorder(text) || isPromptRow(text));
+}
+
+/**
+ * Whether row `row` sits inside a Claude input box: the first frame row under it (a column-0 border or
+ * prompt row, isFrameRow) is a bare bottom border, and the frame walk up from that border closes on a
+ * top border ABOVE `row`. So the row is the box's "❯" prompt row or one of its indented continuation
+ * rows: the operator's own draft. A dialog replaces the composer, so a dialog's own words never sit
+ * in one, and the dialog evidence tests (namesPlanDialog) skip such rows: draft text is never a
+ * dialog. A pure frame test, not the box locator (locateInputBox asks those tests first, so it cannot
+ * be asked back); a box the locator would refuse for its tail still holds a draft here.
+ */
+export function insideInputFrame(texts: string[], row: number): boolean {
+  for (let i = row + 1; i < texts.length && i - row <= MAX_DRAFT_LINES + 1; i++) {
+    if (!isFrameRow(texts[i]!)) continue;
+    if (!isBareBoxBorder(texts[i]!)) return false;
+    const frame = walkFrame(texts, i);
+    return frame !== null && frame.top < row;
+  }
+  return false;
 }
 
 // A MULTI-question AskUserQuestion renders a step indicator above the current question — one
@@ -236,6 +346,101 @@ export function namesPermissionDialog(texts: string[]): boolean {
   return false;
 }
 
+// The plan-approval dialog's own words, read off `claude--plan-approval*.txt` and
+// `claude-lab--plan-approval*.txt` (Claude Code 2.1.27x to 2.1.291):
+// "Claude has written up a plan and is ready to execute. Would you like to proceed?", which wraps
+// onto three rows at 40 columns, then a numbered menu that opens on `1.` and goes on to `2.`. The
+// footer is NOT that evidence: 2.1.291 prints "ctrl+g to edit in nano" on the statusline row under
+// any multi-line draft (`claude-lab--draft-adversarial--w*.txt`).
+const PLAN_QUESTION = /\bready\s+to\s+execute\.\s+would\s+you\s+like\s+to\s+proceed\?$/i;
+const PLAN_FIRST_ROW = /^\s*(?:❯\s*)?1\.\s+\S/;
+const PLAN_SECOND_ROW = /^\s*(?:❯\s*)?2\.\s+\S/;
+// The question, a menu of up to five options, a feedback value wrapped onto a few rows, the hint and
+// the footer with its wrapped path all sit in the last rows of the screen.
+const PLAN_SCAN_ROWS = 30;
+// The question reaches its "?" within three rows at 40 columns.
+const PLAN_QUESTION_ROWS = 4;
+
+/**
+ * True when the screen's last rows are the plan-approval dialog by its own words: the question
+ * ending "ready to execute. Would you like to proceed?" (it may wrap), then a `1.` row, then a `2.`
+ * row. The evidence `classifyFooter` needs before it may claim the `plan` family from the "ctrl+g to
+ * edit" hint or the plan file's path (ADR 0053: a family claim is answered from the dialog, never
+ * from one phrase any screen may print).
+ *
+ * Rows inside the input box are never that evidence (insideInputFrame). Claude Code 2.1.291 prints
+ * the "ctrl+g to edit in nano" hint under any multi-line draft, so a draft that quotes the question
+ * and two numbered rows used to name the dialog: the box was refused and a send stalled, the unread
+ * card covered a live composer, or a `❯`-pointed copy was lifted as two plan buttons that type digits
+ * into the draft. The real dialog replaces the composer, so its words never sit in a box.
+ */
+export function namesPlanDialog(texts: string[]): boolean {
+  let end = texts.length - 1;
+  while (end >= 0 && isBlank(texts[end]!)) end--;
+  const from = Math.max(0, end - PLAN_SCAN_ROWS);
+  for (let i = from; i <= end; i++) {
+    let joined = "";
+    for (let j = i; j <= Math.min(end, i + PLAN_QUESTION_ROWS - 1); j++) {
+      if (isBlank(texts[j]!)) break;
+      joined = joined === "" ? texts[j]!.trim() : `${joined} ${texts[j]!.trim()}`;
+      if (!PLAN_QUESTION.test(joined)) continue;
+      // The row that ends the question: in the box, the whole question is the draft's.
+      if (insideInputFrame(texts, j)) break;
+      return hasPlanMenu(texts, j + 1, end);
+    }
+  }
+  return false;
+}
+
+/** A `1.` row and then a `2.` row between `from` and `end`, inclusive, neither inside the input box. */
+function hasPlanMenu(texts: string[], from: number, end: number): boolean {
+  let first = -1;
+  for (let i = from; i <= end; i++) {
+    if (first < 0 && PLAN_FIRST_ROW.test(texts[i]!) && !insideInputFrame(texts, i)) first = i;
+    else if (first >= 0 && PLAN_SECOND_ROW.test(texts[i]!) && !insideInputFrame(texts, i)) return true;
+  }
+  return false;
+}
+
+// The plan footer's "ctrl+g to edit in <editor> ·" row, when the plan file's path did not fit beside
+// it and moved to the rows below.
+const PLAN_FOOTER_LEAD = /ctrl\+g to edit\b.*·\s*$/i;
+// The whole path, once its rows are joined back: `<config dir>/plans/<slug>.md`.
+const PLAN_FILE_PATH = /^\S*\/plans\/[\w.-]+\.md$/;
+// A long path under a custom CLAUDE_CONFIG_DIR breaks onto a second row at 40 columns.
+const PLAN_PATH_ROWS = 3;
+
+/**
+ * The rows the plan file's path fills under the footer's "ctrl+g to edit … ·" row, when the path
+ * sits there on its own: one row at 82 columns, two at 40, where it breaks mid-word with no space.
+ * Empty when the screen does not end that way. The rows must join, with nothing between them, into
+ * a `…/plans/<slug>.md` path, so a stray `.md` row or a path to some other file claims nothing.
+ */
+function planPathRows(texts: string[]): number[] {
+  let end = texts.length - 1;
+  while (end >= 0 && isBlank(texts[end]!)) end--;
+  const rows: number[] = [];
+  for (let i = end; i >= 0 && rows.length < PLAN_PATH_ROWS; i--) {
+    const t = texts[i]!.trim();
+    if (t === "" || /\s/.test(t)) break;
+    rows.unshift(i);
+  }
+  const first = rows[0];
+  if (first === undefined || first === 0) return [];
+  if (!PLAN_FOOTER_LEAD.test(texts[first - 1]!)) return [];
+  return PLAN_FILE_PATH.test(rows.map((i) => texts[i]!.trim()).join("")) ? rows : [];
+}
+
+/**
+ * The row of the plan footer's "ctrl+g to edit … ·" lead when the plan file's path sits below it on
+ * rows of its own, else -1. The prompt-select grammar measures the gap to the options from this row,
+ * because the path rows under it are the same footer, wrapped.
+ */
+export function planFooterLeadRow(texts: string[]): number {
+  const rows = planPathRows(texts);
+  return rows.length === 0 ? -1 : rows[0]! - 1;
+}
+
 // The gutter Claude Code 2.1.283 paints down the left of a question that spans more than one row
 // ("│ Which fruit do you want?" / "│ Pick the one you like best."). It is chrome, not question text.
 const QUESTION_GUTTER = /^\s*│\s?/;
@@ -255,7 +460,8 @@ export function questionRowText(text: string): string {
  *   - "… Tab to amend …"   → permission (edit/bash "Do you want to proceed?": the digit alone)
  *   - a bare "Esc to cancel" → permission, but only when `namesPermissionDialog` finds the dialog's
  *     own question and Yes/No rows (the hint bar a permission dialog shows off its Yes/No rows)
- *   - "ctrl+g to edit …" or a "~/.claude/plans/…" path → plan (ExitPlanMode: the digit alone)
+ *   - "ctrl+g to edit …" or the plan file's path → plan (ExitPlanMode: the digit alone), but only
+ *     when `namesPlanDialog` finds the dialog's own question and numbered menu
  *
  * The fourth, `trust` (folder-trust prompt: the digit alone), needs MORE than its footer. Its phrase
  * "Enter to confirm" is ordinary Claude wording that other screens print — the /effort slider prints
@@ -271,20 +477,20 @@ export function questionRowText(text: string): string {
  * Case-insensitive and anchored only on the confirm phrase, so per-install extra hints
  * (ctrl+e to explain, ↑/↓ to navigate, …) don't disturb the classification.
  */
-// A plan file's path on a row of its own: `<config dir>/plans/<slug>.md`.
-const PLAN_FILE_ROW = /^\s*\S*\/plans\/[\w.-]+\.md\s*$/;
-
 export function classifyFooter(text: string, texts: string[]): PromptFamily | null {
   const t = text.toLowerCase();
   if (/\benter to select\b/.test(t)) return "select";
   if (/\benter to confirm\b/.test(t)) {
     return namesTrustDialog(texts) ? "trust" : null;
   }
-  if (/ctrl\+g to edit\b/.test(t) || /\.claude\/plans\//.test(t)) return "plan";
-  // The plan file lives under CLAUDE_CONFIG_DIR, which need not be `.claude`, and a long path wraps
-  // the footer so the path is alone on the last row. Claimed only beside the footer's own
-  // "ctrl+g to edit …·" row, so a stray path to some plans/*.md file claims nothing.
-  if (PLAN_FILE_ROW.test(t) && texts.some((row) => /ctrl\+g to edit\b.*·\s*$/i.test(row))) return "plan";
+  // The plan arms need the plan dialog's own words. Claude Code 2.1.291 prints "ctrl+g to edit in
+  // nano" on the statusline row under any multi-line draft, and reading that as `plan` took the
+  // input box away from every send (ADR 0053).
+  const planFooter = /ctrl\+g to edit\b/.test(t) || /\.claude\/plans\//.test(t);
+  // The plan file lives under CLAUDE_CONFIG_DIR, which need not be `.claude`, and a long path moves
+  // below the footer's own "ctrl+g to edit …·" row, alone on one row or broken across two.
+  const planPath = !planFooter && planPathRows(texts).some((i) => texts[i] === text);
+  if ((planFooter || planPath) && namesPlanDialog(texts)) return "plan";
   if (/\btab to amend\b/.test(t)) return "permission";
   // The same dialog with its pointer off the Yes and No rows, or with an amend note open: the hint
   // bar shrinks to "Esc to cancel". The phrase alone proves nothing, so the dialog's words must.

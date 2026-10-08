@@ -1,12 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { parseAnsi } from "@/lib/ansi";
 import { splitLines } from "@/lib/blocks";
 import { buildBlocks } from "@/lib/harness";
-import { UnreadDialogBlock } from "./unread-dialog-block";
+import { ARM_MS, UnreadDialogBlock } from "./unread-dialog-block";
 
 // The unread-dialog card (.adr/0053). Driven off a real capture through the real pipeline, so what
 // it renders is exactly what the post-pass produces.
@@ -85,16 +85,135 @@ describe("UnreadDialogBlock", () => {
     expect(screen.getByRole("button", { name: "Esc" })).toBeInTheDocument();
   });
 
-  it("fires the declared key on a tap", async () => {
+  // #339: the first tap arms, the second sends. An Escape over a screen nobody read can end a
+  // question turn, so one stray tap must never do it.
+  it("arms on the first tap and sends nothing", async () => {
     const user = userEvent.setup();
     const { onAction } = renderCard();
     await user.click(screen.getByRole("button", { name: "Esc" }));
+    expect(onAction).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Tap again to send Esc" })).toBeInTheDocument();
+  });
+
+  it("sends the declared key on the second tap, once", async () => {
+    const user = userEvent.setup();
+    const { onAction } = renderCard();
+    await user.click(screen.getByRole("button", { name: "Esc" }));
+    await user.click(screen.getByRole("button", { name: "Tap again to send Esc" }));
     expect(onAction).toHaveBeenCalledExactlyOnceWith("Escape");
+    expect(screen.getByRole("button", { name: "Esc" })).toBeInTheDocument();
+  });
+
+  it("disarms after the timeout, so the next tap arms again", () => {
+    vi.useFakeTimers();
+    try {
+      const { onAction } = renderCard();
+      fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+      expect(screen.getByRole("button", { name: "Tap again to send Esc" })).toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(ARM_MS + 1);
+      });
+      expect(screen.getByRole("button", { name: "Esc" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+      expect(onAction).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("disarms when the card is disabled", () => {
+    const block = cardBlock();
+    const props = { cancel: block.cancel, lines: block.lines, onAction: vi.fn() };
+    const { rerender } = render(<UnreadDialogBlock {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+    rerender(<UnreadDialogBlock {...props} disabled />);
+    rerender(<UnreadDialogBlock {...props} />);
+    expect(screen.getByRole("button", { name: "Esc" })).toBeInTheDocument();
+  });
+
+  it("says Dismiss on a screen whose footer prints `esc dismiss` (opencode question)", async () => {
+    const user = userEvent.setup();
+    const text = readFileSync(
+      join(import.meta.dirname, "..", "fixtures", "panes", "oc--question--tall14.txt"),
+      "utf8",
+    );
+    const block = buildBlocks(splitLines(parseAnsi(text)), { agent: "opencode" }).find(
+      (b) => b.kind === "unread-dialog",
+    );
+    if (!block || block.kind !== "unread-dialog") throw new Error("no card");
+    const onAction = vi.fn();
+    render(<UnreadDialogBlock cancel={block.cancel} lines={block.lines} onAction={onAction} />);
+    await user.click(screen.getByRole("button", { name: "Esc" }));
+    expect(onAction).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Tap again to dismiss" }));
+    expect(onAction).toHaveBeenCalledExactlyOnceWith("Escape");
+  });
+
+  it("resets the arm when the dialog changes, so a tap on the new dialog only arms", () => {
+    const block = cardBlock();
+    const onAction = vi.fn();
+    const props = { cancel: block.cancel, onAction };
+    const { rerender } = render(<UnreadDialogBlock {...props} lines={block.lines} />);
+    fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+    expect(screen.getByRole("button", { name: "Tap again to send Esc" })).toBeInTheDocument();
+    rerender(<UnreadDialogBlock {...props} lines={block.lines.slice(1)} />);
+    expect(screen.getByRole("button", { name: "Esc" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+    expect(onAction).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Tap again to send Esc" })).toBeInTheDocument();
+  });
+
+  it("resets the arm when the declared key changes", () => {
+    const block = cardBlock();
+    const onAction = vi.fn();
+    const { rerender } = render(
+      <UnreadDialogBlock cancel={block.cancel} lines={block.lines} onAction={onAction} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+    rerender(
+      <UnreadDialogBlock
+        cancel={{ ...block.cancel, key: "Enter" }}
+        lines={block.lines}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button")[0]!);
+    expect(screen.getAllByRole("button")[0]).not.toHaveTextContent("Tap again");
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("keeps the arm when a refresh brings the same rows", () => {
+    const block = cardBlock();
+    const onAction = vi.fn();
+    const { rerender } = render(
+      <UnreadDialogBlock cancel={block.cancel} lines={block.lines} onAction={onAction} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+    rerender(
+      <UnreadDialogBlock cancel={{ ...block.cancel }} lines={[...block.lines]} onAction={onAction} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Tap again to send Esc" }));
+    expect(onAction).toHaveBeenCalledExactlyOnceWith("Escape");
+  });
+
+  it("uses the key wording, not Dismiss, when no row prints `esc dismiss`", () => {
+    renderCard();
+    fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+    expect(screen.getByRole("button", { name: "Tap again to send Esc" })).toBeInTheDocument();
+    expect(screen.queryByText("Tap again to dismiss")).toBeNull();
+  });
+
+  it("announces the armed wording in a status region", () => {
+    renderCard();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    fireEvent.click(screen.getByRole("button", { name: "Esc" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Tap again to send Esc");
   });
 
   it("presses nothing while disabled", async () => {
     const user = userEvent.setup();
     const { onAction } = renderCard(vi.fn(), true);
+    await user.click(screen.getByRole("button", { name: "Esc" }));
     await user.click(screen.getByRole("button", { name: "Esc" }));
     expect(onAction).not.toHaveBeenCalled();
   });
@@ -117,6 +236,7 @@ describe("UnreadDialogBlock", () => {
     };
 
     await user.click(button);
+    await user.click(screen.getByRole("button", { name: "Tap again to send Esc" }));
     expect(button).toHaveAttribute("aria-busy", "true");
     expect(container.textContent).toBe(before.text);
     expect(button.childNodes.length).toBe(before.children);

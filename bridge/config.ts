@@ -4,12 +4,15 @@ import { join } from "node:path";
 
 import {
   configFilePaths,
+  hostFilePerms,
   readConfigFiles,
   type ConfigFileLayer,
   type Environment,
   type FilePerms,
 } from "./config-source.ts";
+import { HOST, type Host } from "./host.ts";
 import { diskIo } from "./operator-file.ts";
+import { secretFileVerdict } from "./owner-only.ts";
 import type { AuditContent } from "./audit.ts";
 import type { DialMode } from "./dial.ts";
 import type { JournalRoots } from "./journal/registry.ts";
@@ -161,6 +164,12 @@ export interface Config {
    * unless {@link mux} is `zellij`.
    */
   zellijBin: string;
+  /**
+   * Absolute path to the `tern` binary, when the operator has one somewhere unusual. Empty (the
+   * default) probes fixed paths — `~/.local/opt/tern` and `~/.local/bin` first — and never `PATH`
+   * (`bridge/mux/tern/exec.ts`). Set via `COLLIE_TERN_BIN`. Inert unless {@link mux} is `tern`.
+   */
+  ternBin: string;
   /** Path to Herdr's control socket. A non-Herdr-launched daemon must discover this itself. */
   socketPath: string;
   /**
@@ -297,6 +306,14 @@ export interface Config {
    * (`COLLIE_TRUSTED_USER_OPTIONAL=1`). Re-opens the tagged-node gap. For host-local development.
    */
   trustedUserOptional: boolean;
+  /**
+   * Cloudflare Access team (`COLLIE_ACCESS_TEAM`): `myteam`, `myteam.cloudflareaccess.com` or the
+   * https issuer. With {@link accessAud}, turns on the Access JWT gate (`bridge/access-jwt.ts`,
+   * ADR 0081). Either one alone fails closed. Empty with an empty {@link accessAud} = the gate is off.
+   */
+  accessTeam: string;
+  /** Cloudflare Access application audience tag(s) (`COLLIE_ACCESS_AUD`). See {@link accessTeam}. */
+  accessAud: string[];
   /**
    * How much of each value's content the audit trail keeps — see {@link AuditContent} in audit.ts
    * for what `none` does and does not redact.
@@ -441,19 +458,19 @@ export function nonLoopbackBindRefusal(
 
 /**
  * herdr's default socket location: `~/.config/herdr/herdr.sock` on Unix, `%APPDATA%\herdr\herdr.sock`
- * on Windows (the Windows beta keeps its config root under AppData\Roaming). Pure so both branches
+ * on Windows (herdr for Windows keeps its config root under AppData\Roaming). Pure so both branches
  * are unit-testable on any platform.
  */
 export function defaultSocketPath(
-  platform: NodeJS.Platform = process.platform,
+  host: Host = HOST,
   env: Environment = process.env,
   home: string = homedir(),
 ): string {
-  if (platform === "win32") {
-    const appData = env.APPDATA ?? join(home, "AppData", "Roaming");
-    return join(appData, "herdr", "herdr.sock");
+  if (host.platform === "win32") {
+    const appData = env.APPDATA ?? host.path.join(home, "AppData", "Roaming");
+    return host.path.join(appData, "herdr", "herdr.sock");
   }
-  return join(home, ".config", "herdr", "herdr.sock");
+  return host.path.join(home, ".config", "herdr", "herdr.sock");
 }
 
 /**
@@ -484,7 +501,7 @@ export function resolveStateDir(
  * Where each harness's journal lives, resolved from an environment and a home directory.
  *
  * A PARAMETER rather than a read of `process.env` and `homedir()`, so `collie doctor` can ask this
- * one function the same question the bridge asks it (issue #137) instead of re-deriving five
+ * one function the same question the bridge asks it (issue #137) instead of re-deriving seven
  * fallbacks that would drift. {@link loadConfig} calls it with the defaults, so the running bridge's
  * roots are unchanged.
  *
@@ -531,6 +548,14 @@ export function resolveJournalRoots(
       env,
     ),
     hermes: envRoots("COLLIE_HERMES_ROOT", join(home, ".hermes"), env),
+    // Muse keeps date-partitioned session logs under the XDG data dir, one session.jsonl per
+    // session uuid. Muse publishes no home var of its own, so the Collie override is the only
+    // relocation.
+    muse: envRoots(
+      "COLLIE_MUSE_ROOT",
+      join(env.XDG_DATA_HOME ?? join(home, ".local", "share"), "muse", "sessions"),
+      env,
+    ),
   };
 }
 
@@ -561,8 +586,11 @@ export function resolveConfigDir(
  * layer))` is the whole of how a `config.toml` reaches the bridge. Called with nothing it behaves
  * exactly as it always has, which is why no existing call site moved.
  */
-/** {@link FilePerms} against the real filesystem, for the secret-permission rule on `config.toml`. */
-const diskFilePerms: FilePerms = {
+/**
+ * {@link FilePerms} against the real filesystem, for the secret-permission rule on `config.toml`. On
+ * Windows the access list decides ({@link hostFilePerms}, `bridge/owner-only.ts`).
+ */
+const diskFilePerms: FilePerms = hostFilePerms(HOST, {
   mode(path) {
     try {
       return statSync(path).mode & 0o777;
@@ -578,7 +606,7 @@ const diskFilePerms: FilePerms = {
       return false;
     }
   },
-};
+}, (path, repair) => secretFileVerdict(path, { repair }));
 
 export function loadConfig(env: Environment = process.env): Config {
   const stateDir = resolveStateDir(env);
@@ -596,7 +624,7 @@ export function loadConfig(env: Environment = process.env): Config {
   const configDir = resolveConfigDir(env);
 
   const mux = (env.COLLIE_MUX ?? "").trim() || DEFAULT_MUX;
-  const socketPath = env.HERDR_SOCKET_PATH ?? defaultSocketPath(process.platform, env);
+  const socketPath = env.HERDR_SOCKET_PATH ?? defaultSocketPath(HOST, env);
 
   return {
     mux,
@@ -605,6 +633,7 @@ export function loadConfig(env: Environment = process.env): Config {
     muxEndpoint: mux === DEFAULT_MUX ? socketPath : (env[muxEndpointVar(mux)] ?? "").trim(),
     tmuxBin: (env.COLLIE_TMUX_BIN ?? "").trim(),
     zellijBin: (env.COLLIE_ZELLIJ_BIN ?? "").trim(),
+    ternBin: (env.COLLIE_TERN_BIN ?? "").trim(),
     socketPath,
     dialMode: envEnum("COLLIE_HERDR_DIAL", ["auto", "net", "bun"] as const, "auto", env),
     port: envInt("COLLIE_PORT", DEFAULT_PORT, { min: 1, max: 65535 }, env),
@@ -636,6 +665,8 @@ export function loadConfig(env: Environment = process.env): Config {
     cacheRulesFile: join(configDir, "cache-rules.toml"),
     trustedUser: env.COLLIE_TRUSTED_USER ?? "",
     trustedUserOptional: envBool("COLLIE_TRUSTED_USER_OPTIONAL", false, env),
+    accessTeam: (env.COLLIE_ACCESS_TEAM ?? "").trim(),
+    accessAud: envList("COLLIE_ACCESS_AUD", env),
     auditContent: envEnum("COLLIE_AUDIT_CONTENT", ["preview", "none"] as const, "preview", env),
     deviceHeader: (env.COLLIE_DEVICE_HEADER ?? "").trim(),
     deviceAllowlist: envList("COLLIE_DEVICE_ALLOWLIST", env),
@@ -679,14 +710,19 @@ export function normaliseBasePath(raw: string | undefined): string {
  * it is not resolved at module scope, because importing `bridge/config.ts` must not open a file (the
  * CLI imports it for `resolveStateDir` alone, in every verb). `cli/context.ts` resolves the same two
  * paths from its own config-dir ladder, so both sides land on one answer.
+ *
+ * `repairAcl`: whether a loose secret file's access list may be changed (Windows only). The
+ * bridge's entry point passes `true`; anything else that calls this only verifies.
  */
 export async function loadConfigLayer(
   env: Environment = process.env,
   home: string = homedir(),
   warn: (line: string) => void = (l) => console.warn(l),
+  repairAcl = false,
 ): Promise<ConfigFileLayer> {
   return readConfigFiles(diskIo, configFilePaths(env, home, resolveConfigDir(env, home)), warn, {
     home,
     perms: diskFilePerms,
+    repairAcl,
   });
 }

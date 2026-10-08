@@ -17,6 +17,7 @@ import {
   fetchDevices,
   fetchHistory,
   fetchCrew,
+  fetchMachines,
   fetchPane,
   fetchSnapshot,
   isApiErrorStatus,
@@ -36,6 +37,7 @@ import {
 } from "@/lib/last-seen";
 import { detectNoEchoPrompt } from "@/lib/no-echo";
 import { markPollResult } from "@/lib/poll-intent";
+import { shareEqual } from "@/lib/share-equal";
 import { prefetchPane, takePanePrefetch } from "@/lib/pane-prefetch";
 import { clearNotPaired, markNotPaired } from "@/lib/pairing";
 import {
@@ -53,6 +55,7 @@ import type {
   DeviceAuth,
   FleetVersionView,
   CrewStatusResponse,
+  MachinesResponse,
   PairedDeviceWire,
   PaneHistoryResponse,
   PaneReadResponse,
@@ -664,6 +667,61 @@ export async function crewLoader({ request }: { request?: Request } = {}): Promi
     // Solo or peer: there is no crew to report, and that is a complete answer.
     if (isApiErrorStatus(e, 404)) return { status: null, error: false };
     return { status: null, error: true };
+  }
+}
+
+// ── The machines census (the /machines pages) ────────────────────────────────
+//
+// `crewLoader`'s shape for the same reasons: it rides the poll loop (a firing alert and a quiet
+// machine should show without a reload), and a failure degrades instead of throwing. A 404 is an
+// answer, not a failure: only a lead or a solo collie serves `/api/machines`, so a peer opened
+// directly says "there is nothing to show here" in one card.
+//
+// `/machines/:id` reads this same loader for its row. Its history is NOT loaded here: 1440 points
+// every poll tick would be the waste History opts out of, so the detail page fetches it on open
+// and then once a minute while visible (routes/machine.tsx).
+
+export interface MachinesData {
+  /** The census, or `null` when this collie serves none (404) or the fetch failed. */
+  census: MachinesResponse | null;
+  /** True only for a fetch that FAILED. A 404 is an answer, not an error. */
+  error: boolean;
+}
+
+/** How many complete minutes the list's small charts show: the Crew tab's half hour. */
+export const MACHINE_SPARK_MINUTES = 30;
+
+/**
+ * The last census read, so the next one can keep the identity of every row that did not change
+ * (`shareEqual`). A poll tick that brings the same numbers then re-renders no card and no chart.
+ */
+let lastCensus: MachinesResponse | null = null;
+
+/** `fresh`, with every row equal to the last census's row swapped for that row's own object. */
+export function keepCensusIdentity(fresh: MachinesResponse): MachinesResponse {
+  const kept = lastCensus === null ? fresh : shareEqual(lastCensus, fresh);
+  lastCensus = kept;
+  return kept;
+}
+
+/** One machine's page: the census without the small charts, which the page does not draw. */
+export async function machinesLoader({ request }: { request?: Request } = {}): Promise<MachinesData> {
+  return machinesRead(request?.signal, undefined);
+}
+
+/** The Machines list: the census with each card's last half hour of CPU and memory. */
+export async function machinesListLoader({ request }: { request?: Request } = {}): Promise<MachinesData> {
+  return machinesRead(request?.signal, MACHINE_SPARK_MINUTES);
+}
+
+async function machinesRead(signal: AbortSignal | undefined, spark: number | undefined): Promise<MachinesData> {
+  try {
+    const census = await fetchMachines(signal, spark === undefined ? {} : { spark });
+    return { census: keepCensusIdentity(census), error: false };
+  } catch (e) {
+    if (isAbortError(e)) throw e; // superseded revalidation, let React Router drop it
+    if (isApiErrorStatus(e, 404)) return { census: null, error: false };
+    return { census: null, error: true };
   }
 }
 

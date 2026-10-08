@@ -20,14 +20,18 @@ import { useLaunchers } from "@/lib/launchers";
 import { buzz } from "@/lib/haptics";
 import { mirrorFont, useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { useChatWindow } from "@/hooks/use-chat-window";
+import { useChatReady } from "@/hooks/use-chat-ready";
+import { usePaneStart } from "@/hooks/use-pane-start";
+import { useHandover, useHeldBody } from "@/hooks/use-handover";
 import { useLatestReply } from "@/hooks/use-latest-reply";
 import { finishedTurnKey, useMirrorImages } from "@/hooks/use-mirror-images";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
 import { isConnecting } from "@/lib/connection";
 import { t } from "@/lib/i18n";
+import { settleAfterSend } from "@/lib/harness/guard";
 import { setStatus } from "@/lib/status";
-import { setFollowing as publishFollowing, stampSend } from "@/lib/poll-intent";
+import { setFollowing as publishFollowing } from "@/lib/poll-intent";
 import { useAutoZenEnabled, useZenEnabled } from "@/lib/zen";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { setStripsCollapsed, useStripsCollapsed } from "@/lib/strips-collapsed";
@@ -47,6 +51,7 @@ import { cn } from "@/lib/utils";
 import { parseAnsi } from "@/lib/ansi";
 import { splitLines } from "@/lib/blocks";
 import { adapterFor, buildBlocks, rendersNativeMirror } from "@/lib/harness";
+import { waitingQuestionNote } from "@/lib/question-waiting";
 import { blockOwnsKeyboard } from "@/lib/harness/dialog-contract";
 import { FindBar } from "@/components/find-bar";
 import { LatestReply } from "@/components/latest-reply";
@@ -60,7 +65,8 @@ import { StripsSummary } from "@/components/strips-summary";
 import { PaneMeta } from "@/components/pane-meta";
 import { CacheSheet } from "@/components/cache-sheet";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
-import { SessionStream } from "@/components/session-stream";
+import { CardWaitingCtx } from "@/components/chat-cards";
+import { chatStatusKey, SessionStream } from "@/components/session-stream";
 import { PaneSettingsSheet } from "@/components/pane-settings-sheet";
 import { CompactStripLabels } from "@/components/ui/labelled-strip";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
@@ -85,6 +91,7 @@ import { paneName, panePlaceParts } from "@/lib/pane-name";
 import { panesOfTab } from "@/lib/pane-ordinal";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { hasJournalAdapter, reportsSessionOnFirstPrompt } from "@/lib/journal-agents";
+import { journalReadingOf, paneBody, type JournalReading } from "@/lib/chat-gate";
 import { paneRowKey, paneScope } from "@/lib/hosts";
 import { paneScopeKey } from "@/lib/scope";
 import { usePins } from "@/lib/pins";
@@ -236,7 +243,7 @@ export function AgentChat({
 }: AgentChatProps) {
   const revalidator = useRevalidator();
   const nav = useNav();
-  useLocale();
+  const { revision: localeRevision } = useLocale();
   // Poll-truth "is the data on screen not live". The one header shell derives the same boolean from
   // the same two root-snapshot fields to drive the Collie mark; here we use it to dim the header's
   // status dot AND its status word, so the pane stops presenting the last snapshot's status as
@@ -324,6 +331,9 @@ export function AgentChat({
   // clock: the lead answered, so this poll was live, and the ConnectionBanner stays silent.
   const hostHealth = useHostHealth(agent?.host ?? scope?.host);
   const hostBlock = writeRefusal(hostHealth);
+  // Whether the pane's own multiplexer can rename it: gates the Rename row in Pane settings, the way
+  // the ⋮ sheet gates its own (components/pane-actions-sheet.tsx asks the same question).
+  const canRenamePane = useMuxCapability("renamePane", { host: agent?.host });
   /**
    * The ONE reason this pane currently refuses a write, or undefined when it accepts them. Every
    * write handler below starts with it, so there is a single place that decides both which gates
@@ -350,6 +360,13 @@ export function AgentChat({
     setDrawer(null);
     setPull(0);
   };
+  // Pane settings' Rename row opens the ⋮ sheet on its rename view (one rename flow, not two). A
+  // flag and not a drawer value, because the drawer is which sheet and this is how it opens. It
+  // lasts until the ⋮ sheet is no longer the open one, so a later ⋮ tap opens the list as ever.
+  const [renameOnOpen, setRenameOnOpen] = useState(false);
+  useEffect(() => {
+    if (drawer !== "paneMenu") setRenameOnOpen(false);
+  }, [drawer]);
 
   // ── ZEN MODE — chrome-free, mirror-only viewing ───────────────────────────────
   // On a phone the chrome IS most of the viewport: measured at 390x844 this route spends 199px above
@@ -934,39 +951,109 @@ export function AgentChat({
   // line moves the header, the strips, the card dock, the belt or the composer. What swaps is the
   // box between the mirror's own top rule and the chrome block, and only that.
   //
-  // TWO VALUES DECIDE IT, and they are different questions (lib/pane-view.ts). `chatExperiment` is
-  // whether this device has opted in at all — off by default, written from Settings → Experiments,
-  // and while it is off the pane menu shows no switch and this whole block is inert. `paneView` is
-  // which body, once opted in, and the pane's ⋮ menu is the one place it is written.
-  //
-  // `historyAvailable` is the third gate and it is about the PANE rather than the device: the chat
-  // route reads the same journal the History page does, so a pane that has no transcript to open
-  // has no session to stream either. A pane like that falls back to the terminal and the ⋮ row
-  // carries the reason — it never hides, because a control that disappears on some panes is how an
-  // operator concludes the app is broken.
+  // CHAT IS THE DEFAULT (1.17.0, ADR 0082). `paneView` is the device's standing choice, `chat` until
+  // the operator picks the terminal from the pane's ⋮ menu, the one place it is written
+  // (lib/pane-view.ts). Which body a pane on a Chat device draws is lib/chat-gate.ts's call, and it
+  // is about the PANE: one that reads its session draws Chat, one that is NEW draws Chat with a line
+  // that says how to begin even before a session or a log exists (Codex reports its session on the
+  // first prompt, pi writes its log after the first reply), and one whose session or log should have
+  // come and did not falls back to the terminal, with the ⋮ row and a muted line saying why. The
+  // row never hides, because a control that disappears on some panes is how an operator concludes
+  // the app is broken.
   // DOWNSTREAM PORT (FORK.toml native-manual-pane-fit-port, for pane-surface-route-port): the fork's
-  // terminal surface replaces whichever body this would draw, so Chat is not offered beneath it.
-  const chatOffered = renderContent === undefined && dash.prefs.chatExperiment;
+  // terminal surface replaces whichever body this would draw, so Chat is neither offered, warmed nor
+  // read beneath it, and the stored `paneView` is left alone for when the mirror is selected again.
+  const chatOffered = renderContent === undefined;
   const chatChosen = chatOffered && dash.prefs.paneView === "chat";
-  const chatBody = chatChosen && historyAvailable;
-  // The live window, moved by the poll that already exists (ADR 0073). Disabled is free: no fetch,
-  // no timer, the empty window.
-  const chatFeed = useChatWindow({ paneId, scope, enabled: chatBody });
+  // The chat route is asked only where a session exists to read: a pane with none has nothing for
+  // it to answer. The poll that already exists moves it (ADR 0073); disabled is free.
+  const chatFetch = chatChosen && historyAvailable;
+  // WARMED BEFORE THE TAP. The read starts when the menu that holds the switch opens, not when the
+  // switch is pressed, so by the time it is the answer is already in hand and the swap lands with the
+  // sheet's own close instead of after it. Only for a pane that has a journal and only while one of
+  // the two sheets that carry the switch is open, so a terminal-only operator pays nothing standing
+  // still on a pane.
+  const switchSheetOpen = drawer === "paneMenu" || drawer === "display";
+  const warming = chatOffered && historyAvailable && switchSheetOpen;
+  const chatFeed = useChatWindow({ paneId, scope, enabled: chatFetch || warming });
+  const chatStatus = chatFeed.window.status;
+  const journal: JournalReading = journalReadingOf(chatStatus);
+  // What this view has seen of how the agent began, for the gate (hooks/use-pane-start.ts): the
+  // events, and whether the journal read that followed the turn's end has answered.
+  const paneStart = usePaneStart(
+    paneId,
+    agent?.agent,
+    isShell,
+    agent?.status,
+    chatFeed,
+    Boolean(agent?.hasSession) && journal !== "missing" && journal !== "off",
+    Boolean(agent?.hasSession),
+  );
+  // A harness draws Chat when the multiplexer keeps a session log and Collie reads this harness's
+  // log. A pane that reported a session is one by construction (the bridge's `hasSession` already
+  // folds the adapter in), so an older phone that does not know a newer harness still draws it.
+  const chatHarness =
+    !isShell && sessionLog.capable && (Boolean(agent?.hasSession) || hasJournalAdapter(agent?.agent));
+  const body = paneBody({
+    chat: chatChosen && chatHarness,
+    session: Boolean(agent?.hasSession),
+    journal,
+    history: paneStart.history,
+    activity: paneStart.activity,
+    settled: paneStart.settled,
+  });
+  const chatBody = body !== "terminal";
+  // What the Chat body's running question card says about the dialog below it. Chat body only: the
+  // terminal body draws no cards, so nothing there reads it. `localeRevision` is READ by the note's
+  // `t()` and keys the memo so the sentence follows a language change.
+  const questionNotes = useMemo(() => {
+    void localeRevision;
+    return waitingQuestionNote(chatFeed.window.entries, blocks);
+  }, [chatFeed.window.entries, blocks, localeRevision]);
+  // THE HANDOVER OWNS THE SWAP WHILE A SHELL BECOMES AN AGENT (hooks/use-handover.ts). The bloom
+  // and the body swap are one sequence: the swap is held while the layer covers, applies at its
+  // rest, and the reveal follows the rest with nothing else to wait for, because the gate above
+  // already names the body that stays.
+  const handover = useHandover(agentStart.started !== null, agentStart.clear);
+  // WHICH BODY IS ON SCREEN. `chatBody` is what the gate chose; the body drawn lags it by one answer
+  // when the swap happens on an open pane (the ⋮ switch, or a session that arrives after a
+  // fallback). The swap used to land on an empty stream in the same tick the menu started to close,
+  // so the turns popped in after it; the terminal now stays up until Chat's first read for this pane
+  // comes back (hooks/use-chat-ready.ts). A read that FAILED comes back too, so a broken read cannot
+  // strand the terminal, and no clock is involved. A pane with no session to ask has nothing to wait
+  // for, and neither has a handover, whose cover is what hides the swap.
+  const chatAnswered =
+    !chatFetch || chatStatus.kind !== "empty" || chatFeed.tried || handover.phase !== "idle";
+  const chatReadyBody = useChatReady(chatBody, chatAnswered);
+  const chatShown = useHeldBody(chatReadyBody, handover.phase);
   // Why this pane keeps the terminal, in the operator's own terms — and ONLY for the half of that
-  // question this side can answer. There are two layers and the split is deliberate: a pane with no
-  // journal at all never asks the bridge, so the reason belongs on the ⋮ row here, while a pane
-  // that DOES ask and is told `available: false` or handed a 404 is drawing the chat body, and the
-  // stream says so in its own words there. Saying both would put "this pane keeps the terminal" on
+  // question this side can answer. There are two layers and the split is deliberate: a pane that
+  // draws Chat says what it is waiting for in the stream, in its own words, while a pane that keeps
+  // the terminal says it on the ⋮ row here. Saying both would put "this pane keeps the terminal" on
   // a menu row above a chat stream.
   //
   // The multiplexer's own words come first where it has any, because a multiplexer that keeps no
-  // agent session log at all is not Collie's fault and Collie does not say it is.
-  const chatReason = historyAvailable
-    ? null
-    : sessionLog.capable
-      ? t("history.unavailable.noSession")
-      : sessionLog.note || t("history.unavailable.noLog");
+  // agent session log at all is not Collie's fault and Collie does not say it is. A device on the
+  // terminal reads exactly the row it read before the gate existed.
+  const chatReason = !sessionLog.capable
+    ? sessionLog.note || t("history.unavailable.noLog")
+    : chatChosen
+      ? chatBody
+        ? null
+        : journal === "off"
+          ? // The server's own reason: reading switched off, or a member older than the chat route.
+            t(chatStatusKey(chatStatus) ?? "history.unavailable.disabled")
+          : agent?.hasSession && journal === "missing"
+            ? t("history.unavailable.noLog")
+            : t("history.unavailable.noSession")
+      : historyAvailable
+        ? null
+        : t("history.unavailable.noSession");
   const chatNote = chatReason === null ? undefined : t("chat.mode.noChat", { reason: chatReason });
+  // The terminal's own line for a pane that fell back with a session but no log to read. The
+  // no-session half has its line already (`noSessionReported`, below in the mirror).
+  const noLogFallback =
+    chatChosen && chatHarness && !chatBody && Boolean(agent?.hasSession) && journal === "missing";
 
   // Scrollback has its own capability, and it is a genuinely different one: a multiplexer can keep
   // screen history while knowing nothing about agents. Hidden rather than explained when absent —
@@ -1082,10 +1169,27 @@ export function AgentChat({
 
   // After a successful send, snap the mirror back to the live tail so the reply's result is visible.
   const onSent = () => {
+    // A prompt sent from here is work begun: it arms the Chat gate's last resort on a harness whose
+    // status never moves (hooks/use-pane-start.ts).
+    paneStart.markSent();
     setFollowing(true);
     revalidator.revalidate();
     listRef.current?.scrollToBottom();
   };
+
+  // The tail of every dialog tap that SENT: wait for the TUI to repaint, then show it. The read a
+  // card revalidates on can land before the repaint (measured: the screen changes about 19 ms after
+  // the key), and a card left on the old highlight refuses its next committing tap, whose guard
+  // compares the full signature against a fresh read. The card's buttons stay disabled while the
+  // `onAction` promise is pending, so awaiting this keeps the card inactive until its picture is
+  // fresh. A key that changes nothing just runs out the bound (lib/harness/guard.ts). The poll burst
+  // is not started here: `sendKeys` in lib/api.ts stamps it for every key written.
+  const showAfterSend = useCallback(async () => {
+    await settleAfterSend({ paneId, requestedLines, scope });
+    setFollowing(true);
+    revalidator.revalidate();
+    listRef.current?.scrollToBottom();
+  }, [paneId, requestedLines, scope, revalidator]);
 
   // Tap a prompt-select option. This can type into a real terminal, so it runs the revision-based
   // race guard first (fresh fetch → revision + re-derived-menu equality); only a clean match sends
@@ -1101,9 +1205,6 @@ export function AgentChat({
         setStatus(refusal, "error");
         return false;
       }
-      // A prompt button is a send too — the same "watch this land" moment as the composer's Send,
-      // just with the keys chosen for you.
-      stampSend(paneId);
       const base = {
         paneId,
         scope,
@@ -1124,10 +1225,11 @@ export function AgentChat({
           action.kind === "feedback" ? t("chat.status.feedbackSent") : t("chat.status.sent"),
           "success",
         );
-        setFollowing(true);
-        revalidator.revalidate();
-        listRef.current?.scrollToBottom();
+        await showAfterSend();
       } else if (result.status === "changed") {
+        // Which step refused, for a person with the console open (`why` is a diagnosis, never UI
+        // text). A harness drift shows up here as the one field that differed.
+        if (result.why !== undefined) console.info("collie: tap refused", result.why);
         setStatus(t("chat.status.menuChanged"), "warn");
         revalidator.revalidate();
       } else {
@@ -1137,7 +1239,7 @@ export function AgentChat({
       // what someone just thumb-typed. Option taps ignore it.
       return result.status === "sent";
     },
-    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator],
+    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator, showAfterSend],
   );
 
   // Tap a wizard control (an option digit, step navigation, or the review step's submit/cancel).
@@ -1164,9 +1266,7 @@ export function AgentChat({
       });
       if (result.status === "sent") {
         setStatus(t("chat.status.sent"), "success");
-        setFollowing(true);
-        revalidator.revalidate();
-        listRef.current?.scrollToBottom();
+        await showAfterSend();
       } else if (result.status === "changed") {
         setStatus(t("chat.status.wizardChanged"), "warn");
         revalidator.revalidate();
@@ -1174,7 +1274,7 @@ export function AgentChat({
         setStatus(result.error || t("chat.status.sendFailed"), "error");
       }
     },
-    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator],
+    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator, showAfterSend],
   );
 
   // Tap a preview-dialog control (an option, the note add/edit/remove, or the wizard step nav).
@@ -1213,9 +1313,7 @@ export function AgentChat({
             : t("chat.status.sent"),
           "success",
         );
-        setFollowing(true);
-        revalidator.revalidate();
-        listRef.current?.scrollToBottom();
+        await showAfterSend();
       } else if (result.status === "changed") {
         setStatus(t("chat.status.dialogChanged"), "warn");
         revalidator.revalidate();
@@ -1224,7 +1322,7 @@ export function AgentChat({
         revalidator.revalidate();
       }
     },
-    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator],
+    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator, showAfterSend],
   );
 
   // Tap a multi-select control (toggle a checkbox, Submit, the "Chat about this" escape, or the
@@ -1250,9 +1348,7 @@ export function AgentChat({
       });
       if (result.status === "sent") {
         setStatus(t("chat.status.sent"), "success");
-        setFollowing(true);
-        revalidator.revalidate();
-        listRef.current?.scrollToBottom();
+        await showAfterSend();
       } else if (result.status === "changed") {
         setStatus(t("chat.status.selectionChanged"), "warn");
         revalidator.revalidate();
@@ -1260,7 +1356,7 @@ export function AgentChat({
         setStatus(result.error || t("chat.status.sendFailed"), "error");
       }
     },
-    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator],
+    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator, showAfterSend],
   );
 
   // Tap a generic-menu control (a footer-named key like Enter/s/Esc, or an arrow). Same guard-first
@@ -1287,9 +1383,7 @@ export function AgentChat({
       });
       if (result.status === "sent") {
         setStatus(t("chat.status.sent"), "success");
-        setFollowing(true);
-        revalidator.revalidate();
-        listRef.current?.scrollToBottom();
+        await showAfterSend();
       } else if (result.status === "changed") {
         setStatus(t("chat.status.screenChanged"), "warn");
         revalidator.revalidate();
@@ -1297,7 +1391,7 @@ export function AgentChat({
         setStatus(result.error || t("chat.status.sendFailed"), "error");
       }
     },
-    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator],
+    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator, showAfterSend],
   );
 
   // The unread-dialog card's one control (.adr/0053). Same guard as every other dialog tap — the
@@ -1325,9 +1419,7 @@ export function AgentChat({
       );
       if (result.status === "sent") {
         setStatus(t("chat.status.sent"), "success");
-        setFollowing(true);
-        revalidator.revalidate();
-        listRef.current?.scrollToBottom();
+        await showAfterSend();
       } else if (result.status === "changed") {
         setStatus(t("chat.status.screenChanged"), "warn");
         revalidator.revalidate();
@@ -1335,7 +1427,7 @@ export function AgentChat({
         setStatus(result.error || t("chat.status.sendFailed"), "error");
       }
     },
-    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator],
+    [refuseWrite, paneId, scope, requestedLines, shown.revision, agent?.agent, revalidator, showAfterSend],
   );
 
   // NOTE: the composer is deliberately NOT auto-focused on open/switch — that would pop the Android
@@ -1628,27 +1720,46 @@ export function AgentChat({
               data-glide-destination="pane"
               className="relative -mx-1 flex min-h-11 min-w-0 flex-1 items-center rounded-lg px-1 text-left"
             >
-              <button
-                type="button"
-                onClick={() => openSpace(agent.workspaceId)}
-                // The state has to be spelled into the label itself, or moving the status word into
-                // this block would have taken the pane's status out of the accessibility tree
-                // entirely. The suffix is a locale string, not a "," glued on in code, because where
-                // the punctuation goes is a translator's decision (host-chip.tsx does the same with
-                // its unreachable suffix).
-                aria-label={t("chat.header.openOverviewAria", {
-                  workspace: agent.workspaceLabel,
-                  status: t("chat.header.statusAria", {
-                    label: isShell ? t("status.shellBadge") : statusLabel(agent.status),
-                  }),
-                })}
-                // The block's geometry is a rule that spans two files — this one states the line
-                // boxes, app-header.tsx states the row floor and the padding that has to hold them —
-                // so it is asserted mechanically in agent-chat.test.tsx. These slots are what that
-                // test reads; renaming one without updating it fails there rather than on a phone.
-                data-slot="pane-identity"
-                className="absolute inset-0 rounded-lg transition-colors active:bg-muted/60"
-              />
+              {/* THE TAP SURFACE IS TWO BUTTONS, one per line (1.17.0): the name line opens Pane
+                  settings, the place line opens the space. They are siblings that together fill a
+                  layer laid over the block, split at the line boundary, and each spans the block's
+                  full width. The layer reaches 8px past the block top and bottom (`-inset-y-2`),
+                  which is where the row's own 4px padding and the 4px of air the 44px block leaves
+                  around its 36px of lines already are, so the two targets are 30px tall each, half
+                  the 60px row, and nothing outside the row is covered. The lines paint above the
+                  layer and pass their taps through, as before; the cache reading takes its own back.
+                  `data-slot="pane-identity"` stays on the place button, which keeps the overview
+                  label and the status suffix a screen reader needs. */}
+              <div data-slot="pane-identity-taps" className="absolute inset-x-0 -inset-y-2 flex flex-col rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setDrawer("paneSettings")}
+                  aria-label={t("chat.header.openPaneSettingsAria", { name })}
+                  data-slot="pane-identity-name"
+                  className="min-h-0 flex-1 rounded-t-lg transition-colors active:bg-muted/60"
+                />
+                <button
+                  type="button"
+                  onClick={() => openSpace(agent.workspaceId)}
+                  // The state has to be spelled into the label itself, or moving the status word into
+                  // this block would have taken the pane's status out of the accessibility tree
+                  // entirely. The suffix is a locale string, not a "," glued on in code, because where
+                  // the punctuation goes is a translator's decision (host-chip.tsx does the same with
+                  // its unreachable suffix).
+                  aria-label={t("chat.header.openOverviewAria", {
+                    workspace: agent.workspaceLabel,
+                    status: t("chat.header.statusAria", {
+                      label: isShell ? t("status.shellBadge") : statusLabel(agent.status),
+                    }),
+                  })}
+                  // The block's geometry is a rule that spans two files — this one states the line
+                  // boxes, app-header.tsx states the row floor and the padding that has to hold them —
+                  // so it is asserted mechanically in agent-chat.test.tsx. These slots are what that
+                  // test reads; renaming one without updating it fails there rather than on a phone.
+                  data-slot="pane-identity"
+                  className="min-h-0 flex-1 rounded-b-lg transition-colors active:bg-muted/60"
+                />
+              </div>
               {/* TWO lines with 4px between them — see the row's own note in app-header.tsx for why
                   the air moved from outside the block to inside it. Each line states its own height
                   (20 / 12) so the block is a sum of boxes: as bare inline spans they inherit the
@@ -1826,7 +1937,13 @@ export function AgentChat({
               absolutely positioned against this region, holds no space and moves nothing (§2), and a
               tap ends it at once. It marks a fact the poll has already found; it never predicts one. */}
           {agentStart.started !== null && (
-            <AgentStart harness={agentStart.started} onDone={agentStart.clear} />
+            <AgentStart
+              harness={agentStart.started}
+              phase={handover.phase}
+              calm={handover.calm}
+              onCovered={handover.onCovered}
+              onFinish={handover.onFinish}
+            />
           )}
           {/* THE ONE WAY OUT OF ZEN. A single floating affordance over the mirror rather than a
               strip, so "everything hides" stays literally true, and TOP-right so entering (the ⋮ that
@@ -2082,20 +2199,26 @@ export function AgentChat({
                 whichever body is on screen back to its tail without knowing which one it is. The
                 draft-notice slot below is outside the swap on purpose: the composer portals into it
                 and the notice floats over both bodies alike (ADR 0061). */}
-            {chatBody ? (
-              <SessionStream
-                feed={chatFeed}
-                address={paneScopeKey(scope, paneId)}
-                // The pane record's own status, the one live fact both bodies share. The mirror gets
-                // this for free — the agent's spinner is in the output it draws — so only this body
-                // has to be told (session-stream.tsx § LIVE_ROW). `connecting` withholds it for the
-                // same reason the status dot dims: a frozen reading must not animate as if it were
-                // arriving.
-                working={agent?.status === "working" && !connecting}
-                showToolCalls={dash.prefs.showToolCalls}
-                fontSize={prefs.chatFontSize}
-                listRef={listRef}
-              />
+            {chatShown ? (
+              <CardWaitingCtx.Provider value={questionNotes}>
+                <SessionStream
+                  feed={chatFeed}
+                  address={paneScopeKey(scope, paneId)}
+                  // The pane record's own status, the one live fact both bodies share. The mirror gets
+                  // this for free — the agent's spinner is in the output it draws — so only this body
+                  // has to be told (session-stream.tsx § LIVE_ROW). `connecting` withholds it for the
+                  // same reason the status dot dims: a frozen reading must not animate as if it were
+                  // arriving.
+                  working={agent?.status === "working" && !connecting}
+                  // A new pane with nothing to read yet: one line that says how to begin, never the
+                  // "no transcript file" reading, which is only true of a pane that should have one.
+                  starting={body === "start"}
+                  showToolCalls={dash.prefs.showToolCalls}
+                  showCompactions={dash.prefs.showCompactions}
+                  fontSize={prefs.chatFontSize}
+                  listRef={listRef}
+                />
+              </CardWaitingCtx.Provider>
             ) : (
             <ChatMessageList
               ref={listRef}
@@ -2173,6 +2296,14 @@ export function AgentChat({
                   {noSessionReported && (
                     <p className="mb-2 px-2 py-1 text-center text-xs leading-snug text-muted-foreground">
                       {t(noSessionKey, { agent: agent?.agent ?? "" })}
+                    </p>
+                  )}
+                  {/* The other half of the Chat fallback: the pane named a session, and its log was
+                      still not there when its first turn ended (lib/chat-gate.ts). The stream's own sentence
+                      for that reading, on the body the operator now has. */}
+                  {noLogFallback && (
+                    <p className="mb-2 px-2 py-1 text-center text-xs leading-snug text-muted-foreground">
+                      {t("history.unavailable.noLog")}
                     </p>
                   )}
                   {/* The newest reply in full, standing IN PLACE OF the rows it covers (the mirror
@@ -2282,7 +2413,7 @@ export function AgentChat({
               up-levelled prompt buttons) — it now lives as a slim row just below the header.
 
               ── `shrink-0`, STATED, AND WHY IT IS NOT `min-h-0` ──────────────────────────
-              This is the flex sibling of the mirror inside a `h-[100dvh]` column. The mirror above
+              This is the flex sibling of the mirror inside a `h-(--app-h)` column. The mirror above
               carries `min-h-0 flex-1`, so IT is the row that gives — and it gives all the way to
               zero. What happens after that is what the operator reported as "the bottom is cut off":
               nothing else in this column can shrink, so the surplus paints past the bottom edge of
@@ -2620,11 +2751,13 @@ export function AgentChat({
               chatOffered
                 ? {
                     chosen: dash.prefs.paneView,
-                    showing: chatBody ? "chat" : "terminal",
+                    showing: chatShown ? "chat" : "terminal",
                     onChange: dash.setPaneView,
                     note: chatNote,
                     showToolCalls: dash.prefs.showToolCalls,
                     setShowToolCalls: dash.setShowToolCalls,
+                    showCompactions: dash.prefs.showCompactions,
+                    setShowCompactions: dash.setShowCompactions,
                     chatFontSize: prefs.chatFontSize,
                     stepChatFontSize,
                   }
@@ -2669,7 +2802,7 @@ export function AgentChat({
           // Find searches the MIRROR, and highlights its hits there. In chat mode the mirror is
           // not on screen, so the row would open a bar over a surface with nothing to show —
           // withheld, the way the sheet withholds every row it was given nothing for.
-          onFind={hasOutput && !chatBody ? openFind : undefined}
+          onFind={hasOutput && !chatShown ? openFind : undefined}
           onHistory={historyAvailable ? () => nav.down(historyPath(paneId, scope)) : undefined}
           // Copy the buffered output — gated on there being output AND a clipboard to write to (absent
           // over plain HTTP), so the row hides where it could only fail, the way find hides with no
@@ -2691,9 +2824,9 @@ export function AgentChat({
           // already spent. It hands over to the sheet below in one React event, so the actions sheet
           // unmounts in the same commit the settings sheet mounts.
           onSettings={() => setDrawer("paneSettings")}
-          // THE BODY SWITCH. `undefined` while Settings → Experiments has Chat off, which is what
-          // keeps the row off the sheet entirely; `chatNote` is why this pane keeps the terminal
-          // when it does. One standing per-device value, written here and nowhere else.
+          openInRename={renameOnOpen}
+          // THE BODY SWITCH. `chatNote` is why this pane keeps the terminal when it does. One
+          // standing per-device value, written here and nowhere else.
           paneView={chatOffered ? dash.prefs.paneView : undefined}
           onPaneViewChange={chatOffered ? dash.setPaneView : undefined}
           paneViewNote={chatOffered ? chatNote : undefined}
@@ -2709,6 +2842,17 @@ export function AgentChat({
           onClose={closeDrawer}
           paneId={paneId}
           scope={scope}
+          // The header's name tap lands here, so the row that edits the name is here too. It hands
+          // over to the ⋮ sheet's rename view in one event. Hidden where that view cannot save: a
+          // read-only device, an unreachable machine, a multiplexer with no rename.
+          onRename={
+            agent && !readOnly && hostBlock === undefined && canRenamePane.capable
+              ? () => {
+                  setRenameOnOpen(true);
+                  setDrawer("paneMenu");
+                }
+              : undefined
+          }
         />
       </div>
     </CompactStripLabels>

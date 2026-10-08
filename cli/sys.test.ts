@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
-import { fakeExec, fakeFiles, HOME } from "./fakes.ts";
+import { hostFor } from "../bridge/host.ts";
+import { fakeExec, fakeFiles, HOME, posixKey } from "./fakes.ts";
 import {
   BUN_PROBE_TIMEOUT_MS,
   realExec,
@@ -13,7 +14,13 @@ import {
   withEnvOverride,
   withoutGitRelocators,
   withPathPrefix,
+  parseProcessRows,
+  parseWindowsProcessAnswer,
+  POWERSHELL_UTF8,
+  realNet,
+  windowsProcessScript,
 } from "./sys.ts";
+import { MIRROR_FETCH } from "../bridge/update.ts";
 
 // The one place Collie looks for Bun, and the proof that the two shell copies of it agree.
 //
@@ -24,6 +31,11 @@ import {
 
 const REPO = `${import.meta.dir}/..`;
 
+/** The Bun under `$BUN_INSTALL=/opt/bun`, spelled the way `toolCandidates` builds it (`join`). */
+const OPT_BUN = join("/opt/bun", "bin", "bun");
+/** `~/.bun/bin/bun`, the default when `BUN_INSTALL` is unset or empty. */
+const HOME_BUN = join(HOME, ".bun", "bin", "bun");
+
 /** A `which` that answers `found` for `bun` and null for everything else. */
 const whichIs = (found: string | null) => ({
   which: (tool: string): string | null => (tool === "bun" ? found : null),
@@ -31,16 +43,16 @@ const whichIs = (found: string | null) => ({
 
 describe("the canonical tool candidate list", () => {
   test("BUN_INSTALL outranks the default ~/.bun, and an empty value counts as unset", () => {
-    expect(toolCandidates({ BUN_INSTALL: "/opt/bun" }, HOME, "bun")[0]).toBe("/opt/bun/bin/bun");
-    expect(toolCandidates({ BUN_INSTALL: "" }, HOME, "bun")[0]).toBe(`${HOME}/.bun/bin/bun`);
-    expect(toolCandidates({}, HOME, "bun")[0]).toBe(`${HOME}/.bun/bin/bun`);
+    expect(toolCandidates({ BUN_INSTALL: "/opt/bun" }, HOME, "bun")[0]).toBe(OPT_BUN);
+    expect(toolCandidates({ BUN_INSTALL: "" }, HOME, "bun")[0]).toBe(HOME_BUN);
+    expect(toolCandidates({}, HOME, "bun")[0]).toBe(HOME_BUN);
   });
 
   test("the order is the shim's, extended by the remote probe's tail", () => {
     expect(toolCandidates({}, HOME, "bun")).toEqual([
-      `${HOME}/.bun/bin/bun`,
-      `${HOME}/.bun/bin/bun`,
-      `${HOME}/.local/bin/bun`,
+      HOME_BUN,
+      HOME_BUN,
+      join(HOME, ".local", "bin", "bun"),
       "/usr/local/bin/bun",
       "/opt/homebrew/bin/bun",
       "/usr/bin/bun",
@@ -52,7 +64,7 @@ describe("the canonical tool candidate list", () => {
 
   test("every candidate is absolute", () => {
     for (const c of toolCandidates({ BUN_INSTALL: "/opt/bun" }, HOME, "bun")) {
-      expect(c.startsWith("/")).toBe(true);
+      expect(isAbsolute(c)).toBe(true);
     }
   });
 });
@@ -72,19 +84,17 @@ describe("resolveTool", () => {
   });
 
   test("a Bun off PATH is found at a candidate, BUN_INSTALL first", () => {
-    const files = fakeFiles({ "/opt/bun/bin/bun": "", [`${HOME}/.bun/bin/bun`]: "" });
-    expect(resolveTool(whichIs(null), files, { BUN_INSTALL: "/opt/bun" }, HOME, "bun")?.path).toBe(
-      "/opt/bun/bin/bun",
-    );
-    expect(resolveTool(whichIs(null), files, {}, HOME, "bun")?.path).toBe(`${HOME}/.bun/bin/bun`);
+    const files = fakeFiles({ [OPT_BUN]: "", [HOME_BUN]: "" });
+    expect(resolveTool(whichIs(null), files, { BUN_INSTALL: "/opt/bun" }, HOME, "bun")?.path).toBe(OPT_BUN);
+    expect(resolveTool(whichIs(null), files, {}, HOME, "bun")?.path).toBe(HOME_BUN);
   });
 
   test("a candidate that is present but not executable is skipped, exactly as `[ -x ]` skips it", () => {
     // Both shells ask `[ -x "$candidate" ]`. A path that exists and cannot be run — a half-written
     // download, an empty file left where an uninstall took the binary from — is not the tool, and
     // taking it would hand the update an absolute path that dies with EACCES.
-    const files = fakeFiles({ [`${HOME}/.bun/bin/bun`]: "", "/usr/bin/bun": "" });
-    files.notExecutable.add(`${HOME}/.bun/bin/bun`);
+    const files = fakeFiles({ [HOME_BUN]: "", "/usr/bin/bun": "" });
+    files.notExecutable.add(HOME_BUN);
     expect(resolveTool(whichIs(null), files, {}, HOME, "bun")?.path).toBe("/usr/bin/bun");
     files.notExecutable.add("/usr/bin/bun");
     expect(resolveTool(whichIs(null), files, {}, HOME, "bun")).toBeNull();
@@ -97,7 +107,7 @@ describe("resolveTool", () => {
 
 describe("a runnable Bun", () => {
   test("proves the resolved absolute path with a bounded version probe", () => {
-    const bun = "/opt/bun/bin/bun";
+    const bun = OPT_BUN;
     const exec = fakeExec({ absent: ["bun"], answers: [[`${bun} --version`, { stdout: "1.1.0\n" }]] });
     const readiness = resolveRunnableBun(exec, fakeFiles({ [bun]: "" }), { BUN_INSTALL: "/opt/bun" }, HOME);
     expect(readiness).toEqual({ kind: "ready", bun: { path: bun, onPath: false, version: "1.1.0" } });
@@ -125,18 +135,18 @@ describe("the PATH a resolved tool's child gets", () => {
   // shells out to `bunx tsc`, and `bunx` is found by NAME or not at all. A lab run died exactly
   // there — `bunx: command not found`, exit 127, checkout already advanced.
   test("the resolved tool's directory goes to the FRONT, so it outranks anything else", () => {
-    expect(withPathPrefix({ PATH: "/usr/bin:/bin" }, "/home/pat/.bun/bin", "linux").PATH).toBe(
+    expect(withPathPrefix({ PATH: "/usr/bin:/bin" }, "/home/pat/.bun/bin", hostFor("linux")).PATH).toBe(
       "/home/pat/.bun/bin:/usr/bin:/bin",
     );
   });
 
   test("an empty or absent PATH becomes the directory alone, never a stray colon", () => {
-    expect(withPathPrefix({}, "/opt/bun/bin", "linux").PATH).toBe("/opt/bun/bin");
-    expect(withPathPrefix({ PATH: "" }, "/opt/bun/bin", "linux").PATH).toBe("/opt/bun/bin");
+    expect(withPathPrefix({}, "/opt/bun/bin", hostFor("linux")).PATH).toBe("/opt/bun/bin");
+    expect(withPathPrefix({ PATH: "" }, "/opt/bun/bin", hostFor("linux")).PATH).toBe("/opt/bun/bin");
   });
 
   test("a directory already on the PATH is left where it is, as the shim leaves it", () => {
-    expect(withPathPrefix({ PATH: "/usr/bin:/opt/bun/bin" }, "/opt/bun/bin", "linux").PATH).toBe(
+    expect(withPathPrefix({ PATH: "/usr/bin:/opt/bun/bin" }, "/opt/bun/bin", hostFor("linux")).PATH).toBe(
       "/usr/bin:/opt/bun/bin",
     );
   });
@@ -152,23 +162,23 @@ describe("the PATH a resolved tool's child gets", () => {
   // nothing else: `error: bash not found — cannot the version gate`.
   test("Windows: the prefix joins the existing `Path` with `;`, under the key it was read from", () => {
     const bun = "C:\\Users\\pat\\.bun\\bin";
-    const out = withPathPrefix({ Path: "C:\\Windows\\system32;C:\\Program Files\\Git\\bin" }, bun, "win32");
+    const out = withPathPrefix({ Path: "C:\\Windows\\system32;C:\\Program Files\\Git\\bin" }, bun, hostFor("win32"));
     expect(out.Path).toBe(`${bun};C:\\Windows\\system32;C:\\Program Files\\Git\\bin`);
     expect(out.PATH).toBeUndefined();
   });
 
   test("Windows: a directory already on the `Path` is left where it is", () => {
     const env = { Path: "C:\\Windows\\system32;C:\\bun\\bin" };
-    expect(withPathPrefix(env, "C:\\bun\\bin", "win32")).toBe(env);
+    expect(withPathPrefix(env, "C:\\bun\\bin", hostFor("win32"))).toBe(env);
   });
 
   test("Windows: an uppercase `PATH` is still honoured, and an absent one becomes the directory", () => {
-    expect(withPathPrefix({ PATH: "C:\\Windows" }, "C:\\bun\\bin", "win32").PATH).toBe("C:\\bun\\bin;C:\\Windows");
-    expect(withPathPrefix({}, "C:\\bun\\bin", "win32").PATH).toBe("C:\\bun\\bin");
+    expect(withPathPrefix({ PATH: "C:\\Windows" }, "C:\\bun\\bin", hostFor("win32")).PATH).toBe("C:\\bun\\bin;C:\\Windows");
+    expect(withPathPrefix({}, "C:\\bun\\bin", hostFor("win32")).PATH).toBe("C:\\bun\\bin");
   });
 
   test("off Windows, a `Path` key is just another variable, never the search path", () => {
-    const out = withPathPrefix({ Path: "/elsewhere", PATH: "/usr/bin" }, "/opt/bun/bin", "linux");
+    const out = withPathPrefix({ Path: "/elsewhere", PATH: "/usr/bin" }, "/opt/bun/bin", hostFor("linux"));
     expect(out.PATH).toBe("/opt/bun/bin:/usr/bin");
     expect(out.Path).toBe("/elsewhere");
   });
@@ -218,15 +228,17 @@ describe("bun lookup parity", () => {
   for (const [label, bunInstall] of cases) {
     test(`scripts/collie-ctl.sh's resolve_bun spells the canonical list ${label}`, async () => {
       const words = shellCandidates(await shim, "for candidate in");
+      // The shell spells POSIX paths; `toolCandidates` builds native ones. Same path, one spelling.
       expect(words.map((w) => expand(w, HOME, bunInstall, "bun"))).toEqual(
-        toolCandidates({ BUN_INSTALL: bunInstall }, HOME, "bun"),
+        toolCandidates({ BUN_INSTALL: bunInstall }, HOME, "bun").map((c) => posixKey(c)),
       );
     });
 
     test(`cli/remote.ts's TOOL_LOOKUP spells the canonical list ${label}`, async () => {
       const words = shellCandidates(await remote, "for _c in");
+      // The shell spells POSIX paths; `toolCandidates` builds native ones. Same path, one spelling.
       expect(words.map((w) => expand(w, HOME, bunInstall, "bun"))).toEqual(
-        toolCandidates({ BUN_INSTALL: bunInstall }, HOME, "bun"),
+        toolCandidates({ BUN_INSTALL: bunInstall }, HOME, "bun").map((c) => posixKey(c)),
       );
     });
   }
@@ -453,22 +465,90 @@ describe("a per-call override wins over the Exec's own environment (#283)", () =
     const d = dir();
     try {
       const exec = realExec({ PATH: process.env.PATH ?? "", COLLIE_PLUGIN_ROOT: "/old" }, d);
-      const out = join(d, "out");
-      const r = exec.runIn("sh", ["-c", `${PRINT} > ${out}`], d, undefined, { COLLIE_PLUGIN_ROOT: null, GIT_DIR: "/x" });
+      // The redirect target is relative to `d`, the call's cwd: a Windows temp path in a `sh -c` string
+      // would have its backslashes read as escapes.
+      const r = exec.runIn("sh", ["-c", `${PRINT} > out`], d, undefined, { COLLIE_PLUGIN_ROOT: null, GIT_DIR: "/x" });
       expect(r.code).toBe(0);
-      expect(readFileSync(out, "utf8").trim()).toBe("[unset][unset][unset]");
+      expect(readFileSync(join(d, "out"), "utf8").trim()).toBe("[unset][unset][unset]");
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
   });
 
-  test("a child killed by a signal says which one", () => {
+  // Windows has no POSIX signals: a child is ended with an exit code, so there is no signal name to report.
+  test.skipIf(process.platform === "win32")("a child killed by a signal says which one", () => {
     const d = dir();
     try {
       const r = realExec({ PATH: process.env.PATH ?? "" }, d).capture("sh", ["-c", "kill -KILL $$"]);
       expect(r.signal).toBe("SIGKILL");
     } finally {
       rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("parseProcessRows", () => {
+  test("reads `<pid> <command>` lines from either process table, and skips the rest", () => {
+    expect(
+      parseProcessRows('123 "C:\\x\\collie.exe" _exec-bridge\r\n\r\nnot a row\n   45 /usr/bin/bun run x \n'),
+    ).toEqual([
+      { pid: 123, command: '"C:\\x\\collie.exe" _exec-bridge' },
+      { pid: 45, command: "/usr/bin/bun run x" },
+    ]);
+    expect(parseProcessRows("")).toEqual([]);
+  });
+});
+
+describe("the Windows process query", () => {
+  test("asks for UTF-8 first, so a user name outside ASCII comes back as it is on disk", () => {
+    const script = windowsProcessScript(4242);
+    expect(script).toStartWith(POWERSHELL_UTF8);
+    expect(POWERSHELL_UTF8).toContain("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8");
+    expect(script).toContain("-Filter 'ProcessId = 4242'");
+  });
+
+  test("three answers: running with its command line, gone, and anything else unknown", () => {
+    expect(parseWindowsProcessAnswer('running\r\n"C:\\Users\\Jürgen Ö\\collie\\bin\\collie.exe" _exec-bridge\r\n')).toEqual({
+      kind: "running",
+      command: '"C:\\Users\\Jürgen Ö\\collie\\bin\\collie.exe" _exec-bridge',
+    });
+    // A process whose command line Windows does not show still runs: it is not taken for gone.
+    expect(parseWindowsProcessAnswer("running\r\n\r\n")).toEqual({ kind: "running", command: "" });
+    expect(parseWindowsProcessAnswer("gone\r\n")).toEqual({ kind: "gone" });
+    for (const nothing of ["", "Get-CimInstance : Access denied\r\n"]) {
+      expect(parseWindowsProcessAnswer(nothing).kind).toBe("unknown");
+    }
+  });
+});
+
+describe("realNet and a rehearsal mirror (a local server, no network)", () => {
+  test("no token reaches the mirror, and a redirect from it is refused; without the option it is followed", async () => {
+    const seen: (string | null)[] = [];
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        seen.push(req.headers.get("authorization"));
+        if (new URL(req.url).pathname === "/hop") {
+          return new Response(null, { status: 302, headers: { location: new URL("/tags", req.url).toString() } });
+        }
+        return Response.json([{ name: "v1.0.0", commit: { sha: "abc" } }]);
+      },
+    });
+    const dir = mkdtempSync(join(tmpdir(), "collie-mirror-"));
+    try {
+      const net = realNet({ token: "a-secret", source: "GH_TOKEN" });
+      const base = `http://127.0.0.1:${server.port}`;
+      expect((await net.getJson(`${base}/repos/AltanS/collie/tags?per_page=100`, MIRROR_FETCH)).ok).toBe(true);
+      expect((await net.getJson(`${base}/hop`, MIRROR_FETCH)).ok).toBe(false);
+      expect((await net.download(`${base}/hop`, join(dir, "x.zip"), MIRROR_FETCH)).ok).toBe(false);
+      // The GitHub download path follows GitHub's own redirect to its file host, and still does.
+      expect((await net.getJson(`${base}/hop`)).ok).toBe(true);
+      expect(seen.length).toBeGreaterThanOrEqual(4);
+      expect(seen.every((h) => h === null)).toBe(true);
+    } finally {
+      server.stop(true);
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     }
   });
 });

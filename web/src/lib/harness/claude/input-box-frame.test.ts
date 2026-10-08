@@ -5,8 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parseAnsi } from "../../ansi";
 import { splitLines, type StyledLine } from "../../blocks";
 import { detectAutocompleteRegion } from "./autocomplete";
-import { namesAMenuKey } from "../menu-hints";
-import { extractInputDraft, extractStatusLines, hasInputBox, inputBoxTail } from "./chrome";
+import { extractInputDraft, extractStatusLines, hasInputBox, inputBoxTail, namesAModalKey } from "./chrome";
 import { draftCarriesSend } from "../../reply-action";
 import { claudeAdapter, claudeBuildBlocks } from "./index";
 import { lineText } from "./markers";
@@ -75,6 +74,9 @@ describe("parity with the old walk on the real corpus", () => {
     "claude--fresh-idle.txt",
     "claude--ghost-suggestion.txt",
     "claude--ghost-typed-over.txt",
+    // Claude Code 2.1.287 default footer: "esc to interrupt" mid-turn and "↓ to manage" with a
+    // background task are the composer's own status hints, not a modal's keys.
+    "claude--idle-background-shell.txt",
     "claude--menu-model-picker-dismissed.txt",
     "claude--model-alias.txt",
     "claude--rename-resolved.txt",
@@ -91,6 +93,7 @@ describe("parity with the old walk on the real corpus", () => {
     "claude--v2283-plugin-marketplaces-updated--w120.txt",
     "claude--v2283-plugin-marketplaces-updated--w40.txt",
     "claude--v2283-plugin-marketplaces-updated--w82.txt",
+    "claude--working-esc-to-interrupt.txt",
     "claude--working.txt",
   ]);
 
@@ -195,6 +198,26 @@ describe("shell mode paints the prompt row with a bang", () => {
   });
 });
 
+describe("the completion popup's pointer row does not hide the box (Claude Code 2.1.291)", () => {
+  // 2.1.291 paints the selected popup entry as "  ❯ /model …". Step 1 steps over a "❯"-led row and
+  // used to keep the box only under a statusline tail, so on these six captures, each taller than
+  // MAX_STATUS_LINES, the box was refused and `composerReady` read false while a slash command was
+  // typed. The row is now kept as the popup's own pointer, and only that row.
+  it.each([
+    ["claude-lab--popup-slash-all--w40.txt", "/"],
+    ["claude-lab--popup-slash-all--w82.txt", "/"],
+    ["claude-lab--popup-slash-all--w82--h30.txt", "/"],
+    ["claude-lab--popup-slash-mo--w82.txt", "/mo"],
+    ["claude-lab--popup-slash-model-exact--w82.txt", "/model"],
+    ["claude-lab--working-popup-open--w82.txt", "/ref"],
+  ])("%s: the box stands under the popup", (name, draft) => {
+    const lines = load(name);
+    expect(claudeAdapter.composerReady?.(lines)).toBe(true);
+    expect(inputBoxTail(lines)).toBe("autocomplete");
+    expect(extractInputDraft(lines)).toBe(draft);
+  });
+});
+
 describe("a bang is a prompt row only with a separator", () => {
   it.each([
     ["a bang glued to a word", "!important"],
@@ -275,7 +298,7 @@ describe("a statusline-shaped tail still carries no menu", () => {
       if (inputBoxTail(lines) !== "statusline") continue;
       for (const row of extractStatusLines(lines).map(lineText)) {
         rows++;
-        expect(namesAMenuKey(row), `${name}: ${row}`).toBe(false);
+        expect(namesAModalKey(row), `${name}: ${row}`).toBe(false);
         expect(/^\s*(?:❯\s*)?\d+\.\s+\S/.test(row), `${name}: ${row}`).toBe(false);
       }
     }

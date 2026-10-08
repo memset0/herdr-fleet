@@ -214,14 +214,27 @@ export function journalAgentOf(pane: AgentView): string {
   return pane.sessionAgent ?? pane.agent;
 }
 
-export function toPaneWire(pane: AgentView, hasJournal: (agent: string) => boolean): PaneWire {
+/**
+ * The wire form of one pane: server-only fields stripped, the History affordance decided.
+ *
+ * `hasSession` answers "may this pane have history": its harness has a journal adapter AND a
+ * session is addressable — reported on the pane record, or discoverable by an adapter that finds
+ * its own (`JournalAdapter.discover`). Keyed off the live `agent` either way, so an exited
+ * agent's pane still offers no affordance and reads like every other shell pane.
+ */
+export function toPaneWire(
+  pane: AgentView,
+  hasJournal: (agent: string) => boolean,
+  discoversSessions: (agent: string) => boolean = () => false,
+): PaneWire {
   const {
     agentSession,
     sessionAgent: _sessionAgent,
     viewportRows: _viewportRows,
     ...rest
   } = pane;
-  return agentSession && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
+  const addressable = agentSession !== undefined || discoversSessions(pane.agent);
+  return addressable && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
 }
 
 /** A Herdr workspace ("space") — a project-scoped container of tabs. From `workspace.list`. */
@@ -479,6 +492,128 @@ export interface CrewMemberStatus {
    * does not make the distinction" and the page renders today's single word (§7.1).
    */
   linkState?: "reconnecting" | "attention";
+}
+
+// ── Machines: every machine's load, kept by the lead (ADR 0084) ──────────────────
+//
+// The wire of `GET /api/machines`, `GET /api/machines/:id/history` and `POST /api/machines/:id/alerts`,
+// and of the `machineStats` sibling a peer adds to its `/crew/v1/snapshot` answer (CREW_PROTOCOL.md
+// §5). Fractions are 0..1, bytes are plain numbers, and every time is epoch ms on the clock of the
+// bridge that answered. Optional keys are OMITTED when absent, never sent as null.
+
+/** One reading of one machine. See `bridge/machine-stats.ts` for where each number comes from. */
+export interface MachineSample {
+  /** Busy fraction of all cores since the previous reading. */
+  cpu: number;
+  cores: number;
+  /** Bytes in use, not counting reclaimable cache where the platform says how much that is. */
+  memUsed: number;
+  memTotal: number;
+  /** The one-minute load average. Absent on Windows, where there is none. */
+  load1?: number;
+  /**
+   * Received bytes per second over the physical interfaces (`isSkippedInterface` in
+   * bridge/machine-stats.ts leaves out loopback, bridges, veth ends and tunnels). Absent without counters.
+   */
+  rxBps?: number;
+  txBps?: number;
+  /**
+   * The filesystems that hold the home folder, the root (on Windows the system drive) and Collie's
+   * state folder, one per device, at most four, read at most once a minute (bridge/machine-disks.ts).
+   * Absent: not reported (an older member, or no filesystem qualified).
+   */
+  disks?: MachineDisk[];
+}
+
+/**
+ * One filesystem. `used` is `df`'s Used and `total` is `used` plus the space an unprivileged process
+ * can still write, so `used / total` is `df`'s Use%. Bytes. `mount` is the label to show: `/var/home`,
+ * `/`, `C:`.
+ */
+export type MachineDisk = {
+  mount: string;
+  used: number;
+  total: number;
+};
+
+/** The metrics an alert can watch. CPU is judged on the minute's average, disk on the fullest filesystem. */
+export type AlertMetric = "cpu" | "mem" | "disk";
+
+/** Push when the metric stays at or above `above` (0.5..0.99) for `forMin` minutes (5..120). */
+export interface AlertRule {
+  above: number;
+  forMin: number;
+}
+
+/** One machine's rules. A missing key is no rule for that metric. */
+export interface MachineAlerts {
+  cpu?: AlertRule;
+  mem?: AlertRule;
+  disk?: AlertRule;
+}
+
+/** One machine on `GET /api/machines`. The lead first, then members in member-id order. */
+export interface MachineRow {
+  /** Member id, the value `?h=` takes. A solo collie that never enrolled is `local`. */
+  id: string;
+  name: string;
+  /** True for the machine answering. A solo collie's one row is `isLead: true`. */
+  isLead: boolean;
+  /** {@link CrewMemberStatus.health}, the same four words. */
+  health: "reachable" | "unreachable" | "incompatible" | "conflicted";
+  /** The last sample held. Absent: not reported yet, or a member older than the field. */
+  sample?: MachineSample;
+  /** When the answering bridge took or received that sample. Present exactly when `sample` is. */
+  sampledAt?: number;
+  alerts: MachineAlerts;
+  /** The metrics whose alert episode is open now. */
+  firing: AlertMetric[];
+  /**
+   * The last complete minutes of CPU and memory, for a small chart. Present only when the request
+   * asked for it (`GET /api/machines?spark=N`) and the lead holds at least one of those minutes.
+   */
+  spark?: MachineSpark;
+}
+
+/**
+ * A small chart's data: one value per complete minute, oldest first, the newest being the minute
+ * before the one the answer's `ts` falls in. Fractions to two places, `null` for a minute with no
+ * reading. At most the minutes asked for; minutes before the first reading are left out.
+ */
+export interface MachineSpark {
+  stepMs: 60000;
+  cpu: (number | null)[];
+  mem: (number | null)[];
+}
+
+/** `GET /api/machines`. */
+export interface MachinesResponse {
+  ts: number;
+  machines: MachineRow[];
+}
+
+/**
+ * One minute of history: `[t, cpuAvg, cpuMax, memFrac, rxBps | null, txBps | null, diskFrac | null]`.
+ * `t` is the minute's start, the fractions are rounded to three places and the rates to whole bytes
+ * per second. `diskFrac` is the fullest filesystem's fraction, `null` where no disk was reported; a
+ * reader older than the field sees six elements and ignores the seventh. A minute with no reading is
+ * simply missing from the list.
+ */
+export type MachineHistoryPoint = [number, number, number, number, number | null, number | null, number | null];
+
+/**
+ * `GET /api/machines/:id/history`. Oldest first, at most 1440 points, one per minute. With
+ * `?since=<ms>`, only the minutes starting at or after it.
+ */
+export interface MachineHistoryResponse {
+  ts: number;
+  stepMs: 60000;
+  points: MachineHistoryPoint[];
+}
+
+/** `POST /api/machines/:id/alerts`. The rules as stored after the write. */
+export interface MachineAlertsResponse {
+  alerts: MachineAlerts;
 }
 
 /**
@@ -829,6 +964,60 @@ export type WorkspaceChangeCommitResponse = { workspaceId: string; workspaceLabe
 /** GET /api/workspace/:id/changes?view=commit&repo=&path= — the same file, asked by workspace. */
 export type WorkspaceChangeCommitDiffResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommitDiff;
 
+// ── The Files view (ADR 0083): one folder, or one text file, under the Changes root ──────────────
+
+/**
+ * One row of a Files listing. `link` is any symlink: it is listed and never followed by the listing.
+ * `size` is present for a file only (the bytes on disk, from `lstat`). `ignored` is present, and
+ * `true`, when git says the entry is ignored in the repository that holds the folder; absent means
+ * not ignored OR not known (no repository, no git, a timeout, an older member). A view filter, never
+ * a gate: an ignored file still reads.
+ */
+export interface FileEntry {
+  name: string;
+  kind: "dir" | "file" | "link";
+  size?: number;
+  ignored?: true;
+}
+
+/** Why a Files request has nothing to show: the Changes reasons, minus `no-git` (Files needs no git). */
+export type FilesUnavailableReason = Exclude<ChangesUnavailableReason, "no-git">;
+
+/**
+ * One folder under the root, not recursive. `dir` is the folder relative to `root`, `/`-separated,
+ * `""` for the root itself. Order: folders first, then by name, case-insensitive. `truncated` means
+ * the folder held more than the entry cap.
+ */
+export type FilesListing =
+  | { available: false; reason: FilesUnavailableReason }
+  | { available: true; root: string; dir: string; entries: FileEntry[]; truncated: boolean };
+
+/**
+ * One file under the root, as UTF-8 text cut at the byte cap. `text` is `""` when `binary` (a NUL in
+ * the first 8000 bytes, git's rule). `size` is the whole file's size, which `truncated` compares
+ * against the cap.
+ */
+export type FileReadAnswer =
+  | { available: false; reason: FilesUnavailableReason }
+  | {
+      available: true;
+      root: string;
+      path: string;
+      size: number;
+      binary: boolean;
+      truncated: boolean;
+      text: string;
+    };
+
+/**
+ * GET /api/pane/:id/files — the pane's workspace root, the Changes view's own. The subject fields are
+ * the Changes answer's, on every answer. A refused path is not one of these: it is
+ * `404 { error: "unknown-path" }`.
+ */
+export type PaneFilesResponse = { paneId: string } & ChangesWorkspace & (FilesListing | FileReadAnswer);
+/** GET /api/workspace/:id/files — the same, asked by workspace. */
+export type WorkspaceFilesResponse = { workspaceId: string; workspaceLabel?: string } & (FilesListing | FileReadAnswer);
+
 /**
  * POST /api/pane/:id/{reply,keys} — result of a send. Discriminated on `ok`: a failure always
  * carries the reason Herdr rejected it. `textDelivered` distinguishes the reply partial-failure case
@@ -849,6 +1038,9 @@ export type ActionResponse =
       textDelivered?: boolean;
       code?: ErrorCode;
       detail?: ApiErrorDetail;
+      /** On a 409 `prompt_changed` only: which check refused (`not_found`, `not_in_tail`, `empty`,
+       *  `style_empty`, `style_not_found`, `style_misaligned`). A reason code, never pane content. */
+      reason?: string;
     };
 
 /** POST /api/pane/:id/upload — image saved to a host file; `path` is the absolute path to ref. */

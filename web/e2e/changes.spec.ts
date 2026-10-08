@@ -1,10 +1,10 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { en } from "@/lib/i18n/messages/en";
 import type { PaneChangesResponse } from "@/lib/types";
 import { fixtureAgents, fixtureChanges, fixtureCleanChanges, fixtureCommit } from "@/test/handlers";
 
-import { installApiStub } from "./fixtures/api";
+import { installApiStub, seedChangesOnly } from "./fixtures/api";
 
 // THE CHANGES VIEW ON A SMALL PHONE (ADR 0065). The list and one file's diff at 375x812, the
 // narrowest iPhone still sold, in a real engine: jsdom cannot say whether a long diff line wraps or
@@ -17,11 +17,33 @@ test.beforeEach(async ({ page }, testInfo) => {
   test.skip(testInfo.project.name.startsWith("states"), "the playground has no pane route");
   test.skip(testInfo.project.name === "app-tablet", "a phone-width case; the tablet run would repeat it");
   await installApiStub(page);
+  // These cases read the list of changes: the screen's body with the device's Changes segment on.
+  // The folder tree, the default since 2026-10-06 (ADR 0083), has its own cases in changes-files.
+  await seedChangesOnly(page);
 });
 
 const PANE = fixtureAgents[0]!;
 
 /** No box on the page is wider than the viewport: nothing scrolls sideways. */
+/**
+ * A tap target's height once the page has stopped moving. The Changes list rises into place with a
+ * 0.2 s animation (`count-arrive`, 1.13.0), and `boundingBox()` through an ancestor mid-rise reads a
+ * 44 px row as 43.99998 or 44.00002: the layout height is exactly 44 (`offsetHeight`), only the float
+ * of a moving transform differs. So the measurement waits for every finite animation to end, and the
+ * floor stays 44, unloosened.
+ */
+async function tapHeight(page: Page, target: Locator): Promise<number> {
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+        .map((a) => a.finished),
+    ),
+  );
+  return (await target.boundingBox())!.height;
+}
+
 async function noSidewaysScroll(page: Page) {
   const { scroll, width } = await page.evaluate(() => ({
     scroll: document.scrollingElement!.scrollWidth,
@@ -44,7 +66,7 @@ async function listSettled(page: Page) {
 
 // EXPERIMENT (operator, 2026-09-23): the entry is a pill on the belt's pinned block, immediately
 // left of the switcher mark, no longer a row in the pane menu.
-test("the belt's Changes pill opens Changes, the list groups by repo, and a diff wraps", async ({ page }) => {
+test("the belt's Files pill opens Files, the list groups by repo, and a diff wraps", async ({ page }) => {
   await page.goto(`/pane/${encodeURIComponent(PANE.paneId)}`);
   const pill = page.getByRole("button", { name: en["chat.changes.label"] });
   const switcher = page.getByRole("button", { name: en["chat.switcher.aria"] });
@@ -79,14 +101,16 @@ test("the belt's Changes pill opens Changes, the list groups by repo, and a diff
   await expect(page).toHaveURL(/\?repo=\.&path=src%2Froutes%2Fcheckout\.tsx$/);
   const long = page.getByText(/including shipping to/);
   await expect(long).toBeVisible();
-  // The long line wraps inside the column rather than widening the page.
-  const line = await long.boundingBox();
+  // The long line wraps inside the column rather than widening the page. The ROW is measured, not the
+  // matched text: once syntax colour lands the text splits into token spans, and under WebKit the one
+  // that holds these words can be a single 14 px line of a row that wraps over two (1 run in 8).
+  const line = await page.locator("[data-slot='diff'] > div").filter({ hasText: /including shipping to/ }).boundingBox();
   expect(line!.x + line!.width).toBeLessThanOrEqual(375);
   expect(line!.height).toBeGreaterThan(20);
   await noSidewaysScroll(page);
 
   const next = page.getByRole("button", { name: en["changes.file.next"] });
-  expect((await next.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  expect(await tapHeight(page, next)).toBeGreaterThanOrEqual(44);
   await next.click();
   await expect(page.getByText("return items.reduce((sum, item) => sum + item.price, 0);")).toBeVisible();
 
@@ -109,16 +133,34 @@ test("the tree folds, the filter narrows, and Previous / Next walk only what is 
   await page.goto(`/pane/${encodeURIComponent(PANE.paneId)}/changes`);
   await expect(page.getByText("webapp · 3 files")).toBeVisible();
 
-  const tree = page.getByRole("radio", { name: en["changes.layout.tree"] });
-  expect((await tree.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  // One icon toggle since 2026-10-06, pressed while the list draws as a tree.
+  const tree = page.getByRole("button", { name: en["changes.layout.tree"] });
+  expect(await tapHeight(page, tree)).toBeGreaterThanOrEqual(44);
+  await expect(tree).toHaveAttribute("aria-pressed", "false");
   await tree.click();
-  await expect(tree).toHaveAttribute("aria-checked", "true");
+  await expect(tree).toHaveAttribute("aria-pressed", "true");
 
   // A chain of single folders is one row, and every folder starts open.
   const chain = page.getByRole("button", { name: "server/handlers, 1 file" });
   await expect(chain).toHaveAttribute("aria-expanded", "true");
   const src = page.getByRole("button", { name: "src, 2 files" });
-  expect((await src.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  expect(await tapHeight(page, src)).toBeGreaterThanOrEqual(44);
+  // The folder's count sits on the name's baseline (review, 2026-10-06), not above it.
+  // A zero-size inline box on each one's baseline: its bottom edge is that baseline.
+  const baselines = await src.evaluate((row) => {
+    const count = row.querySelector('[data-slot="tree-folder-count"]')!;
+    const name = count.previousElementSibling!.lastElementChild ?? count.previousElementSibling!;
+    const [nameY, countY] = [name, count].map((el) => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "display:inline-block;width:0;height:0;vertical-align:baseline";
+      el.append(probe);
+      const y = probe.getBoundingClientRect().bottom;
+      probe.remove();
+      return y;
+    });
+    return { name: nameY!, count: countY! };
+  });
+  expect(Math.abs(baselines.name - baselines.count)).toBeLessThanOrEqual(0.5);
   await src.click();
   await expect(src).toHaveAttribute("aria-expanded", "false");
   await expect(page.getByRole("button", { name: /checkout\.tsx/ })).toHaveCount(0);
@@ -127,7 +169,7 @@ test("the tree folds, the filter narrows, and Previous / Next walk only what is 
   await expect(page.getByRole("button", { name: /checkout\.tsx/ })).toBeVisible();
 
   // The filter row opens under the header and leaves the header where it was.
-  const title = page.getByRole("heading", { name: en["changes.title"] });
+  const title = page.getByRole("heading", { name: en["files.title"] });
   const before = (await title.boundingBox())!;
   await page.getByRole("button", { name: en["changes.filter.button"] }).click();
   const field = page.getByRole("textbox", { name: en["changes.filter.placeholder"] });
@@ -147,7 +189,7 @@ test("the tree folds, the filter narrows, and Previous / Next walk only what is 
   await expect(page.getByRole("button", { name: en["changes.filter.button"] })).toBeVisible();
 
   const modified = page.getByRole("button", { name: en["changes.status.M"], exact: true });
-  expect((await modified.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  expect(await tapHeight(page, modified)).toBeGreaterThanOrEqual(44);
   await modified.click();
   await expect(modified).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("2 of 5 files")).toBeVisible();
@@ -196,7 +238,7 @@ test("opening and closing the filter never moves the list or the header", async 
   await expect(page.getByText("webapp · 3 files")).toBeVisible();
   await listSettled(page);
 
-  const title = page.getByRole("heading", { name: en["changes.title"] });
+  const title = page.getByRole("heading", { name: en["files.title"] });
   const firstRow = page.getByRole("button", { name: /checkout\.tsx/ });
   const titleBefore = (await title.boundingBox())!;
   const rowBefore = (await firstRow.boundingBox())!;
@@ -278,9 +320,9 @@ test("a TypeScript diff takes syntax colour after it loads, and no row changes h
 test("the header names the workspace and its folder, and the space form shows the same list", async ({ page }) => {
   await page.goto(`/pane/${encodeURIComponent(PANE.paneId)}/changes`);
   await expect(page.getByText("webapp · 3 files")).toBeVisible();
-  const folder = page.getByText("…/you/webapp");
-  await expect(folder).toBeVisible();
-  await expect(folder).toHaveAttribute("title", "/home/you/webapp");
+  // The folder is named like the workspace, so the header does not say it twice, and never the path.
+  await expect(page.locator('[data-slot="files-root-folder"]')).toHaveCount(0);
+  await expect(page.getByText("…/you/webapp")).toHaveCount(0);
   await noSidewaysScroll(page);
 
   const asked: string[] = [];
@@ -289,7 +331,7 @@ test("the header names the workspace and its folder, and the space form shows th
   });
   await page.goto(`/space/${encodeURIComponent(PANE.workspaceId)}/changes`);
   await expect(page.getByText("webapp · 3 files")).toBeVisible();
-  await expect(page.getByText("…/you/webapp")).toBeVisible();
+  await expect(page.locator('[data-slot="files-root-folder"]')).toHaveCount(0);
   expect(asked).toContain(`/api/workspace/${PANE.workspaceId}/changes`);
   await page.getByRole("button", { name: en["changes.backAria.workspace"] }).click();
   await expect(page).toHaveURL(new RegExp(`/space/${PANE.workspaceId}$`));
@@ -349,7 +391,7 @@ test("an empty list shows the last commit, its file, and back twice lands on the
   await page.goto(list);
   await expect(page.getByText(en["changes.empty"])).toBeVisible();
   const show = page.getByRole("button", { name: en["changes.commit.show"] });
-  expect((await show.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  expect(await tapHeight(page, show)).toBeGreaterThanOrEqual(44);
   await show.click();
 
   await expect(page).toHaveURL(/\/changes\/commit\?repo=\.$/);

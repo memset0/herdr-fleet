@@ -15,6 +15,13 @@ export interface HarnessAdapter {
   /** Lossless transport pastes. Intermediate parts must be verified before continuing;
    * only the complete reply can authorise Enter. Other harnesses stay single-paste. */
   replyChunks?(text: string): string[];
+  /**
+   * Whether to type this reply part as ONE bracketed paste (`ESC[200~ … ESC[201~`) rather than as
+   * bare keystrokes. `pane.send_text` writes raw bytes (HERDR_API.md), so a long send reaches the
+   * harness as several PTY reads, and a harness that guesses pastes from read size can mis-split it.
+   * OPTIONAL: only for a harness that turns bracketed paste on, or the markers are typed as junk.
+   */
+  bracketedPaste?(text: string): boolean;
   /** The exact Herdr snapshot `agent` string this adapter claims (its registry key). */
   agent: string;
   /** The adapter's OWN full block pipeline over the pane's styled lines — for Claude that is the
@@ -97,6 +104,16 @@ export interface HarnessAdapter {
    * whose final row sits too high would refuse legitimate sweeps, which is worse than leaving it out.
    */
   composerPrompt?(lines: StyledLine[]): string | null;
+  /**
+   * Whether the input on screen SUBMITS when it receives a raw newline. `pane.send_text` delivers a
+   * `\n` inside the text as a real keypress (HERDR_API.md), so on such a screen a multi-line message
+   * would be submitted at its first line break and the rest typed into whatever comes next.
+   *
+   * OPTIONAL; absence means "a newline inserts a line", which is the pre-existing assumption. The
+   * reply path asks it of every read that clears the text to go out, after `composerReady` said yes,
+   * and refuses a message that contains a newline when it answers true.
+   */
+  newlineSubmits?(lines: StyledLine[]): boolean;
   /**
    * SUPPLEMENTAL evidence that `sent` reached the input box, for the case the reply guard's own
    * literal-substring match structurally cannot see: a harness that swallows what was typed and paints

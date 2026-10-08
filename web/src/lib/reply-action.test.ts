@@ -5,7 +5,7 @@ import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
 import * as registry from "./harness/registry";
-import { draftCarriesSend, sendGuardedReply } from "./reply-action";
+import { bracketPaste, draftCarriesSend, sendGuardedReply } from "./reply-action";
 
 // The regression suite for #34: a free-text reply must never fire the submit key until the text is
 // verifiably sitting in the harness's input box. Before this, the reply path typed and then submitted
@@ -384,6 +384,105 @@ describe("sendGuardedReply", () => {
     ]);
   });
 
+  // omp's `ask` tool swaps its composer for an answer editor when the operator picks `Other` or
+  // presses `n` for a note. Before omp/answer-editor.ts the pre-flight saw no composer and refused,
+  // and the only way through ("type anyway") typed the answer but could never verify it — so Enter
+  // was withheld and the draft stayed on the phone.
+  describe("omp's answer editor", () => {
+    const empty = fixtureText("omp--answer-editor-empty.txt");
+    const typed = fixtureText("omp--answer-editor-typed.txt");
+    const composer = fixtureText("omp--fresh-idle.txt");
+
+    it("types the answer, verifies it in the editor, then submits bound to its row", async () => {
+      const calls = harness(() => (calls.length === 0 ? empty : typed));
+
+      const out = await sendGuardedReply({
+        paneId: "w1:p1",
+        text: "a deep teal, like the sea at dusk",
+        agent: "omp",
+        ...instant,
+      });
+
+      expect(out).toEqual({ status: "sent" });
+      expect(calls).toEqual([
+        { text: "a deep teal, like the sea at dusk", submit: false },
+        { text: "", submit: true, expected_prompt: expect.stringMatching(/^│ > a deep teal, like the sea at dusk +│$/) },
+      ]);
+    });
+
+    // Live-probed: a raw newline SUBMITS this editor, so `line one\nline two` answered `line one` and
+    // typed the rest into the composer behind it. No override can make that safe.
+    it("refuses a multi-line answer before typing anything, force or not", async () => {
+      const calls = harness(() => empty);
+
+      const out = await sendGuardedReply({
+        paneId: "w1:p1",
+        text: "line one\nline two",
+        agent: "omp",
+        force: true,
+        ...instant,
+      });
+
+      expect(out).toMatchObject({ status: "error", error: expect.stringMatching(/one line/i) });
+      expect(calls).toEqual([]);
+    });
+
+    // The first read can see omp's composer, where a newline is fine, and a later read the answer
+    // editor, if the operator opened it on the desktop in between. Every read that clears the text
+    // to go out asks again.
+    it("asks again on the read after the pre-clear sweep", async () => {
+      let reads = 0;
+      const calls = harness(() => (reads++ === 0 ? composer : empty));
+
+      const out = await sendGuardedReply({
+        paneId: "w1:p1",
+        text: "line one\nline two",
+        agent: "omp",
+        onComposerSeen: async () => ({ ok: true as const, keysSent: true }),
+        ...instant,
+      });
+
+      expect(reads).toBe(2);
+      expect(out).toMatchObject({ status: "error", error: expect.stringMatching(/one line/i) });
+      expect(calls).toEqual([]);
+    });
+
+    it("asks again on the read before a chunked send", async () => {
+      let reads = 0;
+      const calls = harness(() => (reads++ === 0 ? composer : empty));
+
+      const out = await sendGuardedReply({
+        paneId: "w1:p1",
+        // Five newlines: omp's transport plan splits this into two pastes (omp/reply-chunks.ts).
+        text: "one\ntwo\nthree\nfour\nfive\nsix",
+        agent: "omp",
+        ...instant,
+      });
+
+      expect(reads).toBe(2);
+      expect(out).toMatchObject({ status: "error", error: expect.stringMatching(/one line/i) });
+      expect(calls).toEqual([]);
+    });
+
+    it("asks again on every read between chunks, and says the first one landed", async () => {
+      let reads = 0;
+      // The composer for the pre-flight and the chunk plan's own read, then the answer editor:
+      // the operator opened it on the desktop while the first paste was in flight.
+      const calls = harness(() => (reads++ < 2 ? composer : empty));
+
+      const out = await sendGuardedReply({
+        paneId: "w1:p1",
+        text: "one\ntwo\nthree\nfour\nfive\nsix",
+        agent: "omp",
+        ...instant,
+      });
+
+      expect(out).toMatchObject({ status: "error", error: expect.stringMatching(/already in the pane/i), textDelivered: true });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ submit: false });
+    });
+  });
+
   // The PRE-FLIGHT (.adr/0009). The verify-after guard below already kept Enter from answering a
   // dialog; this keeps the MESSAGE from being deposited in one, which is what the `/model` picker
   // exposed — no input box at all, so the text went into the picker before anything noticed.
@@ -536,6 +635,67 @@ describe("sendGuardedReply", () => {
       { text: "first line\nsecond line\nthird line\nfourth line", submit: false },
       { text: "", submit: true },
     ]);
+  });
+
+  // Bare, a send this long reached Claude as ~1 KB reads and only the last one survived; that tail
+  // verified, so Enter submitted it (claude/paste.ts → collapsesAsPaste). It now goes as ONE paste.
+  it("types a long Claude send as one bracketed paste, then submits on its placeholder", async () => {
+    const long = "a long voice note that goes on and on ".repeat(30);
+    const calls = harness(() => paneWithDraft("[Pasted text #4]"));
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text: long, agent: "claude", ...instant });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text: `\x1b[200~${long}\x1b[201~`, submit: false },
+      { text: "", submit: true },
+    ]);
+  });
+
+  it("drops a paste marker already inside the text, so it cannot end the paste early", () => {
+    expect(bracketPaste("a\x1b[201~\nb\x1b[200~")).toBe("\x1b[200~a\nb\x1b[201~");
+  });
+
+  it("strips until stable: removing an inner marker cannot assemble a new one", () => {
+    expect(bracketPaste("\x1b[2\x1b[201~01~tail\nrm -rf")).toBe("\x1b[200~tail\nrm -rf\x1b[201~");
+  });
+
+  it("strips a start marker nested inside a start marker", () => {
+    expect(bracketPaste("\x1b[20\x1b[200~0~body")).toBe("\x1b[200~body\x1b[201~");
+  });
+
+  it("strips the 8-bit CSI form, alone and mixed with the 7-bit form", () => {
+    expect(bracketPaste("a\x9b201~b\x9b200~c")).toBe("\x1b[200~abc\x1b[201~");
+    expect(bracketPaste("\x9b2\x1b[201~01~x")).toBe("\x1b[200~x\x1b[201~");
+    expect(bracketPaste("\x1b[2\x9b201~01~x")).toBe("\x1b[200~x\x1b[201~");
+  });
+
+  it("frames an empty body when the text is only markers", () => {
+    expect(bracketPaste("\x1b[200~\x1b[201~\x9b200~\x9b201~")).toBe("\x1b[200~\x1b[201~");
+    expect(bracketPaste("\x1b[20\x1b[201~0~")).toBe("\x1b[200~\x1b[201~");
+  });
+
+  it("leaves every other byte alone, other escape sequences and newlines included", () => {
+    const text = "line\n\x1b[31mred\x1b[0m\t\x1b[202~ \x9b1m end\r\n";
+    expect(bracketPaste(text)).toBe(`\x1b[200~${text}\x1b[201~`);
+  });
+
+  it("never lets a marker survive between the outer pair, over random interleavings", () => {
+    const fragments = ["\x1b", "\x1b[", "\x1b[2", "\x1b[20", "\x1b[200", "\x1b[201", "\x1b[200~", "\x1b[201~", "\x9b", "\x9b2", "\x9b20", "\x9b200", "\x9b201", "\x9b200~", "\x9b201~", "2", "0", "1", "~", "[", "x", "\n"];
+    let seed = 0x2f6e2b1;
+    const rand = (n: number): number => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed % n;
+    };
+    for (let i = 0; i < 400; i++) {
+      let text = "";
+      for (let k = 1 + rand(14); k > 0; k--) text += fragments[rand(fragments.length)]!;
+      const framed = bracketPaste(text);
+      expect(framed.startsWith("\x1b[200~")).toBe(true);
+      expect(framed.endsWith("\x1b[201~")).toBe(true);
+      const inner = framed.slice("\x1b[200~".length, framed.length - "\x1b[201~".length);
+      for (const marker of ["\x1b[200~", "\x1b[201~", "\x9b200~", "\x9b201~"]) expect(inner).not.toContain(marker);
+    }
   });
 
   it("stalls on a placeholder inconsistent with what we sent — no submit key", async () => {

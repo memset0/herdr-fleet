@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 
 import { parseEnvFile } from "./context.ts";
 import { capture, context, CONFIG, fakeExec, fakeFiles, HOME, type Scripted } from "./fakes.ts";
@@ -132,7 +133,7 @@ describe("an explicit COLLIE_MUX", () => {
     const h = host({ env: { COLLIE_MUX: "tmux" }, files: { [TMUX_BIN]: "" } });
     expect(await ensureMuxChosen(h.deps)).toBe(EXIT.OK);
     expect(parseEnvFile(h.dotenv() ?? "")).toEqual({ COLLIE_MUX: "tmux" });
-    expect(h.io.stdout.join("\n")).toContain(`wrote COLLIE_MUX=tmux to ${CONFIG}/.env`);
+    expect(h.io.stdout.join("\n")).toContain(`wrote COLLIE_MUX=tmux to ${join(CONFIG, ".env")}`);
   });
 
   test("carries the endpoint the shell set beside it — a choice that half lands is the bug", async () => {
@@ -190,7 +191,7 @@ describe("with no terminal", () => {
     expect(said).toContain("no COLLIE_MUX is set");
     expect(said).toContain("no multiplexers are running");
     // No hint is possible with nothing found, so the name is left as the choice it is.
-    expect(said).toContain("  COLLIE_MUX=<herdr|tmux|tuios|zellij> collie start");
+    expect(said).toContain("  COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start");
     expect(h.dotenv()).toBeNull();
   });
 
@@ -203,7 +204,7 @@ describe("with no terminal", () => {
     expect(said).toContain("  tmux     a tmux server on tmux's own default server — 2 sessions");
     // Nothing in this environment names one of them, so nothing is suggested.
     expect(said).not.toContain("You probably want");
-    expect(said).toContain("  COLLIE_MUX=<herdr|tmux|tuios|zellij> collie start");
+    expect(said).toContain("  COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start");
     expect(h.dotenv()).toBeNull();
   });
 
@@ -230,7 +231,7 @@ describe("with no terminal", () => {
     expect(await ensureMuxChosen(h.deps)).toBe(EXIT.FAIL);
     const said = h.io.stderr.join("\n");
     expect(said).not.toContain("You probably want");
-    expect(said).toContain("  COLLIE_MUX=<herdr|tmux|tuios|zellij> collie start");
+    expect(said).toContain("  COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start");
   });
 
   test("a prompt seam that is there is still never used without a terminal", async () => {

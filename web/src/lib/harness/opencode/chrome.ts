@@ -26,11 +26,15 @@ import type { StyledLine } from "../../blocks";
 import {
   barDraftText,
   hasFooterHints,
+  isBareBar,
   isBarRow,
   isBlank,
   isModelRow,
+  isOverlayRow,
+  isQuestionFooter,
   isRuleRow,
   lineText,
+  OVERLAY_CHROME_GLYPHS,
   rstrip,
 } from "./markers";
 import { displayWidth } from "../../text-width";
@@ -81,6 +85,37 @@ const CHROME_ONLY = /^[\s─━┄┈│┃═║┌┐└┘├┤┬┴┼╭�
 function isPanelBorder(text: string): boolean {
   const inside = interiorOf(text);
   return PANEL_JUNCTION.test(inside) && CHROME_ONLY.test(inside);
+}
+
+// A sidebar's vertical edge where it crosses the bar run: `│` and nothing else. It is
+// padding, not content — the trims below and the empty filter treat it the way they treat
+// a bare bar row. Deliberately NOT part of isPanelBorder: that predicate answers "border"
+// for the walk and the join together, and an edge-only row must stay walkable so typed
+// words below it still read (same reason the walk reads through a typed rule).
+function isBlankInterior(text: string): boolean {
+  return isEdgeOnly(interiorOf(text));
+}
+
+function isEdgeOnly(text: string): boolean {
+  return /^[\s│]*$/u.test(text);
+}
+
+// A panel's bottom border sharing its row with typed text (`┃  hello  └───┘`): cut the
+// trailing border run, keeping the words. The run must hold a corner or junction: `│`, `┃`
+// and rule-blocks alone never strip, because a table row (`│ a │ b │`) ends in one and
+// cutting it breaks the reply guard's contiguity check — the stripped run is gone from the
+// draft but still in what was sent, so verification can never match. A typed rule (`───`)
+// never strips for the same reason. The strip applies only when words remain; a border-only
+// row keeps its text for the isPanelBorder join below to refuse. The run must also follow a gap of
+// two or more spaces: an overlay sits in its own column, far from the typed words, while a pasted
+// `╭─ title ─╮` or `┌ Name ┐` closes its box one space after its words and must stay whole. The walk still owns
+// row-level stops — this owns suffixes in kept rows.
+const OVERLAY_SUFFIX =
+  /[ \t]{2,}[─━┄┈│┃═║┌┐└┘├┤┬┴┼╭╮╰╯╔╗╚╝╠╣╦╩╬╹▀]*[┌┐└┘├┤┬┴┼╭╮╰╯╔╗╚╝╠╣╦╩╬][─━┄┈│┃═║┌┐└┘├┤┬┴┼╭╮╰╯╔╗╚╝╠╣╦╩╬╹▀]*$/u;
+
+function stripOverlaySuffix(text: string): string {
+  const cut = text.replace(OVERLAY_SUFFIX, "");
+  return cut.trim() === "" ? text : cut;
 }
 
 /** The composer tail located at the buffer's end. Every index is into the ORIGINAL `lines` array. */
@@ -177,8 +212,8 @@ export function locateComposer(lines: StyledLine[]): ComposerTail | null {
       top--;
     let first = top;
     let last = above - 1;
-    while (first <= last && interiorOf(texts[first]!) === "") first++;
-    while (last >= first && interiorOf(texts[last]!) === "") last--;
+    while (first <= last && isBlankInterior(texts[first]!)) first++;
+    while (last >= first && isBlankInterior(texts[last]!)) last--;
     if (first <= last) {
       draftStart = first;
       draftEnd = last;
@@ -211,11 +246,6 @@ export function stripChrome(lines: StyledLine[]): StyledLine[] {
   const texts = lines.map((l) => rstrip(lineText(l)));
   while (end > 0 && (isBlank(texts[end - 1]!) || isBareBar(texts[end - 1]!))) end--;
   return end === lines.length ? lines : lines.slice(0, end);
-}
-
-/** A row whose only glyph is the bar — interior padding, not content. */
-function isBareBar(text: string): boolean {
-  return /^\s*┃\s*$/.test(rstrip(text));
 }
 
 /**
@@ -251,10 +281,23 @@ export function extractInputDraft(lines: StyledLine[]): string | null {
   if (tail.draftStart > tail.draftEnd) return null; // no draft block — only the model row below
   const parts: string[] = [];
   for (let i = tail.draftStart; i <= tail.draftEnd; i++) {
-    // A bare bar row inside the block is a blank line of the draft.
+    // A bare bar row inside the block is a blank line of the draft. A sidebar row sharing
+    // the bar run reads as blank too — but only with panel box glyphs aboard: the width
+    // gate alone would also eat deeply-indented typed code, which has no box glyphs.
+    if (isOverlayRow(texts[i]!) && OVERLAY_CHROME_GLYPHS.test(texts[i]!)) {
+      parts.push("");
+      continue;
+    }
     const text = isBareBar(texts[i]!) ? "" : barDraftText(texts[i]!);
     if (text === null) return null; // a non-gutter row inside the block — not a shape we claim
-    parts.push(text.trim());
+    const cleaned = stripOverlaySuffix(text);
+    const trimmed = cleaned.trim();
+    // A palette-box blank row (`┃` + pad + `┃`) carries no words — only the composer's own
+    // bar plus a panel's right edge — so it reads as blank, never as a one-glyph draft line
+    // that would poison the join ("┃ …") and stall verification. Scoped to blank rows in
+    // this reader on purpose: the walk-stop (isPanelBorder) and the dialog walks must keep
+    // seeing the row, and a trailing `┃` on a row WITH words stays untouched (tables).
+    parts.push(isEdgeOnly(trimmed) || /^[\s┃]*$/.test(trimmed) ? "" : trimmed);
   }
   const draft = parts.filter((p) => p.length > 0).join(" ");
   if (draft.length === 0) return null;
@@ -341,9 +384,12 @@ const MODAL_FOOTER_WINDOW = 3;
  * Positive evidence that one of opencode's own modals is up — the fifth condition of the
  * unread-dialog card (.adr/0053, addendum 2026-09-26). `composerReady` answering false says only
  * that no composer is there, which is also what the shell looks like while opencode starts and
- * after it exits; the card must not offer Escape there. Two shapes count, both measured on 1.18.32:
- * a picker (`pickerOverlayUp`), and a dialog painted in the bar run, whose footer — a bar row
- * carrying `⇆ select` and `enter confirm` — sits at the tail.
+ * after it exits; the card must not offer Escape there. Three shapes count: a picker
+ * (`pickerOverlayUp`), a permission dialog painted in the bar run, whose footer — a bar row
+ * carrying `⇆ select` and `enter confirm` — sits at the tail (1.18.32), and a question dialog,
+ * whose footer is a bar row carrying `esc dismiss` after `enter submit|toggle|confirm` (1.18.33).
+ * The question footer counts on EVERY question screen, the ones the grammar refuses included (a tab
+ * bar, a long list): the card and the composer lock must work on exactly those.
  */
 export function modalOnScreen(lines: StyledLine[]): boolean {
   if (pickerOverlayUp(lines)) return true;
@@ -352,7 +398,7 @@ export function modalOnScreen(lines: StyledLine[]): boolean {
     const text = rstrip(lineText(lines[i]!));
     if (isBlank(text)) continue;
     seen++;
-    if (isBarRow(text) && hasFooterHints(text)) return true;
+    if (isBarRow(text) && (hasFooterHints(text) || isQuestionFooter(text))) return true;
   }
   return false;
 }

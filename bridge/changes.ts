@@ -56,6 +56,8 @@
 import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+import { isAbsoluteFolder } from "./changes-root.ts";
+import { HOST, isInside } from "./host.ts";
 import { containedRealpath } from "./journal/files.ts";
 import type {
   ChangeCommit,
@@ -93,7 +95,7 @@ const MAX_LIST_BYTES = 4 * 1024 * 1024;
 /** Bytes of untracked files read in one list to count their lines. Past it the count reads 0. */
 const MAX_COUNT_BUDGET_BYTES = 16 * 1024 * 1024;
 /** How many bytes decide "binary", git's own rule: a NUL in the first 8000. */
-const BINARY_SNIFF_BYTES = 8000;
+export const BINARY_SNIFF_BYTES = 8000;
 /** Repos listed at once. */
 const REPO_CONCURRENCY = 4;
 
@@ -205,7 +207,7 @@ const HARDENING: readonly string[] = [
 ].flatMap((kv) => ["-c", kv]);
 
 /** A repo the way git is run against it: the folder that holds `.git`, and that `.git` entry. */
-interface RepoDirs {
+export interface RepoDirs {
   /** Real path of the work tree (the folder `.git` was found in). */
   workTree: string;
   /** `<workTree>/.git` — a folder, or a gitfile git follows itself. */
@@ -215,7 +217,7 @@ interface RepoDirs {
 /** How many git processes this module has started. Read by the tests that prove reads are shared. */
 export const gitRuns = { spawned: 0 };
 
-interface GitRun {
+export interface GitRun {
   code: number;
   stdout: Buffer;
   /** Output hit the cap and the process was killed. */
@@ -227,17 +229,20 @@ interface GitRun {
  * Run one git command against one repo. argv only, no shell; killed at the timeout; stdout read up
  * to `maxBytes` and the process killed past it.
  */
-async function runGit(
+export async function runGit(
   git: string,
   repo: RepoDirs,
   args: readonly string[],
   extraConfig: readonly string[],
   maxBytes: number,
+  opts: { input?: Uint8Array; timeoutMs?: number; literalPathspecs?: boolean } = {},
 ): Promise<GitRun> {
   const argv = [
     git,
     "--no-pager",
-    "--literal-pathspecs",
+    // `check-ignore` refuses this flag ("pathspec magic not supported"); its caller spells each path
+    // `./name` instead, which no magic can start with.
+    ...(opts.literalPathspecs === false ? [] : ["--literal-pathspecs"]),
     `--git-dir=${repo.gitDir}`,
     `--work-tree=${repo.workTree}`,
     ...HARDENING,
@@ -248,7 +253,8 @@ async function runGit(
   const proc = Bun.spawn(argv, {
     cwd: repo.workTree,
     env: gitEnv(process.env),
-    stdin: "ignore",
+    // `input` is how the Files view hands git file NAMES: on stdin, never in argv.
+    stdin: opts.input ?? "ignore",
     stdout: "pipe",
     stderr: "ignore",
   });
@@ -256,7 +262,7 @@ async function runGit(
   const timer = setTimeout(() => {
     timedOut = true;
     proc.kill();
-  }, GIT_TIMEOUT_MS);
+  }, opts.timeoutMs ?? GIT_TIMEOUT_MS);
   const chunks: Uint8Array[] = [];
   let size = 0;
   let capped = false;
@@ -550,7 +556,7 @@ async function baseTree(git: string, repo: RepoDirs): Promise<string | null> {
 }
 
 /** First bytes of a file hold a NUL: git's own "binary" rule. */
-function looksBinary(bytes: Uint8Array): boolean {
+export function looksBinary(bytes: Uint8Array): boolean {
   const end = Math.min(bytes.byteLength, BINARY_SNIFF_BYTES);
   for (let i = 0; i < end; i++) if (bytes[i] === 0) return true;
   return false;
@@ -689,7 +695,7 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, fn: (item: T
 
 /** Whether `cwd` is a folder we can look in at all. */
 async function usableFolder(cwd: string): Promise<boolean> {
-  if (cwd.trim() === "" || !cwd.startsWith("/")) return false;
+  if (!isAbsoluteFolder(cwd)) return false;
   const st = await stat(cwd).catch(() => null);
   return st !== null && st.isDirectory();
 }
@@ -729,13 +735,15 @@ export async function repoOfFolder(
   repos: readonly Pick<ChangedRepo, "relPath">[],
   folder: string,
 ): Promise<string | undefined> {
-  if (!folder.startsWith("/")) return undefined;
+  if (!isAbsoluteFolder(folder)) return undefined;
   const real = await realpath(folder).catch(() => null);
   if (real === null) return undefined;
+  // Both sides real: a Windows temp folder can be spelled with an 8.3 short name on one side only.
+  const realRoot = await realpath(root).catch(() => root);
   let best: { relPath: string; length: number } | undefined;
   for (const repo of repos) {
-    const dir = resolve(root, repo.relPath);
-    const inside = real === dir || real.startsWith(dir.endsWith(sep) ? dir : `${dir}${sep}`);
+    const dir = resolve(realRoot, repo.relPath);
+    const inside = isInside(HOST, real, dir);
     if (inside && (best === undefined || dir.length > best.length)) best = { relPath: repo.relPath, length: dir.length };
   }
   return best?.relPath;

@@ -23,7 +23,7 @@ import { sshResolveArgs } from "./candidates.ts";
 import type { Environment } from "./context.ts";
 import type { InstallKind } from "./install-kind.ts";
 import { EXIT } from "./io.ts";
-import { cmdCrew, type CrewDeps } from "./crew.ts";
+import { cmdCrew, enrollUrl, type CrewDeps } from "./crew.ts";
 import {
   bindOverwriteConfirmation,
   cmdCrewAdd,
@@ -52,6 +52,7 @@ import {
 import { INSTALLER_SH } from "./installer-embed.ts";
 import type { MuxProbeReport } from "./mux-probe.ts";
 import { realExec } from "./sys.ts";
+import { hostFor } from "../bridge/host.ts";
 
 // `collie crew add` against fakes for every seam. **NOTHING here spawns `ssh` or reaches a network**:
 // the transport is a function that records `(script, stdin)` pairs and answers from a table, the
@@ -182,6 +183,8 @@ interface HarnessOptions {
   resolve?: Readonly<Record<string, string>>;
   /** This lead's install kind. Absent ⇒ a linked clone, the kind every earlier test assumed. */
   installKind?: InstallKind;
+  /** `COLLIE_SERVE_PORT`'s resolved value — the front door's port, when it is not 443. */
+  servePort?: number;
 }
 
 function harness(opts: HarnessOptions = {}): Harness {
@@ -223,9 +226,13 @@ function harness(opts: HarnessOptions = {}): Harness {
   });
 
   const deps: CrewAddDeps = {
+    host: hostFor("linux"),
     // The same reason `cli/crew.test.ts` sets this: the real `setTimeout` in `PeerClient` must never
     // fire and report a fake peer as unreachable.
-    ctx: context({ COLLIE_CREW_TIMEOUT_MS: "60000", ...opts.env }),
+    ctx: context(
+      { COLLIE_CREW_TIMEOUT_MS: "60000", ...opts.env },
+      opts.servePort === undefined ? {} : { servePort: opts.servePort },
+    ),
     io: out,
     exec,
     files: fakeFiles(seeded),
@@ -387,7 +394,10 @@ const GOLDEN: [file: string, script: string][] = [
 describe("the leg scripts", () => {
   for (const [file, script] of GOLDEN) {
     test(`${file} matches its golden file`, () => {
-      expect(script).toBe(readFileSync(join(import.meta.dir, "testdata", file), "utf8"));
+      // The generated script is LF text (a template literal normalises its line breaks). A Windows
+      // checkout may translate the golden file to CRLF, which is the checkout's doing, not the script's.
+      const golden = readFileSync(join(import.meta.dir, "testdata", file), "utf8").replaceAll("\r\n", "\n");
+      expect(script).toBe(golden);
     });
   }
 
@@ -866,6 +876,27 @@ describe("collie crew add", () => {
     expect(h.calls.find((c) => c.leg === "enroll")!.script).toContain("'https://collie.example.com'");
   });
 
+  // Issue 334: the derived front door was the BARE tailnet name, which `collie join` reads as the lead's
+  // own listener (`https://<name>:8787`). A lead behind `tailscale serve` is on 127.0.0.1 there, so the
+  // peer saw "Unable to connect". The string handed to the remote join must dial 443 on its own.
+  test("the lead address handed to the remote join dials 443, not the listener port", async () => {
+    const h = harness();
+    expect(await run(h)).toBe(EXIT.OK);
+    const script = h.calls.find((c) => c.leg === "enroll")!.script;
+    expect(script).toContain("'https://desk.tail.ts.net'");
+    expect(script).not.toContain("'desk.tail.ts.net'");
+    // What `join` actually dials for that string: no :8787 anywhere.
+    expect(enrollUrl("https://desk.tail.ts.net")).toBe("https://desk.tail.ts.net/crew/v1/enroll");
+  });
+
+  test("a front door moved off 443 keeps its port, and the scheme stays out of it", async () => {
+    const h = harness({ servePort: 8443 });
+    expect(await run(h)).toBe(EXIT.OK);
+    const script = h.calls.find((c) => c.leg === "enroll")!.script;
+    expect(script).toContain("'desk.tail.ts.net:8443'");
+    expect(enrollUrl("desk.tail.ts.net:8443")).toBe("https://desk.tail.ts.net:8443/crew/v1/enroll");
+  });
+
   test("the control socket is torn down on every exit path, including a failure", async () => {
     const ok = harness();
     await run(ok);
@@ -1217,7 +1248,7 @@ describe("the mux decision", () => {
     expect(h.calls).toHaveLength(0);
     expect(h.restarts).toBe(0);
     expect(text(h.io)).toContain("--mux screen is not a multiplexer this build drives");
-    expect(text(h.io)).toContain("herdr, tmux, tuios, zellij");
+    expect(text(h.io)).toContain("herdr, tern, tmux, tuios, zellij");
   });
 
   test("--mux writes the name, over one the member already carries, without reading its machine", async () => {
@@ -1722,6 +1753,7 @@ function gitEnv(): Environment {
 function minimalCrewDeps(root: string): RepoCrewDeps {
   const storeIo: TrustStoreIo = { read: async () => null, write: async () => {} };
   return {
+    host: hostFor("linux"),
     ctx: context(gitEnv(), { root }),
     io: capture(),
     exec: realExec(gitEnv(), root),

@@ -1,6 +1,7 @@
 import type { Page, Route } from "@playwright/test";
 
 import type { Locale } from "@/lib/i18n/locale";
+import type { MachineAlerts } from "@/lib/types";
 import { TOUR_STORAGE_KEY, TOUR_VERSION } from "@/lib/tour";
 import {
   fixtureChangeDiff,
@@ -9,6 +10,9 @@ import {
   fixtureCommitDiff,
   fixtureCrewSnapshot,
   fixtureCrewStatus,
+  fixtureFileRead,
+  fixtureFilesDir,
+  FIXTURE_FILES_UNKNOWN,
   fixtureNewSpace,
   fixtureNewTab,
   fixtureSnapshot,
@@ -16,6 +20,7 @@ import {
   paneTextWithDraft,
   recordReply,
 } from "@/test/handlers";
+import { censusFor, fixtureMachines, fixtureMachinesSolo, historyFor } from "@/test/machine-fixtures";
 
 // The `app` target's API. The shipped bundle is served off disk by a static server, so nothing
 // answers `/api/*` unless this module does.
@@ -125,6 +130,14 @@ async function answer(route: Route, path: string, folders: FolderWorld): Promise
     return fulfillJson(route, fixtureChanges);
   }
 
+  // The Files view (ADR 0083): a folder (`?dir=`, none for the root) or one file (`?path=`).
+  if (/^\/api\/(?:pane|workspace)\/[^/]+\/files$/.test(path)) {
+    const q = new URL(route.request().url()).searchParams;
+    const file = q.get("path");
+    const found = file !== null ? fixtureFileRead(file) : fixtureFilesDir(q.get("dir") ?? "");
+    return found === null ? fulfillJson(route, FIXTURE_FILES_UNKNOWN, 404) : fulfillJson(route, found);
+  }
+
   if (/^\/api\/pane\/[^/]+\/history$/.test(path)) {
     return fulfillJson(route, {
       paneId: "w1:p1",
@@ -200,6 +213,15 @@ async function answer(route: Route, path: string, folders: FolderWorld): Promise
       { error: "this collie is not the lead of a crew", code: "crew.not_lead" },
       404,
     );
+  }
+  // The machines census: a solo lead with one row, its day of history, and the alert POST echoing the
+  // body it was given (the bridge answers the rules as stored). A case that wants a crew, or that
+  // wants the rules to stick, registers its own route after `installApiStub` (see `installMachinesWorld`).
+  if (path === "/api/machines") return fulfillJson(route, censusFor(fixtureMachinesSolo, new URL(route.request().url())));
+  if (/^\/api\/machines\/[^/]+\/history$/.test(path)) return fulfillJson(route, historyFor(new URL(route.request().url())));
+  if (/^\/api\/machines\/[^/]+\/alerts$/.test(path) && method === "POST") {
+    // SAFETY: as in `installMachinesWorld`, the body is the app's own `MachineAlerts`.
+    return fulfillJson(route, { alerts: route.request().postDataJSON() as MachineAlerts });
   }
   if (path === "/api/config") return fulfillJson(route, { push: false, vapidPublicKey: "" });
   if (path === "/api/launchers") return fulfillJson(route, { launchers: [], home: "" });
@@ -297,6 +319,36 @@ export async function installCrewWorld(page: Page): Promise<void> {
 }
 
 /**
+ * Turn the default solo machines census into the crew's four machines, with alert rules that STICK:
+ * a POST to a machine's alerts replaces that machine's rules in the census the next read returns, the
+ * way the bridge stores them. Returns the bodies posted, in order, for a case that asserts on them.
+ *
+ * Call it AFTER {@link installApiStub}: Playwright checks the newest handler first.
+ */
+export async function installMachinesWorld(page: Page): Promise<{ posted: { id: string; body: unknown }[] }> {
+  const posted: { id: string; body: unknown }[] = [];
+  const machines = structuredClone(fixtureMachines);
+  await page.route(
+    (url) => url.pathname === "/api/machines",
+    (route) => fulfillJson(route, censusFor(machines, new URL(route.request().url()))),
+  );
+  await page.route(
+    (url) => /^\/api\/machines\/[^/]+\/alerts$/.test(url.pathname),
+    async (route) => {
+      const id = decodeURIComponent(new URL(route.request().url()).pathname.split("/")[3] ?? "");
+      // SAFETY: the body is the app's own: `lib/api.ts`'s `setMachineAlerts` is the only caller and it
+      // posts a `MachineAlerts` object.
+      const body = route.request().postDataJSON() as MachineAlerts;
+      posted.push({ id, body });
+      const row = machines.machines.find((m) => m.id === id);
+      if (row) row.alerts = body;
+      return fulfillJson(route, { alerts: body });
+    },
+  );
+  return { posted };
+}
+
+/**
  * Fill a message's `{slot}`s, the way the app's own `t()` does.
  *
  * The runtime's `interpolate` (`lib/i18n/index.ts`) is module-private and reads the locale out of
@@ -325,4 +377,16 @@ export async function pinLocale(page: Page, locale: Locale): Promise<void> {
     },
     [LOCALE_STORAGE_KEY, locale],
   );
+}
+
+/**
+ * Turn the device's Changes segment (the changesOnly pref) on before the first navigation, so the Changes screen's body
+ * is the list of changes rather than the folder tree, its default since 2026-10-06 (ADR 0083). For a
+ * case that tests the list itself. Written only while nothing is stored, so a reload keeps whatever
+ * the page wrote since.
+ */
+export async function seedChangesOnly(page: Page): Promise<void> {
+  await page.addInitScript((key) => {
+    if (window.localStorage.getItem(key) === null) window.localStorage.setItem(key, JSON.stringify({ changesOnly: true }));
+  }, "collie:dash-prefs:v1");
 }

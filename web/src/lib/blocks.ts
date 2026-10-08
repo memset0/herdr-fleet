@@ -41,6 +41,7 @@ export type {
   PromptOption,
   PromptFamily,
   PromptFeedbackPurpose,
+  PromptSubjectLine,
 } from "./harness/prompt-model";
 export type { WizardModel, WizardOption, WizardStepChip, WizardAnswer } from "./harness/wizard-model";
 export type { PreviewSelectModel, PreviewOption, PreviewNote } from "./harness/preview-model";
@@ -49,6 +50,7 @@ export type {
   MultiSelectOption,
   MultiSelectEscape,
   MultiPointer,
+  MultiSelectReviewSubmit,
 } from "./harness/multi-select-model";
 export type { MenuModel, MenuAction, MenuNav, MenuLeftRight } from "./harness/menu-model";
 export type { AutocompleteModel, AutocompleteEntry } from "./harness/autocomplete-model";

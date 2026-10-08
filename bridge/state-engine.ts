@@ -31,37 +31,172 @@ import {
 // more here than a smaller read. See HERDR_API.md → `pane.read`.
 const SESSION_NAME_READ_LINES = 40;
 
+/**
+ * How many polls the engine runs at the fast cadence after an INTENT says something is about to
+ * change: an input written to a pane, or a pane that has just become an agent and has not named its
+ * session yet. Counted in polls, not milliseconds, for the reason the phone's burst is
+ * (web/src/lib/poll-intent.ts): a deadline would end early on a slow multiplexer and late on a fast
+ * one. Eight polls at the default 1.5 s is about one idle interval, so the hot spell never outlasts
+ * the 12 s gap it closes. It is the decay, and so the last resort: the session-wait hold below ends
+ * on the EVENT (the session seen) and spends this only when that event never comes.
+ */
+export const HOT_POLLS = 8;
+
 // Claude renders its input box as a horizontal rule, the ❯ prompt line, then a closing rule. After
 // `/rename <name>` the TOP rule carries the session name inside it: "────────── my-name ──". This
 // matches that named rule. `\S` also matches box-drawing chars, but a *plain* rule has no embedded
 // space-delimited text, so it can't match — and the ❯-prompt anchor (below) rules out any decorative
 // rule elsewhere in the output. Rule chars: ─ (U+2500, light) and ━ (U+2501, heavy).
 const NAMED_RULE = /^[─━]{2,}[ \t]+(\S.*?\S|\S)[ \t]+[─━]+[ \t]*$/;
+const PLAIN_RULE = /^[─━]{2,}[ \t]*$/;
 // Claude's input prompt marker, anchored at column 0. Its menu/selection cursors render as " ❯"
 // (leading space), so the column-0 anchor discriminates the real input prompt from a selected row.
 const PROMPT_LINE = /^❯/;
+const ESC = String.fromCharCode(27);
+// One SGR sequence, colon sub-parameters included so they are stripped like the rest. Built from the
+// escape byte so no raw control character sits in the source.
+const SGR_SEQ = new RegExp(`${ESC}\\[([0-9;:]*)m`, "g");
+
+// A colour as the terminal resolves it, so two spellings of one colour compare equal: `31`, `91`'s
+// slot 9 and `38;5;1` name palette slots exactly as web/src/lib/ansi.ts resolves them. The default
+// foreground and the default background are two different colours, never one empty value.
+const DEFAULT_FG = "default-fg";
+const DEFAULT_BG = "default-bg";
+
+interface Pen {
+  fg: string;
+  bg: string;
+  inverse: boolean;
+  /** False after a sequence this reader does not parse, until a full reset. */
+  known: boolean;
+}
+
+interface StyledCell {
+  readonly ch: string;
+  readonly fg: string;
+  readonly bg: string;
+  readonly known: boolean;
+}
+
+function applySgr(pen: Pen, params: string): void {
+  if (params.includes(":")) {
+    pen.known = false;
+    return;
+  }
+  const codes = params === "" ? [0] : params.split(";").map(Number);
+  for (let i = 0; i < codes.length; i++) {
+    const c = codes[i]!;
+    if (c === 0) {
+      pen.fg = DEFAULT_FG;
+      pen.bg = DEFAULT_BG;
+      pen.inverse = false;
+      pen.known = true;
+    } else if (c === 7) pen.inverse = true;
+    else if (c === 27) pen.inverse = false;
+    else if (c >= 30 && c <= 37) pen.fg = `palette:${c - 30}`;
+    else if (c === 39) pen.fg = DEFAULT_FG;
+    else if (c >= 40 && c <= 47) pen.bg = `palette:${c - 40}`;
+    else if (c === 49) pen.bg = DEFAULT_BG;
+    else if (c >= 90 && c <= 97) pen.fg = `palette:${8 + c - 90}`;
+    else if (c >= 100 && c <= 107) pen.bg = `palette:${8 + c - 100}`;
+    else if (c === 38 || c === 48) {
+      let colour: string;
+      if (codes[i + 1] === 5) {
+        colour = `palette:${codes[i + 2] ?? 0}`;
+        i += 2;
+      } else if (codes[i + 1] === 2) {
+        colour = `rgb:${codes[i + 2] ?? 0},${codes[i + 3] ?? 0},${codes[i + 4] ?? 0}`;
+        i += 4;
+      } else {
+        pen.known = false;
+        return;
+      }
+      if (c === 38) pen.fg = colour;
+      else pen.bg = colour;
+    }
+  }
+}
 
 /**
- * Pull Claude's own session name (set via `/rename`) out of a pane's visible text, or `undefined` when
- * the session is unnamed (a plain rule) or the pane isn't showing its input box (a dialog, a working
- * spinner). Claude draws the name INTO the horizontal rule directly above the ❯ prompt, e.g.
+ * Row `row` of the grid as characters, each with the colours it is shown in. The pen runs from the
+ * top of the read, because a colour set on one row stays set on the next until something resets it.
+ */
+function styledRow(lines: readonly string[], row: number): StyledCell[] {
+  const pen: Pen = { fg: DEFAULT_FG, bg: DEFAULT_BG, inverse: false, known: true };
+  const cells: StyledCell[] = [];
+  for (let r = 0; r <= row; r++) {
+    const line = lines[r]!;
+    const push = (text: string): void => {
+      if (r !== row) return;
+      const fg = pen.inverse ? pen.bg : pen.fg;
+      const bg = pen.inverse ? pen.fg : pen.bg;
+      for (const ch of text) cells.push({ ch, fg, bg, known: pen.known });
+    };
+    let last = 0;
+    for (const m of line.matchAll(SGR_SEQ)) {
+      push(line.slice(last, m.index));
+      last = m.index + m[0].length;
+      applySgr(pen, m[1] ?? "");
+    }
+    push(line.slice(last));
+  }
+  return cells;
+}
+
+const plainText = (row: string): string => row.replace(SGR_SEQ, "");
+const isRuleGlyph = (ch: string): boolean => ch === "─" || ch === "━";
+
+/**
+ * What the words inside a named-looking rule are: a `/rename` name, a mode badge, or unknown.
+ *
+ * An observed rendering, not a format Claude promises: Claude Code 2.1.290 draws a session name in
+ * the rule's own colour, or, after `/color`, as a chip whose background is that colour, and draws a
+ * mode badge such as `ultracode` (`/effort ultracode`) in a colour of its own. A read with no styling
+ * at all leaves nothing to compare, so the words read as a name and a badge is mistaken for one there.
+ * A rule whose colour cannot be told (an unparsed sequence, rule glyphs in more than one colour) is
+ * unknown.
+ */
+function ruleLabel(lines: readonly string[], row: number): "name" | "badge" | "unknown" {
+  if (!lines.slice(0, row + 1).some((l) => l.includes(ESC))) return "name";
+  const cells = styledRow(lines, row);
+  if (cells.some((c) => !c.known)) return "unknown";
+  const rule = cells.filter((c) => isRuleGlyph(c.ch));
+  const ruleFg = rule[0]?.fg;
+  if (ruleFg === undefined || rule.some((c) => c.fg !== ruleFg)) return "unknown";
+  const named = cells
+    .filter((c) => !isRuleGlyph(c.ch) && c.ch.trim() !== "")
+    .every((c) => c.fg === ruleFg || c.bg === ruleFg);
+  return named ? "name" : "badge";
+}
+
+/**
+ * Pull Claude's own session name (set via `/rename`) out of a pane's visible grid, styled or plain.
+ *
+ * Returns the name; `null` when the input box is in view and carries no name (a plain rule, or a mode
+ * badge, which Claude only shows on an unnamed session); `undefined` when the pane isn't showing its
+ * input box (a dialog, a working spinner) or the rule's colours cannot be read, so nothing can be
+ * said either way. Claude draws the name INTO the horizontal rule directly above the ❯ prompt, e.g.
  * `────────── my-name ──`; we accept that rule ONLY when the very next line is the ❯ prompt, so a
  * decorative rule anywhere else in the output can never be mistaken for it (no false positives).
  * Derived from Claude's UI grammar — claude-only; other harnesses never call this. Pure + exported so
  * it's unit-tested against the pane fixtures without standing up the socket client.
  */
-export function extractClaudeSessionName(text: string): string | undefined {
+export function extractClaudeSessionName(text: string): string | null | undefined {
   if (!text) return undefined;
   const lines = text.split(/\r?\n/);
   // Only the BOTTOMMOST ❯ counts — that's the live input prompt; anything above it is scrollback.
   // The rule directly above it decides, and a plain rule means "unnamed", full stop. Scanning past it
   // for older named-rule-above-❯ pairs (as this once did) let a scrollback line that merely starts
   // with ❯ — an echoed shell prompt, pasted text — sit under a decorative rule and pin a bogus name
-  // on an unnamed session (the caller's sticky cache only overwrites on truthy matches).
+  // on an unnamed session.
   for (let i = lines.length - 1; i >= 1; i--) {
-    if (!PROMPT_LINE.test(lines[i]!)) continue;
-    const m = NAMED_RULE.exec(lines[i - 1]!);
-    return m ? m[1]!.trim() || undefined : undefined;
+    if (!PROMPT_LINE.test(plainText(lines[i]!))) continue;
+    const plain = plainText(lines[i - 1]!);
+    const m = NAMED_RULE.exec(plain);
+    if (!m) return PLAIN_RULE.test(plain) ? null : undefined;
+    const label = ruleLabel(lines, i - 1);
+    if (label === "unknown") return undefined;
+    return label === "name" ? m[1]!.trim() : null;
   }
   return undefined;
 }
@@ -194,8 +329,10 @@ export class StateEngine {
   private bridge: BridgeStatus = "disconnected";
   private readonly prevStatus = new Map<string, AgentStatus>();
   // Last-known claude `/rename` session name per pane. Kept sticky so the name doesn't flicker away
-  // when a pane momentarily hides its input box (a dialog / working spinner) — only cleared when the
-  // pane itself vanishes (see the removal loop). Enriched from pane text each poll (see enrichSessionNames).
+  // when a pane momentarily hides its input box (a dialog / working spinner). A styled read sets it
+  // from a name, deletes it when the input box shows no name (or only a mode badge), and keeps it
+  // when no input box is in view (`undefined`). It is also cleared when the pane itself vanishes
+  // (see the removal loop). Enriched from pane text each poll (see enrichSessionNames).
   private readonly sessionNames = new Map<string, string>();
   // Revision at which each pane was last enriched. enrichSessionNames skips the readGrid RPC for
   // any pane whose revision hasn't moved — O(claude_panes) socket calls per poll → O(changed).
@@ -224,11 +361,25 @@ export class StateEngine {
   // A relax ordered before the engine has ever CONNECTED - parked, and applied by the first
   // successful poll. See setCadence for why relaxing is earned rather than granted on an ack.
   private pendingCadenceMs: number | null = null;
+  // The cadence the event watch asked for (setCadence), before any intent tightens it. The armed
+  // interval is `cadenceMs`; this is what it returns to when the hot spell ends.
+  private baseCadenceMs: number;
+  // Polls left in the hot spell an input bought (noteInput). Decays one per poll attempt.
+  private inputHotPolls = 0;
+  // Panes that became agents while this engine watched and have not named a session yet, each with
+  // the polls its hold has left. A hold ends on the event (the session seen, the pane gone) or, as
+  // the last resort, when its polls run out. See noteNewAgents.
+  private readonly sessionWaits = new Map<string, number>();
+  // Whether a poll has ever succeeded. The first poll's agents are not "new": they were there before
+  // the bridge came up, and holding the engine hot for each of them would spend a fast spell on every
+  // restart.
+  private sawHerd = false;
   constructor(
     private readonly mux: MuxAdapter,
     private readonly pollMs: number,
   ) {
     this.cadenceMs = pollMs;
+    this.baseCadenceMs = pollMs;
   }
 
   onTransition(fn: TransitionListener): () => void {
@@ -293,6 +444,27 @@ export class StateEngine {
     return now - this.lastReadAt <= ATTENTION_WINDOW_MS ? "watched" : "idle";
   }
 
+  /**
+   * An input was just written to a pane through this bridge: typed text, keys, a quick reply, a
+   * dialog answer. The operator is watching for its effect, and some effects reach the multiplexer
+   * with no event at all (Herdr announces a session report to nobody, measured on 0.9.3), so the
+   * engine polls at the fast cadence for {@link HOT_POLLS} polls and then relaxes.
+   *
+   * An intent, not a timer: it re-arms the ONE interval (applyCadence), adds no second one, and
+   * decays by itself. It never polls by itself either; the next poll comes on the fast interval or
+   * on an event's poke, whichever is first. No-op once stopped.
+   */
+  noteInput(): void {
+    if (!this.started) return;
+    this.inputHotPolls = HOT_POLLS;
+    this.applyCadence(this.effectiveCadence());
+  }
+
+  /** Is an intent holding the engine at the fast cadence right now? For tests and diagnostics. */
+  hot(): boolean {
+    return this.inputHotPolls > 0 || this.sessionWaits.size > 0;
+  }
+
   current(): EngineSnapshot {
     return {
       agents: this.agents,
@@ -312,7 +484,10 @@ export class StateEngine {
     if (this.started) return;
     this.started = true;
     this.cadenceMs = this.pollMs;
+    this.baseCadenceMs = this.pollMs;
     this.pendingCadenceMs = null;
+    this.inputHotPolls = 0;
+    this.sessionWaits.clear();
     void this.poll();
     this.timer = setInterval(() => void this.poll(), this.cadenceMs);
   }
@@ -354,7 +529,47 @@ export class StateEngine {
       return;
     }
     this.pendingCadenceMs = null;
-    this.applyCadence(ms);
+    this.baseCadenceMs = ms;
+    this.applyCadence(this.effectiveCadence());
+  }
+
+  /** The watch's cadence, tightened to the fast one while an intent holds the engine hot. */
+  private effectiveCadence(): number {
+    return this.hot() ? Math.min(this.pollMs, this.baseCadenceMs) : this.baseCadenceMs;
+  }
+
+  /**
+   * Spend one poll of every hot hold, and open a session-wait hold for each pane that has just become
+   * an agent with no session. Runs after every poll attempt; `agents` is null when the poll failed,
+   * which still spends a poll (a hold must decay against a dead multiplexer too) but proves nothing
+   * about any pane, so no hold ends on it.
+   *
+   * A pane joins the wait when it was not an agent on the previous successful poll and names no
+   * session now. It leaves on the EVENT: its session is seen, or it stops being an agent. Only a
+   * session that never comes spends the hold to its end. Herdr sends no event when a session is
+   * reported, so without this a pi or Claude pane sitting idle after its start is seen to have a
+   * session only on the next idle tick, 12 s later.
+   */
+  private noteNewAgents(agents: readonly AgentView[] | null, before: ReadonlySet<string>): void {
+    if (this.inputHotPolls > 0) this.inputHotPolls--;
+    for (const [id, left] of this.sessionWaits) {
+      if (left <= 1) this.sessionWaits.delete(id);
+      else this.sessionWaits.set(id, left - 1);
+    }
+    if (agents !== null) {
+      const live = new Map(agents.map((a) => [a.paneId, a]));
+      for (const id of this.sessionWaits.keys()) {
+        const a = live.get(id);
+        if (a === undefined || a.agentSession !== undefined) this.sessionWaits.delete(id);
+      }
+      if (this.sawHerd) {
+        for (const a of agents) {
+          if (!before.has(a.paneId) && a.agentSession === undefined) this.sessionWaits.set(a.paneId, HOT_POLLS);
+        }
+      }
+      this.sawHerd = true;
+    }
+    if (this.started) this.applyCadence(this.effectiveCadence());
   }
 
   /** Swap the interval to `ms` if it differs. The one place the poll timer is re-armed. */
@@ -370,6 +585,10 @@ export class StateEngine {
     // ticks would otherwise stack overlapping in-flight polls.
     if (this.polling) return;
     this.polling = true;
+    // The agent panes the previous successful poll saw, for noteNewAgents. Read before the poll
+    // rewrites prevStatus. `fresh` stays null when the poll fails.
+    const before = new Set(this.prevStatus.keys());
+    let fresh: AgentView[] | null = null;
     try {
       const { panes, spaces, tabs } = await this.mux.snapshot();
 
@@ -490,6 +709,7 @@ export class StateEngine {
       await this.enrichSessionNames(agents, revisions);
 
       this.agents = agents;
+      fresh = agents;
       this.shellPanes = shellPanes;
       this.workspaces = workspaceViews;
       this.tabs = tabViews;
@@ -497,9 +717,8 @@ export class StateEngine {
       this.pollFailureLogged = false;
       // The relax the watch ordered while we had never yet connected - earned now.
       if (this.pendingCadenceMs !== null) {
-        const relaxed = this.pendingCadenceMs;
+        this.baseCadenceMs = this.pendingCadenceMs;
         this.pendingCadenceMs = null;
-        this.applyCadence(relaxed);
       }
 
       // After all transition/removal bookkeeping so listeners see a consistent, current snapshot.
@@ -513,6 +732,9 @@ export class StateEngine {
       this.bridge = "disconnected";
     } finally {
       this.polling = false;
+      // The hot holds, spent and re-judged on every attempt, and the interval re-armed to match. This
+      // is also where a relax the watch parked before the first connect is applied.
+      this.noteNewAgents(fresh, before);
       // Every poll attempt, however it went (see onTick). Listener throws are contained: a tick
       // subscriber must never be able to break the poll loop that hosts it.
       for (const fn of this.tickListeners) {
@@ -535,8 +757,9 @@ export class StateEngine {
    * {@link extractClaudeSessionName}) to the view, exactly parallel to `paneLabel`. The name lives
    * only in the pane's rendered text — Herdr's pane metadata doesn't carry it — so this is the one
    * place all panes can pick it up (the web app only holds text for the open pane). Reads run in
-   * parallel and are individually best-effort: a read that fails or times out keeps the last-known
-   * name (sticky cache) and never fails the poll. Claude-only; other harnesses never set it. A
+   * parallel and are individually best-effort: a read that fails or times out, or a screen with no
+   * input box in view, keeps the last-known name (sticky cache) and never fails the poll; an input
+   * box that shows no name drops it. Claude-only; other harnesses never set it. A
    * multiplexer that cannot hand over a rendered grid declines the read, which reads here as
    * "keep whatever's cached" — exactly like a read that failed.
    */
@@ -557,16 +780,19 @@ export class StateEngine {
           // `viewport` — never `recent`; see SESSION_NAME_READ_LINES for what a `recent` read does
           // to the operator's screen. The viewport is also strictly safer to parse: `recent` hands
           // back transcript scrollback, where Claude echoes past user messages as `❯ …` lines that
-          // the prompt anchor would have to discriminate against. `strip` because this wants words:
-          // colour escapes would only have to be undone before the rules below could match.
+          // the prompt anchor would have to discriminate against. `preserve` because colour is the
+          // only thing that tells a `/rename` name from a mode badge Claude draws in the same rule.
           const read = await this.mux.readGrid(a.paneId, {
             scope: "viewport",
             lines: SESSION_NAME_READ_LINES,
-            styling: "strip",
+            styling: "preserve",
           });
           if (!read.ok) return;
           const name = extractClaudeSessionName(read.value.text);
+          // An input box in view with no name forgets the old one: a name renamed away, or a badge
+          // once mistaken for a name, must not outlive the screen that showed it.
           if (name) this.sessionNames.set(a.paneId, name);
+          else if (name === null) this.sessionNames.delete(a.paneId);
           if (rev !== undefined) this.enrichedAt.set(a.paneId, rev);
         } catch {
           // Keep whatever's cached (if anything) — a transient read failure must not blank the name.

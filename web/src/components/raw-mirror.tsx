@@ -1,3 +1,5 @@
+import type { Ref } from "react";
+
 import type { StyledLine } from "@/lib/blocks";
 import { MIRROR_INVERT, MIRROR_SPACE, styleFor } from "@/components/mirror-space";
 import { renderCells } from "@/components/painted-cells";
@@ -10,14 +12,32 @@ import { cn } from "@/lib/utils";
  * React text nodes only (the XSS boundary is unchanged — nothing is ever set as innerHTML), and
  * the agent's own terminal colours (MIRROR_SPACE / MIRROR_INVERT, ADR 0002). Scrolls horizontally
  * on its own so a wide screen never makes the page pan.
+ *
+ * `wrap` breaks long rows instead, anywhere, the way the pane mirror's Wrap does: the prompt card's
+ * subject (a command, a diff, a warning) must be readable at phone width without a sideways pan.
+ * `className` adds to the box, e.g. a height cap with its own vertical scroll; `ref` reaches the
+ * <pre>, the element that scrolls, for a caller that measures it.
  */
-export function RawMirror({ lines }: { lines: StyledLine[] }) {
+export function RawMirror({
+  lines,
+  wrap = false,
+  className,
+  ref,
+}: {
+  lines: StyledLine[];
+  wrap?: boolean;
+  className?: string;
+  ref?: Ref<HTMLPreElement>;
+}) {
   return (
     <pre
+      ref={ref}
       className={cn(
-        "m-0 overflow-x-auto rounded-lg px-2 py-1.5 font-mono text-[11px] leading-[1.25] whitespace-pre",
+        "m-0 rounded-lg px-2 py-1.5 font-mono text-[11px] leading-[1.25]",
+        wrap ? "whitespace-pre-wrap wrap-anywhere" : "overflow-x-auto whitespace-pre",
         MIRROR_SPACE,
         MIRROR_INVERT,
+        className,
       )}
     >
       {lines.map((line, li) => (
