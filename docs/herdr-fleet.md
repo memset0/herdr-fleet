@@ -351,7 +351,8 @@ native Collie workflow.
 
 On a writable Herdr Pane drawn as the terminal mirror, the belt's Display sheet includes a `Resize`
 row directly below `Text size`, marked `Custom`. Collie's Chat body has its own Display rows and no
-`Resize`, because the action fits the shared PTY to the mirror. A tap measures the current terminal mirror, converts its usable width
+`Resize`, because the action fits the shared PTY to the mirror; Chat is Collie's default body for
+an agent Pane, so choose the terminal view from the Pane's ⋮ menu to reach it. A tap measures the current terminal mirror, converts its usable width
 to complete monospace cells, clamps the result to 20–500 columns, and preserves the trusted current
 viewport row count.
 

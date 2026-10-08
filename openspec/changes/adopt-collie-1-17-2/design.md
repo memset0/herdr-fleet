@@ -114,6 +114,20 @@ Before the fork's suite is deleted, each of its working-screen and dialog cases 
 upstream's reading, and the result is recorded below. A case other than the two accepted differences
 above that fails on upstream's code is reported to the owner. The port is not kept for it.
 
+**Record (task 4.1, on the merge commit, with upstream's `chrome.ts` and `index.ts` and the fork's
+suite still present).** Run against upstream's reading, 47 of the suite's 49 cases pass. These
+include all four working screens (`claude--manage-hint--w120`/`w73`,
+`claude--v2286-agents-interrupt-manage-hint--w120`/`w93`), the three one-hint working-turn variants,
+the mode line's trailing `Esc to cancel`, and upstream's own tasks and config dialog captures. The
+earlier widening (`esc to interrupt` and a trailing `↓ to manage` on the permission-mode line) is
+therefore covered upstream. Two cases fail, exactly the two scope differences above:
+
+- "still reads as a working screen with a right-aligned notice after the hint" is the accepted gap.
+- "the background panel with `↓ to manage` as its only footer hint is still a modal" fails because
+  upstream's exemption is not limited to the mode line. The case is synthetic: upstream's tasks
+  panel with its footer rewritten to that one hint. It is **reported to the owner** and not kept as
+  a port.
+
 ### 3. The Chat gate follows Chat as the default
 
 Collie 1.17.0 made Chat the default body of an agent Pane (ADR 0082). It removed the Experiments
@@ -124,8 +138,14 @@ Chat is neither chosen, warmed nor drawn. The port is one condition on upstream'
 chosen choice and the warming both require `renderContent === undefined`. Everything downstream of
 them (the ⋮ row, the sheet's switch, the window's poll, the handover and ready-body sequencing) stands
 down exactly as before. Collie's stored `paneView` is left alone for when the mirror is selected
-again. Find keeps upstream's `display && !chatShown` gate. The fork's `hasOutput` already feeds
-`display`.
+again. Find takes the fork's terminal-aware `hasOutput` with upstream's `!chatShown`. Upstream's
+`display` is empty under the terminal surface, and the terminal's cell-aware search is fork-owned.
+
+Git auto-merged upstream's switch props over the fork's gate: the Display sheet's `paneView` control
+and the pane menu's `paneView`, `onPaneViewChange` and `paneViewNote`. All three are restored to
+`chatOffered ? … : undefined`. The fork's case "draws the terminal surface and offers no Chat switch
+even when Chat is the standing body" fails with the gate replaced by `true`, which was checked, and
+passes with it in place.
 
 `fleet-pane-terminal` says "where this browser has opted into Collie's Chat body and chosen it". That
 opt-in no longer exists, so the requirement now says Collie's own body choice, Chat by default
