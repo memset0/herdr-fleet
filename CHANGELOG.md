@@ -23,6 +23,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 - **Adopt Collie 1.17.2.** Chat as the default pane body, the Files view and the Machines page, the dashboard's Crew, Dashboard and Files tabs and its Activity and Cache orders, the Tern multiplexer, experimental Windows support, Oh My Pi and Muse harness work, a command-line speech provider, an opt-in Cloudflare Access gate, crew invite addressing fixes and upstream's reader fixes, including its own reading of Claude's `esc to interrupt` and `↓ to manage` hints (#330).
 - **Retire the temporary Claude mode-line hint port.** Collie 1.15.2 reads `esc to interrupt` and `↓ to manage` itself (#330), so both Claude grammar call sites take upstream's text and the fork's recogniser, suite and fixtures are gone; a notice right-aligned after `↓ to manage` on the same row still reads as a dialog upstream.
+- **The Machines list and machine page fill the route column.** Collie 1.17's two new pages lose the centred reading column and header claim between the rails, as the Crew page did.
 
 ## [3.9.14] - 2026-10-06
 

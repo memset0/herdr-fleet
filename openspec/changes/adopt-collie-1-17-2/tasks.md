@@ -25,10 +25,10 @@
 
 ## 5. Review every entry and record the boundary
 
-- [ ] 5.1 Set `[upstream]` to `v1.17.2`; verify `bun scripts/check-fork.ts` reports no unclassified path and no stale anchor
-- [ ] 5.2 Review all remaining entries (keep, adapt, replace or drop), run each entry's bun and vitest `verify` files (browser tier excepted), and record the decisions table here
-- [ ] 5.3 Advance `reviewed = "v1.17.2"` on every entry; add the `UPSTREAM.md` row `3.10.0` → `1.17.2`; verify no version file moved
-- [ ] 5.4 Verify that `bun run test:fork`, `check-private-facts`, both typechecks, `bun run lint`, the build and `bun test ./fleet` pass; commit with an explicit pathspec
+- [x] 5.1 Set `[upstream]` to `v1.17.2`; verify `bun scripts/check-fork.ts` reports no unclassified path and no stale anchor
+- [x] 5.2 Review all remaining entries (keep, adapt, replace or drop), run each entry's bun and vitest `verify` files (browser tier excepted), and record the decisions table here
+- [x] 5.3 Advance `reviewed = "v1.17.2"` on every entry; add the `UPSTREAM.md` row `3.10.0` → `1.17.2`; verify no version file moved
+- [x] 5.4 Verify that `bun run test:fork`, `check-private-facts`, both typechecks, `bun run lint`, the build and `bun test ./fleet` pass; commit with an explicit pathspec
 
 ## 6. Verify (phase C, on a designated member — not in this phase)
 

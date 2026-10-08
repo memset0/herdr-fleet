@@ -1361,9 +1361,7 @@ describe("AgentList — the order toggle", () => {
     expect(headings()).toEqual(["pinned", "newest first(2)"]);
     const pinnedRegion = screen.getByRole("region", { name: "Pinned" });
     // delta (200) outranks alpha (100) inside Pinned, though alpha comes first in place order.
-    const inPinned = within(pinnedRegion)
-      .getAllByRole("button")
-      .map((b) => ["alpha", "delta"].find((n) => within(b).queryByText(n) !== null));
+    const inPinned = rowsIn(pinnedRegion).map((b) => ["alpha", "delta"].find((n) => within(b).queryByText(n) !== null));
     expect(inPinned).toEqual(["delta", "alpha"]);
     // Listed once: the rest are the ranked list.
     expect(names().slice(-2)).toEqual(["beta", "gamma"]);

@@ -193,11 +193,32 @@ AGENTS.md says Fleet resets every ingress and identity setting it decides. Makin
 Fleet-owned would also make a `config.toml` that names them refuse Fleet's start. That is a
 contract-visible decision, so it is not taken inside this adoption. It is reported to the owner.
 
+### 6a. The two new Machines pages fill the route column
+
+`fleet-native-navigation-sidebars` says no route may constrain itself to a centred reading column.
+Collie 1.17's `/machines` and `/machines/:id` (`web/src/routes/machines.tsx`, `machine.tsx`) arrive
+with the same `mx-auto … max-w-screen-sm` wrapper and `width="column"` header claim the Crew page had.
+Both lose the cap and the claim exactly as Crew did: two new invasive paths under
+`native-navigation-sidebars-port`, anchored on the uncapped wrapper class, with upstream's
+`machines.test.tsx` and `machine.test.tsx` joining its `verify` list. That is a narrow port, and
+without it the adoption would break a specified downstream behaviour. Collie's Changes route keeps
+the width ladder it already had at the previous adoption, which this change does not revisit.
+
 ### 7. `COLLIE_CHANGELOG.md`
 
-`v1.17.2`'s changelog becomes the file's byte-exact prefix. Whether a seam is needed depends on
-whether `v1.17.2`'s file still carries every entry the retained file has. This is checked at the
-merge and recorded here.
+`v1.17.2`'s changelog becomes the file's byte-exact prefix. The file is `v1.17.2`'s changelog
+verbatim, with no seam, because every retained release heading and entry is still carried. Two
+differences were found and are recorded here as decisions:
+
+- **An entry reworded in place.** Under `## [1.15.0]` → `### Fixed`, the entry "A URL an agent typed
+  as itself is now a link you can tap" now says "only a Markdown link ever became an anchor" where it
+  said "only a `[text](url)` link". It is the same release and the same commit (`623401a6`
+  precedes it in that section), so this is upstream's correction of its own record. The adopted
+  wording replaces the old one.
+- **A paragraph dropped from the header.** The "Coming from 0.x?" paragraph is gone from the file's
+  `## Upgrading` header. Upstream removed it deliberately in 1.16.1 ("Release pages and the
+  changelog no longer repeat the upgrade path from 0.x"). It is header prose, not a release entry,
+  so nothing is retained below a seam for it.
 
 ### 8. Release axis: MINOR, 3.9.14 → 3.10.0
 
@@ -210,6 +231,74 @@ after the full suites run on a designated member. The remote's newest tag is rea
 
 As before, the push ends this repository's part. The change is archived only after the operator
 reports the lead and the remaining member running 3.10.0, lead first.
+
+### 10. Entry review against `v1.17.2` (task group 5)
+
+Every entry's anchors were re-read in the merged tree, and its `verify` list was run file by file
+(browser tier excepted; that is phase C's). One entry was dropped (decision 2). Two upstream paths
+joined `native-navigation-sidebars-port` (decision 6a). Two upstream tests took scoping ports. One
+fork-owned test learned the Tern adapter. `reviewed = "v1.17.2"` is set on all 28 remaining entries.
+
+| entry | decision | reason |
+| --- | --- | --- |
+| `native-row-actions-menu-port` | keep | the strips auto-merged; no new header-only row reaches a strip pill |
+| `unnarrowed-pack-rows-port` | keep | the loaders auto-merged beside upstream's machines loaders |
+| `repository-guidance` | keep | symlink contract held; upstream's agreement not imported |
+| `fake-network-fleet-routes` | keep | Fleet's 404 sits beside upstream's new files and machines handlers |
+| `lint-parse-boundary` | adapt | upstream's `machine-parse.ts` and the fork's four files share the list (decision 4) |
+| `plugin-identity` | keep | only the version line conflicted |
+| `downstream-version-line` | keep | `COLLIE_CHANGELOG.md` verbatim (decision 7); the credit cases pass |
+| `fleet-build-port` | adapt | `fleet` included beside upstream's contract-test exclusion |
+| `native-agent-favorites-port` | adapt | upstream's order-toggle case reads only row-slot buttons in Pinned |
+| `pane-surface-route-port` | keep | the router auto-merged beside the Machines routes; the Chat gate rides `agent-chat.tsx` |
+| `native-pane-content-port` | keep | `renderContent` untouched |
+| `authenticated-navigation-cache` | keep | the worker's one change carries `machine` into notification data; network-first unchanged |
+| `native-manual-pane-fit-port` | adapt | `files` beside `resize`; `machines` beside `manualPaneFit`; the Chat gate on the default body (decisions 3, 4) |
+| `declined-centred-history-column` | keep | history untouched |
+| `native-navigation-sidebars-port` | adapt | Machines pages uncapped; the footer e2e case opens the needs-you switch, still scoped to main |
+| `native-pane-chrome-port` | keep | `paper` port intact |
+| `native-webfont-port` | keep | `maple` anchors intact |
+| `private-fact-guard-port` | keep | the hook is untouched upstream |
+| `composer-voice-rank-port` | keep | the record-control cases pass |
+| `fork-gate-in-ci` | keep | the step and fetch depth are intact |
+| `no-automatic-release-publication` | keep | `release.yml` gained Windows build jobs; the trigger is still `workflow_dispatch` only |
+| `upstream-removal-clock` | keep | reads `v1.17.2`; the `collie pack` alias stays until 2.0.0 |
+| `downstream-docs` | keep | the exclusion is unchanged |
+| `codex-headless-status-row-port` | keep | `markers.ts` is untouched upstream; the headless multi-item row is still unread |
+| `stt-deadline-runtime-port` | keep | `provider.ts` gained the `local-cli` provider; the anchor is intact, and the deadline and provider suites pass |
+| `stable-table-corpus-test` | keep | the sorted listing is intact beside upstream's new table captures |
+| `terminal-binding-pin-port` | keep | pins and the browser baseline are untouched |
+| `host-workspace-form-port` | keep | the new-space sheet is untouched |
+| `claude-manage-hint-port` | **drop** | upstream's `namesAModalKey` (#330), decision 2 |
+
+Tests settled at the boundary this time: `agent-list.test.tsx` "order: pins lead and are ranked
+inside themselves" (row-slot buttons). The fork-owned `native-agent-rail.test.tsx` "mark all seen"
+now reads the summary line's labelled count, because Collie 1.17 draws three or more counts bare,
+each with its word in an `aria-label`. The fork-owned `fleet/manual-pane-fit/capability.test.ts`
+now expects `tern: false`.
+
+#### Phase A/B record (2026-10-08, this host)
+
+- **Baseline.** `main` was `origin/main` (`420b6d52`, 3.9.14) plus the archive commit `f61470a5`.
+  `bun run test:fork` gave 20 pass, with the boundary at 854 owned and 103 invasive paths.
+  `bun test ./fleet` gave 655 pass and 0 fail.
+- **Commits.** The planning commit is `38cc4a4c`. The preflight (`--allow-active-changes`, authorized)
+  gave 21 disturbed, 8 untouched and no owned path occupied. The merge commit is `b8b0bf6c`, with
+  parents `38cc4a4c` and `3d562ae5`, committed with every hook armed. `bun install` changed neither
+  lockfile. The retirement commit is `1dc54049`.
+- **Results.** Both typechecks (root, including upstream's contract pass, and web) are clean. The
+  full-tree `bun run lint` is clean. `bun run build` passes. `bun run test:fork` passes, and the
+  boundary check is clean with no lagging entry. `check-version.sh` and `check-private-facts` pass.
+  `scripts/check-tag.test.sh` and `scripts/pre-commit.test.sh` pass. `bun test ./fleet` gave 655
+  pass and 0 fail.
+- **Verify lists.** All 64 bun `verify` files pass file by file. The 43 web `verify` files pass in
+  batches. All fork-owned web suites (`fleet-*`, `native-*`: 20 files, 269 tests) pass. The harness
+  tree (`src/lib/harness`) passes.
+- **Load timeouts.** Running `agent-chat.test.tsx` and `fleet-pane-route.test.tsx` inside a 58-file
+  parallel batch on this 3 GB host timed out eight cases at 5 s. Each file passes alone (166 / 0 and
+  5 / 0). This is load, not a regression, and the designated member's full run is the arbiter.
+- **Not run here,** by instruction: the full suites (`bun test ./bridge` hangs on this host), the
+  browser tier, the UI check and the rollback probe. These are phase C on a designated member.
 
 ## Risks / Trade-offs
 

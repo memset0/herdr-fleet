@@ -44,11 +44,10 @@ export function MachinesRoute() {
   const openAlerts = useCallback((row: MachineRow) => nav.down(machinePath(row.id, scope, "alerts")), [nav, scope]);
 
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-screen-sm flex-1 flex-col">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* The shell's own header, filled with a back button and the title, as on Crew and the Settings
           sections. Back goes up to Settings, never home (ADR 0067). */}
       <RouteHeader
-        width="column"
         override={
           <>
             <Button

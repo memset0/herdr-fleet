@@ -304,8 +304,9 @@ describe("mark all seen", () => {
     expect(button).toHaveAccessibleName("Mark 2 unseen panes seen");
     expect(button).toHaveTextContent(/Mark all seen\s*2/u);
     // The summary line still stands first in the same row, ahead of the control, above every row.
+    // Since Collie 1.17 a summary of three or more counts draws them bare and names each in its label.
     const row = button.parentElement!;
-    expect(row.firstElementChild).toHaveTextContent(/unseen/i);
+    expect(row.firstElementChild?.contains(screen.getByLabelText(/^2 unseen$/i))).toBe(true);
     expect(row.contains(rows()[0]!)).toBe(false);
   });
 
