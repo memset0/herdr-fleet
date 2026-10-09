@@ -37,7 +37,6 @@ export interface TerminalTools {
 }
 
 export const TERMINAL_SERVER_NAME = "ttyd";
-export const ATTACH_COMMAND_NAME = "herdr";
 
 /** The websocket path and subprotocol the terminal server serves. Its own, not ours. */
 export const SERVER_WS_PATH = "/ws";
@@ -49,10 +48,15 @@ export const SERVER_WS_PROTOCOL = "tty";
  * Nothing is a complete answer: a deployment without them offers no terminals, which the route
  * already knows how to say. Half an answer would be a Gateway that admits an upgrade and then fails
  * at the spawn, after the browser has been told it has a terminal.
+ *
+ * The attach command is resolved by the caller, through the one resolution every Fleet use of the
+ * multiplexer's command shares (`../herdr-command.ts`); only the terminal server is looked up here.
  */
-export function findTerminalTools(which: (name: string) => string | null): TerminalTools | null {
+export function findTerminalTools(
+  which: (name: string) => string | null,
+  attach: string | null,
+): TerminalTools | null {
   const server = which(TERMINAL_SERVER_NAME);
-  const attach = which(ATTACH_COMMAND_NAME);
   if (server === null || attach === null) return null;
   return { server, attach };
 }

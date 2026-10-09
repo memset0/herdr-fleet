@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import type { JsonValue } from "../../bridge/json.ts";
 import { jsonRecord, jsonStringField } from "../../bridge/stt/json.ts";
+import { HERDR_COMMAND_NAME, resolveHerdrCommand } from "../herdr-command.ts";
 
 export const MIN_PANE_FIT_COLS = 20;
 export const MAX_PANE_FIT_COLS = 500;
@@ -68,6 +69,11 @@ export function validPaneFitRows(value: number | undefined): value is number {
   );
 }
 
+function defaultBinary(env: NodeJS.ProcessEnv): string {
+  const resolved = resolveHerdrCommand({ env });
+  return resolved.ok ? resolved.path : HERDR_COMMAND_NAME;
+}
+
 export class ManualPaneFitControllerManager {
   private readonly leases = new Map<string, ControllerLease>();
   private readonly binary: string;
@@ -82,7 +88,9 @@ export class ManualPaneFitControllerManager {
     readonly env?: NodeJS.ProcessEnv;
   } = {}) {
     this.environment = options.env ?? process.env;
-    this.binary = options.binary ?? (this.environment.HERDR_BIN_PATH?.trim() || "herdr");
+    // The one resolution every Fleet use of the multiplexer's command shares. With nothing found the
+    // bare name is kept, and the spawn then fails closed as an ordinary unsuccessful resize.
+    this.binary = options.binary ?? defaultBinary(this.environment);
     this.spawn =
       options.spawn ??
       ((binary, args, spawnOptions) => nodeSpawn(binary, args, spawnOptions));

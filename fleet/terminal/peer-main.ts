@@ -1,6 +1,5 @@
-import { isAbsolute } from "node:path";
-
 import { FLEET_TERMINAL_ENV, parseFleetTerminalEnvelope } from "../config.ts";
+import { resolveHerdrCommand } from "../herdr-command.ts";
 import { ManualPaneFitControllerManager } from "../manual-pane-fit/controller.ts";
 import { createLocalPaneFit } from "../manual-pane-fit/local.ts";
 import { localSnapshotSource, localSocketPath, resolveTerminal } from "./resolve.ts";
@@ -27,9 +26,11 @@ async function main(): Promise<void> {
 
   // The attach command comes from the runtime this plugin is launched by, not from configuration:
   // it is the multiplexer's own binary, and a configuration that named a different one would be
-  // naming what this service attaches to.
-  const attach = Bun.which("herdr");
-  if (attach === null || !isAbsolute(attach)) throw new Error("the multiplexer command is not installed");
+  // naming what this service attaches to. Herdr states it as HERDR_BIN_PATH because the server's
+  // PATH, which this process inherits, need not contain it.
+  const herdr = resolveHerdrCommand();
+  if (!herdr.ok) throw new Error(herdr.diagnostic);
+  const attach = herdr.path;
   const tools: TerminalTools = { server: terminal.serverPath, attach };
 
   const sockets = await makeSocketDirectory();
@@ -40,8 +41,8 @@ async function main(): Promise<void> {
     resolve: (paneId) => resolveTerminal({ paneId }, snapshots),
     verifyExecutable: () => verifyExecutableDigest(terminal.serverPath, terminal.serverDigest),
     startServer: makeStartServer({ tools, socketDir: sockets.path }),
-    // The same multiplexer command the attach uses, so a fit drives the binary this service verified
-    // is installed rather than whatever an inherited override names.
+    // The same resolved multiplexer command the attach uses, so a fit and an attach on this machine
+    // always drive one Herdr.
     fit: createLocalPaneFit({
       source: snapshots,
       socketPath,

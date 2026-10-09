@@ -153,6 +153,8 @@ export interface TerminalServiceOptions {
   readonly limits?: SessionLimits | undefined;
   readonly log?: ((event: string, detail: Record<string, string | number>) => void) | undefined;
   readonly which?: ((name: string) => string | null) | undefined;
+  /** The multiplexer command to attach with, already resolved; `null` when none was found. */
+  readonly attach: string | null;
 }
 
 /**
@@ -166,7 +168,7 @@ export async function createTerminalService(
   options: TerminalServiceOptions,
 ): Promise<TerminalService | null> {
   const which = options.which ?? ((name: string) => Bun.which(name));
-  const tools = findTerminalTools(which);
+  const tools = findTerminalTools(which, options.attach);
   if (tools === null) return null;
   const socketDir = await makeSocketDirectory();
   return new TerminalService({

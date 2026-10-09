@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fleet finds `herdr` through `HERDR_BIN_PATH` before `PATH`.** A member whose Herdr server `PATH` lacks the `herdr` directory no longer loses its terminal service; terminal attach and Pane fit share one resolver that reports both sources when neither works.
+
 ## [3.11.0] - 2026-10-09
 
 **Every member redeploys, lead first; no operator configuration changes.** Manual Pane fit now runs

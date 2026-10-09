@@ -136,6 +136,7 @@ verify = [
   "fleet/collie-env.test.ts",
   "fleet/config.test.ts",
   "fleet/gateway.test.ts",
+  "fleet/herdr-command.test.ts",
   "fleet/lifecycle.test.ts",
   "fleet/login-ui.test.ts",
   "fleet/main.test.ts",

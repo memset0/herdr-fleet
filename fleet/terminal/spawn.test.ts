@@ -7,7 +7,6 @@ import { join } from "node:path";
 
 import type { Placement } from "./placement.ts";
 import {
-  ATTACH_COMMAND_NAME,
   SERVER_WS_PATH,
   SERVER_WS_PROTOCOL,
   TERMINAL_SERVER_NAME,
@@ -27,16 +26,14 @@ const at = (terminalId: string): Placement => ({ kind: "local", terminalId, pane
 
 describe("the two executables", () => {
   test("are found together or not at all", () => {
-    const found = findTerminalTools((name) =>
-      name === TERMINAL_SERVER_NAME ? TOOLS.server : name === ATTACH_COMMAND_NAME ? TOOLS.attach : null,
-    );
+    const found = findTerminalTools((name) => (name === TERMINAL_SERVER_NAME ? TOOLS.server : null), TOOLS.attach);
     expect(found).toEqual(TOOLS);
   });
 
   test("half an answer is no answer — a deployment simply offers no terminals", () => {
-    expect(findTerminalTools((name) => (name === TERMINAL_SERVER_NAME ? TOOLS.server : null))).toBeNull();
-    expect(findTerminalTools((name) => (name === ATTACH_COMMAND_NAME ? TOOLS.attach : null))).toBeNull();
-    expect(findTerminalTools(() => null)).toBeNull();
+    expect(findTerminalTools((name) => (name === TERMINAL_SERVER_NAME ? TOOLS.server : null), null)).toBeNull();
+    expect(findTerminalTools(() => null, TOOLS.attach)).toBeNull();
+    expect(findTerminalTools(() => null, null)).toBeNull();
   });
 });
 

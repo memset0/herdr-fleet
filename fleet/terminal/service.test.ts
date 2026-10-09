@@ -84,12 +84,13 @@ describe("the numbers, and their bounds", () => {
 
 describe("a deployment without the executables", () => {
   test("offers no terminals rather than half of one", async () => {
-    expect(await createTerminalService({ resolve: async () => ({ ok: false, reason: "no-terminal" }), isActive: async () => true, which: () => null })).toBeNull();
+    expect(await createTerminalService({ resolve: async () => ({ ok: false, reason: "no-terminal" }), isActive: async () => true, which: () => null, attach: "/synthetic/bin/herdr" })).toBeNull();
     expect(
       await createTerminalService({
         resolve: async () => ({ ok: false, reason: "no-terminal" }),
         isActive: async () => true,
         which: (name) => (name === "ttyd" ? "/synthetic/bin/ttyd" : null),
+        attach: null,
       }),
     ).toBeNull();
   });

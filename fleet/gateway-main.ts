@@ -3,6 +3,7 @@ import { createTodoistStore } from "./todoist/store.ts";
 import { dirname, isAbsolute, join } from "node:path";
 
 import { isFleetLeadConfig, loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
+import { resolveHerdrCommand } from "./herdr-command.ts";
 import { startGateway } from "./server.ts";
 import { createTagStore } from "./pane-tags/store.ts";
 import { SessionStore } from "./session-store.ts";
@@ -34,14 +35,18 @@ async function main(): Promise<void> {
   // A member's terminal endpoint comes from the same validated reachability list the Pack link is
   // projected from — a schema-1 lead has none, and therefore serves only its own Panes.
   const members = config.schemaVersion === 2 ? config.reachability : [];
+  // One multiplexer command for both the terminal attach and the manual Pane fit, resolved the way
+  // every Fleet child resolves it. Without one the lead serves neither for its own Panes; members are
+  // still asked through their own terminal services.
+  const herdrCommand = resolveHerdrCommand();
+  if (!herdrCommand.ok) log("herdr.unavailable", { diagnostic: herdrCommand.diagnostic });
+  const herdr = herdrCommand.ok ? herdrCommand.path : null;
   const terminal = await createTerminalService({
+    attach: herdr,
     resolve: leadResolver(snapshots, () => members),
     isActive: (session) => sessions.active({ version: 1, ...session }),
     log,
   });
-  // Manual Pane fit drives this machine's own multiplexer command. Without one, the lead cannot fit
-  // its own Panes; members are still asked through their own terminal services.
-  const herdr = Bun.which(process.env.HERDR_BIN_PATH?.trim() || "herdr");
   const paneFit =
     herdr === null
       ? null

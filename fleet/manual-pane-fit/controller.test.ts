@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 
 import {
@@ -214,5 +217,38 @@ describe("ManualPaneFitControllerManager", () => {
     expect(children[0]!.writes).toContain(`${JSON.stringify({ type: "terminal.release" })}\n`);
     expect(children.map((child) => child.killed)).toEqual([["SIGTERM"], ["SIGTERM"]]);
     expect(manager.activeCount).toBe(0);
+  });
+});
+
+describe("the controller's default binary", () => {
+  const made: string[] = [];
+  afterAll(async () => {
+    for (const dir of made) await rm(dir, { recursive: true, force: true });
+  });
+
+  async function spawnedBinary(env: NodeJS.ProcessEnv): Promise<string> {
+    const seen: string[] = [];
+    const manager = new ManualPaneFitControllerManager({
+      env,
+      spawn: (binary) => {
+        seen.push(binary);
+        return new FakeChild();
+      },
+      readyTimeoutMs: 1,
+    });
+    const pending = manager.resize("/sessions/demo/herdr.sock", "w1:p1", { cols: 72, rows: 31 });
+    manager.disposeAll();
+    await expect(pending).rejects.toBeInstanceOf(ManualPaneFitControllerError);
+    return seen[0] ?? "";
+  }
+
+  test("is the shared resolution: the stated binary outside PATH, else the bare name", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "herdr-fleet-fit-binary-"));
+    made.push(dir);
+    const binary = join(dir, "herdr");
+    await writeFile(binary, "#!/bin/sh\n");
+    await chmod(binary, 0o755);
+    expect(await spawnedBinary({ HERDR_BIN_PATH: binary, PATH: join(dir, "empty") })).toBe(binary);
+    expect(await spawnedBinary({ PATH: join(dir, "empty") })).toBe("herdr");
   });
 });
