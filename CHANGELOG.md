@@ -26,6 +26,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 - **The Machines list and machine page fill the route column.** Collie 1.17's two new pages lose the centred reading column and header claim between the rails, as the Crew page did.
 - **The Gateway owns authentication beneath it.** Collie's Cloudflare Access gate settings (`COLLIE_ACCESS_TEAM`, `COLLIE_ACCESS_AUD`) never reach the Collie child, and a Collie `config.toml` naming either refuses to start, naming the file and key.
 
+### Fixed
+
+- **The manifest's path check reads as a repository path under Collie 1.17's host guard.** Its separator is named once, and a leading slash is refused by the empty segment it leaves; a case pins every unsafe shape.
+
 ## [3.9.14] - 2026-10-06
 
 ### Changed

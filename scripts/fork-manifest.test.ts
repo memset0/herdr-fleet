@@ -39,6 +39,12 @@ describe("FORK.toml", () => {
     expect(() => parseForkManifest(valid.replace("package.json#fleet", "package*.json#fleet"))).toThrow("not exact");
   });
 
+  test("rejects a path that is not a plain repository path", () => {
+    for (const unsafe of ["/fleet/**", "fleet//x/**", "fleet/../x/**", "./fleet/**", "fleet\\x/**"]) {
+      expect(() => parseForkManifest(valid.replace('"fleet/**"', JSON.stringify(unsafe)))).toThrow("unsafe path");
+    }
+  });
+
   test("rejects a manifest that does not state which release each port was reviewed against", () => {
     expect(() => parseForkManifest(valid.replace('reviewed = "v1.2.0"\n', ""))).toThrow("reviewed must be a non-empty string");
     expect(() => parseForkManifest(valid.replace('reviewed = "v1.2.0"', 'reviewed = "1.2"'))).toThrow("reviewed is malformed");

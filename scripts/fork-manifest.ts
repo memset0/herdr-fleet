@@ -73,13 +73,17 @@ function textList(value: JsonValue | undefined, label: string): string[] {
   return strings;
 }
 
+/** The separator of a repository path as the manifest spells it, on every host. */
+const MANIFEST_SEPARATOR = /\//;
+
 function repositoryPath(path: string, label: string): void {
   const file = path.split("#", 1)[0] ?? "";
+  // A manifest path is a repository path, written with `/` on every host, never a host path: it is
+  // cut at that separator, and a leading `/` is refused by the empty first segment it leaves.
   if (
     file === "" ||
-    file.startsWith("/") ||
     file.includes("\\") ||
-    file.split("/").some((part) => part === "" || part === "." || part === "..")
+    file.split(MANIFEST_SEPARATOR).some((part) => part === "" || part === "." || part === "..")
   ) {
     throw new Error(`${label} contains unsafe path ${path}`);
   }
