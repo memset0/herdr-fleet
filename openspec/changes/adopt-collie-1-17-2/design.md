@@ -125,8 +125,11 @@ therefore covered upstream. Two cases fail, exactly the two scope differences ab
 - "still reads as a working screen with a right-aligned notice after the hint" is the accepted gap.
 - "the background panel with `↓ to manage` as its only footer hint is still a modal" fails because
   upstream's exemption is not limited to the mode line. The case is synthetic: upstream's tasks
-  panel with its footer rewritten to that one hint. It is **reported to the owner** and not kept as
-  a port.
+  panel with its footer rewritten to that one hint. **Accepted by the owner (2026-10-08)** together
+  with the right-aligned-notice gap. Both are to be reported upstream by the owner. This repository
+  opens no upstream issue or pull request.
+
+The fork's suite, including both of these cases, was removed with the port (`1dc54049`).
 
 ### 3. The Chat gate follows Chat as the default
 
@@ -183,15 +186,23 @@ Crew addressing (#334, 1.15.3) changed `collie crew invite`/`add`, which hand ou
 `--address <host:port>`, and the lead dials a peer's loopback projection with an explicit port.
 Fleet's enrolment and reachability are unaffected.
 
-### 6. The Cloudflare Access gate is left to an owner decision
+### 6. The Cloudflare Access gate is Fleet-owned
 
 Upstream 1.16 added an opt-in Access gate (`access_team`/`access_aud`, ADR 0081). When it is on, any
 request carrying forwarding headers must hold a verified `Cf-Access-Jwt-Assertion`. The Gateway sets
 `x-forwarded-host` and does not forward that header, so a Collie child with the gate on would refuse
 every request through the Gateway. It is off unless both settings are given, and Fleet sets neither.
 AGENTS.md says Fleet resets every ingress and identity setting it decides. Making these two
-Fleet-owned would also make a `config.toml` that names them refuse Fleet's start. That is a
-contract-visible decision, so it is not taken inside this adoption. It is reported to the owner.
+Fleet-owned would also make a `config.toml` that names them refuse Fleet's start.
+
+**Decided by the owner (2026-10-08): the Gateway owns authentication.** `COLLIE_ACCESS_TEAM` and
+`COLLIE_ACCESS_AUD` join `FLEET_OWNED_COLLIE_SETTINGS`. Fleet never sets them, so an inherited value
+is removed from the child's environment, and a machine or instance `config.toml` naming `access_team`
+or `access_aud` refuses the generation, naming the file and key and never the value. Both keys are
+new in this release, so no running deployment can be relying on them, and the axis stays MINOR.
+`fleet-runtime-configuration` carries the MODIFIED requirement. The fork-owned
+`fleet/collie-env.ts` and its suite carry the change and its two focused cases (an inherited gate on a
+lead and on a peer; each key in each file), and `docs/herdr-fleet.md` lists both names.
 
 ### 6a. The two new Machines pages fill the route column
 

@@ -35,6 +35,9 @@ for this adoption.
 - Review every invasive entry against `v1.17.2` and advance it to `reviewed = "v1.17.2"`. Set
   `[upstream]`, add the `UPSTREAM.md` row (`3.10.0` → `1.17.2`) and make `v1.17.2`'s changelog the
   byte-exact prefix of `COLLIE_CHANGELOG.md`.
+- **The Gateway owns authentication** (owner decision, 2026-10-08). Collie's new Cloudflare Access
+  gate settings `COLLIE_ACCESS_TEAM` and `COLLIE_ACCESS_AUD` become Fleet-owned. They are reset in
+  the child's environment, and a Collie `config.toml` naming either refuses the generation.
 - Release axis **MINOR, 3.9.14 → 3.10.0** (owner decision, 2026-10-08). The release is cut in a later
   phase, after the full suites have run on a designated member.
 
@@ -48,10 +51,8 @@ gate, crew invite and join addressing fixes (#334), and many reader fixes.
 **Non-goals:**
 
 - No specification of upstream behaviour, and no port beyond what the release requires.
-- No Fleet ownership of the new Collie settings (`COLLIE_ACCESS_TEAM`/`_AUD`, `COLLIE_MUX_ENDPOINT_TERN`,
-  `COLLIE_TERN_BIN`, `COLLIE_MUSE_ROOT`, `COLLIE_STT_COMMAND`, `COLLIE_TASK_RUN_LEVEL`) in this
-  change. Whether the Access gate joins `FLEET_OWNED_COLLIE_SETTINGS` is a separate owner decision
-  (design decision 6).
+- No Fleet ownership of the new Collie settings `COLLIE_MUX_ENDPOINT_TERN`, `COLLIE_TERN_BIN`,
+  `COLLIE_MUSE_ROOT`, `COLLIE_STT_COMMAND` and `COLLIE_TASK_RUN_LEVEL`.
 - No port of upstream's `CLAUDE.md` changes into `AGENTS.md`, as at every earlier adoption.
 - No release, tag or push in this phase. Deployment belongs to the private parent repository.
 
@@ -65,6 +66,7 @@ None. An adoption imports upstream behaviour, and upstream behaviour is not spec
 
 - `fleet-harness-compat`: the Claude mode-line hint exemption is removed. Upstream reads those hints
   itself since Collie 1.15.2.
+- `fleet-runtime-configuration`: Collie's Cloudflare Access gate settings are Fleet-owned.
 - `fleet-pane-terminal`: Chat is no longer an opt-in. Collie's own body choice, Chat by default since
   Collie 1.17, applies under the mirror, and the terminal surface still replaces it.
 

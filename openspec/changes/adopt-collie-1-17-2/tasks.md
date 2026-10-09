@@ -30,6 +30,11 @@
 - [x] 5.3 Advance `reviewed = "v1.17.2"` on every entry; add the `UPSTREAM.md` row `3.10.0` → `1.17.2`; verify no version file moved
 - [x] 5.4 Verify that `bun run test:fork`, `check-private-facts`, both typechecks, `bun run lint`, the build and `bun test ./fleet` pass; commit with an explicit pathspec
 
+## 5b. Owner decisions (2026-10-08)
+
+- [x] 5b.1 Make `COLLIE_ACCESS_TEAM` and `COLLIE_ACCESS_AUD` Fleet-owned with focused cases for the environment and both files; update `docs/herdr-fleet.md` and the `fleet-runtime-configuration` delta; verify `bun test ./fleet/collie-env.test.ts` passes
+- [x] 5b.2 Record both Claude scope differences as accepted in design decision 2 and the harness-compat delta; no upstream issue or pull request is opened here
+
 ## 6. Verify (phase C, on a designated member — not in this phase)
 
 - [ ] 6.1 Full suites: root `bun run test`, `cd web && bun run test`, `bun run test:crew`, and the shell suites

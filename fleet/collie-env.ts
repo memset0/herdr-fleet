@@ -23,6 +23,11 @@ import { isFleetLeadConfig, type FleetConfig } from "./config.ts";
  * that names any of these.
  */
 export const FLEET_OWNED_COLLIE_SETTINGS = [
+  // Collie's Cloudflare Access gate (ADR 0081). The Gateway is the authentication front door, and it
+  // forwards with `x-forwarded-host` and no Access token, so a gate turned on beneath it would refuse
+  // every request it proxies. Neither name is ever set; both are reset and refused in a config file.
+  "COLLIE_ACCESS_AUD",
+  "COLLIE_ACCESS_TEAM",
   "COLLIE_ALLOWED_ORIGINS",
   "COLLIE_ALLOW_ANY_HOST",
   "COLLIE_ALLOW_NON_LOOPBACK_BIND",

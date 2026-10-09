@@ -326,6 +326,9 @@ inherited value never decides one:
   `COLLIE_DEVICE_ALLOWLIST`, `COLLIE_DEVICE_HEADER`, `COLLIE_SERVE_MODE`, `COLLIE_SERVE_PORT`,
   `COLLIE_TAILSCALE_HOSTS`, `COLLIE_TRUSTED_USER`, `COLLIE_TRUSTED_USER_OPTIONAL` — always left unset,
   so Collie keeps its defaults and serves at the root the Gateway proxies.
+- `COLLIE_ACCESS_TEAM`, `COLLIE_ACCESS_AUD` — always left unset, so Collie's Cloudflare Access gate
+  stays off: the Gateway owns authentication, and a gate beneath it would refuse every request it
+  proxies.
 
 Collie also reads two `config.toml` files beneath its environment: the machine's
 (`~/.collie/config.toml`, or `COLLIE_CONFIG`) and the instance's, beside Fleet's own configuration.

@@ -73,6 +73,17 @@ describe("Fleet Collie child environment", () => {
     expect(inherited.COLLIE_HOST).toBe("0.0.0.0");
   });
 
+  test("an inherited Cloudflare Access gate never reaches Collie, on a lead or a peer", () => {
+    const inherited = { PATH: "/usr/bin", COLLIE_ACCESS_TEAM: "team-a", COLLIE_ACCESS_AUD: "aud-tag-a" };
+    for (const owner of [config, fleetTestPackPeerConfig()]) {
+      const env = collieChildEnv(owner, STATE, inherited);
+      expect(env.COLLIE_ACCESS_TEAM).toBeUndefined();
+      expect(env.COLLIE_ACCESS_AUD).toBeUndefined();
+    }
+    expect(settingByEnv("COLLIE_ACCESS_TEAM")?.key).toBe("access_team");
+    expect(settingByEnv("COLLIE_ACCESS_AUD")?.key).toBe("access_aud");
+  });
+
   test("keeps a peer loopback-only without public browser or Fleet credential values", () => {
     const env = collieChildEnv(fleetTestPackPeerConfig(), STATE, {
       PATH: "/usr/bin",
@@ -242,6 +253,20 @@ describe("Collie's configuration files cannot decide a Fleet-owned setting", () 
       expect(refusal(env)).not.toContain("someone@example.com");
       await writeFile(file, '[bridge]\nstate_dir = "/elsewhere"\n');
       expect(() => assertCollieConfigFilesCede(env)).toThrow(`${file} sets [bridge] state_dir`);
+    });
+  });
+
+  test("the Cloudflare Access gate is the Gateway's to decide, in either file", async () => {
+    await withDirs(async (env, home, configDir) => {
+      const machine = join(home, ".collie", "config.toml");
+      await writeFile(machine, '[access]\naccess_team = "team-a"\n');
+      expect(() => assertCollieConfigFilesCede(env)).toThrow(`${machine} sets [access] access_team, which Herdr Fleet owns`);
+      expect(refusal(env)).not.toContain("team-a");
+      await rm(machine);
+      const instance = join(configDir, "config.toml");
+      await writeFile(instance, '[access]\naccess_aud = "aud-tag-a"\n');
+      expect(() => assertCollieConfigFilesCede(env)).toThrow(`${instance} sets [access] access_aud, which Herdr Fleet owns`);
+      expect(refusal(env)).not.toContain("aud-tag-a");
     });
   });
 
