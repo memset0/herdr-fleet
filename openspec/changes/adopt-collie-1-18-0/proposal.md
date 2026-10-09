@@ -31,7 +31,7 @@ simplifications to land with the adoption, because the same ports are being re-r
   device again, so a stopped lead holds no live Gateway credential. The lead's readiness probe moves
   to `/api/health`. No operator action is needed.
 - **Fork strings leave upstream's dictionaries.** The fork's keys (about 185, `fleet.*` and a few
-  others) move from upstream's typed dictionaries into a fork-owned `web/src/lib/fleet-i18n.ts` with
+  others) move from upstream's typed dictionaries into a fork-owned `web/src/lib/fleet-i18n/` with
   `ft()`. It follows upstream's active locale through its exported snapshot and subscription, uses
   upstream's `interpolate`, carries the fork's seven languages and falls back to English. Upstream's
   twelve dictionaries carry no fork key.
@@ -89,7 +89,7 @@ None.
 - Predicted conflicts (`git merge-tree`): 21 paths, every one inside a declared entry. The preflight
   reports 19 disturbed and 11 untouched entries and no owned path occupied.
 - Fork-owned: `fleet/collie-pairing.ts`, `fleet/daemon.ts`, `fleet/runtime.ts`, `fleet/proxy.ts`,
-  `fleet/gateway.ts`, `fleet/gateway-main.ts`, `web/src/lib/fleet-i18n.ts` and every fork component
+  `fleet/gateway.ts`, `fleet/gateway-main.ts`, `web/src/lib/fleet-i18n/` and every fork component
   that reads a fork string, `fleet/stt-deadline.*` (removed), `FORK.toml`, `UPSTREAM.md`,
   `COLLIE_CHANGELOG.md`, `CHANGELOG.md`, `docs/herdr-fleet.md`.
 - Upstream paths returning to upstream's text: `bridge/server.ts`, `bridge/stt/provider.ts`, and the

@@ -114,7 +114,7 @@ inset unconditionally, because the band is an overlay below the header that owns
 
 ### 3. Fork strings in a fork-owned dictionary (B1)
 
-`web/src/lib/fleet-i18n.ts` carries the fork's English dictionary as the source of truth and its six
+`web/src/lib/fleet-i18n/` (`index.ts` and one file per language) carries the fork's English dictionary as the source of truth and its six
 other languages as lazily imported modules beside it, exactly as upstream splits its own. `ft(key,
 vars)` reads `getLocaleSnapshot().locale`, serves that language's fork dictionary once it has
 landed, English otherwise, and fills slots with upstream's `interpolate`. `useFleetLocale()` subscribes
