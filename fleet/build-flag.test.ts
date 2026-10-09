@@ -3,22 +3,20 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // The Fleet navigation shell is mounted only by a bundle built with VITE_HERDR_FLEET=1
-// (web/src/lib/fleet-build.ts). A Fleet bundle is built through exactly two routes, and a route that
-// lost the statement would ship a lead without its rails, so both are pinned here.
+// (web/src/lib/fleet-build.ts). Every production bundle — `collie build`, which Herdr's build step and
+// the lead's deployment both run, and `bun run build:web` — goes through web/package.json's `build`
+// script, so that one script states it. Upstream's browser tier calls `vite build` itself and does not.
 const root = resolve(import.meta.dir, "..");
 
 describe("every Fleet build states that it is one", () => {
-  test("the plugin's build script exports the flag before it builds", () => {
-    const script = readFileSync(resolve(root, "scripts/herdr-fleet.sh"), "utf8");
-    const exported = script.indexOf("\nexport VITE_HERDR_FLEET=1\n");
-    expect(exported).toBeGreaterThan(-1);
-    // It must be in force before the first build the script can start.
-    expect(exported).toBeLessThan(script.indexOf("collie-ctl.sh"));
+  test("the web build script sets the flag", () => {
+    const manifest = readFileSync(resolve(root, "web/package.json"), "utf8");
+    expect(manifest).toContain('"build": "VITE_HERDR_FLEET=1 vite build"');
   });
 
-  test("the root build script, which the deployment builds with, sets it", () => {
-    const manifest = readFileSync(resolve(root, "package.json"), "utf8");
-    expect(manifest).toContain('"build": "VITE_HERDR_FLEET=1 bun run cli/main.ts build"');
+  test("collie build produces the bundle through that script", () => {
+    const build = readFileSync(resolve(root, "cli/build.ts"), "utf8");
+    expect(build).toContain('["run", "build", "--", "--outDir", "dist-staging", "--emptyOutDir"]');
   });
 
   test("the browser reads the same name", () => {

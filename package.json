@@ -8,7 +8,7 @@
   "scripts": {
     "start": "bun run bridge/index.ts",
     "dev": "bun --watch bridge/index.ts",
-    "build": "VITE_HERDR_FLEET=1 bun run cli/main.ts build",
+    "build": "bun run cli/main.ts build",
     "build:web": "cd web && bun run build",
     "build:cli": "bun run scripts/build-cli.ts",
     "web:dev": "cd web && bun run dev",

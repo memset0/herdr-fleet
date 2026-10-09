@@ -30,17 +30,18 @@ at call time and answers true only for `"1"`. Vite inlines the value into a prod
 Vitest's `vi.stubEnv` can set it per test, which is why the read is a function rather than a module
 constant.
 
-The Fleet build sets the variable in the two places a Fleet bundle is built from:
+The variable is set in exactly one place: `web/package.json`'s `build` script
+(`VITE_HERDR_FLEET=1 vite build`). That file is already a declared port (its version), and every
+production bundle is built through that script — `collie build` runs it for Herdr's `[[build]]` step,
+the lazy first build at start and the lead's deployment (`bun run build` at the root), and
+`bun run build:web` calls it too. `fleet/build-flag.test.ts` pins the script and `collie build`'s use
+of it, so a route that loses the statement fails a fork test rather than shipping a shell-less lead.
+Upstream's own surfaces never set it: `cd web && bun run e2e` runs a bare `vite build`, and Vitest
+sets nothing, so upstream's browser tier and component suites meet Collie's own layout.
 
-- `scripts/herdr-fleet.sh` (fork-owned) exports it before every build it runs — Herdr's `[[build]]`
-  step and the lazy first build at start;
-- the root `package.json` `build` script (already invasive) prefixes it, because the lead's
-  deployment controller builds with `bun run build`.
-
-`fleet/build-flag.test.ts` asserts both, so a build route that loses the statement fails a fork test
-rather than shipping a shell-less lead. Upstream's own surfaces never set it: `cd web && bun run e2e`
-runs a bare `vite build`, and Vitest sets nothing, so upstream's browser tier and component suites
-meet Collie's own layout.
+An earlier draft prefixed the root `build` script and exported the variable from
+`scripts/herdr-fleet.sh`; upstream's `scripts/build-cli.test.ts` pins the root script's exact text,
+so that would have spent a new invasive path. The web script reaches every build route on its own.
 
 Rejected — a runtime cookie or a Gateway-injected marker: it puts a request-time decision on a
 structural layout, needs a first paint without the shell or a blocking read, and is the kind of

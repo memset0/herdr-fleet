@@ -21,10 +21,6 @@ bun_bin="$(find_bun)"
 [[ -n "$bun_bin" ]] || { printf 'herdr-fleet: Bun is required\n' >&2; exit 1; }
 
 export HERDR_PLUGIN_ROOT="${HERDR_PLUGIN_ROOT:-$root}"
-# Every bundle this script builds is a Fleet build: the browser mounts the Fleet navigation shell only
-# when the bundle was built with this set (web/src/lib/fleet-build.ts). The root `build` script sets it
-# too; fleet/build-flag.test.ts pins both.
-export VITE_HERDR_FLEET=1
 if [[ -z "${HERDR_FLEET_CONFIG:-}" && -n "${HERDR_PLUGIN_CONFIG_DIR:-}" ]]; then
   export HERDR_FLEET_CONFIG="${HERDR_PLUGIN_CONFIG_DIR}/fleet.toml"
 fi

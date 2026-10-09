@@ -21,7 +21,7 @@
 
 ## 4. The shell is a Fleet-build property
 
-- [x] 4.1 Add `web/src/lib/fleet-build.ts` and set `VITE_HERDR_FLEET=1` in `scripts/herdr-fleet.sh` and the root `build` script; pin both with `fleet/build-flag.test.ts`
+- [x] 4.1 Add `web/src/lib/fleet-build.ts` and set `VITE_HERDR_FLEET=1` in `web/package.json`'s `build` script, through which every production bundle is built; pin it with `fleet/build-flag.test.ts`
 - [x] 4.2 Gate `NativeNavigationShell` and `FleetSettingsSection` on the build; make the Pane route's mark follow the shell's presence
 - [x] 4.3 Move the shell-on layout cases from `root.test.tsx` into the shell's own suite with the flag stubbed on; stub it in every fork suite that needs the shell
 - [x] 4.4 Return `root.test.tsx`, `settings.test.tsx`, `motion.test.tsx`, `smoke.spec.ts`, `back-goes-up.spec.ts`, `pane-glide.spec.ts`, `dashboard-footer.spec.ts` to upstream's text and narrow `pinned-panes.spec.ts` to the favorites scoping; make `fleet-todoist.spec.ts` require a Fleet build

@@ -75,5 +75,5 @@ None.
   `web/e2e/pinned-panes.spec.ts` (only the favorites scoping remains), `web/src/lib/types.ts` and
   `web/src/lib/loaders.ts` (the version view's read and type move to a fork module).
 - Fork-owned: the shell's build gate, `web/src/lib/fleet-version-view.ts`, new fork test files, `fleet/tsconfig.json`,
-  `.github/workflows/fleet.yml`, `fleet/README.md`, `scripts/herdr-fleet.sh`.
+  `.github/workflows/fleet.yml`, `fleet/README.md`; `web/package.json` states the Fleet build.
 - Released as the MINOR the owner set for this work; every member redeploys.

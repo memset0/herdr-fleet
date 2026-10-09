@@ -20,8 +20,8 @@ cap inside them takes width from a terminal mirror rather than from emptiness, a
 declared in the fork manifest so an upstream release cannot reinstate it unreported.
 
 The shell SHALL be a property of the Fleet build, decided when the bundle is built and never at
-run time. Every build Fleet ships from — the plugin's own build step and the repository's root
-build — SHALL state that it is a Fleet build, and a bundle so built SHALL always mount the shell. A
+run time. Every production build of the browser bundle — the plugin's own build step, the
+repository's root build and the lead's deployment — SHALL state that it is a Fleet build, and a bundle so built SHALL always mount the shell. A
 bundle built without that statement, as upstream's component suites and browser tier build it,
 SHALL render Collie's own root layout: no rails, no hierarchy trigger in the header, and the Pane
 page's own switcher. Coverage of the shell-on layout, including how it nests Collie's header and
@@ -60,7 +60,7 @@ switcher as the wide-layout Agent rail.
 - **THEN** the existing Pane route, composer, strips, actions, manual fit, and thread switcher remain native outlet content without a framed copy
 
 #### Scenario: A bundle is built for Fleet
-- **WHEN** the plugin's build step or the root build produces the browser bundle
+- **WHEN** the plugin's build step, the root build or the lead's deployment produces the browser bundle
 - **THEN** that bundle mounts the shell on every route
 
 #### Scenario: A bundle is built without the Fleet statement
