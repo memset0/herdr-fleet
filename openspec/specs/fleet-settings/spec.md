@@ -91,8 +91,9 @@ talking to. A document present on another Pack member SHALL have no effect on wh
 - **THEN** the whole document is rejected, naming that binding, and nothing is applied
 
 ### Requirement: Fleet's settings stand together at the head of the Settings page
-The application's Settings page SHALL present every Fleet setting as one group before Collie's own
-settings, so the two are told apart at a glance. Each Fleet setting SHALL make clear whether it
+In a Fleet build, the application's Settings page SHALL present every Fleet setting as one group
+before Collie's own settings, so the two are told apart at a glance. A bundle built without the
+Fleet statement SHALL show Collie's Settings page alone. Each Fleet setting SHALL make clear whether it
 belongs to this browser or to the whole installation.
 
 Collie's own settings SHALL keep their existing content, order and behavior below that group.

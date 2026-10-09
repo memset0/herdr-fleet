@@ -52,7 +52,8 @@ and the folded bar is Collie's own, unchanged.
 
 ### Requirement: The Pane route declines the shared mark
 The application header SHALL let a route decline the Collie mark without taking the whole row, and
-the Pane route SHALL decline it. Every other route SHALL keep it. Declining the mark MUST NOT change
+the Pane route SHALL decline it while it stands inside the Fleet navigation shell. Every other route
+SHALL keep it, and so SHALL the Pane route in a bundle that mounts no shell. Declining the mark MUST NOT change
 the row's height, its safe-area handling, its prerelease strip, its rule, or any other route's
 header.
 
@@ -73,6 +74,10 @@ accessible wording, and SHALL leave when the connection returns.
 #### Scenario: The connection is lost while a Pane is open
 - **WHEN** the bridge stops answering while the Pane route owns the header and the operator dismisses the connection strip
 - **THEN** the connection badge is still visible in the header row, and it leaves when the bridge answers again
+
+#### Scenario: A Pane is opened in a bundle with no shell
+- **WHEN** a bundle built without the Fleet statement renders the Pane route
+- **THEN** the Collie mark is drawn on its header as upstream draws it
 
 ### Requirement: The Pane page's strips inherit the row-actions stand
 

@@ -29,7 +29,7 @@
 ## 5. Manifest, verification and release
 
 - [x] 5.1 Update `FORK.toml` to the new boundary, with the two corrected attributions; record before/after counts from `bun scripts/check-fork.ts`
-- [ ] 5.2 Run focused tests, both typechecks, lint, the build, `bun run test:fork` and the private-facts guard; add the CHANGELOG lines
-- [ ] 5.3 Push `main` unreleased and run the full suites on the remote test member against that exact commit, classifying every failure
-- [ ] 5.4 Cut the MINOR release, tag it annotated, push branch and tag by name
-- [ ] 5.5 Deploy the lead and every member except those excluded; verify versions in the lead's crew census and the lead's shell visually
+- [x] 5.2 Run focused tests, both typechecks, lint, the build, `bun run test:fork` and the private-facts guard; add the CHANGELOG lines
+- [x] 5.3 Push `main` unreleased and run the full suites on the remote test member against that exact commit, classifying every failure
+- [x] 5.4 Cut the MINOR release, tag it annotated, push branch and tag by name
+- [x] 5.5 Deploy the lead and every member except those excluded; verify versions in the lead's crew census and the lead's shell visually

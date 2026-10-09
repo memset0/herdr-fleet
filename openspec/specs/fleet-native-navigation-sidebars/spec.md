@@ -26,6 +26,14 @@ declines that, and every Settings page included, the index and each section it o
 cap inside them takes width from a terminal mirror rather than from emptiness, and the refusal is
 declared in the fork manifest so an upstream release cannot reinstate it unreported.
 
+The shell SHALL be a property of the Fleet build, decided when the bundle is built and never at
+run time. Every production build of the browser bundle — the plugin's own build step, the
+repository's root build and the lead's deployment — SHALL state that it is a Fleet build, and a bundle so built SHALL always mount the shell. A
+bundle built without that statement, as upstream's component suites and browser tier build it,
+SHALL render Collie's own root layout: no rails, no hierarchy trigger in the header, and the Pane
+page's own switcher. Coverage of the shell-on layout, including how it nests Collie's header and
+route column, SHALL live in fork-owned tests.
+
 The shell MUST NOT use an iframe, `postMessage`, frame cache, duplicate router, alternate Gateway
 model, or additional snapshot request. It MUST NOT repurpose the Pane page's existing thread
 switcher as the wide-layout Agent rail.
@@ -57,6 +65,14 @@ switcher as the wide-layout Agent rail.
 #### Scenario: Pane route remains native
 - **WHEN** the operator opens a Pane
 - **THEN** the existing Pane route, composer, strips, actions, manual fit, and thread switcher remain native outlet content without a framed copy
+
+#### Scenario: A bundle is built for Fleet
+- **WHEN** the plugin's build step, the root build or the lead's deployment produces the browser bundle
+- **THEN** that bundle mounts the shell on every route
+
+#### Scenario: A bundle is built without the Fleet statement
+- **WHEN** upstream's component suites or browser tier render the application
+- **THEN** they meet Collie's own root layout, with no rail, no hierarchy trigger and Collie's own Pane switcher
 
 ### Requirement: Wide layouts expose independent local sidebars
 On a wide viewport (from 80rem) Herdr Fleet SHALL display a local Host → Space → Tab → Pane hierarchy
