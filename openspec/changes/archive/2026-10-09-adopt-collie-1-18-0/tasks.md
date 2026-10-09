@@ -46,8 +46,8 @@
 
 ## 8. Release and level
 
-- [ ] 8.1 Read the remote's newest tag; cut `chore(release): 3.13.0`; annotated tag `v3.13.0`, pushed by name
-- [ ] 8.2 Level the lead, then each member; verify census, the Gateway path, pairing refusal, the registry and a throwaway terminal
+- [x] 8.1 Read the remote's newest tag; cut `chore(release): 3.13.0`; annotated tag `v3.13.0`, pushed by name
+- [x] 8.2 Level the lead, then each member; verify census, the Gateway path, pairing refusal, the registry and a throwaway terminal
 
 ## 9. Archive
 
@@ -60,3 +60,15 @@
   file 164 files 5040 / 0 (none hung), `test:crew` 66 / 0, every shell suite, web vitest 388 files
   20125 pass / 32 expected fail / 45 todo / 0 fail, build. No failure to classify. Upstream's Files-view
   failures recorded at the previous adoption on Bun 1.3.14 do not occur on 1.4.2. Browser tier not run.
+- 8.1 `chore(release): 3.13.0` is `9abe5780`, annotated tag `v3.13.0` pushed by name; no GitHub Release.
+- 8.2 Lead, the designated member and the personal-computer member all report `3.13.0+9abe5780` and
+  `reachable` in the lead's census; the fourth member was not touched and stays unreachable. Through the
+  public Gateway with a temporary session (revoked by logout afterwards, `401` after): the snapshot answers
+  `200`; replies to throwaway shells on the lead and the designated member land; federated pane reads of
+  both members answer; `POST /api/pair` and `POST /api/devices/revoke` answer `403` with the Gateway's own
+  body; the registry's only label is `fleet-gateway`; only the Gateway child's environment holds the token;
+  the proxied document policy carries the font origin in `style-src` and `font-src` only. On a throwaway
+  member pane, Resize answered `100×40` and a terminal attach opened, streamed and accepted input. The
+  throwaway workspaces were closed. The lead's deployment controller (private repository) reported a
+  readiness failure, because it still expects Collie's `/api/config` to answer `200` without a token;
+  the runtime itself was healthy.

@@ -15,6 +15,12 @@ decides the feature exists at all — a provider published by the bridge and a b
 after the field and the attach control and directly lead the send control, at the box's own control
 size and touch target.
 
+Where the adopted Collie's left-hand layout turns the pane screen round, the box's controls SHALL
+mirror with it: the record control SHALL stay directly beside the send control, on the field's side
+of it, and the attach control on the field's side of the record control, so the two controls the
+thumb reaches for stay together at the box's outer edge in either hand. The tab order SHALL be the
+one upstream's layout gives, unchanged by the mirroring.
+
 Both controls MUST keep the behavior they had as one shared slot: the record control starts a clip,
 ends a clip and carries the bridge's own reason when the provider cannot serve; the send control
 sends, and answers the destructive-input and override confirmations where those are armed.
@@ -38,6 +44,10 @@ sends, and answers the destructive-input and override confirmations where those 
 #### Scenario: The provider is configured but cannot serve
 - **WHEN** the bridge publishes a provider that reports itself unavailable
 - **THEN** the record control is drawn, refuses activation, and carries the bridge's own reason
+
+#### Scenario: The operator chooses the left-hand layout
+- **WHEN** the device's hand setting is left and the bridge publishes a usable provider
+- **THEN** the send control stands at the box's outer left edge, the record control directly beside it toward the field, and both remain separate controls
 
 ### Requirement: A live clip forbids sending
 While a clip is being recorded or transcribed, Herdr Fleet SHALL refuse to send the draft, on every
