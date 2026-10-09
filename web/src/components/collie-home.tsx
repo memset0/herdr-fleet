@@ -20,14 +20,6 @@ interface CollieHomeProps {
    *  the mark goes still again, muted — a mark that blooms forever reads as "still trying" when
    *  we've in fact given up; muted says "not connected" at a glance, matching the boot splash. */
   lost?: boolean;
-  /** DOWNSTREAM PORT — the ground this mark is knocked out against, as a CSS value.
-   *
-   *  The near-side beads are cut out in the header's own fill so they read as being in FRONT of the
-   *  head; a value that does not match the fill shows as a halo around them. It was `var(--background)`
-   *  written here, which is right for as long as the header is the page colour — and a shell that
-   *  fills that row differently has no way to say so. Defaults to the page, so a caller that says
-   *  nothing gets exactly Collie's own drawing. */
-  paper?: string;
   /** `navigator.onLine`, read by the host (the mark never calls the hook). Only picks which icon the
    *  lost badge wears, the same two the connection strip uses so the two agree: false is the phone's
    *  own fact (WifiOff), anything else is a bridge that does not answer (CloudOff). */
@@ -139,7 +131,6 @@ export function CollieHome({
   lost = false,
   online = true,
   lastSeenAt,
-  paper = "var(--background)",
   className,
 }: CollieHomeProps) {
   useLocale();
@@ -352,8 +343,8 @@ export function CollieHome({
           SIZES the header; it just stops being the short child. Keep the two numbers apart: 40 is the
           mark, 44 is the touchable box it is centred in.
 
-          `paper` is the header's own ground, which the caller states because a downstream shell may
-          fill that row with something other than the page (app-header.tsx). It is the colour of the knockout that
+          `paper` is the header's own ground, which is `bg-background` (app-header.tsx — chrome is
+          the page colour, separated by a rule, not a fill). It is the colour of the knockout that
           makes a near-side bead read as being IN FRONT of the head; anything else shows up as a
           halo around those beads, so this value tracks the ground and is not a taste choice. The
           two are COUPLED and the coupling is easy to forget, so app-header.test.tsx fails if the
@@ -373,7 +364,7 @@ export function CollieHome({
           size={40}
           weight="header"
           loading={bloom || ((round || busy) && !lost)}
-          paper={paper}
+          paper="var(--background)"
           className={cn("transition-opacity", lost && "opacity-40 grayscale")}
         />
         {/* THE LOST BADGE. The strip under the header says the connection is gone, and the operator can

@@ -104,8 +104,8 @@ describe("the header — the one shared shell", () => {
     const header = container.querySelector("header");
     expect(header).not.toBeNull();
     const fill = /(?:^|\s)bg-([a-z][a-z-]*)(?:\/\d+)?(?=\s|$)/.exec(header?.className ?? "");
-    // A bare token, no `/opacity`: the fill is a colour outright, never a wash over content.
-    expect(fill?.[0].trim()).toBe("bg-chrome");
+    // A bare token, no `/opacity`: chrome is the page colour outright, never a wash over content.
+    expect(fill?.[0].trim()).toBe("bg-background");
     expect(markPaper(container)).toBe(`var(--${fill?.[1]})`);
   });
 
@@ -270,18 +270,6 @@ describe("the header — the dog keys on trouble/lost, not the first not-live fr
       renderHeader(<Header bridge="connected" error onHome={() => {}} />);
       act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
       expect(screen.getByRole("button", { name: "Collie home — not connected" })).toBeInTheDocument();
-    });
-
-    // DOWNSTREAM PORT (FORK.toml native-pane-chrome-port): the Pane route declines the mark, and the
-    // badge must not leave with it (fleet-pane-chrome).
-    it("stays in the row, with the mark's words, on a route that declines the mark", () => {
-      const fleetBadge = (root: ParentNode) => root.querySelector('[data-slot="fleet-lost-badge"]');
-      const { container } = renderHeader(<Header bridge="connected" error mark={false} onHome={() => {}} />);
-      expect(fleetBadge(container)).toBeNull();
-      act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
-      expect(screen.queryByRole("button", { name: "Collie home — not connected" })).toBeNull();
-      expect(fleetBadge(container)?.getAttribute("data-icon")).toBe("cloud-off");
-      expect(screen.getByRole("img", { name: "Collie home — not connected" })).toBeInTheDocument();
     });
   });
 });
@@ -824,44 +812,6 @@ describe("the ONE header — hoisted above the outlet", () => {
     await go("/settings");
     expect(header?.className).toContain("max-w-screen-sm");
     for (const step of LADDER.slice(1)) expect(header?.className).not.toContain(step);
-  });
-
-  it("renders a downstream leading node before the mark, and never over an override row", async () => {
-    // The one port the Fleet shell needs in this file: a slot at the start of the row. It is drawn
-    // BEFORE the mark, so the shell's navigation control is where a thumb reaches for it, and it is
-    // inside the non-override branch, so a route that takes the whole row still owns every pixel.
-    const router = createMemoryRouter(
-      [
-        {
-          id: ROOT_ROUTE_ID,
-          path: "/",
-          element: (
-            <AppHeaderHost
-              bridge="connected"
-              error={false}
-              leading={<button type="button">Open Herds</button>}
-            >
-              <Outlet />
-            </AppHeaderHost>
-          ),
-          children: [
-            { index: true, element: <DashRoute /> },
-            { path: "settings", element: <SettingsLikeRoute /> },
-          ],
-        },
-      ],
-      { initialEntries: ["/"] },
-    );
-    const { container } = render(<RouterProvider router={router} />);
-    const leading = screen.getByRole("button", { name: "Open Herds" });
-    const mark = screen.getByRole("button", { name: "Collie home" });
-    expect(leading.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(container.querySelector('[data-slot="header-row"]')?.contains(leading)).toBe(true);
-
-    await act(async () => {
-      await router.navigate("/settings");
-    });
-    expect(screen.queryByRole("button", { name: "Open Herds" })).toBeNull();
   });
 
   it("refuses to render a route header with no host above it", () => {

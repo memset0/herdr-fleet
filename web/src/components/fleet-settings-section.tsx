@@ -21,6 +21,7 @@ import {
   paneSurfaceStore,
 } from "../../../fleet/ui/terminal/switch.ts";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
+import { isFleetBuild } from "@/lib/fleet-build";
 
 /**
  * Everything this fork adds to Settings, in one group, at the head of the page.
@@ -36,6 +37,12 @@ import { ft, useFleetLocale } from "@/lib/fleet-i18n";
  * INSTALLATION behaves is one file every browser reads.
  */
 export function FleetSettingsSection() {
+  // Fleet's group belongs to a Fleet build; any other bundle shows Collie's Settings alone.
+  if (!isFleetBuild()) return null;
+  return <FleetSettingsGroup />;
+}
+
+function FleetSettingsGroup() {
   useFleetLocale();
   return (
     <section aria-labelledby="fleet-settings-heading" className="flex flex-col gap-4">

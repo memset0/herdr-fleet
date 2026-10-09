@@ -17,9 +17,6 @@ const DOCS_DIR = join(import.meta.dir, "..", "docs");
 function pagesOnDisk(): string[] {
   return readdirSync(DOCS_DIR)
     .filter((n) => n.endsWith(".md"))
-    // DOWNSTREAM PORT (FORK.toml downstream-docs): the Fleet runtime's own page is not a `collie`
-    // manual page, so the binary does not embed it and this registry does not expect it.
-    .filter((n) => n !== "herdr-fleet.md")
     .map((n) => n.slice(0, -".md".length))
     .toSorted();
 }

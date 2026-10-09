@@ -30,11 +30,7 @@ test("the app shell renders on /", async ({ page }) => {
   // workspace label out of `fixtureSnapshot` is the shortest proof of that. It is addressed as the
   // dashboard's section heading: the label also names an <option> in the Workspace select, which is
   // never "visible" to a text query.
-  // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Fleet Herds rail names the same
-  // workspace and is hidden below its breakpoint, so the heading is looked for in the route.
-  await expect(
-    page.getByRole("main").getByRole("heading", { name: fixtureWorkspaces[0]!.label, exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: fixtureWorkspaces[0]!.label, exact: true })).toBeVisible();
 });
 
 // The reason the service-worker cases can live in this tier at all. Recorded as a case rather than

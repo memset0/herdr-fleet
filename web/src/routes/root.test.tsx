@@ -210,13 +210,7 @@ describe("RootLayout — the safe-area inset is reserved exactly once", () => {
 
   /** Every element reserving the top inset, anywhere in the app's column. */
   function reservations(container: HTMLElement) {
-    // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Fleet shell's two rails are
-    // columns BESIDE this one, each reserving the inset for itself as the header does (asserted in
-    // native-navigation-shell.test.tsx), and its hierarchy drawer is a fixed layer over the whole
-    // viewport that clears the notch for itself, as the sheet primitive does. Neither is this column.
-    return [...container.querySelectorAll("[class*='safe-area-inset-top']")].filter(
-      (el) => el.closest("[data-slot='native-navigation-shell'] aside, #fleet-hierarchy-overlay") === null,
-    );
+    return container.querySelectorAll("[class*='safe-area-inset-top']");
   }
 
   it("gives it to the header while a strip is showing, and to nothing in the band", async () => {
@@ -280,9 +274,7 @@ describe("RootLayout — the header comes first, the band under it, the route la
     expect(follows(header!, strip)).toBe(true);
     expect(follows(strip, route)).toBe(true);
     // The header is the column's FIRST child: nothing paints above the bar, in any state.
-    // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Fleet shell's rails stand
-    // beside the route's column, so the column the header heads is the shell's route column.
-    const column = container.querySelector("[data-slot='native-route-column']");
+    const column = container.querySelector(".flex.h-\\(--app-h\\).flex-col");
     expect(column?.firstElementChild).toBe(header);
   });
 });

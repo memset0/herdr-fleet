@@ -13,6 +13,17 @@ import type { HomeData } from "@/lib/loaders";
 import { NativeHierarchyToggle, useNativePaneSwitcher } from "./native-navigation-context";
 import { NativeNavigationShell } from "./native-navigation-shell";
 import { StripHost, StripSlot } from "./ui/strip-host";
+import { RootLayout } from "@/routes/root";
+import { ROOT_ROUTE_ID } from "@/lib/loaders";
+
+// The shell is a property of a Fleet build (lib/fleet-build.ts). Every case here is about the Fleet
+// layout, so the suite states the build; the one case about a bundle without it unstubs it.
+beforeEach(() => {
+  vi.stubEnv("VITE_HERDR_FLEET", "1");
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const pane = {
   paneId: "p1",
@@ -1069,5 +1080,85 @@ describe("mark all seen from the Agents rail", () => {
 
     await userEvent.click(within(sheet).getByRole("button", { name: "Mark 2 unseen panes seen" }));
     await waitFor(() => expect(reads).toHaveLength(4));
+  });
+});
+
+// How the shell composes with Collie's own root layout, in a Fleet build: the rails are the outermost
+// columns, and the one header, its band and the route stand in the column between them. Collie's
+// own root suite asserts the same layout without the shell; these are the shell-on halves of it.
+describe("the shell inside Collie's root layout", () => {
+  const offered: HomeData = {
+    ...data,
+    update: {
+      current: "1.4.1",
+      latest: "1.5.0",
+      latestUrl: null,
+      releaseAvailable: true,
+      majorAvailable: null,
+      majorUrl: null,
+      bridgeStale: false,
+      checkedAt: 0,
+    },
+  };
+
+  function renderRoot(loaded: HomeData) {
+    const router = createMemoryRouter(
+      [
+        {
+          id: ROOT_ROUTE_ID,
+          path: "/",
+          loader: () => loaded,
+          element: <RootLayout />,
+          children: [{ index: true, element: <div>dashboard</div> }],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    return render(<RouterProvider router={router} />);
+  }
+
+  it("heads the route column with the header, then the band, then the route", async () => {
+    const { container } = renderRoot(offered);
+    const strip = await screen.findByText(/Collie 1.5.0 available/);
+    const header = container.querySelector("header");
+    const route = screen.getByText("dashboard");
+    const column = container.querySelector("[data-slot='native-route-column']");
+    expect(column?.firstElementChild).toBe(header);
+    expect(column?.contains(strip)).toBe(true);
+    expect(column?.contains(route)).toBe(true);
+    const follows = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(header!, strip)).toBe(true);
+    expect(follows(strip, route)).toBe(true);
+    // The rails are columns BESIDE the route column, never inside it.
+    for (const aside of container.querySelectorAll("[data-slot='native-navigation-shell'] aside")) {
+      expect(column?.contains(aside)).toBe(false);
+    }
+  });
+
+  it("reserves the top inset once in the route column, in the header", async () => {
+    const { container } = renderRoot(offered);
+    await screen.findByText(/Collie 1.5.0 available/);
+    const column = container.querySelector("[data-slot='native-route-column']")!;
+    const reserving = column.querySelectorAll("[class*='safe-area-inset-top']");
+    expect(reserving).toHaveLength(1);
+    expect(reserving[0]).toBe(column.querySelector("header"));
+  });
+
+  it("puts the header on the chrome ground from the column, leaving Collie's fill token alone", async () => {
+    const { container } = renderRoot({ ...data });
+    await waitFor(() => expect(container.querySelector("header")).not.toBeNull());
+    const column = container.querySelector("[data-slot='native-route-column']");
+    expect(column?.className).toContain("[&>header]:[--background:var(--chrome)]");
+    expect(container.querySelector("header")?.className).toMatch(/(?:^|\s)bg-background(?:\s|$)/);
+  });
+
+  it("renders Collie's own layout, with no shell, in a bundle that is not a Fleet build", async () => {
+    vi.stubEnv("VITE_HERDR_FLEET", "");
+    const { container } = renderRoot({ ...data });
+    await screen.findByText("dashboard");
+    expect(container.querySelector("[data-slot='native-navigation-shell']")).toBeNull();
+    expect(container.querySelector("[data-slot='native-route-column']")).toBeNull();
+    expect(screen.queryByRole("button", { name: /hierarchy|herds/i })).toBeNull();
   });
 });

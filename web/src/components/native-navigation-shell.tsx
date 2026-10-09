@@ -82,6 +82,7 @@ import { useSpaceActions } from "@/hooks/use-spaces";
 import { paneName } from "@/lib/pane-name";
 import { isReadOnly, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { isFleetBuild } from "@/lib/fleet-build";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 interface NativeNavigationShellProps {
@@ -112,7 +113,15 @@ interface NativeNavigationShellProps {
  */
 const MISSED_SWEEP_MS = 20_000;
 
-export function NativeNavigationShell({
+export function NativeNavigationShell(props: NativeNavigationShellProps) {
+  // A Fleet build mounts the shell; any other bundle renders Collie's own root layout untouched —
+  // no rails, no navigation context, so the header's leading trigger and the Pane page's switcher
+  // port answer nothing and the Pane keeps its mark (lib/fleet-build.ts).
+  if (!isFleetBuild()) return props.children;
+  return <FleetNavigationShell {...props} />;
+}
+
+function FleetNavigationShell({
   data,
   children,
   preferenceStore = nativeNavigationPreferences,
@@ -634,7 +643,12 @@ export function NativeNavigationShell({
           data-slot="native-route-column"
           aria-hidden={hierarchyOpen}
           inert={hierarchyOpen ? true : undefined}
-          className="flex min-w-0 flex-1 flex-col"
+          // THE HEADER STANDS ON THE CHROME GROUND, set from here rather than in Collie's header. The
+          // header it holds as its first child keeps upstream's `bg-background` fill and the mark keeps
+          // upstream's `var(--background)` knockout; scoping that one variable to the chrome value on
+          // the header moves both together, so they cannot disagree and no halo can form. The route
+          // and the mirror below keep the page colour.
+          className="flex min-w-0 flex-1 flex-col [&>header]:[--background:var(--chrome)]"
         >
           {children}
         </div>

@@ -86,8 +86,10 @@ function isApiPath(pathname: string): boolean {
  * third: the path this route writes to is resolved at startup and is never the client's to name.
  */
 function settingsWriteBody(value: JsonValue): { document: string; version: string } | null {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parse boundary (ADR 0019's class): the settings route's request body, narrowed to exactly the two fields the route accepts.
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const { document, version } = value;
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parse boundary (ADR 0019's class): the settings route's request body, narrowed to exactly the two fields the route accepts.
   if (typeof document !== "string" || typeof version !== "string") return null;
   return { document, version };
 }

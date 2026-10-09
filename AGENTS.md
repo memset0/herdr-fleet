@@ -35,7 +35,7 @@ it mirrors. That surface holds the Pane's geometry while a browser is attached a
 the browser leaves, which is what makes the ADR's objection — that resizing fights the person at the
 keyboard — bounded here rather than true. The ADR's other objection, that these verbs are unverified,
 was answered by probing them first; the findings are in
-[`docs/herdr-fleet.md`](./docs/herdr-fleet.md) and the reasoning in that change's `design.md`.
+[`fleet/README.md`](./fleet/README.md) and the reasoning in that change's `design.md`.
 The terminal surface SHALL always use `terminal attach <terminal-id> --takeover` on lead and peer,
 displacing an external Herdr attachment. Fleet SHALL still share one establishment per placement and
 refuse a second browser client without displacing the first; takeover is never a duplicate-start fix.
@@ -331,7 +331,12 @@ kind must come from the install kind (`cli/install-kind.ts`), never assume one.
   roughly 7 GB of RAM, which bricked installs on ordinary boxes (1.0.0-beta.44). The mux-name check
   left with it; CI covers it through `scripts/check-mux-names.test.ts`.
 - **A finding is fixed in the code, never suppressed and never cleared by downgrading a rule.**
-  There are zero `oxlint-disable` comments in the tree and that is the policy. A `// SAFETY:`
+  Upstream's tree carries zero `oxlint-disable` comments and that is the policy. **The fork's one
+  exception, by its boundary rule:** a fork-owned file that IS a parse boundary of the class ADR 0019
+  exempts suppresses `anti-slop/no-runtime-typeof` at the line, with an
+  `// oxlint-disable-next-line anti-slop/no-runtime-typeof -- <reason>` comment, rather than joining a
+  block in `.oxlintrc.json`, which is upstream's file and stays upstream's text. No other rule and no
+  other shape of suppression is allowed. A `// SAFETY:`
   comment must state the invariant that makes the assertion sound — "safe, trust me" clears the
   rule and fails review.
 - **Changing what's enforced goes through the rationale table in
@@ -615,7 +620,7 @@ What the design settles, and what a later change must not quietly undo:
 `COLLIE_STATE_DIR` — the directory it validates trust in, since Collie ignores
 `HERDR_PLUGIN_STATE_DIR` — and resets every ingress, identity, base-path and crew-timing setting it
 decides. A Collie `config.toml`, machine or instance, that sets one of those refuses Fleet's start,
-and Fleet never writes either file; the list is in [`docs/herdr-fleet.md`](./docs/herdr-fleet.md).
+and Fleet never writes either file; the list is in [`fleet/README.md`](./fleet/README.md).
 From 3.5.0 the 1.7/1.8 crew-wire overlap is gone: the lead and every member run 3.5.0 or later, and a
 state directory holding only 1.7.0's `pack-*.json` names is refused with Collie's own notice.
 

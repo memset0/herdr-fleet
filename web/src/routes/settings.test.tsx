@@ -131,11 +131,7 @@ describe("SettingsRoute — the index", () => {
     // has exactly one interactive element per section and nothing else with a switch role.
     renderSettings();
     await screen.findByRole("button", { name: /Appearance/ });
-    // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the fork's own group stands at the
-    // head of the index by design (fleet-settings), so only Collie's controls are counted here.
-    const collie = (role: string) =>
-      screen.queryAllByRole(role).filter((el) => el.closest('section[aria-labelledby="fleet-settings-heading"]') === null);
-    expect(collie("switch")).toHaveLength(0);
-    expect(collie("combobox")).toHaveLength(0);
+    expect(screen.queryAllByRole("switch")).toHaveLength(0);
+    expect(screen.queryByRole("combobox")).toBeNull();
   });
 });

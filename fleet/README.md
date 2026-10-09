@@ -364,7 +364,7 @@ The actions do not enable Push automatically. Generate initial keys only when in
 existing Fleet `restart` action so the running bridge reads them, then enable notifications in each
 browser through Collie's Settings → Alerts. The fixed `push-keys` action cannot rotate existing keys; forced
 rotation and subscription list/forget operations remain terminal commands because they require
-explicit arguments or review. See [`voice-and-push.md`](voice-and-push.md#web-push-optional) for the
+explicit arguments or review. See [`voice-and-push.md`](../docs/voice-and-push.md#web-push-optional) for the
 native Collie workflow.
 
 ## Manual Pane fit

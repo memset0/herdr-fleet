@@ -83,6 +83,7 @@ function readViewport(payload: Uint8Array): BrowserMessage {
   } catch {
     return { kind: "rejected", why: "malformed-viewport" };
   }
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parse boundary (ADR 0019's class): a live WebSocket frame's parsed value, narrowed here to two integer fields before either sizes a real terminal.
   if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
     return { kind: "rejected", why: "malformed-viewport" };
   }

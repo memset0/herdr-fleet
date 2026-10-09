@@ -234,13 +234,7 @@ export function AppHeaderHost({ bridge, error, lastSeenAt, leading, children }: 
           state it — otherwise the dashboard's 640px rule would silently become the viewport's. */}
       <header
         className={cn(
-          // DOWNSTREAM PORT — `bg-chrome`, not `bg-background`. Upstream draws the header as the
-          // page colour separated by a rule, which is right when the header is the only chrome on
-          // screen. Under the Fleet shell it is one of three chrome surfaces around the content —
-          // two rails and this row — and a header the same colour as the route it heads read as
-          // part of it. --chrome is the raised ground the composer dock already stands on, so the
-          // three agree and the page and the mirror keep theirs.
-          "sticky top-0 z-20 flex flex-col border-b bg-chrome",
+          "sticky top-0 z-20 flex flex-col border-b bg-background",
           /*
            * THE NOTCH IS THIS BAR'S, ALWAYS. The header is the first thing on the screen in every
            * state: the strip band (`ui/strip-host.tsx`) hangs UNDER it as an overlay, never above it,
@@ -313,9 +307,6 @@ export function AppHeaderHost({ bridge, error, lastSeenAt, leading, children }: 
                     lost={lost}
                     online={online}
                     lastSeenAt={lastSeenAt}
-                    // Coupled to the row's fill above, and app-header.test.tsx fails if the two ever
-                    // name different tokens.
-                    paper="var(--chrome)"
                   />
                 ) : (
                   // DOWNSTREAM PORT (FORK.toml native-pane-chrome-port): a route that declines the

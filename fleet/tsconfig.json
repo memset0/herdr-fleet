@@ -1,0 +1,8 @@
+// Herdr Fleet's own TypeScript gate. It extends Collie's root configuration, so the Fleet runtime is
+// held to exactly the root's rules, and it is run by the root `typecheck` script — the one root
+// entry point `collie build` and CI already call — so Collie's own tsconfig.json needs no edit.
+{
+  "extends": "../tsconfig.json",
+  "include": ["."],
+  "exclude": []
+}

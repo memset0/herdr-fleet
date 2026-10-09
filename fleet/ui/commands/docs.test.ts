@@ -7,7 +7,7 @@ import { defaultBindings } from "./catalog.ts";
 // The public documentation and the executable catalog have to agree, and prose drifts. These are the
 // facts a reader would act on, checked against the code rather than proofread.
 
-const DOC = await Bun.file(new URL("../../../docs/herdr-fleet.md", import.meta.url)).text();
+const DOC = await Bun.file(new URL("../../README.md", import.meta.url)).text();
 
 /** The section this change owns, so a claim elsewhere in the document is not this test's business. */
 const SECTION = DOC.slice(DOC.indexOf("## Keyboard commands"), DOC.indexOf("## Retained Collie"));

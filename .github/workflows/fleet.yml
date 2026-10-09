@@ -1,0 +1,55 @@
+name: Fleet
+
+# Herdr Fleet's own gates, beside Collie's `ci.yml` rather than inside it, so upstream's workflow stays
+# upstream's text (FORK.toml fleet-ci). Collie's jobs still run every upstream check; this file adds
+# what only this fork has.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: fleet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fork:
+    name: fork boundary + Fleet suites
+    runs-on: ubuntu-latest
+    steps:
+      # Full history, not the default shallow fetch: the boundary check diffs this tree against the
+      # Collie commit FORK.toml records, and a depth-1 checkout does not contain it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+
+      # Every changed path is classified owned or invasive, every port names the release it was last
+      # reviewed against, and Collie's retained history still begins with the adopted release.
+      - name: Fork boundary
+        run: bun run test:fork
+
+      - name: Install (root)
+        run: bun install --frozen-lockfile
+      - name: Test (fleet)
+        run: bun run test:fleet
+
+  # The Fleet browser cases need a Fleet build (web/src/lib/fleet-build.ts): Collie's own browser job
+  # builds without it, so they skip there and run here.
+  e2e:
+    name: Fleet browser cases (chromium)
+    runs-on: ubuntu-latest
+    env:
+      VITE_HERDR_FLEET: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install (web)
+        run: cd web && bun install --frozen-lockfile
+      - name: Install Chromium
+        run: cd web && bunx playwright install --with-deps chromium
+      - name: Build (Fleet)
+        run: cd web && bunx vite build
+      - name: E2E (Fleet)
+        run: cd web && bunx playwright test --project=app-phone --project=app-tablet e2e/fleet-

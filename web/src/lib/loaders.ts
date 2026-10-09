@@ -56,7 +56,6 @@ import type {
   AgentView,
   BridgeStatus,
   DeviceAuth,
-  FleetVersionView,
   CrewStatusResponse,
   MachinesResponse,
   PairedDeviceWire,
@@ -70,6 +69,7 @@ import type {
   UpdateInfo,
   WorkspaceView,
 } from "@/lib/types";
+import { currentFleetVersionView, refreshFleetVersionView, type FleetVersionView } from "@/lib/fleet-version-view";
 
 // A superseded revalidation is aborted via the loader's request.signal; that surfaces as an
 // AbortError we must RETHROW so React Router discards the stale run — swallowing it into the
@@ -325,34 +325,6 @@ function isAuthError<TThrown>(error: TThrown): boolean {
 let lastRootUrl: string | undefined;
 let lastPaneUrl: string | undefined;
 
-let currentFleetVersions: FleetVersionView = { lead: null, members: [] };
-let fleetVersionRefresh: Promise<void> | null = null;
-
-/**
- * Refresh optional version evidence beside, never in front of, the usable snapshot. One `/api/crew`
- * read carries both halves: the lead's own runtime version, which is the reference every member is
- * compared against, and each member's report. Taking them from one answer keeps the pair coherent.
- */
-function refreshFleetVersionView(): void {
-  if (fleetVersionRefresh !== null) return;
-  fleetVersionRefresh = fetchCrew()
-    .then((status) => {
-      currentFleetVersions = {
-        lead: status.self.version,
-        members: status.members.map((member) =>
-          member.version === undefined ? { id: member.id } : { id: member.id, version: member.version },
-        ),
-      };
-      return undefined;
-    })
-    .catch((error) => {
-      if (isApiErrorStatus(error, 404)) currentFleetVersions = { lead: null, members: [] };
-    })
-    .finally(() => {
-      fleetVersionRefresh = null;
-    });
-}
-
 function isPaneUrl(url: string | undefined): boolean {
   if (!url) return false;
   try {
@@ -412,7 +384,7 @@ function toHomeData(
     viewAll,
     snoozedUntil: snap.notifications?.snoozedUntil ?? null,
     update: snap.update,
-    fleetVersions: currentFleetVersions,
+    fleetVersions: currentFleetVersionView(),
     error,
     authError: error && hasAuthError(scope),
   };
@@ -463,7 +435,7 @@ async function staleHome(scope: Scope, viewAll: boolean): Promise<HomeData> {
     viewAll,
     snoozedUntil: null,
     update: undefined,
-    fleetVersions: currentFleetVersions,
+    fleetVersions: currentFleetVersionView(),
     error: true,
     authError: hasAuthError(scope),
   };

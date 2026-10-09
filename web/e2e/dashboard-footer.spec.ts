@@ -219,9 +219,7 @@ test("the needs-you switch with nothing urgent shows the all-clear line, not an 
   );
   await page.goto("/");
   await needsYou(page).click();
-  // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Agents rail says the same line
-  // beside the route, so look inside the route's own main region.
-  await expect(page.getByRole("main").getByText(en["home.allClear"])).toBeVisible();
+  await expect(page.getByText(en["home.allClear"])).toBeVisible();
   await expect(page.getByRole("heading", { name: "webapp" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "collie" })).toHaveCount(0);
   // No badge when nothing needs you.

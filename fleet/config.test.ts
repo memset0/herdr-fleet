@@ -386,7 +386,7 @@ port = 18902
   });
 
   test("the documented synthetic examples parse and carry no live value", () => {
-    const doc = readFileSync(resolve(import.meta.dir, "..", "docs", "herdr-fleet.md"), "utf8");
+    const doc = readFileSync(resolve(import.meta.dir, "README.md"), "utf8");
     const blocks = [...doc.matchAll(/```toml\n([\s\S]*?)```/g)].map((match) => match[1] ?? "");
     const transportBlock = blocks.find((block) => block.includes("[transport]"));
     const reachabilityBlock = blocks.find((block) => block.includes("[[reachability]]"));

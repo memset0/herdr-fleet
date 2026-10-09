@@ -1691,10 +1691,11 @@ export function AgentChat({
             shrinking to 768px inside it. */}
         <RouteHeader
           onHome={onBackArrow ?? onBack}
-          // DOWNSTREAM PORT — no Collie mark on this route. The row is the breadcrumb's: it is the
-          // only thing here the operator reads, and on a phone the mark spends 44px of it naming an
-          // app they are already inside. Every other route keeps it.
-          mark={false}
+          // DOWNSTREAM PORT — no Collie mark on this route inside the Fleet shell. The row is the
+          // breadcrumb's: it is the only thing here the operator reads, and on a phone the mark spends
+          // 44px of it naming an app they are already inside. Every other route keeps it, and so does
+          // this one wherever no shell is mounted (the shell's switcher seam is null there).
+          mark={nativeSwitcher === null}
           // Zen takes the whole row off the screen — the one shell owns the <header> element, so
           // only the shell can stop drawing it, and this is how a route asks. See HeaderClaim.hidden
           // for what survives (the element, its safe-area inset, its reserved rule) and why.

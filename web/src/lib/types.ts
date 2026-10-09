@@ -400,15 +400,6 @@ export interface ServerSummary {
   /** Epoch ms, stamped by the LEAD on receipt — never the peer's clock (§10.2). `0` = never answered. */
   lastSeenAt: number;
 }
-/**
- * The shell's one version view, from one `/api/crew` read: the lead's own runtime version (the
- * reference every member is compared against) and each member's runtime report.
- */
-export interface FleetVersionView {
-  lead: string | null;
-  members: Array<{ id: string; version?: string }>;
-}
-
 
 /**
  * `GET /api/crew` — the lead's own answer to "how is my whole crew doing?" (CREW_PROTOCOL.md §9.2,

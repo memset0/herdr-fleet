@@ -99,10 +99,8 @@ describe("Motion section", () => {
       const tabs = await within(card).findByRole("navigation", { name: "Tabs" }, SLOW);
       fireEvent.click(within(tabs).getByRole("button", { name: /ARCHITECTURE/i }));
       // The pane's row appears below the belt, so its name is now on screen twice: the chip and the row.
-      // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Fleet Agents rail lists the
-      // same pane beside the route, so the row is looked for in the route's own main region.
       const paneRow = () =>
-        within(within(card).getByRole("main"))
+        within(card)
           .getAllByRole("button", { name: /ARCHITECTURE/ })
           .filter((b) => !tabs.contains(b));
       await waitFor(() => expect(paneRow()).toHaveLength(1), SLOW);

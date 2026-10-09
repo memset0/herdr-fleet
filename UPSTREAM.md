@@ -40,5 +40,5 @@ declared owned root. A change to an upstream-owned file must expose a narrow por
 anchor and reason, and be reviewed again at every upstream synchronization.
 
 The generic downstream runtime and security contract is documented in
-[`docs/herdr-fleet.md`](./docs/herdr-fleet.md). Live configuration and deployment details are not
+[`fleet/README.md`](./fleet/README.md). Live configuration and deployment details are not
 part of this public repository.

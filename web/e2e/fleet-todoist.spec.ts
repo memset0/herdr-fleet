@@ -3,6 +3,10 @@ import { fixtureSnapshot } from "@/test/handlers";
 import { installApiStub } from "./fixtures/api";
 
 test.use({ serviceWorkers: "block" });
+// These cases drive the Fleet rails and the Fleet Settings group, which only a Fleet build mounts
+// (web/src/lib/fleet-build.ts). Collie's own browser job builds without it; `.github/workflows/fleet.yml`
+// builds with it and runs them.
+test.skip(process.env.VITE_HERDR_FLEET !== "1", "needs a Fleet build (VITE_HERDR_FLEET=1)");
 
 test("right sidebar switches independently and terminal associations survive a workspace move", async ({ page }) => {
   await page.setViewportSize({ width: 1720, height: 1100 });

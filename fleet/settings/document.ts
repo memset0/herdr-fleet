@@ -55,6 +55,7 @@ function reject(at: string, message: string): SettingsParseResult {
 }
 
 function isPlainObject(value: JsonValue | undefined): value is JsonObject {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parse boundary (ADR 0019's class): the operator-authored settings JSON; this module is its one reader.
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -85,6 +86,7 @@ export function parseFleetSettings(value: JsonValue | undefined): SettingsParseR
 
   let prefix = DEFAULT_COMMAND_PREFIX;
   if (shortcuts.prefix !== undefined) {
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parse boundary (ADR 0019's class): the operator-authored settings JSON; this module is its one reader.
     if (typeof shortcuts.prefix !== "string") {
       return reject("shortcuts.prefix", "the prefix must be a string");
     }
@@ -110,6 +112,7 @@ export function parseFleetSettings(value: JsonValue | undefined): SettingsParseR
       if (!Array.isArray(list)) return reject(at, "a command's bindings must be an array");
       const own: Binding[] = [];
       for (const text of list) {
+        // oxlint-disable-next-line anti-slop/no-runtime-typeof -- parse boundary (ADR 0019's class): the operator-authored settings JSON; this module is its one reader.
         if (typeof text !== "string") return reject(at, "a binding must be a string");
         const parsed = parseBinding(text);
         if (!parsed.ok) return reject(at, `${text} is not a usable binding (${parsed.failure.reason})`);
