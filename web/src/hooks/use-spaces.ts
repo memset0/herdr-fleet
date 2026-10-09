@@ -8,10 +8,39 @@ import { setStatus } from "@/lib/status";
 import { stampTopology } from "@/lib/poll-intent";
 import { panePath } from "@/lib/nav";
 import { useNav } from "@/hooks/use-nav";
-import { isReadOnly, type AgentView, type CreateResponse } from "@/lib/types";
+import {
+  isReadOnly,
+  type AgentView,
+  type CreateResponse,
+  type WorktreeBaseChoice,
+  type WorktreeFolderChoice,
+} from "@/lib/types";
 import { usePairing } from "@/lib/pairing";
 import { scopeKey, type Scope } from "@/lib/scope";
 import { useOptionalRootData } from "@/lib/route-data";
+
+/** What the New page asks `start` to do. Exactly one `what`; `branch` makes it a new branch first. */
+export interface StartAsk {
+  what: api.StartWhat;
+  /** The folder, as typed or picked; absent is home (or a row's pinned folder). */
+  cwd?: string;
+  /** One id per intent, minted by the page and kept by a retry of the same ask. */
+  requestId: string;
+  /** The chosen machine is older than 1.19.0: a shell goes through its plain space create. */
+  legacyShell?: boolean;
+  branch?: { cwd: string; name: string; base: WorktreeBaseChoice; folder: WorktreeFolderChoice };
+}
+
+/**
+ * What became of a Start. `done`: the phone moved to the new pane. `refused`: the bridge or a gate
+ * said no, and `message` says why in the operator's language; the PAGE shows it (a status line
+ * published here would land on a screen with no status surface, and linger until the next one).
+ * `unknown`: no answer that says whether it ran (ADR 0091).
+ */
+export type StartOutcome =
+  | { kind: "done" }
+  | { kind: "refused"; message: string }
+  | { kind: "unknown" };
 
 /**
  * The key a tab create in flight is held under in `creatingTab`: the space's machine, its session
@@ -59,12 +88,14 @@ export function useSpaceActions(canWrite?: () => boolean) {
   savedCopyRef.current = root?.stale === true;
   const canWriteRef = useRef(canWrite);
   canWriteRef.current = canWrite;
-  /** True while a create must be refused for want of a live read. Says why through the status line. */
+  /** True while a create must be refused for want of a live read. */
+  const notLive = useCallback((): boolean => savedCopyRef.current || !(canWriteRef.current?.() ?? true), []);
+  /** {@link notLive}, said through the status line (every caller but the New page's `start`). */
   const refusedAsSavedCopy = useCallback((): boolean => {
-    if (!savedCopyRef.current && (canWriteRef.current?.() ?? true)) return false;
+    if (!notLive()) return false;
     setStatus(t("space.readOnly.savedCopy"), "error");
     return true;
-  }, []);
+  }, [notLive]);
   // The scope (machine + named session) the new tab/space must be created in, and navigated into.
   // Read via a ref so the returned callbacks stay stable across revalidations, like readOnly above.
   const scopeRef = useRef<Scope | undefined>(undefined);
@@ -80,7 +111,7 @@ export function useSpaceActions(canWrite?: () => boolean) {
 
   const open = useCallback(
     // `at` is the scope the create was ADDRESSED to, which is not always the ambient one: the
-    // new-space sheet can aim a create at another machine in the crew. The navigation has to use
+    // New page can aim a create at another machine in the crew. The navigation has to use
     // the SAME scope, or the phone would open the new pane's id on the machine it was looking at —
     // where that id is a different terminal, which is the one mistake the host dimension exists to
     // prevent. Absent means the ambient scope, which is every caller that cannot re-address.
@@ -149,14 +180,13 @@ export function useSpaceActions(canWrite?: () => boolean) {
     [open, blockedText, refusedAsSavedCopy],
   );
 
-  // ONE Space create in flight at a time, globally — there is only ever one "+" for a new Space on
-  // screen (the dashboard's, or the drill-in's), unlike tabs where each Space has its own. Also
-  // guards `newWorktree`: both open through the same sheet, so only one of the two can be mid-flight
-  // at once anyway, and sharing the flag means either control's trigger shows busy the same way.
+  // ONE Space create in flight at a time, globally — there is only ever one New page on screen,
+  // unlike tabs where each Space has its own. Also guards `start`: both create a space, and sharing
+  // the flag means either control's trigger shows busy the same way.
   const [creatingSpace, setCreatingSpace] = useState(false);
   const creatingSpaceRef = useRef(false);
 
-  // `at` overrides the ambient scope for this one create — the new-space sheet's host picker. It is
+  // `at` overrides the ambient scope for this one create — the New page's host picker. It is
   // optional and defaults to the ambient scope, so every existing caller is unchanged and a solo
   // install never has one to pass.
   const newSpace = useCallback(
@@ -179,89 +209,57 @@ export function useSpaceActions(canWrite?: () => boolean) {
     [open, blockedText, refusedAsSavedCopy],
   );
 
-  // A worktree arrives as a SPACE and is therefore acknowledged as one: same write gate, same
-  // freshPane bootstrap, same revalidate, same status line (ADR 0032 — the multiplexer opens it,
-  // so what comes back is a created pane like any other). Routing both through `open` is what
-  // stops the two newest mutations being the only creates that flash "agent gone" on arrival.
-  const newWorktree = useCallback(
-    async (workspaceId: string, branch: string) => {
-      if (readOnlyRef.current) return setStatus(blockedText(), "error");
-      if (refusedAsSavedCopy()) return;
-      if (creatingSpaceRef.current) return;
-      creatingSpaceRef.current = true;
-      setCreatingSpace(true);
-      try {
-        open(await api.createWorktree(workspaceId, branch, scopeRef.current), "space");
-      } catch (e) {
-        setStatus(describeThrownError(e), "error");
-      } finally {
-        creatingSpaceRef.current = false;
-        setCreatingSpace(false);
-      }
-    },
-    [open, blockedText, refusedAsSavedCopy],
-  );
-
-  // "New agent on a branch" (ADR 0089): `newWorktree` plus a request id and, optionally, a launcher
-  // row to start in the new shell. Same write gate and the SAME in-flight flag, because it opens
-  // through the same sheet. `at` is the pane's scope, for the reason `newSpace` takes one: the create
-  // and the step into the new pane must address the same machine and session.
-  //
-  // Answers whether the phone moved to the new space, so the sheet knows to close. On a thrown error
-  // (a timeout on a slow `git worktree add`, a dropped connection) it answers false and the sheet
-  // stays open with the SAME request id, so the operator's second tap replays the first create
-  // rather than making another.
-  //
-  // A launcher that failed after the create is still a success: the worktree is there and the phone
-  // goes to it. The status line then says the agent did not start, so the operator starts it by hand
-  // instead of creating the worktree again.
-  const branchOff = useCallback(
-    async (
-      workspaceId: string,
-      branch: string,
-      extras: { requestId: string; launcher?: string },
-      at?: Scope,
-    ): Promise<boolean> => {
-      if (readOnlyRef.current) {
-        setStatus(blockedText(), "error");
-        return false;
-      }
-      if (refusedAsSavedCopy()) return false;
-      if (creatingSpaceRef.current) return false;
+  // THE NEW PAGE'S ONE START (M48, ADR 0091, ADR 0093, ADR 0095): an agent, a row, a shell or a one-off line, in a folder, and
+  // optionally on a new branch. Same write gates and the same in-flight flag as a space create, and
+  // the same `open` on success. It answers what became of it, because the page, not the status line,
+  // owns the one case a toast cannot carry: an outcome nobody can confirm. Then nothing is said here
+  // and nothing is re-sent; the page says so and offers the operator a retry with the SAME request
+  // id, which lands on the first start's receipt if it did run.
+  const start = useCallback(
+    async (ask: StartAsk, at?: Scope): Promise<StartOutcome> => {
+      if (readOnlyRef.current) return { kind: "refused", message: blockedText() };
+      if (notLive()) return { kind: "refused", message: t("space.readOnly.savedCopy") };
+      // Another create is in flight: the page's button is already busy, so there is nothing to say.
+      if (creatingSpaceRef.current) return { kind: "refused", message: "" };
       creatingSpaceRef.current = true;
       setCreatingSpace(true);
       const scope = at ?? scopeRef.current;
       try {
-        const res = await api.createWorktree(workspaceId, branch, scope, extras);
-        open(res, "space", scope);
-        if (res.ok && extras.launcher !== undefined && !res.launcherStarted) {
-          setStatus(t("branchOff.launcherFailed"), "error");
+        if (ask.what.kind === "run") {
+          // A one-off line never starts on a branch; the page switches that off, and the bridge refuses it too.
+          if (ask.branch !== undefined) return { kind: "refused", message: t("apiError.launch.run_no_branch") };
+          const res = await api.startRun(ask.what.line, { cwd: ask.cwd, requestId: ask.requestId }, scope);
+          if (!res.ok) return { kind: "refused", message: describeApiError(res) };
+          open(res, "space", scope);
+          return { kind: "done" };
         }
-        return res.ok;
+        if (ask.branch !== undefined) {
+          const res = await api.createWorktreeAt(
+            { cwd: ask.branch.cwd, branch: ask.branch.name, base: ask.branch.base, folder: ask.branch.folder, requestId: ask.requestId, what: ask.what },
+            scope,
+          );
+          if (!res.ok) return { kind: "refused", message: describeApiError(res) };
+          open(res, "space", scope);
+          if (ask.what.kind !== "shell" && !res.launcherStarted) setStatus(t("branchOff.launcherFailed"), "error");
+          return { kind: "done" };
+        }
+        // A machine older than 1.19.0 starts no plain shell by id: its own space create opens one.
+        const res =
+          ask.what.kind === "shell" && ask.legacyShell === true
+            ? await api.createWorkspace(ask.cwd === undefined ? {} : { cwd: ask.cwd }, scope)
+            : await api.startLaunch(ask.what, { cwd: ask.cwd, requestId: ask.requestId }, scope);
+        if (!res.ok) return { kind: "refused", message: describeApiError(res) };
+        open(res, "space", scope);
+        return { kind: "done" };
       } catch (e) {
-        setStatus(describeThrownError(e), "error");
-        return false;
+        if (api.outcomeUnknown(e)) return { kind: "unknown" };
+        return { kind: "refused", message: describeThrownError(e) };
       } finally {
         creatingSpaceRef.current = false;
         setCreatingSpace(false);
       }
     },
-    [open, blockedText, refusedAsSavedCopy],
-  );
-
-  // `alreadyOpen` is an ANSWER, not a refusal — either way the pane below is where to go — so this
-  // reads exactly like a create and never branches on it.
-  const showWorktree = useCallback(
-    async (workspaceId: string, path: string) => {
-      if (readOnlyRef.current) return setStatus(blockedText(), "error");
-      if (refusedAsSavedCopy()) return;
-      try {
-        open(await api.openWorktree(workspaceId, path, scopeRef.current), "space");
-      } catch (e) {
-        setStatus(describeThrownError(e), "error");
-      }
-    },
-    [open, blockedText, refusedAsSavedCopy],
+    [open, blockedText, notLive],
   );
 
   // A launcher arrives as a SPACE (from the dashboard) or a TAB beside a named pane (from the
@@ -298,11 +296,9 @@ export function useSpaceActions(canWrite?: () => boolean) {
   );
 
   return {
+    start,
     newTab,
     newSpace,
-    newWorktree,
-    branchOff,
-    showWorktree,
     launch,
     launching,
     creatingTab,

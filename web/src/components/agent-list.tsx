@@ -1,4 +1,4 @@
-import { Inbox, KeyRound, WifiOff } from "lucide-react";
+import { Inbox, KeyRound, Plus, WifiOff } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
 import { clockTime } from "@/lib/format";
@@ -50,6 +50,12 @@ interface AgentListProps {
   onPress?: (pane: AgentView) => void;
   /** Show the "no agents" placeholder when the herd is empty (default true). */
   emptyState?: boolean;
+  /**
+   * The empty dashboard's way in (M48 spec 01): with it, a connected, empty herd shows a large
+   * "Start your first agent" card that calls this, in place of "No agents running.". Absent (a device
+   * that may not write, a view with nothing to create) keeps the plain placeholder.
+   */
+  onFirstStart?: () => void;
   /**
    * The snapshot on screen is stale — the last fetch failed, or this is a cold boot rendering from the
    * write-through cache. An EMPTY herd then means "we don't know", never "nothing is running", so the
@@ -250,6 +256,7 @@ export function AgentList({
   glideKeyOf,
   onPress,
   emptyState = true,
+  onFirstStart,
   error = false,
   notPaired = false,
   lastSeenAt,
@@ -322,6 +329,28 @@ export function AgentList({
               ? t("home.empty.disconnected")
               : t("home.empty.disconnectedAt", { time: clockTime(lastSeenAt) })}
           </span>
+        </div>
+      );
+    }
+    if (bridge === "connected" && onFirstStart !== undefined) {
+      return (
+        <div className="flex flex-col gap-3 px-4 py-6">
+          <button
+            type="button"
+            onClick={onFirstStart}
+            className="flex w-full flex-col items-start gap-3 rounded-md border border-border bg-card px-4 py-6 text-left shadow-sm transition-colors active:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            <span className="flex size-12 items-center justify-center rounded-md bg-primary text-primary-foreground">
+              <Plus className="size-6" aria-hidden />
+            </span>
+            <span className="text-lg font-semibold text-foreground">{t("newPage.first.title")}</span>
+            <span className="text-sm text-muted-foreground">{t("newPage.first.body")}</span>
+          </button>
+          {!agentDetection.capable && agentDetection.note !== "" && (
+            <p className="text-xs leading-snug text-muted-foreground">
+              {agentDetection.note} {t("home.empty.panesHint")}
+            </p>
+          )}
         </div>
       );
     }

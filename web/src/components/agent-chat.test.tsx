@@ -28,6 +28,7 @@ vi.mock("@/lib/chat-gate", async (importOriginal) => ({
 import { server } from "@/test/setup";
 import { clearStatus, setStatus, useStatus } from "@/lib/status";
 import { setAutoZenEnabled, setZenEnabled, __resetZen } from "@/lib/zen";
+import { noPromptsConfirmed, rememberNoPromptsConfirm } from "@/lib/no-prompts";
 import { setStripsCollapsed, __resetStripsCollapsed } from "@/lib/strips-collapsed";
 import { __resetOperatorCommands } from "@/lib/operator-config";
 import { paneMirrorOverride, setPaneMirrorOverride } from "@/lib/mirror-invert";
@@ -2786,6 +2787,71 @@ describe("AgentChat: Launch section in the switcher", () => {
     await waitFor(() => expect(posted).toEqual({ command: "rumen-peek", paneId: agent.paneId }));
   });
 
+  // THE NO PROMPTS CONFIRM (ADR 0094) in the switcher: a row that skips permission prompts asks first.
+  describe("a row that skips permission prompts", () => {
+    afterEach(() => localStorage.clear());
+
+    function declareNoPrompts(posted: LaunchPostedBody[]) {
+      server.use(
+        http.get("/api/launchers", () =>
+          HttpResponse.json({
+            launchers: [{ command: "claude --yolo", label: "Claude, no prompts", noPrompts: true, cwd: "/home" }],
+            home: "/home",
+          }),
+        ),
+        http.post("/api/launch", async ({ request }) => {
+          // SAFETY: the switcher's launch (`api.launch`) is the only caller and sends these two fields.
+          posted.push((await request.json()) as LaunchPostedBody);
+          return HttpResponse.json({
+            ok: true,
+            pane: { paneId: "w9:p1", workspaceId: "w9", workspaceLabel: "x", tabId: "w9:t1", cwd: "/home" },
+          });
+        }),
+      );
+    }
+
+    it("asks first and sends nothing until Start; Cancel sends nothing and the switcher stays open", async () => {
+      const posted: LaunchPostedBody[] = [];
+      declareNoPrompts(posted);
+      const user = userEvent.setup();
+      renderChat();
+      await user.click(screen.getByRole("button", { name: "Switch pane" }));
+      await user.click(await screen.findByText("Claude, no prompts"));
+      const sheet = await screen.findByRole("dialog", { name: "Start without prompts?" });
+      expect(within(sheet).getByTestId("no-prompts-command")).toHaveTextContent("claude --yolo");
+      expect(posted).toHaveLength(0);
+      await user.click(within(sheet).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Start without prompts?" })).toBeNull());
+      expect(posted).toHaveLength(0);
+      expect(screen.getByText("Claude, no prompts")).toBeInTheDocument();
+    });
+
+    it("Start launches beside this pane and remembers the answer", async () => {
+      const posted: LaunchPostedBody[] = [];
+      declareNoPrompts(posted);
+      const agent = fixtureAgents[0]!;
+      const user = userEvent.setup();
+      renderChat();
+      await user.click(screen.getByRole("button", { name: "Switch pane" }));
+      await user.click(await screen.findByText("Claude, no prompts"));
+      await user.click(within(await screen.findByRole("dialog", { name: "Start without prompts?" })).getByRole("button", { name: "Start" }));
+      await waitFor(() => expect(posted).toEqual([{ command: "claude --yolo", paneId: agent.paneId }]));
+      expect(noPromptsConfirmed("", "claude --yolo")).toBe(true);
+    });
+
+    it("a line this device already confirmed on this machine launches with no question", async () => {
+      const posted: LaunchPostedBody[] = [];
+      declareNoPrompts(posted);
+      rememberNoPromptsConfirm("", "claude --yolo");
+      const user = userEvent.setup();
+      renderChat();
+      await user.click(screen.getByRole("button", { name: "Switch pane" }));
+      await user.click(await screen.findByText("Claude, no prompts"));
+      await waitFor(() => expect(posted).toHaveLength(1));
+      expect(screen.queryByRole("dialog", { name: "Start without prompts?" })).toBeNull();
+    });
+  });
+
   it("is not offered on a read-only device", async () => {
     declareLaunchers();
     const user = userEvent.setup();
@@ -4171,5 +4237,114 @@ describe("AgentChat header — the branch on the path line", () => {
   it("draws no branch when the pane has none", () => {
     const { container } = renderChat();
     expect(pathLine(container).querySelector('[data-slot="branch-label"]')).toBeNull();
+  });
+});
+
+// The pane's model floats on the mirror's bottom-right corner, in the box the draft notice pins to.
+describe("AgentChat — the model above the belt", () => {
+  it("draws the pane's model on the mirror box, under the draft-notice slot", () => {
+    const agent: AgentView = { ...fixtureAgents[0]!, model: "claude-fable-5-1" };
+    const { container } = renderChat({ agent, agents: [agent, ...fixtureAgents.slice(1)] });
+    const tag = container.querySelector<HTMLElement>('[data-slot="model-tag"]')!;
+    expect(tag.textContent).toContain("Fable 5.1");
+    expect(tag.querySelector(".sr-only")?.textContent).toBe("Model Fable 5.1");
+    expect(tag.previousElementSibling).toHaveAttribute("data-slot", "draft-notice-slot");
+  });
+
+  it("draws no model when the pane names none", () => {
+    const { container } = renderChat();
+    expect(container.querySelector('[data-slot="model-tag"]')).toBeNull();
+  });
+});
+
+// THE LABEL STANDS DOWN WHILE THE SCREEN NAMES THE MODEL. Each case is a harness's own footer, from the
+// fixture corpus (hand-typed for pi, which no fixture names a model in), against the model the bridge
+// would send for it. A footer that does not name the model leaves the label where it is.
+describe("AgentChat — the model label and a footer that already names it", () => {
+  const pane = (name: string) => readFileSync(join(import.meta.dirname, "..", "fixtures", "panes", name), "utf8");
+  const tag = (container: HTMLElement) => container.querySelector('[data-slot="model-tag"]');
+  const on = (agent: string, model: string, extra: Partial<AgentView> = {}): AgentView => ({
+    ...fixtureAgents[0]!,
+    agent,
+    model,
+    ...extra,
+  });
+  const terminal = () => localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView: "terminal" }));
+  const chat = () =>
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ paneView: "chat", showToolCalls: true }));
+
+  it("Claude Code: a statusline that prints the model hides the label, and one that does not keeps it", () => {
+    terminal();
+    const named = renderChat({ text: STATUS_TEXT, agent: on("claude", "claude-opus-4-8") });
+    expect(screen.getByText("[Opus 4.8] ~/webapp · main")).toBeInTheDocument(); // the strip is up
+    expect(tag(named.container)).toBeNull();
+    cleanup();
+    const behind = renderChat({ text: STATUS_TEXT, agent: on("claude", "Fable 5.1") });
+    expect(tag(behind.container)?.textContent).toContain("Fable 5.1");
+  });
+
+  it("Claude Code, a real capture: the statusline of claude--done.txt names Opus 4.8", () => {
+    terminal();
+    const { container } = renderChat({ text: pane("claude--done.txt"), agent: on("claude", "claude-opus-4-8") });
+    expect(tag(container)).toBeNull();
+  });
+
+  it("Codex: the footer row names the model, so the label stays away", () => {
+    terminal();
+    const { container } = renderChat({ text: pane("codex--v0157-idle.txt"), agent: on("codex", "gpt-6-luna") });
+    expect(screen.getAllByText(/GPT-6-Luna low/).length).toBeGreaterThan(0);
+    expect(tag(container)).toBeNull();
+  });
+
+  it("Codex: another model than the footer says keeps the label", () => {
+    terminal();
+    const { container } = renderChat({ text: pane("codex--v0157-idle.txt"), agent: on("codex", "gpt-5.6-sol") });
+    expect(tag(container)?.textContent).toContain("gpt-5.6-sol");
+  });
+
+  it("opencode: its strip never carries the model, so the label stays", () => {
+    terminal();
+    const { container } = renderChat({
+      text: pane("oc--done--tool-run.txt"),
+      agent: on("opencode", "openrouter:openai/gpt-5.6-sol"),
+    });
+    expect(tag(container)?.textContent).toContain("gpt-5.6-sol");
+  });
+
+  it("pi: no adapter lifts its footer, so the raw mirror's last rows are judged", () => {
+    terminal();
+    const footer = [
+      "hello from pi",
+      "",
+      "~/webapp (main)",
+      "↑1.2k ↓300 $0.012 4.5%/200k (auto)  (anthropic) claude-sonnet-4-5 • medium",
+    ].join("\n");
+    const named = renderChat({ text: footer, agent: on("pi", "anthropic:claude-sonnet-4-5") });
+    expect(tag(named.container)).toBeNull();
+    cleanup();
+    const other = renderChat({ text: footer, agent: on("pi", "anthropic:claude-opus-5-5") });
+    expect(tag(other.container)?.textContent).toContain("Opus 5.5");
+  });
+
+  it("Chat body, a harness with a strip: the strip still stands below it, so the label stays hidden", async () => {
+    chat();
+    const { container } = renderChat({
+      text: STATUS_TEXT,
+      agent: on("claude", "claude-opus-4-8", { hasSession: true }),
+    });
+    expect(await screen.findByText("what changed today?")).toBeInTheDocument();
+    expect(screen.getByText("[Opus 4.8] ~/webapp · main")).toBeInTheDocument();
+    expect(tag(container)).toBeNull();
+  });
+
+  it("Chat body, a harness without a lifted footer: nothing on screen names the model, so the label stays", async () => {
+    chat();
+    const footer = "~/webapp (main)\n(anthropic) claude-sonnet-4-5 • medium";
+    const { container } = renderChat({
+      text: footer,
+      agent: on("pi", "anthropic:claude-sonnet-4-5", { hasSession: true }),
+    });
+    expect(await screen.findByText("what changed today?")).toBeInTheDocument();
+    expect(tag(container)?.textContent).toContain("Sonnet 4.5");
   });
 });

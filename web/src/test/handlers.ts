@@ -805,7 +805,7 @@ export const handlers = [
   // And manual Pane fit's availability read, for the same reason: no Gateway, so no Resize row.
   http.get("/fleet/api/pane-fit", () => new HttpResponse(null, { status: 404 })),
   // Default world: no folder recorded yet (#289), which is every bridge that never created a space
-  // in a folder. The new-space sheet then renders exactly as it did before the list existed; a test
+  // in a folder. The New page then renders exactly as it did before the list existed; a test
   // that wants a list overrides these two with its own.
   http.get("/api/folders", () => HttpResponse.json({ recent: [], favourites: [], home: "" })),
   http.post("/api/folders/star", () => HttpResponse.json({ recent: [], favourites: [], home: "" })),

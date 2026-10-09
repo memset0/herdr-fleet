@@ -9,6 +9,15 @@ import { useLocale } from "@/hooks/use-locale";
 // Minimal modal focus handling (no deps, no full trap): on open move focus into the panel so
 // keyboard / screen-reader users land inside the dialog; on close restore focus to whatever was
 // focused before it opened. The panel must carry tabIndex={-1} to be a focus target.
+//
+// BOTH focus calls pass `preventScroll: true`, and that is the fix for a page that jumped when a
+// sheet opened (M48 spec 03, seen in the keys playground). A bare `focus()` asks the browser to
+// scroll the focused element into view, and this panel is focused on the very frame it mounts, while
+// its slide-in keyframe still holds it a full height below the screen. The browser then scrolls the
+// nearest scroll container to reach it, and that container is the content BEHIND the sheet (any
+// ancestor that clips with `overflow` and moves a `fixed` child with `transform`). A modal that
+// opens must not move the page under its scrim. The restore on close has the same flaw in reverse:
+// the opener may have been scrolled out of view while the sheet was open.
 export function useDialogFocus(open: boolean, panelRef: React.RefObject<HTMLElement | null>) {
   React.useEffect(() => {
     if (!open) return;
@@ -16,12 +25,48 @@ export function useDialogFocus(open: boolean, panelRef: React.RefObject<HTMLElem
     // is the optional `focus()`, which is what makes it an HTMLElement in practice. The optional
     // call is what covers the case where it isn't one (an SVG element, say).
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
+    panelRef.current?.focus({ preventScroll: true });
     return () => {
-      previouslyFocused?.focus?.();
+      previouslyFocused?.focus?.({ preventScroll: true });
     };
   }, [open, panelRef]);
 }
+
+// HOW MANY BOTTOM SHEETS ARE OPEN, for the one thing that has to know: the dashboard's floating New
+// button hides itself while any sheet is up (DESIGN.md §1, ui/fab.tsx). A module-level count behind
+// `useSyncExternalStore`, because the button and the sheets share no ancestor that could pass the
+// fact down, and a sheet may be mounted from any component. Counts `open` only: a peeking panel
+// (`pull > 0`) is a finger still dragging, not an open sheet.
+let openSheets = 0;
+const sheetListeners = new Set<() => void>();
+function bumpOpenSheets(by: 1 | -1): void {
+  openSheets += by;
+  for (const listener of sheetListeners) listener();
+}
+function subscribeOpenSheets(listener: () => void): () => void {
+  sheetListeners.add(listener);
+  return () => {
+    sheetListeners.delete(listener);
+  };
+}
+
+/** True while at least one `BottomSheet` is open anywhere in the app. */
+export function useAnySheetOpen(): boolean {
+  return React.useSyncExternalStore(
+    subscribeOpenSheets,
+    () => openSheets > 0,
+    () => false,
+  );
+}
+
+/**
+ * The bottom clearance of a TALL sheet whose last control must be reachable when scrolled to the end:
+ * 24px plus the safe area, so the home indicator never sits on it. The panel's own default is 16px plus
+ * the safe area, which is right for a short sheet that ends in a row of text; a tall editor ends in a
+ * button, and a thumb needs air under it. Passed as the sheet's `className`, so it replaces the default
+ * rather than stacking on it.
+ */
+export const TALL_SHEET_CLEARANCE = "pb-[calc(env(safe-area-inset-bottom)_+_1.5rem)]";
 
 // A minimal bottom sheet — no Radix, no portals, no extra deps. Renders nothing when closed.
 // Dismisses on backdrop tap or Escape. Animations come from tw-animate-css (already imported).
@@ -86,6 +131,11 @@ export function BottomSheet({
   // translateY(100%) — the sheet dropped out of view and slid back in.
   const openedFromPeek = React.useRef(false);
   useDialogFocus(open, panelRef);
+  React.useEffect(() => {
+    if (!open) return;
+    bumpOpenSheets(1);
+    return () => bumpOpenSheets(-1);
+  }, [open]);
 
   // Backdrop dismiss requires press AND release on the backdrop itself (the Radix
   // outside-pointerdown rule) — NOT just whatever the browser happens to synthesize a `click` on. A

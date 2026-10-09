@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopted Collie 1.19.0.** The New page replaces the new-space sheet and starts agents, launcher rows, a shell or a one-off command by id; launchers added from a phone, a recent-command history, worktree folders, model labels and an editable Keys pad arrive from upstream beside the fork's rails, mic-and-send split and terminal surface.
+
 ## [3.14.0] - 2026-10-09
 
 **Every member redeploys, lead first; no operator configuration changes.** Nothing a member runs

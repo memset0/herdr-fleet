@@ -46,7 +46,7 @@ import {
   type RowReducer,
 } from "./reduce.ts";
 import { asRecord, asText, probeTail, tokenCount } from "./cache-probe.ts";
-import { claudeResets, lastTwoTurns } from "./claude-resets.ts";
+import { claudeResets, lastTwoTurns, modelChosenAfter } from "./claude-resets.ts";
 // The shared guard on what an image block may become. It lives in pi's adapter because it also
 // resolves pi's `blob:sha256:` refs against pi's own store, and `bridge/server.ts` reaches for it
 // from there for the same reason. The rule it enforces is not pi's, though: a journal is an AGENT's
@@ -134,6 +134,17 @@ export function classifyUserText(
   }
 
   return text.trim() === "" ? null : { role: "user", text };
+}
+
+/**
+ * The string a `system` / `local_command` row carries, when it is a slash command or that command's
+ * output, else null. Only these two envelopes are read: any other `system` row stays bookkeeping.
+ * The string goes through {@link classifyUserText}, exactly as the same envelope on a `user` row does.
+ */
+function localCommandContent(row: RawRow): string | null {
+  if (row.subtype !== "local_command" || typeof row.content !== "string") return null;
+  const text = stripAnsi(row.content);
+  return isEnvelope("command-name", text) || isEnvelope("local-command-stdout", text) ? row.content : null;
 }
 
 /** Flatten a `tool_result.content`, which is either a plain string or a list of text blocks. */
@@ -387,25 +398,63 @@ function deliveredAs(said: string): string {
   return classifyUserText(said)?.text ?? said;
 }
 
+/** One `queued_command` attachment: a message Claude Code took into a turn that was already running. */
+interface QueuedCommand {
+  /** The message as the attachment carries it: a string, or a list of content blocks (a pasted image). */
+  readonly prompt: JsonValue;
+  /** Its text, in the words it was queued in, which is what the queue tracker knows it by. */
+  readonly text: string;
+  /** The operator typed it, and it is a prompt: the only kind that is drawn as a message. */
+  readonly drawn: boolean;
+  /** The attachment's own time: when the operator sent it, which can be well before the row. */
+  readonly timestamp: string | null;
+  /** What names this one delivery, so the same attachment can never be drawn twice. */
+  readonly key: string | null;
+}
+
 /**
  * The message a `queued_command` attachment row carries, or null for every other attachment.
  *
- * Shape measured 2026-10-08: `{ type: "queued_command", prompt, commandMode, origin: { kind }, … }`,
- * written right after the `remove` of every message absorbed mid-turn, the operator's (`kind: "human"`)
- * and Claude Code's own (`"task-notification"`, `"peer"`) alike.
+ * Shape measured 2026-10-08 and again 2026-10-09 over 2,900 rows in the local logs:
+ * `{ type: "queued_command", prompt, commandMode, origin: { kind }, source_uuid, delivery_id,
+ * timestamp, humanTurn? }`, written right after the `remove` of every message absorbed mid-turn.
+ * Four kinds exist. The operator's: `commandMode: "prompt"` with `origin.kind: "human"` (357 rows,
+ * 231 of them with `humanTurn: true`; the older ones carry no `origin` at all and `humanTurn` alone).
+ * Claude Code's own: `"peer"` (431), and `commandMode: "task-notification"` (2,218). No `bash` mode
+ * has been written by any version here, so a `!` command typed while busy has no sample: it stays off
+ * screen, as does anything that is not a prompt.
  */
-function queuedCommandPrompt(attachment: JsonValue | undefined): string | null {
+function queuedCommand(row: JsonObject): QueuedCommand | null {
+  const attachment = row.attachment;
   if (attachment === null || attachment === undefined || typeof attachment !== "object" || Array.isArray(attachment)) return null;
   if (attachment.type !== "queued_command") return null;
-  return firstText(attachment.prompt);
+  const text = firstText(attachment.prompt);
+  if (text === null || attachment.prompt === undefined) return null;
+  const origin = attachment.origin;
+  const kind =
+    origin !== null && origin !== undefined && typeof origin === "object" && !Array.isArray(origin) ? origin.kind : undefined;
+  // The origin names who sent it; `humanTurn` speaks for the rows that predate it. A named origin that
+  // is not the operator wins over the flag.
+  const human = kind === "human" || (kind === undefined && attachment.humanTurn === true);
+  const mode = attachment.commandMode;
+  const key = [attachment.delivery_id, attachment.source_uuid, row.uuid].find((id) => typeof id === "string" && id !== "");
+  return {
+    prompt: attachment.prompt,
+    text,
+    drawn: human && (mode === undefined || mode === "prompt"),
+    timestamp: typeof attachment.timestamp === "string" ? attachment.timestamp : null,
+    key: typeof key === "string" ? key : null,
+  };
 }
 
 /**
  * How much of one queued message the wire carries.
  *
  * Short on purpose, and shorter than {@link MAX_TEXT_CHARS}: this is a reminder of what is waiting,
- * drawn on one row under a working mark, not the message itself. The message arrives as a real turn
- * the moment the agent starts on it, and that turn carries the whole thing.
+ * drawn on one row under a working mark, not the message itself. The message arrives as a real row
+ * the moment the agent starts on it, and that row carries the whole thing: a `user` turn after a
+ * `dequeue`, a `queued_command` attachment after a `remove` (`absorbed_mid_turn`), which
+ * {@link queuedCommand} turns into a user turn here, because Claude Code writes no `user` row for it.
  */
 const MAX_QUEUED_CHARS = 200;
 
@@ -613,6 +662,9 @@ export function createClaudeReducer(opts: { includeSidechains?: boolean } = {}):
   // The message queue, which is state and not a turn — one per generation, thrown away with the
   // reducer when a window resets (`journal/live.ts` § rebuild).
   const queue = createQueueTracker();
+  // The deliveries already drawn as a message, newest last. A `queued_command` attachment draws once,
+  // however often the same row is read (a tail that overlaps, a log copied into a fork).
+  const absorbedDrawn = new Set<string>();
 
   // A nested `function` rather than a method on the returned object: the body below is the old loop
   // body at the indentation it always had, so this refactor is readable as the move it is.
@@ -650,10 +702,28 @@ export function createClaudeReducer(opts: { includeSidechains?: boolean } = {}):
     }
     // A message absorbed into a running turn leaves this attachment right after its `remove`: proof
     // it reached the agent, which clears its place if the `remove` missed it (createQueueTracker § 2).
+    //
+    // And it is the ONLY record of what the operator said. Claude Code 2.1.291 writes no `user` turn
+    // for a message taken mid-turn (`absorbed_mid_turn`, always after "Send now"), so the operator's
+    // own, `commandMode: "prompt"` from a human, is read below as the user turn it stands for. The
+    // other origins (`task-notification`, `peer`) stay off screen, as before.
+    let absorbed: QueuedCommand | null = null;
     if (type === "attachment") {
-      const prompt = queuedCommandPrompt(row.attachment);
-      if (prompt !== null) queue.delivered(prompt);
-      return NO_CHANGE;
+      const command = queuedCommand(row);
+      if (command === null) return NO_CHANGE;
+      queue.delivered(command.text);
+      if (!command.drawn) return NO_CHANGE;
+      // ONE message, ONE row. The identity is Claude Code's own `delivery_id`, then `source_uuid`; the
+      // row's `uuid` also keys the turn on the wire, so a replay would only replace it in place.
+      if (command.key !== null) {
+        if (absorbedDrawn.has(command.key)) return NO_CHANGE;
+        absorbedDrawn.add(command.key);
+        if (absorbedDrawn.size > QUEUE_SLOTS_MAX) {
+          const oldest = absorbedDrawn.values().next();
+          if (!oldest.done) absorbedDrawn.delete(oldest.value);
+        }
+      }
+      absorbed = command;
     }
     // EVERYTHING ELSE IS BOOKKEEPING, and it is a long list. Measured over 462 real session files on
     // 2026-09-30: `attachment`, `last-prompt`, `atis-latch`, `file-history-snapshot`, `mode`,
@@ -669,23 +739,40 @@ export function createClaudeReducer(opts: { includeSidechains?: boolean } = {}):
     // compaction is already visible and already set apart from speech; the boundary row would add a
     // second mark for the same event, and widening this gate to admit it means admitting a subtype
     // test into the one line that keeps 1,060 `attachment` rows off the screen.
-    if (type !== "user" && type !== "assistant") return NO_CHANGE;
+    //
+    // One `system` row is the exception, and it is not bookkeeping: `local_command`. Claude Code writes
+    // a slash command run as a `user` row (`/compact`) or, for others, as a `system` row
+    // (`/subtask`, `/rename`, `/model`, `/color`, `/resume`, `/cd`, `/memory`, `/context`: 282 command
+    // rows and 319 stdout rows across the local logs on 2026-10-08). Same envelope, other carrier, and
+    // never both for one run (the two `/model` pairs found were separate runs minutes apart), so it is
+    // read through the `user` path below and cannot show twice.
+    const systemCommand = type === "system" ? localCommandContent(row) : null;
+    if (type !== "user" && type !== "assistant" && systemCommand === null && absorbed === null) return NO_CHANGE;
     if (row.isSidechain === true && !opts.includeSidechains) return NO_CHANGE;
 
-    const message = row.message;
-    if (message === null || message === undefined || typeof message !== "object" || Array.isArray(message)) return NO_CHANGE;
-    const content = message.content;
+    let content: JsonValue | undefined;
+    if (absorbed !== null) {
+      content = absorbed.prompt;
+    } else if (systemCommand !== null) {
+      content = systemCommand;
+    } else {
+      const message = row.message;
+      if (message === null || message === undefined || typeof message !== "object" || Array.isArray(message)) return NO_CHANGE;
+      content = message.content;
+    }
     // A `user` turn is how a dequeued message reaches the agent, so it clears that message's place if
     // the `dequeue` took another (createQueueTracker § 2). Not one the operator typed straight into an
     // idle prompt (`promptSource: "typed"`): that one never sat in the queue.
-    if (type === "user" && row.isSidechain !== true && row.promptSource !== "typed") {
+    if (absorbed === null && type === "user" && row.isSidechain !== true && row.promptSource !== "typed") {
       const said = firstText(content);
       if (said !== null) queue.delivered(deliveredAs(said));
     }
     // The block walk below is an `else if` chain over four types; this is where a fifth is counted.
     noteBlockTypes(unknown, content);
     const uuid = typeof row.uuid === "string" ? row.uuid : "";
-    const ts = typeof row.timestamp === "string" ? row.timestamp : "";
+    // An absorbed message keeps the time it was SENT at, which is the attachment's own; its row is
+    // written later, once the running tool has returned.
+    const ts = absorbed?.timestamp ?? (typeof row.timestamp === "string" ? row.timestamp : "");
     const parts: TranscriptPart[] = [];
     // Set by a `user` row that is not the operator's speech: a prompt Claude sent on its own (the
     // only meta row left here), or string content that turns out to be injected plumbing.
@@ -1169,6 +1256,8 @@ async function claudeCacheProbe(
   if (observed !== undefined) probe.observedTtlSeconds = observed;
   const model = asText(message.model);
   if (model !== undefined) probe.model = model;
+  const chosen = modelChosenAfter(turns);
+  if (chosen !== undefined) probe.selectedModel = chosen;
   const resets = claudeResets(turns, tail.path);
   if (resets.length > 0) probe.resets = resets;
   return probe;

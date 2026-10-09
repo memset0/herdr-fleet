@@ -6,7 +6,6 @@ import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { SpaceStrip } from "@/components/space-strip";
 import { SpaceView } from "@/components/space-view";
 import { TabStrip } from "@/components/tab-strip";
-import { NewSpaceSheet } from "@/components/new-space-sheet";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
 import { BuildStamp } from "@/components/build-stamp";
@@ -15,7 +14,8 @@ import { tabCreateKey, useSpaceActions } from "@/hooks/use-spaces";
 import { useNav } from "@/hooks/use-nav";
 import { usePaneOpen } from "@/hooks/use-pane-open";
 import { useScrollMemory } from "@/hooks/use-scroll-memory";
-import { homePath, spacePath } from "@/lib/nav";
+import { prefetchFolders } from "@/lib/folders";
+import { homePath, newPath, spacePath } from "@/lib/nav";
 import { ambientHost } from "@/lib/hosts";
 import { scopeKey } from "@/lib/scope";
 import { setStatus } from "@/lib/status";
@@ -31,8 +31,14 @@ export function SpaceRoute() {
   const { spaceId = "" } = useParams();
   const nav = useNav();
   const revalidator = useRevalidator();
-  const { newTab, newSpace, creatingTab, creatingSpace } = useSpaceActions();
-  const [newSpaceOpen, setNewSpaceOpen] = useState(false);
+  const { newTab, creatingTab, creatingSpace } = useSpaceActions();
+  // The New page's Favourites and Recent, read once ahead of the tap so the page opens at its final
+  // height (lib/folders.ts). Once per mount, for the machine this view shows.
+  const folderHost = data.scope?.host;
+  const folderSession = data.scope?.session;
+  useEffect(() => {
+    prefetchFolders({ host: folderHost, session: folderSession });
+  }, [folderHost, folderSession]);
   // Either write gate refusing locks the tab strip's rename/close the same way (see ReadOnlyBanner).
   const { refused: notPaired } = usePairing();
 
@@ -118,7 +124,7 @@ export function SpaceRoute() {
               host={navHost}
               selected={spaceId}
               onSelect={(id) => (id === null ? toDashboard() : switchSpace(id))}
-              onNewSpace={() => setNewSpaceOpen(true)}
+              onNewSpace={() => nav.down(newPath({ machine: data.scope.host, session: data.scope.session }))}
               creatingSpace={creatingSpace}
               onBack={toDashboard}
             />
@@ -170,8 +176,6 @@ export function SpaceRoute() {
       <ToastViewport>
         <StatusArea />
       </ToastViewport>
-
-      <NewSpaceSheet open={newSpaceOpen} onClose={() => setNewSpaceOpen(false)} onCreate={newSpace} />
     </div>
   );
 }

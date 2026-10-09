@@ -51,6 +51,7 @@ const KEYS = new Map<string, KeyFate>([
   // ── Kept: how this phone likes to look and behave, never what a session said ──
   ["collie:theme:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:design:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
+  ["collie:key-board:v1", { area: "local", prefix: false, fate: "kept", why: "preference, this phone's key layout" }],
   ["collie:display-prefs:v4", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:dash-prefs:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
   ["collie:locale:v1", { area: "local", prefix: false, fate: "kept", why: "preference" }],
@@ -66,7 +67,9 @@ const KEYS = new Map<string, KeyFate>([
   ["collie:hidden-machines:v1", { area: "local", prefix: false, fate: "kept", why: "machine names hidden here" }],
   ["collie:mirror-native:", { area: "local", prefix: true, fate: "kept", why: "a per-pane colour choice" }],
   ["collie:tour:v1", { area: "local", prefix: false, fate: "kept", why: "the tour was seen" }],
-  ["collie:branch-off-launcher", { area: "local", prefix: false, fate: "kept", why: "preference, a launcher row's command" }],
+  ["collie:new-sheet:again:v1", { area: "local", prefix: false, fate: "wiped", why: "the last start per machine names its folders" }],
+  ["collie:no-prompts-confirmed:v1", { area: "local", prefix: false, fate: "wiped", why: "the per-device No prompts confirms name machines and command lines" }],
+  ["collie:new-page:kind:v1", { area: "local", prefix: false, fate: "kept", why: "Agent or Command per machine, one word, no folder" }],
   ["collie:push-disabled", { area: "local", prefix: false, fate: "kept", why: "the operator's push choice" }],
   // Written BY the wipe, so it outlives it: the cause the pair screen names once, then clears.
   ["collie:wipe-last", { area: "local", prefix: false, fate: "kept", why: "a wipe reason word, no content" }],

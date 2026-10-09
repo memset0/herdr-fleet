@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { createOperatorLaunchers, validateOperatorLaunchers } from "./operator-launchers.ts";
+import {
+  createLauncherSwitches,
+  createOperatorLaunchers,
+  DEFAULT_SWITCHES,
+  launcherSwitches,
+  validateOperatorLaunchers,
+} from "./operator-launchers.ts";
 import type { OperatorFileIo } from "./operator-file.ts";
 
 // The dashboard's launch strip: the operator's own shell-line rows, typed verbatim into a new
@@ -251,5 +257,93 @@ describe("createOperatorLaunchers", () => {
     const { io } = fakeIo({ mtime: 100, text: "nonsense = [" });
     const read = createOperatorLaunchers("/cfg/launchers.toml", io, quiet);
     expect(await read()).toEqual([]);
+  });
+});
+
+// ── ADR 0094: the row keys that feed the New sheet, and the operator's [phone] switches ──────────
+
+describe("validateOperatorLaunchers: harness and no_prompts", () => {
+  test("harness names the agent that reads the row; no_prompts marks a hidden flag", () => {
+    expect(
+      rows(`[[launchers]]
+command = "claude-danger"
+label = "Claude Code, no prompts"
+harness = "claude"
+no_prompts = true`),
+    ).toEqual([{ command: "claude-danger", label: "Claude Code, no prompts", kind: "agent", harness: "claude", noPrompts: true }]);
+    expect(
+      rows(`[[launchers]]
+command = "htop"
+no_prompts = false`),
+    ).toEqual([{ command: "htop", label: "htop" }]);
+  });
+
+  test("an unknown harness or a non-boolean no_prompts drops the row", () => {
+    const warnings: string[] = [];
+    const out = validateOperatorLaunchers(
+      Bun.TOML.parse(`[[launchers]]
+command = "a"
+harness = "bash"
+
+[[launchers]]
+command = "b"
+no_prompts = "yes"
+
+[[launchers]]
+command = "c"`),
+      (m) => warnings.push(m),
+    );
+    expect(out.map((r) => r.command)).toEqual(["c"]);
+    expect(warnings).toHaveLength(2);
+  });
+
+  test("a bidi control or a C1 character drops the row like a newline does", () => {
+    expect(validateOperatorLaunchers({ launchers: [{ command: "ls \u202Etxt" }, { command: "a\u0085b" }, { command: "ok" }] }, quiet)).toEqual([
+      { command: "ok", label: "ok" },
+    ]);
+  });
+});
+
+describe("launcherSwitches", () => {
+  test("defaults: recipes on, free text off, one-off runs on", () => {
+    expect(launcherSwitches(Bun.TOML.parse(""), quiet)).toEqual(DEFAULT_SWITCHES);
+    expect(DEFAULT_SWITCHES).toEqual({ adds: true, freeText: false, run: true });
+    expect(launcherSwitches(undefined, quiet)).toEqual({ adds: true, freeText: false, run: true });
+  });
+
+  test("the [phone] table, wherever it sits in the file", () => {
+    const doc = Bun.TOML.parse(`[[launchers]]
+command = "htop"
+
+[phone]
+adds = false
+free_text = true
+run = false`);
+    expect(launcherSwitches(doc, quiet)).toEqual({ adds: false, freeText: true, run: false });
+    expect(validateOperatorLaunchers(doc, quiet)).toEqual([{ command: "htop", label: "htop" }]);
+  });
+
+  test("a value that is not true or false reads as OFF", () => {
+    const warnings: string[] = [];
+    expect(launcherSwitches(Bun.TOML.parse(`[phone]\nadds = "yes"\nfree_text = 1\nrun = "true"`), (m) => warnings.push(m))).toEqual({
+      adds: false,
+      freeText: false,
+      run: false,
+    });
+    expect(warnings).toHaveLength(3);
+    expect(launcherSwitches(Bun.TOML.parse(`phone = "on"`), quiet)).toEqual({ adds: false, freeText: false, run: false });
+  });
+
+  test("the reader holds the last good switches across a broken edit", async () => {
+    let text = `[phone]\nadds = false`;
+    let mtime = 1;
+    const io: OperatorFileIo = { mtime: () => Promise.resolve(mtime), read: () => Promise.resolve(text) };
+    const read = createLauncherSwitches("/x/launchers.toml", io, quiet);
+    expect(await read()).toEqual({ adds: false, freeText: false, run: true });
+    text = "[phone\n";
+    mtime = 2;
+    expect(await read()).toEqual({ adds: false, freeText: false, run: true });
+    const none: OperatorFileIo = { mtime: () => Promise.resolve(null), read: () => Promise.reject(new Error("no")) };
+    expect(await createLauncherSwitches("/x/none.toml", none, quiet)()).toEqual(DEFAULT_SWITCHES);
   });
 });

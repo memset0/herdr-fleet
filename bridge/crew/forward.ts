@@ -83,6 +83,17 @@ const FORWARDABLE: readonly RegExp[] = [
   // lead's. Both ride the crew link exactly like `workspace` does.
   /^launch$/,
   /^launchers$/,
+  // The rows a phone adds, removes and renames (ADR 0094). Each machine keeps its own store, so a
+  // `?host=` write lands in THAT member's `launchers-added.json` and nowhere else; no row is ever
+  // copied between machines. `forget-device` is the lead's own call when it revokes a device; the
+  // lead's browser path refuses it, so only an admitted lead's request reaches a member with it.
+  /^launchers\/added(?:\/(?:remove|rename|forget-device))?$/,
+  // The one-off command history (ADR 0095): one per machine, so a `?host=` remove or clear changes
+  // THAT member's `commands-recent.json`, and nothing is copied. A run itself rides `launch` above.
+  /^launch\/recent\/(?:remove|clear)$/,
+  // Check one typed line before it runs (ADR 0095, amendment): a read that runs and stores nothing, so
+  // a `?host=` check is the member's own scan, and a member that predates it answers 404.
+  /^launch\/check$/,
   // The new-space sheet's folder list (#289): folders exist on ONE machine, so the list is that
   // machine's own `folders.json`, read and starred on the member that holds it — the lead keeps no
   // copy. Additive-optional (CREW_PROTOCOL.md §7.1): a member that predates it answers 404, and the
@@ -150,6 +161,9 @@ export function forwardKind(route: string): ForwardKind {
   // this lead has not heard from in a while, never refused before it is tried (§10.3's "a READ to a
   // dead member is still attempted").
   if (route === "launchers") return "read";
+  // The line check is a POST that changes nothing: attempted even against a stale member, never refused
+  // before it is tried (§10.3).
+  if (route === "launch/check") return "read";
   // The folder list is a GET that changes nothing, read even from a stale member like the rows
   // above; a star writes that member's file, so it is a write and a member not taking writes
   // refuses it before it is tried (§10.3), as a read-only device does on the member itself.
@@ -197,7 +211,10 @@ export function forwardAuditAction(route: string): string | null {
   // alone can't see — this generic name is the LEAD's own line about the forward (§12's "plus the
   // target host"), and the peer's own audit line is the accurate record of which one ran.
   if (route === "launch") return "launch";
-  if (route === "launchers") return null;
+  // The member writes the same two names for the history writes (ADR 0095).
+  if (route === "launch/recent/remove") return "launch.recent.remove";
+  if (route === "launch/recent/clear") return "launch.recent.clear";
+  if (route === "launchers" || route === "launch/check") return null;
   if (route === "folders" || route === "folders/star") return null; // a read, and a preference
   if (route.startsWith("blobs/")) return null; // a read
   if (isWorkspaceRead(route)) return null; // a read

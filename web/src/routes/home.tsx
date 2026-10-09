@@ -1,5 +1,5 @@
 import { ListTree, Network, Rows3 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 import { useRevalidator } from "react-router";
 
 import { RouteHeader, SettingsGear } from "@/components/app-header";
@@ -10,7 +10,6 @@ import { AgentList } from "@/components/agent-list";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { LaunchStrip } from "@/components/launch-strip";
 import { SpaceOverview } from "@/components/space-overview";
-import { NewSpaceSheet, type WorktreeRepo } from "@/components/new-space-sheet";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
 import { BuildStamp } from "@/components/build-stamp";
@@ -18,24 +17,30 @@ import { CrewFooterLink } from "@/components/crew-footer-link";
 import { useCrew } from "@/components/crew-provider";
 import { CrewTab } from "@/components/crew-tab";
 import { UpdateBanner } from "@/components/update-banner";
+import { Fab } from "@/components/ui/fab";
+import { useAnySheetOpen } from "@/components/ui/sheet";
 import { TabBar } from "@/components/ui/tab-bar";
 import { WorkspaceChangesList, type WorkspaceChangesRow } from "@/components/workspace-changes-list";
 import { useDashPrefs, openForCount } from "@/hooks/use-dash-prefs";
+import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useLocale } from "@/hooks/use-locale";
 import { useWorkspaceChangeCounts } from "@/hooks/use-workspace-change-counts";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { useNav } from "@/hooks/use-nav";
 import { usePaneOpen } from "@/hooks/use-pane-open";
 import { useScrollMemory } from "@/hooks/use-scroll-memory";
+import { useLaunchers } from "@/lib/launchers";
 import { useMuxCapability } from "@/lib/mux-capability";
+import { setStatus } from "@/lib/status";
 import { isolateSpaces } from "@/lib/spaces";
 import { ambientHost, ambientPanes, isMultiHost, paneRowKey, paneScope, sessionsOnHost } from "@/lib/hosts";
 import { setMachineHidden, useHiddenMachines } from "@/lib/hidden-machines";
 import type { ChangesLookup } from "@/lib/api";
 import type { DashView } from "@/lib/dash-view";
 import { t, tn } from "@/lib/i18n";
+import { prefetchFolders } from "@/lib/folders";
 import { glideForward } from "@/lib/glide";
-import { spaceChangesPath, spacePath } from "@/lib/nav";
+import { newPath, spaceChangesPath, spacePath } from "@/lib/nav";
 import type { WorkspaceGroup } from "@/lib/pane-groups";
 import { scopeKey, type Scope } from "@/lib/scope";
 import { countBlocked, hasReady } from "@/lib/triage";
@@ -99,20 +104,14 @@ function ChangesTabBody({
 export function HomeRoute() {
   const data = useRootData();
   const nav = useNav();
-  const { newSpace, newWorktree, showWorktree, creatingSpace, newTab, creatingTab } = useSpaceActions();
-
-  // Which repos a worktree could be branched from: one entry per repo, taken from the space that
-  // shows the repo ITSELF (a worktree's own space would branch from the same repo, so listing both
-  // would offer the same thing twice under two names). In the spaces list's order, so the first
-  // entry — the sheet's default — is the repo most recently used.
-  // Asked of the machine this view is showing (M22/03): absent `?h=` is the lead, as everywhere.
-  const canCreateWorktree = useMuxCapability("createWorktree", data.scope);
-  const worktreeRepos: WorktreeRepo[] = canCreateWorktree
-    ? data.workspaces
-        .filter((w) => w.repoRoot !== undefined && w.isWorktree === false)
-        .map((w) => ({ workspaceId: w.workspaceId, repoRoot: w.repoRoot!, label: w.label }))
-    : [];
-  const [newSpaceOpen, setNewSpaceOpen] = useState(false);
+  const { creatingSpace, newTab, creatingTab, launching } = useSpaceActions();
+  // The New page's Favourites and Recent, read once ahead of the tap so the page opens at its final
+  // height (lib/folders.ts). Once per mount, for the machine this view shows.
+  const folderHost = data.scope?.host;
+  const folderSession = data.scope?.session;
+  useEffect(() => {
+    prefetchFolders({ host: folderHost, session: folderSession });
+  }, [folderHost, folderSession]);
   useLocale();
   const {
     prefs,
@@ -186,6 +185,26 @@ export function HomeRoute() {
   const revalidator = useRevalidator();
   const { refused: notPaired } = usePairing();
   const readOnly = isReadOnly(data.device) || notPaired;
+
+  // THE FLOATING NEW BUTTON (DESIGN.md §1, M48 spec 01), on the Dashboard tab only: Crew and Files
+  // are other lists, and a create entry over them would read as theirs. Drawn when this machine can
+  // open a space at all, which every start on the New page does, or has rows to run. A device that
+  // may not write gets none of it. A saved copy keeps the button drawn and refuses on the tap
+  // (`workspace-new-tab.tsx` does the same): a control that comes and goes moves what is around it.
+  const { launchers } = useLaunchers(data.scope);
+  const canCreateSpace = useMuxCapability("createSpace").capable;
+  const fabOffered = view === "dashboard" && !readOnly && (canCreateSpace || launchers.length > 0);
+  const openNew = () => {
+    if (data.stale === true) return setStatus(t("space.readOnly.savedCopy"), "error");
+    // THE ONE NEW PAGE (M48 spec 01): the floating button, the Spaces header's folder button and the
+    // empty dashboard's first-agent card all go to it, on the machine this view shows.
+    nav.down(newPath({ machine: data.scope.host, session: data.scope.session }));
+  };
+  // Hidden while a sheet is up (it would sit dimmed under the backdrop, a second create entry next
+  // to the one being used) and while the keyboard is (the dashboard's filter field raises it, and
+  // the button would ride up over the list). Neither moves anything: the layer is fixed.
+  const sheetOpen = useAnySheetOpen();
+  const keyboardOpen = useKeyboardOpen();
   const herd = useMemo(() => [...data.agents, ...data.shellPanes], [data.agents, data.shellPanes]);
   // THE MACHINE FILTER (issue #288): the machines this device leaves off the list, as stored. The
   // list itself keeps the addressed machine and drops ids off the roster (lib/hidden-machines.ts). A
@@ -198,6 +217,8 @@ export function HomeRoute() {
   // scrolls, so nothing else restores this. Keyed on the scope (host + session), so two herdr
   // sessions — or two crew members — keep independent positions. See lib/scroll-memory.ts.
   const scrollRef = useScrollMemory<HTMLDivElement>(`home:${scopeKey(data.scope)}`);
+  // "+ New" shrinks to the round "+" once the list has scrolled, and grows back at the top (card 3.2).
+  const scrolled = useScrolledPast(scrollRef, 24);
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -275,6 +296,8 @@ export function HomeRoute() {
               order={prefs.paneOrder}
               onOrderChange={setPaneOrder}
               onHold={setHeld}
+              // The empty dashboard's large "Start your first agent" card opens the same sheet.
+              onFirstStart={fabOffered ? openNew : undefined}
               reveal={reveal}
               needsYouOnly={needsYouOnly}
               onNeedsYouOnlyChange={setNeedsYouOnly}
@@ -305,7 +328,7 @@ export function HomeRoute() {
                 shellPanes={navPanes.shellPanes}
                 host={navHost}
                 onOpen={drillInto}
-                onNewSpace={() => setNewSpaceOpen(true)}
+                onNewSpace={openNew}
                 creatingSpace={creatingSpace}
                 open={spacesOpen}
                 onOpenChange={setSpacesOpen}
@@ -320,7 +343,10 @@ export function HomeRoute() {
         <CrewFooterLink scope={data.scope} className="px-4 pt-3" />
         <UpdateBanner className="px-4 pt-3" />
         {/* The footer below owns the safe area now, so the stamp only keeps its own air. */}
-        <BuildStamp className="px-4 pt-3 pb-2" />
+        {/* With the New button drawn, the stamp's air grows so the last row scrolls clear of it:
+            16px gap + 56px button + 8px, from the footer's top edge. Set by capability, not by the
+            button's transient hides, so a sheet or the keyboard never moves the list. */}
+        <BuildStamp className={fabOffered ? "px-4 pt-3 pb-20" : "px-4 pt-3 pb-2"} />
       </div>
 
       {/* The dashboard's footer (ADR 0066, ADR 0085): lists, each named for what it holds. Crew
@@ -360,7 +386,10 @@ export function HomeRoute() {
           z-rung, the safe-area inset — belongs to ToastViewport and is stated there once, which is
           what stopped it being three hand-rolled copies of the same four utilities. DESIGN.md §1. */}
       {/* Lifted by the footer's 56px row and its 1px rule, so a toast floats above the tabs. */}
-      <ToastViewport className="bottom-[calc(3.5rem+1px)]">
+      {/* With the New button drawn, the lift also clears it: the footer's 56px and 1px rule, the
+          button's 16px gap and 48px face (the `bottom-` of the Fab below), so a toast floats above
+          the button's top edge, never over it. Capability, not the button's transient hides. */}
+      <ToastViewport className={fabOffered ? "bottom-[calc(3.5rem+1px+1rem+3rem)]" : "bottom-[calc(3.5rem+1px)]"}>
         <StatusArea />
       </ToastViewport>
 
@@ -382,15 +411,33 @@ export function HomeRoute() {
         onPinChange={(pane) => setReveal({ rowKey: paneRowKey(pane) })}
       />
 
-      <NewSpaceSheet
-        open={newSpaceOpen}
-        onClose={() => setNewSpaceOpen(false)}
-        onCreate={newSpace}
-        repos={worktreeRepos}
-        scope={data.scope}
-        onOpenWorktree={(workspaceId, path) => void showWorktree(workspaceId, path)}
-        onCreateWorktree={(workspaceId, branch) => void newWorktree(workspaceId, branch)}
-      />
+      {fabOffered && !sheetOpen && !keyboardOpen && (
+        <Fab
+          label={t("home.new.label")}
+          // The footer's 56px row and 1px rule and the safe area under it, then 16px of air.
+          bottom="bottom-[calc(3.5rem_+_1px_+_env(safe-area-inset-bottom)_+_1rem)]"
+          busy={creatingSpace || launching.size > 0}
+          collapsed={scrolled}
+          onClick={openNew}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * Whether the element's scroll position is past `threshold` px. One passive listener, and a state
+ * change only when the answer flips, so a scroll repaints the button twice per trip, not per frame.
+ */
+function useScrolledPast(ref: RefObject<HTMLElement | null>, threshold: number): boolean {
+  const [past, setPast] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    const read = () => setPast(el.scrollTop > threshold);
+    read();
+    el.addEventListener("scroll", read, { passive: true });
+    return () => el.removeEventListener("scroll", read);
+  }, [ref, threshold]);
+  return past;
 }

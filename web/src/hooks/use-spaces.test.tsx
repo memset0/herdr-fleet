@@ -5,24 +5,29 @@ import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
 import { resetPollIntent, topologyBursting } from "@/lib/poll-intent";
 import type { Scope } from "@/lib/scope";
-import { clearStatus, useStatus } from "@/lib/status";
+import { clearStatus, setStatus, useStatus } from "@/lib/status";
 import { tabCreateKey, useSpaceActions } from "./use-spaces";
 
 // Stub the bridge's create endpoints at the api seam — same idiom launch-strip.test.tsx uses for
 // api.launch. Only the calls this tree can make are declared.
-const { mockCreateTab, mockCreateWorkspace, mockCreateWorktree, mockOpenWorktree, mockLaunch } = vi.hoisted(() => ({
-  mockCreateTab: vi.fn(),
-  mockCreateWorkspace: vi.fn(),
-  mockCreateWorktree: vi.fn(),
-  mockOpenWorktree: vi.fn(),
-  mockLaunch: vi.fn(),
-}));
+const { mockCreateTab, mockCreateWorkspace, mockCreateWorktreeAt, mockStartLaunch, mockStartRun, mockLaunch, mockOutcomeUnknown } =
+  vi.hoisted(() => ({
+    mockCreateTab: vi.fn(),
+    mockCreateWorkspace: vi.fn(),
+    mockCreateWorktreeAt: vi.fn(),
+    mockStartLaunch: vi.fn(),
+    mockStartRun: vi.fn(),
+    mockLaunch: vi.fn(),
+    mockOutcomeUnknown: vi.fn(),
+  }));
 vi.mock("@/lib/api", () => ({
   createTab: mockCreateTab,
   createWorkspace: mockCreateWorkspace,
-  createWorktree: mockCreateWorktree,
-  openWorktree: mockOpenWorktree,
+  createWorktreeAt: mockCreateWorktreeAt,
+  startLaunch: mockStartLaunch,
+  startRun: mockStartRun,
   launch: mockLaunch,
+  outcomeUnknown: mockOutcomeUnknown,
 }));
 
 function homeData(): HomeData {
@@ -235,15 +240,15 @@ describe("useSpaceActions — newTab addressed to a scope", () => {
   });
 });
 
-// "New agent on a branch" (ADR 0089): the create carries the sheet's request id and launcher, and a
-// launcher that failed after the create still lands the phone on the new space, with a status line
-// that says the agent did not start.
-describe("useSpaceActions — branchOff", () => {
+// THE NEW SHEET'S START (M48, ADR 0091, ADR 0093): one call for every kind, with the sheet's request
+// id. It answers what became of it, and an outcome nobody can confirm is the sheet's to say, so the
+// status line stays quiet then and nothing is re-sent.
+describe("useSpaceActions — start", () => {
   const REQUEST_ID = "0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c";
 
   beforeEach(() => {
-    mockCreateWorktree.mockReset();
-    delete document.body.dataset.moved;
+    for (const mock of [mockCreateWorktreeAt, mockStartLaunch, mockStartRun, mockCreateWorkspace, mockOutcomeUnknown]) mock.mockReset();
+    delete document.body.dataset.outcome;
     clearStatus();
     resetPollIntent();
   });
@@ -253,55 +258,127 @@ describe("useSpaceActions — branchOff", () => {
     return <span data-testid="status-probe">{useStatus()?.text ?? ""}</span>;
   }
 
-  function BranchOffHarness({ launcher }: { launcher?: string }) {
-    const { branchOff } = useSpaceActions();
+  function StartHarness({ ask }: { ask: Parameters<ReturnType<typeof useSpaceActions>["start"]>[0] }) {
+    const { start } = useSpaceActions();
     return (
-      <div>
-        <button
-          onClick={() => {
-            void (async () => {
-              const moved = await branchOff("w1", "worktree/x", { requestId: REQUEST_ID, launcher });
-              document.body.dataset.moved = String(moved);
-            })();
-          }}
-        >
-          branch-off
-        </button>
-      </div>
+      <button
+        onClick={() => {
+          void (async () => {
+            const out = await start(ask);
+            document.body.dataset.outcome = out.kind;
+            document.body.dataset.message = out.kind === "refused" ? out.message : "";
+          })();
+        }}
+      >
+        start
+      </button>
     );
   }
 
-  it("hands the request id and the launcher to the create, on the scope it was given", async () => {
-    mockCreateWorktree.mockResolvedValueOnce({ ...pane("w7"), alreadyOpen: false, launcherStarted: true });
+  async function press(ask: Parameters<typeof StartHarness>[0]["ask"]) {
     const user = userEvent.setup();
-    render(<RouterProvider router={makeRouter(<BranchOffHarness launcher="claude" />)} />);
-    await user.click(await screen.findByRole("button", { name: "branch-off" }));
-    await waitFor(() => expect(mockCreateWorktree).toHaveBeenCalledTimes(1));
-    expect(mockCreateWorktree).toHaveBeenCalledWith("w1", "worktree/x", {}, { requestId: REQUEST_ID, launcher: "claude" });
-    await screen.findByText("pane");
-  });
-
-  it("a launcher that did not start still lands on the new space, and says so", async () => {
-    mockCreateWorktree.mockResolvedValueOnce({
-      ...pane("w7"),
-      alreadyOpen: false,
-      launcherStarted: false,
-      launcherError: "pane is gone",
-    });
-    const user = userEvent.setup();
-    const router = makeRouter(<BranchOffHarness launcher="claude" />);
+    const router = makeRouter(<StartHarness ask={ask} />);
     render(
       <>
         <RouterProvider router={router} />
         <StatusProbe />
       </>,
     );
-    await user.click(await screen.findByRole("button", { name: "branch-off" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/pane/w7%3Ap1"));
-    expect(document.body.dataset.moved).toBe("true");
+    await user.click(await screen.findByRole("button", { name: "start" }));
+    await waitFor(() => expect(document.body.dataset.outcome).toBeDefined());
+    return router;
+  }
+
+  it("an agent by id goes to /api/launch with its folder and the request id, and lands on the pane", async () => {
+    mockStartLaunch.mockResolvedValueOnce(pane("w7"));
+    const router = await press({ what: { kind: "harness", id: "claude" }, cwd: "~/src/app", requestId: REQUEST_ID });
+    expect(mockStartLaunch).toHaveBeenCalledWith({ kind: "harness", id: "claude" }, { cwd: "~/src/app", requestId: REQUEST_ID }, {});
+    expect(document.body.dataset.outcome).toBe("done");
+    expect(router.state.location.pathname).toBe("/pane/w7%3Ap1");
+  });
+
+  it("a one-off line goes to startRun with its folder and the request id, and lands on the pane", async () => {
+    mockStartRun.mockResolvedValueOnce(pane("w7"));
+    const router = await press({ what: { kind: "run", line: "htop -d 5" }, cwd: "~/src", requestId: REQUEST_ID });
+    expect(mockStartRun).toHaveBeenCalledWith("htop -d 5", { cwd: "~/src", requestId: REQUEST_ID }, {});
+    expect(mockStartLaunch).not.toHaveBeenCalled();
+    expect(document.body.dataset.outcome).toBe("done");
+    expect(router.state.location.pathname).toBe("/pane/w7%3Ap1");
+  });
+
+  it("a one-off line never starts on a branch: refused with the bridge's own words, nothing sent", async () => {
+    await press({
+      what: { kind: "run", line: "htop" },
+      requestId: REQUEST_ID,
+      branch: { cwd: "~/src/app", name: "x", base: { kind: "default" }, folder: { kind: "default" } },
+    });
+    expect(document.body.dataset.outcome).toBe("refused");
+    expect(document.body.dataset.message).toBe("A one-off command cannot start on a new branch.");
+    expect(mockStartRun).not.toHaveBeenCalled();
+    expect(mockCreateWorktreeAt).not.toHaveBeenCalled();
+  });
+
+  it("a one-off line with no answer is unknown: nothing is said and nothing is re-sent", async () => {
+    mockStartRun.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    mockOutcomeUnknown.mockReturnValueOnce(true);
+    await press({ what: { kind: "run", line: "htop" }, requestId: REQUEST_ID });
+    expect(document.body.dataset.outcome).toBe("unknown");
+    expect(mockStartRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("a refused one-off line comes back as the bridge's words", async () => {
+    mockStartRun.mockResolvedValueOnce({ ok: false, error: "x", code: "launch.run_off" });
+    await press({ what: { kind: "run", line: "htop" }, requestId: REQUEST_ID });
+    expect(document.body.dataset.outcome).toBe("refused");
+    expect(document.body.dataset.message).toBe("Running a one-off command from a phone is turned off on this machine.");
+  });
+
+  it("a shell on an older machine goes through its plain space create", async () => {
+    mockCreateWorkspace.mockResolvedValueOnce(pane("w7"));
+    await press({ what: { kind: "shell" }, cwd: "/srv", requestId: REQUEST_ID, legacyShell: true });
+    expect(mockCreateWorkspace).toHaveBeenCalledWith({ cwd: "/srv" }, {});
+    expect(mockStartLaunch).not.toHaveBeenCalled();
+  });
+
+  it("a branch start sends the folder, base and agent, and a launcher that did not start says so", async () => {
+    mockCreateWorktreeAt.mockResolvedValueOnce({ ...pane("w7"), alreadyOpen: false, launcherStarted: false, launcherError: "gone" });
+    await press({
+      what: { kind: "harness", id: "codex" },
+      requestId: REQUEST_ID,
+      branch: { cwd: "~/src/app", name: "fix-tabs", base: { kind: "default" }, folder: { kind: "parent", parent: "~/trees" } },
+    });
+    expect(mockCreateWorktreeAt).toHaveBeenCalledWith(
+      {
+        cwd: "~/src/app",
+        branch: "fix-tabs",
+        base: { kind: "default" },
+        folder: { kind: "parent", parent: "~/trees" },
+        requestId: REQUEST_ID,
+        what: { kind: "harness", id: "codex" },
+      },
+      {},
+    );
+    expect(document.body.dataset.outcome).toBe("done");
     expect(screen.getByTestId("status-probe")).toHaveTextContent(
       "The worktree is ready, but the agent did not start. Start it in the new shell.",
     );
+  });
+
+  it("no answer is unknown: nothing is said and nothing is re-sent", async () => {
+    mockStartLaunch.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    mockOutcomeUnknown.mockReturnValueOnce(true);
+    await press({ what: { kind: "shell" }, requestId: REQUEST_ID });
+    expect(document.body.dataset.outcome).toBe("unknown");
+    expect(mockStartLaunch).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("status-probe")).toHaveTextContent("");
+  });
+
+  it("a refusal is refused, the words come back to the page, and no status line is published", async () => {
+    mockStartLaunch.mockResolvedValueOnce({ ok: false, error: "unknown agent: x", code: "launch.unknown_harness", detail: { harness: "x" } });
+    await press({ what: { kind: "harness", id: "x" }, requestId: REQUEST_ID });
+    expect(document.body.dataset.outcome).toBe("refused");
+    expect(document.body.dataset.message).toBe("This machine does not start x.");
+    expect(screen.getByTestId("status-probe")).toHaveTextContent("");
   });
 });
 
@@ -310,10 +387,10 @@ describe("useSpaceActions — branchOff", () => {
 // sends nothing, whether the herd is the saved copy (the dashboard) or the caller's own liveness says
 // no (the pane view).
 describe("useSpaceActions — a saved copy refuses every structural write", () => {
-  const ALL = ["new-tab", "new-space", "new-worktree", "branch-off", "show-worktree", "launch"] as const;
+  const ALL = ["new-tab", "new-space", "start", "launch"] as const;
 
   beforeEach(() => {
-    for (const mock of [mockCreateTab, mockCreateWorkspace, mockCreateWorktree, mockOpenWorktree, mockLaunch]) mock.mockReset();
+    for (const mock of [mockCreateTab, mockCreateWorkspace, mockCreateWorktreeAt, mockStartLaunch, mockLaunch]) mock.mockReset();
     clearStatus();
     resetPollIntent();
   });
@@ -324,9 +401,12 @@ describe("useSpaceActions — a saved copy refuses every structural write", () =
     const run = {
       "new-tab": () => void actions.newTab("w1"),
       "new-space": () => void actions.newSpace({}),
-      "new-worktree": () => void actions.newWorktree("w1", "feature/x"),
-      "branch-off": () => void actions.branchOff("w1", "feature/x", { requestId: "r1" }),
-      "show-worktree": () => void actions.showWorktree("w1", "/tmp/wt"),
+      // The page shows a refused Start itself; the harness stands in for it with the status line.
+      start: () =>
+        void (async () => {
+          const out = await actions.start({ what: { kind: "shell" }, requestId: "r1" });
+          if (out.kind === "refused") setStatus(out.message, "error");
+        })(),
       launch: () => void actions.launch("claude"),
     } satisfies Record<(typeof ALL)[number], () => void>;
     return (
@@ -342,7 +422,7 @@ describe("useSpaceActions — a saved copy refuses every structural write", () =
   }
 
   const REFUSAL = "Saved copy. Reconnect to make changes.";
-  const writes = () => [mockCreateTab, mockCreateWorkspace, mockCreateWorktree, mockOpenWorktree, mockLaunch];
+  const writes = () => [mockCreateTab, mockCreateWorkspace, mockCreateWorktreeAt, mockStartLaunch, mockLaunch];
 
   it.each(ALL)("%s sends nothing while the herd on screen is the saved copy", async (name) => {
     const user = userEvent.setup();

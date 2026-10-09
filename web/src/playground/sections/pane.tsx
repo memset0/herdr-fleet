@@ -33,10 +33,18 @@ export const DEF: SectionDef = {
     "One terminal, mirrored. The breadcrumb header and status chip, the ANSI mirror with whatever dialog the grammar lifted out of it, and the composer beneath.",
 };
 
-/** The working pane, on a branch. Local, so the shared fixture stays what an older bridge sends. */
+/**
+ * The working pane, on a branch, with its model named. Local, so the shared fixture stays what an
+ * older bridge sends.
+ */
 const paneOnBranch: PaneFixture = {
   ...paneWorking,
-  pane: { ...paneWorking.pane, gitHead: { kind: "branch", name: "perf/dashboard-poll-cadence-and-backoff" } },
+  pane: {
+    ...paneWorking.pane,
+    gitHead: { kind: "branch", name: "perf/dashboard-poll-cadence-and-backoff" },
+    // Not the "[Fable 5]" the capture's statusline prints: a label that repeats the screen hides.
+    model: "claude-fable-5-1",
+  },
 };
 
 export function PaneSection() {
@@ -69,7 +77,7 @@ export function PaneSection() {
         <Card
           state="pane-header-branch"
           label="pane, the branch on the header's path line"
-          reach="open a pane whose folder sits in a git checkout. Line 2 of the header names the workspace, then the branch, then the machine and the cache reading."
+          reach="open a pane whose folder sits in a git checkout. Line 2 of the header names the workspace, then the branch, then the machine and the cache reading. The model the agent is on floats small on the mirror's bottom-right corner, above the belt, unless the agent's own statusline already names it."
           note="A long branch name on purpose: the workspace gives way first, then the branch gives way in the middle and keeps its tail, and the line stays 12px, so the header holds its 60px."
           span={2}
         >

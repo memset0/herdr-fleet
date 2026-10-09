@@ -36,6 +36,8 @@ import { HistoryRoute } from "@/routes/history";
 import { HomeRoute } from "@/routes/home";
 import { MachineRoute } from "@/routes/machine";
 import { MachinesRoute } from "@/routes/machines";
+import { NewRoute } from "@/routes/new";
+import { NewAddRoute } from "@/routes/new-add";
 import { BootSplash, RootError, RootLayout } from "@/routes/root";
 import { SettingsRoute } from "@/routes/settings";
 import { SpaceRoute } from "@/routes/space";
@@ -245,6 +247,40 @@ export function SettingsRouter({
             { index: true, element: <div className="p-4 text-sm text-muted-foreground">home</div> },
             { path: "settings", loader: () => devices, element: <SettingsRoute /> },
             { path: "settings/updates", element: <UpdatesRoute /> },
+          ],
+        },
+      ],
+      { initialEntries: [start] },
+    ),
+  );
+  return <RouterProvider router={router} />;
+}
+
+/**
+ * The New page (`/new`) and the page below it, Add your own (`/new/add`), on a memory router, inside
+ * the app header and the crew context they read. The routes read the root snapshot (for a pane's folder
+ * and branch) and ask the bridge behind the playground for its agent and command lists, so a card shows
+ * what that bridge reports.
+ */
+export function NewRouter({ home, start = "/new" }: { home: HomeData; start?: string }) {
+  const [router] = useState(() =>
+    createMemoryRouter(
+      [
+        {
+          id: ROOT_ROUTE_ID,
+          path: "/",
+          loader: () => home,
+          element: (
+            <CrewProvider servers={home.servers} sessions={home.sessions} ts={home.ts} pollMs={3_000}>
+              <AppHeaderHost bridge={home.bridge} error={false}>
+                <Outlet />
+              </AppHeaderHost>
+            </CrewProvider>
+          ),
+          children: [
+            { index: true, element: <div className="p-4 text-sm text-muted-foreground">home</div> },
+            { path: "new", element: <NewRoute /> },
+            { path: "new/add", element: <NewAddRoute /> },
           ],
         },
       ],

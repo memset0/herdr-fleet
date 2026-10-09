@@ -34,12 +34,14 @@ import {
   composerReady,
   extractInputDraft,
   extractStatusLines,
+  prepareGrokDisplay,
   stripCanvasBackground,
   stripChrome,
 } from "./chrome";
 import { detectAskRegion } from "./ask";
 import { detectPermissionRegion } from "./permission";
 import { detectPlanMenuRegion } from "./plan-menu";
+import { detectModelPickerRegion } from "./model-picker";
 
 export function grokBuildBlocks(lines: StyledLine[]): Block[] {
   // Drop Grok's full-screen theme-canvas paint before any block is built, so every rendered
@@ -77,6 +79,15 @@ export function grokBuildBlocks(lines: StyledLine[]): Block[] {
     return blocks;
   }
 
+  const picker = detectModelPickerRegion(lines);
+  if (picker) {
+    const before = trimTrailingBlank(lines.slice(0, picker.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "prompt-select", prompt: picker.model, lines: lines.slice(picker.startLine) });
+    return blocks;
+  }
+
   return [{ kind: "raw", lines: stripChrome(lines) }];
 }
 
@@ -95,4 +106,6 @@ export const grokAdapter: HarnessAdapter = {
   // view. Ctrl+C is the cancel.
   cancelKey: "ctrl+c",
   composerPrompt,
+  // Drops the scrollbar track and the terminal padding from the phone mirror's wrapped view.
+  prepareDisplay: prepareGrokDisplay,
 };

@@ -426,6 +426,18 @@ export interface MuxWorktreeScope {
 /** What a new worktree asks for. */
 export interface MuxWorktreeCreateRequest extends MuxWorktreeScope {
   readonly branch: string;
+  /**
+   * The ref the new branch is cut from. Absent means the multiplexer's own choice, which for Herdr
+   * is the HEAD of `repoRoot`. Already checked by the bridge (bridge/worktree-base.ts); an adapter
+   * that cannot honour it ignores it, as tmux, zellij, tuios and tern do with the whole call.
+   */
+  readonly base?: string;
+  /**
+   * The absolute folder the checkout is made in. Absent means the multiplexer's own place, which for
+   * Herdr is `<worktrees directory>/<repo>/<slug>`. Already checked by the bridge on every use
+   * (bridge/worktree-folder.ts, ADR 0093); an adapter that cannot honour it ignores the whole call.
+   */
+  readonly path?: string;
 }
 
 /** Which existing worktree to show. */

@@ -287,7 +287,16 @@ Grok's composer is a rounded box at the tail: `╭─…─╮` / `│ ❯ … �
 |---|---|---|
 | `grok--fresh-idle.txt` | Empty `│ ❯ │` box, status in the bottom border, idle hint row (`Shift+Tab:mode`). Byte-faithful `format:ansi` 2026-08-23 | `idle` |
 | `grok--draft-single.txt` | Stranded one-line draft `testing stuff` on the ❯ row; hint bar adds `Enter:send`. Byte-faithful `format:ansi` 2026-08-23 | `idle` |
+| `grok--draft-scrollbar.txt` | Grok Build 1.0.46 on macOS, 2026-10-08: byte-faithful composer tail from the live Collie API after pasting a 40-line test draft without submitting. Only lines 21–40 are visible, with a separately styled `█` scrollbar inside the right frame. That rail is not message text; a literal typed block glyph must remain. The prompt row is outside the bridge's six-row binding window, so the existing `composerPrompt` returns null while `composerReady` stays true | `idle` |
+| `grok--draft-scrollbar-partial.txt` | Grok Build 1.0.46 on macOS, 2026-10-08: byte-faithful composer tail from an isolated live bridge after the real guarded reply path pastes 40 numbered lines and a final instruction. Lines 26–40 and the instruction remain visible; the separately styled rail begins with `▁` and continues with `█`. The original full-block-only reader returns stalled without submitting. The prompt lies outside the existing bridge binding window | `done` |
 | `grok--draft-wrapped.txt` | Draft wrapped onto a continuation row inside the box | `idle` |
+| `grok--model-picker.txt` | Grok Build 1.0.46, macOS, 2026-10-08: byte-faithful `/model` completion-list tail, with the pointer on Grok 4.7, the four-row counter, composer and Enter hint. No identifying paths. The verified recipe is in [MODEL_PICKER_NOTES.md](/web/src/lib/harness/grok/MODEL_PICKER_NOTES.md) | `idle` |
+| `grok--model-picker-moved.txt` | Same live list after Down moves the pointer to Grok 4.7 Fast, without choosing a model | `idle` |
+| `grok--model-window.txt` | Second `/model` stage, 256k pointed, two visible rows; Enter on the model inserted its name and opened this list | `idle` |
+| `grok--model-window-moved.txt` | Same live window list after Down points at 500k, without submitting | `idle` |
+| `grok--model-effort.txt` | Third `/model` stage, High pointed, four visible rows; Enter on 256k inserted the window and opened this list | `idle` |
+| `grok--model-effort-moved.txt` | Same live effort list after Down points at Medium, without submitting; the captured pair must preserve identity while rejecting stale taps | `idle` |
+| `grok--output-scrollbar.txt` | Grok Build 1.0.46 on macOS, 2026-10-08: tail of the live browser-send capture, from the code reply through the composer, byte-faithful except one status line, whose text was replaced with neutral text of the same width; its ANSI styling is unchanged. The code keeps its rgb(28,28,28) surface; the right-edge track is a separate `█` segment with foreground and background rgb(25,25,25), preceded by uncoloured rgb(20,20,20) canvas padding. A dark block following coloured message text must remain. Its empty viewport rows and full terminal-width padding must not inflate the wrapped phone mirror. Original screen rows remain intact for grammar and guard probes | `done` |
 | `grok--working.txt` | Mid-turn; empty box; working hint row under the box | `working` |
 | `grok--startup.txt` | Fresh-session welcome screen: banner box (logo, menu) above an idle composer whose under-box row is the bare `[stable]` channel chip, not the hint bar. composerReady must be TRUE. Byte-faithful `format:ansi` 2026-08-22 | `idle` |
 | `grok--done.txt` | Square user-message bubble ABOVE an idle composer — the bubble must survive the strip | `idle` |
@@ -311,6 +320,8 @@ Grok's composer is a rounded box at the tail: `╭─…─╮` / `│ ❯ … �
 | `grok--plan-tab-prompt.txt` | Plan review after `Tab:prompt`; composer empty; footer `Tab:plan` / `Esc:back` | `blocked` |
 | `grok--plan-request-changes.txt` | Same geometry after `s` (request changes = type in composer) | `blocked` |
 | `grok--reporter-294-draft-newline-hint.txt` | Grok Build 1.0.41 (macOS, Herdr 0.9.1), the reporter's `format:ansi` capture from issue #294 with the project path replaced by an equal-length `~/src/grok-demo`. A new top bar (`main <path> … 3.0K / 200K │ [Dashboard]`), a one-line draft in the box, `grok-4.7 · always-approve` in the bottom border, and a draft bar that adds `Shift+Enter/Opt+Enter:newline`. Collie 1.14.0 and earlier lost the box on that chord list, so every send from the phone failed after typing. `composerReady` must be TRUE and the draft reads back | `idle` |
+| `grok--reply-table-scrollbar.txt` | Grok Build 1.0.46 (macOS, Herdr 0.9.0, 130 columns), 2026-10-08, throwaway pane: a long reply ending in a two-column table whose cells Grok wraps, with the separately styled `█` scrollbar at the end of every lower row, divider rows included. The reply's text is in `latest-reply.test.ts`. The `█` hid the divider rows from the table reorder, so the full-reply card read the reply as off-screen. Sanitized: the project path and one name in a hook warning were replaced with equal-length neutral text | `done` |
+| `grok--reply-table-highlighted.txt` | Same pane and reply minutes later, while Grok highlighted the message: a box round the whole message (`┆` at its top, `└ … ┘` at its foot) adds a vertical at each end of every table row. Rows with two more verticals than the table's own dropped out of the reorder. Same sanitization | `done` |
 
 
 ## Corpus (captured 2026-07-04, Claude Code TUI as of that date)
@@ -367,6 +378,14 @@ non-blank run below the statusline), never by content.
 | `claude--draft-footer-empty.txt` | Empty `❯` box with the footer below it — box + statusline + hint + footer all strip; `extractInputDraft` → `null` (no chip) |
 | `claude--draft-footer-single.txt` | A single-line stranded draft on the `❯` line, footer below — draft recovered, box + footer stripped |
 | `claude--draft-footer-wrapped.txt` | A wrapped multi-line draft, footer below — continuations folded back into one line, whole box + footer stripped |
+| `claude--footer-pointed-agent.txt` | **Derived** from a live pane, Claude Code 2.1.293 (herdr 0.9.3, 2026-10-08): the transcript above the box was cut, and the draft plus the agents' names, tasks and timings were genericized width-preservingly; the box, statusline and footer rows keep their captured bytes. Its SECOND agent row carries the active-agent pointer (`❯ ◯ worker:fix …`) — the shape that used to take the whole box down |
+
+Claude Code 2.1.293 paints `❯` on the ACTIVE agent's footer row. That row is a frame mark the locator
+steps over (it is the lowest `❯`-led row), and `steppedMarksAreOwned` used to require every stepped
+mark to sit INSIDE the statusline run — the pointed row sits in the footer below it — so the walk was
+refused and `hasInputBox` answered false: no box, no draft chip, and a send from the phone typed its
+text and then never submitted (2026-10-08, four such sends in the operator's audit log). The ownership
+check now owns the statusline run AND the footer run `walkStatusline` peeled below it.
 
 ## Generic-menu corpus (captured 2026-08-05, sandbox pane; decision in [`.adr/0009`](../../../../.adr/0009-a-generic-menu-is-driven-by-the-keys-it-names.md))
 

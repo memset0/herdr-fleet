@@ -272,6 +272,15 @@ export const DEFAULT_TIMEOUT_MS = 5000;
  */
 export const WORKTREE_TIMEOUT_MS = 60_000;
 
+
+/** `worktree.create`'s parameters as Collie sends them. `base` and `path` go on the wire only when set. */
+export interface HerdrWorktreeCreate {
+  cwd: string;
+  branch: string;
+  base?: string;
+  path?: string;
+}
+
 export class HerdrClient {
   constructor(
     private readonly socketPath: string,
@@ -605,13 +614,22 @@ export class HerdrClient {
    * window server, the checkout was created and the OPEN failed with `worktree_open_failed` — the
    * branch exists, nothing shows it. A retry then fails as `worktree_create_failed` (the path is
    * taken), so the recovery is to open it, never to create it again.
+   *
+   * `base` is `WorktreeCreateParams.base` (`herdr api schema --json`, 0.9.3, protocol 22; the socket
+   * docs say a missing branch is created "from the requested base or `HEAD`"). It is sent only when
+   * given, so a call without one is byte-for-byte the call this method always made.
    */
-  async createWorktree(opts: { cwd: string; branch: string }): Promise<CreatedShell> {
+  async createWorktree(opts: HerdrWorktreeCreate): Promise<CreatedShell> {
     // No `trust_repository`: that flag grants Git trust for the request (`safe.directory`), and the
-    // operator gives it in Herdr, never from the phone (ADR 0089).
+    // operator gives it in Herdr, never from the phone (ADR 0089). `path` is Herdr 0.9.3's
+    // `WorktreeCreateParams.path`, absolute, checked by bridge/worktree-folder.ts (ADR 0093).
+    const { cwd, branch, base, path } = opts;
+    const params: JsonObject = { cwd, branch, focus: false };
+    if (base !== undefined) params.base = base;
+    if (path !== undefined) params.path = path;
     const r = await this.request<{ workspace: WireWorkspace; root_pane: WirePane }>(
       "worktree.create",
-      { cwd: opts.cwd, branch: opts.branch, focus: false },
+      params,
       WORKTREE_TIMEOUT_MS,
     );
     const p = r.root_pane;

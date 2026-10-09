@@ -25,6 +25,7 @@ import { mounted } from "./base-path";
 import { CHAT_UNCHANGED, type ChatAnswer } from "./chat-window";
 import type {
   ActionResponse,
+  AddedLauncherResponse,
   BridgeConfig,
   ChatAfter,
   ChatBefore,
@@ -37,6 +38,8 @@ import type {
   CacheWatchState,
   FoldersResponse,
   LaunchersResponse,
+  LaunchCheckResponse,
+  RecentRunsResponse,
   NotifyPrefs,
   ChangeCommitDiffResponse,
   ChangeCommitResponse,
@@ -57,9 +60,10 @@ import type {
   UpdateRun,
   UpdateStartResponse,
   UploadResponse,
-  WorktreeListResponse,
+  WorktreeBaseChoice,
   WorktreeCreateResponse,
-  WorktreeOpenResponse,
+  WorktreeFolderChoice,
+  WorktreePlanResponse,
 } from "./types";
 import type { SubscribeBody } from "./push";
 
@@ -1274,6 +1278,159 @@ export function launch(command: string, besidePaneId?: string, scope?: Scope): P
 }
 
 /**
+ * What the New page starts (ADR 0091): a `launchers.toml` row by its command, an agent by its id,
+ * or a plain shell. Exactly one, which is what the bridge checks first.
+ */
+export type StartWhat =
+  | { kind: "row"; command: string }
+  | { kind: "harness"; id: string }
+  | { kind: "shell" }
+  /** A one-off line the person typed, or took from the machine's history (ADR 0095). Never on a branch. */
+  | { kind: "run"; line: string };
+
+/** What can start on a new worktree: everything but a one-off line (`launch.run_no_branch`). */
+export type BranchableWhat = Exclude<StartWhat, { kind: "run" }>;
+
+/** POST /api/launch's body from the New page. A named contract so `startLaunch` infers against it. */
+interface StartLaunchBody {
+  command?: string;
+  harness?: string;
+  shell?: true;
+  cwd?: string;
+  requestId: string;
+}
+
+/**
+ * POST /api/launch from the New page: one kind, an optional folder, and a request id the phone
+ * minted for this intent. A retry with the same id answers the first pane (`replayed: true`).
+ */
+export function startLaunch(what: BranchableWhat, opts: { cwd?: string; requestId: string }, scope?: Scope): Promise<CreateResponse> {
+  const body: StartLaunchBody = { requestId: opts.requestId };
+  if (what.kind === "row") body.command = what.command;
+  else if (what.kind === "harness") body.harness = what.id;
+  else body.shell = true;
+  if (opts.cwd !== undefined) body.cwd = opts.cwd;
+  return req<CreateResponse>(withScope("/api/launch", scope), { method: "POST", body: JSON.stringify(body) });
+}
+
+// ── One-off commands and their history, per machine (ADR 0095) ──────────────────────────────────
+//
+// A line the person wrote, typed into a fresh shell on that machine. The bridge checks a paired
+// device, the operator's `[phone] run` switch and the character rule (200 characters, no control,
+// separator or bidi character) before anything runs. A run that works joins that machine's history,
+// which `fetchLaunchers` lists as `recentRuns`; running an entry again is this same call. A `scope`
+// with `host` reaches that member through the lead's ordinary forward.
+
+/** POST /api/launch's body for a one-off run. A named contract so `startRun` infers against it. */
+interface StartRunBody {
+  run: string;
+  cwd?: string;
+  requestId: string;
+}
+
+/**
+ * POST /api/launch `{ run }`. `requestId` is minted per intent (`mintRequestId`): a retry with it
+ * answers the first pane (`replayed: true`) and runs nothing. The answer's `noPrompts` says whether
+ * the line carries a flag known to skip permission prompts. Refusals: `launch.no_device`,
+ * `launch.run_off`, `launch.bad_line` (`detail.problem`, `detail.max`), `launch.bad_folder`,
+ * `launch.folder_missing`.
+ */
+export function startRun(line: string, opts: { cwd?: string; requestId: string }, scope?: Scope): Promise<CreateResponse> {
+  const body: StartRunBody = { run: line, requestId: opts.requestId };
+  if (opts.cwd !== undefined) body.cwd = opts.cwd;
+  return req<CreateResponse>(withScope("/api/launch", scope), { method: "POST", body: JSON.stringify(body) });
+}
+
+/**
+ * POST /api/launch/check: what a typed line would be, before it runs. A read, forwarded with `?host=`:
+ * it runs nothing and stores nothing, and the answer is that machine's own scan. `problem` is the
+ * character rule's refusal; `noPrompts` says whether the line skips permission prompts, which the
+ * history can only say after a first run (ADR 0095, amendment).
+ */
+export function checkRun(line: string, scope?: Scope): Promise<LaunchCheckResponse> {
+  return req<LaunchCheckResponse>(withScope("/api/launch/check", scope), {
+    method: "POST",
+    body: JSON.stringify({ run: line }),
+  });
+}
+
+/** POST /api/launch/recent/remove: remove one line from that machine's history. */
+export function removeRecentRun(line: string, scope?: Scope): Promise<RecentRunsResponse> {
+  return req<RecentRunsResponse>(withScope("/api/launch/recent/remove", scope), {
+    method: "POST",
+    body: JSON.stringify({ line }),
+  });
+}
+
+/** POST /api/launch/recent/clear: remove every line from that machine's history. */
+export function clearRecentRuns(scope?: Scope): Promise<RecentRunsResponse> {
+  return req<RecentRunsResponse>(withScope("/api/launch/recent/clear", scope), { method: "POST", body: "{}" });
+}
+
+/**
+ * GET /api/worktree/plan — what a branch from `cwd` would be (ADR 0093). A read, lead-local: the
+ * sheet asks it only of the lead. `branch` and `parent` add the folder answers.
+ */
+export function planWorktree(query: { cwd: string; branch?: string; parent?: string }, scope?: Scope): Promise<WorktreePlanResponse> {
+  const params = new URLSearchParams({ cwd: query.cwd });
+  if (query.branch !== undefined && query.branch !== "") params.set("branch", query.branch);
+  if (query.parent !== undefined && query.parent !== "") params.set("parent", query.parent);
+  return req<WorktreePlanResponse>(withScope(`/api/worktree/plan?${params.toString()}`, scope));
+}
+
+/** POST /api/worktree's body. A named contract so `createWorktreeAt` infers against it. */
+interface WorktreeAtBody {
+  cwd: string;
+  branch: string;
+  base: WorktreeBaseChoice;
+  folder: WorktreeFolderChoice;
+  requestId: string;
+  harness?: string;
+  /** An agent row (an operator's with a harness, or one a phone added): the allowlisted line. */
+  command?: string;
+  shell?: true;
+}
+
+/**
+ * POST /api/worktree — a new branch in its own folder from the folder `cwd` names, opened as a
+ * space, with an agent or a shell in it (ADR 0093). Lead-local, like every worktree call.
+ */
+export function createWorktreeAt(
+  ask: {
+    cwd: string;
+    branch: string;
+    base: WorktreeBaseChoice;
+    folder: WorktreeFolderChoice;
+    requestId: string;
+    what: BranchableWhat;
+  },
+  scope?: Scope,
+): Promise<WorktreeCreateResponse> {
+  const body: WorktreeAtBody = { cwd: ask.cwd, branch: ask.branch, base: ask.base, folder: ask.folder, requestId: ask.requestId };
+  if (ask.what.kind === "harness") body.harness = ask.what.id;
+  else if (ask.what.kind === "row") body.command = ask.what.command;
+  else body.shell = true;
+  return req<WorktreeCreateResponse>(withScope("/api/worktree", scope), {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: WORKTREE_TIMEOUT_MS,
+  });
+}
+
+/**
+ * Whether a Start that threw may still have happened on the host (ADR 0091). A refusal (a 4xx) is an
+ * answer: nothing ran. So is a crew member that was never reached (503 `host_unreachable`,
+ * `host_incompatible`). Everything else, a transport failure, a timeout, a 5xx or the crew's 504
+ * `write_outcome_unknown`, says nothing about the host, so the phone must not guess.
+ */
+export function outcomeUnknown<TThrown>(thrown: TThrown): boolean {
+  if (!(thrown instanceof ApiError)) return true;
+  if (thrown.status < 500) return false;
+  const code = thrown.fields?.code;
+  return !(thrown.status === 503 && (code === "host_unreachable" || code === "host_incompatible"));
+}
+
+/**
  * GET /api/launchers — THIS scope's own host's launcher rows, read live off its `launchers.toml`.
  * Never cached alongside `/api/config`: rows must come from the host that runs them, and the
  * operator file is read live on the bridge, so this is fetched on mount and again whenever the
@@ -1283,10 +1440,55 @@ export function fetchLaunchers(scope?: Scope): Promise<LaunchersResponse> {
   return req<LaunchersResponse>(withScope("/api/launchers", scope));
 }
 
+// ── Rows a phone adds on one machine (ADR 0094) ─────────────────────────────────────────────────
+//
+// Each machine keeps its own list: a `scope` with `host` writes THAT member's store through the
+// lead's ordinary forward, and nothing is copied anywhere else. All three are writes on the write gate.
+
+/** What "Add your own" sends: a recipe the bridge builds, or a line typed by hand. */
+export type AddLauncherAsk =
+  | { recipe: { harness: string; options: string[] }; label?: string }
+  | {
+      text: string;
+      kind: "agent" | "command";
+      /** Required for an agent line: which harness reads it. */
+      harness?: string;
+      /** The person's own tick: an alias hides its flags. */
+      noPrompts?: boolean;
+      label?: string;
+    };
+
 /**
- * GET /api/folders — THIS scope's own host's folder list for the new-space sheet (#289), off that
+ * POST /api/launchers/added. `requestId` is a UUID minted per add (`mintRequestId`); a retry with the
+ * same id answers the stored row with `replayed: true` and adds nothing.
+ */
+export function addLauncher(ask: AddLauncherAsk, requestId: string, scope?: Scope): Promise<AddedLauncherResponse> {
+  return req<AddedLauncherResponse>(withScope("/api/launchers/added", scope), {
+    method: "POST",
+    body: JSON.stringify({ ...ask, requestId }),
+  });
+}
+
+/** POST /api/launchers/added/remove — remove one row a phone added on that machine. */
+export function removeAddedLauncher(id: string, scope?: Scope): Promise<{ ok: true; removed: number }> {
+  return req<{ ok: true; removed: number }>(withScope("/api/launchers/added/remove", scope), {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+}
+
+/** POST /api/launchers/added/rename — a new label for one row a phone added. */
+export function renameAddedLauncher(id: string, label: string, scope?: Scope): Promise<AddedLauncherResponse> {
+  return req<AddedLauncherResponse>(withScope("/api/launchers/added/rename", scope), {
+    method: "POST",
+    body: JSON.stringify({ id, label }),
+  });
+}
+
+/**
+ * GET /api/folders — THIS scope's own host's folder list for the New page (#289), off that
  * machine's `folders.json`. Session-scoped only so `?host=` reaches the machine whose folders they
- * are; the list itself is one per machine. Read when the sheet opens and when its chosen machine
+ * are; the list itself is one per machine. Read when the page opens and when its chosen machine
  * changes (lib/folders.ts), never polled and never part of the snapshot.
  */
 export function fetchFolders(scope?: Scope): Promise<FoldersResponse> {
@@ -1301,8 +1503,8 @@ interface StarFolderBody {
 
 /**
  * POST /api/folders/star — star (`true`) or unstar (`false`) one folder on THIS scope's host. The
- * bridge refuses a folder that is not already in its lists, so the sheet only ever sends one it read.
- * Answers the whole new list, so the sheet redraws from the bridge's word rather than guessing.
+ * bridge refuses a folder that is not already in its lists, so the page only ever sends one it read.
+ * Answers the whole new list, so the page redraws from the bridge's word rather than guessing.
  */
 export function starFolder(folder: string, starred: boolean, scope?: Scope): Promise<FoldersResponse> {
   const body: StarFolderBody = { folder, starred };
@@ -1324,60 +1526,6 @@ export function starFolder(folder: string, starred: boolean, scope?: Scope): Pro
 export function fetchCacheRules(): Promise<CacheRulesResponse> {
   return req<CacheRulesResponse>("/api/cache-rules");
 }
-
-/** The worktrees of the repo a space sits in. Empty-handed when the space is not in one. */
-export function listWorktrees(workspaceId: string, scope?: Scope): Promise<WorktreeListResponse> {
-  return req<WorktreeListResponse>(
-    withScope(`/api/workspace/${encodeURIComponent(workspaceId)}/worktrees`, scope),
-  );
-}
-
-/**
- * What a worktree create may carry beyond the branch (ADR 0089). Both are optional, and the
- * dashboard's sheet sends neither, which is the body the route has always taken.
- */
-export interface WorktreeCreateExtras {
-  /** One id per intent, minted by the phone. A retry with the same id replays, never re-creates. */
-  requestId?: string;
-  /** A launcher row's `command`, typed into the new shell. Absent is a plain shell. */
-  launcher?: string;
-}
-
-/** The create's wire body: the branch, plus the two extras when the caller has them. */
-interface WorktreeCreateBody {
-  branch: string;
-  requestId?: string;
-  launcher?: string;
-}
-
-/** Create a worktree on a new branch and open it as its own space, optionally starting an agent in it. */
-export function createWorktree(
-  workspaceId: string,
-  branch: string,
-  scope?: Scope,
-  extras: WorktreeCreateExtras = {},
-): Promise<WorktreeCreateResponse> {
-  const body: WorktreeCreateBody = { branch };
-  if (extras.requestId !== undefined) body.requestId = extras.requestId;
-  if (extras.launcher !== undefined) body.launcher = extras.launcher;
-  return req<WorktreeCreateResponse>(
-    withScope(`/api/workspace/${encodeURIComponent(workspaceId)}/worktree`, scope),
-    { method: "POST", body: JSON.stringify(body), timeoutMs: WORKTREE_TIMEOUT_MS },
-  );
-}
-
-/** Show a worktree that already exists. Answers `alreadyOpen` rather than refusing. */
-export function openWorktree(
-  workspaceId: string,
-  path: string,
-  scope?: Scope,
-): Promise<WorktreeOpenResponse> {
-  return req<WorktreeOpenResponse>(
-    withScope(`/api/workspace/${encodeURIComponent(workspaceId)}/worktree/open`, scope),
-    { method: "POST", body: JSON.stringify({ path }), timeoutMs: WORKTREE_TIMEOUT_MS },
-  );
-}
-
 
 /**
  * The bridge's startup config: push setup, the build id, the operator's own rows, and the

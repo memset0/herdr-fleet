@@ -128,17 +128,45 @@ export const ACK_MANIFEST = {
     channel: "status",
     why: "A launcher creates a Space (dashboard) or a tab beside the pane you launched it from (switcher), and the app navigates straight into its pane either way, so the button that asked is already off screen; hooks/use-spaces.ts names what was created on arrival, exactly as createWorkspace does. A refusal (an unlisted row, an unknown pane, a failed send) has no control left to sit in either.",
   },
+  startLaunch: {
+    channel: "status",
+    why: "The New page's Start creates a space and the app navigates straight into its pane, so the page is already gone; hooks/use-spaces.ts `start` names a refusal on the status line as `launch` does. An answer that never came is the page's own notice and its Try again button instead (M48, ADR 0091): the status line could only guess whether the pane exists.",
+  },
+  startRun: {
+    channel: "status",
+    why: "A one-off run creates a space and the app navigates straight into its pane, exactly as `startLaunch` does, so the page is already gone; a refusal names the switch, the device or the character the bridge refused on the status line. An answer that never came is the page's own notice and its Try again button, with the same request id (ADR 0091, ADR 0095).",
+  },
+  checkRun: {
+    channel: "inline",
+    why: "A read asked on Start for a typed line: it runs and stores nothing. Its answer (a character the bridge refuses, or whether the line skips prompts) goes straight into the New page's own refusal notice and the confirm sheet, so the person reads it beside the field they are fixing (ADR 0095, amendment).",
+  },
+  removeRecentRun: {
+    channel: "silent",
+    why: "The line leaves the history under the thumb once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the history is read again (ADR 0095).",
+  },
+  clearRecentRuns: {
+    channel: "silent",
+    why: "The history empties on the page the person is looking at once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the history is read again (ADR 0095).",
+  },
+  addLauncher: {
+    channel: "inline",
+    why: "The added row appears in the list the person is looking at, so the list is the acceptance. A refusal names a field (a character the bridge refuses, a line too long) or a switch the operator turned off, and the person must still read it while they fix the line, so it sits in the add form itself and not on the status line (M48, ADR 0094).",
+  },
+  removeAddedLauncher: {
+    channel: "silent",
+    why: "The row leaves the list under the thumb once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the list is read again.",
+  },
+  renameAddedLauncher: {
+    channel: "silent",
+    why: "The new label replaces the old one in the row being edited once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the row keeps its old label.",
+  },
   starFolder: {
     channel: "silent",
-    why: "The row moves between Favourites and Recent and its star fills or empties under the thumb, both in the sheet the operator is looking at, once the bridge answers with the new list; a refusal publishes an error status through lib/mutate.ts and the list is read again (lib/folders.ts).",
+    why: "The row moves between Favourites and Recent and its star fills or empties under the thumb, both on the page the operator is looking at, once the bridge answers with the new list; a refusal publishes an error status through lib/mutate.ts and the list is read again (lib/folders.ts).",
   },
-  createWorktree: {
+  createWorktreeAt: {
     channel: "status",
-    why: "A worktree arrives as a whole new space and the app navigates into its pane, so the eye has already left the button that asked for it; hooks/use-spaces.ts names what was created on arrival, exactly as createWorkspace does.",
-  },
-  openWorktree: {
-    channel: "status",
-    why: "Same navigation, same reason as createWorktree — and `alreadyOpen` is an answer rather than a refusal (ADR 0032), so the operator is told the space is ready without being told which of the two things just happened.",
+    why: "A branch arrives as a whole new space and the app navigates into its pane, so the eye has already left the New page; hooks/use-spaces.ts `start` names what was created on arrival, exactly as createWorkspace does. An answer that never came is the page's own notice instead (M48, ADR 0091), because the status line cannot say whether the start happened.",
   },
   setSnooze: {
     channel: "echo",

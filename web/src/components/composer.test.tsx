@@ -13,6 +13,8 @@ import { server } from "@/test/setup";
 import { fixtureServers, recordReply } from "@/test/handlers";
 import { CrewProvider } from "./crew-provider";
 import { Composer, TUI_SETTLE_MS } from "./composer";
+import { addRow, chordKey, DEFAULT_BOARD, setCell } from "@/lib/key-board";
+import { resetKeyBoard, setKeyBoard } from "@/lib/key-board-store";
 import { type ServerSummary } from "@/lib/types";
 
 // M46 spec 11 turns every send off for a pane the bridge has not answered lately (lib/liveness.ts).
@@ -844,7 +846,8 @@ describe("Composer — typing into the terminal", () => {
       Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
       fireEvent(document, new Event("visibilitychange"));
       fireEvent.click(screen.getByRole("button", { name: /^type into terminal$/i })); // re-arm
-      act(() => vi.runOnlyPendingTimers());
+      // Run the zero-delay blur, and stop well short of the re-armed session's 60s watchdog.
+      act(() => vi.advanceTimersByTime(1000));
     } finally {
       vi.useRealTimers();
     }
@@ -894,6 +897,98 @@ describe("Composer — typing into the terminal", () => {
 
     await waitFor(() => expect(screen.getByPlaceholderText(/type a reply/i)).toBeInTheDocument());
     expect(screen.getByTestId("status")).not.toHaveTextContent(/backgrounded/i);
+  });
+
+  // AltanS #379: the mode belongs to the session that armed it. When the
+  // agent under the pane changes (exit to shell), the mode disarms with a
+  // notice instead of streaming into the stranger. Mounting with an agent
+  // already set is not a change — no disarm, no notice.
+  it("disarms with a notice when the pane's agent changes", async () => {
+    function Harness() {
+      const [agent, setAgent] = useState<string | undefined>("claude");
+      return (
+        <>
+          <StatusSentinel />
+          <button type="button" onClick={() => setAgent(undefined)}>
+            agent exits
+          </button>
+          <Composer
+            paneId="w1:p1"
+            agent={agent}
+            isShell={false}
+            gone={false}
+            readOnly={false}
+            dialogPresent={false}
+            text="pane output"
+            terminalDraft={null}
+            rawTerminalDraft={null}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
+            display={{ open: false, onToggle: vi.fn() }}
+            onSent={vi.fn()}
+          />
+        </>
+      );
+    }
+    const router = createMemoryRouter([{ path: "/", element: <Harness /> }]);
+    render(<RouterProvider router={router} />);
+    startDirectTyping();
+    expect(screen.getByPlaceholderText(/type into the terminal/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "agent exits" }));
+
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText(/type into the terminal/i)).toBeNull(),
+    );
+    expect(screen.getByTestId("status")).toHaveTextContent(/agent changed/i);
+  });
+
+  // Same pane, same agent, a minute without a key: the mode disarms with a
+  // notice. The clock starts at the arming, because arming and then typing
+  // chat after the agent exited is the trap. A keystroke at 59s restarts it,
+  // so only 60s of true silence fires. Fake timers: the watchdog is the only
+  // clock under test.
+  it("disarms after 60 seconds without a keystroke, restarted by activity", async () => {
+    server.use(
+      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async () => {
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderComposerWithStatus();
+    vi.useFakeTimers();
+    const box = startDirectTyping();
+    try {
+      act(() => vi.advanceTimersByTime(59_000));
+      expect(screen.getByPlaceholderText(/type into the terminal/i)).toBeInTheDocument();
+      fireEvent.change(box, { target: { value: "y" } });
+      act(() => vi.advanceTimersByTime(59_000));
+      expect(screen.getByPlaceholderText(/type into the terminal/i)).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1000));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText(/type into the terminal/i)).toBeNull(),
+    );
+    expect(screen.getByTestId("status")).toHaveTextContent(/no key for 60 seconds/i);
+  });
+
+  it("disarms an armed mode that was never touched after 60 seconds", async () => {
+    renderComposerWithStatus();
+    vi.useFakeTimers();
+    startDirectTyping();
+    try {
+      act(() => vi.advanceTimersByTime(59_000));
+      expect(screen.getByPlaceholderText(/type into the terminal/i)).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1000));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText(/type into the terminal/i)).toBeNull(),
+    );
+    expect(screen.getByTestId("status")).toHaveTextContent(/no key for 60 seconds/i);
   });
 
   it("sends committed keyboard text as literal ordered keys with no implicit Enter", async () => {
@@ -2352,6 +2447,69 @@ describe("Composer — keys dock (in-flow, not an overlay)", () => {
 
     await user.click(screen.getByRole("button", { name: "Close Keys" }));
     expect(screen.queryByRole("button", { name: "Esc" })).not.toBeInTheDocument();
+  });
+
+  it("the pencil sits beside the KEYS label on the same line, ahead of the close X, and opens the editor", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    await user.click(screen.getByRole("button", { name: "Keys" }));
+
+    const pencil = screen.getByRole("button", { name: "Edit keys" });
+    const close = screen.getByRole("button", { name: "Close Keys" });
+    // The pencil and the label share one group, which is on the header row; the close X is the row's far end.
+    const group = pencil.parentElement;
+    expect(group).toHaveClass("items-center");
+    expect(group?.textContent).toContain("Keys");
+    expect(group?.contains(close)).toBe(false);
+    expect(group?.parentElement).toBe(close.parentElement);
+    expect(pencil.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    // 28px drawn, 44px reached, like the X beside it.
+    expect(pencil).toHaveClass("size-7");
+    expect(pencil.className).toContain("before:-inset-2");
+    // Quick has no pencil.
+    expect(screen.queryByRole("dialog", { name: "Edit keys" })).toBeNull();
+
+    await user.click(pencil);
+    expect(screen.getByRole("dialog", { name: "Edit keys" })).toBeInTheDocument();
+    // The dock stays put behind the sheet.
+    expect(screen.getAllByRole("button", { name: "Esc" }).length).toBeGreaterThan(0);
+  });
+
+  it("the Keys dock header holds the KEYS label and the pencil and no machine name, on a crew too", async () => {
+    const user = userEvent.setup();
+    renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
+    await user.click(screen.getByRole("button", { name: "Keys" }));
+
+    const pencil = screen.getByRole("button", { name: "Edit keys" });
+    const group = pencil.parentElement!;
+    // The group is the label and the pencil, nothing else: two children, no chip, no machine word.
+    expect(group.children).toHaveLength(2);
+    expect(group.textContent).toBe("Keys");
+    const header = group.parentElement!;
+    expect(header.textContent).not.toMatch(/workshop/i);
+    expect(header.querySelector("[data-slot='host-chip']")).toBeNull();
+  });
+
+  it("a custom key from the board goes out through the same pane.send_keys, a sequence in order", async () => {
+    const user = userEvent.setup();
+    let sentKeys: string[] | null = null;
+    server.use(
+      http.post<never, { keys: string[] }>(/\/api\/pane\/[^/]+\/keys$/, async ({ request }) => {
+        sentKeys = (await request.json()).keys;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    const seq = chordKey(["ctrl+b", "c"]);
+    if (seq === null) throw new Error("bad key");
+    setKeyBoard(setCell(addRow(DEFAULT_BOARD), 14, seq));
+    try {
+      renderComposer();
+      await user.click(screen.getByRole("button", { name: "Keys" }));
+      await user.click(screen.getByRole("button", { name: "Ctrl+B, then C" }));
+      await waitFor(() => expect(sentKeys).toEqual(["ctrl+b", "c"]));
+    } finally {
+      resetKeyBoard();
+    }
   });
 
   it("routes a docked key press through pane.send_keys", async () => {

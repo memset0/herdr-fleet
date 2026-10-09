@@ -149,6 +149,15 @@ export interface AgentView {
    */
   cache?: PaneCache;
   /**
+   * The model this pane's agent is on, as its harness names it: a `/model` chosen since the last turn
+   * first (Claude), else the model that turn ran on (`claude-opus-5-5`, `provider:model` for opencode
+   * and pi). Read by the cache tracker's probe and attached at serialise time exactly as {@link cache}
+   * is. Display only: the phone draws it small above the belt and nothing decides on it.
+   *
+   * ABSENT, NEVER A PLACEHOLDER: no journal adapter, no session, no turn yet, or an older bridge.
+   */
+  model?: string;
+  /**
    * What the checkout holding this pane's folder is on: a branch, or a detached head at a full
    * object name. Read off disk by `bridge/git-head.ts` (two small files, no git process, no lock) and
    * attached at serialise time exactly as {@link cache} is.
@@ -1073,7 +1082,9 @@ export interface CreatedPane {
  * is that shell, so the client can navigate straight into it before the next poll lands.
  */
 export type CreateResponse =
-  | { ok: true; pane: CreatedPane }
+  // `noPrompts`: a one-off run's line carries a flag known to skip permission prompts (ADR 0095).
+  // Present only on the answer to a fresh `run`; a replay answers the stored pane alone.
+  | { ok: true; pane: CreatedPane; replayed?: true; noPrompts?: boolean }
   | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
 /** One Git worktree of the repo a space sits in (ADR 0032). */
@@ -1095,9 +1106,14 @@ export interface WorktreeView {
   prunable: boolean;
 }
 
-/** GET /api/workspace/:id/worktrees — the worktrees of the repo that space sits in. */
+/**
+ * GET /api/workspace/:id/worktrees — the worktrees of the repo that space sits in.
+ *
+ * `defaultBranch` is the LOCAL branch a create with `base: { kind: "default" }` starts from
+ * (`resolveDefaultBranch`, bridge/worktree-base.ts), or `null` when the repo has none to name.
+ */
 export type WorktreeListResponse =
-  | { ok: true; worktrees: WorktreeView[] }
+  | { ok: true; worktrees: WorktreeView[]; defaultBranch: string | null }
   | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
 /**
@@ -1131,6 +1147,31 @@ export type WorktreeCreateResponse =
     }
   | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
+
+/**
+ * GET /api/worktree/plan — what a branch from a folder would be, before Start (M48, ADR 0093).
+ *
+ * `repoRoot` is the repo's main checkout, as a real path. `defaultBranch` is what a create with
+ * `base: { kind: "default" }` starts from, `currentBranch` the branch the folder itself is on, each
+ * `null` when there is none to name. `remembered` is this repo's last choices on this machine.
+ * `branchValid`, `defaultTarget` and `parentTarget` answer only when the query named a branch (and a
+ * parent): `defaultTarget` is where Herdr will put the folder when no path is sent, a prediction from
+ * Herdr's own rule; `parentTarget` is the folder rule's verdict on the parent the phone named.
+ */
+export type WorktreePlanResponse =
+  | {
+      ok: true;
+      repoRoot: string;
+      defaultBranch: string | null;
+      currentBranch: string | null;
+      remembered?: { base: "default" | "current"; folder: "default" | "parent"; parent?: string };
+      branchValid?: boolean;
+      defaultTarget?: { path: string; exists: boolean };
+      parentTarget?:
+        | { ok: true; path: string }
+        | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
+    }
+  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
 /**
  * Which role this collie plays in a crew (CREW_PROTOCOL.md §3). `solo` is a lead with zero peers —
@@ -1338,6 +1379,71 @@ export interface Launcher {
    * either way.
    */
   cwd?: string;
+  /**
+   * Where the row comes from (ADR 0094): the operator's `launchers.toml`, or a phone (this machine's
+   * `launchers-added.json`). Absent from an older bridge, which only had the first.
+   */
+  source?: "operator" | "added";
+  /** An added row's id: the request id of the add. Absent on an operator row. */
+  id?: string;
+  /** `agent` when a harness reads the row; absent or `command` for a plain line. */
+  kind?: "agent" | "command";
+  /** The harness id that reads an agent row. */
+  harness?: string;
+  /** True when the line skips permission prompts: the phone badges it and asks once per device. */
+  noPrompts?: boolean;
+  /** The pairing label of the device that added the row. Added rows only. */
+  addedBy?: string;
+  /** Epoch ms of the add. Added rows only. */
+  addedAt?: number;
+  /** How the row was added: built from a recipe, or a line typed by hand. Added rows only. */
+  addedAs?: "recipe" | "text";
+}
+
+/** One option chip of a recipe, as the phone draws it (bridge/launcher-recipes.ts). */
+export interface RecipeOptionWire {
+  id: string;
+  label: string;
+  /** The words the option appends, so the phone can show the line before the bridge builds it. */
+  args: string;
+  group?: string;
+  noPrompts?: true;
+}
+
+/** One harness's recipe: its binary and the option chips this bridge's table lists for it. */
+export interface RecipeWire {
+  harness: string;
+  label: string;
+  binary: string;
+  options: RecipeOptionWire[];
+}
+
+/** An added row that does not start here now, and why (ADR 0094). */
+export interface AddedOffWire {
+  id: string;
+  label: string;
+  command: string;
+  kind: "agent" | "command";
+  harness?: string;
+  /** `adds_off`: the operator turned phone rows off. `free_text_off`: free lines are off. */
+  reason: "adds_off" | "free_text_off";
+}
+
+/** What "Add your own" needs to know about THIS machine (ADR 0094). */
+export interface LaunchersAdding {
+  /** `[phone] adds`: whether a phone may add rows here, and its rows may start. */
+  adds: boolean;
+  /** `[phone] free_text`: whether a phone may add a line typed by hand. */
+  freeText: boolean;
+  /** `[phone] run`: whether a phone may run a one-off line here, and run a `recentRuns` entry again (ADR 0095). */
+  run: boolean;
+  /** The absolute path of this machine's `launchers.toml`, written or not. */
+  file: string;
+  /** Rows stored now, and the most there may be. */
+  count: number;
+  max: number;
+  recipes: RecipeWire[];
+  off: AddedOffWire[];
 }
 
 /**
@@ -1350,6 +1456,111 @@ export interface Launcher {
 export interface LaunchersResponse {
   launchers: Launcher[];
   home: string;
+  /**
+   * The agents this host can start by id, and whether each binary is there (ADR 0091). Absent from a
+   * bridge that predates the New sheet, which is how the phone tells an older crew member apart.
+   */
+  harnesses?: HarnessInfo[];
+  /**
+   * What "Add your own" needs (ADR 0094). Absent from a bridge older than 1.19.0, which takes no
+   * phone-added rows: the phone then offers no add.
+   */
+  adding?: LaunchersAdding;
+  /**
+   * Every agent, row and the shell, in the order the page lists them, each with its availability on
+   * THIS machine and the reason code when it is off (ADR 0094). Absent from an older bridge.
+   */
+  items?: LauncherItem[];
+  /**
+   * The one-off lines a phone ran on THIS machine, newest first, at most twelve (ADR 0095). Listed
+   * while `[phone] run` is off too, each then unavailable with `run_off`. Absent from an older bridge.
+   */
+  recentRuns?: RecentRunWire[];
+}
+
+/** One line in this machine's one-off command history (ADR 0095, `bridge/recent-runs.ts`). */
+export interface RecentRunWire {
+  /** The line, exactly as it ran. Running it again is `POST /api/launch` with `{ run: line }`. */
+  line: string;
+  /** The folder it last ran in, absolute, or `null` for home. */
+  cwd: string | null;
+  /** Epoch ms of the last run. */
+  at: number;
+  /** The line carries a flag known to skip permission prompts: badge it, and confirm once per device. */
+  noPrompts: boolean;
+  /** Whether it may run here now. */
+  available: boolean;
+  /** Why not: `run_off`, the operator turned one-off runs off (`[phone] run = false`). */
+  reason?: "run_off";
+}
+
+/** POST /api/launch/recent/remove and /clear (ADR 0095). `removed` is how many entries went. */
+export type RecentRunsResponse =
+  | { ok: true; removed: number }
+  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
+
+/**
+ * POST /api/launch/check `{ run }` (ADR 0095, amendment): what a one-off line would be, before it runs.
+ * A READ: it runs nothing and stores nothing. `noPrompts` is {@link scanNoPrompts}'s answer on the
+ * cleaned line; `problem` is the character rule's refusal, in which case `noPrompts` is false.
+ */
+export interface LaunchCheckResponse {
+  ok: true;
+  noPrompts: boolean;
+  problem?: "empty" | "too_long" | "forbidden_character";
+}
+
+/**
+ * One thing the New page may start on THIS machine, with whether it can start here now and why not
+ * (ADR 0094). The page draws every item; an unavailable one is a disabled option with its reason.
+ * Machine-wide reasons (the machine is not taking writes, an older Collie) are the phone's own, from
+ * the crew health and from this list's absence; these are the reasons only this machine knows.
+ */
+export interface LauncherItem {
+  /** Stable per machine: `harness:<id>`, `row:<command>`, or `shell`. */
+  key: string;
+  /** What `POST /api/launch` (and `POST /api/worktree`) names to start it. */
+  start: { harness: string } | { command: string } | { shell: true };
+  /** Agents: Collie reads the pane as that harness. Commands: a plain line, no agent status. */
+  group: "agents" | "commands";
+  label: string;
+  /** The harness that reads it: a built-in agent, or an agent row. */
+  harness?: string;
+  /** The line a row types. */
+  command?: string;
+  /** A row's pinned folder. */
+  cwd?: string;
+  source: "builtin" | "operator" | "added";
+  /** True when the line skips permission prompts: badge it, and confirm once per device. */
+  noPrompts: boolean;
+  /** Whether it may start on a new branch: agents and the shell, never a command row. */
+  branch: boolean;
+  available: boolean;
+  /**
+   * Why not, when `available` is false. `not_found`: the binary is not on this machine's login PATH.
+   * `adds_off`: the operator turned phone rows off. `free_text_off`: free lines are off.
+   */
+  reason?: "not_found" | "adds_off" | "free_text_off";
+  /** Added rows: the id (for rename and remove), who added it, when, and how. */
+  id?: string;
+  addedBy?: string;
+  addedAt?: number;
+  addedAs?: "recipe" | "text";
+}
+
+/** POST /api/launchers/added and /rename's answer. */
+export type AddedLauncherResponse =
+  | { ok: true; row: Launcher; replayed?: true }
+  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
+
+/** One agent a host can start by id (`bridge/harness-launch.ts`). */
+export interface HarnessInfo {
+  /** The id `POST /api/launch` takes as `harness`. */
+  id: string;
+  /** The harness's own name for itself. */
+  label: string;
+  /** Whether the binary is on this host's login PATH. A launch of one that is not still runs. */
+  found: boolean;
 }
 
 /**
