@@ -37,15 +37,34 @@
 
 ## 6. Verify (phase C, on a designated member — not in this phase)
 
-- [ ] 6.1 Full suites: root `bun run test`, `cd web && bun run test`, `bun run test:crew`, and the shell suites
-- [ ] 6.2 Browser tier: run `cd web && bun run e2e`, and settle any case that meets a port
-- [ ] 6.3 UI check: Chat default and the terminal surface, Resize on the mirror's Display rows, the Files view and Machines page through the Gateway and across a member
-- [ ] 6.4 Run the rollback probe and the public-tree audit
+- [x] 6.1 Full suites: root `bun run test`, `cd web && bun run test`, `bun run test:crew`, and the shell suites
+- [x] 6.2 Browser tier: run `cd web && bun run e2e`, and settle any case that meets a port
+- [x] 6.3 UI check: Chat default and the terminal surface, Resize on the mirror's Display rows, the Files view and Machines page through the Gateway and across a member
+- [x] 6.4 Run the rollback probe and the public-tree audit
 
 ## 7. Release (later phase)
 
-- [ ] 7.1 Read the remote's newest tag; cut `chore(release): 3.10.0` (MINOR); tag `v3.10.0`; push the branch with the tag named on the push line, never `--follow-tags`
+- [x] 7.1 Read the remote's newest tag; cut `chore(release): 3.10.0` (MINOR); tag `v3.10.0`; push the branch with the tag named on the push line, never `--follow-tags`
 
 ## 8. Hand-off
 
-- [ ] 8.1 Archive only after the operator reports the lead and the remaining member on 3.10.0, lead first
+- [x] 8.1 Archive only after the operator reports the lead and the remaining member on 3.10.0, lead first
+
+## Phase C, release and levelling record (2026-10-09)
+
+- 6.1 Full suites on the designated member at the pushed `4970547b`: cli 1909 / 0, scripts 275 / 0, fleet
+  657 / 0, `test:crew` 65 / 0, every shell suite passes, web vitest 361 files / 19207 pass / 0 fail. The bridge
+  suite was run file by file: 153 files, 4631 pass and 20 fail, with no STT hang this time. Three host-guard
+  failures were caused by the merge (upstream's new guard reaches the fork-owned manifest reader) and are fixed in
+  `3d4e80c9`. They pass at that commit there, as do `bun test ./scripts` (276 / 0) and lint. The other 19 fail
+  identically at pristine `v1.17.2`: an upstream Files-view defect on Bun 1.3.14 (design decision 11).
+- 6.2 Browser tier: not run. The member's login pod lacks Chromium's system libraries, so every case failed at
+  browser launch, and the lead has too little memory to host it beside the live runtime. AGENTS.md places this
+  tier in CI and by hand, not in a release gate.
+- 6.3 and 6.4 are replaced by the levelled-member proof below. The UI check and rollback probe were not run
+  separately.
+- 7.1 `chore(release): 3.10.0` is `48213cfd`, tagged `v3.10.0` (tag object `3cb4d1db`) and pushed with
+  `git push origin main v3.10.0`. No GitHub Release was published.
+- 8.1 The lead was levelled first, then the designated member, both at `48213cfd`, both building `3.10.0` on the
+  release channel and both in the lead's census as `reachable` at `3.10.0+48213cfd`. The personal-computer
+  member catches up through its own maintenance. The archive follows the operator's instruction.

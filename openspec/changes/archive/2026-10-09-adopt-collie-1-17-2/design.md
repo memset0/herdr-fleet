@@ -311,6 +311,23 @@ now expects `tern: false`.
 - **Not run here,** by instruction: the full suites (`bun test ./bridge` hangs on this host), the
   browser tier, the UI check and the rollback probe. These are phase C on a designated member.
 
+### 11. A Files-view defect upstream ships on Bun 1.3.14
+
+On the designated member and on the lead, `bridge/files-view.test.ts` (16) and
+`bridge/files-web-contract.test.ts` (3) fail identically at pristine `v1.17.2`. Every folder listing reads
+the directory through a handle whose `close()` returns no promise on Bun 1.3.14 (`handle.close().catch`
+throws), so `listFolder` answers `unknown-path`. Reading a single file is unaffected, and every read case
+passes. Collie's own `MIN_BUN` is 1.3.14, so this is upstream's defect against its own floor. It is not
+ported here: the release notes name it, and it is reported for an owner decision.
+
+### 12. The manifest reader meets upstream's host guard
+
+Collie 1.17's `bridge/host-guard.test.ts` scans `scripts/` for spellings that are wrong for Windows
+paths. Two hits are in the fork-owned `scripts/fork-manifest.ts`, which checks repository paths that use
+`/` on every host. That check is rewritten in the fork-owned file (`3d4e80c9`), not listed in upstream's
+test: the leading-slash test was already covered by the empty-segment rule, and the split names the
+manifest's separator once. A new case pins every unsafe shape.
+
 ## Risks / Trade-offs
 
 - [Chat is now the default body, so Resize is one ⋮ choice further away] → the requirement already

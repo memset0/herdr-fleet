@@ -21,8 +21,8 @@ rather than by navigating away from the Pane the choice is about.
 While the switch selects the mirror, the Pane's existing route, loader, data, polling, mirror,
 composer and every surface around them SHALL behave exactly as they do without this capability, and
 no terminal connection, process, or session SHALL be created. That includes the adopted Collie's own
-choice of body: where this browser has opted into Collie's Chat body and chosen it, the Pane is drawn
-as Chat exactly as Collie draws it.
+choice of body: where Collie's body choice for the Pane is Chat — Collie's default for an agent Pane
+since Collie 1.17 — the Pane is drawn as Chat exactly as Collie draws it.
 
 While the switch selects the terminal, the Pane's address SHALL be unchanged, the application's
 persistent navigation rails and header SHALL be rendered as they are for every other route, and the
@@ -41,11 +41,11 @@ and applies again once the switch selects the mirror.
 - **THEN** that Pane's address is unchanged, the rails and header render as on every other route, the terminal surface replaces the mirror and composer, and the Pane's mirror text is not fetched
 
 #### Scenario: Chat is Collie's chosen body while the switch selects the terminal
-- **WHEN** this browser has opted into Collie's Chat body and chosen it, and the switch selects the terminal
+- **WHEN** Collie's body choice for the Pane is Chat, by default or by the operator's choice, and the switch selects the terminal
 - **THEN** the terminal surface is drawn, the Pane offers no Chat switch, no Chat session read is made, and the stored Chat choice is unchanged
 
 #### Scenario: Chat is Collie's chosen body while the switch selects the mirror
-- **WHEN** this browser has opted into Collie's Chat body and chosen it, and the switch selects the mirror
+- **WHEN** Collie's body choice for the Pane is Chat, by default or by the operator's choice, and the switch selects the mirror
 - **THEN** the Pane is drawn as Collie's Chat body with Collie's own switch, exactly as without this capability
 
 #### Scenario: The switch is changed from the navigation
