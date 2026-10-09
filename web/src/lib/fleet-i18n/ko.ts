@@ -111,6 +111,7 @@ export const ko: FleetDictionary = {
   "home.favorite.add": "{name} 상단에 고정",
   "home.favorite.remove": "{name} 고정 해제",
   "fleet.navigation.hierarchy": "Herds",
+  "fleet.host.newSpace": "새 스페이스",
   "fleet.navigation.agents": "에이전트",
   "fleet.navigation.empty": "사용 가능한 스페이스가 없습니다.",
   "fleet.navigation.thisHost": "이 호스트",

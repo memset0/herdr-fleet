@@ -234,6 +234,16 @@ and a clean stop revokes it again. The Gateway refuses a browser's `POST /api/pa
 revocation with its own `403`, so the credential every request rides on cannot be revoked from the
 page. Nothing here needs `collie pair` or any other operator step, and a peer enrols nothing.
 
+Because every browser behind the Gateway is that one device, Collie's per-device records are shared
+by every operator the Gateway admits. Launchers added from the New page (Collie 1.19) are attributed
+to `fleet-gateway`, on the lead and on each member they were added to; Collie drops a device's rows
+only when its label leaves the registry while Collie runs, and the supervisor revokes and re-enrols
+the label only while no Collie child is running, so a Fleet restart keeps them. One-off command runs
+are on by default for a paired device, so behind the Gateway every admitted operator may run one —
+the same operator who can already type into any Pane; Fleet leaves Collie's `[phone]` switches to the
+operator. The New page's remembered choices, its no-prompts confirmations and the Keys pad stay in
+each browser.
+
 Login and logout require an exact-origin POST. Return targets are relative application paths rather
 than user-provided URLs. Credential inputs, session files, attempt budgets, proxy bodies, headers,
 and redirects are bounded or allowlisted, and authentication material is removed before a request

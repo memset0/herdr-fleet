@@ -9,11 +9,13 @@ import {
   FleetMenuItem,
 } from "@/components/fleet-context-menu";
 import { FleetRenameDialog } from "@/components/fleet-rename-dialog";
-import { NewSpaceSheet } from "@/components/new-space-sheet";
 import type { Scope } from "@/lib/scope";
 import { ActionRow } from "@/components/action-sheet-rows";
 import { BottomSheet } from "@/components/ui/sheet";
 import { useSpaceActions } from "@/hooks/use-spaces";
+import { useNav } from "@/hooks/use-nav";
+import { newPath } from "@/lib/nav";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { TabActionsSheet } from "@/components/tab-actions-sheet";
 import { useHostWriteBlock, useCrew } from "@/components/crew-provider";
@@ -470,7 +472,13 @@ export function FleetSpaceActions({ open, onClose, space, readOnly = false }: Fl
   );
 }
 
-/** Host creation uses the native form, but its target is the row rather than the ambient route. */
+/**
+ * A Host row's New space opens Collie's New page on that Host. The page's own `?machine=` address
+ * preselects it (the lead's id for the lead), and no `?s=` is passed, so a start addresses that
+ * Host's primary session rather than the route's. The gates below only decide whether the action
+ * is offered; everything the page does — its machine select, folder, start and refusals — is
+ * upstream's.
+ */
 export function FleetHostActions({ open, onClose, host, readOnly = false }: {
   open: boolean;
   onClose: () => void;
@@ -478,23 +486,22 @@ export function FleetHostActions({ open, onClose, host, readOnly = false }: {
   readOnly?: boolean;
 }) {
   useLocale();
+  useFleetLocale();
   const coarse = useCoarseOnly();
   const at = useClaimedPoint(open, coarse);
-  const [creatingOn, setCreatingOn] = useState<typeof host>(null);
+  const nav = useNav();
   const { lead, servers } = useCrew();
-  const selected = creatingOn ?? host;
   // An explicit empty scope addresses the lead's primary session instead of inheriting a route.
-  const scope: Scope = { host: selected?.id && selected.id !== lead ? selected.id : undefined };
+  const scope: Scope = { host: host?.id && host.id !== lead ? host.id : undefined };
   const hostBlock = useHostWriteBlock(scope.host);
   const canCreate = useMuxCapability("createSpace", scope);
-  const { newSpace, creatingSpace } = useSpaceActions();
   const targetMissing = scope.host !== undefined && servers.length > 0 && !servers.some((server) => server.id === scope.host);
   const blocked = readOnly || hostBlock !== undefined || targetMissing;
   const label = host?.label ?? "";
   const add = () => {
-    if (!host || blocked || !canCreate.capable || creatingSpace) return;
-    setCreatingOn(host);
+    if (!host || blocked || !canCreate.capable) return;
     onClose();
+    nav.down(newPath({ machine: host.id }));
   };
   const notice = blocked ? (
     <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
@@ -505,21 +512,10 @@ export function FleetHostActions({ open, onClose, host, readOnly = false }: {
       {canCreate.note || t("paneActions.empty.fallback")}
     </p>
   ) : null;
-  return <>
-    {at !== null ? <FleetContextMenu open={open} at={at} onClose={onClose} label={label}>
-      {notice ?? <FleetMenuItem icon={<Plus className="size-3 shrink-0 text-muted-foreground" />} label={t("space.new.title")} onSelect={add} />}
-    </FleetContextMenu> : <BottomSheet open={open} onClose={onClose} title={label}>
-      {notice ?? <ActionRow icon={<Plus className="size-4 shrink-0 text-muted-foreground" />} label={t("space.new.title")} onClick={add} />}
-    </BottomSheet>}
-    <NewSpaceSheet
-      open={creatingOn !== null}
-      onClose={() => setCreatingOn(null)}
-      fixedHost={creatingOn?.id}
-      scope={scope}
-      onCreate={(opts) => {
-        if (!creatingOn || blocked || !canCreate.capable || creatingSpace) return;
-        void newSpace(opts, scope);
-      }}
-    />
-  </>;
+  const newLabel = ft("fleet.host.newSpace");
+  return at !== null ? <FleetContextMenu open={open} at={at} onClose={onClose} label={label}>
+    {notice ?? <FleetMenuItem icon={<Plus className="size-3 shrink-0 text-muted-foreground" />} label={newLabel} onSelect={add} />}
+  </FleetContextMenu> : <BottomSheet open={open} onClose={onClose} title={label}>
+    {notice ?? <ActionRow icon={<Plus className="size-4 shrink-0 text-muted-foreground" />} label={newLabel} onClick={add} />}
+  </BottomSheet>;
 }

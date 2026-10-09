@@ -446,5 +446,29 @@ describe("the Gateway as Collie's paired device", () => {
     expect(authorizations.length).toBeGreaterThanOrEqual(2);
     expect(new Set(authorizations)).toEqual(new Set(["Bearer gateway-token"]));
   });
+
+  test("forwards the New page's starts and launcher writes with its own token, member scope intact", async () => {
+    const seen: { path: string; host: string | null; authorization: string | null }[] = [];
+    const { handler } = await setup(
+      async (input, init) => {
+        const url = new URL(String(input));
+        seen.push({ path: url.pathname, host: url.searchParams.get("host"), authorization: new Headers(init?.headers).get("authorization") });
+        return new Response("{}", { headers: { "content-type": "application/json" } });
+      },
+      { collieToken: "gateway-token" },
+    );
+    const cookie = await login(handler);
+    const paths = ["/api/launch", "/api/launch/check", "/api/launchers/added", "/api/launch/recent/clear", "/api/worktree"];
+    for (const path of paths) {
+      const response = await handler(
+        request(`${path}?host=example-peer`, { method: "POST", headers: { cookie, origin: config.public.origin, "content-type": "application/json", authorization: "Bearer browser" }, body: "{}" }),
+        { peerAddress: "127.0.0.1" },
+      );
+      expect(response.status).toBe(200);
+    }
+    expect(seen.map((entry) => entry.path)).toEqual(paths);
+    expect(new Set(seen.map((entry) => entry.host))).toEqual(new Set(["example-peer"]));
+    expect(new Set(seen.map((entry) => entry.authorization))).toEqual(new Set(["Bearer gateway-token"]));
+  });
 });
 

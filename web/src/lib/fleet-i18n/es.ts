@@ -111,6 +111,7 @@ export const es: FleetDictionary = {
   "home.favorite.add": "Fijar {name} arriba",
   "home.favorite.remove": "Desfijar {name}",
   "fleet.navigation.hierarchy": "Herds",
+  "fleet.host.newSpace": "Nuevo espacio",
   "fleet.navigation.agents": "Agentes",
   "fleet.navigation.empty": "No hay espacios disponibles.",
   "fleet.navigation.thisHost": "Este host",

@@ -111,6 +111,7 @@ export const zh: FleetDictionary = {
   "home.favorite.add": "置顶 {name}",
   "home.favorite.remove": "取消置顶 {name}",
   "fleet.navigation.hierarchy": "Herds",
+  "fleet.host.newSpace": "新建工作区",
   "fleet.navigation.agents": "智能体",
   "fleet.navigation.empty": "暂无可用空间。",
   "fleet.navigation.thisHost": "本机",

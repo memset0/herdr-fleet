@@ -82,9 +82,54 @@ Per-device meaning under one shared device:
 - `crew-focus-audit-name-port`: upstream's forward table changed but still names the forwarded focus
   `focus`; kept.
 
-### 4. Entry review
+### 4. Merge resolutions
 
-Every entry is reviewed against `v1.19.0`; the table is filled during apply.
+Eight paths conflicted, each inside a declared entry:
+
+| path | resolution |
+| --- | --- |
+| `CLAUDE.md` (and upstream's file beside it) | symlink to `AGENTS.md` kept; upstream's additions (New page allowlist, branch folder law) are upstream's working agreement and not ported, as at 1.18 |
+| `CHANGELOG.md`, `herdr-plugin.toml`, `package.json`, `web/package.json` | ours; upstream changed only its version number |
+| `web/src/router.tsx` | upstream's `/new` and `/new/add` routes beside the fork's Pane drop-ins; `DetailRoute` stays unimported |
+| `web/src/components/agent-chat.tsx` | the fork's `renderContent` prop kept; upstream's model-label footer helpers taken; upstream's `foldLabelKey` not carried, because the page draws no fold control |
+| `web/src/components/new-space-sheet.tsx` | deleted with upstream; its port is replaced by decision 1 |
+
+`COLLIE_CHANGELOG.md` is `v1.19.0`'s changelog verbatim. Upstream only added the 1.18.1 and 1.19.0
+sections, so no seam and no retained text are needed, and no entry was reworded.
+
+### 5. Entry review
+
+| entry | disturbed | decision |
+| --- | --- | --- |
+| native-row-actions-menu-port | no | keep |
+| unnarrowed-pack-rows-port | no | keep |
+| repository-guidance | `CLAUDE.md` | keep (symlink) |
+| fake-network-fleet-routes | handlers | keep; reason notes `/api/launchers` is upstream's handler |
+| plugin-identity | version | keep |
+| downstream-version-line | `CHANGELOG.md`, `web/package.json` | keep |
+| fleet-build-port | `package.json` | keep |
+| native-agent-favorites-port | `agent-list.tsx`, its test | keep (auto-merged; star beside upstream's new row content) |
+| pane-surface-route-port | `router.tsx` | keep |
+| native-pane-content-port | no | keep |
+| authenticated-navigation-cache | no | keep |
+| native-manual-pane-fit-port | no | keep |
+| native-pane-page-port | `agent-chat.tsx`, its test | adapt (conflict above); reason updated |
+| crew-focus-audit-name-port | `forward.ts`, its test | keep; upstream still names focus bare |
+| declined-centred-history-column | no | keep |
+| native-navigation-sidebars-port | `home.tsx`, `space.tsx` | keep; `/new` and `/new/add` keep upstream's column (reason updated) |
+| native-pane-chrome-port | no | keep |
+| native-webfont-port | no | keep |
+| private-fact-guard-port | no | keep |
+| composer-voice-rank-port | `composer.tsx` | keep; Keys pad editor adopted (reason updated) |
+| no-automatic-release-publication | no | keep |
+| upstream-removal-clock | no | keep |
+| codex-headless-status-row-port | no | keep (upstream unchanged) |
+| stable-table-corpus-test | no | keep |
+| terminal-binding-pin-port | seven type/baseline paths | keep (auto-merged beside 1.19's new fields) |
+| host-workspace-form-port | the deleted sheet | **drop** (decision 1) |
+
+Boundary: 910 owned / 69 invasive paths in 26 entries before; after, 914 owned (this change's
+OpenSpec files, less the removed fork test) / 68 invasive in 25 entries.
 
 ## Risks / Trade-offs
 

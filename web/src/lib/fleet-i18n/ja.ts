@@ -111,6 +111,7 @@ export const ja: FleetDictionary = {
   "home.favorite.add": "{name}をトップに固定",
   "home.favorite.remove": "{name}の固定を解除",
   "fleet.navigation.hierarchy": "Herds",
+  "fleet.host.newSpace": "スペースを作成",
   "fleet.navigation.agents": "エージェント",
   "fleet.navigation.empty": "利用できるスペースがありません。",
   "fleet.navigation.thisHost": "このホスト",

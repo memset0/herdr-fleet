@@ -22,6 +22,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Changed
 
 - **Adopted Collie 1.19.0.** The New page replaces the new-space sheet and starts agents, launcher rows, a shell or a one-off command by id; launchers added from a phone, a recent-command history, worktree folders, model labels and an editable Keys pad arrive from upstream beside the fork's rails, mic-and-send split and terminal surface.
+- **A Host row's New space opens Collie's New page on that machine.** The deleted new-space sheet's fixed-Host port is retired; the page's own `?machine=` preselects the Host (one invasive path fewer).
 
 ## [3.14.0] - 2026-10-09
 

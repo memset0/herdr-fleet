@@ -110,6 +110,7 @@ export const en = {
   "home.favorite.add": "Pin {name} to top",
   "home.favorite.remove": "Unpin {name}",
   "fleet.navigation.hierarchy": "Herds",
+  "fleet.host.newSpace": "New space",
   "fleet.navigation.agents": "Agents",
   "fleet.navigation.empty": "No spaces available.",
   "fleet.navigation.thisHost": "This host",
