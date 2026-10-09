@@ -19,20 +19,30 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.13.0] - 2026-10-09
+
+**Every member redeploys, lead first; no operator configuration changes.** This release adopts
+Collie 1.18.0, whose pairing is always on and covers reads: behind the Gateway the Gateway itself is
+Collie's one paired device, enrolled at every lead start with a token held only in memory, so no
+`collie pair` is needed and a browser cannot pair or revoke. Every machine must run Bun 1.4.0 or later
+(the fork's speech-deadline port is gone). Fleet's own strings left Collie's dictionaries; the five
+languages Collie added read Fleet's labels in English. Rolling the lead back is a plain redeploy: a
+clean stop revokes the Gateway's device first.
+
 ### Changed
 
-- **Adopted Collie 1.18.0.** Pairing on every read, twelve languages, a left-hand layout, secret masking, offline reading and the one dashboard control bar arrive from upstream; the fork's rails, mic-and-send split and terminal surface sit beside them.
-- **The Gateway is Collie's one paired device.** A lead enrols it in Collie's own registry before the child starts, with a fresh token held only in memory, sends it on every proxied request and refuses a browser's pair or revoke; no `collie pair` is needed.
-- **Fleet's strings live in their own dictionary.** `ft()` follows Collie's language and reads English where Fleet has no translation; Collie's twelve dictionaries are upstream's text again.
-- **The CJK font origin is added by the Gateway.** It widens `style-src` and `font-src` of the documents it proxies, so Collie's own policy is no longer edited.
-- **Bun 1.4.0 is the floor.** It keeps a speech deadline armed between phases, so the fork's timeout helper is gone and upstream's own deadline runs.
-- **An offline cold start opens the app.** Navigation stays network-first; only a failed request falls back to the precached shell, so Collie's saved copy can be read.
-- **The record control mirrors with the left-hand layout.** It stays directly beside Send on either hand.
+- **Adopted Collie 1.18.0.** Pairing on every read, twelve languages, a left-hand layout, secret masking, offline reading and the one dashboard control bar arrive from upstream; the fork's rails, mic-and-send split and terminal surface sit beside them. ([2b1fc08](https://github.com/memset0/herdr-fleet/commit/2b1fc08))
+- **The Gateway is Collie's one paired device.** A lead enrols it in Collie's own registry before the child starts, with a fresh token held only in memory, sends it on every proxied request and refuses a browser's pair or revoke; no `collie pair` is needed. ([c93774d](https://github.com/memset0/herdr-fleet/commit/c93774d))
+- **Fleet's strings live in their own dictionary.** `ft()` follows Collie's language and reads English where Fleet has no translation; Collie's twelve dictionaries are upstream's text again. ([c93774d](https://github.com/memset0/herdr-fleet/commit/c93774d))
+- **The CJK font origin is added by the Gateway.** It widens `style-src` and `font-src` of the documents it proxies, so Collie's own policy is no longer edited. ([c93774d](https://github.com/memset0/herdr-fleet/commit/c93774d))
+- **Bun 1.4.0 is the floor.** It keeps a speech deadline armed between phases, so the fork's timeout helper is gone and upstream's own deadline runs. ([c93774d](https://github.com/memset0/herdr-fleet/commit/c93774d))
+- **An offline cold start opens the app.** Navigation stays network-first; only a failed request falls back to the precached shell, so Collie's saved copy can be read. ([c93774d](https://github.com/memset0/herdr-fleet/commit/c93774d))
+- **The record control mirrors with the left-hand layout.** It stays directly beside Send on either hand. ([c93774d](https://github.com/memset0/herdr-fleet/commit/c93774d))
 
 ### Fixed
 
-- **The Pane header keeps the lost-connection badge.** It declines the Collie mark, so the badge Collie hangs on the mark is drawn in the row on its own.
-- **The Maple Mono typeface shows its own note.** It read the note for an operator's face.
+- **The Pane header keeps the lost-connection badge.** It declines the Collie mark, so the badge Collie hangs on the mark is drawn in the row on its own. ([c93774d](https://github.com/memset0/herdr-fleet/commit/c93774d))
+- **The Maple Mono typeface shows its own note.** It read the note for an operator's face. ([c93774d](https://github.com/memset0/herdr-fleet/commit/c93774d))
 
 ## [3.12.0] - 2026-10-09
 
