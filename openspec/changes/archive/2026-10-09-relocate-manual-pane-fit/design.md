@@ -113,3 +113,15 @@ other Pane-page ports it is attributed with.
 Cut as a MINOR. Deploy the lead, then every member. Rollback is per member: redeploy the previous tag;
 a lead on this release with a member on the previous one gets a failed (not wrong) resize for that
 member's Panes.
+
+## Deployment finding (pre-existing, not caused by this change)
+
+On one member the terminal service has failed to start since that member's Herdr server last
+restarted: the plugin's children inherit the Herdr server's `PATH`, which does not contain the
+`herdr` binary, and `fleet/terminal/peer-main.ts` looks the command up with `Bun.which("herdr")`
+while ignoring the `HERDR_BIN_PATH` the runtime does provide. The service exits at startup, so that
+member serves neither the terminal surface nor the new `resize` operation through the Gateway; the
+lead reports an ordinary failed resize, as specified. The member-side fit core itself was exercised
+against that member's own Herdr and fitted a throwaway Pane keeping its rows. The fix (honour
+`HERDR_BIN_PATH` in `peer-main.ts`) touches code a peer executes and therefore needs its own MINOR;
+it is left for a follow-up rather than folded into this released change.

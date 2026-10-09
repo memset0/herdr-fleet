@@ -24,6 +24,6 @@
 ## 5. Verification and release
 
 - [x] 5.1 Run focused tests, both typechecks, lint, the build, `bun run test:fork` and the private-facts guard
-- [ ] 5.2 Push `main` unreleased and run the full suites on the remote test member against that exact commit, classifying every failure
-- [ ] 5.3 Cut the MINOR release, tag it annotated, push branch and tag by name
-- [ ] 5.4 Deploy the lead and every member except those excluded, verify versions, health in the crew census, an end-to-end fit of a throwaway lead Pane and a throwaway member Pane, and that Collie no longer answers the removed route
+- [x] 5.2 Push `main` unreleased and run the full suites on the remote test member against that exact commit, classifying every failure
+- [x] 5.3 Cut the MINOR release, tag it annotated, push branch and tag by name
+- [x] 5.4 Deploy the lead and every member except those excluded, verify versions, health in the crew census, an end-to-end fit of a throwaway lead Pane and a throwaway member Pane, and that Collie no longer answers the removed route (the member's fit core was verified on the member's own Herdr; the Gateway-to-member path is blocked by the pre-existing finding recorded in design.md)
