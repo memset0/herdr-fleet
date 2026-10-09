@@ -19,20 +19,27 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-10-09
+
+**Every member redeploys, lead first; no operator configuration changes.** Nothing a member runs
+changed behaviour: this release returns seventeen of Collie's files to upstream's text (86 → 69
+invasive paths) so the next adoption has fewer merges, and the Fleet navigation shell is now part of
+the Fleet build rather than of every bundle. A Fleet install looks and behaves as 3.13.0 did.
+
 ### Changed
 
-- **The navigation shell is part of the Fleet build.** The web build script sets `VITE_HERDR_FLEET=1`, which mounts the rails, the Fleet Settings group and the Pane's declined mark; any other bundle draws Collie's own layout, so upstream's suites meet upstream's layout.
-- **Fork cases and configuration stand beside Collie's files.** Fleet's test cases, lint suppressions, TypeScript gate and CI workflow moved into fork-owned files; seventeen upstream paths are Collie's text again (86 → 69 invasive).
-- **The Fleet manual moved to `fleet/README.md`.** Collie's embedded `docs/` no longer needs an exclusion for it.
+- **The navigation shell is part of the Fleet build.** `web/package.json`'s build script sets `VITE_HERDR_FLEET=1`, which mounts the rails, the Fleet Settings group and the Pane's declined mark; any other bundle draws Collie's own layout, so upstream's suites meet upstream's layout. ([45684ec](https://github.com/memset0/herdr-fleet/commit/45684ec))
+- **Fork cases and configuration stand beside Collie's files.** Fleet's test cases, lint suppressions, TypeScript gate and CI workflow moved into fork-owned files; seventeen upstream paths are Collie's text again (86 → 69 invasive). ([45684ec](https://github.com/memset0/herdr-fleet/commit/45684ec))
+- **The Fleet manual moved to `fleet/README.md`.** Collie's embedded `docs/` no longer needs an exclusion for it. ([45684ec](https://github.com/memset0/herdr-fleet/commit/45684ec))
 
 ### Fixed
 
-- **Header knockouts use the header's own ground.** The shell sets the header's chrome through a variable scope, so a status dot's ring on the Pane header no longer shows the page colour.
+- **Header knockouts use the header's own ground.** The shell sets the header's chrome through a variable scope, so a status dot's ring on the Pane header no longer shows the page colour. ([45684ec](https://github.com/memset0/herdr-fleet/commit/45684ec))
 
 ### Packaging
 
-- **The web build script states the Fleet build.** Every production bundle, `collie build` included, goes through it; Collie's root `build` script is upstream's again.
-- **The Fleet suites run from `bun run test:fleet`.** Collie's `bun run test` no longer includes them; `.github/workflows/fleet.yml` runs them with the boundary check.
+- **The web build script states the Fleet build.** Every production bundle, `collie build` included, goes through it; Collie's root `build` and `test` scripts are upstream's again. ([949f76a](https://github.com/memset0/herdr-fleet/commit/949f76a))
+- **The Fleet suites run from `bun run test:fleet`.** Collie's `bun run test` no longer includes them; `.github/workflows/fleet.yml` runs them with the boundary check. ([45684ec](https://github.com/memset0/herdr-fleet/commit/45684ec))
 
 ## [3.13.0] - 2026-10-09
 
