@@ -173,27 +173,46 @@ describe("ManualPaneFitControllerManager", () => {
     expect(timed.manager.activeCount).toBe(0);
   });
 
-  test("releases one Pane, one session, or every owned lease only", async () => {
+  test("recognises Herdr 0.9's attached-client refusal as a conflict", async () => {
+    const { manager, children } = harness();
+    const resize = manager.resize("/run/herdr.sock", "w1:p1", { cols: 60, rows: 24 });
+    children[0]!.stdout.write(
+      `${JSON.stringify({
+        type: "terminal.closed",
+        reason: "terminal attach failed: terminal term_x already has an attached client; retry with --takeover",
+      })}\n`,
+    );
+    await expect(resize).rejects.toMatchObject({ failure: "conflict" });
+    expect(manager.activeCount).toBe(0);
+  });
+
+  test("forgets a controller that exits after acquisition and acquires afresh", async () => {
+    // A held browser attachment (attach --takeover) displaces the controller, and closing the Pane
+    // ends it: both are an exit, and neither may leave a lease that points at a dead child.
+    const { manager, children, calls } = harness();
+    const first = manager.resize("/run/herdr.sock", "w1:p1", { cols: 60, rows: 24 });
+    children[0]!.stdout.write('{"type":"terminal.frame","bytes":""}\n');
+    await first;
+    expect(manager.activeCount).toBe(1);
+    children[0]!.emit("exit", 0, null);
+    expect(manager.activeCount).toBe(0);
+    const again = manager.resize("/run/herdr.sock", "w1:p1", { cols: 70, rows: 24 });
+    expect(calls).toHaveLength(2);
+    children[1]!.stdout.write('{"type":"terminal.frame","bytes":""}\n');
+    await again;
+  });
+
+  test("releases every owned lease on dispose", async () => {
     const { manager, children } = harness();
     const requests = [
       manager.resize("/sessions/a/herdr.sock", "w1:p1", { cols: 60, rows: 24 }),
-      manager.resize("/sessions/a/herdr.sock", "w1:p2", { cols: 60, rows: 24 }),
       manager.resize("/sessions/b/herdr.sock", "w1:p1", { cols: 60, rows: 24 }),
     ];
     for (const child of children) child.stdout.write('{"type":"terminal.frame","bytes":""}\n');
     await Promise.all(requests);
-
-    manager.releasePane("/sessions/a/herdr.sock", "w1:p1");
-    expect(children[0]!.writes).toContain(`${JSON.stringify({ type: "terminal.release" })}\n`);
-    expect(children[1]!.killed).toEqual([]);
-    expect(children[2]!.killed).toEqual([]);
-
-    manager.releaseSession("/sessions/a/herdr.sock");
-    expect(children[1]!.killed).toEqual(["SIGTERM"]);
-    expect(children[2]!.killed).toEqual([]);
-
     manager.disposeAll();
-    expect(children[2]!.killed).toEqual(["SIGTERM"]);
+    expect(children[0]!.writes).toContain(`${JSON.stringify({ type: "terminal.release" })}\n`);
+    expect(children.map((child) => child.killed)).toEqual([["SIGTERM"], ["SIGTERM"]]);
     expect(manager.activeCount).toBe(0);
   });
 });

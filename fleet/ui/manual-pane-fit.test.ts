@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
   manualPaneFitColumns,
+  parsePaneFitAnswer,
+  parsePaneFitAvailability,
   runManualPaneFit,
 } from "./manual-pane-fit.ts";
 
@@ -65,5 +67,23 @@ describe("manual Pane fit geometry", () => {
       reason: "geometry",
     });
     expect(calls).toBe(0);
+  });
+});
+
+describe("the Gateway's answers, narrowed", () => {
+  test("availability is the lead flag and string member ids, or nothing", () => {
+    expect(parsePaneFitAvailability({ lead: true, members: ["member-a", 7] })).toEqual({
+      lead: true,
+      members: ["member-a"],
+    });
+    expect(parsePaneFitAvailability({ lead: "yes", members: [] })).toBeNull();
+    expect(parsePaneFitAvailability({ error: "not found" })).toBeNull();
+  });
+
+  test("a resize answer is a result or a closed failure", () => {
+    expect(parsePaneFitAnswer({ ok: true, cols: 80, rows: 31 })).toEqual({ ok: true, cols: 80, rows: 31 });
+    expect(parsePaneFitAnswer({ ok: false, reason: "conflict" })).toEqual({ ok: false, reason: "conflict" });
+    expect(parsePaneFitAnswer({ ok: false, reason: "anything" })).toEqual({ ok: false, reason: "failed" });
+    expect(parsePaneFitAnswer("ok")).toEqual({ ok: false, reason: "failed" });
   });
 });

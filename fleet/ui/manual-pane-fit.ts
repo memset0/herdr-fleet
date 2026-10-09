@@ -1,3 +1,6 @@
+import type { JsonValue } from "../../bridge/json.ts";
+import { jsonNumberField, jsonRecord, jsonStringField } from "../../bridge/stt/json.ts";
+
 export const MIN_MANUAL_PANE_FIT_COLS = 20;
 export const MAX_MANUAL_PANE_FIT_COLS = 500;
 
@@ -121,4 +124,39 @@ function cssPixels(value: string): number {
 
 function validResultDimension(value: number | undefined): value is number {
   return value !== undefined && Number.isInteger(value) && value > 0;
+}
+
+/** Which Hosts can fit, as the Fleet Gateway answers it. */
+export interface PaneFitAvailability {
+  readonly lead: boolean;
+  readonly members: readonly string[];
+}
+
+/** The Gateway's availability answer, narrowed; anything else is "no Fleet here". */
+export function parsePaneFitAvailability(value: JsonValue): PaneFitAvailability | null {
+  const record = jsonRecord(value);
+  if (record === null || (record.lead !== true && record.lead !== false) || !Array.isArray(record.members)) {
+    return null;
+  }
+  const members: string[] = [];
+  for (const member of record.members) {
+    const id = jsonStringField(member);
+    if (id !== null) members.push(id);
+  }
+  return { lead: record.lead, members };
+}
+
+/** The Gateway's resize answer, narrowed to the result shape `runManualPaneFit` reads. */
+export function parsePaneFitAnswer(value: JsonValue): ManualPaneFitRequestResult {
+  const record = jsonRecord(value);
+  if (record === null) return { ok: false, reason: "failed" };
+  if (record.ok === true) {
+    const cols = jsonNumberField(record.cols);
+    const rows = jsonNumberField(record.rows);
+    return cols !== null && rows !== null ? { ok: true, cols, rows } : { ok: false, reason: "failed" };
+  }
+  const reason = jsonStringField(record.reason);
+  return reason === "unsupported" || reason === "geometry" || reason === "conflict"
+    ? { ok: false, reason }
+    : { ok: false, reason: "failed" };
 }

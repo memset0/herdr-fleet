@@ -6,7 +6,6 @@ import {
   EllipsisVertical,
   Loader2,
   Minimize2,
-  Scaling,
   ScrollText,
   TerminalSquare,
 } from "lucide-react";
@@ -109,10 +108,8 @@ import type {
 } from "@/lib/blocks";
 import { paneMirrorOverride, setPaneMirrorOverride } from "@/lib/mirror-invert";
 import type { Scope } from "@/lib/scope";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { resizePane, sendKeys } from "@/lib/api";
-import { runManualPaneFit } from "../../../fleet/ui/manual-pane-fit.ts";
+import { sendKeys } from "@/lib/api";
+import { useFleetPaneFit } from "@/components/fleet-pane-fit";
 import { useFleetCommandAdapters } from "@/components/fleet-commands";
 
 /** An alternate body keeps the native Pane header and its actions, not a copy of them. */
@@ -317,8 +314,6 @@ export function AgentChat({
   // ReadOnlyBanner names which.
   const { refused: notPaired } = usePairing();
   const readOnly = isReadOnly(device) || notPaired;
-  // DOWNSTREAM PORT — the Pane's own machine answers, as every other capability here does.
-  const manualPaneFit = useMuxCapability("resizePane", scope);
   // TIER 2: is the machine THIS pane lives on still answering the lead? Read off the pane's own host
   // — never the ambient scope — because the pane row is what carries the truth about where it lives;
   // `scope.host` is the fallback for a pane the snapshot has already dropped (an absent `?h=` is the
@@ -485,35 +480,17 @@ export function AgentChat({
   }, [landscape, zen, autoZenActive]);
   const listRef = useRef<ChatMessageListHandle>(null);
   const composerRef = useRef<ComposerHandle>(null);
-  const [manualPaneFitBusy, setManualPaneFitBusy] = useState(false);
-
-  async function fitPaneToMirror(): Promise<void> {
-    if (manualPaneFitBusy || readOnly || hostBlock !== undefined) return;
-    setManualPaneFitBusy(true);
-    try {
-      const result = await runManualPaneFit(
-        listRef.current?.getScrollElement() ?? null,
-        prefs.fontSize,
-        (cols) => resizePane(paneId, cols, scope),
-      );
-      if (result.ok) {
-        setStatus(
-          t("settings.display.resize.success", { cols: result.cols, rows: result.rows }),
-          "success",
-        );
-        return;
-      }
-      const key = {
-        unsupported: "settings.display.resize.unsupported",
-        geometry: "settings.display.resize.geometryError",
-        conflict: "settings.display.resize.conflict",
-        failed: "settings.display.resize.failed",
-      } as const;
-      setStatus(t(key[result.reason]), "error");
-    } finally {
-      setManualPaneFitBusy(false);
-    }
-  }
+  // DOWNSTREAM PORT — manual Pane fit is Fleet's (web/src/components/fleet-pane-fit.tsx): this page
+  // hands over what it alone knows and receives the Display row and the one fit function.
+  const paneFit = useFleetPaneFit({
+    paneId,
+    scope,
+    readOnly,
+    hostBlocked: hostBlock !== undefined,
+    gone: !agent,
+    scrollElement: () => listRef.current?.getScrollElement() ?? null,
+    fontSize: prefs.fontSize,
+  });
 
   /**
    * DOWNSTREAM PORT — one fixed key sequence, sent through the writer this page already uses.
@@ -529,13 +506,13 @@ export function AgentChat({
 
   // DOWNSTREAM PORT — the Pane-scoped commands, registered for as long as this page is mounted.
   //
-  // The fit command calls the SAME function the Display dock's own control calls, rather than a
-  // second measurement: one geometry, one busy flag, one result policy. The key commands send a
+  // The fit command calls the SAME function the Display row calls, rather than a second
+  // measurement: one geometry, one busy flag, one result policy. The key commands send a
   // CONSTANT sequence chosen by the command's id — the id is the whole address, and no caller may
   // supply a sequence — through the writer this page already uses, so the read-only refusal and the
   // audit attribution are the ones that were already there.
   useFleetCommandAdapters({
-    "fit-pane-width": () => fitPaneToMirror(),
+    "fit-pane-width": () => paneFit.fit(),
     "send-escape": () => sendFixedKeys(["Escape"]),
     "send-enter": () => sendFixedKeys(["Enter"]),
     "send-alt-up": () => sendFixedKeys(["alt+Up"]),
@@ -2702,47 +2679,7 @@ export function AgentChat({
             setRawTerminal={setRawTerminal}
             setTapToFocus={setTapToFocus}
             setExpandClippedReply={setExpandClippedReply}
-            afterTextSize={
-                manualPaneFit.capable && !gone ? (
-                  <div className="flex items-center justify-between gap-3 py-1.5">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 text-sm font-medium">
-                        {t("settings.display.resize.label")}
-                        <Badge
-                          variant="outline"
-                          className="px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
-                        >
-                          {t("settings.display.resize.badge")}
-                        </Badge>
-                      </div>
-                      <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                        {t("settings.display.resize.hint")}
-                      </p>
-                    </div>
-                    <Button
-                      className="shrink-0"
-                      variant="outline"
-                      size="sm"
-                      disabled={
-                        readOnly ||
-                        hostBlock !== undefined ||
-                        manualPaneFitBusy
-                      }
-                      onClick={() => void fitPaneToMirror()}
-                      aria-label={t("settings.display.resize.aria")}
-                    >
-                      {manualPaneFitBusy ? (
-                        <Loader2 className="animate-spin" />
-                      ) : (
-                        <Scaling />
-                      )}
-                      {manualPaneFitBusy
-                        ? t("settings.display.resize.busy")
-                        : t("settings.display.resize.label")}
-                    </Button>
-                  </div>
-                ) : undefined
-            }
+            afterTextSize={paneFit.row}
             // THE BODY SWITCH, second door. The ⋮ menu writes the same value; this is the one an
             // operator opens to change how a pane LOOKS, which is the question it answers. `chosen`
             // and `showing` are both passed because they differ on a pane with no journal, and the

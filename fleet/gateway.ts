@@ -30,6 +30,7 @@ import { tagResponse } from "./pane-tags/route.ts";
 import type { TagStore } from "./pane-tags/store.ts";
 import type { SettingsStore } from "./settings/store.ts";
 import { TERMINAL_PATH, admit, type TerminalTarget } from "./terminal/admit.ts";
+import { isPaneFitPath, paneFitResponse, type PaneFitRouteDeps } from "./manual-pane-fit/route.ts";
 
 const HTML_CSP =
   "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; " +
@@ -74,6 +75,7 @@ export const FLEET_SETTINGS_PATH = "/fleet/api/settings";
 function isApiPath(pathname: string): boolean {
   if (pathname === "/api" || pathname.startsWith("/api/")) return true;
   if (pathname.startsWith(TODOIST_API + "/")) return true;
+  if (isPaneFitPath(pathname)) return true;
   return pathname === TAGS_PATH || pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
 }
 
@@ -118,6 +120,8 @@ export interface GatewayOptions {
   readonly settings?: SettingsStore;
   readonly tags?: TagStore;
   readonly todoist?: TodoistService;
+  /** Manual Pane fit. Absent leaves both of its routes 404, as every capability this Gateway lacks. */
+  readonly paneFit?: PaneFitRouteDeps;
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
   readonly now?: () => number;
@@ -335,6 +339,14 @@ export function createGatewayHandler(options: GatewayOptions) {
         }
       }
       return withBaseHeaders(await tagResponse(request, options.tags), "no-store");
+    }
+
+    // MANUAL PANE FIT, Fleet's and not Collie's: below the session gate and the unsafe-method origin
+    // rule above, and above the proxy, so Collie never sees a resize at all.
+    if (isPaneFitPath(url.pathname)) {
+      if (options.paneFit === undefined) return json({ error: "not found" }, 404);
+      const answer = await paneFitResponse(request, url, options.paneFit);
+      if (answer !== null) return json(answer.body, answer.status);
     }
 
     // FLEET'S OWN SURFACE, above the proxy and below the session gate. It is served here rather than

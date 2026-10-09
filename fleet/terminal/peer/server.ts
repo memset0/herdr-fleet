@@ -42,7 +42,7 @@ export function startPeerTerminalServer(deps: PeerServerDeps): ReturnType<typeof
   return Bun.serve<StreamData>({
     hostname: config.bind.host,
     port: config.bind.port,
-    // Nothing here has a body worth the name: the one POST carries a Pane id.
+    // Nothing here has a body worth the name: the POSTs carry a Pane id and at most a column count.
     maxRequestBodySize: 4 * 1024,
     async fetch(request, server) {
       // Before the Pane, before the grammar, before anything: this service answers on one loopback
@@ -61,7 +61,7 @@ export function startPeerTerminalServer(deps: PeerServerDeps): ReturnType<typeof
           // `readPeerRequest` reads is narrowed there before it becomes a Pane id.
           body = (await request.json()) as JsonValue;
         } catch {
-          return refusal("body", "close takes one JSON object");
+          return refusal("body", "this operation takes one JSON object");
         }
       }
       const read = readPeerRequest({ method: request.method, url, upgrade, body });
@@ -72,6 +72,7 @@ export function startPeerTerminalServer(deps: PeerServerDeps): ReturnType<typeof
       const operation = read.operation;
 
       if (operation.kind === "state") return Response.json(service.state());
+      if (operation.kind === "resize") return Response.json(await service.resize(operation.paneId, operation.cols));
       if (operation.kind === "close") {
         service.close(operation.paneId);
         return Response.json({ ok: true });

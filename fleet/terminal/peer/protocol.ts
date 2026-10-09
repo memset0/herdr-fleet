@@ -1,8 +1,8 @@
 /**
  * What a member's terminal service will answer, and the exact shape it must be asked in.
  *
- * Three operations, and the grammar is closed around them: request a Pane's terminal, close a Pane's
- * terminal, report the service's own state. Everything a terminal needs beyond the Pane id — the
+ * Four operations, and the grammar is closed around them: request a Pane's terminal, close a Pane's
+ * terminal, fit a Pane to a column count, report the service's own state. Everything a terminal needs beyond the Pane id — the
  * terminal itself, the executable, its arguments, the socket, the account it runs as — comes from
  * this member's own configuration and its own multiplexer server, so there is nowhere in this shape
  * for a caller to put one.
@@ -14,15 +14,19 @@
 
 import { isPaneId } from "../admit.ts";
 import type { JsonValue } from "../../../bridge/json.ts";
-import { jsonRecord, jsonStringField } from "../../../bridge/stt/json.ts";
+import { jsonNumberField, jsonRecord, jsonStringField } from "../../../bridge/stt/json.ts";
+import { validPaneFitColumns } from "../../manual-pane-fit/controller.ts";
 
 export const ATTACH_PATH = "/terminal/attach";
 export const CLOSE_PATH = "/terminal/close";
 export const STATE_PATH = "/terminal/state";
+export const RESIZE_PATH = "/terminal/resize";
 
 export type PeerOperation =
   | { readonly kind: "attach"; readonly paneId: string }
   | { readonly kind: "close"; readonly paneId: string }
+  /** Fit a Pane to a column count. Rows are never the caller's: the member reads its own. */
+  | { readonly kind: "resize"; readonly paneId: string; readonly cols: number }
   | { readonly kind: "state" };
 
 export interface PeerRefusal {
@@ -44,6 +48,9 @@ const ATTACH_PARAMS = new Set(["pane"]);
 
 /** The only field a close body may carry. */
 const CLOSE_FIELDS = new Set(["pane"]);
+
+/** The only fields a resize body may carry. A row count is refused like any other extra field. */
+const RESIZE_FIELDS = new Set(["pane", "cols"]);
 
 export interface PeerRequestInput {
   readonly method: string;
@@ -80,6 +87,21 @@ export function readPeerRequest(input: PeerRequestInput): PeerRequestResult {
     return { ok: true, operation: { kind: "close", paneId } };
   }
 
+  if (path === RESIZE_PATH) {
+    if (input.method !== "POST") return refuse("method", "resize is a POST");
+    if (input.upgrade) return refuse("upgrade", "resize is not a stream");
+    if (input.url.searchParams.size > 0) return refuse("query", "resize carries its Pane in its body");
+    const body = jsonRecord(input.body);
+    if (body === null) return refuse("body", "resize takes one JSON object");
+    const extra = Object.keys(body).find((key) => !RESIZE_FIELDS.has(key));
+    if (extra !== undefined) return refuse(extra, "resize names a Pane and a column count and nothing else");
+    const paneId = jsonStringField(body.pane) ?? "";
+    if (!isPaneId(paneId)) return refuse("pane", "pane must be a Pane id");
+    const cols = jsonNumberField(body.cols);
+    if (cols === null || !validPaneFitColumns(cols)) return refuse("cols", "cols must be a whole number from 20 to 500");
+    return { ok: true, operation: { kind: "resize", paneId, cols } };
+  }
+
   if (path === STATE_PATH) {
     if (input.method !== "GET") return refuse("method", "state is a GET");
     if (input.upgrade) return refuse("upgrade", "state is not a stream");
@@ -87,7 +109,7 @@ export function readPeerRequest(input: PeerRequestInput): PeerRequestResult {
     return { ok: true, operation: { kind: "state" } };
   }
 
-  return refuse("path", "this service answers three operations");
+  return refuse("path", "this service answers four operations");
 }
 
 /** What `state` reports. Counts and timing only: never a Pane, a terminal, or anything on one. */

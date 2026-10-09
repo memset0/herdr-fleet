@@ -156,10 +156,8 @@ function makeEngine() {
   engine.onTransition((a, from, to) => transitions.push({ pane: a.paneId, from, to }));
   const removed: string[] = [];
   engine.onRemove((paneId) => removed.push(paneId));
-  const paneRemoved: string[] = [];
-  engine.onPaneRemove((paneId) => paneRemoved.push(paneId));
   const poll = () => engine["poll"]();
-  return { herdr, engine, transitions, removed, paneRemoved, poll };
+  return { herdr, engine, transitions, removed, poll };
 }
 
 describe("StateEngine — transition detection", () => {
@@ -311,18 +309,6 @@ describe("StateEngine — removal events", () => {
     herdr.panes = [];
     await poll();
     expect(removed).toEqual([]);
-  });
-
-  test("fires the all-Pane removal port for both agent and shell Panes", async () => {
-    const { herdr, paneRemoved, poll } = makeEngine();
-    herdr.panes = [
-      pane("w1:p1", "w1", "blocked", "claude"),
-      pane("w1:p2", "w1", "unknown", null),
-    ];
-    await poll();
-    herdr.panes = [];
-    await poll();
-    expect(paneRemoved).toEqual(["w1:p1", "w1:p2"]);
   });
 });
 
@@ -1056,10 +1042,6 @@ describe("StateEngine — pane capability fields", () => {
     herdr.panes = [p];
     await poll();
     expect(engine.current().agents[0]!.readableLines).toBe(6946);
-    expect(engine.current().agents[0]!.viewportRows).toBe(51);
-    expect(engine.paneViewportRows("w1:p1")).toBe(51);
-    const wire = toPaneWire(engine.current().agents[0]!, () => true);
-    expect(wire).not.toHaveProperty("viewportRows");
   });
 
   test("an alt-screen pane reports just its viewport — the case that has no scrollback at all", async () => {
@@ -1076,7 +1058,6 @@ describe("StateEngine — pane capability fields", () => {
     herdr.panes = [pane("w1:p1", "w1", "idle", "claude")];
     await poll();
     expect(engine.current().agents[0]!.readableLines).toBeUndefined();
-    expect(engine.paneViewportRows("w1:p1")).toBeUndefined();
   });
 });
 

@@ -150,18 +150,7 @@ export class ManualPaneFitControllerManager {
     }
   }
 
-  releasePane(socketPath: string, paneId: string): void {
-    const key = leaseKey(socketPath, paneId);
-    const lease = this.leases.get(key);
-    if (lease !== undefined) this.releaseLease(key, lease);
-  }
-
-  releaseSession(socketPath: string): void {
-    for (const [key, lease] of this.leases) {
-      if (lease.socketPath === socketPath) this.releaseLease(key, lease);
-    }
-  }
-
+  /** Release every retained controller: the Gateway or the peer service is stopping. */
   disposeAll(): void {
     for (const [key, lease] of this.leases) this.releaseLease(key, lease);
   }
@@ -273,8 +262,14 @@ function parseControllerRecord(line: string): ControllerRecord | null {
   return reason === null ? null : { type, reason };
 }
 
+/**
+ * Herdr refuses a no-takeover controller while another client holds the terminal. Older servers said
+ * so in terms of a "controller"; Herdr 0.9 says the terminal "already has an attached client" (a
+ * held browser attachment counts). Both are a conflict, never a reason to take the terminal over.
+ */
 function isControllerConflict(reason: string): boolean {
   const normalized = reason.toLowerCase();
+  if (normalized.includes("already has an attached client")) return true;
   return normalized.includes("controller") && (
     normalized.includes("already") ||
     normalized.includes("owned") ||

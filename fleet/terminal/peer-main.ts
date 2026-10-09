@@ -1,7 +1,9 @@
 import { isAbsolute } from "node:path";
 
 import { FLEET_TERMINAL_ENV, parseFleetTerminalEnvelope } from "../config.ts";
-import { localSnapshotSource, resolveTerminal } from "./resolve.ts";
+import { ManualPaneFitControllerManager } from "../manual-pane-fit/controller.ts";
+import { createLocalPaneFit } from "../manual-pane-fit/local.ts";
+import { localSnapshotSource, localSocketPath, resolveTerminal } from "./resolve.ts";
 import { makeSocketDirectory, makeStartServer, type TerminalTools } from "./spawn.ts";
 import { PeerTerminalService } from "./peer/service.ts";
 import { startPeerTerminalServer } from "./peer/server.ts";
@@ -31,12 +33,20 @@ async function main(): Promise<void> {
   const tools: TerminalTools = { server: terminal.serverPath, attach };
 
   const sockets = await makeSocketDirectory();
-  const snapshots = localSnapshotSource();
+  const socketPath = localSocketPath();
+  const snapshots = localSnapshotSource(socketPath);
   const service = new PeerTerminalService({
     config: terminal,
     resolve: (paneId) => resolveTerminal({ paneId }, snapshots),
     verifyExecutable: () => verifyExecutableDigest(terminal.serverPath, terminal.serverDigest),
     startServer: makeStartServer({ tools, socketDir: sockets.path }),
+    // The same multiplexer command the attach uses, so a fit drives the binary this service verified
+    // is installed rather than whatever an inherited override names.
+    fit: createLocalPaneFit({
+      source: snapshots,
+      socketPath,
+      controller: new ManualPaneFitControllerManager({ binary: attach }),
+    }),
     standDown: () => void stop(0),
     log: (event, detail) => {
       console.log(`herdr-fleet ${event} ${JSON.stringify(detail)}`);

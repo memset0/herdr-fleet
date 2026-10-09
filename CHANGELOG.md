@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Manual Pane fit moved out of Collie into Fleet.** The Gateway serves `/fleet/api/pane/:id/resize`, members fit their own Panes through their terminal service's new `resize` operation, and Collie's resize route, capability and crew-link forward are gone; every member must redeploy.
+
 ## [3.10.0] - 2026-10-09
 
 **Every member redeploys, lead first; no operator configuration changes.** This release adopts

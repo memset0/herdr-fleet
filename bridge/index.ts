@@ -181,7 +181,6 @@ import {
   updateStartCommand,
 } from "./update-action.ts";
 import { collieVersion, collieVersionBare } from "./version.ts";
-import { createManualPaneFitAction } from "../fleet/manual-pane-fit/action.ts";
 
 // How often the registry rescans the filesystem for sessions that appeared/disappeared after boot.
 const SESSION_REFRESH_MS = 15_000;
@@ -1044,8 +1043,6 @@ function withBeaconsIfBlind(adapter: MuxAdapter, target: MuxTarget): MuxAdapter 
 // (config.ts). Both per-adapter knobs ride the target's OPAQUE options — which local dialer opens a
 // filesystem-path endpoint is Herdr's question, where the tmux binary is, is tmux's, and the registry
 // reads neither key.
-const manualPaneFit = createManualPaneFitAction();
-
 const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   const target = {
     endpoint: cfg.mux === DEFAULT_MUX ? socketPath : cfg.muxEndpoint,
@@ -1123,17 +1120,10 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   );
   engine.onTransition((agent, from, to) => notifications.onTransition(agent, from, to));
   engine.onRemove((paneId) => notifications.onRemove(paneId));
-  engine.onPaneRemove((paneId) => manualPaneFit.releasePane(socketPath, paneId));
 
   engine.start();
   poker.start();
-  return {
-    herdr,
-    engine,
-    poker,
-    notifications,
-    dispose: () => manualPaneFit.releaseSession(socketPath),
-  };
+  return { herdr, engine, poker, notifications };
 };
 
 const registry = new SessionRegistry({
@@ -1919,7 +1909,6 @@ const server = startServer({
   crew,
   pairing,
   stt,
-  manualPaneFit,
   crewLead,
   crewStatus,
   peerNotifier,
@@ -2015,7 +2004,6 @@ const shutdown = async () => {
   await server.stop();
   clearInterval(refreshTimer);
   registry.disposeAll();
-  manualPaneFit.disposeAll();
   // The codex speech-to-text provider owns a `codex app-server` child (bridge/stt/codex-auth.ts).
   // A no-op when speech-to-text is off, or configured to a provider that holds nothing open.
   stt.close();

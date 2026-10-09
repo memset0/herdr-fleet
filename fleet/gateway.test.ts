@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import type { FleetLeadConfig } from "./config.ts";
-import { createGatewayHandler, trustedClientSource } from "./gateway.ts";
+import { createGatewayHandler, trustedClientSource, type GatewayOptions } from "./gateway.ts";
 import type { FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import { SessionStore } from "./session-store.ts";
@@ -40,7 +40,7 @@ function request(path: string, init: RequestInit = {}): Request {
   return new Request(`${config.public.origin}${path}`, { ...init, headers });
 }
 
-async function setup(fetcher: FleetFetcher = fetch) {
+async function setup(fetcher: FleetFetcher = fetch, extra: Partial<GatewayOptions> = {}) {
   const root = await mkdtemp(join(tmpdir(), "herdr-fleet-gateway-"));
   roots.push(root);
   const sessions = new SessionStore(join(root, "sessions.json"));
@@ -54,6 +54,7 @@ async function setup(fetcher: FleetFetcher = fetch) {
       fetcher,
       now: () => 1_000,
       loginCsrfToken,
+      ...extra,
     }),
   };
 }
@@ -306,5 +307,93 @@ describe("authenticated solo Gateway", () => {
     const response = await handler(request("/api/snapshot", { headers: { cookie } }), { peerAddress: "127.0.0.1" });
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "upstream unavailable" });
+  });
+});
+
+describe("manual Pane fit on the Gateway", () => {
+  function paneFit(log: string[] = []) {
+    const calls: Array<[string, number]> = [];
+    return {
+      calls,
+      deps: {
+        local: {
+          resize: async (paneId: string, cols: number) => {
+            calls.push([paneId, cols]);
+            return { ok: true as const, cols, rows: 31 };
+          },
+          held: () => 0,
+          dispose: () => undefined,
+        },
+        members: () => [],
+        log: (event: string) => void log.push(event),
+      },
+    };
+  }
+
+  test("an unauthenticated resize is a 401, not a login page, and resizes nothing", async () => {
+    const fit = paneFit();
+    const { handler } = await setup(fetch, { paneFit: fit.deps });
+    const response = await handler(
+      request("/fleet/api/pane/w1%3Ap1/resize", {
+        method: "POST",
+        headers: { origin: config.public.origin, "content-type": "application/json" },
+        body: JSON.stringify({ cols: 80 }),
+      }),
+      { peerAddress: "127.0.0.1" },
+    );
+    expect(response.status).toBe(401);
+    expect(fit.calls).toEqual([]);
+  });
+
+  test("a cross-origin resize is refused before any Pane is resolved", async () => {
+    const fit = paneFit();
+    const { handler } = await setup(fetch, { paneFit: fit.deps });
+    const cookie = await login(handler);
+    for (const origin of ["https://attacker.example", null]) {
+      const headers = new Headers({ cookie, "content-type": "application/json" });
+      if (origin !== null) headers.set("origin", origin);
+      const response = await handler(
+        request("/fleet/api/pane/w1%3Ap1/resize", { method: "POST", headers, body: JSON.stringify({ cols: 80 }) }),
+        { peerAddress: "127.0.0.1" },
+      );
+      expect(response.status).toBe(403);
+    }
+    expect(fit.calls).toEqual([]);
+  });
+
+  test("an authenticated same-origin resize is served by Fleet and never reaches Collie", async () => {
+    const fit = paneFit();
+    const log: string[] = [];
+    let proxied = 0;
+    const { handler } = await setup(
+      async () => {
+        proxied += 1;
+        return new Response("collie");
+      },
+      { paneFit: { ...fit.deps, log: (event) => void log.push(event) } },
+    );
+    const cookie = await login(handler);
+    const response = await handler(
+      request("/fleet/api/pane/w1%3Ap1/resize", {
+        method: "POST",
+        headers: { cookie, origin: config.public.origin, "content-type": "application/json" },
+        body: JSON.stringify({ cols: 80 }),
+      }),
+      { peerAddress: "127.0.0.1" },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, cols: 80, rows: 31 });
+    expect(fit.calls).toEqual([["w1:p1", 80]]);
+    expect(log).toEqual(["pane-fit.resize"]);
+    expect(proxied).toBe(0);
+  });
+
+  test("without a configured fit both routes are 404", async () => {
+    const { handler } = await setup();
+    const cookie = await login(handler);
+    const response = await handler(request("/fleet/api/pane-fit", { headers: { cookie } }), {
+      peerAddress: "127.0.0.1",
+    });
+    expect(response.status).toBe(404);
   });
 });

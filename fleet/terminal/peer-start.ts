@@ -14,10 +14,11 @@
 import type { Placement, PlacementEndpoint } from "./placement.ts";
 import type { StartServer, TerminalServer } from "./session.ts";
 
-/** The three things a member's terminal service answers, and the only three. */
+/** The four things a member's terminal service answers, and the only four. */
 export const PEER_ATTACH_PATH = "/terminal/attach";
 export const PEER_CLOSE_PATH = "/terminal/close";
 export const PEER_STATE_PATH = "/terminal/state";
+export const PEER_RESIZE_PATH = "/terminal/resize";
 
 /** A loopback authority, bracketed where the address requires it. */
 export function peerAuthority(endpoint: PlacementEndpoint): string {

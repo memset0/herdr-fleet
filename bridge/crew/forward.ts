@@ -46,18 +46,13 @@ export function crewRouteFor(pathname: string): string | null {
 }
 
 /**
- * The route grammars, mirroring EVERY pane-route and tab-route literal in bridge/server.ts
- * one-for-one. `forward.test.ts` pins that correspondence by reading server.ts's source — two
- * grammars that "agree" would be two grammars that drift, and a drift here is a route the phone can
- * call locally but not across a link (or, worse, the reverse).
- *
- * It reads EVERY declaration and not one by name, which it did not always do: `resize` was declared
- * beside `PANE_ROUTE` in a literal of its own, the test looked at `PANE_ROUTE` alone, and the route
- * was locally serveable and silently unfederated for as long as it existed. A guard that inspects
- * one of two declarations is a guard the next declaration walks around.
+ * The route grammars, mirroring `PANE_ROUTE` / `TAB_ACTION_ROUTE` in bridge/server.ts one-for-one.
+ * `forward.test.ts` pins that correspondence by reading server.ts's source — two grammars that
+ * "agree" would be two grammars that drift, and a drift here is a route the phone can call locally
+ * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|resize))?$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
@@ -167,12 +162,9 @@ export function forwardAuditAction(route: string): string | null {
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
   if (isPaneRead(action)) return null; // reads, and a read is audited on neither side
-  // The handlers for these four namespace themselves; `reply`, `keys` and `upload` do not. The list
-  // is not a style choice — it is read off what the PEER's own handler records, and a mismatch here
-  // makes the lead's line and the peer's line disagree about what happened.
-  if (action === "close" || action === "rename" || action === "focus" || action === "resize") {
-    return `pane.${action}`;
-  }
+  // DOWNSTREAM PORT — `focus` namespaces itself on the peer's own handler (`pane.focus`), so the
+  // lead's record of the forward says the same; a bare word made the two logs disagree.
+  if (action === "close" || action === "rename" || action === "focus") return `pane.${action}`;
   return action; // reply | keys | upload
 }
 

@@ -7,10 +7,6 @@ import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider, useParams, useRevalidator } from "react-router";
 
 import { __resetConnectionHealth } from "@/lib/connection-health";
-import {
-  __resetOperatorCommands,
-  getMuxConfig,
-} from "@/lib/operator-config";
 
 // Mock the race guard at AgentChat's seam so the frozen-revision tests can observe exactly what
 // `detectedRevision` the tap handler passes (the guard's own behaviour is covered in
@@ -33,6 +29,7 @@ import { server } from "@/test/setup";
 import { clearStatus, setStatus, useStatus } from "@/lib/status";
 import { setAutoZenEnabled, setZenEnabled, __resetZen } from "@/lib/zen";
 import { setStripsCollapsed, __resetStripsCollapsed } from "@/lib/strips-collapsed";
+import { __resetOperatorCommands } from "@/lib/operator-config";
 import { paneMirrorOverride, setPaneMirrorOverride } from "@/lib/mirror-invert";
 import { submitPromptOption } from "@/lib/prompt-action";
 import { submitWizardKeys } from "@/lib/wizard-action";
@@ -87,121 +84,6 @@ function renderChat(overrides: Partial<ComponentProps<typeof AgentChat>> = {}) {
   const { container } = render(<RouterProvider router={router} />);
   return { props, container };
 }
-
-function manualPaneFitConfig(supported: boolean) {
-  return HttpResponse.json({
-    mux: {
-      name: "reference",
-      capabilities: { resizePane: supported },
-      unsupportedKeys: [],
-      notes: {},
-      spaces: "many",
-      topologyLatency: { kind: "push" },
-    },
-  });
-}
-
-describe("AgentChat — explicit manual Pane fit", () => {
-  it("renders the Custom Resize row immediately below Text size and sends one measured request", async () => {
-    let requestBody: unknown;
-    let requests = 0;
-    server.use(
-      http.get(/\/api\/config$/, () => manualPaneFitConfig(true)),
-      http.post(/\/api\/pane\/[^/]+\/resize(?:\?.*)?$/, async ({ request }) => {
-        requests += 1;
-        requestBody = await request.json();
-        return HttpResponse.json({ ok: true, cols: 80, rows: 31 });
-      }),
-    );
-    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      width: 1_000,
-      height: 10,
-      top: 0,
-      right: 1_000,
-      bottom: 10,
-      left: 0,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    });
-    const user = userEvent.setup();
-    const { container } = renderChat();
-    const scrollport = container.querySelector<HTMLElement>(".overflow-y-auto.overflow-x-hidden");
-    expect(scrollport).not.toBeNull();
-    Object.defineProperty(scrollport, "clientWidth", { configurable: true, value: 816 });
-    if (scrollport !== null) {
-      scrollport.style.paddingLeft = "8px";
-      scrollport.style.paddingRight = "8px";
-    }
-
-    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-    const textSize = screen.getByText("Text size");
-    const resize = screen.getByRole("button", { name: "Resize Pane to this view" });
-    expect(screen.getByText("Custom")).toBeInTheDocument();
-    expect(textSize.compareDocumentPosition(resize) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-
-    fireEvent.click(resize);
-    fireEvent.click(resize);
-    await waitFor(() => expect(requests).toBe(1));
-    expect(requestBody).toEqual({ cols: 80 });
-    expect(await screen.findByText("Resized to 80 columns × 31 rows.")).toBeInTheDocument();
-    rect.mockRestore();
-  });
-
-  it("never sends from render, font, viewport, or drawer changes", async () => {
-    let requests = 0;
-    server.use(
-      http.get(/\/api\/config$/, () => manualPaneFitConfig(true)),
-      http.post(/\/api\/pane\/[^/]+\/resize(?:\?.*)?$/, () => {
-        requests += 1;
-        return HttpResponse.json({ ok: true, cols: 80, rows: 31 });
-      }),
-    );
-    const user = userEvent.setup();
-    renderChat();
-    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-    await user.click(screen.getByRole("button", { name: "Increase font size" }));
-    window.dispatchEvent(new Event("resize"));
-    await user.click(within(screen.getByRole("dialog", { name: "Display" })).getByRole("button", { name: "Close" }));
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-    expect(requests).toBe(0);
-  });
-
-  it("fails closed for unsupported bridges and leaves read-only clients no usable action", async () => {
-    const user = userEvent.setup();
-    server.use(http.get(/\/api\/config$/, () => manualPaneFitConfig(false)));
-    renderChat();
-    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(false));
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-    expect(screen.queryByText("Custom")).not.toBeInTheDocument();
-
-    cleanup();
-    __resetOperatorCommands();
-    server.use(http.get(/\/api\/config$/, () => manualPaneFitConfig(true)));
-    renderChat({
-      device: { enforced: true, device: "viewer", authorized: false },
-    });
-    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-    expect(screen.getByRole("button", { name: "Resize Pane to this view" })).toBeDisabled();
-  });
-
-  // Collie 1.15's Display sheet answers for the body on screen. Resize fits the PTY to the MIRROR, so
-  // it is one of the terminal body's rows and the Chat body, which draws no mirror, has none.
-  it("offers Resize among the terminal body's rows and not among Chat's", async () => {
-    const user = userEvent.setup();
-    server.use(http.get(/\/api\/config$/, () => manualPaneFitConfig(true)));
-    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ chatExperiment: true, paneView: "chat" }));
-    renderChat({ agent: { ...fixtureAgents[0]!, hasSession: true } });
-    await screen.findByText("what changed today?");
-    await waitFor(() => expect(getMuxConfig()?.capabilities.resizePane).toBe(true));
-    await user.click(screen.getByRole("button", { name: "Display settings" }));
-    expect(screen.queryByRole("button", { name: "Resize Pane to this view" })).toBeNull();
-    expect(screen.queryByText("Custom")).not.toBeInTheDocument();
-  });
-});
 
 // The fork's terminal surface (pane-surface-route-port) replaces the Pane's body whichever body
 // Collie would draw, so Collie's Chat switch is not offered under it and no live window is read.

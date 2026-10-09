@@ -1296,14 +1296,6 @@ export type ActionResponse =
       reason?: string;
     };
 
-export type PaneResizeResponse =
-  | { ok: true; cols: number; rows: number }
-  | {
-      ok: false;
-      error: string;
-      reason: "unsupported" | "geometry" | "conflict" | "failed";
-    };
-
 export type UploadResponse =
   | { ok: true; path: string }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
@@ -1387,7 +1379,6 @@ export const MUX_CAPABILITIES = [
   "agentSessionRef",
   "typeText",
   "sendKeys",
-  "resizePane",
   "renamePane",
   "closePane",
   "setFocus",
@@ -1695,3 +1686,4 @@ export type WorktreeListResponse =
 export type WorktreeOpenResponse =
   | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+

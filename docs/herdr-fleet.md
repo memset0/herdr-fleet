@@ -360,11 +360,23 @@ to complete monospace cells, clamps the result to 20–500 columns, and preserve
 viewport row count.
 
 This is an explicit action only. Opening the drawer or changing the browser, font, route, or layout
-does not resize the shared PTY. The bridge retains one no-takeover Herdr controller per session
-socket and Pane, reuses it for later taps, reports ownership conflicts, and releases only its own
-controllers when the Pane, session, or bridge ends. Browser requests carry columns only; socket paths
-and rows stay server-owned. tmux, zellij, older bridges, unavailable Panes, and read-only clients do
-not receive a usable action.
+does not resize the shared PTY. The fit is Fleet's, not Collie's: the browser posts `{cols}` to the
+Gateway's `POST /fleet/api/pane/:id/resize` (same session and same-origin rule as every Gateway
+write), and the Gateway records one `pane-fit.resize` diagnostic line per attempt. A lead Pane is
+fitted on the lead; a member's Pane is fitted by that member's own terminal service over the same
+loopback projection the terminal surface uses, so a member needs a declared terminal endpoint and the
+release that answers `resize`. Nothing crosses the crew link. The machine the Pane lives on resolves
+the Pane and its rows from its own Herdr server, retains one no-takeover `terminal session control`
+controller per socket and Pane, and reuses it for later taps. Herdr ends that controller when the Pane
+closes; Fleet releases the rest when the Gateway or the terminal service stops, and a member's
+terminal service does not stand down while it holds one. Which Hosts can fit comes from
+`GET /fleet/api/pane-fit`: a Host without a terminal endpoint shows the row disabled, as does a
+read-only client.
+
+The controller and the terminal surface do not share a Pane. Probed on Herdr 0.9.3: an
+`attach --takeover` displaces a retained controller (it closes with `terminal attach taken over`), and
+while any client holds the terminal a no-takeover controller is refused with `already has an attached
+client`, which the row reports as a conflict rather than taking the terminal back.
 
 ## Keyboard commands
 
@@ -557,7 +569,7 @@ without seeing output, writing input, or starting another attachment. Failed est
 its resources, shutdown drains late results, and a browser that leaves while connecting releases
 only its own acquisition interest. Once no browser or acquiring caller needs a session, the ordinary
 bounded grace period applies. Establishing sessions count toward the same capacity bound as held
-ones. The manual Pane-fit controller's separate no-takeover policy is unchanged.
+ones. The manual Pane-fit controller never takes over; see *Manual Pane fit*.
 
 ## Retained Collie deployment alternatives
 

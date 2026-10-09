@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { ATTACH_PATH, CLOSE_PATH, STATE_PATH, readPeerRequest } from "./protocol.ts";
+import { ATTACH_PATH, CLOSE_PATH, RESIZE_PATH, STATE_PATH, readPeerRequest } from "./protocol.ts";
 
 const base = "http://127.0.0.1:18903";
 const ask = (path: string, over: Partial<Parameters<typeof readPeerRequest>[0]> = {}) =>
   readPeerRequest({ method: "GET", url: new URL(path, base), upgrade: false, ...over });
 
-describe("the three operations", () => {
+describe("the four operations", () => {
   test("attach names a Pane and becomes a stream", () => {
     expect(ask(`${ATTACH_PATH}?pane=w1:p1`, { upgrade: true })).toEqual({
       ok: true,
@@ -21,16 +21,23 @@ describe("the three operations", () => {
     });
   });
 
+  test("resize names a Pane and a column count in a JSON body", () => {
+    expect(ask(RESIZE_PATH, { method: "POST", body: { pane: "w1:p1", cols: 96 } })).toEqual({
+      ok: true,
+      operation: { kind: "resize", paneId: "w1:p1", cols: 96 },
+    });
+  });
+
   test("state takes nothing at all", () => {
     expect(ask(STATE_PATH)).toEqual({ ok: true, operation: { kind: "state" } });
   });
 });
 
 describe("what the grammar refuses", () => {
-  test("a fourth operation does not exist", () => {
+  test("a fifth operation does not exist", () => {
     expect(ask("/terminal/start")).toEqual({
       ok: false,
-      refusal: { at: "path", message: "this service answers three operations" },
+      refusal: { at: "path", message: "this service answers four operations" },
     });
   });
 
@@ -81,5 +88,27 @@ describe("what the grammar refuses", () => {
     expect(ask(CLOSE_PATH, { method: "POST" }).ok).toBe(false);
     expect(ask(CLOSE_PATH, { method: "POST", body: "w1:p1" }).ok).toBe(false);
     expect(ask(CLOSE_PATH, { method: "POST", body: ["w1:p1"] }).ok).toBe(false);
+  });
+
+  test.each([
+    ["a row count", { pane: "w1:p1", cols: 96, rows: 40 }, "rows"],
+    ["a socket path", { pane: "w1:p1", cols: 96, socket: "/tmp/x.sock" }, "socket"],
+    ["too few columns", { pane: "w1:p1", cols: 19 }, "cols"],
+    ["too many columns", { pane: "w1:p1", cols: 501 }, "cols"],
+    ["a fractional column count", { pane: "w1:p1", cols: 80.5 }, "cols"],
+    ["a string column count", { pane: "w1:p1", cols: "96" }, "cols"],
+    ["a malformed Pane", { pane: "../x", cols: 96 }, "pane"],
+  ])("resize refuses %s", (_label, body, at) => {
+    const result = ask(RESIZE_PATH, { method: "POST", body });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.refusal.at).toBe(at);
+  });
+
+  test("resize is a POST with no query and no stream", () => {
+    const body = { pane: "w1:p1", cols: 96 };
+    expect(ask(RESIZE_PATH, { body }).ok).toBe(false);
+    expect(ask(RESIZE_PATH, { method: "POST", upgrade: true, body }).ok).toBe(false);
+    expect(ask(`${RESIZE_PATH}?pane=w1:p1`, { method: "POST", body }).ok).toBe(false);
   });
 });

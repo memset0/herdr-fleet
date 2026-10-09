@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { FleetTerminalConfig } from "../../config.ts";
 import type { Resolution } from "../resolve.ts";
 import type { TerminalServer, TimerHandle } from "../session.ts";
+import type { LocalPaneFit } from "../../manual-pane-fit/local.ts";
 import { PeerTerminalService } from "./service.ts";
 
 const CONFIG: FleetTerminalConfig = {
@@ -20,6 +21,7 @@ function harness(
     readonly verified?: boolean;
     readonly config?: Partial<FleetTerminalConfig>;
     readonly startThrows?: boolean;
+    readonly fit?: LocalPaneFit;
   } = {},
 ) {
   let clock = 1_000;
@@ -53,6 +55,7 @@ function harness(
         },
       };
     },
+    fit: over.fit,
     standDown: () => stoodDown.push(clock),
     now: () => clock,
     setTimer: (fn, ms) => {
@@ -220,5 +223,59 @@ describe("closing", () => {
     expect(h.pending()).toBe(0);
     // And it serves nothing afterwards.
     expect(await h.service.attach("w1:p1")).toEqual({ ok: false, reason: "server-unavailable" });
+  });
+});
+
+describe("fitting a Pane", () => {
+  function fakeFit() {
+    let held = 0;
+    let disposed = 0;
+    const calls: Array<[string, number]> = [];
+    const fit: LocalPaneFit = {
+      async resize(paneId, cols) {
+        calls.push([paneId, cols]);
+        held = 1;
+        return { ok: true, cols, rows: 31 };
+      },
+      held: () => held,
+      dispose: () => {
+        disposed += 1;
+        held = 0;
+      },
+    };
+    return { fit, calls, release: () => (held = 0), disposed: () => disposed };
+  }
+
+  test("answers with this machine's own rows", async () => {
+    const f = fakeFit();
+    const h = harness({ fit: f.fit });
+    expect(await h.service.resize("w1:p1", 96)).toEqual({ ok: true, cols: 96, rows: 31 });
+    expect(f.calls).toEqual([["w1:p1", 96]]);
+  });
+
+  test("a held controller keeps the service from standing down until it is released", async () => {
+    const f = fakeFit();
+    const h = harness({ fit: f.fit });
+    await h.service.resize("w1:p1", 96);
+    h.advance(3_601);
+    h.advance(3_601);
+    expect(h.stoodDown).toEqual([]);
+    f.release();
+    h.advance(3_601);
+    expect(h.stoodDown).toHaveLength(1);
+  });
+
+  test("stopping the service releases every retained controller", async () => {
+    const f = fakeFit();
+    const h = harness({ fit: f.fit });
+    await h.service.resize("w1:p1", 96);
+    h.service.stop();
+    expect(f.disposed()).toBe(1);
+    expect(await h.service.resize("w1:p1", 96)).toMatchObject({ ok: false, reason: "unsupported" });
+  });
+
+  test("a service without a fit answers unsupported", async () => {
+    const h = harness();
+    expect(await h.service.resize("w1:p1", 96)).toMatchObject({ ok: false, reason: "unsupported" });
   });
 });

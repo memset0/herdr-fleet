@@ -23,6 +23,8 @@ import type { Placement } from "./placement.ts";
 export interface SnapshotPane {
   readonly pane_id: string;
   readonly terminal_id?: string | null;
+  /** The Pane's current viewport, read only by the manual fit, which must keep its row count. */
+  readonly scroll?: { readonly viewport_rows?: number } | null;
 }
 
 export interface TerminalSnapshot {
@@ -107,9 +109,12 @@ export type SnapshotSource = () => Promise<TerminalSnapshot>;
  * discipline and its timeouts, and a second implementation of those would be a second thing to be
  * wrong about them.
  */
-export function localSnapshotSource(
-  socketPath: string = process.env.HERDR_SOCKET_PATH ?? defaultSocketPath(),
-): SnapshotSource {
+/** The one local multiplexer socket this machine's Fleet processes read and drive. */
+export function localSocketPath(): string {
+  return process.env.HERDR_SOCKET_PATH ?? defaultSocketPath();
+}
+
+export function localSnapshotSource(socketPath: string = localSocketPath()): SnapshotSource {
   const client = new HerdrClient(socketPath);
   return async () => await client.sessionSnapshot();
 }

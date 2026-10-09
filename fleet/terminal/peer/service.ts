@@ -13,6 +13,7 @@
  */
 
 import type { FleetTerminalConfig } from "../../config.ts";
+import { paneFitFailure, type LocalPaneFit, type PaneFitResult } from "../../manual-pane-fit/local.ts";
 import type { Resolution } from "../resolve.ts";
 import type { StartServer, TerminalServer, TimerHandle } from "../session.ts";
 import type { PeerState } from "./protocol.ts";
@@ -37,6 +38,8 @@ export interface PeerTerminalDeps {
   /** True when the configured executable is present and is the one the configuration named. */
   readonly verifyExecutable: () => Promise<boolean>;
   readonly startServer: StartServer;
+  /** This machine's own manual Pane fit. Absent leaves `resize` answering unsupported. */
+  readonly fit?: LocalPaneFit | undefined;
   /** Called when the idle interval expires with nothing held. The process ends; nothing else does. */
   readonly standDown: () => void;
   readonly now?: (() => number) | undefined;
@@ -124,6 +127,22 @@ export class PeerTerminalService {
     return { ok: true, endpoint: server.endpoint };
   }
 
+  /**
+   * Fit one of this machine's Panes to a column count, keeping its own rows.
+   *
+   * The controller it acquires is retained — a controller's size does not survive its release — and
+   * a retained controller is somebody's choice of geometry, so it keeps this service from standing
+   * down until its Pane goes away or the service stops.
+   */
+  async resize(paneId: string, cols: number): Promise<PaneFitResult> {
+    if (this.stopped || this.deps.fit === undefined) return paneFitFailure("unsupported");
+    this.touch();
+    const result = await this.deps.fit.resize(paneId, cols);
+    this.deps.log?.("peer-terminal.resize", result.ok ? { cols: result.cols, rows: result.rows } : { reason: result.reason });
+    this.touch();
+    return result;
+  }
+
   /** Stop one Pane's terminal server. Everything else on this machine keeps running. */
   close(paneId: string): boolean {
     this.touch();
@@ -142,6 +161,7 @@ export class PeerTerminalService {
     this.cancelIdle();
     for (const held of Array.from(this.servers.values())) held.server.stop();
     this.servers.clear();
+    this.deps.fit?.dispose();
   }
 
   /** A request happened. The idle clock starts again from here. */
@@ -157,7 +177,8 @@ export class PeerTerminalService {
       this.idleHandle = null;
       // Holding a terminal is not idle, however long ago it was asked for: somebody is attached to
       // it, and the lead is the one that decides when that ends.
-      if (this.servers.size > 0) {
+      // A retained resize controller is the same: it holds geometry somebody chose.
+      if (this.servers.size > 0 || (this.deps.fit?.held() ?? 0) > 0) {
         this.armIdle();
         return;
       }

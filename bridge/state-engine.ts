@@ -291,7 +291,6 @@ function toView(pane: MuxPane, kind: "agent" | "shell"): AgentView {
   // reads as a shell, and its transcript is still readable. Server-side only, like the ref itself.
   if (pane.sessionAgent) view.sessionAgent = pane.sessionAgent;
   if (pane.readableLines !== undefined) view.readableLines = pane.readableLines;
-  if (pane.viewportRows !== undefined) view.viewportRows = pane.viewportRows;
   // A finished sentence for the operator, composed server-side and carried through untouched. It is
   // presentation: nothing in this engine reads it, and it never reaches `agent` or `status` above.
   if (pane.hint) view.hint = pane.hint;
@@ -339,7 +338,6 @@ export class StateEngine {
   private readonly enrichedAt = new Map<string, number>();
   private readonly transitionListeners = new Set<TransitionListener>();
   private readonly removeListeners = new Set<RemoveListener>();
-  private readonly paneRemoveListeners = new Set<RemoveListener>();
   private readonly updateListeners = new Set<UpdateListener>();
   private readonly tickListeners = new Set<TickListener>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -355,7 +353,6 @@ export class StateEngine {
   // connected-gated warn was silent there, so a first poll losing the multiplexer's startup race
   // left no trace at all — the one thing an operator needs to see when a cold herd reads empty.
   private pollFailureLogged = false;
-  private knownPaneIds = new Set<string>();
   // Current interval cadence; setCadence swaps it (relaxed while the event stream is healthy).
   private cadenceMs: number;
   // A relax ordered before the engine has ever CONNECTED - parked, and applied by the first
@@ -391,12 +388,6 @@ export class StateEngine {
   onRemove(fn: RemoveListener): () => void {
     this.removeListeners.add(fn);
     return () => this.removeListeners.delete(fn);
-  }
-
-  /** Fires when any previously-seen Pane vanishes, including a bare shell Pane. */
-  onPaneRemove(fn: RemoveListener): () => void {
-    this.paneRemoveListeners.add(fn);
-    return () => this.paneRemoveListeners.delete(fn);
   }
 
   /** Fires after every successful poll (post-transition bookkeeping) with the fresh snapshot. */
@@ -473,11 +464,6 @@ export class StateEngine {
       tabs: this.tabs,
       bridge: this.bridge,
     };
-  }
-
-  /** Trusted current viewport rows for a Pane in this session; never derived from a request body. */
-  paneViewportRows(paneId: string): number | undefined {
-    return [...this.agents, ...this.shellPanes].find((pane) => pane.paneId === paneId)?.viewportRows;
   }
 
   start(): void {
@@ -621,13 +607,6 @@ export class StateEngine {
         .filter((p) => p.agent === SHELL)
         .map((p) => toView(p, "shell"))
         .toSorted(byPlace);
-
-      const currentPaneIds = new Set(panes.map((pane) => pane.paneId));
-      for (const paneId of this.knownPaneIds) {
-        if (currentPaneIds.has(paneId)) continue;
-        for (const listener of this.paneRemoveListeners) listener(paneId);
-      }
-      this.knownPaneIds = currentPaneIds;
 
       const workspaceViews: WorkspaceView[] = spaces
         .map((s) => {

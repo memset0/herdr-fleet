@@ -25,6 +25,11 @@ const service = new PeerTerminalService({
     stop: () => stopped.push("term_abc"),
   }),
   standDown: () => undefined,
+  fit: {
+    resize: async (_paneId, cols) => ({ ok: true, cols, rows: 31 }),
+    held: () => 0,
+    dispose: () => undefined,
+  },
 });
 
 let listener: ReturnType<typeof startPeerTerminalServer>;
@@ -56,6 +61,26 @@ describe("what the listener answers", () => {
     expect(await response.json()).toEqual({ ok: true });
   });
 
+  test("resize, naming a Pane and a column count, answering this machine's rows", async () => {
+    const response = await fetch(at("/terminal/resize"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pane: "w1:p1", cols: 96 }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, cols: 96, rows: 31 });
+  });
+
+  test("resize refuses a row count from the lead", async () => {
+    const response = await fetch(at("/terminal/resize"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pane: "w1:p1", cols: 96, rows: 40 }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "refused", at: "rows" });
+  });
+
   test("a refusal names the field it refused", async () => {
     const response = await fetch(at("/terminal/close"), {
       method: "POST",
@@ -66,7 +91,7 @@ describe("what the listener answers", () => {
     expect(await response.json()).toMatchObject({ error: "refused", at: "terminal" });
   });
 
-  test("a fourth operation does not exist", async () => {
+  test("a fifth operation does not exist", async () => {
     const response = await fetch(at("/terminal/start"));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ at: "path" });

@@ -623,7 +623,6 @@ describe("solo zero-tax — routes", () => {
       // `files` is the Files view (ADR 0083): one folder or one file under the Changes root, a read
       // gated on an authorised device and forwarded to the owning member like `changes`.
       "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/",
-      "/^\\/api\\/pane\\/([^/]+)\\/resize$/",
       "/^\\/api\\/tab\\/([^/]+)\\/(rename|close)$/",
       // The Changes view asked by workspace (ADR 0065): the same read as the pane route's `changes`,
       // read-gated and forwarded with `?host=` to the member that owns the space.

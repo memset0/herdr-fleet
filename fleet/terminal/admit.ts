@@ -86,6 +86,11 @@ export function isPaneId(value: string): boolean {
 /** A scope value is an opaque identifier the app already round-trips; bound it the same way. */
 const SCOPE_VALUE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+/** The same scope-value shape, for the Pane fit route, which takes the same `h`/`s` address. */
+export function isScopeValue(value: string): boolean {
+  return SCOPE_VALUE.test(value);
+}
+
 export function admit(input: AdmissionInput, config: AdmissionConfig): Admission {
   // Host first: a request for another name is not this deployment's to answer, whatever it carries.
   if (input.host !== config.publicHost) return { ok: false, reason: "wrong-host" };
