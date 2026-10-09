@@ -36,9 +36,9 @@ until explicitly configured.
 - **Output search** and full conversation history beyond standard terminal scrollback
 - **Files screen**: the files of an agent's workspace folder with the changes marked, and a Changes segment with what it changed in its git repos, as diffs with syntax colour, and its last commit, read-only
 - **File attachments**: images from the camera roll, and markdown, text and code files
-- **Device pairing** as the write credential: once a device is paired, every write needs its token
+- **Device pairing** always on: a device needs its token for every request, reads and writes, and an unpaired browser sees only the pair screen
 - **Crews**: several machines' Collies behind one URL, with operator-triggered failover
-- **Six UI languages** and a per-device typeface setting
+- **Twelve UI languages** and a per-device typeface setting
 - **Herdr session switching** managed from the web interface
 - **PWA support** running locally on loopback with no external accounts or cloud dependencies
 
@@ -141,7 +141,7 @@ and that is the only way to install it on a phone.
 | --- | --- |
 | [**Install**](./docs/install.md) | The front door you need, then the install for your system: Linux, Arch and Omarchy, Nix, macOS, Windows, or as a Herdr plugin. Covers first run, setup on an iPhone or Android phone, updates, and uninstallation |
 | [**Windows**](./docs/windows.md) | Windows 11 with Herdr: what is supported, installing with `install.ps1`, the unsigned binary, updating, long paths, and what is not tested |
-| [**Security**](./docs/security.md) | What a Collie exposes, the defenses, and pairing a device as the write credential |
+| [**Security**](./docs/security.md) | What a Collie exposes, the defenses, and pairing a device, the credential for every request |
 | [**Configure**](./docs/configure.md) | The `.env`, your own slash commands, keys, quick replies and typefaces; appearance, Zen mode, language |
 | [**Changes**](./docs/changes.md) | The Files screen: a workspace's folder with its changes marked, the changed files and their diffs, and the last commit, from the pane or the dashboard's Files tab. Read-only git, nested repos, and the two settings that decide how far it looks |
 | [**Deployment**](./docs/deployment.md) | Front doors other than the default: an identity-aware proxy, a reverse proxy with no Tailscale, an off-host ingress, several Collies on one host (one per user, or several instances for one user), and a crew's standby door |
@@ -302,12 +302,16 @@ disables `/api`, preventing requests to a live Collie instance. Vite targets onl
 during production builds, keeping `playground.html` and `src/playground/` out of `dist` and the PWA
 precache. This exclusion is tested in `src/playground/playground-entry.test.ts`.
 
-The page is tabbed: one section is shown at a time, picked from a sidebar on wide screens and a top
-bar on narrow ones, and only the selected section's components are mounted. The selected tab lives
-in the URL hash. `#pane` opens
-the Pane tab, and `#pane/<card-handle>` also scrolls that card into view once it mounts (the handle
-is the card's `data-state`, e.g. `pane-mid-tool-run`). With no hash, the last tab you were on is
-remembered (`localStorage`); with neither, the page opens on the first tab.
+The page is split into pages: one section is shown at a time, picked from a sidebar on wide screens
+and a top bar on narrow ones. Each section's code loads only when you open it, and only its
+components are mounted. The section lives in the URL hash, and a click pushes it, so Back returns to
+the page before. `#pane` opens the Pane section, and `#pane/<card-handle>` also scrolls that card
+into view once it mounts (the handle is the card's `data-state`, e.g. `pane-mid-tool-run`). A
+section's groups are sub-pages: the bar under its title opens one, `#changes:one-file`, and mounts
+only that group's cards. With no hash, the last section you were on is remembered (`localStorage`);
+with neither, the page opens on the first. `src/playground/layout.tsx` holds the page's layout and
+routes; `src/playground/harness.tsx` holds the routers that mount real app routes, so a section that
+needs no router never loads them.
 
 The tabs, in order: Dashboard, Pane, Crew, Settings, Boot & connection, Idle & resume, Brand,
 Notices, Motion. Notices covers everything that ANNOUNCES (the notice primitive, the strip band,

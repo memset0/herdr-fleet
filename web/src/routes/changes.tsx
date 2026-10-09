@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
-import { ArrowLeft, ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Code, Eye, GitCompareArrows, Loader2, RefreshCw } from "lucide-react";
 
 import { RouteHeader } from "@/components/app-header";
 import { FilesLoading, RefusedBody, TreeFolderBody, useFilesRead, type FilesReadState, type TreeRead } from "@/routes/changes-files";
@@ -12,8 +12,9 @@ import {
   FilesModeControl,
   useFilesFilter,
 } from "@/components/files-view";
-import { FileContent, defaultView, type FileLinks, type FileView } from "@/components/file-preview";
+import { FileContent, defaultView, type FileImages, type FileLinks, type FileView } from "@/components/file-preview";
 import { CleanRepos, CommitHead } from "@/components/changes-commit";
+import { dropHeldImages, heldImage, imageSubject } from "@/lib/file-image-cache";
 import {
   ChangePath,
   ChangesFilterBar,
@@ -29,13 +30,18 @@ import {
   StatusLetter,
   type ChangeRef,
 } from "@/components/changes-view";
+import { BottomBar } from "@/components/ui/bottom-bar";
+import { BranchLabel } from "@/components/ui/branch-label";
 import { Button } from "@/components/ui/button";
 import { STRIP_TAP_TARGET } from "@/components/ui/labelled-strip";
 import { Notice } from "@/components/ui/notice";
 import { SectionLabel } from "@/components/ui/section-label";
 import { Segmented } from "@/components/ui/segmented";
 import { useDashPrefs } from "@/hooks/use-dash-prefs";
+import { handOf, useDisplayPrefs, type Hand } from "@/hooks/use-display-prefs";
+import { useKeyboardOpen } from "@/hooks/use-keyboard";
 import { useLocale } from "@/hooks/use-locale";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNav } from "@/hooks/use-nav";
 import { CHANGES_POLL_MS, useVisibleInterval } from "@/hooks/use-visible-interval";
 import { keepChangeCount, keptChangeCount } from "@/hooks/use-workspace-change-counts";
@@ -44,6 +50,7 @@ import {
   fetchChangeCommitDiff,
   fetchChangeDiff,
   fetchChanges,
+  fetchFileImage,
   fetchFilesDir,
   fetchFileText,
   type ChangesLookup,
@@ -65,6 +72,7 @@ import { unavailableKey } from "@/lib/changes-reason";
 import { folderView, isNameFilterOn } from "@/lib/files-filter";
 import { changeAt, EMPTY_CHANGE_INDEX, indexChanges, markFolder, type MarkedFolder, type RootChange } from "@/lib/files-marks";
 import { baseName, formatBytes, headerFolder, previewKindFor, rootPathOf } from "@/lib/files-view";
+import { scopeGitHead } from "@/lib/git-head";
 import { GLIDE_PAIRS, glideBack } from "@/lib/glide";
 import { isAbortError } from "@/lib/loaders";
 import { t, tn, type MessageKey } from "@/lib/i18n";
@@ -84,7 +92,9 @@ import {
   spaceChangesPath,
   spaceFilesPath,
   spacePath,
+  treeUpLanding,
   upTarget,
+  type TreeUpLanding,
   type FilesAt,
 } from "@/lib/nav";
 import { useRootData } from "@/lib/route-data";
@@ -101,6 +111,8 @@ import type {
   FileEntry,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { fitPath } from "@/lib/fit-path";
+import { useElementWidth } from "@/hooks/use-element-width";
 import { summarizeChanges, type WorkspaceChangeCount } from "@/lib/workspace-changes";
 
 // The Changes view (ADR 0065): what changed under a WORKSPACE's folder since the last commit,
@@ -218,6 +230,17 @@ function nextCommit(prev: CommitState | null, repo: string, data: ChangeCommitRe
  */
 const collapsedByPane = new Map<string, ReadonlySet<string>>();
 
+// The tree's back arrow, named for where it lands (`treeUpLanding`): the screens it can step back
+// onto reuse the labels those screens' own arrows have.
+const TREE_BACK_ARIA = {
+  pane: "changes.backAria.pane",
+  workspace: "changes.backAria.workspace",
+  dashboard: "changes.backAria.dashboard",
+  list: "changes.listBackAria",
+  folder: "files.backAria.folder",
+  parent: "files.backAria.parent",
+} satisfies Record<TreeUpLanding, MessageKey>;
+
 /**
  * The header's one place for the root folder, on every screen of this route (the root, a folder, a
  * file, the commit view): `· segment` in mono after the workspace label, where the segment is the
@@ -241,6 +264,50 @@ function RootSegment({ folder, label }: { folder: string | null; label: string }
   );
 }
 
+/**
+ * A phone, as this screen draws it: under Tailwind's `md` (768px), where the column stops filling
+ * the width and caps at `md:max-w-screen-md`. From there up the header arrow is in reach and the
+ * bottom Back is not drawn.
+ */
+const PHONE_QUERY = "(max-width: 767.98px)";
+
+/**
+ * The screen's one Back: what the header arrow does and what it is called, at the level on screen.
+ * The header arrow and the bottom Back (a phone's thumb cannot reach the header) both take this
+ * object, so the two cannot drift apart; a level that changes its way back changes both at once.
+ */
+export interface BackControl {
+  /** ALREADY TRANSLATED. Where the tap lands, the arrow's accessible name. */
+  label: string;
+  go: () => void;
+}
+
+/** The Back button of the bottom bar: the header arrow's act and name, plus the word. */
+function BackButton({ back, className }: { back: BackControl; className?: string }) {
+  return (
+    <Button variant="outline" className={cn("h-11", className)} onClick={back.go} aria-label={back.label}>
+      <ArrowLeft className="size-4" />
+      {t("files.back")}
+    </Button>
+  );
+}
+
+/**
+ * The bar under a level that has no Previous / Next: Back alone, on the side of the hand that holds
+ * the phone, as wide as its word and not the row. Gone while the on-screen keyboard is up, which only
+ * a filter field raises on this screen: the bar would ride up over the keys and cost the list
+ * a row's height it needs to show what is being typed.
+ */
+export function BackBar({ back, hand }: { back: BackControl; hand: Hand }) {
+  const keyboard = useKeyboardOpen();
+  if (keyboard) return null;
+  return (
+    <BottomBar className={cn("flex", hand === "left" ? "justify-start" : "justify-end")}>
+      <BackButton back={back} className="min-w-28" />
+    </BottomBar>
+  );
+}
+
 /** Where the back arrow of a file view goes: the list entry it came from, when there is one. */
 interface FromList {
   fromList: true;
@@ -254,6 +321,66 @@ const TREE_VIEW_LABEL = {
   source: "files.view.source",
   preview: "files.view.preview",
 } satisfies Record<TreeView, MessageKey>;
+
+/** The switcher draws a glyph per view; the word rides along as the segment's name and tooltip. */
+export const TREE_VIEW_ICON = {
+  diff: <GitCompareArrows />,
+  source: <Code />,
+  preview: <Eye />,
+} satisfies Record<TreeView, ReactNode>;
+
+/**
+ * The previous / next button at the end of the file screen when there is nothing to step to. The
+ * primitive's `opacity-50` alone left an outline button looking tappable, so the box goes too: no
+ * border, no fill, no shadow, muted ink. The 1px border is already reserved (it only turns
+ * transparent), so the pair keeps its width and nothing moves.
+ */
+const STEP_OFF =
+  "disabled:border-transparent disabled:bg-transparent disabled:shadow-none disabled:text-muted-foreground disabled:opacity-40";
+
+/**
+ * Previous / Next beside Back: the pair gives up some padding and its gap, and a label too long for
+ * its half (a long file label on a narrow phone) clips with an ellipsis instead of pushing Back off the bar.
+ */
+const STEP_TIGHT = "min-w-0 gap-1 px-2 has-[>svg]:px-2";
+
+/** The mono class the path row draws in, and the hidden `0` that measures one character of it. */
+const PATH_ROW_MONO = "font-mono text-[11px] leading-4";
+/** A mono character at 11px, when the measure gives 0 (jsdom has no layout). */
+const FALLBACK_CHAR_WIDTH = 6.6;
+
+/**
+ * The thin row under the file screen's name row: the FOLDER the file lives in, from the repo root, as
+ * much of it as the row's width holds (`fitPath`). The name row above holds the file's name alone, so
+ * no part of the path is on screen twice (Altan's phone passes, 2026-10-07 and 2026-10-08: the whole
+ * path under a clipped whole path still read as the same line twice). `title` carries the full path
+ * for a pointer. Until the width is measured, the folder draws with `truncate`, so it is one line.
+ * A file at the root has no folder, and no row.
+ */
+function FilePathRow({ folder, path }: { folder: string; path: string }) {
+  const [rowRef, width] = useElementWidth<HTMLDivElement>(0);
+  const probeRef = useRef<HTMLSpanElement>(null);
+  const [charWidth, setCharWidth] = useState(FALLBACK_CHAR_WIDTH);
+  useEffect(() => {
+    const w = probeRef.current?.getBoundingClientRect().width ?? 0;
+    if (w > 0) setCharWidth(w);
+  }, []);
+  // The row's padding is not text room: measure the content box by taking `px-4` (16 px) twice off.
+  const budget = width === 0 ? null : Math.max(0, Math.floor((width - 32) / charWidth));
+  return (
+    <>
+      <span ref={probeRef} aria-hidden className={cn("invisible absolute", PATH_ROW_MONO)}>0</span>
+      <div
+        ref={rowRef}
+        data-slot="file-path-row"
+        title={path}
+        className={cn("h-[18px] min-w-0 px-4 text-muted-foreground", PATH_ROW_MONO, budget === null && "truncate")}
+      >
+        {budget === null ? folder : fitPath(folder, budget)}
+      </div>
+    </>
+  );
+}
 
 /**
  * The Changes route: the tree or the list at the root, a folder or a file of the tree
@@ -273,12 +400,17 @@ function ChangesScreen() {
   );
   const targetKey = target.kind === "pane" ? `pane:${paneId}` : `space:${spaceId}`;
   const scope = useScope();
+  // What the held pictures of this screen are filed under (lib/file-image-cache.ts).
+  const imagesOf = imageSubject(scope, targetKey);
   const navigate = useNavigate();
   const nav = useNav();
   const location = useLocation();
   const [search] = useSearchParams();
   const root = useRootData();
   const { prefs, setChangesLayout, setChangesOnly, setFilesShowIgnored } = useDashPrefs();
+  // The thumb side of the bottom Back (display pref `hand`, as the pane screen reads it).
+  const hand = handOf(useDisplayPrefs().prefs);
+  const phone = useMediaQuery(PHONE_QUERY);
   const layout = prefs.changesLayout;
   const lookup: ChangesLookup = useMemo(
     () => ({ depth: prefs.changesDepth, nested: prefs.changesNested }),
@@ -293,6 +425,9 @@ function ChangesScreen() {
   const filesSplat = splat === "files";
   const dirParam = filesSplat ? (search.get("dir") ?? "") : "";
   const treePathParam = filesSplat ? (pathParam ?? "") : "";
+  // `&line=`: the line a path the agent printed named (ADR 0088). A file screen's own; never sent.
+  const lineParam = filesSplat && treePathParam !== "" ? Number(search.get("line") ?? "") : Number.NaN;
+  const treeLine = Number.isSafeInteger(lineParam) && lineParam > 0 ? lineParam : undefined;
   const fileRef: ChangeRef | null =
     !filesSplat && repoParam !== null && pathParam !== null ? { repo: repoParam, path: pathParam } : null;
   // The root: the screen itself, or `…/changes/files` with neither query, its address before the
@@ -529,7 +664,15 @@ function ChangesScreen() {
         ];
   const [viewChoice, setViewChoice] = useState<{ path: string; view: TreeView } | null>(null);
   const previewAsked = readPreviewAsked(location.state) && treeViews.includes("preview");
-  const treeDefault: TreeView = previewAsked ? "preview" : treeChange ? "diff" : defaultView(treeFile ?? "");
+  // A line asked for is a line of the Source, so a file opened at one opens on Source, changed or not.
+  const lineAsked = treeLine !== undefined && treeViews.includes("source");
+  const treeDefault: TreeView = previewAsked
+    ? "preview"
+    : lineAsked
+      ? "source"
+      : treeChange
+        ? "diff"
+        : defaultView(treeFile ?? "");
   const treeView: TreeView =
     treeFile !== null && viewChoice !== null && viewChoice.path === treeFile && treeViews.includes(viewChoice.view)
       ? viewChoice.view
@@ -579,8 +722,17 @@ function ChangesScreen() {
   // Keyed with the screen it belongs to, so a commit's file and the same uncommitted file differ. A
   // tree file on its Diff reads through the same machinery as the list's file screen.
   const current = open ?? commitOpen;
+  // The diff's read is LATCHED to its file once the Diff has been shown: the switch to Source or
+  // Preview and back is a change of body only, the read, its answer and its poll stay put, so the
+  // way back shows the held diff at once, with no loading state and no request. The latch is this
+  // file's alone; another file, or the tree's folders, let it go, and the next Diff reads afresh.
+  const diffLatch = useRef<string | null>(null);
+  if (treeFile === null || (diffLatch.current !== null && diffLatch.current !== treeFile)) diffLatch.current = null;
+  if (treeFile !== null && treeView === "diff" && treeChange) diffLatch.current = treeFile;
   const treeDiffRef: ChangeRef | null =
-    treeFile !== null && treeView === "diff" && treeChange ? { repo: treeChange.repo, path: treeChange.path } : null;
+    treeFile !== null && treeChange && (treeView === "diff" || diffLatch.current === treeFile)
+      ? { repo: treeChange.repo, path: treeChange.path }
+      : null;
   const diffRef = current ?? treeDiffRef;
   const openKey = diffRef ? `${commitView ? "commit" : "changes"}\n${diffRef.repo}\n${diffRef.path}` : null;
   const [file, setFile] = useState<FileState | null>(null);
@@ -638,7 +790,10 @@ function ChangesScreen() {
   // file has left, and what Previous / Next walk, so it must not go stale under an open file.
   const [failures, setFailures] = useState(0);
   const reread = async (mode: "manual" | "poll") => {
-    if (mode === "manual") setRefreshing(true);
+    if (mode === "manual") {
+      setRefreshing(true);
+      dropHeldImages(imagesOf);
+    }
     // On the commit view the list is still read: it is what says the repo has new uncommitted work.
     const reads = [readList(mode)];
     if (commitRepo !== null) reads.push(readCommit(commitRepo, mode));
@@ -678,21 +833,40 @@ function ChangesScreen() {
   const previewInFiles = (path: string) => nav.down(filesPathTo({ path }), { fileView: "preview" });
 
   // The tree's moves (ADR 0067): a folder or a file is one level down, recorded as `from`, so the
-  // way up steps back onto the folder it came from and replaces otherwise; a crumb is sideways.
+  // way up steps back onto whatever it came from and replaces onto the parent folder otherwise; a crumb
+  // to an ancestor folder pops back to it (ADR 0067, amended 2026-10-07).
   const treeAt: FilesAt | null = treeFile !== null ? { path: treeFile } : treeDir !== null && treeDir !== "" ? { dir: treeDir } : null;
   const treeParent = treeAt === null ? null : filesParent(treeAt);
-  const upTree = (parent: FilesAt) => nav.upExact(filesPathTo(parent));
+  const upTree = (parent: FilesAt) => nav.upTree(filesPathTo(parent));
   const openEntry = (entry: FileEntry) => {
     const rel = entryPath(treeDir ?? "", entry);
     nav.down(filesPathTo(entry.kind === "dir" ? { dir: rel } : { path: rel }), entry.kind === "link" ? { viaLink: true } : undefined);
   };
   // A link in a Markdown file opens another file or folder, one level down like a row does. The name
   // may be a folder written without its slash, so the read is allowed to fall back (`viaLink`).
+  // The pictures a file screen draws, read off the same machine and root as its text (ADR 0090).
+  // Memoised on what addresses them, so a re-render of the screen does not ask for the bytes again.
+  // Held in memory by version (lib/file-image-cache.ts): the same file opened again draws at once, and
+  // the refresh button drops what this pane or workspace holds before it reads.
+  const fileImages = useMemo<FileImages>(
+    () => ({
+      bytes: (path, signal, version) =>
+        heldImage(imagesOf, path, version, () => fetchFileImage(target, path, scope, signal)),
+      text: async (path, signal) => {
+        const read = await fetchFileText(target, path, scope, signal);
+        if (read.outcome !== "body" || !read.body.available) return null;
+        return read.body.binary || read.body.truncated ? null : read.body.text;
+      },
+    }),
+    [target, scope, imagesOf],
+  );
   const fileLinks: FileLinks = {
     hrefFor: (to) => filesPathTo(to),
     onOpen: (to) => nav.down(filesPathTo(to), { viaLink: true }),
   };
-  const openCrumb = (to: string) => nav.side(filesPathTo(to === "" ? undefined : { dir: to }));
+  const openCrumb = (to: string) => nav.crumb(filesPathTo(to === "" ? undefined : { dir: to }));
+  // The tree's arrow names where it lands, by the same guard the move runs (`treeUpLanding`).
+  const treeBackAria = TREE_BACK_ARIA[treeUpLanding(readFrom(location.state), treeFile !== null, prefs.changesOnly, canStepBack())];
   const pair = () => nav.down(pairedDevicesPath(scope));
   // The Changes segment is one control under the header on every level of the tree. The list is the root's body, so
   // turning it on from a folder or a file also goes up to the root, the way back from there does.
@@ -732,6 +906,17 @@ function ChangesScreen() {
     : backDestination.startsWith("/space/")
       ? "changes.backAria.workspace"
       : "changes.backAria.dashboard";
+  // The one way back of the level on screen, for the header arrow and the phone's bottom Back alike.
+  const back: BackControl = {
+    go: current ? backToList : commitView ? upToList : treeParent !== null ? () => upTree(treeParent) : backOut,
+    label: commitOpen
+      ? t("changes.commit.backAria")
+      : open || commitView
+        ? t("changes.listBackAria")
+        : treeParent !== null
+          ? t(treeBackAria)
+          : t(backAriaKey),
+  };
 
   // The header names the scope: the workspace, then its folder. The list's own answer wins, because
   // the bridge resolved the root; before it arrives the snapshot's label stands in.
@@ -742,6 +927,14 @@ function ChangesScreen() {
   const listRoot = ready?.available ? ready.root : null;
   const rootFolder = treeFile !== null || (treeDir !== null && treeDir !== "") ? (filesRoot.current ?? listRoot) : (listRoot ?? filesRoot.current);
   const rootName = rootFolder === null ? null : baseName(rootFolder.replace(/[\\/]+$/, ""));
+  // The branch the root is on, read off the panes that sit in it (lib/git-head.ts § scopeGitHead):
+  // the pane's own workspace on a pane's screen, the workspace's on a space's. Panes that disagree,
+  // or none that know, leave the header as it was.
+  const headWorkspace = target.kind === "space" ? spaceId : pane?.workspaceId;
+  const headPanes = [...root.agents, ...root.shellPanes].filter(
+    (p) => p.workspaceId === headWorkspace && p.host === (space?.host ?? pane?.host),
+  );
+  const rootHead = scopeGitHead(headPanes, rootFolder);
 
   // The header's count line: the tab's kept answer until this visit's first read, then what the
   // list sums to, which the tab keeps in turn so the way back shows it at once.
@@ -817,18 +1010,8 @@ function ChangesScreen() {
                 variant="ghost"
                 size="icon"
                 className="size-11 shrink-0"
-                onClick={
-                  current ? backToList : commitView ? upToList : treeParent !== null ? () => upTree(treeParent) : backOut
-                }
-                aria-label={
-                  commitOpen
-                    ? t("changes.commit.backAria")
-                    : open || commitView
-                      ? t("changes.listBackAria")
-                      : treeParent !== null
-                        ? t(treeFile !== null ? "files.backAria.folder" : "files.backAria.parent")
-                        : t(backAriaKey)
-                }
+                onClick={back.go}
+                aria-label={back.label}
               >
                 <ArrowLeft className="size-5" />
               </Button>
@@ -849,6 +1032,11 @@ function ChangesScreen() {
                     </span>
                     {folderLine}
                   </div>
+                  {/* The root's branch, after the label and its folder. It may take half the line
+                      and gives way in the middle; the label keeps the rest. */}
+                  {rootHead !== null && (
+                    <BranchLabel head={rootHead} className="max-w-1/2 shrink self-center overflow-hidden leading-tight" />
+                  )}
                   {staleNote}
                 </div>
               </div>
@@ -919,7 +1107,9 @@ function ChangesScreen() {
         )}
       </div>
 
-      {(rootScreen || treeAt !== null) && (
+      {/* Not while a file is open (2026-10-06): the control swaps the LIST's body, and a reader of
+          one file wants the screen for the file. It is back the moment the file closes. */}
+      {treeFile === null && (rootScreen || treeAt !== null) && (
         <FilesModeControl changesOnly={prefs.changesOnly} count={changedFiles} onChange={changeChangesOnly} />
       )}
 
@@ -936,6 +1126,8 @@ function ChangesScreen() {
             prev={prev}
             next={next}
             onStep={stepTo}
+            back={phone ? back : null}
+            hand={hand}
           />
         ) : commitView ? (
           <div className="p-4">
@@ -969,6 +1161,8 @@ function ChangesScreen() {
             diff={fileState}
             read={filesState}
             links={fileLinks}
+            images={fileImages}
+            line={treeLine}
             onPair={pair}
           />
         ) : treeDir !== null ? (
@@ -1013,6 +1207,9 @@ function ChangesScreen() {
           </div>
         )}
       </main>
+      {/* A phone's thumb cannot reach the header arrow: the same Back repeats here, under the
+          scroller so nothing scrolls behind it. A file's diff carries it in its Previous / Next bar. */}
+      {phone && !current && <BackBar back={back} hand={hand} />}
     </div>
   );
 }
@@ -1179,7 +1376,7 @@ function CommitBody({
   );
 }
 
-function FileScreen({
+export function FileScreen({
   path,
   oldPath,
   status,
@@ -1189,6 +1386,8 @@ function FileScreen({
   prev,
   next,
   onStep,
+  back,
+  hand,
 }: {
   path: string;
   oldPath: string | undefined;
@@ -1201,6 +1400,9 @@ function FileScreen({
   prev: ChangeRef | undefined;
   next: ChangeRef | undefined;
   onStep: (ref: ChangeRef) => void;
+  /** The screen's Back, on a phone only: it joins Previous / Next in their bar, on the thumb side. */
+  back: BackControl | null;
+  hand: Hand;
 }) {
   return (
     <>
@@ -1234,16 +1436,20 @@ function FileScreen({
 
       {/* Across what the list shows, repos included: the filtered files, in the layout's order.
           Disabled rather than hidden at either end, so the pair never moves. */}
-      <div className="sticky bottom-0 grid grid-cols-2 gap-2 border-t border-rule bg-background p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <Button variant="outline" className="h-11" disabled={!prev} onClick={() => prev && onStep(prev)}>
-          <ChevronLeft className="size-4" />
-          {t("changes.file.prev")}
+      <BottomBar
+        className={cn("grid gap-2", back === null ? "grid-cols-2" : hand === "left" ? "grid-cols-[auto_1fr_1fr]" : "grid-cols-[1fr_1fr_auto]")}
+      >
+        {back && hand === "left" && <BackButton back={back} className="px-3" />}
+        <Button variant="outline" className={cn("h-11", STEP_OFF, back && STEP_TIGHT)} disabled={!prev} onClick={() => prev && onStep(prev)}>
+          <ChevronLeft className="size-4 shrink-0" />
+          <span className="min-w-0 truncate">{t("changes.file.prev")}</span>
         </Button>
-        <Button variant="outline" className="h-11" disabled={!next} onClick={() => next && onStep(next)}>
-          {t("changes.file.next")}
-          <ChevronRight className="size-4" />
+        <Button variant="outline" className={cn("h-11", STEP_OFF, back && STEP_TIGHT)} disabled={!next} onClick={() => next && onStep(next)}>
+          <span className="min-w-0 truncate">{t("changes.file.next")}</span>
+          <ChevronRight className="size-4 shrink-0" />
         </Button>
-      </div>
+        {back && hand !== "left" && <BackButton back={back} className="px-3" />}
+      </BottomBar>
     </>
   );
 }
@@ -1299,6 +1505,8 @@ function TreeFileScreen({
   diff,
   read,
   links,
+  images,
+  line,
   onPair,
 }: {
   path: string;
@@ -1313,9 +1521,14 @@ function TreeFileScreen({
   diff: FileState | null;
   read: FilesReadState<TreeRead>;
   links: FileLinks;
+  /** Where a picture's bytes come from (ADR 0090). */
+  images: FileImages;
+  /** The line a printed path named, marked in the Source (ADR 0088). */
+  line?: number;
   onPair: () => void;
 }) {
   useLocale();
+  const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
   const size = read.phase === "ready" && read.data.available && "size" in read.data ? read.data.size : null;
   let body: React.ReactNode;
   if (waiting) body = <FilesLoading />;
@@ -1333,15 +1546,19 @@ function TreeFileScreen({
   else if (!read.data.available) body = <Quiet>{t(unavailableKey(read.data.reason))}</Quiet>;
   // A link that led to a folder: the screen is moving there on its own.
   else if ("entries" in read.data) body = <FilesLoading />;
-  else body = <FileContent file={read.data} view={view} links={links} />;
+  else body = <FileContent file={read.data} view={view} links={links} images={images} line={line} />;
   return (
     <>
-      {/* Sticky, so the reader always knows which file this is, however far down the page. */}
-      <div className="sticky top-0 z-10 flex flex-col gap-2 border-b border-rule bg-background px-4 py-2">
-        <div className="flex min-h-7 items-center gap-3">
+      {/* Sticky, so the reader always knows which file this is, however far down the page. ONE ROW
+          (2026-10-06): the file's name, its size, and the view control at the right, each segment as wide as
+          its word. Two rows and the mode control above them held 166 px of a phone's 844 before the
+          first line of the file; this row holds 60. The name keeps its middle truncation and the
+          folder gives way first, so the control never pushes the file's name off the row. */}
+      <div className="sticky top-0 z-10 border-b border-rule bg-background">
+        <div className="flex min-h-11 items-center gap-3 px-4 py-2">
           {change && <StatusLetter status={change.status} />}
           <div className="min-w-0 flex-1">
-            <ChangePath path={path} />
+            <ChangePath path={baseName(path)} />
             {change?.oldPath && (
               <div className="truncate font-mono text-xs text-muted-foreground">
                 {t("changes.file.renamedFrom", { path: change.oldPath })}
@@ -1352,16 +1569,22 @@ function TreeFileScreen({
           <span role="status" className="shrink-0 text-xs text-muted-foreground">
             {gone ? t("changes.file.gone") : ""}
           </span>
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{size === null ? "" : formatBytes(size)}</span>
+          {/* Three segments and the size would leave the name about 60 px at 390: the size, the least
+              needed word on the row, waits for a wider screen. */}
+          <span className={cn("shrink-0 text-xs text-muted-foreground tabular-nums", views.length >= 3 && "hidden sm:inline")}>
+            {size === null ? "" : formatBytes(size)}
+          </span>
+          {!waiting && views.length > 1 && (
+            <Segmented
+              label={t("files.view.aria")}
+              value={view}
+              onChange={onView}
+              className="shrink-0 [&>button]:flex-none [&>button]:px-3"
+              options={views.map((value) => ({ value, label: t(TREE_VIEW_LABEL[value]), icon: TREE_VIEW_ICON[value] }))}
+            />
+          )}
         </div>
-        {!waiting && views.length > 1 && (
-          <Segmented
-            label={t("files.view.aria")}
-            value={view}
-            onChange={onView}
-            options={views.map((value) => ({ value, label: t(TREE_VIEW_LABEL[value]) }))}
-          />
-        )}
+        {folder && <FilePathRow folder={folder} path={path} />}
       </div>
       <div className="flex-1 py-2">{body}</div>
     </>

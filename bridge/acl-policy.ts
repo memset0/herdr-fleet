@@ -45,6 +45,8 @@ export const PRIVATE_ROOTS: readonly PrivateRoot[] = [
     label: "the Collie state folder",
     secrets: [
       "crew-trust.json",
+      // The CLI's read credential (bridge/local-secret.ts), rotated per bridge start.
+      "local-secret",
       "paired-devices.json",
       "pairing-pending.json",
       "push-subscriptions.json",
@@ -80,6 +82,9 @@ const KNOWN_NAMES: ReadonlySet<string> = new Set([
   "crew-runtime.json",
   "crew-trust.json",
   "folders.json",
+  "local-secret",
+  "machine-alerts.json",
+  "machine-history.json",
   "notify-prefs.json",
   "pack-ops.json",
   "pack-runtime.json",
@@ -94,6 +99,7 @@ const KNOWN_NAMES: ReadonlySet<string> = new Set([
   "update-state.json",
   "update.json",
   "update.lock",
+  "worktree-receipts.json",
   // Config folder.
   ".env",
   "cache-rules.toml",

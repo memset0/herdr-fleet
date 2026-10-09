@@ -9,6 +9,12 @@ import {
   whenLocaleReady,
 } from "./index";
 import { LOCALES } from "./locale";
+import { en, type MessageKey } from "./messages/en";
+
+/** The extra plural categories a language may carry beyond English's `.one`/`.other`. */
+const EXTRA_PLURAL_CATEGORIES = ["few", "many"] as const;
+/** The languages whose Intl plural rules use those extra categories for whole numbers. */
+const EXTRA_PLURAL_LOCALES = new Set(["ru"]);
 
 // The translation runtime. What is pinned here is everything that fails SILENTLY in production:
 // a value that carries regex punctuation, a plural that reads the wrong language's grammar, the
@@ -20,7 +26,7 @@ beforeEach(() => {
 });
 
 describe("isLocale", () => {
-  it("narrows the seven we ship and refuses everything else", () => {
+  it("narrows the twelve we ship and refuses everything else", () => {
     expect(isLocale("de")).toBe(true);
     expect(isLocale("zh")).toBe(true);
     expect(isLocale("zh-TW")).toBe(true);
@@ -79,6 +85,35 @@ describe("plurals", () => {
     await whenLocaleReady("ja");
     expect(tn("space.overview.paneCount", 1)).toBe("1ペイン");
     expect(tn("space.overview.paneCount", 2)).toBe("2ペイン");
+  });
+
+  it("picks one/few/many for Russian", async () => {
+    setLocale("ru");
+    await whenLocaleReady("ru");
+    const files = (n: number) => tn("home.changes.files", n);
+    expect(files(1)).toBe("1 файл");
+    expect(files(2)).toBe("2 файла");
+    expect(files(5)).toBe("5 файлов");
+    expect(files(11)).toBe("11 файлов");
+    expect(files(21)).toBe("21 файл");
+    expect(files(22)).toBe("22 файла");
+    expect(files(25)).toBe("25 файлов");
+    expect(files(0)).toBe("0 файлов");
+    expect(files(0.5)).toBe("Файлов: 0.5");
+  });
+
+  it("falls back to .other when the dictionary has no key for the category", async () => {
+    // French has a `many` category (for millions) that its bundle carries no key for. If CLDR ever
+    // drops it, the two reads still agree, which is what the fallback promises.
+    setLocale("fr");
+    await whenLocaleReady("fr");
+    expect(tn("space.overview.paneCount", 1_000_000)).toBe("1000000 volets");
+  });
+
+  it("reads English while a Russian bundle is still loading, with English grammar", () => {
+    setLocale("ru");
+    expect(tn("space.overview.paneCount", 1)).toBe("1 pane");
+    expect(tn("space.overview.paneCount", 2)).toBe("2 panes");
   });
 
   it("uses the Traditional Chinese bundle as its own locale", async () => {
@@ -173,5 +208,81 @@ describe("document language", () => {
     expect(document.documentElement.lang).toBe("zh-TW");
     setLocale("en");
     expect(document.documentElement.lang).toBe("en");
+  });
+});
+
+describe("every translated dictionary", () => {
+  // The set of slot names, so a translation may repeat a slot or reorder them.
+  const slotsOf = (template: string): string[] => [
+    ...new Set([...template.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!)),
+  ].toSorted();
+  // SAFETY: `MessageKey` is `keyof typeof en` by construction, so every own key of `en` is one.
+  const englishKeys = Object.keys(en) as MessageKey[];
+  // Every shipped language except the source one. A new locale joins `LOCALES` and is covered here
+  // with no edit to this test.
+  const translated = LOCALES.map((option) => option.code).filter((code) => code !== "en");
+  // The bundles are read straight from their files. `t()` falls back to English key by key, so a
+  // key a bundle forgot would read as English and pass a check made through `t()`.
+  const bundles = import.meta.glob<Record<string, Record<string, string>>>("./messages/*.ts");
+
+  it.each(translated)(
+    "%s has English's keys, English's slots on every key, no em dash, and is not English",
+    async (code) => {
+      const load = bundles[`./messages/${code}.ts`];
+      expect(load, `${code} has a bundle file`).toBeDefined();
+      const exports = Object.values(await load!());
+      expect(exports, `${code} exports one dictionary`).toHaveLength(1);
+      const dictionary = exports[0]!;
+
+      const keys = Object.keys(dictionary);
+      expect(
+        englishKeys.filter((key) => !(key in dictionary)),
+        `${code} lacks keys`,
+      ).toEqual([]);
+      // The one thing a bundle may add: `.few`/`.many` next to a `.one`/`.other` pair English has.
+      const isExtraPlural = (key: string): boolean =>
+        EXTRA_PLURAL_CATEGORIES.some((category) => {
+          if (!key.endsWith(`.${category}`)) return false;
+          return `${key.slice(0, -category.length - 1)}.one` in en;
+        });
+      expect(
+        keys.filter((key) => !(key in en) && !isExtraPlural(key)),
+        `${code} has keys English lacks`,
+      ).toEqual([]);
+      // Intl gives Russian `few` and `many` for whole numbers, so a plural base without both would
+      // quietly read `.other` for 2 and for 5.
+      const bases = englishKeys.filter((key) => key.endsWith(".one")).map((key) => key.slice(0, -4));
+      const extras = bases.flatMap((base) => EXTRA_PLURAL_CATEGORIES.map((category) => `${base}.${category}`));
+      expect(
+        extras.filter((key) => key in dictionary),
+        `${code} carries plural categories its language does not use`,
+      ).toEqual(EXTRA_PLURAL_LOCALES.has(code) ? extras : []);
+
+      // A bundle that is English in disguise would pass every check below. A few strings are
+      // legitimately identical (a unit, a name, a placeholder); a copied bundle makes nearly all so.
+      const sameAsEnglish = englishKeys.filter((key) => dictionary[key] === en[key]);
+      expect(sameAsEnglish.length, `${code} looks like English`).toBeLessThan(englishKeys.length / 10);
+
+      for (const key of englishKeys) {
+        const value = dictionary[key]!;
+        expect(slotsOf(value), `${code} ${key}`).toEqual(slotsOf(en[key]));
+        expect(value, `${code} ${key} has an em dash`).not.toContain("\u2014");
+      }
+      // An extra plural form carries the same slots as its pair's `.other`.
+      for (const key of keys.filter(isExtraPlural)) {
+        // SAFETY: `isExtraPlural` only passes keys whose `.one` exists in English, and every English `.one` has an `.other`.
+        const other = `${key.slice(0, key.lastIndexOf("."))}.other` as MessageKey;
+        expect(slotsOf(dictionary[key]!), `${code} ${key}`).toEqual(slotsOf(en[other]));
+        expect(dictionary[key], `${code} ${key} has an em dash`).not.toContain("\u2014");
+      }
+    },
+  );
+
+  // WCAG 2.5.3, Label in Name: voice control says the words it sees on the button, so an accessible
+  // name that is a different sentence ("Send the waiting messages now" under "Send now") fails it.
+  it.each(["en", ...translated])("%s: the Send now button's accessible name starts with its visible words", async (code) => {
+    const load = bundles[`./messages/${code}.ts`];
+    const dictionary = Object.values(await load!())[0]!;
+    expect(dictionary["chat.stream.sendNowAria"]!.startsWith(dictionary["chat.stream.sendNow"]!)).toBe(true);
   });
 });

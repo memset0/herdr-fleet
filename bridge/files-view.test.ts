@@ -1,5 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  truncateSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,19 +21,37 @@ import { crewGate } from "./crew/peer-gate.ts";
 import {
   compareEntries,
   decodeFileText,
+  existingPaths,
   type FilesContext,
   filesQuery,
   gitIgnoredNames,
+  IMAGE_SNIFF_BYTES,
   listFolder,
   MAX_FILES_ENTRIES,
+  MAX_EXIST_PATHS,
   MAX_FILES_READ_BYTES,
+  MAX_IMAGE_READ_BYTES,
+  NODE_FILES_FS,
+  type OpenedFile,
   parseRelPath,
   readFile,
+  readImage,
+  sniffImageType,
   UNKNOWN_PATH,
 } from "./files-view.ts";
 import { hostFor } from "./host.ts";
 import { containedRealpath } from "./journal/files.ts";
-import { filesPrivateFolders, paneFiles, paneGateLevel, workspaceFiles } from "./server.ts";
+import {
+  filesExist,
+  filesImage,
+  filesImageResponse,
+  filesPrivateFolders,
+  forwardedFilesImage,
+  paneFiles,
+  paneGateLevel,
+  parseFilesExistBody,
+  workspaceFiles,
+} from "./server.ts";
 import type { AgentView, FileEntry, FileReadAnswer, FilesListing, WorkspaceView } from "./types.ts";
 
 // The Files view (ADR 0083) is the third place a client value becomes a path, so most of this file
@@ -195,6 +226,7 @@ describe("read one file", () => {
       root,
       path: "a.txt",
       size: 6,
+      mtimeMs: statSync(join(root, "a.txt")).mtimeMs,
       binary: false,
       truncated: false,
       text: "hello\n",
@@ -202,6 +234,20 @@ describe("read one file", () => {
     expect(await read("c/inner.txt")).toMatchObject({ path: "c/inner.txt", text: "inner\n" });
     // A dot-file is the operator's own file, and shown.
     expect(await read(".env")).toMatchObject({ text: "OPERATOR=yes\n" });
+  });
+
+  test("the answer carries the file's mtime, read off the same open handle as its size", async () => {
+    const got = await read("a.txt");
+    if (got === UNKNOWN_PATH || !got.available) throw new Error("a.txt refused");
+    expect(got.mtimeMs).toBe(statSync(join(root, "a.txt")).mtimeMs);
+    // A disk fake that names no mtime leaves the field out, not NaN or 0: the phone then holds nothing.
+    const fs = { ...NODE_FILES_FS, readHead: async () => ({ bytes: bytes(HEADS.png), size: 8 }) };
+    const bare = await read("a.txt", { ...ctx, fs });
+    if (bare === UNKNOWN_PATH || !bare.available) throw new Error("bare refused");
+    expect("mtimeMs" in bare).toBe(false);
+    // The mtime that comes back is the handle's: a fake's value is passed through untouched.
+    const fixed = { ...NODE_FILES_FS, readHead: async () => ({ bytes: bytes(HEADS.png), size: 8, mtimeMs: 1_728_300_000_123.5 }) };
+    expect(await read("a.txt", { ...ctx, fs: fixed })).toMatchObject({ size: 8, mtimeMs: 1_728_300_000_123.5 });
   });
 
   test("a literal %2e%2e file is read as the name it is", async () => {
@@ -557,6 +603,122 @@ describe("GET /api/pane/:id/files and /api/workspace/:id/files", () => {
   });
 });
 
+// ── Which paths exist (ADR 0088) ──────────────────────────────────────────────────────────────────
+
+describe("existingPaths: one lstat per path, under the same checks as a read", () => {
+  test("a mixed batch answers the files and folders that are there, in the order asked, once each", async () => {
+    const got = await existingPaths(ctx, ["a.txt", "nope.md", "c", "c/inner.txt", "a.txt", "sub/code.ts", "c/deep", "inside", "clink/inner.txt"]);
+    expect(got).toEqual(["a.txt", "c", "c/inner.txt", "sub/code.ts", "c/deep", "inside", "clink/inner.txt"]);
+  });
+
+  test("traversal, an absolute path, an empty or dot segment and the root itself are absent", async () => {
+    const asked = ["../outside/secret.txt", "c/../a.txt", "./a.txt", "/etc/passwd", `${root}/a.txt`, "", "c//inner.txt", "a.txt\0"];
+    expect(await existingPaths(ctx, asked)).toEqual([]);
+  });
+
+  test("a symlink that escapes the root is absent, as a file, a folder, a chain or a loop", async () => {
+    expect(await existingPaths(ctx, ["leak", "leakdir", "leakdir/secret.txt", "chain1", "chain2", "loop"])).toEqual([]);
+  });
+
+  test("the deny rules answer absent: .git, the private folders, and a state secret's basename", async () => {
+    const asked = [
+      ".git",
+      ".git/config",
+      ".GIT/config",
+      "gitlink",
+      ".collie-state",
+      ".collie-state/paired-devices.json",
+      "collie-config/.env",
+      "tostate/paired-devices.json",
+      "sib/collie-other/crew-trust.json",
+      "sib/collie-other/PAIRED-DEVICES.json",
+      "sib/notes",
+    ];
+    expect(await existingPaths(ctx, asked)).toEqual([]);
+    // A sibling's other files are ordinary files.
+    expect(await existingPaths(ctx, ["sib/collie-other/activity.json"])).toEqual(["sib/collie-other/activity.json"]);
+  });
+
+  test("nothing is opened: the check never calls readHead", async () => {
+    let reads = 0;
+    const fs = { ...NODE_FILES_FS, readHead: async () => (reads++, null) };
+    expect(await existingPaths({ ...ctx, fs }, ["a.txt", "B.md"])).toEqual(["a.txt", "B.md"]);
+    expect(reads).toBe(0);
+  });
+
+  test("a FIFO is neither a file nor a folder: absent", async () => {
+    if (!POSIX) return; // Windows has no FIFO in the file system; same guard as the read test above.
+    const fifo = join(root, "exist.fifo");
+    Bun.spawnSync(["mkfifo", fifo]);
+    try {
+      expect(await existingPaths(ctx, ["exist.fifo"])).toEqual([]);
+    } finally {
+      rmSync(fifo, { force: true });
+    }
+  });
+
+  test("a root that is not narrow enough answers nothing", async () => {
+    expect(await existingPaths({ ...ctx, root: home }, ["projects"])).toEqual([]);
+  });
+});
+
+describe("POST /api/pane/:id/files/exist and /api/workspace/:id/files/exist", () => {
+  let snap: RootSnapshot;
+  const engine = { current: () => snap };
+  const deny = (): string[] => [state, config];
+  const post = (body: string) => new Request("http://x/", { method: "POST", body, headers: { "content-type": "application/json" } });
+  const ask = (paths: unknown[]) => post(JSON.stringify({ paths }));
+
+  beforeAll(() => {
+    snap = {
+      agents: [pane("w1:p1", "w1", join(root, "c", "deep"))],
+      shellPanes: [pane("w1:p2", "w1", join(root, "sub")), pane("w2:p1", "w2", home)],
+      workspaces: [space("w1", "ws"), space("w2", "home")],
+    };
+  });
+
+  test("both routes answer { exists } over the workspace root, with a mixed batch", async () => {
+    const paths = ["a.txt", "missing.md", "../outside/secret.txt", "leak", ".git/config", "c/inner.txt", "c"];
+    for (const subject of [{ kind: "pane", paneId: "w1:p1" }, { kind: "workspace", workspaceId: "w1" }] as const) {
+      const res = await filesExist(engine, subject, ask(paths), deny(), home);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("application/json");
+      expect(await res.json()).toEqual({ exists: ["a.txt", "c/inner.txt", "c"] });
+    }
+  });
+
+  test("an entry that is not a string is absent, never a refusal of the batch", async () => {
+    const res = await filesExist(engine, { kind: "pane", paneId: "w1:p1" }, ask(["a.txt", 7, null, { p: 1 }, ["B.md"]]), deny(), home);
+    expect(await res.json()).toEqual({ exists: ["a.txt"] });
+  });
+
+  test("64 paths is the cap: 64 are answered, 65 is a 400", async () => {
+    const full = Array.from({ length: MAX_EXIST_PATHS }, (_, i) => (i === 0 ? "a.txt" : `none-${i}.md`));
+    expect(MAX_EXIST_PATHS).toBe(64);
+    expect(await (await filesExist(engine, { kind: "pane", paneId: "w1:p1" }, ask(full), deny(), home)).json()).toEqual({ exists: ["a.txt"] });
+    const over = await filesExist(engine, { kind: "pane", paneId: "w1:p1" }, ask([...full, "B.md"]), deny(), home);
+    expect(over.status).toBe(400);
+  });
+
+  test("a body of the wrong shape is a 400", async () => {
+    for (const body of ["", "not json", "[]", "null", '{"paths":"a.txt"}', '{"path":["a.txt"]}']) {
+      expect((await filesExist(engine, { kind: "pane", paneId: "w1:p1" }, post(body), deny(), home)).status).toBe(400);
+    }
+    expect(parseFilesExistBody({ paths: ["a", 1, "b"] })).toEqual(["a", "b"]);
+  });
+
+  test("no root, no pane and no workspace all answer an empty list", async () => {
+    for (const subject of [
+      { kind: "pane", paneId: "w2:p1" },
+      { kind: "workspace", workspaceId: "w2" },
+      { kind: "pane", paneId: "nope" },
+      { kind: "workspace", workspaceId: "nope" },
+    ] as const) {
+      expect(await (await filesExist(engine, subject, ask(["projects", "a.txt"]), deny(), home)).json()).toEqual({ exists: [] });
+    }
+  });
+});
+
 // ── The gate ──────────────────────────────────────────────────────────────────────────────────────
 
 describe("the gate: files is a read that needs an authorised device", () => {
@@ -564,6 +726,18 @@ describe("the gate: files is a read that needs an authorised device", () => {
     expect(paneGateLevel("files")).toBe("device-read");
     for (const action of [undefined, "history", "chat", "changes"]) expect(paneGateLevel(action)).toBe("read");
     for (const action of ["reply", "keys", "upload", "close", "rename", "focus"]) expect(paneGateLevel(action)).toBe("write");
+  });
+
+  test("the image read asks device-read, on both forms, before it resolves a runtime or reads a byte", () => {
+    // The dispatcher lives inside Bun.serve, which `bun test` cannot stand up (CLAUDE.md), so the
+    // wiring is pinned by source, as api-front-gate.test.ts pins the front gate's.
+    const server = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const start = server.indexOf("const imageMatch = paneImageMatch ?? workspaceImageMatch;");
+    const block = server.slice(start, server.indexOf("return filesImage(", start));
+    expect(start).toBeGreaterThan(0);
+    const gate = block.indexOf('caller.gate("device-read")');
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(block.indexOf("caller.resolve()"));
   });
 
   test("on a crew member, device-read is decided by the member's own device policy, as a write is", () => {
@@ -773,5 +947,541 @@ describe("list: entries git ignores carry ignored: true", () => {
     const answer = await readFile(ictx(repoRoot), "debug.log");
     if (answer === UNKNOWN_PATH || !answer.available) throw new Error("an ignored file must still read");
     expect(answer.text).toBe("x\n");
+  });
+});
+
+// A file body is file content, and the Files view opens `.env` files on request. The mirror's mask
+// (bridge/redact.ts) runs on every body the Files routes serve, gated by `cfg.redact` as the mirror
+// is. Placeholder secrets only.
+describe("Files view bodies are masked like the mirror", () => {
+  let maskBase: string;
+  let maskHome: string;
+  let app: string;
+  let snap: RootSnapshot;
+  const engine = { current: () => snap };
+  const req = new Request("http://x/");
+  const at = (q = "") => new URL(`http://x/api/x/files${q}`);
+  const BODY = "NAME=collie\npassword=placeholder1234\nAuthorization: Bearer placeholderplaceholder0000\n";
+
+  beforeAll(() => {
+    maskBase = realpathSync.native(mkdtempSync(join(tmpdir(), "collie-files-mask-")));
+    maskHome = join(maskBase, "home");
+    app = join(maskHome, "projects", "app");
+    mkdirSync(app, { recursive: true });
+    writeFileSync(join(app, "settings.env"), BODY);
+    snap = {
+      agents: [pane("w1:p1", "w1", app)],
+      shellPanes: [],
+      workspaces: [space("w1", "app", app)],
+    };
+  });
+  afterAll(() => rmSync(maskBase, { recursive: true, force: true }));
+
+  test("a file read hides the values, keeps the names, and keeps every line and column", async () => {
+    for (const res of [
+      await workspaceFiles(engine, "w1", at("?path=settings.env"), req, [], maskHome, true),
+      await paneFiles(engine, "w1:p1", at("?path=settings.env"), req, [], maskHome, true),
+    ]) {
+      const body = await res.json();
+      expect(body.available).toBe(true);
+      expect(body.text).not.toContain("placeholder1234");
+      expect(body.text).not.toContain("placeholderplaceholder0000");
+      expect(body.text).toContain("NAME=collie\npassword=•");
+      expect(body.text.split("\n").map((l: string) => l.length)).toEqual(BODY.split("\n").map((l) => l.length));
+    }
+  });
+
+  test("COLLIE_REDACT=off serves the body as it is on disk", async () => {
+    const body = await (await workspaceFiles(engine, "w1", at("?path=settings.env"), req, [], maskHome, false)).json();
+    expect(body.text).toBe(BODY);
+  });
+
+  test("a listing is names only, and is answered as before", async () => {
+    const masked = await (await workspaceFiles(engine, "w1", at(), req, [], maskHome, true)).json();
+    const plain = await (await workspaceFiles(engine, "w1", at(), req, [], maskHome, false)).json();
+    expect(masked).toEqual(plain);
+    expect(masked.entries.map((e: { name: string }) => e.name)).toEqual(["settings.env"]);
+  });
+});
+
+// ── One picture as bytes (ADR 0090) ───────────────────────────────────────────────────────────────
+// The image read is the Files read with another cap and another answer, so its refusals are run
+// against the same real folder as the text read's, and must come out the same `unknown-path`.
+
+/** ASCII as bytes, for building a header. */
+const ascii = (text: string): number[] => [...text].map((c) => c.charCodeAt(0));
+
+/** A file head of each type the route serves, padded past the sniff window with zeros. */
+const HEADS = {
+  png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, ...ascii("IHDR")],
+  jpeg: [0xff, 0xd8, 0xff, 0xe0, 0, 16, ...ascii("JFIF")],
+  gif87: [...ascii("GIF87a"), 1, 0, 1, 0],
+  gif89: [...ascii("GIF89a"), 1, 0, 1, 0],
+  webp: [...ascii("RIFF"), 36, 0, 0, 0, ...ascii("WEBPVP8 ")],
+  // An `ftyp` box of 28 bytes: major brand `avif`, minor version 0, compatible `mif1` `miaf` `avif`.
+  avif: [0, 0, 0, 28, ...ascii("ftypavif"), 0, 0, 0, 0, ...ascii("mif1miafavif")],
+  // A sequence: major `avis`.
+  avis: [0, 0, 0, 20, ...ascii("ftypavis"), 0, 0, 0, 0, ...ascii("avis")],
+  // Major `mif1`, with `avif` only among the compatible brands: still an AVIF.
+  avifCompatible: [0, 0, 0, 24, ...ascii("ftypmif1"), 0, 0, 0, 0, ...ascii("miafavif")],
+} as const;
+
+const bytes = (head: readonly number[], pad = 80): Uint8Array => {
+  const out = new Uint8Array(Math.max(pad, head.length));
+  out.set(head);
+  return out;
+};
+
+describe("sniffImageType: the type comes off the bytes and nothing else", () => {
+  test("each of the five types, from its signature", () => {
+    expect(sniffImageType(bytes(HEADS.png))).toBe("image/png");
+    expect(sniffImageType(bytes(HEADS.jpeg))).toBe("image/jpeg");
+    expect(sniffImageType(bytes(HEADS.gif87))).toBe("image/gif");
+    expect(sniffImageType(bytes(HEADS.gif89))).toBe("image/gif");
+    expect(sniffImageType(bytes(HEADS.webp))).toBe("image/webp");
+    expect(sniffImageType(bytes(HEADS.avif))).toBe("image/avif");
+    expect(sniffImageType(bytes(HEADS.avis))).toBe("image/avif");
+    expect(sniffImageType(bytes(HEADS.avifCompatible))).toBe("image/avif");
+  });
+
+  test("a near miss is not a picture", () => {
+    for (const head of [
+      // PNG's first four bytes alone, as the blob sniffer reads them, but not the whole signature.
+      [0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0],
+      ascii("GIF88a"),
+      // RIFF is also a WAV and an AVI.
+      [...ascii("RIFF"), 36, 0, 0, 0, ...ascii("WAVEfmt ")],
+      // A HEIC photo: an ftyp box with no AVIF brand in it.
+      [0, 0, 0, 24, ...ascii("ftypheic"), 0, 0, 0, 0, ...ascii("mif1heic")],
+      // `avif` past the box's own end is not a brand of the box.
+      [0, 0, 0, 16, ...ascii("ftypmif1"), 0, 0, 0, 0, ...ascii("avif")],
+      ascii("<svg xmlns='http://www.w3.org/2000/svg'/>"),
+      ascii("hello, I am text"),
+      [],
+      [0xff, 0xd8],
+    ]) {
+      expect(sniffImageType(bytes(head, 0))).toBeNull();
+    }
+  });
+
+  test("the sniff window holds every signature", () => {
+    expect(IMAGE_SNIFF_BYTES).toBeGreaterThanOrEqual(HEADS.avif.length);
+  });
+});
+
+describe("readImage: one picture, under the same checks as the text read", () => {
+  const img = (name: string) => join(root, "img", name);
+
+  beforeAll(() => {
+    mkdirSync(join(root, "img"), { recursive: true });
+    write(img("a.png"), bytes(HEADS.png, 200));
+    write(img("b.jpg"), bytes(HEADS.jpeg));
+    write(img("c.gif"), bytes(HEADS.gif89));
+    write(img("d.webp"), bytes(HEADS.webp));
+    write(img("e.avif"), bytes(HEADS.avif));
+    // A picture under the wrong name is still a picture, and a text file named `.png` is not.
+    write(img("photo.txt"), bytes(HEADS.png));
+    write(img("fake.png"), "I am text, whatever my name says.\n");
+    write(img("logo.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>\n");
+    // Over the cap without writing 16 MiB: a PNG head, then a sparse tail.
+    write(img("huge.png"), bytes(HEADS.png));
+    truncateSync(img("huge.png"), MAX_IMAGE_READ_BYTES + 1);
+    // Exactly at the cap is still served.
+    write(img("edge.png"), bytes(HEADS.png));
+    truncateSync(img("edge.png"), MAX_IMAGE_READ_BYTES);
+    write(join(outside, "out.png"), bytes(HEADS.png));
+    symlinkSync(join(outside, "out.png"), img("leak.png"));
+    symlinkSync("a.png", img("inside.png"));
+  });
+
+  test("each type is read whole, with the sniffed type", async () => {
+    for (const [name, type] of [
+      ["a.png", "image/png"],
+      ["b.jpg", "image/jpeg"],
+      ["c.gif", "image/gif"],
+      ["d.webp", "image/webp"],
+      ["e.avif", "image/avif"],
+      ["photo.txt", "image/png"],
+      ["inside.png", "image/png"],
+    ] as const) {
+      const got = await readImage(ctx, `img/${name}`);
+      if (got === UNKNOWN_PATH || !got.available || got.kind !== "image") throw new Error(`${name}: ${JSON.stringify(got)}`);
+      expect(got.type).toBe(type);
+      expect(got.bytes).toEqual(new Uint8Array(readFileSync(img(name))));
+      expect(got.size).toBe(got.bytes.length);
+      expect(got.mtimeMs).toBe(statSync(img(name)).mtimeMs);
+    }
+  });
+
+  test("a text file named .png, and an SVG, are not pictures this read serves", async () => {
+    expect(await readImage(ctx, "img/fake.png")).toEqual({ available: true, kind: "not-image" });
+    expect(await readImage(ctx, "img/logo.svg")).toEqual({ available: true, kind: "not-image" });
+  });
+
+  test("over the cap is too-large and is never read; at the cap is served", async () => {
+    let reads = 0;
+    const fs = { ...NODE_FILES_FS, readHead: (path: string, max: number) => (reads++, NODE_FILES_FS.readHead(path, max)) };
+    expect(await readImage({ ...ctx, fs }, "img/huge.png")).toEqual({ available: true, kind: "too-large", size: MAX_IMAGE_READ_BYTES + 1 });
+    expect(reads).toBe(0);
+    const edge = await readImage(ctx, "img/edge.png");
+    if (edge === UNKNOWN_PATH || !edge.available || edge.kind !== "image") throw new Error("edge refused");
+    expect(edge.size).toBe(MAX_IMAGE_READ_BYTES);
+  });
+
+  test("a file that grew past the cap between the size check and the open is too-large", async () => {
+    const fs = {
+      ...NODE_FILES_FS,
+      readHead: async () => ({ bytes: bytes(HEADS.png), size: MAX_IMAGE_READ_BYTES + 10 }),
+    };
+    expect(await readImage({ ...ctx, fs }, "img/a.png")).toEqual({ available: true, kind: "too-large", size: MAX_IMAGE_READ_BYTES + 10 });
+  });
+
+  test("every path the text read refuses, this read refuses the same way", async () => {
+    for (const bad of [
+      "../outside/out.png",
+      "/etc/passwd",
+      `${outside}/out.png`,
+      "img/../../outside/out.png",
+      "img/leak.png",
+      "leak",
+      "leakdir/secret.txt",
+      "chain1",
+      "loop",
+      ".git/config",
+      ".GIT/config",
+      "gitlink",
+      ".collie-state/paired-devices.json",
+      "tostate/paired-devices.json",
+      "sib/collie-other/crew-trust.json",
+      "sib/notes",
+      "img",
+      "",
+      "img/nope.png",
+      "a\\b",
+      "a\0b",
+    ]) {
+      expect({ bad, got: await readImage(ctx, bad) }).toEqual({ bad, got: UNKNOWN_PATH });
+      // And it is the text read's own answer for the same path.
+      expect({ bad, text: await readFile(ctx, bad) }).toEqual({ bad, text: UNKNOWN_PATH });
+    }
+  });
+
+  test("a FIFO named .png is not a file, and the read does not hang on it", async () => {
+    if (!POSIX) return; // as the text read's FIFO test
+    const fifo = img("pipe.png");
+    if (Bun.spawnSync(["mkfifo", fifo]).exitCode !== 0) throw new Error("mkfifo failed");
+    try {
+      expect(await readImage(ctx, "img/pipe.png")).toBe(UNKNOWN_PATH);
+    } finally {
+      rmSync(fifo, { force: true });
+    }
+  });
+
+  test("a root that is not narrow enough is no-folder", async () => {
+    expect(await readImage({ ...ctx, root: home }, "projects/ws/img/a.png")).toEqual({ available: false, reason: "no-folder" });
+  });
+});
+
+describe("GET /api/pane/:id/files/image and /api/workspace/:id/files/image", () => {
+  let snap: RootSnapshot;
+  const engine = { current: () => snap };
+  const deny = (): string[] => [state, config];
+  const at = (q: string) => new URL(`http://x/api/x/files/image${q}`);
+  const both = async (q: string): Promise<Response[]> => [
+    await filesImage(engine, { kind: "pane", paneId: "w1:p1" }, at(q), deny(), home),
+    await filesImage(engine, { kind: "workspace", workspaceId: "w1" }, at(q), deny(), home),
+  ];
+
+  beforeAll(() => {
+    snap = {
+      agents: [pane("w1:p1", "w1", join(root, "c", "deep"))],
+      shellPanes: [pane("w1:p2", "w1", join(root, "sub")), pane("w2:p1", "w2", home)],
+      workspaces: [space("w1", "ws"), space("w2", "home")],
+    };
+  });
+
+  test("a picture is its own bytes, typed by the sniff, with the picture's headers", async () => {
+    for (const res of await both("?path=img%2Fa.png")) {
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/png");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(res.headers.get("content-disposition")).toBe("inline");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(res.headers.get("etag")).toBeNull();
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(readFileSync(join(root, "img", "a.png"))));
+    }
+    // The name does not decide the type: a PNG named .txt is a PNG.
+    for (const res of await both("?path=img%2Fphoto.txt")) expect(res.headers.get("content-type")).toBe("image/png");
+  });
+
+  test("a text file named .png is 415, over the cap is 413", async () => {
+    for (const res of await both("?path=img%2Ffake.png")) expect(res.status).toBe(415);
+    for (const res of await both("?path=img%2Flogo.svg")) expect(res.status).toBe(415);
+    for (const res of await both("?path=img%2Fhuge.png")) expect(res.status).toBe(413);
+  });
+
+  test("the route sends the file's size and mtime as headers, the text read's own numbers", async () => {
+    const st = statSync(join(root, "img", "a.png"));
+    for (const res of await both("?path=img%2Fa.png")) {
+      expect(res.headers.get("x-collie-file-size")).toBe(String(st.size));
+      expect(res.headers.get("x-collie-file-mtime")).toBe(String(st.mtimeMs));
+    }
+  });
+
+  test("a refused path is the Files view's 404 { error: unknown-path }", async () => {
+    for (const q of ["?path=..%2Foutside%2Fout.png", "?path=img%2Fleak.png", "?path=.git%2Fconfig", "?path=%2Fetc%2Fpasswd", "?path=img"]) {
+      for (const res of await both(q)) {
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({ error: "unknown-path" });
+      }
+    }
+  });
+
+  test("no root, no pane and no workspace are the same 404; no path is a 400", async () => {
+    for (const subject of [
+      { kind: "pane", paneId: "w2:p1" },
+      { kind: "workspace", workspaceId: "w2" },
+      { kind: "pane", paneId: "nope" },
+      { kind: "workspace", workspaceId: "nope" },
+    ] as const) {
+      const res = await filesImage(engine, subject, at("?path=a.png"), deny(), home);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "unknown-path" });
+    }
+    expect((await filesImage(engine, { kind: "pane", paneId: "w1:p1" }, at(""), deny(), home)).status).toBe(400);
+  });
+
+  test("a member's answer, forwarded, wears the picture's headers whatever the member sent", () => {
+    const member = new Response("bytes", { headers: { "content-type": "image/png", "cache-control": "max-age=3600", etag: '"x"' } });
+    const out = forwardedFilesImage(member);
+    expect(out.headers.get("content-type")).toBe("image/png");
+    expect(out.headers.get("cache-control")).toBe("no-store");
+    expect(out.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(out.headers.get("content-disposition")).toBe("inline");
+    expect(out.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(out.headers.get("etag")).toBeNull();
+    // An older member's 404 is passed on as its own status, and is not cached either.
+    const stale = forwardedFilesImage(new Response('{"error":"not found"}', { status: 404 }));
+    expect(stale.status).toBe(404);
+    expect(stale.headers.get("cache-control")).toBe("no-store");
+  });
+
+  test("the answer's statuses, as a pure function", async () => {
+    expect(filesImageResponse(UNKNOWN_PATH).status).toBe(404);
+    expect(filesImageResponse({ available: false, reason: "no-folder" }).status).toBe(404);
+    expect(filesImageResponse({ available: true, kind: "too-large", size: MAX_IMAGE_READ_BYTES + 1 }).status).toBe(413);
+    expect(filesImageResponse({ available: true, kind: "not-image" }).status).toBe(415);
+    // A window onto a larger buffer is sent as exactly its own bytes.
+    const big = bytes(HEADS.gif89, 64);
+    const res = filesImageResponse({ available: true, kind: "image", type: "image/gif", bytes: big.subarray(0, 10), size: 10 });
+    expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([...big.subarray(0, 10)]);
+  });
+
+  test("the picture's version rides as two headers, size and mtime", () => {
+    const res = filesImageResponse({ available: true, kind: "image", type: "image/png", bytes: bytes(HEADS.png, 20), size: 20, mtimeMs: 1_728_300_000_123.5 });
+    expect(res.headers.get("x-collie-file-size")).toBe("20");
+    expect(res.headers.get("x-collie-file-mtime")).toBe("1728300000123.5");
+    // The text read spells the same number in JSON, so the phone's two version strings agree.
+    expect(String(JSON.parse(JSON.stringify(1_728_300_000_123.5)))).toBe("1728300000123.5");
+    // A read that knows no mtime sends the size alone.
+    const bare = filesImageResponse({ available: true, kind: "image", type: "image/png", bytes: bytes(HEADS.png, 20), size: 20 });
+    expect(bare.headers.get("x-collie-file-size")).toBe("20");
+    expect(bare.headers.get("x-collie-file-mtime")).toBeNull();
+    // A refusal carries no version: it says nothing about a file.
+    expect(filesImageResponse({ available: true, kind: "not-image" }).headers.get("x-collie-file-size")).toBeNull();
+  });
+});
+
+// ── The opened file, and the edge spellings (pre-push hardening, 2026-10-08) ─────────────────────
+
+describe("the opened file is checked, not only the path", () => {
+  let race = "";
+  let held = "";
+  let away = "";
+  const inRoot = bytes(HEADS.png, 40);
+  const outsideBytes = bytes(HEADS.png, 80);
+
+  beforeAll(() => {
+    race = join(root, "race");
+    held = join(root, "race-held");
+    away = join(outside, "race");
+    mkdirSync(race, { recursive: true });
+    mkdirSync(away, { recursive: true });
+    write(join(race, "pic.png"), inRoot);
+    write(join(race, "note.txt"), "inside\n");
+    write(join(away, "pic.png"), outsideBytes);
+    write(join(away, "note.txt"), "OUTSIDE\n");
+  });
+
+  /** The folder above the file, swapped for a link that leads out of the root. */
+  function swap(): void {
+    renameSync(race, held);
+    symlinkSync(away, race, "dir");
+  }
+  function restore(): void {
+    unlinkSync(race);
+    renameSync(held, race);
+  }
+
+  /**
+   * A disk that swaps the folder between the containment check and the open, the race a writer
+   * inside the root could try. `confirmAs` changes what the check on the opened file is shown:
+   * `kernel` is the real Linux answer, `no-proc` drops the kernel's name to run the fallback, and
+   * `restored` also puts the folder back before the fallback looks again.
+   */
+  function racingFs(confirmAs: "kernel" | "no-proc" | "restored") {
+    return {
+      ...NODE_FILES_FS,
+      async readHead(path: string, max: number, confirm?: (o: OpenedFile) => Promise<boolean>) {
+        swap();
+        let swapped = true;
+        try {
+          const wrapped =
+            confirm === undefined
+              ? undefined
+              : async (o: OpenedFile): Promise<boolean> => {
+                  if (confirmAs === "kernel") return confirm(o);
+                  if (confirmAs === "restored") {
+                    restore();
+                    swapped = false;
+                  }
+                  return confirm({ ...o, path: null });
+                };
+          return await NODE_FILES_FS.readHead(path, max, wrapped);
+        } finally {
+          if (swapped) restore();
+        }
+      },
+    };
+  }
+
+  test("the race is real: without the check, the swapped folder's file is what opens", async () => {
+    if (!POSIX) return;
+    swap();
+    try {
+      const head = await NODE_FILES_FS.readHead(join(race, "pic.png"), MAX_IMAGE_READ_BYTES);
+      expect(head?.bytes).toEqual(outsideBytes);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a folder swapped for a link out, after the check and before the open, is refused (kernel's name)", async () => {
+    if (process.platform !== "linux") return;
+    const fs = racingFs("kernel");
+    expect(await readImage({ ...ctx, fs }, "race/pic.png")).toBe(UNKNOWN_PATH);
+    expect(await readFile({ ...ctx, fs }, "race/note.txt")).toBe(UNKNOWN_PATH);
+  });
+
+  test("without the kernel's name, a swap still in place fails the second containment check", async () => {
+    if (!POSIX) return;
+    const fs = racingFs("no-proc");
+    expect(await readImage({ ...ctx, fs }, "race/pic.png")).toBe(UNKNOWN_PATH);
+    expect(await readFile({ ...ctx, fs }, "race/note.txt")).toBe(UNKNOWN_PATH);
+  });
+
+  test("without the kernel's name, a swap put back before the second look fails the identity check", async () => {
+    if (!POSIX) return;
+    const fs = racingFs("restored");
+    expect(await readImage({ ...ctx, fs }, "race/pic.png")).toBe(UNKNOWN_PATH);
+    expect(await readFile({ ...ctx, fs }, "race/note.txt")).toBe(UNKNOWN_PATH);
+  });
+
+  test("an untouched file passes both forms of the check", async () => {
+    const noProc = {
+      ...NODE_FILES_FS,
+      readHead: (path: string, max: number, confirm?: (o: OpenedFile) => Promise<boolean>) =>
+        NODE_FILES_FS.readHead(path, max, confirm && ((o) => confirm({ ...o, path: null }))),
+    };
+    for (const c of [ctx, { ...ctx, fs: noProc }]) {
+      const pic = await readImage(c, "race/pic.png");
+      if (pic === UNKNOWN_PATH || !pic.available || pic.kind !== "image") throw new Error(JSON.stringify(pic));
+      expect(pic.bytes).toEqual(inRoot);
+      const note = await readFile(c, "race/note.txt");
+      if (note === UNKNOWN_PATH || !note.available) throw new Error(JSON.stringify(note));
+      expect(note.text).toBe("inside\n");
+    }
+  });
+});
+
+describe("edge paths on the image read and the text read", () => {
+  let edge = "";
+
+  beforeAll(() => {
+    edge = join(root, "edge");
+    mkdirSync(edge, { recursive: true });
+    write(join(outside, "edge-out.png"), bytes(HEADS.png, 30));
+    // A link inside the root that leads out, and one to `.git/config` wearing a picture's name.
+    symlinkSync(join(outside, "edge-out.png"), join(edge, "out.png"));
+    symlinkSync(join(root, ".git", "config"), join(edge, "x.png"));
+    // A HARD link to a file outside the root: the same inode, under a name inside it.
+    linkSync(join(outside, "edge-out.png"), join(edge, "hard.png"));
+    // On a case-sensitive disk `.GIT` is its own folder, not `.git`; it is refused all the same.
+    mkdirSync(join(root, ".GIT"), { recursive: true });
+    write(join(root, ".GIT", "config"), "[core]\n");
+    symlinkSync(join(root, ".GIT", "config"), join(edge, "upper.png"));
+  });
+
+  test("a link inside the root that leads out, and a link to .git/config named x.png, are refused", async () => {
+    for (const bad of ["edge/out.png", "edge/x.png", "edge/upper.png", ".GIT/config", ".Git/config"]) {
+      expect({ bad, image: await readImage(ctx, bad) }).toEqual({ bad, image: UNKNOWN_PATH });
+      expect({ bad, text: await readFile(ctx, bad) }).toEqual({ bad, text: UNKNOWN_PATH });
+    }
+  });
+
+  test("the .git deny folds case on a case-sensitive host too, on the asked name and the real path", () => {
+    expect(LINUX.caseInsensitive).toBeFalsy();
+    for (const p of [".GIT/config", "a/.Git/HEAD", ".gIt"]) expect(parseRelPath(p, LINUX)).toBeNull();
+  });
+
+  test("a hard link to a file outside the root is served: its real path is inside, and nothing can tell", async () => {
+    // Documented in files-view.ts ("THE RACE, AND THE CHECK ON THE OPENED FILE"): a hard link is the
+    // same inode under a name inside the root, so realpath, the kernel's name and the identity check
+    // all answer "inside". Making one takes write access inside the root and, under Linux's
+    // protected_hardlinks, ownership of the target: the operator's own user, who reads it anyway.
+    const got = await readImage(ctx, "edge/hard.png");
+    if (got === UNKNOWN_PATH || !got.available || got.kind !== "image") throw new Error(JSON.stringify(got));
+    expect(got.bytes).toEqual(new Uint8Array(readFileSync(join(outside, "edge-out.png"))));
+  });
+
+  test("encoded traversal, double encoding, NUL and a backslash on the route are all 404 unknown-path", async () => {
+    const engine = {
+      current: (): RootSnapshot => ({
+        agents: [pane("w1:p1", "w1", join(root, "c", "deep"))],
+        shellPanes: [],
+        workspaces: [space("w1", "ws")],
+      }),
+    };
+    for (const q of [
+      "..%2foutside%2fedge-out.png",
+      "..%2Foutside%2Fedge-out.png",
+      "%2e%2e%2foutside%2fedge-out.png",
+      "%252e%252e%252foutside%252fedge-out.png",
+      "edge%2F..%2F..%2Foutside%2Fedge-out.png",
+      "img%2Fa.png%00",
+      "img%2Fa.png%00.png",
+      "img%5Ca.png",
+      "..%5C..%5Coutside%5Cedge-out.png",
+      "%2Fetc%2Fpasswd",
+    ]) {
+      const res = await filesImage(engine, { kind: "pane", paneId: "w1:p1" }, new URL(`http://x/i?path=${q}`), [state, config], home);
+      expect({ q, status: res.status }).toEqual({ q, status: 404 });
+      expect(await res.json()).toEqual({ error: "unknown-path" });
+      // Every answer, a refusal too, carries nosniff from the shared headers.
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    }
+  });
+
+  test("the image read's every answer carries nosniff: 200, 404, 413 and 415", () => {
+    for (const answer of [
+      { available: true, kind: "image", type: "image/png", bytes: bytes(HEADS.png, 20), size: 20 },
+      UNKNOWN_PATH,
+      { available: true, kind: "too-large", size: MAX_IMAGE_READ_BYTES + 1 },
+      { available: true, kind: "not-image" },
+    ] as const) {
+      expect(filesImageResponse(answer).headers.get("x-content-type-options")).toBe("nosniff");
+    }
   });
 });

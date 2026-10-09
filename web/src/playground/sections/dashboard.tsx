@@ -11,6 +11,7 @@ import { CrewFooterLink } from "@/components/crew-footer-link";
 import { ListGroup } from "@/components/ui/list-group";
 import { TabBar } from "@/components/ui/tab-bar";
 import type { DashView } from "@/lib/dash-view";
+import type { AgentView, GitHead } from "@/lib/types";
 import { countBlocked, hasReady } from "@/lib/triage";
 import { t, tn } from "@/lib/i18n";
 import { PaneStrip } from "@/components/pane-strip";
@@ -46,16 +47,8 @@ import {
   updateRelease,
   updateRestart,
 } from "../fixtures";
-import {
-  Card,
-  Group,
-  PackedRootRouter,
-  RootRouter,
-  Section,
-  Segmented,
-  Stage,
-  type SectionDef,
-} from "../harness";
+import { PackedRootRouter, RootRouter } from "../harness";
+import { Card, CardControls, Group, Section, Segmented, Stage, type SectionDef } from "../layout";
 import { PhoneFrameCard } from "./shared";
 
 export const DEF: SectionDef = {
@@ -68,6 +61,22 @@ export const DEF: SectionDef = {
 /** Each workspace heading's "+" (M40/03), wired to nothing: the card shows where it sits, as the
  *  dashboard draws it, and a tap goes nowhere. */
 const HEADING_NEW_TAB: HeadingNewTab = { scope: {}, creating: new Set(), onNewTab: () => {} };
+
+/**
+ * The herd with the branch the bridge reads off each pane's folder. Derived here rather than added to
+ * the shared fixtures, so every other card (and the browser tests that import them) keeps the herd an
+ * older bridge sends. Every fourth row has none.
+ */
+const BRANCHES: readonly (GitHead | undefined)[] = [
+  { kind: "branch", name: "main" },
+  { kind: "branch", name: "perf/dashboard-poll-cadence-and-backoff" },
+  { kind: "detached", sha: "abc1234def5678abc1234def5678abc1234def56" },
+  undefined,
+];
+const herdWithBranches: AgentView[] = herd.map((pane, i) => {
+  const gitHead = BRANCHES[i % BRANCHES.length];
+  return gitHead === undefined ? pane : { ...pane, gitHead };
+});
 
 /** The dashboard with its order toggle live (ADR 0071): tap a segment and the list re-ranks, the way
  *  the route does, with the reading held between taps. */
@@ -172,6 +181,18 @@ export function DashboardSection() {
         >
           <PhoneFrameCard>
             <AgentList agents={herd} bridge="connected" onOpen={() => {}} newTab={HEADING_NEW_TAB} />
+          </PhoneFrameCard>
+        </Card>
+
+        <Card
+          state="agent-list-branches"
+          label="agent list, the branch on every row"
+          reach="every pane whose folder sits in a git checkout. The bridge reads the branch off disk and the row leads line 2 with it, before the tab."
+          note="The same herd as above, with a branch on most rows: a short name, a long one that gives way in the middle and keeps its tail, a detached head, and rows with none, which draw exactly what they drew before. Every row stays 44px."
+          span={2}
+        >
+          <PhoneFrameCard>
+            <AgentList agents={herdWithBranches} bridge="connected" onOpen={() => {}} newTab={HEADING_NEW_TAB} />
           </PhoneFrameCard>
         </Card>
 
@@ -467,9 +488,9 @@ function WriteGateCard() {
       }
       note="The pairing latch is set through lib/pairing's own markNotPaired/clearNotPaired, and it OUTRANKS the device gate — the two can never both show, so pick one."
     >
-      <div className="mb-2">
+      <CardControls>
         <Segmented name="write gate" value={gate} options={GATE_OPTIONS} onChange={setGate} />
-      </div>
+      </CardControls>
       {/* 390px and the routes' own `mx-4 mt-3`: this box WRAPS in five of six locales, so its
           height is a function of the width it is read at, and a card-wide stage measures a box
           nobody has. The gutter rides the component the way home.tsx and space.tsx pass it. */}
@@ -652,14 +673,16 @@ function PlaygroundToggle({
   offLabel: string;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={name}
-      aria-pressed={on}
-      onClick={onToggle}
-      className="mb-2 w-full rounded-md border border-border bg-muted px-3 py-1 text-left text-[11px] font-medium text-muted-foreground"
-    >
-      {on ? onLabel : offLabel}
-    </button>
+    <CardControls>
+      <button
+        type="button"
+        aria-label={name}
+        aria-pressed={on}
+        onClick={onToggle}
+        className="w-full rounded-md border border-border bg-muted px-3 py-1 text-left text-[11px] font-medium text-muted-foreground"
+      >
+        {on ? onLabel : offLabel}
+      </button>
+    </CardControls>
   );
 }

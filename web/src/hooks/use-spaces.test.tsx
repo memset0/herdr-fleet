@@ -5,17 +5,24 @@ import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
 import { resetPollIntent, topologyBursting } from "@/lib/poll-intent";
 import type { Scope } from "@/lib/scope";
+import { clearStatus, useStatus } from "@/lib/status";
 import { tabCreateKey, useSpaceActions } from "./use-spaces";
 
 // Stub the bridge's create endpoints at the api seam — same idiom launch-strip.test.tsx uses for
 // api.launch. Only the calls this tree can make are declared.
-const { mockCreateTab, mockCreateWorkspace } = vi.hoisted(() => ({
+const { mockCreateTab, mockCreateWorkspace, mockCreateWorktree, mockOpenWorktree, mockLaunch } = vi.hoisted(() => ({
   mockCreateTab: vi.fn(),
   mockCreateWorkspace: vi.fn(),
+  mockCreateWorktree: vi.fn(),
+  mockOpenWorktree: vi.fn(),
+  mockLaunch: vi.fn(),
 }));
 vi.mock("@/lib/api", () => ({
   createTab: mockCreateTab,
   createWorkspace: mockCreateWorkspace,
+  createWorktree: mockCreateWorktree,
+  openWorktree: mockOpenWorktree,
+  launch: mockLaunch,
 }));
 
 function homeData(): HomeData {
@@ -85,13 +92,13 @@ function AddressedHarness() {
   );
 }
 
-function makeRouter(harness = <Harness />) {
+function makeRouter(harness = <Harness />, root: Partial<HomeData> = {}) {
   return createMemoryRouter(
     [
       {
         id: ROOT_ROUTE_ID,
         path: "/",
-        loader: () => homeData(),
+        loader: () => ({ ...homeData(), ...root }),
         element: <Outlet />,
         children: [{ index: true, element: harness }],
       },
@@ -225,5 +232,139 @@ describe("useSpaceActions — newTab addressed to a scope", () => {
     expect(mockCreateTab).toHaveBeenLastCalledWith("w1", {}, {});
     release();
     await waitFor(() => expect(screen.getByTestId("creating-peer-w1")).toHaveTextContent("false"));
+  });
+});
+
+// "New agent on a branch" (ADR 0089): the create carries the sheet's request id and launcher, and a
+// launcher that failed after the create still lands the phone on the new space, with a status line
+// that says the agent did not start.
+describe("useSpaceActions — branchOff", () => {
+  const REQUEST_ID = "0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c";
+
+  beforeEach(() => {
+    mockCreateWorktree.mockReset();
+    delete document.body.dataset.moved;
+    clearStatus();
+    resetPollIntent();
+  });
+
+  /** The status line, outside the router, so it outlives the step into the new pane. */
+  function StatusProbe() {
+    return <span data-testid="status-probe">{useStatus()?.text ?? ""}</span>;
+  }
+
+  function BranchOffHarness({ launcher }: { launcher?: string }) {
+    const { branchOff } = useSpaceActions();
+    return (
+      <div>
+        <button
+          onClick={() => {
+            void (async () => {
+              const moved = await branchOff("w1", "worktree/x", { requestId: REQUEST_ID, launcher });
+              document.body.dataset.moved = String(moved);
+            })();
+          }}
+        >
+          branch-off
+        </button>
+      </div>
+    );
+  }
+
+  it("hands the request id and the launcher to the create, on the scope it was given", async () => {
+    mockCreateWorktree.mockResolvedValueOnce({ ...pane("w7"), alreadyOpen: false, launcherStarted: true });
+    const user = userEvent.setup();
+    render(<RouterProvider router={makeRouter(<BranchOffHarness launcher="claude" />)} />);
+    await user.click(await screen.findByRole("button", { name: "branch-off" }));
+    await waitFor(() => expect(mockCreateWorktree).toHaveBeenCalledTimes(1));
+    expect(mockCreateWorktree).toHaveBeenCalledWith("w1", "worktree/x", {}, { requestId: REQUEST_ID, launcher: "claude" });
+    await screen.findByText("pane");
+  });
+
+  it("a launcher that did not start still lands on the new space, and says so", async () => {
+    mockCreateWorktree.mockResolvedValueOnce({
+      ...pane("w7"),
+      alreadyOpen: false,
+      launcherStarted: false,
+      launcherError: "pane is gone",
+    });
+    const user = userEvent.setup();
+    const router = makeRouter(<BranchOffHarness launcher="claude" />);
+    render(
+      <>
+        <RouterProvider router={router} />
+        <StatusProbe />
+      </>,
+    );
+    await user.click(await screen.findByRole("button", { name: "branch-off" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/pane/w7%3Ap1"));
+    expect(document.body.dataset.moved).toBe("true");
+    expect(screen.getByTestId("status-probe")).toHaveTextContent(
+      "The worktree is ready, but the agent did not start. Start it in the new shell.",
+    );
+  });
+});
+
+// NOTHING SAVED CAN ACT (M46, ADR 0087 rule 8). A cold open draws the saved herd before the bridge
+// answers; every create here is a write at ids read from that snapshot. Each entry point refuses and
+// sends nothing, whether the herd is the saved copy (the dashboard) or the caller's own liveness says
+// no (the pane view).
+describe("useSpaceActions — a saved copy refuses every structural write", () => {
+  const ALL = ["new-tab", "new-space", "new-worktree", "branch-off", "show-worktree", "launch"] as const;
+
+  beforeEach(() => {
+    for (const mock of [mockCreateTab, mockCreateWorkspace, mockCreateWorktree, mockOpenWorktree, mockLaunch]) mock.mockReset();
+    clearStatus();
+    resetPollIntent();
+  });
+
+  function WritesHarness({ canWrite }: { canWrite?: () => boolean }) {
+    const actions = useSpaceActions(canWrite);
+    const status = useStatus();
+    const run = {
+      "new-tab": () => void actions.newTab("w1"),
+      "new-space": () => void actions.newSpace({}),
+      "new-worktree": () => void actions.newWorktree("w1", "feature/x"),
+      "branch-off": () => void actions.branchOff("w1", "feature/x", { requestId: "r1" }),
+      "show-worktree": () => void actions.showWorktree("w1", "/tmp/wt"),
+      launch: () => void actions.launch("claude"),
+    } satisfies Record<(typeof ALL)[number], () => void>;
+    return (
+      <div>
+        {ALL.map((name) => (
+          <button key={name} onClick={() => run[name]()}>
+            {name}
+          </button>
+        ))}
+        <span data-testid="status">{status?.text ?? ""}</span>
+      </div>
+    );
+  }
+
+  const REFUSAL = "Saved copy. Reconnect to make changes.";
+  const writes = () => [mockCreateTab, mockCreateWorkspace, mockCreateWorktree, mockOpenWorktree, mockLaunch];
+
+  it.each(ALL)("%s sends nothing while the herd on screen is the saved copy", async (name) => {
+    const user = userEvent.setup();
+    render(<RouterProvider router={makeRouter(<WritesHarness />, { stale: true })} />);
+    await user.click(await screen.findByRole("button", { name }));
+    expect(screen.getByTestId("status")).toHaveTextContent(REFUSAL);
+    for (const mock of writes()) expect(mock).not.toHaveBeenCalled();
+  });
+
+  it.each(ALL)("%s sends nothing while the caller's own read is not live", async (name) => {
+    const user = userEvent.setup();
+    render(<RouterProvider router={makeRouter(<WritesHarness canWrite={() => false} />)} />);
+    await user.click(await screen.findByRole("button", { name }));
+    expect(screen.getByTestId("status")).toHaveTextContent(REFUSAL);
+    for (const mock of writes()) expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("a live herd and a live caller still create", async () => {
+    mockCreateTab.mockResolvedValueOnce(refused());
+    const user = userEvent.setup();
+    render(<RouterProvider router={makeRouter(<WritesHarness canWrite={() => true} />)} />);
+    await user.click(await screen.findByRole("button", { name: "new-tab" }));
+    await waitFor(() => expect(mockCreateTab).toHaveBeenCalledTimes(1));
   });
 });

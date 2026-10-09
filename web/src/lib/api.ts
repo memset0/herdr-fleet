@@ -3,10 +3,21 @@
 
 import { parseApiErrorFields, type ApiErrorDetail, type ApiErrorFields } from "./api-error-codes";
 import { trackBusy } from "./busy";
-import { beginLongUpload, endLongUpload, markLive } from "./connection-health";
+import {
+  beginLongUpload,
+  endLongUpload,
+  markLive,
+  noteNetworkFailure,
+  noteReadStart,
+  noteServerFailure,
+  type ReadFailureKind,
+} from "./connection-health";
+import { markDead as markPaneDead, markLive as markPaneLive } from "./liveness";
 import { abortSignalAfter, abortSignalAny } from "./env";
-import { asJsonString, parseJsonObject } from "./json";
-import { authHeader, clearNotPaired, markNotPaired, NOT_PAIRED_BODY } from "./pairing";
+import { asJsonString, parseJsonObject, type JsonObject } from "./json";
+import { authHeader, clearNotPaired, EXPIRED_BODY, markExpired, markNotPaired, NOT_PAIRED_BODY } from "./pairing";
+import { pairingRefused } from "./wipe";
+import { fileVersionOf } from "./file-image-cache";
 import { isLead, normalizeScope, paneScopeKey, type Scope } from "./scope";
 import { stampSend } from "./poll-intent";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
@@ -47,6 +58,7 @@ import type {
   UpdateStartResponse,
   UploadResponse,
   WorktreeListResponse,
+  WorktreeCreateResponse,
   WorktreeOpenResponse,
 } from "./types";
 import type { SubscribeBody } from "./push";
@@ -109,6 +121,34 @@ export function isApiErrorStatus<TThrown>(error: TThrown, status: number): boole
 }
 
 /**
+ * True when the bridge (or a proxy in front of it) answered and REFUSED the request: a 4xx. A pairing
+ * refusal, a proxy's sign-in, a gone pane. Not a transport failure, not a timeout and not a 5xx, which
+ * is what a proxy answers when the bridge behind it is down. The Chat tail reads its saved copy back
+ * only on the other kind (hooks/use-chat-window.ts): a refusal is an answer, not an outage.
+ */
+export function isRefusalStatus<TThrown>(error: TThrown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500;
+}
+
+/**
+ * What a failed read says about the connection (lib/connection-health.ts `ReadFailureKind`).
+ *
+ * `network` is a read that got NO answer: `fetch` threw a TypeError (no route, the radio off) or the
+ * poll deadline ran out (a `TimeoutError`, see {@link POLL_TIMEOUT_MS}). `server` is a 5xx. Everything
+ * else, a refusal included, is `other`. A superseded poll (an `AbortError`) is `other` too: the app
+ * aborted it, the bridge did not fail it.
+ */
+export function readFailureKind<TThrown>(error: TThrown): ReadFailureKind {
+  if (error instanceof ApiError) return error.status >= 500 ? "server" : "other";
+  // The deadline's own DOMException, an Error subclass in every engine Collie runs in (the loaders'
+  // `isAbortError` reads the superseded case the same way).
+  if (error instanceof Error && error.name === "TimeoutError") return "network";
+  // `fetch` rejects a network failure with a plain TypeError in every engine Collie runs in.
+  if (error instanceof TypeError) return "network";
+  return "other";
+}
+
+/**
  * The bridge's error fields off a caught throw, or `undefined` when it did not come from here.
  *
  * The accessor exists so `ApiError` itself stays private to this module: `lib/api-error-message.ts`
@@ -128,10 +168,25 @@ export function apiErrorFields<TThrown>(thrown: TThrown): ApiErrorFields | undef
 //   - GET reads (snapshot/pane polls) are small and frequent — a short leash surfaces a dead link
 //     fast so the UI can show "reconnecting…" and retry on the next tick.
 const GET_TIMEOUT_MS = 10_000;
+//   - THE POLL READS (the herd snapshot, the pane mirror, the Chat window, the config read) get a
+//     shorter one still: 6s, decided 2026-10-07 (M46 pass 3). On a phone with a VPN up and the radio
+//     off, a request to the tailnet address does not fail, it hangs, and the 10s leash plus the 15s
+//     escalation made Collie slow to admit the network was gone. A poll read that runs out counts as
+//     a network failure (`readFailureKind`). 6s is one second above the bridge's own 5s mux timeout
+//     (bridge/mux/herdr/client.ts DEFAULT_TIMEOUT_MS), so a Herdr call that uses its whole budget
+//     comes back as the bridge's own answer and never reads as an outage on the phone. Long reads
+//     keep the 10s leash: the History page's 5000 turns, a `?before=` page, a file. Uploads keep
+//     their own budget below.
+export const POLL_TIMEOUT_MS = 6_000;
 //   - Mutations drive a real terminal on the host, which can legitimately take a beat — more slack.
 const MUTATION_TIMEOUT_MS = 20_000;
 //   - Uploads carry a whole file over the phone's uplink — the most generous budget.
 const UPLOAD_TIMEOUT_MS = 60_000;
+//   - A worktree create or open waits on `git worktree add`, which Herdr gives 60 s, and a create
+//     may then wait for the new shell and type a launcher into it. 75 s covers both and stays under
+//     the bridge's own 90 s hold on the connection (ADR 0089). A create that outlives it is retried
+//     with the same request id, and the bridge answers from its receipt instead of creating twice.
+export const WORKTREE_TIMEOUT_MS = 75_000;
 
 // ── THE TRANSCRIPTION DEADLINE IS A FUNCTION OF THE CLIP, NOT A CONSTANT ────────────────────────
 //
@@ -220,6 +275,65 @@ export function imageSrc(ref: string, scope?: Scope): string | null {
   return ref.startsWith("data:image/") ? ref : null;
 }
 
+// ── READS NEED THE PAIRING TOKEN (M46 specs 03 and 06, ADR 0086) ───────────────────────────────
+//
+// Every `/api` route but health and pair answers 403 `device not paired` (or `device expired`) to a
+// browser without a valid token. Two things follow here, and both are this module's to say.
+
+/** Whether a status and body are the bridge's own pairing refusal, exactly as `guard` sends it. */
+function isPairingRefusalBody(status: number, detail: string): boolean {
+  const body = detail.trim();
+  return status === 403 && (body === NOT_PAIRED_BODY || body === EXPIRED_BODY);
+}
+
+/**
+ * A pairing refusal is the bridge ANSWERING. It is not an outage, so it stamps the connection-health
+ * anchor like a 304 does: otherwise an unpaired phone would watch the connection strip escalate to
+ * "not connected" over a bridge that is up and asking to be paired.
+ */
+function notePairingAnswer(status: number, detail: string): void {
+  if (isPairingRefusalBody(status, detail)) markLive();
+}
+
+/**
+ * Whether a failed request was refused for want of pairing. The loaders use it to keep this refusal
+ * apart from a fronting proxy's 401/403 (`isAuthError`): the remedy here is the pair screen, not the
+ * proxy's sign-in page.
+ */
+export function isPairingRefusal<TThrown>(error: TThrown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  const marker = ` → ${String(error.status)} `;
+  const at = error.message.indexOf(marker);
+  return at !== -1 && isPairingRefusalBody(error.status, error.message.slice(at + marker.length));
+}
+
+/**
+ * A subresource the bridge serves under `/api` (a journal blob, the multiplexer's mark, an operator
+ * font) as bytes fetched WITH the token. An `<img src>` or a CSS `url()` cannot carry an
+ * `Authorization` header, so since reads need the token those URLs are fetched here and handed to the
+ * page as object URLs or bytes (lib/authed-url.ts, lib/operator-fonts.ts). `path` is root-absolute,
+ * as every other call here spells it; the mount is applied by `apiFetch`.
+ */
+export async function fetchAuthedBytes(path: string, signal?: AbortSignal): Promise<Blob> {
+  return (await fetchAuthedAnswer(path, signal)).blob;
+}
+
+/** {@link fetchAuthedBytes} with the answer's headers, for a caller that reads a version off them. */
+async function fetchAuthedAnswer(path: string, signal?: AbortSignal): Promise<{ blob: Blob; headers: Headers }> {
+  const res = await apiFetch(path, {
+    signal: withTimeout(signal, GET_TIMEOUT_MS),
+    headers: { [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() },
+  });
+  captureBuild(res);
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    notePairing("GET", res.status, detail);
+    notePairingAnswer(res.status, detail);
+    throw new ApiError(`${path} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  return { blob: await res.blob(), headers: res.headers };
+}
+
 // Best-effort human-readable failure detail: the response body if present, else the status text.
 async function errorDetail(res: Response): Promise<string> {
   try {
@@ -246,7 +360,29 @@ function normaliseProxyRedirect(res: Response): Response {
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   // Every caller spells a root-absolute `/api/…`; the mount is applied here, once (ADR 0052).
-  return normaliseProxyRedirect(await fetch(mounted(path), { ...init, redirect: "manual" }));
+  try {
+    return normaliseProxyRedirect(await fetch(mounted(path), { ...init, redirect: "manual" }));
+  } catch (error) {
+    throw deadlineError(error, init?.signal);
+  }
+}
+
+/**
+ * A read that ran out of its deadline, named for what it is on every engine.
+ *
+ * WebKit rejects a fetch whose signal aborted with a generic `AbortError` ("Fetch is aborted") even
+ * when the signal is `AbortSignal.timeout`, whose own reason is a `TimeoutError`; Chromium and Gecko
+ * reject with the reason. The two are not the same event for the app: an `AbortError` is a superseded
+ * poll, which the loaders rethrow for React Router to drop, and a `TimeoutError` is a read that got
+ * no answer ({@link readFailureKind}). On Safari the deadline looked like a supersede, so a hung poll
+ * went to the error boundary and never counted as a lost connection. The signal still holds the
+ * truth, so the error is swapped for the signal's own `TimeoutError` reason when that is what aborted
+ * it. Anything else, a caller's own abort included, passes through unchanged.
+ */
+function deadlineError<TThrown>(error: TThrown, signal: AbortSignal | null | undefined): TThrown | Error {
+  if (!(error instanceof Error) || error.name !== "AbortError") return error;
+  const reason: unknown = signal?.aborted ? signal.reason : undefined;
+  return reason instanceof Error && reason.name === "TimeoutError" ? reason : error;
 }
 
 /**
@@ -276,16 +412,26 @@ function promptChangedResponse(detail: string): ActionResponse | null {
 /**
  * Read the pairing gate's verdict off a finished request, at the one place every request passes.
  *
- * Only a WRITE can discover that this device is unpaired — reads are ungated — so the refusal latch
- * is set here, from the bridge's own 403 body, and cleared by the opposite proof: a mutation that
- * actually went through. GETs say nothing either way and are ignored on both counts.
+ * The refusal latch is set here, from the bridge's own 403 body, and cleared by the opposite proof: a
+ * mutation that actually went through. A refusal counts on any method, because every read is gated
+ * too (ADR 0086) and refuses with the same two bodies. A GET that succeeds clears nothing: after a
+ * refusal the token is gone, so the next proof is a fresh pairing, which clears the latch itself.
+ *
+ * The body must match EXACTLY. A refusal while this phone held a token ends its pairing, and
+ * `pairingRefused` then runs the one wipe (M46 spec 02): `device not paired` means the token was
+ * revoked, `device expired` that its lifetime ran out (spec 01). The proxy allowlist's
+ * `device not authorised`, a crew member's longer body and every other 403 wipe nothing.
  */
 function notePairing(method: string, status: number, detail?: string): void {
-  if (method === "GET") return;
   if (status === 403 && detail?.trim() === NOT_PAIRED_BODY) {
-    markNotPaired();
+    pairingRefused("not-paired");
     return;
   }
+  if (status === 403 && detail?.trim() === EXPIRED_BODY) {
+    pairingRefused("expired");
+    return;
+  }
+  if (method === "GET") return;
   if (status >= 200 && status < 300) clearNotPaired();
 }
 
@@ -304,13 +450,17 @@ function captureBuild(res: Response): void {
  */
 type Recover<T> = (status: number, detail: string) => T | null;
 
-async function doReq<T>(path: string, init?: RequestInit, recover?: Recover<T>): Promise<T> {
+/** A request's init, plus the one deadline override a poll read asks for ({@link POLL_TIMEOUT_MS}). */
+type ReqInit = RequestInit & { timeoutMs?: number };
+
+async function doReq<T>(path: string, reqInit?: ReqInit, recover?: Recover<T>): Promise<T> {
+  const { timeoutMs: asked, ...init } = reqInit ?? {};
   // GET reads get the short leash; anything mutating gets the longer mutation budget.
-  const method = init?.method?.toUpperCase() ?? "GET";
-  const timeoutMs = method === "GET" ? GET_TIMEOUT_MS : MUTATION_TIMEOUT_MS;
+  const method = init.method?.toUpperCase() ?? "GET";
+  const timeoutMs = asked ?? (method === "GET" ? GET_TIMEOUT_MS : MUTATION_TIMEOUT_MS);
   const res = await apiFetch(path, {
     ...init,
-    signal: withTimeout(init?.signal, timeoutMs),
+    signal: withTimeout(init.signal, timeoutMs),
     headers: {
       "content-type": "application/json",
       [XHR_HEADER]: XHR_HEADER_VALUE,
@@ -318,13 +468,14 @@ async function doReq<T>(path: string, init?: RequestInit, recover?: Recover<T>):
       // Absent header when this device holds no token — which is exactly right for a bridge with
       // nothing paired, and for the bootstrap POST /api/pair that mints the first one.
       ...authHeader(),
-      ...init?.headers,
+      ...init.headers,
     },
   });
   captureBuild(res);
   if (!res.ok) {
     const detail = await errorDetail(res);
     notePairing(method, res.status, detail);
+    notePairingAnswer(res.status, detail);
     const recovered = recover?.(res.status, detail);
     if (recovered !== null && recovered !== undefined) return recovered;
     throw new ApiError(`${path} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
@@ -346,7 +497,7 @@ async function doReq<T>(path: string, init?: RequestInit, recover?: Recover<T>):
 // Every mutating request (non-GET) feeds the app-wide busy signal so the top progress bar shows
 // while it's in flight; GET reads (snapshot/config polling) don't, or the bar would never rest.
 // trackBusy increments synchronously, so a caller sees `isBusy()` true the instant it fires.
-function req<T>(path: string, init?: RequestInit, recover?: Recover<T>): Promise<T> {
+function req<T>(path: string, init?: ReqInit, recover?: Recover<T>): Promise<T> {
   const op = doReq<T>(path, init, recover);
   const method = init?.method?.toUpperCase() ?? "GET";
   return method === "GET" ? op : trackBusy(op);
@@ -367,10 +518,27 @@ export async function fetchSnapshot(
   all = false,
 ): Promise<SnapshotResponse> {
   const path = withScope("/api/snapshot", scope);
-  const snap = await req<SnapshotResponse>(
-    all ? `${path}${path.includes("?") ? "&" : "?"}sessions=all` : path,
-    { signal },
-  );
+  let snap: SnapshotResponse;
+  // When this read began, and whether the page was hidden: a read with no answer right after a wake
+  // is one strike, not the outage (lib/connection-health.ts `noteNetworkFailure`).
+  noteReadStart();
+  try {
+    snap = await req<SnapshotResponse>(all ? `${path}${path.includes("?") ? "&" : "?"}sessions=all` : path, {
+      signal,
+      timeoutMs: POLL_TIMEOUT_MS,
+    });
+  } catch (error) {
+    // THE HERD READ IS THE ONE THAT DECIDES "THE BRIDGE IS GONE" (lib/connection-health.ts
+    // `noteNetworkFailure`, `noteServerFailure`). Every poll makes it, it always goes to the lead, and
+    // it is small, so a failure here is about the connection and not about one slow pane on a member.
+    // A read the app aborted itself (a superseded poll, a navigation) says nothing and counts nothing.
+    if (signal?.aborted !== true) {
+      const kind = readFailureKind(error);
+      if (kind === "network") noteNetworkFailure();
+      else if (kind === "server") noteServerFailure();
+    }
+    throw error;
+  }
   // A snapshot whose herd link is UP is a provably-live moment — stamp the shared connection-health
   // anchor so escalation is measured from here. A snapshot that 200s but reports `bridge:
   // "disconnected"` is NOT live (the pill/banner still escalate on it), so it must NOT reset the
@@ -454,8 +622,18 @@ export async function fetchPane(
   if (seen) headers.set("x-collie-seen", "1");
   if (cached) headers.set("if-none-match", cached.etag);
 
-  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  let res: Response;
+  try {
+    res = await apiFetch(url, { signal: withTimeout(signal, POLL_TIMEOUT_MS), headers });
+  } catch (error) {
+    // A read that never answered (network down, timed out) is a failed read. One the caller aborted
+    // (a superseded revalidation, a navigation away) says nothing about the bridge.
+    if (signal?.aborted !== true) markPaneDead(paneId, scope);
+    throw error;
+  }
   captureBuild(res); // pane polls carry the build header too (incl. 304s) — keep the store fresh
+  if (res.ok || res.status === 304) markPaneLive(paneId, Date.now(), scope); // M46 spec 11: controls on this pane may act (lib/liveness.ts)
+  else markPaneDead(paneId, scope); // a refused or failed read takes them down, after a short debounce
 
   if (res.status === 304 && cached) {
     // Unchanged — hand back the cached body (text included) so the mirror keeps its content. An
@@ -467,6 +645,10 @@ export async function fetchPane(
 
   if (!res.ok) {
     const detail = await errorDetail(res);
+    // A pane read is gated like every read (ADR 0086), and it does not pass through `doReq`, so it
+    // reads the pairing verdict itself: the pane screen shows the pair strip, not an outage.
+    notePairing("GET", res.status, detail);
+    notePairingAnswer(res.status, detail);
     throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
   }
 
@@ -538,6 +720,13 @@ export type ChatRequest =
 // 6). A `?before=` page is a one-shot tap like fetchHistory's, so there is no repeat fetch for a
 // validator to save. The body alone is NOT cached beside the tag: a 304 here means "you already
 // hold this", and what the client holds is the merged window (lib/chat-window.ts), not this answer.
+//
+// THE TAG IS SENT ONLY WITH A CURSOR. A read with no `after` is the client saying it holds nothing: a
+// view that mounted again (back from the Files screen), or a pane switched to. The tag outlives the
+// view, so on such a read it could still match: the answer to a first read, when nothing moved since,
+// hashes to the very bytes the tag was made from, and the 304 then told an EMPTY window "you already
+// hold this". The Chat body stood blank until the session next changed. Only a read that names the
+// window it holds can be told "unchanged".
 const chatEtags = new Map<string, string>();
 // One Chat screen is open at a time and a second device makes two; eight covers any plausible
 // come-and-go across a session, and matches MAX_WINDOWS on the bridge side.
@@ -575,7 +764,7 @@ export async function fetchChat(
     scope,
   );
   const cacheKey = opts.before ? null : paneScopeKey(scope, paneId);
-  const cached = cacheKey === null ? undefined : chatEtags.get(cacheKey);
+  const cached = cacheKey === null || !opts.after ? undefined : chatEtags.get(cacheKey);
 
   const headers = new Headers({
     [XHR_HEADER]: XHR_HEADER_VALUE,
@@ -586,7 +775,10 @@ export async function fetchChat(
   });
   if (cached !== undefined) headers.set("if-none-match", cached);
 
-  const res = await apiFetch(url, { signal: withTimeout(signal, GET_TIMEOUT_MS), headers });
+  // The live window is a poll read and gets the poll deadline. A `?before=` page is a tap the operator
+  // waits on, and it can reach back to disk, so it keeps the long one.
+  const deadline = opts.before ? GET_TIMEOUT_MS : POLL_TIMEOUT_MS;
+  const res = await apiFetch(url, { signal: withTimeout(signal, deadline), headers });
   captureBuild(res);
 
   if (res.status === 304) {
@@ -607,6 +799,9 @@ export async function fetchChat(
   }
   if (!res.ok) {
     const detail = await errorDetail(res);
+    // Gated like every read (ADR 0086), and outside `doReq`, as `fetchPane` is.
+    notePairing("GET", res.status, detail);
+    notePairingAnswer(res.status, detail);
     throw new ApiError(`${url} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
   }
 
@@ -754,8 +949,16 @@ function filesRefusal(status: number, detail: string): FilesRefusal | null {
   const body = detail.trim();
   if (body.startsWith(NOT_PAIRED_BODY)) {
     // Reads were ungated until Files, so nothing on a read could ever discover an unpaired device.
-    // Latch it as a refused write does: the app's read-only strip then names the remedy, once.
-    markNotPaired();
+    // Latch it as a refused write does: the app's read-only strip then names the remedy, once. Only
+    // the lead's own exact body wipes (M46 spec 02); a member's longer one latches and no more.
+    if (body === NOT_PAIRED_BODY) pairingRefused("not-paired");
+    else markNotPaired();
+    return FILES_NOT_PAIRED;
+  }
+  if (body.startsWith(EXPIRED_BODY)) {
+    // The same refusal for the view's purpose; the latch carries the pair-again reason.
+    if (body === EXPIRED_BODY) pairingRefused("expired");
+    else markExpired();
     return FILES_NOT_PAIRED;
   }
   return body.startsWith(NOT_AUTHORISED_BODY) ? FILES_NOT_AUTHORISED : null;
@@ -804,6 +1007,78 @@ export function fetchFileText(
   signal?: AbortSignal,
 ): Promise<FilesAnswer<FileReadResponse>> {
   return filesRead<FileReadResponse>(`${filesBase(target)}?${new URLSearchParams({ path }).toString()}`, scope, signal);
+}
+
+/**
+ * The address of one picture under the Files root, as bytes (ADR 0090): `files/image` beside the
+ * Files read, in the same pane or workspace form and with the same scope.
+ */
+export function filesImagePath(target: ChangesTarget, path: string, scope?: Scope): string {
+  return withScope(`${filesBase(target)}/image?${new URLSearchParams({ path }).toString()}`, scope);
+}
+
+/**
+ * What an image read came to. `image` is the bytes, typed by the bridge's sniff. `too-large` is the
+ * bridge's 413 (over 16 MiB), `not-image` its 415 (the bytes are none of the types it serves), and
+ * `failed` everything else: a refusal, an older member's 404, the network. The screen then shows the
+ * file's size as it did before, with the reason. `version` is the size and mtime the bridge sent with
+ * the bytes, when it sent them (an older bridge sends none; a crew lead relays a member's as they came).
+ */
+export type FileImageAnswer =
+  | { outcome: "image"; blob: Blob; version?: string }
+  | { outcome: "too-large" }
+  | { outcome: "not-image" }
+  | { outcome: "failed" };
+
+/**
+ * One picture under the Files root, fetched WITH the pairing token (an `<img src>` cannot carry it)
+ * and handed back as a Blob the caller turns into an object URL and revokes. Never through
+ * `lib/authed-url.ts`'s table: that one keeps one URL per path for the life of the page, which is
+ * right for content-addressed blobs and wrong for a file whose bytes change under one name. An abort
+ * rethrows, so a caller that moved on hears nothing.
+ */
+export async function fetchFileImage(
+  target: ChangesTarget,
+  path: string,
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<FileImageAnswer> {
+  try {
+    const { blob, headers } = await fetchAuthedAnswer(filesImagePath(target, path, scope), signal);
+    const version = fileVersionOf(headers.get("x-collie-file-size"), headers.get("x-collie-file-mtime"));
+    return version === null ? { outcome: "image", blob } : { outcome: "image", blob, version };
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    if (err instanceof ApiError && err.status === 413) return { outcome: "too-large" };
+    if (err instanceof ApiError && err.status === 415) return { outcome: "not-image" };
+    return { outcome: "failed" };
+  }
+}
+
+/** The most paths one existence check may name: the bridge's `MAX_EXIST_PATHS` (ADR 0088). */
+export const FILES_EXIST_MAX = 64;
+
+/**
+ * Which of up to {@link FILES_EXIST_MAX} root-relative paths are a file or a folder under the pane's
+ * Files root (ADR 0088), so the pane view links only a path that opens. A POST because the paths ride
+ * in the body, but a read: it changes nothing, so it takes the read's deadline and stays off the busy
+ * bar. Only paths that were asked come back. A refusal or a failure throws, and the caller draws text.
+ */
+export async function fetchFilesExist(
+  paneId: string,
+  paths: readonly string[],
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const got = await doReq<JsonObject>(withScope(`/api/pane/${encodeURIComponent(paneId)}/files/exist`, scope), {
+    method: "POST",
+    body: JSON.stringify({ paths }),
+    signal,
+    timeoutMs: GET_TIMEOUT_MS,
+  });
+  const asked = new Set(paths);
+  const exists = Array.isArray(got.exists) ? got.exists : [];
+  return exists.map(asJsonString).filter((p): p is string => p !== undefined && asked.has(p));
 }
 
 /**
@@ -1057,15 +1332,37 @@ export function listWorktrees(workspaceId: string, scope?: Scope): Promise<Workt
   );
 }
 
-/** Create a worktree on a new branch and open it as its own space. */
+/**
+ * What a worktree create may carry beyond the branch (ADR 0089). Both are optional, and the
+ * dashboard's sheet sends neither, which is the body the route has always taken.
+ */
+export interface WorktreeCreateExtras {
+  /** One id per intent, minted by the phone. A retry with the same id replays, never re-creates. */
+  requestId?: string;
+  /** A launcher row's `command`, typed into the new shell. Absent is a plain shell. */
+  launcher?: string;
+}
+
+/** The create's wire body: the branch, plus the two extras when the caller has them. */
+interface WorktreeCreateBody {
+  branch: string;
+  requestId?: string;
+  launcher?: string;
+}
+
+/** Create a worktree on a new branch and open it as its own space, optionally starting an agent in it. */
 export function createWorktree(
   workspaceId: string,
   branch: string,
   scope?: Scope,
-): Promise<WorktreeOpenResponse> {
-  return req<WorktreeOpenResponse>(
+  extras: WorktreeCreateExtras = {},
+): Promise<WorktreeCreateResponse> {
+  const body: WorktreeCreateBody = { branch };
+  if (extras.requestId !== undefined) body.requestId = extras.requestId;
+  if (extras.launcher !== undefined) body.launcher = extras.launcher;
+  return req<WorktreeCreateResponse>(
     withScope(`/api/workspace/${encodeURIComponent(workspaceId)}/worktree`, scope),
-    { method: "POST", body: JSON.stringify({ branch }) },
+    { method: "POST", body: JSON.stringify(body), timeoutMs: WORKTREE_TIMEOUT_MS },
   );
 }
 
@@ -1077,7 +1374,7 @@ export function openWorktree(
 ): Promise<WorktreeOpenResponse> {
   return req<WorktreeOpenResponse>(
     withScope(`/api/workspace/${encodeURIComponent(workspaceId)}/worktree/open`, scope),
-    { method: "POST", body: JSON.stringify({ path }) },
+    { method: "POST", body: JSON.stringify({ path }), timeoutMs: WORKTREE_TIMEOUT_MS },
   );
 }
 
@@ -1098,7 +1395,8 @@ export function openWorktree(
  * nothing on the wire and gets the byte-identical body it always did.
  */
 export function fetchConfig(scope?: Scope): Promise<BridgeConfig> {
-  return req<BridgeConfig>(withScope("/api/config", scope));
+  // A poll read: the connection strip's probe asks it while the strip is red.
+  return req<BridgeConfig>(withScope("/api/config", scope), { timeoutMs: POLL_TIMEOUT_MS });
 }
 
 /** Register push through the same timeout, authentication and error handling as the other APIs. */
@@ -1310,7 +1608,10 @@ export async function pairDevice(code: string, label: string): Promise<PairResul
   return "token" in res ? { ok: true, token: res.token, label: res.label } : res;
 }
 
-/** The paired-device registry. Read-level, so an unpaired device may ask (and learn it is unpaired). */
+/**
+ * The paired-device registry. Read-level, and like every read it needs the token (ADR 0086): an
+ * unpaired device learns that it is unpaired from the 403 itself (`isPairingRefusal`).
+ */
 export function fetchDevices(signal?: AbortSignal): Promise<DevicesResponse> {
   return req<DevicesResponse>("/api/devices", { signal });
 }

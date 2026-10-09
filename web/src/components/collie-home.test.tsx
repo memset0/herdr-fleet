@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetOperatorBusy, beginBusy } from "@/lib/busy";
 import { clearStatus, setStatus } from "@/lib/status";
 import { markIsLive } from "@/test/collie-mark";
+import { savedAtLabel } from "@/lib/format";
 import { CollieHome, spinRate } from "./collie-home";
 
 // THE ROUND IS AN EVENT, NOT A STATE. Any status the app publishes turns the orbit exactly once, at
@@ -204,5 +205,64 @@ describe("spinRate — the wheel-throw curve", () => {
     // which is why SPIN_SKEW may not reach 1. Past it `u′` goes negative and the orbit would run
     // BACKWARDS through the last of the round. This is what says so if either is ever changed.
     for (let i = 0; i <= 200; i++) expect(spinRate((i / 200) * T, T)).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// THE LOST BADGE: the strip above the header can be dismissed, so the mark carries the state on.
+// WifiOff when the phone itself says it is offline, CloudOff otherwise (a bridge that does not
+// answer): the same two icons the strip uses. The host passes the flag; the mark never reads it.
+describe("CollieHome — the lost badge", () => {
+  const badge = (root: ParentNode) => root.querySelector<SVGElement>('[data-slot="collie-lost-badge"]');
+
+  it("is absent while the connection is not lost, even in trouble", () => {
+    expect(badge(render(<CollieHome trouble={false} />).container)).toBeNull();
+    expect(badge(render(<CollieHome trouble online={false} />).container)).toBeNull();
+  });
+
+  it("wears CloudOff when lost and the phone reports online", () => {
+    const { container } = render(<CollieHome trouble lost online />);
+    expect(badge(container)?.getAttribute("data-icon")).toBe("cloud-off");
+    expect(badge(container)?.getAttribute("class")).toMatch(/lucide-cloud-off/);
+  });
+
+  it("wears CloudOff by default, since online is the unremarkable case", () => {
+    const { container } = render(<CollieHome trouble lost />);
+    expect(badge(container)?.getAttribute("data-icon")).toBe("cloud-off");
+  });
+
+  it("wears WifiOff when lost and the phone reports offline", () => {
+    const { container } = render(<CollieHome trouble lost online={false} />);
+    expect(badge(container)?.getAttribute("data-icon")).toBe("wifi-off");
+    expect(badge(container)?.getAttribute("class")).toMatch(/lucide-wifi-off/);
+  });
+
+  it("is decorative: hidden from assistive tech, the button's label names the state", () => {
+    const { container, getByRole } = render(<CollieHome trouble lost online={false} />);
+    expect(badge(container)?.getAttribute("aria-hidden")).toBe("true");
+    expect(getByRole("button", { name: "Collie home — not connected" })).toBeInTheDocument();
+  });
+
+  // What remains of the strip's "Showing what was saved at <time>" once it is dismissed: the badge
+  // for the eye, and the time in the button's name for a screen reader. Only while lost, and only
+  // when a stamp is known; without one the plain lost name stays.
+  it("speaks the saved time in the button's name while lost and a stamp is known", () => {
+    const at = new Date(2026, 9, 7, 12, 21).getTime();
+    const { getByRole } = render(<CollieHome trouble lost lastSeenAt={at} />);
+    expect(
+      getByRole("button", { name: `Collie home, not connected. Showing what was saved at ${savedAtLabel(at)}.` }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the reconnecting name while merely troubled, stamp or not", () => {
+    const { getByRole } = render(<CollieHome trouble lastSeenAt={1_000} />);
+    expect(getByRole("button", { name: "Collie home — reconnecting" })).toBeInTheDocument();
+  });
+
+  it("sits on the page colour with the ring cut, in the danger token", () => {
+    const { container } = render(<CollieHome trouble lost />);
+    const cls = badge(container)?.getAttribute("class") ?? "";
+    expect(cls).toMatch(/bg-background/);
+    expect(cls).toMatch(/ring-background/);
+    expect(cls).toMatch(/text-status-blocked/);
   });
 });

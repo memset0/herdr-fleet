@@ -2,12 +2,14 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { asJsonBoolean, asJsonObject } from "@/lib/json";
 import { resetChangesListCache } from "@/lib/changes-list-cache";
+import { clearHeldImages } from "@/lib/file-image-cache";
 import { en } from "@/lib/i18n/messages/en";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
+import { CHANGES_POLL_MS } from "@/hooks/use-visible-interval";
 import { clearNotPaired, isNotPaired } from "@/lib/pairing";
 import { fixtureAgents, fixtureChanges, fixtureFileRead, fixtureFilesDir } from "@/test/handlers";
 import { withHeaderHost } from "@/test/header-host";
@@ -73,6 +75,7 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   resetChangesListCache();
+  clearHeldImages();
   clearNotPaired();
 });
 
@@ -358,10 +361,12 @@ describe("Files: the All files | Changes control", () => {
     expect(await screen.findByRole("button", { name: /checkout\.tsx/ })).toBeTruthy();
   });
 
-  it("is on a file of the tree too, with Refresh", async () => {
+  // 2026-10-06: a file gets the screen. The control swaps the list's body, so it leaves with the
+  // list and is back the moment the file closes; Refresh stays in the header.
+  it("is not on a file of the tree, where Refresh stays", async () => {
     renderAt([`${FILES}?path=README.md`]);
     expect(await screen.findByText("Run it")).toBeTruthy();
-    expect(await changesSegment()).toBeTruthy();
+    expect(screen.queryByRole("radiogroup", { name: en["files.mode.aria"] })).toBeNull();
     expect(screen.getByRole("button", { name: en["changes.refreshAria"] })).toBeTruthy();
   });
 });
@@ -377,7 +382,7 @@ describe("Changes: back goes up one level through the tree", () => {
     await userEvent.click(await screen.findByRole("button", { name: /^checkout\.tsx/ }));
     expect(router.state.location.pathname).toBe(FILES);
     expect(router.state.location.search).toBe("?path=src%2Froutes%2Fcheckout.tsx");
-    expect(await screen.findByText("Checkout", { exact: false })).toBeTruthy();
+    expect((await screen.findAllByText("Checkout", { exact: false })).length).toBeGreaterThan(0);
 
     await userEvent.click(screen.getByRole("button", { name: en["files.backAria.folder"] }));
     await waitFor(() => expect(router.state.location.search).toBe("?dir=src%2Froutes"));
@@ -408,6 +413,40 @@ describe("Changes: back goes up one level through the tree", () => {
     expect(router.state.historyAction).toBe("POP");
   });
 
+  // Measured on the dev lane 2026-10-07: a pane printed `src/lib/nav.ts:120`, the tap opened the file,
+  // and the arrow walked up the folders while the edge swipe went straight back to the pane.
+  it("steps back onto the pane a file was opened from, and says so", async () => {
+    const router = renderAt([
+      "/pane/w1%3Ap1",
+      { pathname: FILES, search: "?path=src%2Froutes%2Fcheckout.tsx", state: { from: "/pane/w1%3Ap1" } },
+    ]);
+    const arrow = await screen.findByRole("button", { name: en["changes.backAria.pane"] });
+    await userEvent.click(arrow);
+    expect(await screen.findByText("pane screen")).toBeTruthy();
+    expect(router.state.historyAction).toBe("POP");
+  });
+
+  it("steps back onto the diff a Preview was opened from, and says so", async () => {
+    const diff = "/pane/w1%3Ap1/changes?repo=.&path=src%2Froutes%2Fcheckout.tsx";
+    const router = renderAt([
+      diff,
+      { pathname: FILES, search: "?path=src%2Froutes%2Fcheckout.tsx", state: { from: diff } },
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: en["changes.listBackAria"] }));
+    await waitFor(() => expect(router.state.location.search).toBe("?repo=.&path=src%2Froutes%2Fcheckout.tsx"));
+    expect(router.state.historyAction).toBe("POP");
+  });
+
+  it("steps back onto a folder, not up the tree, when a folder row opened a file from a link", async () => {
+    const router = renderAt([
+      { pathname: FILES, search: "?path=README.md", state: { from: "/pane/w1%3Ap1" } },
+      { pathname: FILES, search: "?path=docs%2Fa.md", state: { from: `${FILES}?path=README.md` } },
+    ]);
+    await userEvent.click(await screen.findByRole("button", { name: en["files.backAria.folder"] }));
+    await waitFor(() => expect(router.state.location.search).toBe("?path=README.md"));
+    expect(router.state.historyAction).toBe("POP");
+  });
+
   it("replaces onto the parent folder when the entry behind is not that folder (a cold deep link)", async () => {
     const router = renderAt([`${FILES}?dir=src%2Froutes`]);
     await screen.findByRole("button", { name: /^checkout\.tsx/ });
@@ -429,11 +468,120 @@ describe("Changes: one file of the tree", () => {
     expect((await screen.findAllByText("cartTotal", { exact: false })).length).toBeGreaterThan(0);
     const diff = screen.getByRole("radio", { name: en["files.view.diff"] });
     expect(diff.getAttribute("aria-checked")).toBe("true");
+    // Icons, not words: the name and the tooltip carry the word.
+    expect(diff.textContent).toBe("");
+    expect(diff.getAttribute("title")).toBe(en["files.view.diff"]);
     // A TypeScript file has no Preview: Diff | Source.
-    expect(within(screen.getByRole("radiogroup", { name: en["files.view.aria"] })).getAllByRole("radio").map((r) => r.textContent)).toEqual([en["files.view.diff"], en["files.view.source"]]);
+    expect(within(screen.getByRole("radiogroup", { name: en["files.view.aria"] })).getAllByRole("radio").map((r) => r.getAttribute("aria-label"))).toEqual([en["files.view.diff"], en["files.view.source"]]);
     await userEvent.click(screen.getByRole("radio", { name: en["files.view.source"] }));
     await waitFor(() => expect(screen.queryAllByText("cartTotal", { exact: false })).toHaveLength(0));
     expect(screen.getAllByText("Checkout", { exact: false }).length).toBeGreaterThan(0);
+  });
+
+  // A path the agent printed with a line (`checkout.tsx:2`, ADR 0088): the line is of the Source, so
+  // the file opens there, changed or not, with that row marked. The line never reaches the bridge.
+  it("opens a file asked at a line on its Source, with the row marked, changed or not", async () => {
+    const asked: string[] = [];
+    const listener = ({ request }: { request: Request }) => {
+      if (new URL(request.url).pathname.includes("/files")) asked.push(request.url);
+    };
+    server.events.on("request:start", listener);
+    renderAt([`${FILES}?path=src%2Froutes%2Fcheckout.tsx&line=2`]);
+    const source = await screen.findByRole("radio", { name: en["files.view.source"] });
+    await waitFor(() => expect(source.getAttribute("aria-checked")).toBe("true"));
+    const marked = await waitFor(() => {
+      const row = document.querySelector("[data-slot='file-source'] [aria-current='location']");
+      expect(row).not.toBeNull();
+      return row!;
+    });
+    expect(marked.textContent?.startsWith("2")).toBe(true);
+    server.events.removeListener("request:start", listener);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((u) => !u.includes("line"))).toBe(true);
+  });
+
+  // The path is on screen once (2026-10-08): the name row holds the file's name alone, and the thin
+  // row under it the folder. Nothing of the path draws twice, clipped or not.
+  it("names the file on the name row and its folder on the thin row, each once", async () => {
+    renderAt([`${FILES}?path=src%2Froutes%2Fcheckout.tsx`]);
+    await screen.findAllByText("cartTotal", { exact: false });
+    const row = document.querySelector('[data-slot="file-path-row"]');
+    expect(row?.textContent).toBe("src/routes/");
+    expect(row?.getAttribute("title")).toBe("src/routes/checkout.tsx");
+    expect(screen.getAllByText(/checkout\.tsx/).length).toBe(1);
+    expect(screen.queryAllByText(/src\/routes\/checkout/).length).toBe(0);
+  });
+
+  it("draws no folder row for a file at the root", async () => {
+    renderAt([`${FILES}?path=README.md`]);
+    await screen.findAllByText("README.md");
+    expect(document.querySelector('[data-slot="file-path-row"]')).toBeNull();
+  });
+
+  // ONE READ PER FILE'S DIFF (2026-10-07): Diff, Source and Diff again is a change of body. The diff
+  // read stays open under Source, so the way back shows the held answer with no loading state and no
+  // request; only the refresh button asks again.
+  describe("switching between Diff and Source", () => {
+    const ORDERS = `${FILES}?path=packages%2Fapi%2Fserver%2Fhandlers%2Forders.ts`;
+
+    function watch() {
+      const diffs: string[] = [];
+      const sources: string[] = [];
+      const listener = ({ request }: { request: Request }) => {
+        const url = new URL(request.url);
+        if (url.pathname.endsWith("/changes") && url.searchParams.get("path") !== null) diffs.push(url.search);
+        if (url.pathname.endsWith("/files") && url.searchParams.get("path") !== null) sources.push(url.search);
+      };
+      server.events.on("request:start", listener);
+      return { diffs, sources, stop: () => server.events.removeListener("request:start", listener) };
+    }
+
+    it("shows the held diff at once on the way back, with no loading state and no request", async () => {
+      const seen = watch();
+      renderAt([ORDERS]);
+      await screen.findByText(en["changes.file.renamedFrom"].replace("{path}", "server/orders.ts"));
+      await waitFor(() => expect(seen.diffs.length).toBe(1));
+      await userEvent.click(screen.getByRole("radio", { name: en["files.view.source"] }));
+      await waitFor(() => expect(document.querySelector("[data-slot='file-source']")).not.toBeNull());
+      await userEvent.click(screen.getByRole("radio", { name: en["files.view.diff"] }));
+      // Synchronously after the tap: the diff body is there, the loader is not.
+      expect(screen.queryByText(en["files.loading"])).toBeNull();
+      expect(screen.getByText(/listOrders/)).toBeTruthy();
+      await userEvent.click(screen.getByRole("radio", { name: en["files.view.source"] }));
+      await userEvent.click(screen.getByRole("radio", { name: en["files.view.diff"] }));
+      expect(seen.diffs.length).toBe(1);
+      expect(seen.sources.length).toBe(1);
+      seen.stop();
+    });
+
+    it("reads again on the refresh button, and the held answer stays on screen meanwhile", async () => {
+      const seen = watch();
+      renderAt([ORDERS]);
+      await waitFor(() => expect(seen.diffs.length).toBe(1));
+      await userEvent.click(await screen.findByRole("radio", { name: en["files.view.source"] }));
+      await userEvent.click(await screen.findByRole("radio", { name: en["files.view.diff"] }));
+      await userEvent.click(screen.getByRole("button", { name: en["changes.refreshAria"] }));
+      await waitFor(() => expect(seen.diffs.length).toBe(2));
+      expect(screen.queryByText(en["files.loading"])).toBeNull();
+      seen.stop();
+    });
+
+    it("keeps reading the diff on the poll while Source is showing", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const seen = watch();
+        renderAt([ORDERS]);
+        await waitFor(() => expect(seen.diffs.length).toBe(1));
+        await userEvent.click(await screen.findByRole("radio", { name: en["files.view.source"] }));
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(CHANGES_POLL_MS + 100);
+        });
+        await waitFor(() => expect(seen.diffs.length).toBeGreaterThan(1));
+        seen.stop();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("asks the diff of the change set's repo, with the path inside that repo", async () => {
@@ -454,7 +602,7 @@ describe("Changes: one file of the tree", () => {
   it("a new Markdown file opens on Diff, all added, and Preview is one tap away", async () => {
     renderAt([`${FILES}?path=packages%2Fapi%2Fnotes.md`]);
     expect(await screen.findByText("Orders moved under handlers/.")).toBeTruthy();
-    expect(within(screen.getByRole("radiogroup", { name: en["files.view.aria"] })).getAllByRole("radio").map((r) => r.textContent)).toEqual([
+    expect(within(screen.getByRole("radiogroup", { name: en["files.view.aria"] })).getAllByRole("radio").map((r) => r.getAttribute("aria-label"))).toEqual([
       en["files.view.diff"],
       en["files.view.source"],
       en["files.view.preview"],
@@ -490,9 +638,78 @@ describe("Changes: one file of the tree", () => {
     expect(screen.queryByRole("radiogroup", { name: en["files.view.aria"] })).toBeNull();
   });
 
-  it("shows a binary file as its size and nothing else", async () => {
+  it("draws a picture from the image read, with no Source | Preview control (ADR 0090)", async () => {
+    const asked: string[] = [];
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/files\/image$/, ({ request }) => {
+        asked.push(new URL(request.url).search);
+        return undefined;
+      }),
+    );
     renderAt([`${FILES}?path=logo.png`]);
-    expect(await screen.findByText("Binary file, 20 KB")).toBeTruthy();
+    const picture = await screen.findByRole("img", { name: "logo.png" });
+    expect(picture.getAttribute("src")).toMatch(/^blob:/);
+    expect(asked).toEqual(["?path=logo.png"]);
+    expect(screen.queryByText("Binary file, 20 KB")).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: en["files.view.aria"] })).toBeNull();
+  });
+
+  // The image read is held in memory under the file's version (ADR 0090, amended 2026-10-07).
+  describe("a held picture", () => {
+    function countImageReads() {
+      const asked: string[] = [];
+      server.use(
+        http.get(/\/api\/pane\/[^/]+\/files\/image$/, ({ request }) => {
+          asked.push(new URL(request.url).search);
+          return undefined;
+        }),
+      );
+      return asked;
+    }
+
+    it("opened again makes no second request", async () => {
+      const asked = countImageReads();
+      renderAt([`${FILES}?path=logo.png`]);
+      await screen.findByRole("img", { name: "logo.png" });
+      cleanup();
+      renderAt([`${FILES}?path=logo.png`]);
+      await screen.findByRole("img", { name: "logo.png" });
+      expect(asked).toEqual(["?path=logo.png"]);
+    });
+
+    it("is read again once the file's version changed", async () => {
+      const asked = countImageReads();
+      renderAt([`${FILES}?path=logo.png`]);
+      await screen.findByRole("img", { name: "logo.png" });
+      cleanup();
+      server.use(
+        http.get(/\/api\/pane\/[^/]+\/files$/, ({ request }) => {
+          const path = new URL(request.url).searchParams.get("path");
+          const read = path === null ? null : fixtureFileRead(path);
+          return read === null ? undefined : HttpResponse.json({ ...read, mtimeMs: 1_728_300_999_000 });
+        }),
+      );
+      renderAt([`${FILES}?path=logo.png`]);
+      await screen.findByRole("img", { name: "logo.png" });
+      expect(asked).toHaveLength(2);
+    });
+
+    it("is read again on the refresh button", async () => {
+      const asked = countImageReads();
+      renderAt([`${FILES}?path=logo.png`]);
+      await screen.findByRole("img", { name: "logo.png" });
+      await userEvent.click(screen.getByRole("button", { name: en["changes.refreshAria"] }));
+      await waitFor(() => expect(asked).toHaveLength(2));
+      await screen.findByRole("img", { name: "logo.png" });
+    });
+  });
+
+  it("shows a picture the bridge will not serve as its size, with the reason", async () => {
+    server.use(http.get(/\/api\/pane\/[^/]+\/files\/image$/, () => new HttpResponse("not an image this route serves", { status: 415 })));
+    renderAt([`${FILES}?path=logo.png`]);
+    expect(await screen.findByText(en["files.image.notImage"])).toBeTruthy();
+    expect(screen.getByText(/Binary file, 20 KB/)).toBeTruthy();
+    expect(screen.queryByRole("img")).toBeNull();
   });
 
   it("opens a link row like a file", async () => {

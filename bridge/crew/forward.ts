@@ -1,4 +1,5 @@
 import type { JsonObject } from "../json.ts";
+import { MASK_VERSION } from "../redact.ts";
 import { MAX_UPLOAD_OVERHEAD, uploadTooLarge } from "../uploads.ts";
 import { DEVICE_HEADER, encodeDeviceHeader } from "./admission.ts";
 import { type CrewLink, type PeerFailure, type PeerOutcome, WRITE_BUDGET_MS } from "./peer-client.ts";
@@ -15,10 +16,19 @@ import { HOST_PARAM, type PeerState } from "./registry.ts";
 // this module is reached from the ONE place that resolves `(host, session)`.
 //
 // ── WHAT MAKES IT A PROXY AND NOT A RE-IMPLEMENTATION ────────────────────────
-// The lead does not parse a forwarded body, does not recompute an ETag, does not touch a disk on a
-// peer's behalf, and does not interpret a send/verify sequence (.adr/0010 lives client-side and on
-// the OWNING host — §9.1). Everything here is request-shaping in, response-classification out; the
-// transport is the injected peer client, so all of it is unit-testable without a socket.
+// The lead does not recompute an ETag (a masked answer's is only salted, {@link saltTag}), does not touch a disk on a peer's behalf, and does not
+// interpret a send/verify sequence (.adr/0010 lives client-side and on the OWNING host — §9.1).
+// Everything here is request-shaping in, response-classification out; the transport is the injected
+// peer client, so all of it is unit-testable without a socket.
+//
+// ── THE ONE BODY IT READS: TEXT THE PHONE WILL SHOW ──────────────────────────
+// A member masks secrets in its own text before it answers (bridge/redact.ts), but a member one
+// release behind does not, and the phone must not get a key in clear because of a member's version.
+// So five answers are masked again on the lead, with the injected {@link AnswerMask} (the same
+// functions the local routes use, through `bridge/crew/mask.ts`): the mirror, History, Chat, a
+// Changes diff and a Files body ({@link textAnswerOf}). The mask is idempotent, so an answer a member
+// already masked comes back byte for byte. Every other route, a picture and a blob included, still
+// streams unread. An answer that should be masked and cannot be read is refused, never passed on raw.
 //
 // ── AND THE ONE THING IT REFUSES TO GUESS ────────────────────────────────────
 // §10.3: an attempted write whose outcome is unknown is SURFACED, never retried and never reported
@@ -53,6 +63,11 @@ export function crewRouteFor(pathname: string): string | null {
  */
 const FORWARDABLE: readonly RegExp[] = [
   /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/,
+  // One picture under the Files root, as bytes (ADR 0090): off the disk of the member that owns the
+  // pane or the space, like the Files read it sits beside. Mirrors `PANE_FILES_IMAGE_ROUTE` and
+  // `WORKSPACE_FILES_IMAGE_ROUTE` in bridge/server.ts one-for-one. Additive-optional (§7.1).
+  /^pane\/[^/]+\/files\/image$/,
+  /^workspace\/[^/]+\/files\/image$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
@@ -81,9 +96,35 @@ const FORWARDABLE: readonly RegExp[] = [
   /^blobs\/[^/]+$/,
 ];
 
-/** `workspace/<id>/changes` and `workspace/<id>/files` — the workspace routes that are reads. */
+/**
+ * The answers that carry text a pane or an agent wrote, which the lead masks before the phone reads
+ * them (§9.1): the mirror (`pane`), a History page, a Chat body, and a Changes or Files answer, asked
+ * by pane or by space. A picture (`files/image`) and a blob are bytes, never text, and stay byte for
+ * byte, and so does every write's answer.
+ */
+export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files";
+
+/** Which {@link TextAnswer} a crew route answers with, or `null` for a route whose answer is not text. */
+export function textAnswerOf(route: string): TextAnswer | null {
+  if (/^pane\/[^/]+$/.test(route)) return "pane";
+  if (/^pane\/[^/]+\/history$/.test(route)) return "history";
+  if (/^pane\/[^/]+\/chat$/.test(route)) return "chat";
+  if (/^(?:pane|workspace)\/[^/]+\/changes$/.test(route)) return "changes";
+  if (/^(?:pane|workspace)\/[^/]+\/files$/.test(route)) return "files";
+  return null;
+}
+
+/**
+ * The lead's mask over one text answer: the member's body in, the body to send out, or `null` when
+ * the body is not the answer it should be and so cannot be masked. Injected rather than imported, so
+ * this module still reads no journal and touches no disk; absent when the lead's own `COLLIE_REDACT`
+ * is off, which leaves every answer byte for byte.
+ */
+export type AnswerMask = (answer: TextAnswer, body: string) => string | null;
+
+/** `workspace/<id>/changes`, `.../files` and `.../files/image` — the workspace routes that are reads. */
 function isWorkspaceRead(route: string): boolean {
-  return /^workspace\/[^/]+\/(?:changes|files)$/.test(route);
+  return /^workspace\/[^/]+\/(?:changes|files|files\/image)$/.test(route);
 }
 
 /** The pane actions that only read, as bridge/server.ts's `isPaneReadAction` lists them. */
@@ -126,7 +167,8 @@ export function forwardKind(route: string): ForwardKind {
   // `changes` is read-only git over the owning member's folder (ADR 0065): a read, like history.
   // `chat` is the same log `history` reads, asked for its newest end (journal/live.ts): a read too,
   // and the one on the poll path — so it must never be refused before it is tried (§10.3). `files`
-  // reads one folder or file under that same root (ADR 0083): a read as well.
+  // reads one folder or file under that same root (ADR 0083): a read as well, and so is
+  // `files/image`, whose third segment is `files` too (ADR 0090).
   return isPaneRead(action) ? "read" : "write";
 }
 
@@ -251,7 +293,16 @@ export function forwardHeaders(req: Request, device?: string | null): Headers {
  * `accept-encoding` — the same negotiation `bridge/http-cache.ts` makes for a local route, and the
  * same relationship to the ETag (hashed over the identity body, `vary: accept-encoding` declared).
  */
-const PROXIED_RESPONSE_HEADERS = ["content-type", "etag", "cache-control", "vary"];
+const PROXIED_RESPONSE_HEADERS = [
+  "content-type",
+  "etag",
+  "cache-control",
+  "vary",
+  // The picture's version, as plain data (ADR 0090): a file's size and mtime. Without them a member's
+  // picture reaches the phone with no key to hold it under, so the phone would never keep it.
+  "x-collie-file-size",
+  "x-collie-file-mtime",
+];
 
 /** Content types worth a transform. Everything else (an image, an upload echo) streams through. */
 function compressibleType(contentType: string | null): boolean {
@@ -274,16 +325,17 @@ function varyWithAcceptEncoding(existing: string | null): string {
 
 /**
  * The peer's answer, re-emitted for the phone **unmodified** — status, body bytes and, critically,
- * `etag` (§9.1) — and compressed for this hop when the phone asked for it.
+ * `etag` (§9.1) — and compressed for this hop when the phone asked for it. A text answer reaches
+ * here already masked ({@link maskedAnswer}); the bytes this function sees are the ones it sends.
  *
  * ── COMPRESSION IS HOP-LOCAL, AND IT IS A TRANSFORM ──────────────────────────
  * The peer hop is identity so the lead's headers can describe the lead's bytes ({@link
  * forwardHeaders}). That left the lead→phone hop plain for *forwarded* routes only — ~136 KB per poll
  * where a local pane ships ~6 KB, which on cellular is the difference between usable and not. So the
  * lead compresses this hop itself, on the phone's own `accept-encoding`, via
- * `CompressionStream("gzip")`: the body is still never buffered, so a 400-turn history is transformed
- * chunk by chunk rather than held whole. The peer's ETag rides through untouched — it names the
- * identity bytes, exactly as `gzipJsonResponse` intends it on a local route (.adr/0023).
+ * `CompressionStream("gzip")`: the transform never buffers, so a body the lead does not mask is
+ * transformed chunk by chunk rather than held whole. The peer's ETag rides through (salted on a masked
+ * answer, {@link saltTag}) — it names the identity bytes, exactly as `gzipJsonResponse` intends it on a local route (.adr/0023).
  *
  * `content-length` is absent by construction in both branches: it is not copied, and a transform
  * cannot know it. A copied one would be the peer's pre-decompression length — the same lie as a
@@ -317,7 +369,8 @@ export type ForwardErrorCode =
   | "host_incompatible"
   | "write_outcome_unknown"
   | "upload_too_large"
-  | "route_not_federated";
+  | "route_not_federated"
+  | "answer_unmaskable";
 
 /** A refusal the LEAD generated (as opposed to a peer's answer). Always JSON, never a bare 500. */
 export function forwardError(
@@ -452,6 +505,92 @@ export interface ForwardDeps {
    * peer with a different one enforces its own when the bytes arrive.
    */
   readonly maxUploadBytes: number;
+  /**
+   * The mask for the answers that carry text (§9.1), when the LEAD's `COLLIE_REDACT` is on. Absent
+   * means every answer is re-emitted byte for byte, as before the lead masked anything.
+   */
+  readonly mask?: AnswerMask | undefined;
+}
+
+/**
+ * A member's text answer, masked for the phone. Only a `2xx` with a body is read: a `304` has no
+ * body, and an error body (`404 unknown-path`, `502 transcript read failed`) carries no session text
+ * on either side, so it streams on as itself.
+ *
+ * ── FAIL CLOSED ──────────────────────────────────────────────────────────────
+ * A body that is not the answer it should be (not JSON, or not the shape the route answers with) is
+ * never passed on raw: it is a `502 answer_unmaskable` naming the member. Raw would be the one way a
+ * member's key reached the phone through a lead that masks, and a failed read is a state the phone
+ * already draws (the last mirror stays, Chat says it could not load). A body the transport lost
+ * mid-read is a failed read like any other, `host_unreachable`.
+ *
+ * ── HEADERS ─────────────────────────────────────────────────────────────────
+ * The member's ETag rides on, salted with the mask's version ({@link saltTag}). The mask is a function
+ * of the member's bytes and that version alone, so the salted tag still names exactly one body the
+ * phone can hold, and the member keeps answering the phone's `If-None-Match` with its own `304`. A tag
+ * the lead hashed over the masked body would be one the member never recognises, and every Chat and
+ * mirror poll would then cost a full body. No
+ * `content-length` is copied ({@link proxiedResponse}), so the new body is framed by its own length.
+ */
+async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask, memberId: string): Promise<Response> {
+  if (res.status < 200 || res.status >= 300 || res.status === 204 || res.body === null) return res;
+  let raw: string;
+  try {
+    raw = await res.text();
+  } catch (err) {
+    return forwardError("host_unreachable", `host ${memberId}: the answer broke off (${String(err)})`, 503, {
+      host: memberId,
+    });
+  }
+  const masked = mask(answer, raw);
+  if (masked === null) {
+    return forwardError(
+      "answer_unmaskable",
+      `host ${memberId} sent an answer this collie could not read to mask its secrets, so it was not passed on`,
+      502,
+      { host: memberId },
+    );
+  }
+  return new Response(masked, { status: res.status, headers: res.headers });
+}
+
+/**
+ * ── A MASKED ANSWER'S TAG NAMES THE MASK AS WELL AS THE BODY ─────────────────────────────────
+ * The member's ETag rides on ({@link maskedAnswer}), but the body the phone holds under it is the
+ * member's bytes AFTER this lead's mask. A tag of the member's alone would let a `304` keep a copy
+ * masked by an older pattern list, or not masked at all (a copy a 1.17 lead passed on raw), for as
+ * long as the member's text stays the same. So the lead salts the tag with {@link MASK_VERSION} on
+ * the way out, and on the way in passes the member only a tag carrying the CURRENT salt, unsalted.
+ * Any other tag is dropped, the member answers in full, and the lead masks that.
+ */
+const MASK_SALT = `~m${MASK_VERSION}`;
+
+/** `"abc"` → `"abc~m1"`, `W/"abc"` → `W/"abc~m1"`. A value that is not a quoted tag stays as it is. */
+export function saltTag(etag: string): string {
+  return etag.endsWith('"') && etag.length >= 2 ? `${etag.slice(0, -1)}${MASK_SALT}"` : etag;
+}
+
+/**
+ * The phone's `If-None-Match`, as the member may see it: only the tags this lead salted under the
+ * current {@link MASK_VERSION}, unsalted. `null` when none is left, and the header is then not sent.
+ */
+export function unsaltIfNoneMatch(value: string): string | null {
+  const suffix = `${MASK_SALT}"`;
+  const kept = value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.endsWith(suffix))
+    .map((tag) => `${tag.slice(0, -suffix.length)}"`);
+  return kept.length === 0 ? null : kept.join(", ");
+}
+
+/** The answer with its tag salted. A `304` carries the tag too, and is salted the same way. */
+function withSaltedTag(res: Response): Response {
+  const etag = res.headers.get("etag");
+  if (etag === null) return res;
+  const headers = new Headers(res.headers);
+  headers.set("etag", saltTag(etag));
+  return new Response(res.status === 304 || res.status === 204 ? null : res.body, { status: res.status, headers });
 }
 
 /**
@@ -496,10 +635,17 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
 
   // `duplex` is required by the Fetch spec for a stream body; the DOM lib's `RequestInit` predates
   // it, so the streaming half of this init is typed here rather than asserted at the assignment.
-  const init: RequestInit & { duplex?: "half" } = {
-    method: req.method,
-    headers: forwardHeaders(req, deps.device),
-  };
+  const headers = forwardHeaders(req, deps.device);
+  // Text the phone will show is masked here, whatever the member's version (§9.1). Every other answer
+  // is not read at all. A masked answer's tag carries the mask's version, both ways ({@link saltTag}).
+  const answer = deps.mask === undefined ? null : textAnswerOf(route);
+  if (answer !== null) {
+    const tags = headers.get("if-none-match");
+    const kept = tags === null ? null : unsaltIfNoneMatch(tags);
+    if (kept === null) headers.delete("if-none-match");
+    else headers.set("if-none-match", kept);
+  }
+  const init: RequestInit & { duplex?: "half" } = { method: req.method, headers };
   // The body is STREAMED, not buffered: an upload is up to 10 MB of multipart and the lead never
   // stores a copy of it (§13). Assigned, never conditionally spread: a bodyless method must carry
   // NEITHER key.
@@ -555,8 +701,12 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
   // `receivedAt` is when the response landed on this lead, not when the phone finished reading it.
   deps.onExchange?.(outcome.receivedAt);
   record(`http ${outcome.value.status}`);
+  const answered =
+    answer === null || deps.mask === undefined
+      ? outcome.value
+      : withSaltedTag(await maskedAnswer(outcome.value, answer, deps.mask, deps.link.memberId));
   // The phone's own `accept-encoding` — never the peer's, which was pinned to `identity` on the way
   // out. Compression is decided once per hop (.adr/0023).
-  return proxiedResponse(outcome.value, req.headers.get("accept-encoding"));
+  return proxiedResponse(answered, req.headers.get("accept-encoding"));
 }
 

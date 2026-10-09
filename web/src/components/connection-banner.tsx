@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRevalidator } from "react-router";
 import {
   CheckCircle2,
+  CloudOff,
   Loader2,
   LogIn,
   Plug,
@@ -22,11 +23,12 @@ import { useConnectionLost, useConnectionTrouble } from "@/hooks/use-connection-
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
 import { useOnline } from "@/hooks/use-online";
 import { isConnecting } from "@/lib/connection";
-import { clockTime } from "@/lib/format";
+import { clockTime, savedAtLabel } from "@/lib/format";
 import { writeRefusal } from "@/lib/host-health";
 import * as api from "@/lib/api";
 import type { BridgeStatus } from "@/lib/types";
 import { mounted } from "@/lib/base-path";
+import { usePairing } from "@/lib/pairing";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
@@ -45,6 +47,13 @@ interface ConnectionBannerProps {
    * re-renders the herd from cache, and an undated old screen is indistinguishable from a live one.
    */
   lastSeenAt?: number;
+  /**
+   * What is on screen is the SAVED COPY (M46 spec 10, `HomeData.stale` / `PaneData.stale`): a cold
+   * open before any live answer, or an outage the shared clock has latched. The strip then says so
+   * at once, in one of two sentences (see {@link resolveView}), instead of waiting out the amber
+   * and red escalation that exists to keep a blip quiet: a cold open with no bridge is not a blip.
+   */
+  stale?: boolean;
 }
 
 // /api/config probes the lead's HTTP surface, never a member or a mux.
@@ -62,7 +71,7 @@ type Tone = "amber" | "red" | "green";
 // one duration shared with everything else in the app that moves in flow.
 export const GREEN_MS = 1_800;
 
-// The ONE connection surface: a single, thin bar in the band above the header — `ui/strip-host.tsx`,
+// The ONE connection surface: a single, thin bar in the ribbon band under the header — `ui/strip-host.tsx`,
 // registered from here as a StripSlot — that is the app's entire connection UI; the header pill is
 // gone. It appears only on SUSTAINED trouble, escalates from amber → red on a real outage, flashes
 // green on recovery, and otherwise renders nothing. It reads the SAME two shared-clock signals
@@ -75,9 +84,43 @@ export const GREEN_MS = 1_800;
 // slot's PRIORITY moves with it: a lost connection is `OUTAGE`, trouble and the recovery flash are
 // `DEGRADED` (`lib/strip-priority.ts`). Green is not a fifth level — it is this same fact, resolved,
 // and it outranks the update offer for the second it stands for exactly the reason amber does.
-export function ConnectionBanner({ bridge, host, error, authError, lastSeenAt }: ConnectionBannerProps) {
+//
+// THREE OFFLINE STATES, TOLD APART HERE AND NOWHERE ELSE (M46 spec 10, reworded in pass 3):
+//   1. The phone says it is offline (`navigator.onLine` false): "You are offline. Showing what was
+//      saved at …".
+//   2. Any other failed read: "No connection to the bridge. Showing what was saved at …", with a
+//      smaller second line, "Check your connection or Tailscale."
+//   3. The bridge answered and refused this device (a 403 `device not paired` or `device expired`
+//      while a token was held): the wipe has run, nothing kept is drawn, and the pair screen is the
+//      answer. No connection strip at all, below.
+// The first two draw the saved copy and date it by when it was fetched.
+//
+// WHY STATE 2 GUESSES NO CAUSE. `navigator.onLine` false is a fact, so state 1 may say "offline". True
+// is not the opposite fact: a VPN (Tailscale on a phone) keeps a network interface up, so the flag
+// stays true in airplane mode. From inside the page, "the phone has no network" and "the bridge or the
+// tunnel is down" then look the same: a request that gets no answer. Telling them apart would take a
+// probe to some third-party host, and Collie does not make one (ADR 0034: Collie collects nothing).
+// So the sentence says only what is known, and the second line names both places to look. It used to
+// say "Is Tailscale connected?", which read as a diagnosis on a phone that was simply offline.
+//
+// WHEN IT APPEARS, AND WHY IT DOES NOT FLAP (M46 pass 3). The saved-copy strip is red at once when the
+// screen IS the saved copy (`stale`), and the screen becomes that on the read that proves the outage
+// (lib/connection-health.ts `noteNetworkFailure` and `noteServerFailure`: the first read that got no
+// answer, the second one right after a wake, or the second 5xx in a row). It goes only on a live
+// answer. Amber no longer stands in front
+// of it: amber is kept for the one case where the bridge answers and says its multiplexer is down, so
+// a failing read goes from nothing straight to the saved-copy strip, and a slow read (a stall) moves
+// only the header dog. Every red variant reserves the height of the tallest one, so a change of
+// sentence does not move the page.
+export function ConnectionBanner({ bridge, host, error, authError, lastSeenAt, stale = false }: ConnectionBannerProps) {
+  const { refused: notPaired } = usePairing();
   if (authError) return <AuthErrorBanner />;
-  return <ConnectionStateBanner bridge={bridge} host={host} error={error} lastSeenAt={lastSeenAt} />;
+  // Refused for want of pairing (ADR 0086: reads need the token). The bridge answered, so this is not
+  // an outage, and the pairing strip on the route names the remedy. No connection strip at all.
+  if (notPaired && error) return null;
+  return (
+    <ConnectionStateBanner bridge={bridge} host={host} error={error} lastSeenAt={lastSeenAt} stale={stale} />
+  );
 }
 
 // A refusal is not an outage, so it gets its own surface ahead of the connection state machine: no
@@ -145,25 +188,43 @@ function ConnectionStateBanner({
   host,
   error,
   lastSeenAt,
+  stale = false,
 }: Omit<ConnectionBannerProps, "authError">) {
   useLocale();
   const { lead } = useCrew();
   const memberHealth = useHostHealth(host);
   const stalled = useLoadingStalled();
-  const connecting = isConnecting({ bridge, error, stalled });
-  const trouble = useConnectionTrouble(connecting);
-  const lost = useConnectionLost(connecting);
+  // Amber is the bridge ANSWERING that its multiplexer is down, and nothing else (see the header). A
+  // failed read and a stall are left to `lost`: one failed read that proves nothing shows no strip at
+  // all, and the read that does prove it shows the red one at once.
+  const muxTrouble = !error && !stalled && bridge === "disconnected";
+  const trouble = useConnectionTrouble(muxTrouble);
+  // Red waits for a read that has FAILED, not one that is merely slow. The latch is set inside the
+  // failing herd read, a beat before the loader hands over the saved copy; counting the stall here
+  // drew one frame of "Can't reach Collie" before the saved-copy sentence replaced it, a jump in
+  // height measured at 390px. The poll deadline (lib/api.ts POLL_TIMEOUT_MS) turns a stall into a
+  // failure within 6s anyway, and the header dog still gallops on the stall.
+  const lost = useConnectionLost(isConnecting({ bridge, error }));
 
   // What the live signals want on screen right now — red wins over amber; null = healthy (or a blip
   // that never reached trouble). Green is NOT derived here: it's a timed confirmation the state machine
   // adds only when a VISIBLE bar recovers, so it can't come from the instantaneous signals.
-  const activeTone: Exclude<Tone, "green"> | null = lost ? "red" : trouble ? "amber" : null;
+  //
+  // A saved copy on screen is red at once (see `stale`): the escalation clock exists to keep a blip
+  // quiet, and a herd drawn from the store is already past being one. Recovery from it flashes green
+  // like any other visible bar.
+  const activeTone: Exclude<Tone, "green"> | null = stale || lost ? "red" : trouble ? "amber" : null;
 
   // The rendered tone. Adds the recovery "connected" flash on top of the live signals.
   const [tone, setTone] = useState<Tone | null>(null);
   // Has an amber/red bar actually been shown since the last time we went hidden? Gates the green flash
   // so a sub-trouble blip (which never showed a bar) recovers silently.
   const shownBar = useRef(false);
+  // The operator hid the red strip for THIS outage. The state draws (or does not draw) the strip; the
+  // ref is the same fact for the effect below, which must read it at recovery without re-running when
+  // it flips. Both reset together when the outage ends (`activeTone` goes null).
+  const [dismissed, setDismissed] = useState(false);
+  const dismissedRef = useRef(false);
 
   useEffect(() => {
     if (activeTone) {
@@ -171,9 +232,20 @@ function ConnectionStateBanner({
       setTone(activeTone);
       return;
     }
-    // activeTone === null → recovered, or never troubled.
+    // activeTone === null → recovered, or never troubled. Either way the outage the operator hid, if
+    // they hid one, is over: the next one shows its strip again.
+    const wasDismissed = dismissedRef.current;
+    dismissedRef.current = false;
+    setDismissed(false);
     if (!shownBar.current) {
       setTone(null); // a blip that never showed a bar → show nothing.
+      return;
+    }
+    // The operator asked for quiet by hiding the strip, so a green "Connected" would be the one thing
+    // on screen they did not ask for. The bar they dismissed was shown, so the latch still clears.
+    if (wasDismissed) {
+      shownBar.current = false;
+      setTone(null);
       return;
     }
     // Recovery FROM a visible bar → a brief green "connected", then hide.
@@ -215,6 +287,14 @@ function ConnectionStateBanner({
   }, [lost, runProbe]);
 
   if (tone === null) return null;
+  // Dismissed: nothing is registered in the band, and the band's own leave animation closes the row.
+  // Only red can be dismissed (amber and green carry no ✕), but the guard states what it hides.
+  if (tone === "red" && dismissed) return null;
+
+  function onDismiss() {
+    dismissedRef.current = true;
+    setDismissed(true);
+  }
 
   // Recovery (a successful poll) flips the signals → tone → hidden on its own, no reload. Retry just
   // nudges that along: revalidate the snapshot and re-run the probe.
@@ -230,7 +310,10 @@ function ConnectionStateBanner({
   // that member is down, and the sentence for it exists (`connection.stale.*`, the one the pane
   // notice and a refused write use). Read only to NAME the cause; it feeds no clock and no latch.
   const memberFault = host !== undefined && host !== lead ? writeRefusal(memberHealth) : undefined;
-  const view = resolveView(tone, online, probe, muxDisconnected, memberFault, lastSeenAt);
+  const view = resolveView(tone, online, probe, muxDisconnected, memberFault, lastSeenAt, stale);
+  // The ✕ is red's alone, so it is spread in rather than passed as `undefined`: the primitive types a
+  // dismiss control and its label as a pair, and an `undefined` for one is not that.
+  const dismissProps = tone === "red" ? { onDismiss, dismissLabel: t("connection.dismiss.aria") } : {};
 
   return (
     // A lost connection outranks trouble, and both outrank the update offer. Green rides at
@@ -242,39 +325,51 @@ function ConnectionStateBanner({
         // Red is an actionable error (assertive); amber and green are ambient. One attribute either
         // way — the `aria-live="polite"` that used to sit beside the role is gone, and cannot come
         // back: `ui/notice.tsx` has no way to spell a role and a liveness at the same time.
-        announce={tone === "red" ? "alert" : "status"}
+        announce={view.tone === "danger" ? "alert" : "status"}
         icon={<view.Icon />}
-        // Actions only in red — amber is ambient (no buttons), green is a passing confirmation.
+        // The saved-copy sentence names the cause and the saved time, and both matter: at 390px
+        // beside Retry it truncated mid-word. It wraps to a second line instead.
+        wrap={view.saved}
+        // NO RESERVED HEIGHT (2026-10-07). Red used to take a 72px floor, the tallest variant's
+        // height, because the band sat in flow and every change of sentence moved the page. The band
+        // is an overlay on the header's bottom edge now (`ui/strip-host.tsx`), so a taller sentence
+        // covers a little more of the strip beneath it and moves nothing. The strip is as tall as
+        // its words.
+        // Actions only in red — amber is ambient (no buttons), green is a passing confirmation. ONE
+        // button, Retry, and the ✕ the Notice draws beside it. A Reload icon stood here too and the
+        // operator read two buttons for one problem; Retry already revalidates and re-probes, and the
+        // auth strip above keeps its Reload because a refusal is not cured by asking again.
         action={
           tone === "red" ? (
-            <>
-              <Button
-                size="sm"
-                className={NOTICE_ACTION}
-                onClick={onRetry}
-                disabled={retrying}
-              >
-                {retrying ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <RotateCw className="size-3.5" />
-                )}
-                {t("connection.retry")}
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                aria-label={t("connection.reload.aria")}
-                className={cn("size-6 text-muted-foreground", NOTICE_ACTION_TAP)}
-                onClick={() => window.location.reload()}
-              >
-                <RefreshCw className="size-3.5" />
-              </Button>
-            </>
+            <Button
+              size="sm"
+              // `whitespace-nowrap`: Retry is one word on one line, whatever the sentence beside it.
+              className={cn(NOTICE_ACTION, "whitespace-nowrap")}
+              onClick={onRetry}
+              disabled={retrying}
+            >
+              {retrying ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RotateCw className="size-3.5" />
+              )}
+              {t("connection.retry")}
+            </Button>
           ) : undefined
         }
+        {...dismissProps}
       >
-        {view.copy}
+        {view.hint === undefined ? (
+          view.copy
+        ) : (
+          <>
+            {view.copy}
+            {/* The second line: smaller and quieter, because it is advice, not the state. */}
+            <span data-slot="connection-hint" className="block text-[11px] font-normal text-muted-foreground">
+              {view.hint}
+            </span>
+          </>
+        )}
       </Notice>
     </StripSlot>
   );
@@ -300,21 +395,41 @@ function resolveView(
   muxDisconnected: boolean,
   memberFault: string | undefined,
   lastSeenAt?: number,
+  stale = false,
 ) {
   if (tone === "green") {
-    return { copy: t("connection.connected"), Icon: CheckCircle2, tone: "success" } as const;
+    return { copy: t("connection.connected"), Icon: CheckCircle2, tone: "success", saved: false, hint: undefined } as const;
   }
   if (tone === "amber") {
     // Static Plug (no spinner) — the galloping dog carries the motion, and a spinner would fight
     // prefers-reduced-motion. Ambient by design.
-    return { copy: t("connection.reconnecting"), Icon: Plug, tone: "caution" } as const;
+    return { copy: t("connection.reconnecting"), Icon: Plug, tone: "caution", saved: false, hint: undefined } as const;
   }
   // The lead answered, so the fault is one it can name. A mux that is down belongs to the machine
   // being viewed only when that machine is the lead (or there is no crew); on a member the lead's
   // own `bridge` says nothing, and what the lead knows about that member is its health. The member's
   // sentence carries its own "last seen", so it is not dated a second time below.
   if (probe === "reachable" && !muxDisconnected && memberFault !== undefined) {
-    return { copy: memberFault, Icon: TriangleAlert, tone: "danger" } as const;
+    return { copy: memberFault, Icon: TriangleAlert, tone: "danger", saved: false, hint: undefined } as const;
+  }
+  // THE SAVED COPY, in the quiet tone: it is not an error state, it is the screen the operator left,
+  // dated (M46 spec 10). `online` false is the phone's own fact and needs no probe. Anything else is
+  // ONE sentence that guesses no cause, with the places to look on a second line: a VPN keeps
+  // `navigator.onLine` true in airplane mode, so "offline" and "bridge down" cannot be told apart
+  // from here without a probe to a third-party host, which Collie never makes (ADR 0034; see the
+  // header). A probe that says the bridge DOES answer HTTP falls through to the named cause below,
+  // because "no connection" would then be false.
+  if (stale && lastSeenAt !== undefined && probe !== "reachable") {
+    const time = savedAtLabel(lastSeenAt);
+    return online
+      ? ({
+          copy: t("connection.saved.noBridge", { time }),
+          hint: t("connection.saved.hint"),
+          Icon: CloudOff,
+          tone: "neutral",
+          saved: true,
+        } as const)
+      : ({ copy: t("connection.saved.offline", { time }), Icon: WifiOff, tone: "neutral", saved: true, hint: undefined } as const);
   }
   const cause =
     probe === "reachable" && muxDisconnected
@@ -326,5 +441,5 @@ function resolveView(
     lastSeenAt === undefined
       ? cause.copy
       : t("connection.withLastSeen", { cause: cause.copy, time: clockTime(lastSeenAt) });
-  return { copy, Icon: cause.Icon, tone: "danger" } as const;
+  return { copy, Icon: cause.Icon, tone: "danger", saved: false, hint: undefined } as const;
 }

@@ -37,6 +37,7 @@ import {
 } from "./owner-only.ts";
 import type { AgentView, CrewMode, CrewStatusResponse } from "./types.ts";
 import { EventPoker } from "./event-poker.ts";
+import { GitHeads } from "./git-head.ts";
 import { exePathOf, exeReplaced } from "./exe-replaced.ts";
 import {
   herdrActionCommand,
@@ -66,7 +67,16 @@ import { NotificationCoordinator, makeNotifySink, type NotifyClock } from "./not
 import { pushTitle } from "./push-titles.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { FolderStore } from "./folders.ts";
-import { filePairingIo, PairingStore } from "./pairing.ts";
+import { WorktreeReceiptStore } from "./worktree-receipts.ts";
+import { filePairingIo, type PairedRegistry, PairingStore } from "./pairing.ts";
+import {
+  LOCAL_SECRET_FILENAME,
+  type LocalCredential,
+  localCredentialOf,
+  mintLocalSecret,
+  removeLocalSecret,
+  writeLocalSecret,
+} from "./local-secret.ts";
 import { createSttGate } from "./stt/index.ts";
 import { runBootGate } from "./crew/boot-gate.ts";
 import { PEER_BROWSER_ENV, resolveCrewRuntime, warnsOnWildcardBind } from "./crew/config.ts";
@@ -604,8 +614,38 @@ await notifyPrefs.load();
 // Device pairing (bridge/pairing.ts). Constructed unconditionally and holding no state of its own:
 // it re-reads `<stateDir>/paired-devices.json` per request (cached on mtime), so `collie pair` and
 // `collie devices revoke` land on the RUNNING service without the restart every other backend change
-// needs. An empty registry — the state every existing install starts in — enforces nothing.
+// needs. Pairing is always on (ADR 0086): an empty registry answers only `/api/health` and
+// `/api/pair`, and `collie pair` on this host is how the first device gets in.
 const pairing = new PairingStore(filePairingIo(cfg.stateDir));
+
+/**
+ * The registry for a caller that reports rather than gates, or null while the file is there and
+ * unreadable (`RegistryUnreadableError`). Never the empty registry in that case: an unreadable store
+ * is not "nobody is paired" (bridge/pairing.ts).
+ */
+const readableRegistry = (): PairedRegistry | null => {
+  try {
+    return pairing.registry();
+  } catch {
+    return null;
+  }
+};
+
+// The host's own read credential (bridge/local-secret.ts): a fresh secret per start, written
+// owner-only to `<stateDir>/local-secret` for `collie doctor` and `collie crew update` to read their
+// own bridge with, and only its hash kept here. Reads only, from loopback only. A write that fails
+// costs the CLI its reads (it falls back to a 403, as before this existed) and nothing else.
+const localSecret = mintLocalSecret();
+let localCredential: LocalCredential | undefined;
+try {
+  await writeLocalSecret(cfg.stateDir, localSecret);
+  localCredential = localCredentialOf(localSecret);
+} catch (err) {
+  console.warn(
+    `[bridge] could not write ${LOCAL_SECRET_FILENAME}: ${err instanceof Error ? err.message : String(err)} — ` +
+      "`collie doctor` cannot read this bridge until it can",
+  );
+}
 
 // Speech-to-text (bridge/stt/). Constructed unconditionally and holding no settings of its own, for
 // exactly pairing's reason: it re-reads `<stateDir>/stt.json` per request (cached on mtime) and the
@@ -633,6 +673,10 @@ const paneCache =
     ? null
     : new CacheTracker(journals, { overrides: () => cacheRulesReader() }, () => Date.now());
 
+// Which branch each pane's folder is on (bridge/git-head.ts). One for the whole bridge: every
+// session's poll feeds it its folders, and the server reads it from memory at serialise time.
+const gitHeads = new GitHeads();
+
 // Which panes the operator asked to be warned about before their prompt cache goes cold, and the
 // deadlines already warned (bridge/cache/watch.ts). Loaded here beside the other two preference stores;
 // the file does not exist until an operator toggles something or a warning actually goes out.
@@ -644,6 +688,12 @@ await cacheWatch.load();
 // writes nothing: the file appears on the first create with a folder or the first star.
 const folders = new FolderStore(cfg);
 await folders.load();
+
+// One receipt per worktree create the phone tagged with a request id, so a retried create replays
+// instead of making a second worktree (ADR 0089, bridge/worktree-receipts.ts). Loading writes
+// nothing: the file appears on the first create that carries an id.
+const worktreeReceipts = new WorktreeReceiptStore(cfg.stateDir);
+await worktreeReceipts.load();
 
 // The warden that judges them. A DEPS LITERAL WITH NO LOGIC IN IT, for the reason
 // `bridge/update.ts`'s monitor is built the same way: there is no `bridge/index.test.ts`, so every gate
@@ -1076,6 +1126,11 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   // which the engine's agent-derived removal event never reports.
   trackActivity(engine, activity, name);
 
+  // The branch of every pane's folder rides the same poll, fired and not awaited, for the cache
+  // probe's reason below: a poll never waits on a disk read. The reader keeps its own clocks, so a
+  // poll every 1.5 s is not a read every 1.5 s, and it never throws.
+  engine.onUpdate((s) => void gitHeads.refresh([...s.agents, ...s.shellPanes].map((p) => p.cwd)));
+
   // The prompt-cache probe rides the same poll, and for the reason the tracker's header gives:
   // `localSnapshot` is synchronous, so the disk read cannot happen at serialise time. It is fired and
   // not awaited — `onUpdate` is synchronous and a poll must never wait on a probe — and the tracker
@@ -1269,7 +1324,12 @@ const standbySurface: CrewRouterDeps["standby"] =
         syncedDigest: () => pairingReportOf(standbyStore.current()),
         // §18.14's finding, re-derived from disk on every answer: which of THIS machine's own paired
         // devices share a label with the registry it was synced. Empty is the ordinary case.
-        syncedCollision: () => collisionReportOf(pairing.registry(), standbyStore.current()),
+        // An unreadable registry reports no finding rather than failing the hello it rides on: the
+        // finding is advisory, and the next hello after the repair carries it.
+        syncedCollision: () => {
+          const own = readableRegistry();
+          return own === null ? [] : collisionReportOf(own, standbyStore.current());
+        },
         applySync: async (sync) => {
           // Wholesale, never a merge: the lead's registry is the whole truth, so a revocation there
           // has to be able to REMOVE a device here.
@@ -1503,7 +1563,11 @@ const crewLead = (() => {
       current: () => {
         const held = trustStore.current();
         if (held === null || held.crew === null) return null;
-        const devices = syncedDevicesOf(pairing.registry());
+        // `null` is "nothing to send" (lead.ts): an unreadable registry must not reach the deputy as
+        // an empty list, which would revoke every phone at its standby door.
+        const own = readableRegistry();
+        if (own === null) return null;
+        const devices = syncedDevicesOf(own);
         return {
           sync: { crewId: held.crew.crewId, leadMemberId: held.self.memberId, devices },
           digest: syncDigest(devices),
@@ -1755,7 +1819,11 @@ async function performTakeover(deviceLabel: string): Promise<{ ok: boolean; mess
       // credential it already holds. A label collision refuses the whole takeover and writes nothing —
       // checked BEFORE the store is rewritten, so a refusal really does leave everything as it was.
       const devices = syncedDevices();
-      const clash = collidingLabels(pairing.registry(), devices);
+      // An unreadable registry cannot be checked for a collision, and adopting into it would write a
+      // torn reading back: refuse before anything is written, as a collision does.
+      const own = readableRegistry();
+      if (own === null) return { kind: "refused", reason: "commit-failed" };
+      const clash = collidingLabels(own, devices);
       if (clash.length > 0) return { kind: "refused", reason: "pairing-collision", labels: clash };
       const result = await commitCrewChange(trustStore, audit, (current) =>
         current === null ? null : adoptLeadership(current, { roster, confirmed, now: Date.now() }),
@@ -1902,12 +1970,15 @@ const server = startServer({
   // Built above so the cache tracker probes through the same adapters this serves history from.
   journals: journals ?? undefined,
   cache: paneCache ?? undefined,
+  gitHeads,
   cacheWatch,
   folders,
+  worktreeReceipts,
   // Every machine's load and its alert rules (ADR 0084). Undefined on a peer, whose routes then 404.
   machines: machineWatch,
   crew,
   pairing,
+  localCredential,
   stt,
   crewLead,
   crewStatus,
@@ -2002,6 +2073,8 @@ const shutdown = async () => {
   // Stop accepting new connections and let in-flight requests drain briefly (non-forced stop)
   // before we tear down the poll loops and exit.
   await server.stop();
+  // The CLI's read credential dies with the process that holds its hash (bridge/local-secret.ts).
+  await removeLocalSecret(cfg.stateDir, localSecret);
   clearInterval(refreshTimer);
   registry.disposeAll();
   // The codex speech-to-text provider owns a `codex app-server` child (bridge/stt/codex-auth.ts).

@@ -9,7 +9,9 @@ import { BeltSizeControl } from "@/components/belt-size-control";
 import { ChangesControl } from "@/components/changes-control";
 import { ConnectionInfo } from "@/components/connection-info";
 import { CrewSettingsCard } from "@/components/crew-settings-card";
+import { KeepChatControl } from "@/components/keep-chat-control";
 import { FontSettingsControl } from "@/components/font-settings";
+import { HandControl } from "@/components/hand-control";
 import { HandsFreeControl } from "@/components/hands-free-control";
 import { HapticsControl } from "@/components/haptics-control";
 import { HarnessBarControl } from "@/components/harness-bar-control";
@@ -26,7 +28,7 @@ import { TourControl } from "@/components/tour-control";
 import { TypefaceControl } from "@/components/typeface-control";
 import { UpdatesSettingsCard } from "@/components/updates-settings-card";
 import { ZenControl } from "@/components/zen-control";
-import { useServerBuild } from "@/hooks/use-server-build";
+import { useServerDiagnostics } from "@/hooks/use-server-diagnostics";
 import { EMPTY_DEVICES, type DevicesData } from "@/lib/loaders";
 import { useOptionalRootData } from "@/lib/route-data";
 
@@ -78,6 +80,9 @@ export function SettingsAppearanceRoute() {
           band, pills, icons and words (components/actions-row.tsx, `--belt-scale`). */}
       <HarnessBarControl />
       <BeltSizeControl />
+      {/* Which thumb the belt and the reply box are laid out for. Under the belt's size because both
+          decide how that one belt is drawn. */}
+      <HandControl />
       {/* Which way a pane list runs (ADR 0071). Here rather than in Device because it decides how a
           surface is ARRANGED, which is the same question every card above answers. The pane
           switcher's own toggle writes the same value; this is where you go to find it. */}
@@ -105,6 +110,9 @@ export function SettingsDeviceRoute() {
       <ZenControl />
       {/* How a pane's Changes view finds repos (ADR 0065). Read by the pane menu, not by here. */}
       <ChangesControl />
+      {/* What this phone keeps of each pane's Chat, and for how long (M46 spec 09). Here, beside the
+          Changes search, because it is a standing decision about the device, not about a look. */}
+      <KeepChatControl />
       {/* The ONLY way back to a tour that was interrupted — the tour is marked seen the moment it
           opens. An action, so the row ends in a button rather than a Switch. */}
       <TourControl />
@@ -176,7 +184,7 @@ export function SettingsExperimentsRoute() {
 
 export function SettingsSystemRoute() {
   const root = useOptionalRootData();
-  const serverBuild = useServerBuild();
+  const diagnostics = useServerDiagnostics();
   // This page's OWN loader: the paired-device registry (lib/loaders.ts devicesLoader).
   // Defaulted rather than asserted: a harness that mounts this route without the loader (or a
   // navigation whose loader threw) must still render the rest of the page, not crash it.
@@ -194,7 +202,12 @@ export function SettingsSystemRoute() {
       <PairedDevices data={devices} />
       {/* Renders NOTHING on a solo install — the card owns that gate itself (useCrew().multi). */}
       <CrewSettingsCard />
-      <ConnectionInfo bridge={root?.bridge} device={root?.device} build={serverBuild} />
+      <ConnectionInfo
+        bridge={root?.bridge}
+        device={root?.device}
+        build={diagnostics.build}
+        redact={diagnostics.redact}
+      />
     </SettingsPage>
   );
 }

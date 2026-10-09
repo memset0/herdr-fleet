@@ -40,6 +40,7 @@ import {
   STATE,
 } from "./fakes.ts";
 import { EXIT } from "./io.ts";
+import type { PairedDevice } from "../bridge/pairing.ts";
 import { POWERSHELL_UTF8 } from "./sys.ts";
 import { collieBinary } from "./unit.ts";
 import {
@@ -138,7 +139,24 @@ function healthyFiles(): SeededFiles {
     // `journal-roots` warns when no root is there at all, and the contract test above asserts a
     // healthy install warns about nothing (issue #137).
     [`${HOME}/.claude/projects/-home-pat-repo/9f3c.jsonl`]: "{}",
+    // One paired device. Pairing is always on (ADR 0086), so a healthy install has one: with none,
+    // `pairing` warns that every route but health and pair answers `device not paired`.
+    [PAIRED_DEVICES]: pairedRegistry([{ label: "phone" }]),
   };
+}
+
+/** Where the bridge keeps its paired devices, under the fake state dir. */
+const PAIRED_DEVICES = `${STATE}/paired-devices.json`;
+
+/** A `paired-devices.json` body: hash-shaped entries only, never a real token. */
+function pairedRegistry(devices: { label: string; expiresAt?: number }[]): string {
+  return JSON.stringify({
+    devices: devices.map((d, i): PairedDevice => {
+      const row: PairedDevice = { label: d.label, tokenHash: String(i).repeat(64), createdAt: 1, lastSeenAt: 1 };
+      if (d.expiresAt !== undefined) row.expiresAt = d.expiresAt;
+      return row;
+    }),
+  });
 }
 
 /**
@@ -375,6 +393,7 @@ describe("collie doctor — the contract", () => {
       "bind-wildcard",
       "acl",
       "front-door",
+      "pairing",
       "mux",
       // Windows only, and this suite runs on the real host.
       ...(HOST.platform === "win32" ? ["windows-task", "windows-long-paths", "secrets-private"] : []),
@@ -1303,6 +1322,30 @@ describe("collie doctor — the crew checks", () => {
     expect(own?.headers["tailscale-user-login"]).toBeUndefined();
   });
 
+  // Reads need a pairing token since ADR 0086, and this process holds none: the bridge writes a local
+  // read credential to `<stateDir>/local-secret` at start, and this verb sends it on its own read.
+  test("the bridge's own snapshot carries the local read credential when the file is there", async () => {
+    const secret = "A".repeat(43);
+    const h = harness(LEAD, [hello(), hello()], {
+      files: { ...healthyFiles(), ...markerFile(LEAD), [`${STATE}/local-secret`]: `${secret}\n` },
+    });
+    await findings(h);
+    const own = h.sent.find((r) => r.url === "http://127.0.0.1:8787/api/snapshot");
+    expect(own?.headers.authorization).toBe(`Bearer ${secret}`);
+    // Never on a crew leg (those carry the crew secret): the credential is this host's own bridge's.
+    for (const r of h.sent.filter((x) => x.url.startsWith("https://"))) expect(r.headers.authorization).not.toContain(secret);
+  });
+
+  test("no local-secret file, or one that is not secret-shaped, means no Authorization header", async () => {
+    const extras: Record<string, string>[] = [{}, { [`${STATE}/local-secret`]: "not-a-secret\n" }];
+    for (const extra of extras) {
+      const h = harness(LEAD, [hello(), hello()], { files: { ...healthyFiles(), ...markerFile(LEAD), ...extra } });
+      await findings(h);
+      const own = h.sent.find((r) => r.url === "http://127.0.0.1:8787/api/snapshot");
+      expect(own?.headers.authorization).toBeUndefined();
+    }
+  });
+
   test("member-versions: skew WARNS naming both versions — §7.1 refuses nothing, so nor does this", async () => {
     const { code, byCheck } = await findings(
       harness(LEAD, [hello({ version: "1.0.0-alpha.9" })], {
@@ -1542,6 +1585,57 @@ const tmuxOnly = () => ({
   absent: ["herdr"],
 });
 
+// ── Pairing is always on (M46 spec 03, ADR 0086) ────────────────────────────
+// A bridge with no paired device answers only `/api/health` and `/api/pair`. `doctor` says so, and
+// names the one command that fixes it.
+describe("pairing — doctor points to collie pair", () => {
+  test("no device paired: a warning that names collie pair", async () => {
+    const { code, byCheck } = await findings(harness(null, [], { files: without(healthyFiles(), PAIRED_DEVICES) }));
+    const pairing = byCheck.get("pairing");
+    expect(pairing?.status).toBe("warn");
+    expect(pairing?.detail).toContain("no device paired yet");
+    expect(pairing?.detail).toContain("device not paired");
+    expect(pairing?.remedy).toContain("`collie pair`");
+    // A warning, so a fresh install still exits clean: it is the state every install starts in.
+    expect(code).toBe(EXIT.OK);
+  });
+
+  // The bridge answers 503 `pairing unavailable` over such a file, never `device not paired`
+  // (bridge/pairing.ts, RegistryUnreadableError), so doctor must not call it "no device paired".
+  test("an unreadable registry is its own warning, not \"no device paired\"", async () => {
+    for (const body of ["{ not json", "", "[]", "null"]) {
+      const files = { ...healthyFiles(), [PAIRED_DEVICES]: body };
+      const pairing = (await findings(harness(null, [], { files }))).byCheck.get("pairing");
+      expect(pairing?.status).toBe("warn");
+      expect(pairing?.detail).toContain("cannot be read");
+      expect(pairing?.detail).toContain("pairing unavailable");
+      expect(pairing?.detail).not.toContain("no device paired");
+      expect(pairing?.remedy).toContain("`collie pair`");
+    }
+  });
+
+  test("every pairing expired: a warning that names collie pair", async () => {
+    const files = { ...healthyFiles(), [PAIRED_DEVICES]: pairedRegistry([{ label: "old", expiresAt: 1 }]) };
+    const pairing = (await findings(harness(null, [], { files }))).byCheck.get("pairing");
+    expect(pairing?.status).toBe("warn");
+    expect(pairing?.detail).toContain("expired");
+    expect(pairing?.remedy).toContain("`collie pair`");
+  });
+
+  test("one live device: ok, counted", async () => {
+    const pairing = (await findings(harness(null))).byCheck.get("pairing");
+    expect(pairing?.status).toBe("ok");
+    expect(pairing?.detail).toBe("1 device(s) paired");
+  });
+
+  test("a peer is skipped and pointed at the lead's collie pair", async () => {
+    const h = harness(peerStore(), [], { files: without(healthyFiles(), PAIRED_DEVICES) });
+    const pairing = (await findings(h)).byCheck.get("pairing");
+    expect(pairing?.status).toBe("skipped");
+    expect(pairing?.remedy).toContain("`collie pair` on the lead");
+  });
+});
+
 describe("the finding set is scoped by the chosen multiplexer", () => {
   test("a healthy tmux host exits 0, and carries no Herdr check at all", async () => {
     const { code, byCheck, raw } = await findings(harness(null, [], tmuxOnly()));
@@ -1560,6 +1654,7 @@ describe("the finding set is scoped by the chosen multiplexer", () => {
       "bind-wildcard",
       "acl",
       "front-door",
+      "pairing",
       "mux",
       ...(HOST.platform === "win32" ? ["windows-task", "windows-long-paths", "secrets-private"] : []),
       "beacon-hooks-claude",

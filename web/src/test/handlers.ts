@@ -20,6 +20,7 @@ import type {
   TranscriptEntry,
   WorkspaceView,
 } from "@/lib/types";
+import { asJsonString, parseJsonObject } from "@/lib/json";
 
 import { censusFor, fixtureMachinesSolo, historyFor } from "./machine-fixtures";
 
@@ -662,19 +663,33 @@ export function fixtureFilesDir(dir: string): FilesListResponse | null {
   return { ...FILES_HEAD, available: true, root: FILES_ROOT, dir, entries, truncated: false };
 }
 
+/** The modification time every fixture file answers with, epoch ms (the version's second half). */
+export const FIXTURE_MTIME_MS = 1_728_300_000_000;
+
 /** The fixture file `path`, answered the way the bridge answers it, or null for a path it has none of. */
 export function fixtureFileRead(path: string): FileReadResponse | null {
   const bytes = FIXTURE_BINARY.get(path);
   if (bytes !== undefined) {
-    return { ...FILES_HEAD, available: true, root: FILES_ROOT, path, size: bytes, binary: true, truncated: false, text: "" };
+    return { ...FILES_HEAD, available: true, root: FILES_ROOT, path, size: bytes, mtimeMs: FIXTURE_MTIME_MS, binary: true, truncated: false, text: "" };
   }
   const text = FIXTURE_FILE_TEXT.get(path);
   if (text === undefined) return null;
-  return { ...FILES_HEAD, available: true, root: FILES_ROOT, path, size: text.length, binary: false, truncated: false, text };
+  return { ...FILES_HEAD, available: true, root: FILES_ROOT, path, size: text.length, mtimeMs: FIXTURE_MTIME_MS, binary: false, truncated: false, text };
 }
 
 /** The route's one answer for a path that is not there, outside the root or denied. */
 export const FIXTURE_FILES_UNKNOWN = { error: "unknown-path" } as const;
+
+/** A 1 × 1 transparent PNG: the bytes every fixture picture answers the image read with (ADR 0090). */
+const FIXTURE_PNG = Uint8Array.from(
+  atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="),
+  (c) => c.charCodeAt(0),
+);
+
+/** The bytes the image read answers for `path`: a fixture binary named `.png`, or null (404). */
+export function fixtureFileImage(path: string): Uint8Array | null {
+  return FIXTURE_BINARY.has(path) && path.endsWith(".png") ? FIXTURE_PNG : null;
+}
 
 export const handlers = [
   http.get("/api/snapshot", () => HttpResponse.json(fixtureSnapshot)),
@@ -699,6 +714,26 @@ export const handlers = [
     const path = q.get("path");
     const answer = path !== null ? fixtureFileRead(path) : fixtureFilesDir(q.get("dir") ?? "");
     return answer === null ? HttpResponse.json(FIXTURE_FILES_UNKNOWN, { status: 404 }) : HttpResponse.json(answer);
+  }),
+  // One picture under the Files root, as bytes (ADR 0090): a fixture binary named `.png`.
+  http.get(/\/api\/(?:pane|workspace)\/[^/]+\/files\/image$/, ({ request }) => {
+    const bytes = fixtureFileImage(new URL(request.url).searchParams.get("path") ?? "");
+    if (bytes === null) return HttpResponse.json(FIXTURE_FILES_UNKNOWN, { status: 404 });
+    const size = FIXTURE_BINARY.get(new URL(request.url).searchParams.get("path") ?? "") ?? bytes.length;
+    return new HttpResponse(bytes.slice(), {
+      headers: {
+        "content-type": "image/png",
+        "cache-control": "no-store",
+        "x-collie-file-size": String(size),
+        "x-collie-file-mtime": String(FIXTURE_MTIME_MS),
+      },
+    });
+  }),
+  // Which paths exist under the Files root (ADR 0088): the fixture tree's files and folders.
+  http.post(/\/api\/(?:pane|workspace)\/[^/]+\/files\/exist$/, async ({ request }) => {
+    const body = parseJsonObject(await request.text());
+    const paths = Array.isArray(body?.paths) ? body.paths.map(asJsonString).filter((p): p is string => p !== undefined) : [];
+    return HttpResponse.json({ exists: paths.filter((p) => fixtureFileRead(p) !== null || fixtureFilesDir(p) !== null) });
   }),
   // Pane transcript history. Two turns, newest-anchored, with nothing older behind them.
   http.get(/\/api\/pane\/[^/]+\/history/, () =>
@@ -755,6 +790,10 @@ export const handlers = [
     HttpResponse.json({ alerts: await request.json() }),
   ),
   http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "" })),
+  // The token-bearing subresources (lib/authed-url.ts, ADR 0086): a picture's bytes and the mark's.
+  // Any bytes do; the page draws them from an object URL the test setup stubs.
+  http.get("/api/blobs/:hash", () => new HttpResponse(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { headers: { "content-type": "image/png" } })),
+  http.get("/api/mux/logo.svg", () => new HttpResponse("<svg/>", { headers: { "content-type": "image/svg+xml" } })),
   // Default world: no `launchers.toml`. Session-scoped (server.ts), so a test that wants rows
   // overrides this with its own `/api/launchers` handler rather than adding a field to `/api/config`.
   http.get("/api/launchers", () => HttpResponse.json({ launchers: [], home: "" })),
@@ -795,14 +834,14 @@ export const handlers = [
   }),
   http.get("/api/notifications/cache-watch/list", () => HttpResponse.json({ entries: [] })),
   http.post("/api/notifications/cache-watch/forget", () => HttpResponse.json({ entries: [] })),
-  // Device pairing. The default world has NOTHING paired — writes are ungated, exactly like a
-  // fresh install — so every pre-existing test keeps asserting the unpaired-and-unenforced bridge,
-  // and a test that wants pairing on overrides these two.
+  // Device pairing. The default world has NOTHING paired, exactly like a fresh install, and pairing
+  // is always on (ADR 0086), so `enforced` is true. The other routes here answer without a token for
+  // the tests' convenience; a test that wants the refusal overrides the route with a 403.
   http.get("/api/devices", () =>
-    HttpResponse.json({ enforced: false, current: null, devices: [] }),
+    HttpResponse.json({ enforced: true, current: null, devices: [] }),
   ),
   http.post("/api/devices/revoke", () =>
-    HttpResponse.json({ enforced: false, current: null, devices: [] }),
+    HttpResponse.json({ enforced: true, current: null, devices: [] }),
   ),
   http.post("/api/pair", () =>
     HttpResponse.json({ error: "no-pending" }, { status: 400 }),

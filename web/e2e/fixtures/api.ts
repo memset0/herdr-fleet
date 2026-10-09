@@ -10,6 +10,7 @@ import {
   fixtureCommitDiff,
   fixtureCrewSnapshot,
   fixtureCrewStatus,
+  fixtureFileImage,
   fixtureFileRead,
   fixtureFilesDir,
   FIXTURE_FILES_UNKNOWN,
@@ -138,6 +139,13 @@ async function answer(route: Route, path: string, folders: FolderWorld): Promise
     return found === null ? fulfillJson(route, FIXTURE_FILES_UNKNOWN, 404) : fulfillJson(route, found);
   }
 
+  // One picture under the Files root, as bytes (ADR 0090).
+  if (/^\/api\/(?:pane|workspace)\/[^/]+\/files\/image$/.test(path)) {
+    const bytes = fixtureFileImage(new URL(route.request().url()).searchParams.get("path") ?? "");
+    if (bytes === null) return fulfillJson(route, FIXTURE_FILES_UNKNOWN, 404);
+    return route.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(bytes) });
+  }
+
   if (/^\/api\/pane\/[^/]+\/history$/.test(path)) {
     return fulfillJson(route, {
       paneId: "w1:p1",
@@ -225,9 +233,10 @@ async function answer(route: Route, path: string, folders: FolderWorld): Promise
   }
   if (path === "/api/config") return fulfillJson(route, { push: false, vapidPublicKey: "" });
   if (path === "/api/launchers") return fulfillJson(route, { launchers: [], home: "" });
-  // Nothing paired, nothing enforced — a fresh install.
+  // Nothing paired on a fresh install, and pairing is always on (ADR 0086). The stub answers every
+  // other read without a token, so the cases need not pair first: it stands in for a paired phone.
   if (path === "/api/devices" || path === "/api/devices/revoke") {
-    return fulfillJson(route, { enforced: false, current: null, devices: [] });
+    return fulfillJson(route, { enforced: true, current: null, devices: [] });
   }
   if (path === "/api/notifications/prefs") {
     return fulfillJson(route, { blocked: true, done: false, updates: true });

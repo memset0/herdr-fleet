@@ -105,3 +105,28 @@ export function clockTime(ts: number): string {
   const locale = getLocaleSnapshot().locale;
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(ts));
 }
+
+/**
+ * A date and a time, medium and short, in the active APP locale — for a moment that may be weeks
+ * away, like a paired device's expiry. An age ("in 3 days") would have to be recomputed to stay
+ * true; a date stays true however long the screen sits there.
+ */
+export function dateTime(ts: number): string {
+  const locale = getLocaleSnapshot().locale;
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(ts));
+}
+
+/**
+ * When a saved copy was fetched, the way the offline banners say it (M46 spec 10): the clock time
+ * when it was today, else a date and a time. A clock time alone for a copy from yesterday would read
+ * as this morning. Not an age, for {@link clockTime}'s reason: the screen may sit there for an hour.
+ */
+export function savedAtLabel(ts: number, now: number = Date.now()): string {
+  const then = new Date(ts);
+  const today = new Date(now);
+  const sameDay =
+    then.getFullYear() === today.getFullYear() &&
+    then.getMonth() === today.getMonth() &&
+    then.getDate() === today.getDate();
+  return sameDay ? clockTime(ts) : dateTime(ts);
+}

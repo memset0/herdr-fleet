@@ -33,8 +33,35 @@ export interface WireWorkspace {
   tab_count: number;
   active_tab_id: string;
   agent_status: AgentStatus;
-  /** Present when the workspace sits in a Git work tree — probed 2026-08-28 on herdr 0.8.2. */
+  /**
+   * Present when the workspace sits in a Git work tree — probed 2026-08-28 on herdr 0.8.2.
+   *
+   * Still in herdr 0.9.3's schema (protocol 22) but no longer sent for a plain workspace: probed
+   * 2026-10-07, `workspace.list` and `session.snapshot` omit it on every workspace, Git ones
+   * included. The repo is read from {@link HerdrClient.workspaceWorktrees} instead (adapter.ts).
+   */
   worktree?: WireWorkspaceWorktree | null;
+}
+
+/**
+ * The repo a `worktree.list` answer is about — its `source` object (herdr 0.9.3, protocol 22).
+ *
+ * `source_checkout_path` is NOT the asked workspace's own checkout: probed 2026-10-07, asked from
+ * inside a linked worktree it still names the repo's main checkout. Which checkout the workspace
+ * sits in is the `worktrees` entry whose `open_workspace_id` is that workspace.
+ */
+export interface WireWorktreeSource {
+  repo_root: string;
+  repo_key?: string;
+  repo_name?: string;
+  source_checkout_path?: string;
+  source_workspace_id?: string | null;
+}
+
+/** A whole `worktree.list` answer: the repo, and every checkout of it. */
+export interface WireWorktreeListing {
+  source: WireWorktreeSource;
+  worktrees: WireWorktree[];
 }
 
 /**
@@ -227,6 +254,7 @@ export type HerdrRpc = Pick<
   | "closeTab"
   | "createWorkspace"
   | "listWorktrees"
+  | "workspaceWorktrees"
   | "createWorktree"
   | "openWorktree"
   | "subscribeEvents"
@@ -237,6 +265,13 @@ let idCounter = 0;
 /** Per-request wall-clock budget. Exported so callers can pass it explicitly alongside a dial mode. */
 export const DEFAULT_TIMEOUT_MS = 5000;
 
+/**
+ * The budget of a worktree create or open, per call (ADR 0089). Herdr runs `git worktree add` and
+ * opens a workspace before it answers, and on a large repo that takes far longer than the 5 s every
+ * other call gets. Cut at 5 s, the create still finishes on the host, and the phone is told it failed.
+ */
+export const WORKTREE_TIMEOUT_MS = 60_000;
+
 export class HerdrClient {
   constructor(
     private readonly socketPath: string,
@@ -245,8 +280,12 @@ export class HerdrClient {
     private readonly dialMode: DialMode = "auto",
   ) {}
 
-  /** One request, one reply, one connection. Rejects on error reply, timeout, or early close. */
-  private request<T>(method: string, params: JsonObject = {}): Promise<T> {
+  /**
+   * One request, one reply, one connection. Rejects on error reply, timeout, or early close.
+   *
+   * `timeoutMs` overrides the client's budget for this one call; absent, the constructor's applies.
+   */
+  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs): Promise<T> {
     const id = `b${++idCounter}`;
     return new Promise<T>((resolve, reject) => {
       let buf = "";
@@ -285,8 +324,8 @@ export class HerdrClient {
         cancelDial = null;
       };
       const timer = setTimeout(
-        () => finish(() => reject(new Error(`herdr ${method}: timed out after ${this.timeoutMs}ms`))),
-        this.timeoutMs,
+        () => finish(() => reject(new Error(`herdr ${method}: timed out after ${timeoutMs}ms`))),
+        timeoutMs,
       );
 
       const dialed = dialHerdr(this.socketPath, {
@@ -546,6 +585,19 @@ export class HerdrClient {
   }
 
   /**
+   * The repo a WORKSPACE sits in, and every checkout of it: `worktree.list` by `workspace_id`.
+   *
+   * herdr 0.9.3 stopped putting the repo on the workspace record (see {@link WireWorkspace.worktree}),
+   * and this is where it went. On the client's own budget, not WORKTREE_TIMEOUT_MS: it runs `git
+   * worktree list`, which reads and never writes. A folder outside Git answers `not_git_worktree`,
+   * an unknown id `workspace_not_found` — both rejections, both told apart by the caller.
+   */
+  async workspaceWorktrees(workspaceId: string): Promise<WireWorktreeListing> {
+    const r = await this.request<WireWorktreeListing>("worktree.list", { workspace_id: workspaceId });
+    return { source: r.source, worktrees: r.worktrees };
+  }
+
+  /**
    * Create a worktree on a new branch and open it as its own workspace. `focus:false`, so the
    * operator's own screen stays where they left it (the phone navigates itself).
    *
@@ -555,9 +607,12 @@ export class HerdrClient {
    * taken), so the recovery is to open it, never to create it again.
    */
   async createWorktree(opts: { cwd: string; branch: string }): Promise<CreatedShell> {
+    // No `trust_repository`: that flag grants Git trust for the request (`safe.directory`), and the
+    // operator gives it in Herdr, never from the phone (ADR 0089).
     const r = await this.request<{ workspace: WireWorkspace; root_pane: WirePane }>(
       "worktree.create",
       { cwd: opts.cwd, branch: opts.branch, focus: false },
+      WORKTREE_TIMEOUT_MS,
     );
     const p = r.root_pane;
     return {
@@ -584,7 +639,7 @@ export class HerdrClient {
       workspace: WireWorkspace;
       root_pane: WirePane;
       already_open?: boolean;
-    }>("worktree.open", { cwd: opts.cwd, path: opts.path, focus: false });
+    }>("worktree.open", { cwd: opts.cwd, path: opts.path, focus: false }, WORKTREE_TIMEOUT_MS);
     const p = r.root_pane;
     return {
       shell: {

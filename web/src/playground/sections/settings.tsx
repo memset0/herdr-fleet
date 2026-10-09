@@ -14,7 +14,8 @@ import {
   spacesWithWorktrees,
   watchedPanes,
 } from "../fixtures";
-import { Card, Group, Section, SettingsRouter, Stage, type SectionDef } from "../harness";
+import { SettingsRouter } from "../harness";
+import { Card, Group, Section, Stage, type SectionDef } from "../layout";
 import { PhoneFrameCard } from "./shared";
 
 export const DEF: SectionDef = {
@@ -31,7 +32,7 @@ export function SettingsSection() {
         <Card
           state="settings-solo-unpaired"
           label="settings, solo collie, nothing paired"
-          reach="tap the gear from the dashboard. With no device paired, writes are ungated and the Paired devices card offers the pairing verb instead of a list."
+          reach="tap the gear from the dashboard. With no device paired, the bridge answers no read and no write, and the Paired devices card offers the pairing verb instead of a list."
           note="The whole real route. Two things on it still reach the network on purpose — /api/config for the diagnostics build, and the browser's own push subscription — and both fail soft, so the page renders whole with no bridge."
           span={2}
         >

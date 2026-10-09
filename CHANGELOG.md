@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopted Collie 1.18.0.** Pairing on every read, twelve languages, a left-hand layout, secret masking, offline reading and the one dashboard control bar arrive from upstream; the fork's rails, mic-and-send split and terminal surface sit beside them.
+
 ## [3.12.0] - 2026-10-09
 
 **Every member redeploys, lead first; no operator configuration changes.** 3.11.0's member-side Pane

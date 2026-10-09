@@ -20,17 +20,10 @@ import {
   paneWorking,
   updateRelease,
   uploadedImagePath,
+  type PaneFixture,
 } from "../fixtures";
-import {
-  Card,
-  Group,
-  PaneRouter,
-  PaneStackRouter,
-  Section,
-  Segmented,
-  Stage,
-  type SectionDef,
-} from "../harness";
+import { PaneRouter, PaneStackRouter } from "../harness";
+import { Card, CardControls, Group, Section, Segmented, Stage, type SectionDef } from "../layout";
 import { PhoneFrameCard } from "./shared";
 
 export const DEF: SectionDef = {
@@ -38,6 +31,12 @@ export const DEF: SectionDef = {
   title: "Pane",
   intent:
     "One terminal, mirrored. The breadcrumb header and status chip, the ANSI mirror with whatever dialog the grammar lifted out of it, and the composer beneath.",
+};
+
+/** The working pane, on a branch. Local, so the shared fixture stays what an older bridge sends. */
+const paneOnBranch: PaneFixture = {
+  ...paneWorking,
+  pane: { ...paneWorking.pane, gitHead: { kind: "branch", name: "perf/dashboard-poll-cadence-and-backoff" } },
 };
 
 export function PaneSection() {
@@ -64,6 +63,18 @@ export function PaneSection() {
         >
           <PhoneFrameCard height={760}>
             <PaneRouter home={homeSolo} fixture={paneWorking} />
+          </PhoneFrameCard>
+        </Card>
+
+        <Card
+          state="pane-header-branch"
+          label="pane, the branch on the header's path line"
+          reach="open a pane whose folder sits in a git checkout. Line 2 of the header names the workspace, then the branch, then the machine and the cache reading."
+          note="A long branch name on purpose: the workspace gives way first, then the branch gives way in the middle and keeps its tail, and the line stays 12px, so the header holds its 60px."
+          span={2}
+        >
+          <PhoneFrameCard height={760}>
+            <PaneRouter home={homeSolo} fixture={paneOnBranch} />
           </PhoneFrameCard>
         </Card>
 
@@ -188,9 +199,9 @@ function NoEchoNoticeHarness() {
   const [dismissed, setDismissed] = useState(false);
   return (
     <>
-      <div className="mb-2">
+      <CardControls>
         <Segmented name="no-echo prompt" value={typed} options={NO_ECHO_OPTIONS} onChange={setTyped} />
-      </div>
+      </CardControls>
       <Stage>
         <div className="p-3">
           <Collapse open={!dismissed}>

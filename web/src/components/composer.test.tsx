@@ -17,6 +17,15 @@ import { CrewProvider } from "./crew-provider";
 import { Composer, TUI_SETTLE_MS } from "./composer";
 import { type ServerSummary } from "@/lib/types";
 
+// M46 spec 11 turns every send off for a pane the bridge has not answered lately (lib/liveness.ts).
+// These suites drive sends against a mocked network and never poll first, so they pin the pane live;
+// the gating itself is covered by liveness.test.ts and the *-offline suites.
+vi.mock("@/lib/liveness", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/liveness")>()),
+  isLive: () => true,
+  useLive: () => true,
+}));
+
 // A guarded send is TWO reply calls: type (submit:false), then — once the text is verified on the
 // input line — submit-only (empty text). Overriding the reply handler therefore has to keep the fake
 // pane's input line honest via recordReply, or the verification poll never passes. Helper so each
@@ -1989,6 +1998,103 @@ describe("Composer — in-flight echo suppression (match-last-sent)", () => {
   });
 });
 
+// While a send is still in flight, the terminal line carries OUR staging text (attachments go
+// out as host paths) — the draft preview must stay off for it, or a slow photo send flashes the
+// card while the guard verifies. The gate only hides DURING the send; afterwards the ordinary
+// echo/handled path resumes, so a foreign draft that is still there surfaces again once its line
+// changes (pinned for the non-sending case by the test above).
+describe("Composer — no draft preview while its own send is in flight", () => {
+  function FlightHarness({ staged }: { staged: string }) {
+    // The parent strands the staged line while the send is held, the way the mirror would once
+    // the guard has typed the text and Enter is still pending. The second button strands a
+    // DIFFERENT line afterwards, proving the gate delays rather than permanently suppresses.
+    const [draft, setDraft] = useState<string | null>(null);
+    const props: ComponentProps<typeof Composer> = {
+      paneId: "w1:p1",
+      agent: "claude",
+      isShell: false,
+      gone: false,
+      readOnly: false,
+      dialogPresent: false,
+      text: "pane output",
+      terminalDraft: draft,
+      rawTerminalDraft: draft,
+      prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+      display: { open: false, onToggle: vi.fn() },
+      onSent: vi.fn(),
+    };
+    return (
+      <>
+        <button onClick={() => setDraft(staged)}>__strand-staged</button>
+        <button onClick={() => setDraft("host typed more afterwards")}>__strand-other</button>
+        <Composer {...props} />
+      </>
+    );
+  }
+
+  function renderFlight(staged: string) {
+    const router = createMemoryRouter([{ path: "/", element: <FlightHarness staged={staged} /> }]);
+    render(<RouterProvider router={router} />);
+  }
+
+  // Hold the type call: the send stays staged (sending) until the returned release runs.
+  // The submit call passes straight through, so releasing the gate always lets the send complete.
+  function holdTypeCall(callLog: string[]) {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/keys$/, async () => HttpResponse.json({ ok: true })),
+      http.post<never, { text: string; submit?: boolean }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
+        const body = await request.json();
+        recordReply(body);
+        callLog.push(body.submit ? "submit" : `reply:${body.text}`);
+        if (!body.submit) await gate;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    return { release };
+  }
+
+  it("hides its own staged photo path for the whole send, and stays quiet after", async () => {
+    const user = userEvent.setup();
+    const callLog: string[] = [];
+    const { release } = holdTypeCall(callLog);
+    const staged = "schau mal /home/andiw/.local/state/collie/uploads/w4_p2-abc123.jpg";
+    renderFlight(staged);
+    await user.type(screen.getByPlaceholderText(/type a reply/i), staged);
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(callLog).toContain(`reply:${staged}`));
+    // The guard has typed the line and Enter is pending — the staged text must not surface.
+    await user.click(screen.getByRole("button", { name: "__strand-staged" }));
+    expect(screen.queryByText(/draft in terminal/i)).not.toBeInTheDocument();
+    release();
+    await waitFor(() => expect(callLog).toContain("submit"));
+    expect(screen.queryByText(/draft in terminal/i)).not.toBeInTheDocument();
+  });
+
+  it("hides even a foreign draft while the send is in flight", async () => {
+    // The send moment belongs to the phone: a host draft that appears mid-send waits until the
+    // send completes rather than fighting it for the mirror.
+    const user = userEvent.setup();
+    const callLog: string[] = [];
+    const { release } = holdTypeCall(callLog);
+    renderFlight("someone else's leftover");
+    await user.type(screen.getByPlaceholderText(/type a reply/i), "hello");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(callLog).toContain("reply:hello"));
+    await user.click(screen.getByRole("button", { name: "__strand-staged" }));
+    expect(screen.queryByText(/draft in terminal/i)).not.toBeInTheDocument();
+    release();
+    await waitFor(() => expect(callLog).toContain("submit"));
+    // The delay is bounded, not permanent: a genuinely new line after the send surfaces again.
+    // (This doubles as the in-harness positive control — a latch that never fires could not pass.)
+    await user.click(screen.getByRole("button", { name: "__strand-other" }));
+    expect(await screen.findByText(/draft in terminal/i)).toBeInTheDocument();
+  });
+});
+
 // The no-service-worker self-updater must never reload over unsent work. The composer holds a reload
 // (lib/reload-guard) while its phone-owned input has REAL text or an upload is in flight — but a
 // terminal draft alone is SAFE (it lives on the "❯" line and its preview re-derives after a reload),
@@ -3725,5 +3831,98 @@ describe("Fleet task delivery through the native composer", () => {
     const props = renderComposer({ bindingPane, isShell: true, agent: "shell" });
     expect(await deliverTodoistTask(terminal, bindingPane.paneId, "Task content")).toBe(false);
     expect(props.onSent).not.toHaveBeenCalled();
+  });
+});
+
+// THE LEFT-HAND COMPOSER (Settings -> Hand). The box runs mirrored in CSS and the DOM keeps the
+// right-hand order, so the tab and reading order are the same for both hands: field, Attach, Send.
+describe("Composer — hand", () => {
+  beforeEach(() => __resetOperatorCommands());
+  afterEach(() => __resetOperatorCommands());
+
+  const box = () => document.querySelector<HTMLElement>('[data-slot="composer-box"]')!;
+  const publishUpload = () =>
+    server.use(
+      http.get("/api/config", () =>
+        HttpResponse.json({
+          push: false,
+          vapidPublicKey: "",
+          upload: { maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md"] },
+        }),
+      ),
+    );
+
+  it("is the right hand by default: the box is not mirrored and the attach panel opens right-aligned", async () => {
+    const user = userEvent.setup();
+    publishUpload();
+    renderComposer();
+    expect(box().className).not.toMatch(/(?:^|\s)flex-row-reverse(?=\s|$)/);
+    expect(document.body.innerHTML).not.toMatch(/direction:(?:rtl|ltr)/);
+    await user.click(await screen.findByRole("button", { name: "Attach file" }));
+    const panel = await screen.findByRole("dialog", { name: "Attach" });
+    expect(panel.className).toMatch(/(?:^|\s)right-0(?=\s|$)/);
+    expect(panel.className).not.toMatch(/(?:^|\s)left-0(?=\s|$)/);
+  });
+
+  it("left: mirrors the box so Send, Attach, then the field read left to right, in the same DOM order", () => {
+    renderComposer();
+    const order = (el: HTMLElement) =>
+      [...el.children]
+        .map((c) => c.getAttribute("aria-label") ?? c.tagName)
+        .filter((n) => ["TEXTAREA", "Attach file", "Send"].includes(n));
+    const right = order(box());
+    cleanup();
+    renderComposer({ hand: "left" });
+    expect(box().className).toMatch(/(?:^|\s)flex-row-reverse(?=\s|$)/);
+    expect(order(box())).toEqual(right);
+    // DOM: field, Attach, Send. Mirrored on screen that is Send, Attach, field.
+    expect(right).toEqual(["TEXTAREA", "Attach file", "Send"]);
+  });
+
+  it("left: opens the attach panel left-aligned, against the side Attach stands on", async () => {
+    const user = userEvent.setup();
+    publishUpload();
+    renderComposer({ hand: "left" });
+    await user.click(await screen.findByRole("button", { name: "Attach file" }));
+    const panel = await screen.findByRole("dialog", { name: "Attach" });
+    expect(panel.className).toMatch(/(?:^|\s)left-0(?=\s|$)/);
+    expect(panel.className).not.toMatch(/(?:^|\s)right-0(?=\s|$)/);
+  });
+
+  it("left: hands the belt the same hand, so it runs right to left with its block at the left", () => {
+    renderComposer({ hand: "left" });
+    const belt = document.querySelector<HTMLElement>('[data-slot="composer-actions"]')!;
+    expect(belt.querySelector(".overflow-x-auto")!.className).toContain("[direction:rtl]");
+  });
+});
+
+// A line copied off the mirror carries the bridge's dots, not the secret behind them. The composer
+// warns, and never blocks: reply-action.ts accepts `•` as a mask slot on purpose.
+describe("Composer — a draft that holds masked text", () => {
+  const CAUTION = /this reply holds masked text/i;
+
+  it("warns under the box while the draft holds a run of dots, and goes when they are deleted", async () => {
+    renderComposerWithStatus();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    expect(screen.queryByText(CAUTION)).toBeNull();
+    fireEvent.change(box, { target: { value: "export KEY=sk-o••••••••" } });
+    const caution = await screen.findByText(CAUTION);
+    expect(caution).toHaveTextContent("The pane gets the dots, not the secret.");
+    await waitFor(() => expect(caution.closest('[data-slot="collapse"]')!.getAttribute("data-state")).toBe("open"));
+    fireEvent.change(box, { target: { value: "export KEY=" } });
+    expectLeaving(screen.queryByText(CAUTION));
+  });
+
+  it("does not warn for three dots or an ordinary sentence", () => {
+    renderComposerWithStatus();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    fireEvent.change(box, { target: { value: "wait for it ••• then run the tests" } });
+    expect(screen.queryByText(CAUTION)).toBeNull();
+  });
+
+  it("does not block Send", () => {
+    renderComposerWithStatus();
+    fireEvent.change(screen.getByPlaceholderText(/type a reply/i), { target: { value: "ghp_••••••••" } });
+    expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled();
   });
 });

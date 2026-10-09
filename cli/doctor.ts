@@ -15,6 +15,7 @@ import { beaconReader } from "../bridge/beacon-io.ts";
 import { readBeacons, type BeaconSweepDeps } from "../bridge/beacon/reader.ts";
 import { DEFAULT_PORT, envBool, nonLoopbackBindRefusal, resolveBridgeHost } from "../bridge/config.ts";
 import { configFilePaths } from "../bridge/config-source.ts";
+import { localAuthHeader, readLocalSecret } from "../bridge/local-secret.ts";
 import type { MuxCapabilityDeclaration } from "../bridge/mux/capabilities.ts";
 import {
   buildMuxRegistry,
@@ -52,6 +53,8 @@ import {
   whoCanRead,
 } from "../bridge/owner-only.ts";
 import { sidName } from "../bridge/sddl.ts";
+import { DEVICES_FILENAME, isExpired, parseRegistryText } from "../bridge/pairing.ts";
+import { pairedRegistryOf } from "./pairing.ts";
 import { collieVersionBare, type CliContext } from "./context.ts";
 import { aboutCrew, bad, ok, skipped, warn, type DoctorStatus, type Finding } from "./finding.ts";
 import { explicitMux, probeMuxes, refusedMux, type MuxSighting } from "./mux.ts";
@@ -230,6 +233,7 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
     bindWildcard(deps),
     acl(deps),
     frontDoor(deps, mode),
+    pairedDevices(deps, mode),
     mux(deps),
     // Windows only: who the Task Scheduler task belongs to (M43 spec 05), the long-path switch, and
     // whether the secret folders are owner-only by their access list (M43 spec 04). No line elsewhere:
@@ -853,6 +857,51 @@ function bindCheck(deps: DoctorDeps, mode: string): Finding {
  */
 const resolvedBind = (deps: DoctorDeps): string => resolveBridgeHost(deps.ctx.env);
 
+/**
+ * Whether any device is paired here (M46 spec 03). Pairing is always on (ADR 0086): with nothing in
+ * `paired-devices.json` the bridge answers `/api/health` and `/api/pair` and refuses every other
+ * `/api` route with `device not paired`, so the phone shows its pair screen and nothing else. A warning
+ * and not an error: it is the state every fresh install starts in, and the remedy is one command.
+ *
+ * Read off disk through `pairedRegistryOf`, the reader `devices list` uses, so a half-written file
+ * counts the same devices here as there. A PEER is skipped: it publishes no front door (ADR 0013), its phone
+ * reads it through the lead, and the lead's registry is the one that decides.
+ */
+function pairedDevices(deps: DoctorDeps, mode: string): Finding {
+  if (mode === "peer") {
+    return skipped("pairing", "a peer is read through its lead — pair devices on the lead", "`collie pair` on the lead");
+  }
+  // A file that is THERE and not a registry is its own finding, before the count: `pairedRegistryOf`
+  // reads it as empty, while the bridge answers every phone `503 pairing unavailable` until it can
+  // read it (bridge/pairing.ts, RegistryUnreadableError). Saying "no device paired" would send the
+  // operator to pair again over a registry that still holds every device.
+  const raw = deps.files.read(join(deps.ctx.stateDir, DEVICES_FILENAME));
+  if (raw !== null && parseRegistryText(raw) === null) {
+    return warn(
+      "pairing",
+      `${DEVICES_FILENAME} is there and cannot be read: every phone gets 503 \`pairing unavailable\` until it can`,
+      `restore ${join(deps.ctx.stateDir, DEVICES_FILENAME)} from a backup, or move it aside and run \`collie pair\` for each phone`,
+    );
+  }
+  const devices = pairedRegistryOf(deps.files, deps.ctx.stateDir).devices;
+  const live = devices.filter((d) => !isExpired(d, Date.now()));
+  if (devices.length === 0) {
+    return warn(
+      "pairing",
+      "no device paired yet: every /api route but health and pair answers 403 `device not paired`",
+      "run `collie pair` here and enter the code on the phone",
+    );
+  }
+  if (live.length === 0) {
+    return warn(
+      "pairing",
+      `${String(devices.length)} device(s) paired, and every pairing has expired: no device can read or write`,
+      "run `collie pair` here and enter the code on the phone",
+    );
+  }
+  return ok("pairing", `${String(live.length)} device(s) paired`);
+}
+
 /** The operator's own decision, reported back — never a failure (ADR 0013's posture). */
 function bindWildcard(deps: DoctorDeps): Finding {
   if (!bindIsWildcard(resolvedBind(deps))) return ok("bind-wildcard", "bound to one address");
@@ -896,14 +945,14 @@ function acl(deps: DoctorDeps): Finding {
 const tailscaleServeByHand = (port: number): string => `\`tailscale serve --bg --set-path=/ ${port}\``;
 
 /**
- * Collie records no mapping on Windows, so a hand-made one leaves every tailnet device free to use
- * Collie until a device is paired. The remedies that publish say to pair right away.
+ * Pairing is always on (ADR 0086): a published Collie answers no phone until one is paired. The
+ * remedies that publish say so, because a door that opens onto a pair screen looks broken otherwise.
  */
-const WINDOWS_PAIR_NOW = "pair a device right away";
+const WINDOWS_PAIR_NOW = "run `collie pair` to pair a device";
 
 const windowsPublishRemedy = (port: number): string =>
-  `run ${tailscaleServeByHand(port)} in PowerShell, then ${WINDOWS_PAIR_NOW}: until then every tailnet` +
-  " device can use Collie (docs/windows.md); or set COLLIE_SKIP_SERVE=1 if you own the ingress";
+  `run ${tailscaleServeByHand(port)} in PowerShell, then ${WINDOWS_PAIR_NOW}: until then Collie` +
+  " answers no device (docs/windows.md); or set COLLIE_SKIP_SERVE=1 if you own the ingress";
 
 const windowsHttpsDisabledHint = (port: number): string =>
   'enable HTTPS in the admin console (https://login.tailscale.com/admin/dns, "Enable HTTPS"), then run' +
@@ -1130,7 +1179,7 @@ async function ownSnapshot(deps: DoctorDeps): Promise<SnapshotRead> {
   try {
     const answer = await deps.fetch(`http://${bracketed}:${String(deps.ctx.port)}/api/snapshot`, {
       signal: AbortSignal.timeout(SNAPSHOT_BUDGET_MS),
-      headers: identityHeader(deps),
+      headers: ownReadHeaders(deps),
     });
     if (answer.ok) return { kind: "body", text: await answer.text() };
     return { kind: "refused", status: answer.status };
@@ -1160,6 +1209,21 @@ async function ownSnapshot(deps: DoctorDeps): Promise<SnapshotRead> {
 function identityHeader(deps: DoctorDeps): Record<string, string> | undefined {
   const login = deps.ctx.env.COLLIE_TRUSTED_USER ?? "";
   return login === "" ? undefined : { "Tailscale-User-Login": login };
+}
+
+/**
+ * Everything this verb shows its own bridge on a read: the configured login (issue #238, above) and
+ * the bridge's local read credential (`<stateDir>/local-secret`, bridge/local-secret.ts), because
+ * reads need a pairing token now (ADR 0086) and this process holds none. The credential reads only,
+ * and only from this host (loopback or the host's own bound address); with no file (the bridge is
+ * down, or older) nothing is sent and the bridge refuses as it did before, which `ownAnswerSentence`
+ * and the history section report as a refusal.
+ */
+function ownReadHeaders(deps: DoctorDeps) {
+  return {
+    ...identityHeader(deps),
+    ...localAuthHeader(readLocalSecret(deps.ctx.stateDir, (p) => deps.files.read(p))),
+  };
 }
 
 /** Long enough for a busy loopback bridge, short enough that a wedged one does not hold the verb. */

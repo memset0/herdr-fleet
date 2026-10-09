@@ -29,9 +29,43 @@ import {
   segmentStyle,
 } from "@/components/mirror-space";
 import { renderCells } from "@/components/painted-cells";
-import { ImageCard } from "@/components/ui/image-card";
+import { AuthedImageCard } from "@/components/authed-image-card";
 import { findMatches, splitSegment, type FindMatch } from "@/lib/find";
-import { findLinks } from "@/lib/links";
+import { findLinks, type LinkMatch } from "@/lib/links";
+import { findFilePaths } from "@/lib/file-paths";
+import { isPlainClick, useFileLinks, type FileLinkOpener } from "@/components/file-links";
+
+/**
+ * A link in the mirror: an autolinked URL (opens a new tab), or a path the agent printed that
+ * resolves under the Changes root and exists there (`onOpen`, ADR 0088), which opens Files inside
+ * the app.
+ */
+type MirrorLink = LinkMatch & { onOpen?: () => void };
+
+/**
+ * The URL links plus the file paths, in one sorted list over the same haystack. Paths are found per
+ * mirror ROW: a path the terminal wrapped onto two rows is two pieces and is not joined this round
+ * (the URL repair through `logicalText` has no file counterpart yet). A path that overlaps a URL
+ * gives way to it. With no opener this is the URL list, unchanged.
+ */
+function mirrorLinks(haystack: string, urls: LinkMatch[], open: FileLinkOpener | null): MirrorLink[] {
+  if (open === null || !haystack.includes("/")) return urls;
+  const files: MirrorLink[] = [];
+  let base = 0;
+  for (const row of haystack.split("\n")) {
+    for (const f of findFilePaths(row)) {
+      const target = open(f);
+      if (target === null) continue;
+      const start = base + f.start;
+      const end = base + f.end;
+      if (urls.some((u) => u.start < end && start < u.end)) continue;
+      files.push({ start, end, href: target.href, onOpen: target.onOpen });
+    }
+    base += row.length + 1;
+  }
+  if (files.length === 0) return urls;
+  return [...urls, ...files].toSorted((a, b) => a.start - b.start);
+}
 
 /** A raw block, narrowed off the Block union (the highlight/offset paths only touch these). */
 type RawBlock = Extract<Block, { kind: "raw" }>;
@@ -238,8 +272,10 @@ const TABLE_RUN_CLASS =
 // can't contain a newline, so no match straddles the inter-line separators.)
 //
 // Autolinked URLs (lib/links.ts) live in that SAME coordinate space and are applied over the raw
-// blocks too, as anchors wrapping the find-highlighted runs. Only `http(s)://` text becomes a link,
-// and the href is the matched text itself — no scheme can appear that wasn't printed by the agent.
+// blocks too, as anchors wrapping the find-highlighted runs. Only `http(s)://` text becomes a web
+// link, and the href is the matched text itself — no scheme can appear that wasn't printed by the agent.
+// The one other link is a file path the agent printed (ADR 0088): its href is an in-app Files
+// address the screen's opener built from a root-relative path, never the printed text.
 //
 // Performance: parseAnsi + block-building run once per unique `text` (and `agent`) value (useMemo),
 // as does the link scan; React.memo prevents re-renders when props are unchanged — critical for the
@@ -253,9 +289,9 @@ const TABLE_RUN_CLASS =
 // could not match, or a journal read that has not answered yet, still has to say "a picture is
 // here", which is the whole difference from the black box this replaces.
 //
-// The picture is the shared `ImageCard` (ui/image-card.tsx), whose href is a URL `imageSrc` already
-// vetted (`lib/api.ts`) — a blob path on the owning host, or inline bytes. Never a URL the agent's
-// log supplied.
+// The picture is the shared `ImageCard` (ui/image-card.tsx), loaded with the pairing token through
+// `AuthedImageCard`. Its source is a URL `imageSrc` already vetted (`lib/api.ts`) — a blob path on
+// the owning host, or inline bytes. Never a URL the agent's log supplied.
 const renderImageCluster = (
   url: string | null,
   key: string,
@@ -275,7 +311,7 @@ const renderImageCluster = (
     // the journal turn by turn and is exact. A load that fails falls back to the badge (see FAILED
     // IMAGES in the component); the handler reports the URL, not the cluster, because the same blob
     // can sit under two clusters.
-    <ImageCard
+    <AuthedImageCard
       key={key}
       src={url}
       alt={t("mirror.imageAlt")}
@@ -371,7 +407,12 @@ export const AnsiOutput = memo(function AnsiOutput({
   // Autolinked URLs, in the SAME offset space as find matches — both are ranges over `haystack`, so
   // one running offset serves both splits. Recomputed only when the mirror text changes. `logicalText`
   // (when the bridge sent it) lets a URL the pane wrapped be linked as the single URL it was.
-  const links = useMemo(() => findLinks(haystack, logicalText), [haystack, logicalText]);
+  const urls = useMemo(() => findLinks(haystack, logicalText), [haystack, logicalText]);
+  // Paths the agent printed, opened in Files (ADR 0088), in that same offset space. The opener is
+  // stable across polls (components/file-links.tsx), so this re-runs when the text does, and when a
+  // path it asked about turns out to exist.
+  const openFile = useFileLinks();
+  const links = useMemo(() => mirrorLinks(haystack, urls, openFile), [haystack, urls, openFile]);
 
   useEffect(() => {
     onMatchCount?.(matches.length);
@@ -454,8 +495,27 @@ export const AnsiOutput = memo(function AnsiOutput({
       const pieceStart = at;
       at += p.text.length;
       if (p.matchIndex === null) return <Fragment key={i}>{renderFind(p.text, pieceStart)}</Fragment>;
+      const link = links[p.matchIndex]!;
+      const onOpen = link.onOpen;
+      if (onOpen !== undefined) {
+        // A file path stays in the app: a plain tap opens Files, a modified click is the browser's.
+        return (
+          <a
+            key={i}
+            href={link.href}
+            onClick={(e) => {
+              if (e.defaultPrevented || !isPlainClick(e)) return;
+              e.preventDefault();
+              onOpen();
+            }}
+            className={LINK_CLASS}
+          >
+            {renderFind(p.text, pieceStart)}
+          </a>
+        );
+      }
       return (
-        <a key={i} href={links[p.matchIndex]!.href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+        <a key={i} href={link.href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
           {renderFind(p.text, pieceStart)}
         </a>
       );

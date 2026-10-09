@@ -1,16 +1,33 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
 
+import { markNotPaired, setDeviceToken } from "@/lib/pairing";
 import { ConnectionInfo } from "./connection-info";
 
 // The diagnostics panel translates the polled snapshot into a read-only "why isn't X working" view.
 // The device-access row is the interesting bit — it must mirror the deviceAuth matrix on the bridge.
 
 describe("ConnectionInfo — device access row", () => {
-  it("reads 'Not enforced' when the feature is off (no device on the snapshot)", () => {
+  // Most cases describe a paired phone; the unpaired ones clear the token themselves.
+  beforeEach(() => setDeviceToken("tok-placeholder"));
+
+  it("a paired device with the header gate off reads as enforced and paired, never 'Not enforced'", () => {
     render(<ConnectionInfo bridge="connected" device={undefined} />);
-    expect(screen.getByText("Not enforced")).toBeInTheDocument();
+    expect(screen.getByText("Enforced, this device is paired")).toBeInTheDocument();
+    expect(screen.queryByText("Not enforced")).toBeNull();
     expect(screen.getByText("Connected")).toBeInTheDocument();
+  });
+
+  it("a browser with no token reads as enforced and not paired", () => {
+    localStorage.clear();
+    render(<ConnectionInfo bridge={undefined} device={undefined} />);
+    expect(screen.getByText("Enforced, this device is not paired")).toBeInTheDocument();
+  });
+
+  it("a refusal latched after a self-unpair or revoke reads as not paired, even with a token", () => {
+    render(<ConnectionInfo bridge="connected" device={{ enforced: true, device: "my-phone", authorized: true }} />);
+    act(() => markNotPaired());
+    expect(screen.getByText("Enforced, this device is not paired")).toBeInTheDocument();
   });
 
   it("shows full access with the device id for an authorised device", () => {
@@ -34,9 +51,58 @@ describe("ConnectionInfo — device access row", () => {
     expect(screen.getByText(/full access \(local\)/i)).toBeInTheDocument();
   });
 
+  it("an unpaired phone reads 'reachable, not paired' on the bridge row, never 'Connecting…'", () => {
+    localStorage.clear();
+    render(<ConnectionInfo bridge={undefined} device={undefined} />);
+    expect(screen.getByText("Reachable, not paired")).toBeInTheDocument();
+    expect(screen.queryByText("Connecting…")).toBeNull();
+  });
+
+  it("a refused phone reads 'reachable, not paired' on the bridge row", () => {
+    render(<ConnectionInfo bridge={undefined} device={undefined} />);
+    expect(screen.getByText("Connecting…")).toBeInTheDocument();
+    act(() => markNotPaired());
+    expect(screen.getByText("Reachable, not paired")).toBeInTheDocument();
+    expect(screen.queryByText("Connecting…")).toBeNull();
+  });
+
+  it("a paired phone keeps 'Connecting…' only while no answer has arrived", () => {
+    const { rerender } = render(<ConnectionInfo bridge={undefined} device={undefined} />);
+    expect(screen.getByText("Connecting…")).toBeInTheDocument();
+    rerender(<ConnectionInfo bridge="connected" device={undefined} />);
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+  });
+
   it("shows a connecting state and the server build when provided", () => {
     render(<ConnectionInfo bridge={undefined} device={undefined} build="abc1234" />);
     expect(screen.getByText("Connecting…")).toBeInTheDocument();
     expect(screen.getByText("abc1234")).toBeInTheDocument();
+  });
+});
+
+// The masking switch lives on the bridge. This row only SHOWS it, read-only, so the three states are
+// the whole contract: on, off in the caution tone, and a dash (same height) while unknown.
+describe("ConnectionInfo — secret masking row", () => {
+  beforeEach(() => setDeviceToken("tok-placeholder"));
+
+  it("says On when the bridge masks, and offers no control", () => {
+    render(<ConnectionInfo bridge="connected" device={undefined} redact={true} />);
+    expect(screen.getByText("Secret masking")).toBeInTheDocument();
+    expect(screen.getByText("On, set on the bridge")).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("says Off in the caution tone when the bridge does not mask", () => {
+    render(<ConnectionInfo bridge="connected" device={undefined} redact={false} />);
+    const off = screen.getByText("Off, set on the bridge");
+    expect(off).toHaveClass("text-status-working");
+  });
+
+  it("shows a dash while unknown, or for an older bridge, so the card never changes height", () => {
+    render(<ConnectionInfo bridge="connected" device={undefined} />);
+    const row = screen.getByText("Secret masking").closest("div")!;
+    expect(row).toHaveTextContent("—");
+    expect(screen.queryByText(/set on the bridge/)).toBeNull();
   });
 });

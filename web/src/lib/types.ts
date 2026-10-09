@@ -145,7 +145,19 @@ export interface AgentView {
    * all, and a 1.8.x peer simply omits it — every one of those renders as nothing.
    */
   cache?: PaneCache;
+  /**
+   * What the checkout holding this pane's folder is on. Mirrors `PaneWire.gitHead` in bridge/types.ts.
+   *
+   * **Absent, never a placeholder**: a folder in no checkout, a reading the bridge has not taken yet,
+   * an older bridge and an older crew member all send no key, and every one of those renders exactly
+   * what it rendered before the field existed. Read it through `paneGitHead` (lib/git-head.ts), which
+   * also drops a malformed one from a peer. Text only, never markup: a branch name is the repo's.
+   */
+  gitHead?: GitHead;
 }
+
+/** What a checkout is on: a branch by name, or a detached head at a full object name. */
+export type GitHead = { kind: "branch"; name: string } | { kind: "detached"; sha: string };
 
 /**
  * One rule as the pane sheet reads it. Mirrors `CacheRuleWire` in bridge/types.ts.
@@ -290,6 +302,13 @@ export interface PairedDeviceWire {
   label: string;
   createdAt: number;
   lastSeenAt: number;
+  /**
+   * When the token stops working (epoch ms), or null for no expiry (M46 spec 01). Optional on this
+   * side so a fixture or an older answer without it reads as "no expiry".
+   */
+  expiresAt?: number | null;
+  /** True once `expiresAt` has passed. The device stays listed until it is revoked. */
+  expired?: boolean;
   /** True for the device making the request — i.e. the one you're reading this on. */
   current: boolean;
 }
@@ -303,6 +322,11 @@ export interface DevicesResponse {
   enforced: boolean;
   /** The label this request's token authenticated as, or null when it authenticated as nobody. */
   current: string | null;
+  /**
+   * True when this request's token belongs to a paired device whose expiry passed — so a cold open
+   * can say "pairing expired" without first failing a write. Absent reads as false.
+   */
+  currentExpired?: boolean;
   devices: PairedDeviceWire[];
 }
 
@@ -1165,7 +1189,17 @@ export type FilesListing =
  */
 export type FileRead =
   | { available: false; reason: ChangesUnavailableReason }
-  | { available: true; root: string; path: string; size: number; binary: boolean; truncated: boolean; text: string };
+  | {
+      available: true;
+      root: string;
+      path: string;
+      size: number;
+      /** The file's modification time, epoch ms. With `size` it is the version a held picture is keyed on (ADR 0090). Absent from an older bridge. */
+      mtimeMs?: number;
+      binary: boolean;
+      truncated: boolean;
+      text: string;
+    };
 
 /** GET …/files and GET …/files?dir= — a folder, asked by pane or by workspace. */
 export type FilesListResponse = ChangesWorkspace & FilesListing;
@@ -1235,6 +1269,13 @@ export interface ChatWindowBody {
    * the route is additive-optional over a crew link).
    */
   queued?: string[];
+  /**
+   * The keys that deliver {@link queued} now, in the neutral key spelling, declared by the bridge
+   * for this session's harness. Absent for every harness that has no such key and from a bridge one
+   * release behind, and both read as "no Send now button". Mirrors `ChatWindowBody` in
+   * bridge/journal/live.ts.
+   */
+  sendQueuedNow?: string[];
 }
 
 /**
@@ -1573,6 +1614,12 @@ export interface BridgeConfig {
    * mid-upgrade operator sees the old picker rather than an empty one.
    */
   upload?: UploadCapability;
+  /**
+   * Whether the bridge masks secret shapes before text reaches this phone (`COLLIE_REDACT`). The
+   * phone only SHOWS this and never sets it: a switch on the phone would let any paired or stolen
+   * phone unmask. **Absent is an older bridge** (or a member-scoped read), shown as unknown.
+   */
+  redact?: boolean;
 }
 
 /**
@@ -1666,6 +1713,14 @@ export function statusLabel(status: AgentStatus): string {
   return t(`status.label.${status}`);
 }
 
+/**
+ * The same status in the PAST tense, for a herd drawn from the saved copy (M46 spec 10): a cached
+ * row says what the pane was doing when the phone last heard, never what it is doing now.
+ */
+export function statusLabelPast(status: AgentStatus): string {
+  return t(`status.past.${status}`);
+}
+
 /** One Git worktree of the repo a space sits in. Mirrors `WorktreeView` in bridge/types.ts. */
 export interface WorktreeView {
   path: string;
@@ -1685,5 +1740,21 @@ export type WorktreeListResponse =
 /** POST /api/workspace/:id/worktree[/open] — `alreadyOpen` is an answer, never a failure. */
 export type WorktreeOpenResponse =
   | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
+  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
+
+/**
+ * POST /api/workspace/:id/worktree — the new space, and whether the launcher was typed into it
+ * (ADR 0089). Mirrors `WorktreeCreateResponse` in bridge/types.ts. A launcher that failed after the
+ * create is still `ok: true`: the worktree exists, `pane` is where it is.
+ */
+export type WorktreeCreateResponse =
+  | {
+      ok: true;
+      pane: CreatedPane;
+      alreadyOpen: false;
+      launcherStarted: boolean;
+      launcherError?: string;
+      replayed?: true;
+    }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
 

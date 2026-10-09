@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-import { BootSplash, RootLayout, shownLastSeenAt } from "./root";
+import { BootSplash, RootLayout, shownLastSeenAt, shownStale } from "./root";
 import { RouteHeader } from "@/components/app-header";
 import { server } from "@/test/setup";
 import { __resetOperatorCommands } from "@/lib/operator-config";
@@ -103,6 +103,25 @@ function pane(overrides: Partial<PaneData>): PaneData {
   };
 }
 
+// M46 spec 10: the banner tells a saved copy from a live screen by the data on screen, the pane's
+// own mark inside a pane and the herd's mark on the dashboard.
+describe("whether the screen is the saved copy", () => {
+  it("follows the herd on the dashboard", () => {
+    expect(shownStale({ ...home(AFTERNOON), stale: true }, undefined)).toBe(true);
+    expect(shownStale(home(AFTERNOON), undefined)).toBe(false);
+  });
+
+  it("follows the pane while a stale mirror is what is being read", () => {
+    expect(shownStale({ ...home(AFTERNOON), stale: true }, pane({ stale: false }))).toBe(false);
+    expect(shownStale(home(AFTERNOON), pane({ stale: true }))).toBe(true);
+  });
+
+  it("falls back to the herd when the pane is live or has no text", () => {
+    expect(shownStale({ ...home(AFTERNOON), stale: true }, pane({ error: false }))).toBe(true);
+    expect(shownStale({ ...home(AFTERNOON), stale: true }, pane({ text: "" }))).toBe(true);
+  });
+});
+
 describe("which 'last seen' the connection bar shows", () => {
   it("uses the snapshot's stamp on the dashboard (no pane route active)", () => {
     expect(shownLastSeenAt(home(AFTERNOON), undefined)).toBe(AFTERNOON);
@@ -153,7 +172,8 @@ describe("RootLayout — the document itself never scrolls", () => {
   });
 });
 
-// THE NOTCH IS PAID FOR ONCE, IN BOTH STATES, AND THIS IS THE REPORTED BUG.
+// THE NOTCH IS PAID FOR ONCE, IN BOTH STATES, AND THIS IS THE REPORTED BUG. The header pays for it,
+// always, now that the band hangs under it.
 //
 // Three rows at the top of this app each set `env(safe-area-inset-top)` for themselves — the update
 // ribbon, the connection bar and the header — every one of them written when it was, or might have
@@ -199,15 +219,12 @@ describe("RootLayout — the safe-area inset is reserved exactly once", () => {
     );
   }
 
-  it("gives it to the band while a strip is showing, and not to the header as well", async () => {
+  it("gives it to the header while a strip is showing, and to nothing in the band", async () => {
     const { container } = renderLayout(offered);
     await waitFor(() => expect(screen.getByText(/Collie 1.5.0 available/)).toBeInTheDocument());
 
     expect(reservations(container)).toHaveLength(1);
-    // And it is the band's, above the header — not the header's.
-    const reserved = reservations(container)[0]!;
-    expect(container.querySelector("header")?.contains(reserved)).toBe(false);
-    expect(container.querySelector("header")?.className).not.toMatch(/safe-area/);
+    expect(container.querySelector("header")?.className).toMatch(/safe-area-inset-top/);
   });
 
   it("gives it to the header while the band is empty", async () => {
@@ -216,6 +233,137 @@ describe("RootLayout — the safe-area inset is reserved exactly once", () => {
 
     expect(reservations(container)).toHaveLength(1);
     expect(container.querySelector("header")?.className).toMatch(/safe-area-inset-top/);
+  });
+});
+
+// THE RIBBON HANGS UNDER THE BAR (2026-10-07). The band painted above the header until then, so an
+// outage pushed the whole page down, bar included, and the notch had to be handed between the two.
+// Now the header is the first thing in the column, the band's anchor comes after it, and the route
+// after the anchor. Asserted as DOM order over the real layout; the block below asserts the overlay.
+describe("RootLayout — the header comes first, the band under it, the route last", () => {
+  it("orders header → strip → route in the document", async () => {
+    const offered: HomeData = {
+      ...home(AFTERNOON),
+      error: false,
+      update: {
+        current: "1.4.1",
+        latest: "1.5.0",
+        latestUrl: null,
+        releaseAvailable: true,
+        majorAvailable: null,
+        majorUrl: null,
+        bridgeStale: false,
+        checkedAt: 0,
+      },
+    };
+    const router = createMemoryRouter(
+      [
+        {
+          id: ROOT_ROUTE_ID,
+          path: "/",
+          loader: () => offered,
+          element: <RootLayout />,
+          children: [{ index: true, element: <div>dashboard</div> }],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    const { container } = render(<RouterProvider router={router} />);
+    const strip = await screen.findByText(/Collie 1.5.0 available/);
+    const header = container.querySelector("header");
+    const route = screen.getByText("dashboard");
+    expect(header).not.toBeNull();
+
+    const follows = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(header?.contains(strip)).toBe(false);
+    expect(follows(header!, strip)).toBe(true);
+    expect(follows(strip, route)).toBe(true);
+    // The header is the column's FIRST child: nothing paints above the bar, in any state.
+    const column = container.querySelector(".flex.h-\\(--app-h\\).flex-col");
+    expect(column?.firstElementChild).toBe(header);
+  });
+});
+
+// THE BAND FLOATS OVER THE ROUTE (2026-10-07, later the same day). In flow under the bar it still
+// shoved the pane strip and the dashboard's filter row down when an outage appeared, and the operator
+// does not want layout shifts. So the band hangs from a zero-height anchor on the header's bottom
+// edge and covers the top of the route instead. jsdom cannot measure a height, so the contract is
+// asserted as structure: the strip lives inside an absolutely positioned box, and the route's own
+// wrapper is the same element, class for class, with and without a strip.
+describe("RootLayout: the band floats over the route and moves nothing", () => {
+  const offered: HomeData = {
+    ...home(AFTERNOON),
+    error: false,
+    update: {
+      current: "1.4.1",
+      latest: "1.5.0",
+      latestUrl: null,
+      releaseAvailable: true,
+      majorAvailable: null,
+      majorUrl: null,
+      bridgeStale: false,
+      checkedAt: 0,
+    },
+  };
+
+  function renderLayout(data: HomeData) {
+    const router = createMemoryRouter(
+      [
+        {
+          id: ROOT_ROUTE_ID,
+          path: "/",
+          loader: () => data,
+          element: <RootLayout />,
+          children: [{ index: true, element: <div>dashboard</div> }],
+        },
+      ],
+      { initialEntries: ["/"] },
+    );
+    return render(<RouterProvider router={router} />);
+  }
+
+  /** The route's box: the column's direct child that holds the outlet. */
+  function routeBox(container: HTMLElement) {
+    const column = container.querySelector(".flex.h-\\(--app-h\\).flex-col");
+    return [...(column?.children ?? [])].find((el) => el.textContent?.includes("dashboard"));
+  }
+
+  it("paints the strip inside an absolutely positioned band hung right under the header", async () => {
+    const { container } = renderLayout(offered);
+    const strip = await screen.findByText(/Collie 1.5.0 available/);
+    const header = container.querySelector("header");
+    const anchor = container.querySelector('[data-slot="strip-anchor"]');
+    expect(anchor).toHaveClass("relative", "z-30", "h-0");
+    expect(anchor?.parentElement).toBe(header?.parentElement);
+    // The anchor is the first BOXED sibling after the bar: only the band's two sr-only live regions
+    // sit between them, and those are out of flow.
+    let el = header?.nextElementSibling;
+    while (el && el.classList.contains("sr-only")) el = el.nextElementSibling;
+    expect(el).toBe(anchor);
+    const band = strip.closest('[data-slot="collapse"]');
+    expect(band).toHaveClass("absolute", "inset-x-0", "top-0", "bg-background", "shadow-md");
+    expect(band?.parentElement).toBe(anchor);
+    // And the route is not inside the band's anchor.
+    expect(anchor?.contains(screen.getByText("dashboard"))).toBe(false);
+  });
+
+  it("leaves the route's box the same element, class for class, with and without a strip", async () => {
+    const bare = renderLayout({ ...home(AFTERNOON), error: false });
+    await screen.findByText("dashboard");
+    const bareBox = routeBox(bare.container);
+    expect(bareBox).toBeDefined();
+    const bareClass = bareBox?.className;
+    const bareStyle = bareBox?.getAttribute("style");
+    bare.unmount();
+
+    const shown = renderLayout(offered);
+    await screen.findByText(/Collie 1.5.0 available/);
+    const shownBox = routeBox(shown.container);
+    expect(shownBox?.className).toBe(bareClass);
+    expect(shownBox?.getAttribute("style")).toBe(bareStyle);
+    // No padding, margin or offset tied to the band anywhere on the route's box.
+    expect(shownBox?.className ?? "").not.toMatch(/(?:^|\s)(?:p|pt|py|m|mt|my|top)-/);
   });
 });
 
@@ -339,10 +487,11 @@ describe("RootLayout — the header identity survives a round trip to a pane", (
     await waitFor(() => expect(screen.getByText("on reference")).toBeInTheDocument());
 
     const identity = container.querySelector('[data-slot="header-identity"]');
+    // The mark is fetched with the pairing token and drawn from an object URL (ADR 0086).
+    await waitFor(() => expect(container.querySelector('[data-slot="header-identity"] img')).not.toBeNull());
     const logo = container.querySelector('[data-slot="header-identity"] img');
     expect(identity).toBeVisible();
-    expect(logo).not.toBeNull();
-    expect(logo).toHaveAttribute("src", "/api/mux/logo.svg");
+    expect(logo?.getAttribute("src")).toMatch(/^blob:/);
 
     // Into the pane: the block yields the width, so it must not be SEEN…
     await act(() => router.navigate("/pane/w1%3Ap1"));

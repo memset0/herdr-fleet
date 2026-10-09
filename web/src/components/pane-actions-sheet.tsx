@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Copy, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, SlidersHorizontal, SquareTerminal, XCircle } from "lucide-react";
+import { Copy, GitBranchPlus, Maximize2, MessagesSquare, Monitor, Pencil, Pin, PinOff, ScrollText, Search, SlidersHorizontal, SquareTerminal, XCircle } from "lucide-react";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -12,6 +12,7 @@ import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { t } from "@/lib/i18n";
 import { useMuxCapability, useMuxName } from "@/lib/mux-capability";
+import { branchOffOffered } from "@/lib/branch-off";
 import { setStatus } from "@/lib/status";
 import { stampTopology } from "@/lib/poll-intent";
 import { paneName } from "@/lib/pane-name";
@@ -29,6 +30,13 @@ interface PaneActionsSheetProps {
   scope?: Scope;
   /** This device isn't authorised to write — show a read-only note instead of the actions. */
   readOnly?: boolean;
+  /**
+   * What is on screen is a SAVED COPY, or the pane has not answered lately (`lib/liveness.ts`): the
+   * ids here may name panes that no longer exist or have been reused, so Rename, Focus, Close and
+   * the branch-off are replaced by a note, exactly as `readOnly` replaces them. Pin stays: it is
+   * this device's own preference and writes nothing to the machine.
+   */
+  savedCopy?: boolean;
   /** Fired after a successful rename so the parent can revalidate (the label lands on the next poll). */
   onRenamed: () => void;
   /** Fired after a successful close, with the closed pane id — the parent navigates Home if it's the
@@ -111,6 +119,16 @@ interface PaneActionsSheetProps {
    * pane view does, and a success toast says it instead, because the outcome is on another screen.
    */
   onPinChange?: (pane: AgentView, pinned: boolean) => void;
+  /**
+   * Open "New agent on a branch" for this pane (ADR 0089): the new-space sheet in worktree mode,
+   * on this pane's repo.
+   *
+   * Absence is the first gate, as it is for the read rows: the caller passes it only for a pane whose
+   * space sits in a Git repo. The sheet adds the other two itself, because they are the same on
+   * every door: the multiplexer declares `createWorktree`, and the scope is the lead (no `?h=`), since
+   * the route is lead-local and a crew does not forward it. A write, so read-only hides it too.
+   */
+  onBranchOff?: () => void;
 }
 
 const NO_HERD: readonly AgentView[] = [];
@@ -134,6 +152,7 @@ export function PaneActionsSheet({
   pane,
   scope,
   readOnly = false,
+  savedCopy = false,
   onRenamed,
   onClosed,
   onFind,
@@ -147,6 +166,7 @@ export function PaneActionsSheet({
   paneViewNote,
   herd = NO_HERD,
   onPinChange,
+  onBranchOff,
 }: PaneActionsSheetProps) {
   useLocale();
   // Whether this pane is pinned on this device, read live from the store so the row's word is right
@@ -180,6 +200,10 @@ export function PaneActionsSheet({
   const canRename = useMuxCapability("renamePane", paneHost);
   const canClose = useMuxCapability("closePane", paneHost);
   const canFocus = useMuxCapability("setFocus", paneHost);
+  // Asked of the LEAD, with no host: the branch-off route never leaves the lead, so the lead's own
+  // multiplexer is the one that must be able to do it.
+  const canWorktree = useMuxCapability("createWorktree");
+  const showBranchOff = onBranchOff !== undefined && branchOffOffered(canWorktree.capable, scope);
   const [focusing, setFocusing] = useState(false);
   // The mux name for the "Focus in <mux>" row and its toast — see `focusMux` below for why this
   // is gated to panes on the LOCAL machine before it's trusted.
@@ -212,7 +236,7 @@ export function PaneActionsSheet({
   }, [mode]);
 
   async function save() {
-    if (!pane || saving) return;
+    if (!pane || saving || savedCopy) return;
     const next = label.trim();
     setSaving(true);
     try {
@@ -238,7 +262,7 @@ export function PaneActionsSheet({
   // own words (`closeFailed` is the fallback for a body that carried none), so it is not a swallow
   // site. `pane` is copied to a local first — narrowing does not survive into the async closure.
   async function requestClose() {
-    if (!pane || closeEcho.pending) return;
+    if (!pane || closeEcho.pending || savedCopy) return;
     const target = pane;
     if (!confirm(target.paneId)) return;
     await closeEcho.run(target.paneId, async () => {
@@ -275,7 +299,7 @@ export function PaneActionsSheet({
    * screen and the operator is about to look there.
    */
   async function showInTerminal() {
-    if (!pane || focusing) return;
+    if (!pane || focusing || savedCopy) return;
     setFocusing(true);
     try {
       const res = await api.focusPane(pane.paneId, scope);
@@ -452,6 +476,8 @@ export function PaneActionsSheet({
       )}
       {readOnly ? (
         <p className="py-2 text-sm text-muted-foreground">{t("paneActions.readOnly")}</p>
+      ) : savedCopy ? (
+        <p className="py-2 text-sm text-muted-foreground">{t("space.readOnly.savedCopy")}</p>
       ) : hostBlock ? (
         // Refused BEFORE anything is attempted (§10.3): no queue, no retry, no "try anyway" — the
         // lead would answer `host_unreachable` and the operator would be left guessing whether a
@@ -489,6 +515,18 @@ export function PaneActionsSheet({
               onClick={() => void showInTerminal()}
             />
           )}
+          {/* A second agent on a new branch of this pane's repo (ADR 0089). Above Close, so the
+              destructive row stays last; close-then-act, so the new-space sheet arrives alone. */}
+          {showBranchOff && (
+            <ActionRow
+              icon={<GitBranchPlus className="size-4 shrink-0 text-muted-foreground" />}
+              label={t("paneActions.branchOff.label")}
+              onClick={() => {
+                onClose();
+                onBranchOff?.();
+              }}
+            />
+          )}
           {canClose.capable && (
             <DestructiveActionRow
               icon={<XCircle className="size-4 shrink-0" />}
@@ -505,7 +543,7 @@ export function PaneActionsSheet({
           {/* An EMPTY sheet is the one case that must speak. Long-pressing a pane and being handed
               a blank box says nothing at all, so when every row is gone the adapter's own reason
               takes their place — hide the meaningless, explain the expected. */}
-          {!canRename.capable && !canClose.capable && !canFocus.capable && (
+          {!canRename.capable && !canClose.capable && !canFocus.capable && !showBranchOff && (
             <p className="py-2 text-sm leading-snug text-muted-foreground">
               {canRename.note || canClose.note || canFocus.note || t("paneActions.empty.fallback")}
             </p>

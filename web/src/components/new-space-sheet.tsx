@@ -9,8 +9,12 @@ import { HOST_TEXT_CLASSES, hostSlot, isMultiHost, leadHost } from "@/lib/hosts"
 import { useCrew } from "@/components/crew-provider";
 import type { Scope } from "@/lib/scope";
 import type { HostHealth } from "@/lib/host-health";
-import type { ServerSummary, WorktreeView } from "@/lib/types";
+import type { Launcher, ServerSummary, WorktreeView } from "@/lib/types";
 import { Collapse } from "@/components/ui/collapse";
+import { OneOf } from "@/components/ui/one-of";
+import { Select } from "@/components/ui/select";
+import { SHELL_CHOICE, defaultLauncher, rememberLauncher } from "@/lib/branch-off";
+import { branchOffName, mintRequestId } from "@/lib/worktree-name";
 import { BottomSheet } from "@/components/ui/sheet";
 import { FolderSections } from "@/components/new-space-folders";
 import { useFolders } from "@/lib/folders";
@@ -29,6 +33,25 @@ export interface WorktreeRepo {
 
 /** Stable empty default: a fresh `[]` per render would break referential equality downstream. */
 const NO_REPOS: readonly WorktreeRepo[] = [];
+
+/**
+ * "New agent on a branch" (ADR 0089): the sheet opened from a pane's ⋯ menu rather than from the
+ * dashboard's "+". It opens straight on the worktree side, with the pane's repo chosen and a fresh
+ * branch name typed, and adds the one question the dashboard's sheet does not ask: which agent to
+ * start in the new shell.
+ */
+export interface BranchOffSetup {
+  /** The pane's space, which is the repo the sheet opens on. Must be one of `repos`. */
+  workspaceId: string;
+  /** This scope's launcher rows. The picker offers them, plus a plain shell. */
+  launchers: readonly Launcher[];
+  /**
+   * Run the create. Resolves true once the phone has moved to the new space, which closes the sheet.
+   * `launcher` is a row's `command`, absent for a shell; `requestId` is one per sheet opening and is
+   * reused by a retry, so a second tap after a lost reply replays rather than creating again.
+   */
+  onCreate: (workspaceId: string, branch: string, extras: { requestId: string; launcher?: string }) => Promise<boolean>;
+}
 
 /**
  * A member's tier-2 health, with the same fallback `server-switcher.tsx` uses: mounted outside a
@@ -89,6 +112,8 @@ interface NewSpaceSheetProps {
   scope?: Scope;
   /** A caller-selected Host: never apply picker fallback or allow implicit retargeting. */
   fixedHost?: string;
+  /** Open as "New agent on a branch" (ADR 0089). Absent is the dashboard's sheet, exactly as before. */
+  branchOff?: BranchOffSetup;
 }
 
 // Create a new space (workspace). Both fields are optional and dictation-friendly: leave the
@@ -103,6 +128,7 @@ export function NewSpaceSheet({
   onOpenWorktree,
   scope,
   fixedHost,
+  branchOff,
 }: NewSpaceSheetProps) {
   useLocale();
   const [label, setLabel] = useState("");
@@ -113,7 +139,25 @@ export function NewSpaceSheet({
   const [mode, setMode] = useState<"space" | "worktree">("space");
   const [branch, setBranch] = useState("");
   const [repo, setRepo] = useState("");
-  const worktreesOffered = repos.length > 0 && onCreateWorktree !== undefined;
+  const worktreesOffered = repos.length > 0 && (onCreateWorktree !== undefined || branchOff !== undefined);
+  // The branch-off half (ADR 0089). `launcherChoice` is a row's command or SHELL_CHOICE; a choice
+  // whose row is not (or no longer) in this scope's list reads as the shell, so the picker never
+  // shows a value it has no option for.
+  const [launcherChoice, setLauncherChoice] = useState(SHELL_CHOICE);
+  const launcherRows = branchOff?.launchers ?? [];
+  const pickedLauncher = launcherRows.some((r) => r.command === launcherChoice) ? launcherChoice : SHELL_CHOICE;
+  // Whether the operator moved the picker in this opening: until they do, a row list that arrives
+  // after the sheet opened may still supply the remembered default.
+  const launcherTouched = useRef(false);
+  // ONE create per opening. The state paints the busy button; the ref is the guard, because it is
+  // already set inside the handler a second tap lands in, before React has re-rendered.
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  // One request id per opening, kept across a failed or lost create so a retry replays it. The bridge
+  // replays a known id, so the id must name ONE request: `lastAsk` is the fields the id was last used
+  // with, and a create with other fields mints a new id (see `createBranchOff`).
+  const requestId = useRef("");
+  const lastAsk = useRef<string | null>(null);
   // WHICH MACHINE this space is created on. The roster and its tier-2 health come from the provider
   // rather than a prop, for the same reason `HostChip` reads them there: this sheet is mounted from
   // a list, not from a route, and the hide rule below has to hold wherever it is mounted.
@@ -168,14 +212,37 @@ export function NewSpaceSheet({
       // spaces list's own order, so the top entry is the repo you were last in.
       setRepo(repos[0]?.workspaceId ?? "");
       setHost(defaultHost(servers, health, scope?.host));
+      setCreating(false);
+      creatingRef.current = false;
+      if (branchOff !== undefined) {
+        setMode("worktree");
+        setRepo(branchOff.workspaceId);
+        setBranch(branchOffName());
+        setLauncherChoice(defaultLauncher(branchOff.launchers));
+        launcherTouched.current = false;
+        requestId.current = mintRequestId();
+        lastAsk.current = null;
+      }
     }
     // `repos` is derived per render; keying the reset on `open` alone is deliberate — a poll that
     // reorders the repos must not wipe a half-typed branch name.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // The rows are read when the pane view mounts, so they may land after the sheet opened. Until the
+  // operator has touched the picker, the remembered default is re-read against them.
+  const launcherCount = branchOff?.launchers.length ?? 0;
   useEffect(() => {
-    if (!open || mode !== "worktree" || repo === "") {
+    if (!open || branchOff === undefined || launcherTouched.current) return;
+    setLauncherChoice(defaultLauncher(branchOff.launchers));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, launcherCount]);
+
+  // Only a sheet that can OPEN one lists them. A boolean, not the callback: a caller's inline arrow is
+  // a new function every render, and the read must not re-run on each one.
+  const listsUnopened = onOpenWorktree !== undefined;
+  useEffect(() => {
+    if (!open || mode !== "worktree" || repo === "" || !listsUnopened) {
       setUnopened([]);
       return;
     }
@@ -189,7 +256,7 @@ export function NewSpaceSheet({
     return () => {
       live = false;
     };
-  }, [open, mode, repo, scope]);
+  }, [open, mode, repo, scope, listsUnopened]);
 
   function create() {
     if (refusal !== undefined) return;
@@ -213,13 +280,50 @@ export function NewSpaceSheet({
 
   function createWorktree() {
     const name = branch.trim();
-    if (name === "" || repo === "" || onCreateWorktree === undefined) return;
+    if (name === "" || repo === "") return;
+    if (branchOff !== undefined) {
+      void createBranchOff(branchOff, name);
+      return;
+    }
+    if (onCreateWorktree === undefined) return;
     onCreateWorktree(repo, name);
     onClose();
   }
 
+  /**
+   * The branch-off create. The sheet STAYS OPEN while it runs, with the button busy, because a
+   * create can take a minute and a sheet that closed at once would leave the operator looking at the
+   * pane they came from with no sign that anything is happening. It closes once the phone has moved.
+   */
+  async function createBranchOff(setup: BranchOffSetup, name: string) {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    setCreating(true);
+    rememberLauncher(pickedLauncher);
+    // An unchanged retry keeps its id: that is the point of it, a lost reply replays instead of
+    // creating twice. A retry with another branch, agent or repo is a different request, and the
+    // bridge would answer it with the OLD worktree if it kept the id.
+    const ask = JSON.stringify([repo, name, pickedLauncher]);
+    if (lastAsk.current !== null && lastAsk.current !== ask) requestId.current = mintRequestId();
+    lastAsk.current = ask;
+    try {
+      const moved = await setup.onCreate(repo, name, {
+        requestId: requestId.current,
+        launcher: pickedLauncher === SHELL_CHOICE ? undefined : pickedLauncher,
+      });
+      if (moved) onClose();
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
+  }
+
   return (
-    <BottomSheet open={open} onClose={onClose} title={t("space.new.title")}>
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title={branchOff !== undefined ? t("paneActions.branchOff.label") : t("space.new.title")}
+    >
       <div className="flex flex-col gap-3">
         {/* WHERE this lands, above WHAT it is. A crew's "+" used to create silently on whichever
             machine the list happened to be pointed at; the one thing an operator must not have to
@@ -228,7 +332,9 @@ export function NewSpaceSheet({
         {fixedHost !== undefined && <p className="text-xs text-muted-foreground">
           {t("space.new.host.label")}{": "}{chosenServer?.name ?? fixedHost}
         </p>}
-        {multiHost && fixedHost === undefined && (
+        {/* No host row when branching off a pane: that create is lead-local (ADR 0089), and the
+            pane already fixed the machine. */}
+        {multiHost && fixedHost === undefined && branchOff === undefined && (
           <div className="flex flex-col gap-1">
             <span id="new-space-host" className="text-xs font-medium text-muted-foreground">
               {t("space.new.host.label")}
@@ -294,8 +400,9 @@ export function NewSpaceSheet({
           </div>
         )}
 
-        {/* Only where there is a choice to make: one tab is not a tab strip, it is noise. */}
-        {worktreesOffered && (
+        {/* Only where there is a choice to make: one tab is not a tab strip, it is noise. A branch-off
+            has no choice to make, it is a worktree by definition. */}
+        {worktreesOffered && branchOff === undefined && (
           <div role="tablist" className="flex gap-1 rounded-lg bg-muted p-1">
             {(["space", "worktree"] as const).map((option) => (
               <button
@@ -323,17 +430,13 @@ export function NewSpaceSheet({
           <>
             <label className="flex flex-col gap-1">
               <span className="text-xs font-medium text-muted-foreground">{t("space.new.repo.label")}</span>
-              <select
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-                className="h-11 rounded-lg border border-border bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
+              <Select value={repo} onChange={(e) => setRepo(e.target.value)}>
                 {repos.map((candidate) => (
                   <option key={candidate.workspaceId} value={candidate.workspaceId}>
                     {candidate.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-xs font-medium text-muted-foreground">{t("worktree.branchLabel")}</span>
@@ -347,8 +450,41 @@ export function NewSpaceSheet({
                 className="h-11 rounded-lg border border-border bg-background px-3 font-mono text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               />
             </label>
-            <Button onClick={createWorktree} disabled={branch.trim() === ""} className="mt-1 h-11">
-              {t("worktree.create")}
+            {branchOff !== undefined && (
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-muted-foreground">{t("branchOff.agentLabel")}</span>
+                <Select
+                  value={pickedLauncher}
+                  onChange={(e) => {
+                    launcherTouched.current = true;
+                    setLauncherChoice(e.target.value);
+                  }}
+                >
+                  <option value={SHELL_CHOICE}>{t("branchOff.shell")}</option>
+                  {launcherRows.map((row) => (
+                    <option key={row.command} value={row.command}>
+                      {row.label}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+            )}
+            <Button
+              onClick={createWorktree}
+              disabled={branch.trim() === "" || creating}
+              aria-busy={creating || undefined}
+              className="mt-1 h-11"
+            >
+              {/* The word changes while a create runs, so both words share one reserved box
+                  (DESIGN.md §2): the button keeps its width whichever is showing. */}
+              <OneOf
+                active={creating ? "creating" : "create"}
+                className="justify-items-center"
+                options={[
+                  { key: "create", node: t("worktree.create") },
+                  { key: "creating", node: t("worktree.creating") },
+                ]}
+              />
             </Button>
             {/* This list arrives from a read that runs when the repo is chosen, so it appears in
                 flow under the button — the one thing DESIGN.md §1 says may only ever happen

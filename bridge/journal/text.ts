@@ -3,6 +3,8 @@
 // text nodes rather than interpreting them.
 
 import type { JsonObject, JsonValue } from "../json.ts";
+import { redactText } from "../redact.ts";
+import type { TranscriptEntry, TranscriptPart } from "./types.ts";
 
 /** Per-tool-result cap. Tool output is unbounded (a 2 MB file read); the phone only needs a gist. */
 export const MAX_RESULT_CHARS = 2000;
@@ -97,4 +99,76 @@ export function summarizeToolInput(input: JsonValue | undefined): string {
     // Unknown tool: first string value wins, so the line is never empty for no reason.
     values.find((v): v is string => typeof v === "string" && v.trim() !== "");
   return chosen === undefined ? "" : oneLine(chosen);
+}
+
+// ── SECRETS ARE MASKED BEFORE A TURN LEAVES THE BRIDGE ─────────────────────────────────────────
+// The journal's own text: what the agent said, what it thought, what a tool printed, the command it
+// ran, the diff it wrote, and the question it asked with its options and the answers. Each string
+// goes through `bridge/redact.ts`, the same list the mirror and the push use, so a key masked on the
+// screen is masked in Chat too. Line count and block order hold: the mask is the same length as what
+// it hides, and no part, turn or hunk line is added or dropped.
+//
+// THE MASK IS STRUCTURAL, NOT A FIELD LIST. A tool part is walked whole, its `call` included, and
+// EVERY string in it is masked unless its key is in {@link UNMASKED_KEYS}. Until 1.18.0 this was a
+// switch that named the content fields per call kind, and the `question` kind's words (each question,
+// header, option label and description, and the answers) went out in clear because nobody named them.
+// A field added to `ToolCall` or to the tool part later is masked from its first day, with no edit
+// here: forgetting to list a field now leaves an address masked, which is visible and harmless,
+// never a secret in clear. `text.test.ts` pins every field of every call kind.
+//
+// Three keys are skipped, because they are labels the bridge itself wrote, never an agent's words:
+// `kind`, `id` and `mimeType`. Everything else is masked BY SHAPE, paths included (`path`, `to`, a
+// search's `where`) and image URLs too: the mask replaces only the known secret shapes in
+// `bridge/redact.ts`, so an ordinary path or URL comes back unchanged, and a path that does hold a
+// key is masked like any other text. A masked path then simply does not link on the phone (its
+// `files/exist` check asks for the masked string and finds nothing), which is the price and an
+// acceptable one. An image URL in one of the two shapes `resolveImageUrl` (journal/pi.ts) produces,
+// `/api/blobs/<64 hex>` or a `data:image/*;base64,` payload, is left whole: neither shape can hold a
+// secret in text, a blob's hash must stay the hash the blob route answers to, and a vendor-key shape
+// can turn up by chance inside megabytes of base64 and would break the picture. Any other image URL
+// is masked by shape. The entry's own `uuid`, `ts` and `role` are never walked. Numbers and flags
+// are not strings and pass as they are.
+//
+// Called by the History and Chat routes (server.ts) when `COLLIE_REDACT` is on, and by a crew lead
+// on a member's History and Chat answers (bridge/answer-mask.ts, crew/mask.ts). Never on what the
+// operator sends, and never on the audit trail.
+
+/** Keys whose string values the bridge wrote itself, left unmasked wherever they sit inside a part. */
+const UNMASKED_KEYS: ReadonlySet<string> = new Set(["kind", "id", "mimeType"]);
+
+/**
+ * The two image URL shapes `resolveImageUrl` (journal/pi.ts) produces: this collie's blob route by
+ * a 64-hex hash, and an inline base64 image payload (with the whitespace a wrapped payload carries).
+ * Spelled here rather than imported, because pi.ts imports this module.
+ */
+const IMAGE_ADDRESS = /^(?:\/api\/blobs\/[0-9a-f]{64}|data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]*)$/i;
+
+/** An image URL, masked by shape unless it is one of the two {@link IMAGE_ADDRESS} shapes. */
+function maskImageUrl(url: string): string {
+  return IMAGE_ADDRESS.test(url) ? url : redactText(url);
+}
+
+/**
+ * The reviver that does the walk: every string is masked by shape unless its own key is one of
+ * {@link UNMASKED_KEYS}. An array element's key is its index, so a list of strings (hunk lines,
+ * options, answers) is masked whole.
+ */
+function maskReviver(key: string, value: JsonValue): JsonValue {
+  if (typeof value !== "string" || UNMASKED_KEYS.has(key)) return value;
+  return key === "imageUrl" ? maskImageUrl(value) : redactText(value);
+}
+
+function redactPart(part: TranscriptPart): TranscriptPart {
+  // An image part is a URL and its type, and the URL is masked by shape like a tool's `imageUrl`.
+  if (part.kind === "image") return { ...part, url: maskImageUrl(part.url) };
+  // SAFETY: a TranscriptPart is plain JSON (strings, numbers, booleans, arrays and objects, with no
+  // dates, functions or cycles), so the round trip rebuilds the same value, and the reviver swaps a
+  // string only for a string of the same length. A key holding `undefined` drops out, which is how
+  // this module spells "absent" anyway.
+  return JSON.parse(JSON.stringify(part), maskReviver) as TranscriptPart;
+}
+
+/** One turn with every content string masked. Same parts, same order, same line counts. */
+export function redactEntry<T extends TranscriptEntry>(entry: T): T {
+  return { ...entry, parts: entry.parts.map(redactPart) };
 }

@@ -27,11 +27,13 @@ test("the app shell renders on /", async ({ page }) => {
   await expect(page.getByRole("main")).toBeVisible();
 
   // And the shell is showing FIXTURE data, so the stub was reached and `rootLoader` resolved. A
-  // workspace label out of `fixtureSnapshot` is the shortest proof of that.
+  // workspace label out of `fixtureSnapshot` is the shortest proof of that. It is addressed as the
+  // dashboard's section heading: the label also names an <option> in the Workspace select, which is
+  // never "visible" to a text query.
   // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the Fleet Herds rail names the same
-  // workspace first and is hidden below its breakpoint, so the label is looked for in the route.
+  // workspace and is hidden below its breakpoint, so the heading is looked for in the route.
   await expect(
-    page.getByRole("main").getByText(fixtureWorkspaces[0]!.label, { exact: false }).first(),
+    page.getByRole("main").getByRole("heading", { name: fixtureWorkspaces[0]!.label, exact: true }),
   ).toBeVisible();
 });
 

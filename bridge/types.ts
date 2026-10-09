@@ -4,6 +4,7 @@
 import type { Confidence } from "./cache/claims.ts";
 import type { PaneCache } from "./cache/engine.ts";
 import type { ApiErrorDetail, ErrorCode } from "./error-codes.ts";
+import type { GitHead } from "./git-head.ts";
 import type { ChatBody } from "./journal/live.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
 import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
@@ -16,6 +17,7 @@ export type { TranscriptEntry, TranscriptPart } from "./journal/types.ts";
 export type { ChatBody, ChatEntry, ChatOlderBody, ChatWindowBody } from "./journal/live.ts";
 export type { CacheStateName, PaneCache } from "./cache/engine.ts";
 export type { Confidence } from "./cache/claims.ts";
+export type { GitHead } from "./git-head.ts";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
@@ -146,6 +148,16 @@ export interface AgentView {
    * solo body byte-identical to 1.8.2's for every non-agent pane (`solo-baseline.test.ts`).
    */
   cache?: PaneCache;
+  /**
+   * What the checkout holding this pane's folder is on: a branch, or a detached head at a full
+   * object name. Read off disk by `bridge/git-head.ts` (two small files, no git process, no lock) and
+   * attached at serialise time exactly as {@link cache} is.
+   *
+   * ABSENT, NEVER A PLACEHOLDER. A folder in no checkout, one that is gone or unreadable, a reading
+   * not taken yet (the first snapshot after a folder appears) and every older bridge carry no key at
+   * all, and the phone then draws exactly what it drew before the field existed.
+   */
+  gitHead?: GitHead;
 }
 
 /**
@@ -997,6 +1009,12 @@ export type FileReadAnswer =
       root: string;
       path: string;
       size: number;
+      /**
+       * The file's modification time, epoch ms, off the same open handle as `size`. With `size` it is
+       * the file's version: the phone holds a picture in memory under it (ADR 0090). Absent from a
+       * bridge that predates it, and then nothing is held.
+       */
+      mtimeMs?: number;
       binary: boolean;
       truncated: boolean;
       text: string;
@@ -1090,6 +1108,27 @@ export type WorktreeListResponse =
  */
 export type WorktreeOpenResponse =
   | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
+  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
+
+/**
+ * POST /api/workspace/:id/worktree — the new worktree's space, plus what happened to the launcher
+ * (ADR 0089).
+ *
+ * `launcherStarted` is false when no launcher was asked for AND when one was asked for and could not
+ * be typed; `launcherError` says why in the second case. Either way the worktree EXISTS and `pane` is
+ * where it is, so a launcher failure is a 200: the recovery is "open it", never "create it again"
+ * (ADR 0032). `replayed` marks an answer read back from the receipt of an earlier request with the
+ * same `requestId`, so nothing ran this time.
+ */
+export type WorktreeCreateResponse =
+  | {
+      ok: true;
+      pane: CreatedPane;
+      alreadyOpen: false;
+      launcherStarted: boolean;
+      launcherError?: string;
+      replayed?: true;
+    }
   | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
 
@@ -1448,6 +1487,13 @@ export interface BridgeConfig {
    * `COLLIE_MAX_UPLOAD_MB` still answers for itself when the bytes arrive. See docs/configure.md.
    */
   upload?: UploadCapability;
+  /**
+   * Whether this bridge masks secret shapes before text leaves the machine (`cfg.redact`,
+   * `COLLIE_REDACT`). Read-only on the phone: Settings shows it and never sets it. **Absent is an
+   * older bridge, or a `?host=<member>` answer**, which the phone shows as unknown. Mirrors
+   * `BridgeConfig` in web/src/lib/types.ts.
+   */
+  redact?: boolean;
 }
 
 /**

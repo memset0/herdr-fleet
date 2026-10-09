@@ -53,10 +53,17 @@ export const SEEN_THROTTLE_MS = 60_000;
 export type PendingPairing = {
   /** SHA-256 (hex) of the normalised code. */
   codeHash: string;
-  /** Epoch ms after which the code is dead. */
+  /** Epoch ms after which the CODE is dead. Nothing to do with the token's own lifetime below. */
   expiresAt: number;
   /** Wrong guesses left before the pending pairing is destroyed. */
   attemptsLeft: number;
+  /**
+   * How long the TOKEN this code mints stays valid, in ms — set only by `collie pair --expires`.
+   * Carried as a lifetime rather than a date so it counts from the claim, not from the minute the
+   * operator ran the verb. Absent ⇒ the token never expires, exactly as before the flag existed.
+   * The phone never chooses it: the operator's terminal is the only writer of this file.
+   */
+  tokenLifetimeMs?: number;
 };
 
 /** One paired device. The token itself was shown once, at claim time, and is not recoverable. */
@@ -67,6 +74,12 @@ export type PairedDevice = {
   tokenHash: string;
   createdAt: number;
   lastSeenAt: number;
+  /**
+   * Epoch ms from which the token is refused (M46 spec 01). OPTIONAL and absent on every device
+   * paired without `--expires`: such an entry is never given the key, on disk or in memory, so a
+   * registry written before expiry existed reads and writes back byte for byte.
+   */
+  expiresAt?: number;
 };
 
 /** The on-disk registry shape. An object (not a bare array) so it can gain keys without a migration. */
@@ -79,11 +92,49 @@ export interface PairedDeviceWire {
   label: string;
   createdAt: number;
   lastSeenAt: number;
+  /** Epoch ms the token stops working, or null for a token with no expiry. */
+  expiresAt: number | null;
+  /** True once `expiresAt` has passed. The device stays listed (and enforcing) until revoked. */
+  expired: boolean;
   /** True for the device making this request (so the UI can say "this device"). */
   current: boolean;
 }
 
 export const EMPTY_REGISTRY: PairedRegistry = { devices: [] };
+
+/**
+ * The registry file is THERE and cannot be read as a registry: a half-written or truncated file, a
+ * value that is not an object, a read the OS refused.
+ *
+ * Its own state, never "nobody is paired". Reading it as an empty registry turned a torn write into
+ * `403 device not paired` for every phone, and the phone answers that refusal by wiping what it
+ * stored. The gate answers `503 pairing unavailable` instead (`guard` in bridge/server.ts), which the
+ * phone reads as an outage and retries. A MISSING file is not this: that is a bridge nobody has
+ * paired with yet, and the empty registry is the truth.
+ */
+export class RegistryUnreadableError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "RegistryUnreadableError";
+  }
+}
+
+/** Whether an error is a missing file (`ENOENT`) — the one read failure that means "no registry". */
+function isMissing(err: Error): boolean {
+  return "code" in err && err.code === "ENOENT";
+}
+
+/**
+ * A parsed registry file, or the error that says it is not one. Only the outer shape is checked here:
+ * an object. The entries inside are {@link coerceRegistry}'s, which drops an incomplete one, because
+ * a hand-edited entry is a reason to lose THAT device, not to call the whole store unreadable.
+ */
+function registryValue(value: JsonValue): JsonValue {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new RegistryUnreadableError(`${DEVICES_FILENAME} is not a registry object`);
+  }
+  return value;
+}
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────────────────────
 
@@ -128,9 +179,76 @@ export function generateToken(random: (n: number) => Buffer = randomBytes): stri
   return random(32).toString("base64url");
 }
 
-/** A fresh pending pairing for `code`, expiring `ttlMs` from `now`. */
-export function newPending(code: string, now: number, ttlMs = CODE_TTL_MS): PendingPairing {
-  return { codeHash: sha256Hex(normalizeCode(code)), expiresAt: now + ttlMs, attemptsLeft: CODE_ATTEMPTS };
+/**
+ * A fresh pending pairing for `code`, expiring `ttlMs` from `now`. `tokenLifetimeMs` is the lifetime
+ * of the token the code will mint, and is written only when given — a plain `collie pair` leaves the
+ * file exactly as it always was.
+ */
+export function newPending(
+  code: string,
+  now: number,
+  ttlMs = CODE_TTL_MS,
+  tokenLifetimeMs?: number,
+): PendingPairing {
+  const pending: PendingPairing = {
+    codeHash: sha256Hex(normalizeCode(code)),
+    expiresAt: now + ttlMs,
+    attemptsLeft: CODE_ATTEMPTS,
+  };
+  if (tokenLifetimeMs !== undefined) pending.tokenLifetimeMs = tokenLifetimeMs;
+  return pending;
+}
+
+// ── Token lifetimes (M46 spec 01) ────────────────────────────────────────────────────────────
+
+/** Longest lifetime `--expires` accepts: ten years. Past that it is "never", which is no flag. */
+export const MAX_LIFETIME_MS = 3650 * 24 * 60 * 60 * 1000;
+
+/** Milliseconds per `--expires` unit, or undefined for anything that is not one. */
+function lifetimeUnitMs(unit: string): number | undefined {
+  switch (unit.toLowerCase()) {
+    case "h":
+      return 60 * 60 * 1000;
+    case "d":
+      return 24 * 60 * 60 * 1000;
+    case "w":
+      return 7 * 24 * 60 * 60 * 1000;
+    default:
+      return undefined;
+  }
+}
+
+export type LifetimeParse = { ok: true; ms: number } | { ok: false; reason: string };
+
+/**
+ * Parse an operator's `--expires` value: a whole number and one unit, `h`, `d` or `w` (`12h`,
+ * `30d`, `2w`). Zero, negative, fractional, unit-less and unknown-unit values are refused with the
+ * sentence the CLI prints.
+ *
+ * NO MINUTES, deliberately: `6m` reads as six months to as many people as it reads as six minutes,
+ * and a credential lifetime is the wrong place to find out which one the parser meant.
+ */
+export function parseLifetime(raw: string): LifetimeParse {
+  const value = raw.trim();
+  const match = /^(-?\d+)\s*([a-zA-Z]+)$/.exec(value);
+  const usage = "write a whole number and a unit: h (hours), d (days) or w (weeks), for example 30d";
+  if (!match) return { ok: false, reason: `\`${raw}\` is not a duration. To fix, ${usage}` };
+  const unit = lifetimeUnitMs(match[2]!);
+  if (unit === undefined) return { ok: false, reason: `\`${match[2]}\` is not a unit. To fix, ${usage}` };
+  const count = Number(match[1]);
+  if (!Number.isSafeInteger(count) || count <= 0) {
+    return { ok: false, reason: `\`${raw}\` is not a lifetime, it must be more than zero` };
+  }
+  const ms = count * unit;
+  if (ms > MAX_LIFETIME_MS) {
+    return { ok: false, reason: `\`${raw}\` is longer than ten years. Leave out --expires for no expiry` };
+  }
+  return { ok: true, ms };
+}
+
+/** Whether `device` carries an expiry and it has passed. A device without one never expires. */
+export function isExpired(device: { readonly label: string; readonly expiresAt?: number }, now: number): boolean {
+  return device.expiresAt !== undefined && now >= device.expiresAt;
 }
 
 /** Coerce an untrusted parsed value into a {@link PendingPairing}, or null if it isn't one. */
@@ -140,7 +258,18 @@ export function coercePending(raw: JsonValue | undefined): PendingPairing | null
   if (typeof o.codeHash !== "string" || o.codeHash === "") return null;
   if (typeof o.expiresAt !== "number" || !Number.isFinite(o.expiresAt)) return null;
   if (typeof o.attemptsLeft !== "number" || !Number.isFinite(o.attemptsLeft)) return null;
-  return { codeHash: o.codeHash, expiresAt: o.expiresAt, attemptsLeft: Math.floor(o.attemptsLeft) };
+  const pending: PendingPairing = {
+    codeHash: o.codeHash,
+    expiresAt: o.expiresAt,
+    attemptsLeft: Math.floor(o.attemptsLeft),
+  };
+  // A lifetime that is not a positive number is dropped, not trusted: the code still pairs, and the
+  // token it mints simply has no expiry — the shape every pairing had before the flag existed.
+  const lifetime = o.tokenLifetimeMs;
+  if (typeof lifetime === "number" && Number.isFinite(lifetime) && lifetime > 0) {
+    pending.tokenLifetimeMs = lifetime;
+  }
+  return pending;
 }
 
 /**
@@ -158,14 +287,38 @@ export function coerceRegistry(raw: JsonValue | undefined): PairedRegistry {
     if (typeof d.label !== "string" || d.label.trim() === "") continue;
     if (typeof d.tokenHash !== "string" || d.tokenHash.length !== 64) continue;
     if (devices.some((x) => x.label === d.label)) continue;
-    devices.push({
+    const device: PairedDevice = {
       label: d.label,
       tokenHash: d.tokenHash,
       createdAt: typeof d.createdAt === "number" ? d.createdAt : 0,
       lastSeenAt: typeof d.lastSeenAt === "number" ? d.lastSeenAt : 0,
-    });
+    };
+    // Only a present value adds the key at all — an entry from before expiry existed keeps its exact
+    // shape. `null` is read as "no expiry" (what a hand edit meaning "never" would write). Anything
+    // else that is not a finite number (a string, a date written by hand) is read as ALREADY
+    // EXPIRED, never as "no expiry": a field set to limit a credential must not turn into an
+    // unlimited one by being malformed.
+    if (d.expiresAt !== undefined && d.expiresAt !== null) {
+      device.expiresAt = typeof d.expiresAt === "number" && Number.isFinite(d.expiresAt) ? d.expiresAt : 0;
+    }
+    devices.push(device);
   }
   return { devices };
+}
+
+/**
+ * A registry file's text, parsed, or null when it is not a registry: not JSON, or JSON that is not an
+ * object. The bridge reads such a file as unreadable ({@link RegistryUnreadableError}) and answers
+ * `503 pairing unavailable`; `collie doctor` asks this to say so rather than "no device paired".
+ */
+export function parseRegistryText(raw: string): PairedRegistry | null {
+  try {
+    // SAFETY: `JSON.parse` output IS a JsonValue by construction; `registryValue` checks its outer
+    // shape and `coerceRegistry` every entry.
+    return coerceRegistry(registryValue(JSON.parse(raw) as JsonValue));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -222,17 +375,67 @@ export function findByToken(registry: PairedRegistry, token: string | null): Pai
   return found;
 }
 
-/** Add a device, or null when the label is already taken (labels are the revoke handle). */
-export function addDevice(
-  registry: PairedRegistry,
-  device: { label: string; tokenHash: string; now: number },
-): PairedRegistry | null {
+/** What {@link addDevice} enrols: a label, the token's hash, the moment, and an optional expiry. */
+export type Enrolment = { label: string; tokenHash: string; now: number; expiresAt?: number };
+
+/**
+ * Add a device, or null when the label is already taken (labels are the revoke handle). `expiresAt`
+ * lands on the entry only when given.
+ */
+export function addDevice(registry: PairedRegistry, device: Enrolment): PairedRegistry | null {
   if (registry.devices.some((d) => d.label === device.label)) return null;
+  const entry: PairedDevice = {
+    label: device.label,
+    tokenHash: device.tokenHash,
+    createdAt: device.now,
+    lastSeenAt: device.now,
+  };
+  if (device.expiresAt !== undefined) entry.expiresAt = device.expiresAt;
+  return { devices: [...registry.devices, entry] };
+}
+
+/**
+ * Enrol a device through a CLAIM: like {@link addDevice}, except that an EXPIRED device under the same
+ * label is replaced instead of refused. Null when a LIVE device holds the label.
+ *
+ * Why a claim may replace an expired entry. An expired device stays listed until it is revoked, so
+ * the phone can say "pair again" (docs/security.md). The person who pairs again types the name they
+ * used before, and `addDevice` answered "A device is already using that name" about a device whose
+ * token already authenticates as nobody. The old entry is dropped and the new one appended IN THE
+ * SAME REGISTRY VALUE, so the one write that enrols the new token also revokes the old one: there is
+ * no moment with both, and none with neither. A live device's label is still refused, because
+ * replacing it would revoke a working phone on the say-so of whoever holds the current code.
+ *
+ * `replaced` is true when an expired entry went, so the caller can audit the revoke.
+ */
+export function enrolDevice(
+  registry: PairedRegistry,
+  device: Enrolment,
+): { registry: PairedRegistry; replaced: boolean } | null {
+  const holder = registry.devices.find((d) => d.label === device.label);
+  if (holder !== undefined && !isExpired(holder, device.now)) return null;
+  const rest = holder === undefined ? registry : { devices: registry.devices.filter((d) => d.label !== device.label) };
+  const next = addDevice(rest, device);
+  return next === null ? null : { registry: next, replaced: holder !== undefined };
+}
+
+/**
+ * Set (a number) or clear (null) one device's expiry, by exact label. Null when there is no such
+ * device. Clearing REMOVES the key rather than writing `null`, so a cleared entry is shaped exactly
+ * like one that never had an expiry.
+ */
+export function setDeviceExpiry(
+  registry: PairedRegistry,
+  label: string,
+  expiresAt: number | null,
+): PairedRegistry | null {
+  if (!registry.devices.some((d) => d.label === label)) return null;
   return {
-    devices: [
-      ...registry.devices,
-      { label: device.label, tokenHash: device.tokenHash, createdAt: device.now, lastSeenAt: device.now },
-    ],
+    devices: registry.devices.map((d) => {
+      if (d.label !== label) return d;
+      const { expiresAt: _dropped, ...rest } = d;
+      return expiresAt === null ? rest : { ...rest, expiresAt };
+    }),
   };
 }
 
@@ -259,11 +462,17 @@ export function touchDevice(
 }
 
 /** The wire shape of the registry, for `GET /api/devices`. */
-export function toDeviceWire(registry: PairedRegistry, current: string | null): PairedDeviceWire[] {
+export function toDeviceWire(
+  registry: PairedRegistry,
+  current: string | null,
+  now: number = Date.now(),
+): PairedDeviceWire[] {
   return registry.devices.map((d) => ({
     label: d.label,
     createdAt: d.createdAt,
     lastSeenAt: d.lastSeenAt,
+    expiresAt: d.expiresAt ?? null,
+    expired: isExpired(d, now),
     current: d.label === current,
   }));
 }
@@ -290,9 +499,17 @@ export interface PairingIo {
   readPending(): Promise<JsonValue | null>;
   writePending(pending: PendingPairing): Promise<void>;
   deletePending(): Promise<void>;
+  /**
+   * The registry file, parsed. Null ⇒ no registry file. THROWS {@link RegistryUnreadableError} when
+   * the file is there and cannot be read or parsed, so a read-modify-write never writes a torn file's
+   * "empty" reading back over the devices it held.
+   */
   readRegistry(): Promise<JsonValue | null>;
   writeRegistry(registry: PairedRegistry): Promise<void>;
-  /** The registry as of now, read synchronously. Null ⇒ no registry file. */
+  /**
+   * The registry as of now, read synchronously. Null ⇒ no registry file. Throws
+   * {@link RegistryUnreadableError} on a file that is there and unreadable, as `readRegistry` does.
+   */
   readRegistrySync(): JsonValue | null;
 }
 
@@ -349,7 +566,22 @@ export function filePairingIo(stateDir: string): PairingIo {
         /* already gone — deleting a spent pairing is idempotent */
       }
     },
-    readRegistry: () => readJson(registryPath),
+    async readRegistry() {
+      let raw: string;
+      try {
+        raw = await readFile(registryPath, "utf8");
+      } catch (err) {
+        if (err instanceof Error && isMissing(err)) return null;
+        throw new RegistryUnreadableError(`${DEVICES_FILENAME} cannot be read`, { cause: err });
+      }
+      try {
+        // SAFETY: `JSON.parse` output IS a JsonValue by construction; `coerceRegistry` re-checks it.
+        return registryValue(JSON.parse(raw) as JsonValue);
+      } catch (err) {
+        if (err instanceof RegistryUnreadableError) throw err;
+        throw new RegistryUnreadableError(`${DEVICES_FILENAME} is not valid JSON`, { cause: err });
+      }
+    },
     async writeRegistry(registry) {
       await writeAtomic(registryPath, JSON.stringify(registry, null, 2));
       cache = null;
@@ -359,19 +591,31 @@ export function filePairingIo(stateDir: string): PairingIo {
       try {
         const st = statSync(registryPath);
         key = `${st.mtimeMs}:${st.size}`;
-      } catch {
+      } catch (err) {
         cache = null;
-        return null;
+        if (err instanceof Error && isMissing(err)) return null;
+        throw new RegistryUnreadableError(`${DEVICES_FILENAME} cannot be read`, { cause: err });
       }
       if (cache?.key === key) return cache.value;
+      // An unreadable file is NEVER cached: the cache is dropped and the error thrown, so the request
+      // after a repair (or after the writer's rename lands) reads the file again, whatever its mtime.
+      cache = null;
+      let text: string;
+      try {
+        text = readFileSync(registryPath, "utf8");
+      } catch (err) {
+        throw new RegistryUnreadableError(`${DEVICES_FILENAME} cannot be read`, { cause: err });
+      }
+      let value: JsonValue;
       try {
         // SAFETY: `JSON.parse` output IS a JsonValue by construction; `coerceRegistry` re-checks it.
-        const value = JSON.parse(readFileSync(registryPath, "utf8")) as JsonValue;
-        cache = { key, value };
-        return value;
-      } catch {
-        return null;
+        value = registryValue(JSON.parse(text) as JsonValue);
+      } catch (err) {
+        if (err instanceof RegistryUnreadableError) throw err;
+        throw new RegistryUnreadableError(`${DEVICES_FILENAME} is not valid JSON`, { cause: err });
       }
+      cache = { key, value };
+      return value;
     },
   };
 }
@@ -380,9 +624,11 @@ export function filePairingIo(stateDir: string): PairingIo {
  * The bridge's view of pairing: a synchronous gate for the request path, plus the async enrolment
  * and revocation operations.
  *
- * "Enforced" is not a setting — it is `the registry is non-empty`. Pairing nobody keeps Collie
- * exactly as it was; pairing one device turns the requirement on for every device, which is the only
- * ordering that can't lock the operator out of their own bridge halfway through.
+ * Pairing is ALWAYS ON (M46 spec 03, ADR 0086). A bridge with nothing paired is not open, it is
+ * waiting for its first device: every `/api/*` route except `/api/health` and `/api/pair` refuses
+ * with `device not paired`. Revoking the last device leaves the bridge in exactly that state. The
+ * way back in is the host itself, where `collie pair` mints a code, so no state here can lock the
+ * operator out of a machine they can log in to.
  */
 export class PairingStore {
   constructor(
@@ -418,24 +664,61 @@ export class PairingStore {
     await this.writeQueue;
   }
 
-  /** The registry as of this instant, straight off disk (cached on mtime). */
+  /**
+   * The registry as of this instant, straight off disk (cached on mtime). No file is the empty
+   * registry. A file that is there and cannot be read THROWS {@link RegistryUnreadableError}: an
+   * unreadable store is never "nobody is paired", and every caller must decide what it means for it.
+   */
   registry(): PairedRegistry {
-    return coerceRegistry(this.io.readRegistrySync());
+    let raw: JsonValue | null;
+    try {
+      raw = this.io.readRegistrySync();
+    } catch (err) {
+      if (err instanceof RegistryUnreadableError) throw err;
+      throw new RegistryUnreadableError(`${DEVICES_FILENAME} cannot be read`, { cause: err });
+    }
+    if (raw === null) return { devices: [] };
+    return coerceRegistry(registryValue(raw));
   }
 
-  /** Whether a bearer token is required for writes — i.e. whether anything is paired at all. */
+  /**
+   * Whether a bearer token is required. Always true since M46 spec 03: an empty registry no longer
+   * switches the gate off. Kept as a method because the gate and the `/api/devices` wire still ask.
+   * It reads nothing, so it cannot fail; an unreadable registry surfaces through {@link resolve},
+   * which every gated request asks.
+   */
   enforced(): boolean {
-    return this.registry().devices.length > 0;
+    return true;
+  }
+
+  /**
+   * Whether this token belongs to a paired device whose expiry has passed — the question that turns
+   * a refusal's text from `device not paired` into `device expired`. Asked only on the refusal path,
+   * so a valid request never pays for a second hash. Throws {@link RegistryUnreadableError} as
+   * {@link registry} does.
+   */
+  expired(token: string | null): boolean {
+    const device = findByToken(this.registry(), token);
+    return device !== null && isExpired(device, this.now());
   }
 
   /**
    * The device this request's bearer token belongs to, or null. Also stamps `lastSeenAt`, throttled
    * and fire-and-forget: a failed stamp must never fail the request it was decorating.
+   *
+   * An EXPIRED device resolves to null — its token authenticates as nobody — and is not stamped,
+   * because a refused request is not the device being seen. It stays in the registry, so the
+   * device list still shows it and the phone can say "pair again" rather than "pair".
+   *
+   * THROWS {@link RegistryUnreadableError} when the registry file is there and unreadable, rather than
+   * answering null: null means "this token is nobody's", and that is not known. The gate turns the
+   * throw into `503 pairing unavailable`.
    */
   resolve(token: string | null): PairedDevice | null {
     const registry = this.registry();
     const device = findByToken(registry, token);
     if (!device) return null;
+    if (isExpired(device, this.now())) return null;
     const touched = touchDevice(registry, device.label, this.now());
     if (touched) {
       // Fire-and-forget: a failed stamp must never fail the request that triggered it.
@@ -470,8 +753,28 @@ export class PairingStore {
    * Claim the pending code and enrol `label`. On success the token is returned ONCE — it is not
    * stored, recoverable or re-derivable — and the pending pairing is destroyed, so a code is
    * single-use even within its TTL.
+   *
+   * A label held by an EXPIRED device is taken over, and that device's token revoked in the same
+   * write ({@link enrolDevice}); `replacedExpired` says so, for the audit trail. A live device's label
+   * is still `duplicate-label`.
    */
-  async claim(code: string, label: string): Promise<{ ok: true; token: string } | { ok: false; reason: ClaimFailure }> {
+  async claim(
+    code: string,
+    label: string,
+  ): Promise<{ ok: true; token: string; replacedExpired: boolean } | { ok: false; reason: ClaimFailure }> {
+    // The WHOLE claim runs in the write queue, the code check included. Two claims racing on one
+    // code would otherwise both read the pending pairing before either deleted it, and both enrol:
+    // one code, two devices. Two wrong guesses racing would both read the same attempt count and
+    // write it back once, and the five-tries rule would count one. In the queue the second claim
+    // reads what the first wrote: no pending pairing, or the higher count.
+    return this.serialize(() => this.claimInQueue(code, label));
+  }
+
+  /** {@link claim}'s body. Runs inside {@link serialize} only, so it must not queue anything itself. */
+  private async claimInQueue(
+    code: string,
+    label: string,
+  ): Promise<{ ok: true; token: string; replacedExpired: boolean } | { ok: false; reason: ClaimFailure }> {
     const pending = coercePending(await this.io.readPending());
     const verdict = checkClaim(pending, code, this.now());
     if (!verdict.ok) {
@@ -480,21 +783,22 @@ export class PairingStore {
       return { ok: false, reason: verdict.reason };
     }
     const token = generateToken(this.random);
-    const enrolled = await this.serialize(async () => {
-      const next = addDevice(coerceRegistry(await this.io.readRegistry()), {
-        label,
-        tokenHash: sha256Hex(token),
-        now: this.now(),
-      });
-      if (!next) return false;
-      await this.io.writeRegistry(next);
-      return true;
-    });
+    const now = this.now();
+    // The operator's `--expires`, carried on the pending code, counts from THIS moment.
+    const lifetime = pending?.tokenLifetimeMs;
+    const enrolment: Enrolment = {
+      label,
+      tokenHash: sha256Hex(token),
+      now,
+    };
+    if (lifetime !== undefined) enrolment.expiresAt = now + lifetime;
+    const enrolled = enrolDevice(coerceRegistry(await this.io.readRegistry()), enrolment);
     // A duplicate label leaves the pending pairing alive: the operator retries with another name
     // rather than re-running `collie pair`.
     if (!enrolled) return { ok: false, reason: "duplicate-label" };
+    await this.io.writeRegistry(enrolled.registry);
     await this.io.deletePending();
-    return { ok: true, token };
+    return { ok: true, token, replacedExpired: enrolled.replaced };
   }
 
   /**
@@ -509,7 +813,9 @@ export class PairingStore {
    * Returns the colliding labels, and writes NOTHING when there are any — refuse and report, never
    * namespace-and-merge (RFC §16, decision 6): a label is the revoke handle.
    */
-  async adopt(devices: readonly { label: string; tokenHash: string; createdAt: number }[]): Promise<string[]> {
+  async adopt(
+    devices: readonly { label: string; tokenHash: string; createdAt: number; expiresAt?: number }[],
+  ): Promise<string[]> {
     return this.serialize(async () => {
       const own = coerceRegistry(await this.io.readRegistry());
       const collisions = devices.filter((d) => own.devices.some((x) => x.label === d.label)).map((d) => d.label);
@@ -518,8 +824,13 @@ export class PairingStore {
         devices: [
           ...own.devices,
           // `lastSeenAt: 0` — never contacted THIS machine, and copying the lead's stamp would be this
-          // machine asserting traffic it never saw.
-          ...devices.map((d) => ({ label: d.label, tokenHash: d.tokenHash, createdAt: d.createdAt, lastSeenAt: 0 })),
+          // machine asserting traffic it never saw. The expiry DOES carry: it is the operator's limit
+          // on the credential, not a fact about traffic, and dropping it would un-expire a phone.
+          ...devices.map((d): PairedDevice => {
+            const entry: PairedDevice = { label: d.label, tokenHash: d.tokenHash, createdAt: d.createdAt, lastSeenAt: 0 };
+            if (d.expiresAt !== undefined) entry.expiresAt = d.expiresAt;
+            return entry;
+          }),
         ],
       });
       return [];

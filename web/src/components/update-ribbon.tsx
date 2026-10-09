@@ -38,18 +38,20 @@ import type { DismissScope } from "@/lib/types";
 // the same thing again in forty characters.
 //
 // ── IT REGISTERS A SLOT; IT DOES NOT DRAW A ROW ──────────────────────────────
-// The pixels live in the ONE band above the header, `ui/strip-host.tsx`, and this component only
+// The pixels live in the ONE band under the header, `ui/strip-host.tsx`, and this component only
 // says how loud its fact is: `UPDATE`, the quietest of the four (`lib/strip-priority.ts`). That is
 // what ended the band's original fault — this row, the connection bar and the auth refusal each
 // reserved the safe-area inset for themselves, on the assumption that each might be the first thing
 // on the screen, so any two of them at once paid for the notch twice and left a dead strip above
-// the notice. The inset now has one owner and the band has one winner. The losing fact is not lost:
-// the update offer keeps its footer line and its `/settings/updates` control.
+// the notice. The inset now has one owner (the header, which the band sits under) and the band has
+// one winner. The losing fact is not lost: the update offer keeps its footer line and its
+// `/settings/updates` control.
 //
 // ── FIXED HEIGHT, IN EVERY STATE ─────────────────────────────────────────────
 // The row is one height whatever it is saying, and only the text changes. A band that grew and
-// shrank as a run progressed would reflow the whole route under the operator's thumb mid-update,
-// which is the one moment they are least able to tolerate it. That height is now `ui/notice.tsx`'s
+// shrank as a run progressed would cover more and then less of the route under the operator's thumb
+// mid-update (it reflowed the whole route until the band became an overlay on 2026-10-07), which is
+// the one moment they are least able to tolerate it. That height is now `ui/notice.tsx`'s
 // `min-h-[33px]` strip floor, shared with every other strip, rather than a number written here —
 // which is also what makes the band's arbitration height-invariant. One truncating line rather than
 // a wrapping paragraph, and the strings are held to a 40-character budget in all six locales for

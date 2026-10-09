@@ -7,7 +7,7 @@ import { ChangesControl } from "@/components/changes-control";
 import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 
-import { FileContent, type FileLinks, type FileText, type FileView } from "@/components/file-preview";
+import { FileContent, type FileImages, type FileLinks, type FileText, type FileView } from "@/components/file-preview";
 import { ChangesListHead, FilesBreadcrumb, FilesFilterBar, FilesFolderBody, FilesModeControl } from "@/components/files-view";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
@@ -26,13 +26,15 @@ import {
   StatusLetter,
 } from "@/components/changes-view";
 import { t } from "@/lib/i18n";
+import { BackBar, FileScreen, TREE_VIEW_ICON, type BackControl } from "@/routes/changes";
+import type { Hand } from "@/hooks/use-display-prefs";
 import { summarizeChanges } from "@/lib/workspace-changes";
 import { folderView } from "@/lib/files-filter";
 import { previewKindFor } from "@/lib/files-view";
 import { changeAt, indexChanges, markFolder } from "@/lib/files-marks";
 import { countFiles, filterRepos, type ChangesFilter, type ChangesLayout } from "@/lib/changes-tree";
 import { fixtureChangeDiff, fixtureChanges, fixtureFileRead, fixtureFilesDir } from "@/test/handlers";
-import { Card, Group, Section, Stage, type SectionDef } from "../harness";
+import { Card, Group, Section, Stage, type SectionDef } from "../layout";
 
 export const DEF: SectionDef = {
   id: "changes",
@@ -205,13 +207,66 @@ const README_WITH_LINKS = [
 /** What the playground gives a link in a Markdown file: an address that goes nowhere, and a tap that does nothing. */
 const PLAYGROUND_LINKS: FileLinks = { hrefFor: () => "#", onOpen: () => {} };
 
+/** An SVG with a transparent ground, for the SVG preview and the Markdown image cards. */
+const PLAYGROUND_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 24 24" fill="none" ' +
+  'stroke="#2563eb" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M8 13l3 3 5-7"/></svg>\n';
+
+/** A 96 × 64 PNG, transparent but for a disc and a bar, so the board shows through around them. */
+const PLAYGROUND_PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAYAAADlNHIOAAAA2ElEQVR42u3cMQoCMQBE0fSew5PtvbygtfUuWApaiDom8wZygf+6BDKGmZlZyW6X0548AAB8duftugP4QeR3D4BA9FcYAALhHw+AYPw0Qn34NIT4YQTxwwjihxHEDyOIH0YQP4wAoBVgpvjfRBA/jACgDWDm+M+utGvu8gEAmBtghfhTIwAAAAAAAAAAAPQBrBQfgvgAAAAAAAAAAAAAvAcAAAAAgvgAIIi/LsJYcQAgdMefAWG0THwI3fH/CWG0T/xCCLWDCCoH/wuy8I9ZFv4zzszMzOy+AxMOJ70dzlJtAAAAAElFTkSuQmCC",
+  ),
+  (c) => c.charCodeAt(0),
+);
+
+/** What the playground gives a picture (ADR 0090): canvas pixels for a raster one, the SVG above for text. */
+const PLAYGROUND_IMAGES: FileImages = {
+  bytes: async () => ({ outcome: "image", blob: new Blob([PLAYGROUND_PNG], { type: "image/png" }) }),
+  text: async () => PLAYGROUND_SVG,
+};
+
+/** A bridge that will not serve the picture: the bytes are not one of the five types (415). */
+const PLAYGROUND_IMAGES_REFUSED: FileImages = {
+  bytes: async () => ({ outcome: "not-image" }),
+  text: async () => null,
+};
+
+/** A README with a relative picture, a relative SVG and a remote one, which stays its alt text. */
+const README_WITH_IMAGES = [
+  "# Webapp",
+  "",
+  "The cart, as it looks today:",
+  "",
+  "![the cart screen](docs/cart.png)",
+  "",
+  "The mark: ![the mark](public/mark.svg) and a remote badge, which stays words: ![build passing](https://example.com/badge.png)",
+  "",
+].join("\n");
+
 type CardView = "diff" | FileView;
+
+/** The bottom Back's act and name, as the folder level gives it; the playground's tap goes nowhere. */
+const BACK_TO_FOLDER: BackControl = { label: "Back to the folder", go: () => {} };
 
 /**
  * The file screen's sticky bar and body, live: the Diff | Source | Preview choice is a real control.
  * A file the change set names shows its letter and opens on Diff; another opens on its default.
  */
-function FileCard({ file, initial, height = 380 }: { file: FileText; initial: CardView; height?: number }) {
+function FileCard({
+  file,
+  initial,
+  height = 380,
+  images,
+  hand,
+}: {
+  file: FileText;
+  initial: CardView;
+  height?: number;
+  images?: FileImages;
+  /** Draw the phone's bottom Back under the file, on this hand's side. */
+  hand?: Hand;
+}) {
   const [view, setView] = useState<CardView>(initial);
   const change = changeAt(CHANGES, file.path);
   const views: CardView[] = [
@@ -223,7 +278,8 @@ function FileCard({ file, initial, height = 380 }: { file: FileText; initial: Ca
   const label = { diff: t("files.view.diff"), source: t("files.view.source"), preview: t("files.view.preview") };
   return (
     <Stage height={height}>
-      <div className="h-full overflow-y-auto">
+      <div className="flex h-full flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="sticky top-0 z-10 flex flex-col gap-2 border-b border-rule bg-background px-4 py-2">
           <div className="flex min-h-7 items-center gap-3">
             {change && <StatusLetter status={change.status} />}
@@ -234,7 +290,8 @@ function FileCard({ file, initial, height = 380 }: { file: FileText; initial: Ca
               label={t("files.view.aria")}
               value={view}
               onChange={setView}
-              options={views.map((value) => ({ value, label: label[value] }))}
+              options={views.map((value) => ({ value, label: label[value], icon: TREE_VIEW_ICON[value] }))}
+              className="[&>button]:flex-none [&>button]:px-3"
             />
           )}
         </div>
@@ -242,9 +299,11 @@ function FileCard({ file, initial, height = 380 }: { file: FileText; initial: Ca
           {view === "diff" && diff?.available ? (
             <DiffView diff={diff.diff} path={file.path} />
           ) : (
-            <FileContent file={file} view={view === "preview" ? "preview" : "source"} links={PLAYGROUND_LINKS} />
+            <FileContent file={file} view={view === "preview" ? "preview" : "source"} links={PLAYGROUND_LINKS} images={images} />
           )}
         </div>
+      </div>
+      {hand && <BackBar back={BACK_TO_FOLDER} hand={hand} />}
       </div>
     </Stage>
   );
@@ -261,6 +320,7 @@ function FolderCard({
   query: initialQuery = "",
   filterOpen = false,
   deleted = false,
+  hand,
 }: {
   dir: string;
   showIgnored?: boolean;
@@ -268,6 +328,8 @@ function FolderCard({
   filterOpen?: boolean;
   /** Add a deleted file to the change set, so the row the disk no longer lists shows struck through. */
   deleted?: boolean;
+  /** Draw the phone's bottom Back under the rows, on this hand's side. */
+  hand?: Hand;
 }) {
   const [showIgnored, setShowIgnored] = useState(initialShow);
   const [query, setQuery] = useState(initialQuery);
@@ -316,6 +378,47 @@ function FolderCard({
             onOpen={() => {}}
           />
         </div>
+        {hand && <BackBar back={BACK_TO_FOLDER} hand={hand} />}
+      </div>
+    </Stage>
+  );
+}
+
+/** The Changes list with the phone's bottom Back under it, on this hand's side. */
+function ListBackCard({ hand }: { hand: Hand }) {
+  return (
+    <Stage height={480}>
+      <div className="flex h-full flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <ChangesList repos={repos} onOpen={() => {}} />
+        </div>
+        <BackBar back={{ label: "Back to the pane", go: () => {} }} hand={hand} />
+      </div>
+    </Stage>
+  );
+}
+
+/** A diff screen: Previous, Next and Back share one bar, Back on this hand's side. */
+function DiffBackCard({ hand }: { hand: Hand }) {
+  const change = changeAt(CHANGES, "src/routes/checkout.tsx");
+  const diff = change ? fixtureChangeDiff(change.repo, change.path) : null;
+  if (!change || !diff?.available) return null;
+  return (
+    <Stage height={480}>
+      <div className="flex h-full flex-col overflow-y-auto">
+        <FileScreen
+          path={change.path}
+          oldPath={undefined}
+          status={change.status}
+          gone={false}
+          onPreview={undefined}
+          state={{ phase: "ready", key: "playground", data: diff }}
+          prev={{ repo: change.repo, path: "src/lib/cart.ts" }}
+          next={undefined}
+          onStep={() => {}}
+          back={{ label: "Back to the list", go: () => {} }}
+          hand={hand}
+        />
       </div>
     </Stage>
   );
@@ -585,9 +688,123 @@ export function ChangesSection() {
         <Card
           state="files-binary"
           label="file, a binary file"
-          reach="in the tree, open an image or any other binary file. Its size is the whole screen."
+          reach="in the tree, open a binary file that is not a picture. Its size is the whole screen."
         >
-          <FileCard file={fileOf("logo.png")} initial="source" height={260} />
+          <FileCard file={fileOf("logo.png", { path: "dist/app.wasm" })} initial="source" height={260} />
+        </Card>
+
+        <Card
+          state="files-image"
+          label="file, a picture"
+          reach="in the tree, open a .png, .jpg, .gif, .webp or .avif file. It fits the column on a board that
+            shows its transparency, with its size and type under it, and no Source | Preview control."
+        >
+          <FileCard file={fileOf("logo.png")} initial="source" height={360} images={PLAYGROUND_IMAGES} />
+        </Card>
+
+        <Card
+          state="files-image-refused"
+          label="file, a picture the bridge will not serve"
+          reach="in the tree, open a .png that is really text, or one over 16 MB. The binary line stays, with
+            the reason under it."
+        >
+          <FileCard file={fileOf("logo.png")} initial="source" height={260} images={PLAYGROUND_IMAGES_REFUSED} />
+        </Card>
+
+        <Card
+          state="files-preview-svg"
+          label="file, an SVG preview"
+          reach="in the tree, open an .svg file. It opens on Preview, drawn as a picture that runs no script;
+            Source shows its text."
+        >
+          <FileCard
+            file={fileOf("index.html", { path: "public/mark.svg", text: PLAYGROUND_SVG, size: PLAYGROUND_SVG.length })}
+            initial="preview"
+            height={340}
+          />
+        </Card>
+
+        <Card
+          state="files-preview-markdown-images"
+          label="file, a Markdown preview with pictures"
+          reach="in the tree, open a README that shows pictures by a relative path. A remote picture stays its
+            alt text."
+        >
+          <FileCard
+            file={fileOf("README.md", { text: README_WITH_IMAGES })}
+            initial="preview"
+            height={460}
+            images={PLAYGROUND_IMAGES}
+          />
+        </Card>
+      </Group>
+
+      <Group title="The phone's bottom Back">
+        <Card
+          state="files-back-list-right"
+          label="back bar, the list, right hand"
+          reach="on a phone, open Files with Changes on. A bar under the list holds Back at its right end,
+            the right thumb's side, as wide as its word."
+        >
+          <ListBackCard hand="right" />
+        </Card>
+
+        <Card
+          state="files-back-list-left"
+          label="back bar, the list, left hand"
+          reach="the same with Settings, Appearance, Hand on Left: Back moves to the left end."
+        >
+          <ListBackCard hand="left" />
+        </Card>
+
+        <Card
+          state="files-back-folder-right"
+          label="back bar, a folder, right hand"
+          reach="on a phone, open a folder in Files. The Show / Hide ignored line stays in the rows and
+            scrolls clear above the bar."
+        >
+          <FolderCard dir="src" showIgnored hand="right" />
+        </Card>
+
+        <Card
+          state="files-back-folder-left"
+          label="back bar, a folder, left hand"
+          reach="the same with the left-hand layout."
+        >
+          <FolderCard dir="src" showIgnored hand="left" />
+        </Card>
+
+        <Card
+          state="files-back-file-right"
+          label="back bar, a file, right hand"
+          reach="on a phone, open a file in the tree. Back alone, as under a folder."
+        >
+          <FileCard file={fileOf("src/cart.ts")} initial="source" hand="right" height={420} />
+        </Card>
+
+        <Card
+          state="files-back-image-left"
+          label="back bar, a picture, left hand"
+          reach="on a phone with the left-hand layout, open a picture in the tree."
+        >
+          <FileCard file={fileOf("logo.png")} initial="source" hand="left" height={420} images={PLAYGROUND_IMAGES} />
+        </Card>
+
+        <Card
+          state="files-back-diff-right"
+          label="back bar, a diff, right hand"
+          reach="on a phone, open a changed file from the list. Previous, Next and Back share one bar, Back
+            at the right end. Next is dimmed when there is no next file, and keeps its place."
+        >
+          <DiffBackCard hand="right" />
+        </Card>
+
+        <Card
+          state="files-back-diff-left"
+          label="back bar, a diff, left hand"
+          reach="the same with the left-hand layout: Back first, then Previous and Next."
+        >
+          <DiffBackCard hand="left" />
         </Card>
       </Group>
 

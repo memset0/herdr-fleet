@@ -79,6 +79,13 @@ export type NoticeProps = {
   icon?: ReactNode;
   children: ReactNode;
   className?: string;
+  /**
+   * A strip only: let the copy wrap instead of truncating. The one exception to "strips never wrap"
+   * (see STRIP), for a sentence the reader must see whole to act on, like the dated saved-copy line
+   * at 390px beside Retry. The strip then grows past its floor, which `min-h` allows on purpose.
+   * Ignored by a box, which always wraps.
+   */
+  wrap?: boolean;
 } & NoticeInteraction;
 
 /**
@@ -170,9 +177,9 @@ export const NOTICE_ACTION = `h-6 gap-1 px-2 text-xs ${NOTICE_ACTION_TAP}`;
  * by definition and `ui/strip-host.tsx` owns the row it sits in, so there is no gutter for the 100%
  * to be offset by. Both halves of that are what the box cannot say for itself.
  *
- * No safe-area inset here. The band's top inset belongs to `ui/strip-host.tsx`, which owns the row;
- * three of the current strips carry it and one does not, which is exactly the drift a shared owner
- * ends. The FLOOR, by contrast, does belong here and not on the host: it is derived from the action
+ * No safe-area inset here. The band sits under the header, and the header owns the notch
+ * (`app-header.tsx`); three of the old strips carried it and one did not, which is exactly the drift
+ * a single owner ends. The FLOOR, by contrast, does belong here and not on the host: it is derived from the action
  * slot's button, which is this component's contract, and it is tone-tinted through the `border-b`,
  * which the host is deliberately blind to.
  */
@@ -222,6 +229,7 @@ export function Notice({
   action,
   onDismiss,
   dismissLabel,
+  wrap = false,
 }: NoticeProps) {
   const { surface, accent } = TONE[tone];
   const strip = variant === "strip";
@@ -243,7 +251,8 @@ export function Notice({
     <span
       role={role}
       id={onActivate ? bodyId : undefined}
-      className="min-w-0 flex-1 truncate font-medium"
+      // `wrap`: the opt-in exception, a sentence that must read whole (see NoticeProps.wrap).
+      className={cn("min-w-0 flex-1 font-medium", wrap ? "break-words text-pretty" : "truncate")}
     >
       {children}
     </span>

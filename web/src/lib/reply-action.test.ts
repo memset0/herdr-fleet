@@ -7,6 +7,15 @@ import { server } from "@/test/setup";
 import * as registry from "./harness/registry";
 import { bracketPaste, draftCarriesSend, sendGuardedReply } from "./reply-action";
 
+// M46 spec 11 turns every send off for a pane the bridge has not answered lately (lib/liveness.ts).
+// These suites drive sends against a mocked network and never poll first, so they pin the pane live;
+// the gating itself is covered by liveness.test.ts and the *-offline suites.
+vi.mock("@/lib/liveness", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/liveness")>()),
+  isLive: () => true,
+  useLive: () => true,
+}));
+
 // The regression suite for #34: a free-text reply must never fire the submit key until the text is
 // verifiably sitting in the harness's input box. Before this, the reply path typed and then submitted
 // blind, so with a dialog focused the text was swallowed and the submit key ANSWERED the dialog —
@@ -162,6 +171,20 @@ describe("draftCarriesSend", () => {
     expect(draftCarriesSend(`prefix ${family.repeat(8)} suffix`, family.repeat(8))).toBe(true);
   });
 
+  // M46: the bridge masks a known secret shape on screen (bridge/redact.ts) but never the operator's
+  // own send, so a reply carrying a key reads back from the box as the key's mask. Placeholder only.
+  it("reads the bridge's secret mask as one printable character per mark", () => {
+    const key = "sk-or-v1-your-key-here-0000000000";
+    const masked = `sk-o${"•".repeat(key.length - 4)}`;
+    expect(draftCarriesSend(`use ${key} now`, `use ${masked} now`)).toBe(true);
+    // One mark too many or too few is a different text.
+    expect(draftCarriesSend(`use ${key} now`, `use ${masked}• now`)).toBe(false);
+    expect(draftCarriesSend(`use ${key} now`, `use ${masked.slice(0, -1)} now`)).toBe(false);
+    // A mark never stands for whitespace, and a literal bullet still verifies itself.
+    expect(draftCarriesSend("password: a b c d e f", "password: a•b c d e f")).toBe(false);
+    expect(draftCarriesSend("• first item in a list", "• first item in a list")).toBe(true);
+  });
+
   it("treats regex metacharacters in the draft as literal text", () => {
     expect(draftCarriesSend("run a.*b now", "run a.*b now")).toBe(true);
     expect(draftCarriesSend("run axxb now", "run a.*b now")).toBe(false);
@@ -279,6 +302,20 @@ describe("sendGuardedReply", () => {
     // sends nothing but its configured submitKeys.
     expect(calls).toEqual([
       { text: "ship it please", submit: false },
+      { text: "", submit: true },
+    ]);
+  });
+
+  it("submits a reply whose key the bridge masks on screen (M46)", async () => {
+    const key = "sk-or-v1-your-key-here-0000000000";
+    const sent = `set OPENROUTER_API_KEY=${key}`;
+    const calls = harness(() => paneWithDraft(`set OPENROUTER_API_KEY=sk-o${"•".repeat(key.length - 4)}`));
+
+    const out = await sendGuardedReply({ paneId: "w1:p1", text: sent, agent: "claude", ...instant });
+
+    expect(out).toEqual({ status: "sent" });
+    expect(calls).toEqual([
+      { text: sent, submit: false },
       { text: "", submit: true },
     ]);
   });

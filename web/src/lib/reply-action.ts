@@ -25,6 +25,7 @@ import { t } from "./i18n";
 import { graphemeSegmenter } from "./env";
 import { adapterFor, type HarnessAdapter } from "./harness";
 import { POLL_ATTEMPTS, POLL_DELAY_MS, defaultSleep, type Sleep } from "./harness/guard";
+import { isLive } from "./liveness";
 import { detectNoEchoPrompt } from "./no-echo";
 import type { Scope } from "./scope";
 
@@ -48,12 +49,30 @@ export type ReplyOutcome =
    *  that the screen is deliberately not showing it — see lib/no-echo.ts. */
   | { status: "stalled"; error: string; noEcho?: string }
   /** Transport/RPC failure. `textDelivered` = text is in the pane but unsubmitted; don't resend. */
-  | { status: "error"; error: string; textDelivered?: boolean };
+  | { status: "error"; error: string; textDelivered?: boolean }
+  /**
+   * Nothing was read, typed or sent: the bridge has not answered a read for this pane lately, so the
+   * screen the caller acted on may be cached or hours old (M46 spec 11). The caller keeps the draft.
+   * There is no queue and no retry: a person sends again once the pane reads live.
+   */
+  | { status: "refused"; reason: "offline"; error: string };
 
 /** Minimum visible characters that must match before we believe the input box holds OUR text. */
 export const MIN_MATCH_CHARS = 8;
 
 const REGEXP_META = /[.*+?^${}()|[\]\\]/g;
+
+/**
+ * The bridge's secret mask (`bridge/redact.ts`, `COLLIE_REDACT`, default on): a known secret shape on
+ * screen reaches the phone as one `•` per hidden character. The operator's own send is never masked,
+ * so a reply that carries a key reads back from the box as that key's mask. A mask character in the
+ * draft therefore stands for exactly ONE printable ASCII character of `sent` (every pattern the bridge
+ * masks is printable ASCII), or for a literal `•` the operator typed. Length and position still have
+ * to agree, so a draft that dropped or altered a visible character still fails.
+ */
+const REDACT_MASK = "•";
+const REDACT_SLOT = "(?:•|[\\x21-\\x7e])";
+const PRINTABLE_ASCII = /^[\x21-\x7e]$/;
 
 /** The exact gap extractInputDraft's fold inserts at a wrap seam: one plain space, always. Any
  *  other gap on screen is whitespace the operator really typed, so `sent` must carry it too. */
@@ -152,7 +171,7 @@ export function draftCarriesSend(sent: string, draft: string | null): boolean {
   if (visible < Math.min(visibleLength(sent), MIN_MATCH_CHARS)) return false;
 
   // Runs are whitespace-free by construction, so the joined pattern can never nest quantifiers.
-  const escape = (s: string) => s.replace(REGEXP_META, "\\$&");
+  const escape = (s: string) => s.replace(REGEXP_META, "\\$&").replaceAll(REDACT_MASK, REDACT_SLOT);
   let pattern = escape(runs[0]!);
   for (let i = 1; i < runs.length; i++) {
     const gap = gaps[i - 1]!;
@@ -252,12 +271,23 @@ export type ComposerPrepResult =
 
 // A cumulative prefix alone can match a stale screen after a later paste was
 // dropped. Multipart sends must also show the end that was just delivered.
+// A `•` in the draft may stand for one printable ASCII character of the send (REDACT_MASK).
 function carriesReplyTail(sent: string, draft: string | null): boolean {
-  const tail = Array.from(sent.replace(/\s/g, "")).slice(-32).join("");
-  return tail.length > 0 && draft !== null && draft.replace(/\s/g, "").endsWith(tail);
+  const tail = Array.from(sent.replace(/\s/g, "")).slice(-32);
+  if (tail.length === 0 || draft === null) return false;
+  const seen = Array.from(draft.replace(/\s/g, "")).slice(-tail.length);
+  return (
+    seen.length === tail.length &&
+    seen.every((ch, i) => ch === tail[i] || (ch === REDACT_MASK && PRINTABLE_ASCII.test(tail[i]!)))
+  );
 }
 
 export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOutcome> {
+  // M46 spec 11: the backstop behind every disabled Send. A UI that slipped through (a stale render,
+  // a handler held across an outage) still cannot reach the bridge from a pane it has not just read.
+  if (!isLive(args.paneId, args.scope)) {
+    return { status: "refused", reason: "offline", error: t("composer.send.reconnect") };
+  }
   const adapter = adapterFor(args.agent ?? undefined);
   // No grammar for this harness → the input box is unreadable, so there is nothing to verify
   // against and the guard cannot run. Keep the legacy one-shot send rather than guess: a heuristic

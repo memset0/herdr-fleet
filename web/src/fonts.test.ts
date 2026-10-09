@@ -9,9 +9,9 @@ import {
   parseDesignPrefs,
 } from "@/lib/design";
 import { acceptOperatorFonts, operatorFontCss, operatorFontUrl } from "@/lib/operator-fonts";
-import { DEFAULT_UI_FONT_URL, FONT_URLS, UI_FONT_URLS } from "@/lib/sw-routes";
+import { DEFAULT_UI_FONT_URL, FONT_URLS, UI_COMPANION_FONT_URLS, UI_FONT_URLS } from "@/lib/sw-routes";
 
-// Collie ships four webfonts — two Nerd Font symbol subsets and two UI typefaces — and the design
+// Collie ships five webfonts — two Nerd Font symbol subsets, two UI typefaces and a Cyrillic companion — and the design
 // rests on facts that are silent when broken: the stylesheet, the service worker and the disk agree
 // on which files exist; the symbol faces stay range-restricted so they stay lazy; the UI face is
 // preloaded and metric-matched so its swap moves nothing; and none of them re-enters the precache.
@@ -29,6 +29,9 @@ const root = resolve(import.meta.dirname, "..");
 const read = (p: string) => readFileSync(resolve(root, p), "utf8");
 const css = read("src/index.css");
 const html = read("index.html");
+const companionUrls: readonly string[] = UI_COMPANION_FONT_URLS;
+const shippedUiUrls: readonly string[] = UI_FONT_URLS;
+const allFontUrls: readonly string[] = FONT_URLS;
 const cssUrls = [...css.matchAll(/url\("([^"]+\.woff2)"\)/g)].map((m) => m[1]!);
 
 describe("bundled fonts", () => {
@@ -57,7 +60,9 @@ describe("bundled fonts", () => {
 
 describe("the UI typefaces", () => {
   // The entries that are NOT range-restricted, because one of them dresses every label in the app.
-  const uiUrls = FONT_URLS.filter((u) => u.startsWith("/fonts/ui-"));
+  const uiUrls = FONT_URLS.filter(
+    (u) => u.startsWith("/fonts/ui-") && !companionUrls.includes(u),
+  );
 
   it("ships exactly the shipped faces, and the default is one of them", () => {
     expect(uiUrls).toEqual([...UI_FONT_URLS]);
@@ -135,6 +140,59 @@ describe("the UI typefaces", () => {
   });
 });
 
+// ── The Cyrillic companion ──────────────────────────────────────────────────────────────────────
+//
+// Aldrich draws no Cyrillic. Play 400 covers it, under the SAME family name, behind a `unicode-range`
+// — which is the whole of its laziness: a browser fetches a face only when text in its range is on
+// screen. Every assertion here protects one of the ways that quietly stops being true: a preload or
+// a precache entry charges every English device for a Russian font; a stand-in without a Latin range
+// keeps drawing Cyrillic 13% too large; a range that drifts from the script's makes the file load
+// for the wrong text or not at all.
+describe("the Cyrillic companion", () => {
+  const playFace = (source: string) =>
+    [...source.matchAll(/@font-face\s*\{[^}]*\}/g)].map((m) => m[0]).find((b) => b.includes("ui-play-"));
+  const rangeOf = (block: string) => /unicode-range:\s*([^;]+);/.exec(block)?.[1]?.replace(/\s+/g, " ").trim();
+
+  it("is declared as an Aldrich face behind a Cyrillic-only unicode-range, in the stylesheet and the splash", () => {
+    for (const [name, source] of [["index.css", css], ["index.html", html]] as const) {
+      const face = playFace(source);
+      expect(face, name).toBeDefined();
+      expect(face, name).toContain('font-family: "Aldrich";');
+      expect(face, name).toContain("U+0400-045F");
+      expect(rangeOf(face!), name).toBe("U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116");
+      expect(face, name).toMatch(/size-adjust:\s*\d/);
+    }
+    expect(rangeOf(playFace(css)!)).toBe(rangeOf(playFace(html)!));
+  });
+
+  it("is lazy: never preloaded, never in the precache, never a Typeface choice", () => {
+    for (const url of UI_COMPANION_FONT_URLS) {
+      expect(html).not.toMatch(new RegExp(`<link[^>]*rel="preload"[^>]*${url.replace(/[.]/g, "\\.")}`));
+      expect(read("vite.config.ts")).not.toContain(url);
+      expect(shippedUiUrls).not.toContain(url);
+      // Kept by the SW's activate sweep, which only spares what FONT_URLS names.
+      expect(allFontUrls).toContain(url);
+    }
+  });
+
+  // Each metric stand-in is tuned to its face's LATIN. Without a range it also catches Cyrillic,
+  // which then renders at 113% (Aldrich) or 107.5% (Space Grotesk) of a system face for no reason.
+  it.each(["Aldrich Fallback", "Space Grotesk Fallback"])(
+    "keeps the %s stand-in off Cyrillic with a Latin-only range, in both copies",
+    (family) => {
+      for (const [name, source] of [["index.css", css], ["index.html", html]] as const) {
+        const block = [...source.matchAll(/@font-face\s*\{[^}]*\}/g)]
+          .map((m) => m[0])
+          .find((b) => b.includes(`"${family}"`));
+        expect(block, name).toBeDefined();
+        const range = rangeOf(block!);
+        expect(range, name).toMatch(/^U\+0000-00FF,/);
+        expect(range, name).not.toMatch(/U\+04/);
+      }
+    },
+  );
+});
+
 describe("the chrome/content boundary", () => {
   // F-D2: the custom face dresses the app's own chrome and never an agent's words. Two mechanisms
   // hold that line — `font-mono` for verbatim terminal surfaces, and `font-content` for agent text
@@ -207,12 +265,14 @@ describe("operator fonts stay off the shipped path", () => {
     expect(acceptOperatorFonts([{ family: "X", basename: "a.woff2", weight: "700 400" }])).toEqual([]);
   });
 
-  it("quotes the family and points the src at the api path", () => {
+  // Reads need the pairing token (ADR 0086) and a CSS `url()` cannot send it, so the sheet names the
+  // family only: the face itself is a `FontFace` built from bytes fetched with the token.
+  it("quotes the family, and carries no url() a token could not ride", () => {
     const sheet = operatorFontCss([{ family: "Departure Mono", basename: "d.woff2", weight: "400 700" }], "op:d.woff2");
-    expect(sheet).toContain('font-family: "Departure Mono";');
-    expect(sheet).toContain('src: url("/api/fonts/d.woff2") format("woff2");');
-    expect(sheet).toContain("font-weight: 400 700;");
     expect(sheet).toContain('--font-operator-family: "Departure Mono";');
+    expect(sheet).not.toContain("@font-face");
+    expect(sheet).not.toContain("url(");
+    expect(operatorFontUrl("d.woff2")).toBe("/api/fonts/d.woff2");
   });
 
   // The offline / deleted-row case, and the reason index.css's `var()` carries a fallback: with no
@@ -220,7 +280,7 @@ describe("operator fonts stay off the shipped path", () => {
   it("emits no family property for a choice no row answers to", () => {
     const sheet = operatorFontCss([{ family: "Departure Mono", basename: "d.woff2" }], "op:gone.woff2");
     expect(sheet).not.toContain("--font-operator-family");
-    expect(sheet).toContain('font-family: "Departure Mono";');
+    expect(sheet).toBe("");
     expect(cssRootOperatorStack()).toContain('var(--font-operator-family, "Aldrich")');
   });
 

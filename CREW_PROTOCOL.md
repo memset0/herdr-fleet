@@ -247,6 +247,8 @@ the same handlers. There is no second handler set, no second semantic, and no He
 | `GET` | `/crew/v1/workspace/:id/changes` | `GET …/workspace/:id/changes` | proxied byte-for-byte — additive-optional (§7.1). The same list asked by workspace rather than by pane (ADR 0065), with the same query. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
 | `GET` | `/crew/v1/pane/:id/files` | `GET …/files` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-05 (M45/03). One folder (`?dir=`) or one text file (`?path=`) under the same root the pane's Changes list reads, off **the member's own disk** (ADR 0083); the query rides through untouched. A READ for forwarding (attempted against a stale member, read budget, audited on neither side), but the member answers it only for a device its **own** device policy authorises, exactly as for a write (§12): `crewGate` takes its write branch for it. A lead that predates it never calls it, and a peer that predates it answers **404** to a lead that does, which the phone must read as "update this member", never as a missing file. A refused path is the member's own `404 { "error": "unknown-path" }`, told apart by its body. A listing row may carry `ignored: true` (additive-optional, added 2026-10-05): git says the entry is ignored in the repository that holds the folder, asked once per listing by the member over its own disk. A member that predates it, one with no repository there, and one whose git did not answer in time all send no field, and the phone then hides nothing for it. The phone hides flagged rows by default; it is a view filter, and an ignored file still reads |
 | `GET` | `/crew/v1/workspace/:id/files` | `GET …/workspace/:id/files` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-05 (M45/03). The same Files view asked by workspace, with the same query, gate and 404 reading as the pane row above |
+| `GET` | `/crew/v1/pane/:id/files/image` | `GET …/files/image` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-07 (ADR 0090). One picture (`?path=`) under the same root as the pane's Files read, as its own bytes, off **the member's own disk**; the member reads the type off the bytes (PNG, JPEG, GIF, WebP, AVIF) and answers `413` past 16 MiB and `415` for anything else. The same gate as the Files read (§12, `crewGate`'s write branch), a READ for forwarding, audited on neither side. The lead does not relay the member's cache or security headers: it sets `no-store`, `default-src 'none'; sandbox` and `inline` itself on whatever comes back. It does relay the plain-data `X-Collie-File-Size` and `X-Collie-File-Mtime` the member sends, the picture's version, so the phone can hold the picture in memory; a member that sends neither gets neither. A peer that predates it answers **404**, which the phone reads as "no picture" and shows the file's size instead |
+| `GET` | `/crew/v1/workspace/:id/files/image` | `GET …/workspace/:id/files/image` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-07 (ADR 0090). The same picture asked by workspace, with the same query, gate, statuses and headers as the pane row above |
 | `POST` | `/crew/v1/pane/:id/reply` | `POST …/reply` (`:279`) | forwarded |
 | `POST` | `/crew/v1/pane/:id/keys` | `POST …/keys` (`:280`) | forwarded |
 | `POST` | `/crew/v1/pane/:id/upload` | `POST …/upload` (`:281`) | forwarded (§13) |
@@ -613,6 +615,15 @@ updated machines, so build skew is the steady state (§7), and this section is t
   `total` that is not positive, a `used` outside `0..total`) drops the whole sample, like any other
   field out of range. Past four entries the lead keeps the first four rather than refuse a later build
   that sends more. Unknown keys inside an entry are ignored.
+
+- **A pane gained an optional `gitHead`** (added 2026-10-08). It names what the checkout holding
+  the pane's folder is on: `{ kind: "branch", name }` or `{ kind: "detached", sha }`, the full object
+  name. Additive-optional with the closed reading this section requires: **absent means no branch is
+  known**, which the phone renders as nothing at all, exactly as before the field. It is read on the
+  machine the pane lives on, off that machine's own disk, so a member's panes carry the member's own
+  branch. An older peer omits it, and an older lead passes it through untouched. A kind the phone does
+  not know reads as absent. Nothing in `bridge/crew/merge.ts` changes, for the reason the `cache`
+  bullet gives. `CREW_PROTOCOL_VERSION` stays `2`, no new route, no new verb and no new header.
 
 - **An addition a lead has no reader for is INERT, not merely tolerated — measured, not assumed**
   (2026-09-08, §16's version-skew leg). This section's promise used to rest on a unit test with a
@@ -1113,12 +1124,15 @@ reuse of the four-field one above, for two reasons that are both load-bearing:
 
 ## 9. Reads — what is proxied, what is merged
 
-**Exactly one route is merged. Everything else is proxied byte-for-byte.**
+**Exactly one route is merged. Everything else is proxied byte-for-byte**, except that the lead masks
+the secrets in the text answers it relays (§9.1, "The lead masks a member's text").
 
 ### 9.1 Proxied reads (pane mirror, history)
 
 The lead forwards the request to the owning peer and returns the peer's response **unmodified**:
-status, body bytes, `content-type`, and — critically — **`etag`**.
+status, body bytes, `content-type`, and — critically — **`etag`**. The one change it may make to a
+body is the secret mask below, and that change keeps the status and salts the ETag with the mask's
+version.
 
 - `If-None-Match` from the phone is passed through to the peer.
 - **Compression is hop-local: the peer hop is `Accept-Encoding: identity`, and the peer's
@@ -1127,8 +1141,8 @@ status, body bytes, `content-type`, and — critically — **`etag`**.
   anyway, it does *not* strip the stale `content-encoding` from the response headers, and re-emitting
   that header describes bytes that no longer exist.
 - **The lead→phone hop is compressed by the lead itself**, on the phone's own `Accept-Encoding`, as a
-  **stream transform** over the identity bytes (`CompressionStream("gzip")`) — never a buffer, so a
-  400-turn history is still never held whole. It applies to JSON and text bodies with a body to send;
+  **stream transform** over the identity bytes (`CompressionStream("gzip")`) — the transform itself
+  never buffers (a text answer the lead masks is held once, for the mask, below). It applies to JSON and text bodies with a body to send;
   a `304`/`204` and a non-compressible type stream through untouched. When it applies, the lead sets
   `content-encoding: gzip` and merges `accept-encoding` into the peer's `Vary` (setting it when the
   peer sent none) — the same negotiation, and the same `Vary`, a local route already declares
@@ -1146,6 +1160,50 @@ status, body bytes, `content-type`, and — critically — **`etag`**.
   silently-different value across a version skew at worst.
 - The 304-skips-the-transfer win (`bridge/server.ts:460-462`) is preserved end to end, which is the
   entire reason proxying is byte-for-byte rather than parse-and-re-emit.
+
+**The lead masks a member's text** *(added 2026-10-08, 1.18.0)*. Every collie masks known secret
+shapes in the text it sends a phone (`bridge/redact.ts`, `COLLIE_REDACT`, on by default), and a
+member does so for its own answers. A member one release behind does not, so a lead with the mask on
+masks five answers again before the phone reads them: the mirror (`pane/:id`), `history`, `chat`,
+and `changes` and `files`, asked by pane or by workspace. It uses the functions its own routes use
+for the same answers (`bridge/answer-mask.ts`, through `bridge/crew/mask.ts`), so a member's answer
+is masked exactly as the lead's own would be, whatever the member's version. Nothing changes on the
+peer surface, and `CREW_PROTOCOL_VERSION` does not move.
+
+- **Only a `2xx` with a body is read.** A `304` has none, and an error answer carries no session text
+  on either side, so both stream on as themselves. Every other route, `files/image` and `blobs`
+  included, is never read on the lead: a picture is bytes, not text.
+- **The mask is idempotent.** A masked span becomes `•` marks, which no pattern matches, so masking a
+  masked body changes nothing. A body a 1.18 member already masked is re-serialised with
+  `JSON.stringify`, the member's own serialiser, and comes back byte for byte. An answer with nothing
+  to mask (`available: false`, a listing, a commit list) is passed on as the member's bytes, unparsed
+  past its shape check.
+- **The member's ETag rides on, salted with the mask's version.** The lead appends `~m<N>` inside the
+  quotes (`"abc"` becomes `"abc~m1"`), where `N` is `MASK_VERSION` in `bridge/redact.ts`, bumped
+  whenever a pattern is added. The mask is a function of the member's bytes and that version alone,
+  so the salted tag still names exactly one body the phone can hold. On the way in, the lead passes the
+  member only the phone's tags that carry the current salt, unsalted, and the member keeps answering
+  them with its own `304` (salted on the way out, like a `200`). Any other tag is dropped, so a copy
+  masked under an older list, or one a 1.17 lead passed on in clear, is fetched again and masked now.
+  A tag hashed over the masked body would never match on the member, and every Chat and mirror poll
+  would cost a full body. A route the lead does not mask, and every route while its mask is off,
+  passes the tag through untouched. `content-length` is never copied, as above, so the new body is
+  framed by its own length.
+- **It fails closed.** A `2xx` body that is not the answer its route makes (not JSON, or a field the
+  mask walks of the wrong type) is never passed on raw: the lead answers `502 answer_unmaskable`
+  naming the member (§10.3). A body the link loses mid-read is `503 host_unreachable`.
+- **It costs one parse per changed body.** Unchanged polls are `304`s and read nothing. A changed
+  body is held whole while it is masked, about 1 ms for a 128 KB mirror and 2 ms for a 200-turn
+  History page (measured 2026-10-08), then compressed for the phone as above.
+- **Either switch masks.** The lead masks by its own `COLLIE_REDACT`, and the member by its own. Text
+  reaches the phone in clear only when both are off.
+- **The merged snapshot masks its titles too.** A pane's program-set `terminalTitle` is masked in the
+  lead's own snapshot, so the lead masks it on its members' panes in the merged body (§9.2) as well.
+
+A prompt answer bound to the mirror (`expected`, `verifyPromptBinding` in `bridge/server.ts`) is
+read off the masked text, and a member compares it with its own mask applied. A member that does not mask therefore refuses such a send as
+`prompt_changed` when a secret sits inside the compared lines. That refusal is the safe side, and it
+ends when the member updates.
 
 **A blob read is proxied byte for byte, exactly like `history`** *(added 2026-09-09)*. `GET
 /api/blobs/<hash>` serves one content-addressed image out of a pi/omp journal's blob store, and that
@@ -1335,7 +1393,8 @@ bytes may already be in the terminal, and a retry types them twice. Concretely:
 **On the wire** (what the phone renders on — `bridge/crew/forward.ts`): every lead-generated refusal
 is JSON with `{ok: false, code, error, host}` and a distinct status — `host_unreachable` (503),
 `host_incompatible` (503), `write_outcome_unknown` (504), `upload_too_large` (413),
-`route_not_federated` (501, for a route outside §5's table). Never a bare 500,
+`route_not_federated` (501, for a route outside §5's table), `answer_unmaskable` (502, a member's
+text answer the lead could not read to mask, §9.1). Never a bare 500,
 and never a silent success. A peer's *own* answer is never given one of these: it is passed through
 as itself (§9.1), including its 403 when the peer's write gate refuses.
 
@@ -1534,10 +1593,11 @@ happened on the peer's terminals.
 - **A peer is never asked to trust the lead's authorisation decision in place of its own.** The peer
   applies its own write-level checks to a crew request; the lead's gate does not stand in for them.
 - **One read borrows the write's device check** (added 2026-10-05, ADR 0083): `files` on the pane and
-  workspace routes. It is still a read on the link (forwarded on the read budget, audited on neither
-  side), but the peer answers it only when `X-Crew-Device` names a device its own allowlist holds,
-  the same branch of `crewGate` a write takes. Additive inside protocol version 2: the route is new,
-  so no request that crossed the link before is gated differently.
+  workspace routes, and `files/image` beside them (added 2026-10-07, ADR 0090). It is still a read
+  on the link (forwarded on the read budget, audited on neither side), but the peer answers it only
+  when `X-Crew-Device` names a device its own allowlist holds, the same branch of `crewGate` a write
+  takes. Additive inside protocol version 2: the routes are new, so no request that crossed the link
+  before is gated differently.
 
 ---
 
@@ -2510,8 +2570,8 @@ token the *lead* minted, so the lead pushes its registry.
 |---|---|
 | **Route** | `POST /crew/v1/pairing`, lead → **deputy only** |
 | **Gate** | the crew's two factors (§8.1), plus a role check: the caller must be *this collie's own lead*, **and this collie must hold a verified warrant naming itself**. Every other peer that ever receives one refuses it. |
-| **Body** | `{ crewId, leadMemberId, devices: [{ label, tokenHash, createdAt }] }` — every field required, because the route is new and a new route may require its own fields (§7.1). |
-| **Sent** | at designation and on every change — a `pair`, a `devices revoke`, nothing else. |
+| **Body** | `{ crewId, leadMemberId, devices: [{ label, tokenHash, createdAt, expiresAt? }] }`. Every field is required except `expiresAt`, because the route is new and a new route may require its own fields (§7.1). `expiresAt` *(added 2026-10-06, M46)* is additive-optional: sent only for a device paired with `collie pair --expires` or given one by `devices set-expiry`, and folded into `pairingDigest` only then, so a registry without expiries digests exactly as before. A non-numeric value refuses the body. The standby door refuses a token past its `expiresAt`, and a takeover adopts the field with the device. A deputy one release behind ignores it and honours the token until it updates. |
+| **Sent** | at designation and on every change: a `pair`, a `devices revoke`, a `devices set-expiry` or `clear-expiry`, nothing else. |
 | **Absent (404)** | no credential to verify ⇒ **the standby door refuses to arm.** Closed. |
 
 - **Only hashes cross.** The token was shown once, at claim time, and is not recoverable
@@ -2536,10 +2596,11 @@ token the *lead* minted, so the lead pushes its registry.
   *remove* a device on the deputy.
 - **It lands in `standby-devices.json`** — its own file, its own version integer, 0600 in a 0700
   directory, temp-then-rename — and is **NEVER merged into the deputy's own `paired-devices.json`.**
-  This is not tidiness. `PairingStore.enforced()` is *the registry is non-empty*, so a merge would
-  silently switch on the deputy's **own** write gate for its **own** operator, on a machine where
-  nobody ran `collie pair`. A gate the operator did not arm is a lockout waiting for the day they use
-  that machine directly. The synced entries are adopted into the deputy's own registry **at takeover
+  This is not tidiness. The deputy's own registry decides who may use the deputy's **own** front
+  door, and pairing is always on (ADR 0086, amended 2026-10-07: before it, *the registry is
+  non-empty* armed the gate, so a merge would have armed it). A merge would silently let every phone
+  paired with the lead read and drive the deputy directly, on a machine where its operator never ran
+  `collie pair` for them. The synced entries are adopted into the deputy's own registry **at takeover
   commit and only then** (§18.16), because after the commit that machine *is* the lead and the phone
   must keep working against the credential it already holds.
 - **A label collision is a FINDING, and it never refuses the sync** *(amended 2026-08-20, after a

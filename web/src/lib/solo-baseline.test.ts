@@ -116,6 +116,9 @@ const AGENT_VIEW_KEYS = {
   // Fleet optional durable identity, absent from the upstream baseline fixture.
   bindingId: true,
   bindingSession: true,
+  // Not a crew dimension: what the checkout holding the pane's folder is on, read off the disk of
+  // the machine the pane lives on. An older bridge or peer omits it.
+  gitHead: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -211,6 +214,7 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "cache",
       "cwd",
       "focused",
+      "gitHead",
       "hasSession",
       "hint",
       "host",

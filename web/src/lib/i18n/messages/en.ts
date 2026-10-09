@@ -8,7 +8,8 @@
 //     different VALUES for the same keys, so they are typed `Record<MessageKey, string>`.
 //   * `{name}` marks an interpolation slot; `t()` fills it. Slots are named, never positional,
 //     because a translator re-orders a sentence and positions do not survive that.
-//   * A plural comes as a `.one` / `.other` PAIR and is read through `tn()`, never `t()`.
+//   * A plural comes as a `.one` / `.other` PAIR and is read through `tn()`, never `t()`. A language
+//     with more categories (Russian: `.few`, `.many`) adds them in its own file only.
 //
 // Seeded with the language-selector copy only — the full string sweep lands separately.
 
@@ -171,6 +172,10 @@ export const en = {
   "settings.beltSize.option.default": "Default",
   "settings.beltSize.option.large": "Large",
   "settings.beltSize.option.larger": "Larger",
+  "settings.hand.title": "Hand",
+  "settings.hand.description": "Moves Send and the belt's Switch to the side of your thumb.",
+  "settings.hand.right": "Right",
+  "settings.hand.left": "Left",
   "settings.zen.title": "Zen mode",
   "settings.zen.description": "Adds a row to the pane menu that hides everything but the terminal.",
   "settings.zen.auto.label": "Enter on landscape",
@@ -233,21 +238,31 @@ export const en = {
 
   // --- settings.devices ---
   "settings.devices.title": "Paired devices",
-  "settings.devices.description.enforced": "Every write needs a paired device. Reading stays open.",
-  "settings.devices.description.open":
-    "Nothing is paired, so writes are ungated. Pair a device to require a credential.",
+  "settings.devices.description.enforced": "Every read and every write needs a paired device.",
   "settings.devices.pairedAs": "This device is paired as {device}.",
   "settings.devices.loadError": "Couldn’t load the paired devices from the bridge.",
   "settings.devices.thisDevice": "This device",
   "settings.devices.row.meta": "Paired {paired} · last seen {lastSeen}",
+  "settings.devices.row.expires": "Expires {date}",
+  "settings.devices.row.noExpiry": "No expiry",
+  "settings.devices.row.expired": "Expired",
+  "settings.devices.row.expiredOn": "Expired {date}",
   "settings.devices.revokeError": "Couldn’t revoke that device.",
   "settings.devices.cancel": "Cancel",
   "settings.devices.unpairSelf": "Unpair this phone",
   "settings.devices.revoke": "Revoke",
   "settings.devices.revokeAria": "Revoke {label}",
+  "settings.devices.confirm.self": "Unpair this phone? Its drafts, saved pane text and notifications are cleared here. Your settings stay.",
+  "settings.devices.confirm.other": "Revoke {label}? It loses access until it is paired again.",
   "settings.devices.pair.title": "Pair this device",
   "settings.devices.pair.hint":
     "Run {command} on the host, then scan the code it prints or type it here.",
+  "settings.devices.pair.againTitle": "Pair again",
+  "settings.devices.pair.expired": "This device’s pairing expired. Run {command} on the host, then enter the new code here.",
+  "settings.devices.pair.never": "This browser has not been paired. Run {command} on your machine and enter the code here.",
+  "settings.devices.pair.cleared.unpair": "Saved data was cleared because this phone was unpaired.",
+  "settings.devices.pair.cleared.expired": "Saved data was cleared because its pairing expired.",
+  "settings.devices.pair.cleared.revoked": "Saved data was cleared because the bridge revoked it.",
   "settings.devices.pair.codeLabel": "Pairing code",
   "settings.devices.pair.codePlaceholder": "8 characters",
   "settings.devices.pair.nameLabel": "Name for this device",
@@ -275,12 +290,17 @@ export const en = {
   "settings.connection.row.bridge": "Bridge",
   "settings.connection.row.deviceAccess": "Device access",
   "settings.connection.row.serverBuild": "Server build",
+  "settings.connection.row.secretMasking": "Secret masking",
+  "settings.connection.masking.on": "On, set on the bridge",
+  "settings.connection.masking.off": "Off, set on the bridge",
   "settings.connection.secure.yes": "Yes",
   "settings.connection.secure.no": "No (plain HTTP)",
   "settings.connection.bridge.connected": "Connected",
   "settings.connection.bridge.offline": "Herdr offline",
   "settings.connection.bridge.connecting": "Connecting…",
-  "settings.connection.device.notEnforced": "Not enforced",
+  "settings.connection.bridge.notPaired": "Reachable, not paired",
+  "settings.connection.device.notPaired": "Enforced, this device is not paired",
+  "settings.connection.device.paired": "Enforced, this device is paired",
   "settings.connection.device.fullAccessNamed": "Full access · {device}",
   "settings.connection.device.fullAccessLocal": "Full access (local)",
   "settings.connection.device.readOnlyNamed": "Read-only · {device}",
@@ -411,8 +431,10 @@ export const en = {
   "composer.send.reallySend": "Really send?",
   "composer.send.stopTypingAria": "Stop typing into terminal",
   "composer.send.sendAria": "Send",
+  "composer.send.reconnect": "Reconnect to send",
   "composer.draft.tooLong":
     "Too long to keep as a saved draft — it survives switching panes, but not closing the app.",
+  "composer.draft.holdsMask": "This reply holds masked text (••••). The pane gets the dots, not the secret.",
   "composer.status.dialogWaiting": "A dialog is waiting — answer it first, then send.",
   "composer.status.unreadDialog":
     "Collie cannot read this dialog. {key} is on the card. Tap Send again to type anyway.",
@@ -440,6 +462,8 @@ export const en = {
     "Send confirms what it typed, and this prompt shows nothing to confirm. Type sends your keys straight through, Enter included.",
   "composer.noEcho.useType": "Use Type",
   "composer.noEcho.dismissAria": "Dismiss password-prompt notice",
+  "composer.offline.draftNote": "The draft stays on this phone and is never sent by itself.",
+  "composer.offline.draftNote.dismissAria": "Dismiss the offline draft note",
   "composer.draftPreview.title": "Draft in terminal",
   "composer.draftPreview.takeOver": "Take over",
   "composer.draftPreview.dismissAria": "Dismiss the terminal draft notice",
@@ -486,10 +510,14 @@ export const en = {
   // 7). The route is additive-optional over a crew link, so a machine one release behind has no
   // route at all. Say the remedy, because there is exactly one and waiting is not it.
   "chat.stale.member": "This machine runs an older Collie. Update it to follow the conversation here.",
+  "chat.savedCopy": "Saved copy from {time}. Older text is on the bridge.",
   "chat.fullReply.title": "Full reply",
   "chat.fullReply.fromTranscript": "from transcript",
   "chat.fullReply.showingTerminal": "showing the terminal",
   "chat.output.empty": "(no recent output)",
+  // The pane page with the bridge away and nothing kept for this pane: what the phone can say
+  // without a live answer. Never "gone", which only a live answer can state (M46 spec 10).
+  "pane.saved.none": "No saved copy of this pane on this phone.",
   "chat.switcher.aria": "Switch pane",
   "chat.switcher.ariaNeedsYou": "Switch pane, another pane needs you",
   "chat.switcher.title": "Switch pane",
@@ -501,6 +529,13 @@ export const en = {
   "paneOrder.recent": "Newest first",
   "paneOrder.cache": "Cache",
   "paneOrder.coldest": "Going cold first",
+  "settings.keepChat.title": "Keep chat on this phone",
+  "settings.keepChat.description": "Keeps the newest Chat turns of each pane, so you can read them when the bridge is out of reach. Off keeps nothing and deletes what is kept.",
+  "settings.keepChat.off": "Off",
+  "settings.keepChat.day": "1 day",
+  "settings.keepChat.week": "7 days",
+  "settings.keepChat.clearNow": "Clear saved copies now",
+  "settings.keepChat.cleared": "Saved copies cleared. Live panes are saved again as you read them.",
   "settings.paneOrder.description":
     "Activity puts the pane where something last happened at the top of the dashboard and the switcher. Cache puts the one whose prompt cache dies soonest there. Place keeps the order your terminal has.",
   "chat.status.feedbackSent": "Feedback sent",
@@ -536,6 +571,8 @@ export const en = {
   "chat.stream.empty": "Send a message to start.",
   "chat.stream.working": "Still working…",
   "chat.stream.queued": "Waiting to send",
+  "chat.stream.sendNow": "Send now",
+  "chat.stream.sendNowAria": "Send now, the waiting messages",
   "chat.stream.loadOlderFailed": "Couldn't load older turns",
   // --- chat.card (the blocks of the stream: turns, steps, notices) ---
   // A card's LABEL is the kind of step, a chrome word. What the step acted on — a path, a command,
@@ -611,6 +648,7 @@ export const en = {
   "prompt.family.trust": "Trust this folder?",
   "prompt.family.plan": "Review the plan",
   "prompt.sendingAria": "Sending",
+  "prompt.reconnectNote": "Reconnect to answer.",
   "prompt.feedback.cancel": "Cancel",
   "prompt.feedback.typedAria": "Feedback in the terminal",
   "prompt.feedback.planChange.offer": "Tell Claude what to change",
@@ -652,6 +690,7 @@ export const en = {
   "paneActions.focus.done": "Focused in the terminal",
   "paneActions.focus.failed": "Couldn't focus in the terminal",
   "paneActions.pin.label": "Pin to top",
+  "paneActions.branchOff.label": "New agent on a branch",
   "paneActions.unpin.label": "Unpin",
   "paneActions.pin.done": "Pinned to the top",
   "paneActions.unpin.done": "Unpinned",
@@ -675,6 +714,7 @@ export const en = {
   "nav.settings.aria": "Settings",
   "nav.home.aria.default": "Collie home",
   "nav.home.aria.lost": "Collie home — not connected",
+  "nav.home.aria.lostAt": "Collie home, not connected. Showing what was saved at {time}.",
   "nav.home.aria.reconnecting": "Collie home — reconnecting",
   "nav.mux.onPrefix": "on",
   "nav.prereleaseTitle": "Pre-release build — {version}",
@@ -692,11 +732,16 @@ export const en = {
   "home.workspace.paneCount.other": "{count} panes",
   "home.workspace.hidden": "hidden",
   "home.machineHidden.show": "Show {name}'s panes",
+  "home.workspaceFilter.aria": "Workspace",
+  "home.workspaceFilter.all": "All workspaces",
+  "home.workspaceFilter.showHidden": "Show hidden workspaces",
   "home.sidebar.shells": "Shells",
   "home.pinned.title": "Pinned",
   "home.pinHint.hold": "Hold a pane to pin it here.",
   "home.pinHint.rightClick": "Right-click a pane to pin it here.",
   "home.pinHint.dismiss": "Dismiss hint",
+  "pane.maskedHint.body": "Some secrets on this screen are masked. Read them on the machine.",
+  "pane.maskedHint.dismiss": "Dismiss hint",
   "home.group.newTab": "New tab in {name}",
   "home.sidebar.paneActionsTitle": "Tap for pane actions",
   "fleet.navigation.hierarchy": "Herds",
@@ -802,6 +847,11 @@ export const en = {
   "status.label.idle": "idle",
   "status.label.done": "done",
   "status.label.unknown": "unknown",
+  "status.past.blocked": "needed you",
+  "status.past.working": "was working",
+  "status.past.idle": "was idle",
+  "status.past.done": "was done",
+  "status.past.unknown": "was unknown",
   "status.count.needsYou.one": "{count} needs you",
   "status.count.needsYou.other": "{count} needs you",
   "status.count.working.one": "{count} working",
@@ -862,7 +912,9 @@ export const en = {
   "space.tab.closeFailed": "Close failed",
   "space.tab.closed": "Tab closed",
   "space.readOnly.notPaired": "Not paired — pair this device in Settings",
+  "space.readOnly.expired": "Pairing expired. Pair again in Settings",
   "space.readOnly.deviceUnauthorised": "Read-only — device not authorised",
+  "space.readOnly.savedCopy": "Saved copy. Reconnect to make changes.",
   "space.create.ready": "New {what} ready — launch your agent",
   "space.noun.tab": "tab",
   "space.noun.space": "space",
@@ -908,6 +960,7 @@ export const en = {
   "connection.auth.signIn": "Sign in",
   "connection.reload.aria": "Reload",
   "connection.retry": "Retry",
+  "connection.dismiss.aria": "Hide this notice",
   "common.closeAria": "Close",
   "common.scrollToLatestAria": "Scroll to latest",
   "connection.connected": "Connected",
@@ -916,6 +969,9 @@ export const en = {
   "connection.offlineCantReach": "Offline — can't reach Collie",
   "connection.cantReach": "Can't reach Collie",
   "connection.withLastSeen": "{cause} — last seen {time}",
+  "connection.saved.offline": "You are offline. Showing what was saved at {time}.",
+  "connection.saved.noBridge": "No connection to the bridge. Showing what was saved at {time}.",
+  "connection.saved.hint": "Check your connection or Tailscale.",
   "connection.readOnly.notPaired": "Not paired — pair this device in Settings to type into agents.",
   "connection.readOnly.device": "Read-only — this device isn’t authorised to type into agents{deviceSuffix}.",
   "connection.host.lastSeen": "last seen {time}",
@@ -1306,12 +1362,16 @@ export const en = {
   "apiError.worktree.ambiguous_branch": "That branch name matches more than one thing: {reason}",
   "apiError.worktree.branch_required": "Type a branch name first.",
   "apiError.worktree.not_a_repo": "This space isn't in a Git repository.",
+  "apiError.worktree.invalid_branch": "That branch name is not allowed. Use letters, digits, dashes and slashes.",
   "worktree.section": "Worktrees",
   "worktree.new": "New worktree",
   "worktree.branchLabel": "Branch name",
   "worktree.branchPlaceholder": "feature/my-change",
   "worktree.branchesFrom": "Branches from {branch}",
   "worktree.create": "Create",
+  "branchOff.agentLabel": "Agent",
+  "branchOff.shell": "Shell",
+  "branchOff.launcherFailed": "The worktree is ready, but the agent did not start. Start it in the new shell.",
   "worktree.creating": "Creating…",
   "worktree.open": "Open",
   "worktree.opening": "Opening…",
@@ -1783,6 +1843,11 @@ export const en = {
   // --- changes (ADR 0065) ---
   "chat.changes.label": "Files",
   "files.title": "Files",
+  // --- the branch a pane's folder is on (components/ui/branch-label.tsx) ---
+  "branch.aria": "Branch {name}",
+  "branch.detachedAria": "Detached at {sha}",
+  "branch.detached": "detached @{sha}",
+  "files.back": "Back",
   "changes.backAria.dashboard": "Back to the dashboard",
   "changes.backAria.workspace": "Back to the workspace",
   "changes.backAria.pane": "Back to the pane",
@@ -1900,6 +1965,10 @@ export const en = {
   "files.json.empty": "Empty",
   "files.html.caption": "Scripts, forms and remote files are off",
   "files.html.frameTitle": "HTML preview",
+  "files.image.tooLarge": "Too large to show here. Pictures up to 16 MB are drawn.",
+  "files.image.notImage": "Not a picture Collie can draw.",
+  "files.image.failed": "The picture did not load. Tap refresh to try again.",
+  "files.image.undrawable": "This browser cannot draw this picture.",
   "settings.changes.title": "Changes",
   "settings.changes.description": "How a pane's Changes view finds git repos.",
   "settings.changes.nested.label": "Look for repos inside this folder",
@@ -1936,4 +2005,17 @@ export type Messages = typeof en;
 /** What a translated bundle must be: every key, any string. `Record` over a finite union of
  *  literals is complete in BOTH directions — a missing key fails the assignment, an extra one is
  *  caught as an excess property. That is the entire enforcement mechanism; don't loosen it. */
-export type Dictionary = Record<MessageKey, string>;
+export type Dictionary = Record<MessageKey, string> & Partial<Record<ExtraPluralKey, string>>;
+
+/** The base of every `.one`/`.other` pair English has. */
+type PluralBaseOf<K> = K extends `${infer Base}.one`
+  ? `${Base}.other` extends MessageKey
+    ? Base
+    : never
+  : never;
+
+/** The plural forms a language may add beyond `.one`/`.other`, for a base English has a pair for:
+ *  `.few` and `.many` for Russian (1 файл, 2 файла, 5 файлов). Optional here, because a language
+ *  with no such category carries none; `tn()` falls back to `.other` for a category with no key.
+ *  The parity test requires them in `ru`. */
+export type ExtraPluralKey = `${PluralBaseOf<MessageKey>}.${"few" | "many"}`;

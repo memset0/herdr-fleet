@@ -1,7 +1,9 @@
 // THE FILES VIEW'S BRIDGE HALF — one folder listed, or one text file read, under the Changes root
-// (ADR 0083). Read-only by construction: nothing here writes, renames, creates or deletes. The one
+// (ADR 0083), or one picture read as bytes (ADR 0090, {@link readImage}). Read-only by construction: nothing here writes, renames, creates or deletes. The one
 // child process is `git check-ignore`, once per listing, through Changes' hardened runner, with the
-// names on stdin and no flags at all when git does not answer ({@link gitIgnoredNames}).
+// names on stdin and no flags at all when git does not answer ({@link gitIgnoredNames}). A third
+// call only asks whether paths exist, for the links in the pane view (ADR 0088): the same checks as
+// a read, then one `lstat` per path, and nothing opened ({@link existingPaths}).
 //
 // ── THE THIRD PLACE A CLIENT VALUE BECOMES A PATH ───────────────────────────────────────────────
 // The law in bridge/journal/files.ts names three places, and this is the third. Its bound:
@@ -30,20 +32,30 @@
 // Every refusal is the same answer, `unknown-path`: absent, outside, denied, a folder read as a file
 // and a file listed as a folder cannot be told apart by anything the client sees.
 //
-// ── THE RACE THIS ACCEPTS ───────────────────────────────────────────────────────────────────────
+// ── THE RACE, AND THE CHECK ON THE OPENED FILE ──────────────────────────────────────────────────
 // Between the containment check and the read, a path component can be swapped for a symlink. The
 // final component is opened with O_NOFOLLOW (POSIX) so a swap of the file itself fails the open,
 // O_NONBLOCK so a FIFO swapped in cannot hang the request, and the opened handle must be a regular
-// file. A swap of a folder ABOVE it is not closed: that needs `openat2(RESOLVE_BENEATH)`, which Bun
-// does not expose. The only party who can win that race is someone who can write inside the root,
-// which is the agent running as the operator's own user, and that agent can already read every file
-// the bridge can. ADR 0065 accepted the same race for the untracked read.
+// file. A swap of a folder ABOVE it would still open a file elsewhere, so containment is checked a
+// SECOND time, on the handle, before a byte is read ({@link openedFileAllowed}):
+//   - Linux: the kernel's own name for the open file (`/proc/self/fd/<fd>`) must lie inside the
+//     root's real path and pass the deny rules. That name is the file the handle holds, so no later
+//     swap can change the answer.
+//   - Elsewhere (no `/proc`): the path is resolved and checked again, and its `lstat` must be the
+//     handle's own file (same device and inode). A swap still in place fails the containment; a swap
+//     put back fails the identity.
+// A hard link cannot be told apart by either check: it is the same inode under a name inside the
+// root, so its real path and the kernel's name are both inside. It is served. Making one needs write
+// access inside the root and (with Linux's `protected_hardlinks`) ownership of the target, which is
+// the agent running as the operator's own user, and that agent can already read every file the
+// bridge can. A file with more than one link is not refused either: package managers (pnpm) and
+// tools hard-link ordinary files, and refusing them would refuse the files a root is made of.
 //
 // Pure where it can be (the path grammar, the order, the decoding); the disk half takes its file
 // calls through {@link FilesFs}, so a test can stand one in.
 
 import { constants, type Dirent } from "node:fs";
-import { lstat, open, opendir, stat } from "node:fs/promises";
+import { lstat, open, opendir, readlink, stat } from "node:fs/promises";
 import { relative, sep } from "node:path";
 
 import { isStateSecretName } from "./acl-policy.ts";
@@ -166,6 +178,19 @@ export interface FilesStat {
   isDirectory(): boolean;
   isSymbolicLink(): boolean;
   size: number;
+  /** The file's identity, compared against an open handle's ({@link openedFileAllowed}). */
+  dev?: number;
+  ino?: number;
+}
+
+/**
+ * The file an open handle holds, as the check on the opened file reads it. `path` is the kernel's
+ * own name for it (Linux, `/proc/self/fd/<fd>`), or null where there is no such name to ask.
+ */
+export interface OpenedFile {
+  path: string | null;
+  dev: number;
+  ino: number;
 }
 
 /** The file calls this module makes. {@link NODE_FILES_FS} in production. */
@@ -176,16 +201,32 @@ export interface FilesFs {
   /** Up to `limit` names in `dir`, in the order the disk gives them, and whether more were there. */
   names(dir: string, limit: number, keep: (name: string) => boolean): Promise<{ names: string[]; more: boolean }>;
   /**
-   * Open `path` without following a final symlink, refuse anything but a regular file, and read at
-   * most `max` bytes from its start. `null` when the open or the type check refused it.
+   * Open `path` without following a final symlink, refuse anything but a regular file, ask
+   * `confirm` about the opened file BEFORE any byte is read, and read at most `max` bytes from its
+   * start. `null` when the open, the type check or `confirm` refused it.
    */
-  readHead(path: string, max: number): Promise<{ bytes: Uint8Array; size: number } | null>;
+  readHead(
+    path: string,
+    max: number,
+    confirm?: (opened: OpenedFile) => Promise<boolean>,
+  ): Promise<{ bytes: Uint8Array; size: number; mtimeMs?: number } | null>;
   /** The real path containment, `containedRealpath` in production. */
   contained(candidate: string, root: string, host: Host): Promise<string | null>;
 }
 
 /** O_NOFOLLOW and O_NONBLOCK exist on POSIX only; Windows reads them as 0 (no flag). */
 const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+/**
+ * The kernel's name for an open descriptor, on Linux, or null. `/proc/self/fd/<fd>` is a link the
+ * kernel answers from the open file itself, so it names the file the handle holds, not whatever a
+ * path names now. A file deleted since the open reads as `<path> (deleted)`, which is no path inside
+ * any root, so it is refused.
+ */
+async function kernelPathOf(fd: number): Promise<string | null> {
+  if (HOST.platform !== "linux") return null;
+  return readlink(`/proc/self/fd/${String(fd)}`).catch(() => null);
+}
 
 export const NODE_FILES_FS: FilesFs = {
   realpath: (path) => realpathOf(path),
@@ -210,12 +251,15 @@ export const NODE_FILES_FS: FilesFs = {
     }
     return { names, more };
   },
-  async readHead(path, max) {
+  async readHead(path, max, confirm) {
     const handle = await open(path, OPEN_FLAGS).catch(() => null);
     if (handle === null) return null;
     try {
       const st = await handle.stat();
       if (!st.isFile()) return null;
+      if (confirm !== undefined && !(await confirm({ path: await kernelPathOf(handle.fd), dev: st.dev, ino: st.ino }))) {
+        return null;
+      }
       const want = Math.min(st.size, max);
       const bytes = new Uint8Array(want);
       let got = 0;
@@ -224,7 +268,9 @@ export const NODE_FILES_FS: FilesFs = {
         if (bytesRead === 0) break;
         got += bytesRead;
       }
-      return { bytes: bytes.subarray(0, got), size: st.size };
+      // The mtime is the open handle's own, read with the size: the phone keys a held picture on both
+      // (ADR 0090), and a second path lookup could name another file than the one these bytes came from.
+      return { bytes: bytes.subarray(0, got), size: st.size, mtimeMs: st.mtimeMs };
     } finally {
       await handle.close().catch(() => {});
     }
@@ -310,6 +356,30 @@ async function checkedTarget(segments: readonly string[], r: Resolved): Promise<
   const real = await r.fs.contained(candidate, r.rootReal, r.host);
   if (real === null) return null;
   return isDeniedReal(real, r) ? null : real;
+}
+
+/**
+ * The check on the OPENED file (see "THE RACE, AND THE CHECK ON THE OPENED FILE" above): whether the
+ * file a handle holds is still the one {@link checkedTarget} allowed. `real` is what that check
+ * answered for `segments` before the open.
+ *
+ * With the kernel's name for the handle (Linux), that name must lie inside the root's real path and
+ * pass the same deny rules; nothing that happens to the path afterwards changes which file the handle
+ * holds. Without one, the path is checked again from the start and must answer `real` once more, and
+ * the file there must be the handle's own (device and inode), so a folder swapped and swapped back
+ * around the open is caught by the identity, and one still swapped by the containment.
+ */
+function openedFileAllowed(segments: readonly string[], r: Resolved, real: string) {
+  return async (opened: OpenedFile): Promise<boolean> => {
+    if (opened.path !== null) {
+      return isInside(r.host, opened.path, r.rootReal) && !isDeniedReal(opened.path, r);
+    }
+    const again = await checkedTarget(segments, r).catch(() => null);
+    if (again !== real) return false;
+    const st = await r.fs.lstat(again).catch(() => null);
+    if (st === null || st.isSymbolicLink() || !st.isFile()) return false;
+    return st.dev !== undefined && st.ino !== undefined && st.dev === opened.dev && st.ino === opened.ino;
+  };
 }
 
 /** `unknown-path`: the one answer for absent, outside, denied, and the wrong kind. */
@@ -446,14 +516,158 @@ export async function readFile(ctx: FilesContext, path: string): Promise<FilesRe
   try {
     const real = await checkedTarget(segments, r);
     if (real === null) return UNKNOWN_PATH;
-    const head = await r.fs.readHead(real, MAX_FILES_READ_BYTES);
+    const head = await r.fs.readHead(real, MAX_FILES_READ_BYTES, openedFileAllowed(segments, r, real));
     if (head === null) return UNKNOWN_PATH;
     const truncated = head.size > MAX_FILES_READ_BYTES;
     const { binary, text } = decodeFileText(head.bytes, truncated);
-    return { available: true, root: ctx.root, path: segments.join("/"), size: head.size, binary, truncated, text };
+    const answer: FileReadAnswer = { available: true, root: ctx.root, path: segments.join("/"), size: head.size, binary, truncated, text };
+    if (head.mtimeMs !== undefined) answer.mtimeMs = head.mtimeMs;
+    return answer;
   } catch {
     return UNKNOWN_PATH;
   }
+}
+
+// ── Image ───────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The most bytes one picture may have (ADR 0090). The blob route's ceiling (`BLOB_MAX_BYTES` in
+ * bridge/server.ts), for the same reason: a phone on a cellular link is the reader, and past this a
+ * picture costs more to send than it is worth. A larger file answers `too-large` before it is opened.
+ */
+export const MAX_IMAGE_READ_BYTES = 16 * 1024 * 1024;
+
+/** The picture types the image read serves. SVG is not one of them: it is text (ADR 0090). */
+export type ImageType = "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/avif";
+
+/** The leading bytes {@link sniffImageType} reads at most: an `ftyp` box's brands, generously. */
+export const IMAGE_SNIFF_BYTES = 64;
+
+/** Whether `head` holds the ASCII text `ascii` at `offset`. */
+function bytesAt(head: Uint8Array, offset: number, ascii: string): boolean {
+  if (head.length < offset + ascii.length) return false;
+  for (let i = 0; i < ascii.length; i++) if (head[offset + i] !== ascii.charCodeAt(i)) return false;
+  return true;
+}
+
+/**
+ * Whether an ISO-BMFF `ftyp` box at the start of `head` names an AVIF brand (`avif` for a still,
+ * `avis` for a sequence), as its major brand or as one of its compatible brands. A HEIC photo has the
+ * same box with other brands, and a browser that draws AVIF does not draw HEIC, so it is no match.
+ */
+function isAvif(head: Uint8Array): boolean {
+  if (!bytesAt(head, 4, "ftyp")) return false;
+  const size = ((head[0]! << 24) | (head[1]! << 16) | (head[2]! << 8) | head[3]!) >>> 0;
+  // The major brand at 8, the minor version at 12, then four-byte compatible brands to the box's end,
+  // read only as far as the bytes in hand reach.
+  const end = Math.min(size, head.length);
+  if (end < 12) return false;
+  for (let at = 8; at + 4 <= end; at += at === 8 ? 8 : 4) {
+    if (bytesAt(head, at, "avif") || bytesAt(head, at, "avis")) return true;
+  }
+  return false;
+}
+
+/**
+ * The type of a picture, read off its leading bytes and NOTHING ELSE (ADR 0090). The extension is
+ * the agent's word, or a stranger's: a text file renamed `x.png` is not a picture, and a type taken
+ * from its name would hand the browser bytes under a label they do not match. `null` is every file
+ * that is not one of the five types, and the route answers it `415`.
+ *
+ * - PNG: the full eight-byte signature, `\x89PNG\r\n\x1a\n`.
+ * - JPEG: `FF D8 FF`, the start-of-image marker and the first marker after it.
+ * - GIF: `GIF87a` or `GIF89a`. An animated GIF is a GIF, and the phone draws it animating.
+ * - WebP: `RIFF` at 0 and `WEBP` at 8. `RIFF` alone is also a WAV or an AVI.
+ * - AVIF: an `ftyp` box at 4 that names `avif` or `avis` ({@link isAvif}).
+ */
+export function sniffImageType(head: Uint8Array): ImageType | null {
+  if (head.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((b, i) => head[i] === b)) return "image/png";
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
+  if (bytesAt(head, 0, "GIF87a") || bytesAt(head, 0, "GIF89a")) return "image/gif";
+  if (bytesAt(head, 0, "RIFF") && bytesAt(head, 8, "WEBP")) return "image/webp";
+  if (isAvif(head)) return "image/avif";
+  return null;
+}
+
+/**
+ * What an image read comes to: the picture, a file over {@link MAX_IMAGE_READ_BYTES}, a file that is
+ * not one of the five types, or a root that is not there to read.
+ */
+export type ImageReadAnswer =
+  | { available: false; reason: "no-folder" }
+  | { available: true; kind: "image"; type: ImageType; bytes: Uint8Array; size: number; mtimeMs?: number }
+  | { available: true; kind: "too-large"; size: number }
+  | { available: true; kind: "not-image" };
+
+/**
+ * One picture under the root (ADR 0090), through exactly the checks {@link readFile} runs: the same
+ * root, the same shape rule, the same real-path containment and deny list, the same no-follow open of
+ * a regular file. Only the cap and the answer differ. The file is sized before it is opened, so a
+ * video asked for as a picture is refused without a read, and sized again on the open handle, so a
+ * file that grew in between is refused too. The type comes off the bytes ({@link sniffImageType}).
+ */
+export async function readImage(ctx: FilesContext, path: string): Promise<FilesResult<ImageReadAnswer>> {
+  const r = await resolveRoot(ctx);
+  if (r === null) return { available: false, reason: "no-folder" };
+  const segments = parseRelPath(path, r.host);
+  if (segments === null || segments.length === 0) return UNKNOWN_PATH;
+  try {
+    const real = await checkedTarget(segments, r);
+    if (real === null) return UNKNOWN_PATH;
+    const st = await r.fs.stat(real).catch(() => null);
+    if (st === null || !st.isFile()) return UNKNOWN_PATH;
+    if (st.size > MAX_IMAGE_READ_BYTES) return { available: true, kind: "too-large", size: st.size };
+    const head = await r.fs.readHead(real, MAX_IMAGE_READ_BYTES, openedFileAllowed(segments, r, real));
+    if (head === null) return UNKNOWN_PATH;
+    if (head.size > MAX_IMAGE_READ_BYTES) return { available: true, kind: "too-large", size: head.size };
+    const type = sniffImageType(head.bytes.subarray(0, IMAGE_SNIFF_BYTES));
+    if (type === null) return { available: true, kind: "not-image" };
+    const picture: ImageReadAnswer = { available: true, kind: "image", type, bytes: head.bytes, size: head.size };
+    if (head.mtimeMs !== undefined) picture.mtimeMs = head.mtimeMs;
+    return picture;
+  } catch {
+    return UNKNOWN_PATH;
+  }
+}
+
+// ── Exist ───────────────────────────────────────────────────────────────────────────────────────
+
+/** The most paths one existence check may name (ADR 0088). More is a refused body, not a cut. */
+export const MAX_EXIST_PATHS = 64;
+
+/** What an existence check answers: the asked paths that are a regular file or a folder. */
+export interface FilesExistAnswer {
+  exists: string[];
+}
+
+/**
+ * Which of `paths` name a regular file or a folder under the root, in the order asked, each once
+ * (ADR 0088). A path passes the same checks a read runs (the shape, the real path inside the root's,
+ * `.git`, the private folders, a state secret's basename), then takes ONE `lstat` on its real path.
+ * Nothing is opened and no byte is read. Everything the read would refuse is absent here, and so is
+ * the root itself, a FIFO and a socket: an absent path and a refused one cannot be told apart, as on
+ * the read.
+ */
+export async function existingPaths(ctx: FilesContext, paths: readonly string[]): Promise<string[]> {
+  const asked = [...new Set(paths)];
+  if (asked.length === 0) return [];
+  const r = await resolveRoot(ctx);
+  if (r === null) return [];
+  const found = await mapLimited(asked, LSTAT_CONCURRENCY, async (path): Promise<boolean> => {
+    const segments = parseRelPath(path, r.host);
+    if (segments === null || segments.length === 0) return false;
+    try {
+      const real = await checkedTarget(segments, r);
+      if (real === null) return false;
+      // The real path holds no link by construction; one swapped in since is a link here, and absent,
+      // the way O_NOFOLLOW refuses it on the read.
+      const st = await r.fs.lstat(real).catch(() => null);
+      return st !== null && !st.isSymbolicLink() && (st.isFile() || st.isDirectory());
+    } catch {
+      return false;
+    }
+  });
+  return asked.filter((_, i) => found[i] === true);
 }
 
 /** List or read, as the query asks. */
