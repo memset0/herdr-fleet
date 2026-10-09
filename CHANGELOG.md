@@ -19,16 +19,31 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-10-09
+
+**Every member redeploys, lead first; no operator configuration changes.** This release adopts
+Collie 1.17.2: Chat as the default pane body, the Files view and the Machines page, the dashboard's
+Crew, Dashboard and Files tabs, the Tern multiplexer, experimental Windows support and upstream's
+fixes. Level the lead first, then each member; crew protocol stays 2 and every new field is additive,
+so a 3.9.x member beside a 3.10.0 lead keeps working in the short gap, and rolling a machine back is a
+plain redeploy with nothing renamed on disk. The temporary Claude mode-line port is retired for
+upstream's own reading of `esc to interrupt` and `↓ to manage`; two narrower cases are accepted and
+reported upstream. The Codex headless status-row port remains. Collie's new Cloudflare Access gate
+settings are Fleet's: the Gateway owns authentication, so neither reaches the Collie child and a Collie
+`config.toml` naming one refuses to start. Known upstream defect: on Bun 1.3.14 the Files view cannot
+list a folder (its directory handle's `close()` returns no promise), so a listing answers as an unknown
+path; reading a file is unaffected.
+
 ### Changed
 
-- **Adopt Collie 1.17.2.** Chat as the default pane body, the Files view and the Machines page, the dashboard's Crew, Dashboard and Files tabs and its Activity and Cache orders, the Tern multiplexer, experimental Windows support, Oh My Pi and Muse harness work, a command-line speech provider, an opt-in Cloudflare Access gate, crew invite addressing fixes and upstream's reader fixes, including its own reading of Claude's `esc to interrupt` and `↓ to manage` hints (#330).
-- **Retire the temporary Claude mode-line hint port.** Collie 1.15.2 reads `esc to interrupt` and `↓ to manage` itself (#330), so both Claude grammar call sites take upstream's text and the fork's recogniser, suite and fixtures are gone; a notice right-aligned after `↓ to manage` on the same row still reads as a dialog upstream.
-- **The Machines list and machine page fill the route column.** Collie 1.17's two new pages lose the centred reading column and header claim between the rails, as the Crew page did.
-- **The Gateway owns authentication beneath it.** Collie's Cloudflare Access gate settings (`COLLIE_ACCESS_TEAM`, `COLLIE_ACCESS_AUD`) never reach the Collie child, and a Collie `config.toml` naming either refuses to start, naming the file and key.
+- **Adopt Collie 1.17.2.** Chat as the default pane body, the Files view and the Machines page, the dashboard's Crew, Dashboard and Files tabs and its Activity and Cache orders, the Tern multiplexer, experimental Windows support, Oh My Pi and Muse harness work, a command-line speech provider, an opt-in Cloudflare Access gate, crew invite addressing fixes and upstream's reader fixes, including its own reading of Claude's `esc to interrupt` and `↓ to manage` hints (#330). ([b8b0bf6](https://github.com/memset0/herdr-fleet/commit/b8b0bf6))
+- **Retire the temporary Claude mode-line hint port.** Collie 1.15.2 reads `esc to interrupt` and `↓ to manage` itself (#330), so both Claude grammar call sites take upstream's text and the fork's recogniser, suite and fixtures are gone; a notice right-aligned after `↓ to manage` on the same row still reads as a dialog upstream. ([1dc5404](https://github.com/memset0/herdr-fleet/commit/1dc5404))
+- **The Machines list and machine page fill the route column.** Collie 1.17's two new pages lose the centred reading column and header claim between the rails, as the Crew page did. ([882c187](https://github.com/memset0/herdr-fleet/commit/882c187))
+- **The Gateway owns authentication beneath it.** Collie's Cloudflare Access gate settings (`COLLIE_ACCESS_TEAM`, `COLLIE_ACCESS_AUD`) never reach the Collie child, and a Collie `config.toml` naming either refuses to start, naming the file and key. ([4970547](https://github.com/memset0/herdr-fleet/commit/4970547))
 
 ### Fixed
 
-- **The manifest's path check reads as a repository path under Collie 1.17's host guard.** Its separator is named once, and a leading slash is refused by the empty segment it leaves; a case pins every unsafe shape.
+- **The manifest's path check reads as a repository path under Collie 1.17's host guard.** Its separator is named once, and a leading slash is refused by the empty segment it leaves; a case pins every unsafe shape. ([3d4e80c](https://github.com/memset0/herdr-fleet/commit/3d4e80c))
 
 ## [3.9.14] - 2026-10-06
 
