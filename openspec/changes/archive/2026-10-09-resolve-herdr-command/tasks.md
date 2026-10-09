@@ -12,6 +12,6 @@
 ## 3. Verification and release
 
 - [x] 3.1 Run focused tests, both typechecks, lint, the build, `bun run test:fork` and the private-facts guard
-- [ ] 3.2 Push `main` unreleased and run the full suites on the remote test member against that exact commit, classifying every failure
-- [ ] 3.3 Cut the MINOR release, tag it annotated, push branch and tag by name
-- [ ] 3.4 Deploy the lead and every member except those excluded; verify versions and health in the crew census, the member's terminal service running, an end-to-end fit of a throwaway member Pane keeping rows, and the member terminal route through the Gateway
+- [x] 3.2 Push `main` unreleased and run the full suites on the remote test member against that exact commit, classifying every failure
+- [x] 3.3 Cut the MINOR release, tag it annotated, push branch and tag by name
+- [x] 3.4 Deploy the lead and every member except those excluded; verify versions and health in the crew census, the member's terminal service running, an end-to-end fit of a throwaway member Pane keeping rows, and the member terminal route through the Gateway
