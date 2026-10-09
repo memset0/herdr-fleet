@@ -11,7 +11,7 @@ import { t } from "@/lib/i18n";
 import { isUnseen } from "@/lib/triage";
 import { statusLabel, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { useLocale } from "@/hooks/use-locale";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 interface NativeAgentCardProps {
   agent: AgentView;
@@ -72,7 +72,7 @@ export function NativeAgentCard({
   current = false,
   rowKey,
 }: NativeAgentCardProps) {
-  useLocale();
+  useFleetLocale();
   const flat = density === "row";
   const blocked = agent.status === "blocked";
   const unseen = isUnseen(agent);
@@ -149,7 +149,7 @@ export function NativeAgentCard({
           size="icon"
           type="button"
           aria-pressed={pinned}
-          aria-label={pinned ? t("home.favorite.remove", { name }) : t("home.favorite.add", { name })}
+          aria-label={pinned ? ft("home.favorite.remove", { name }) : ft("home.favorite.add", { name })}
           onClick={onPinToggle}
           className={cn(
             "size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95",

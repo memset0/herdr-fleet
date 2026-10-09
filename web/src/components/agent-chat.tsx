@@ -27,7 +27,7 @@ import { finishedTurnKey, useMirrorImages } from "@/hooks/use-mirror-images";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
 import { isConnecting } from "@/lib/connection";
-import { t, type MessageKey } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { savedAtLabel } from "@/lib/format";
 import { settleAfterSend } from "@/lib/harness/guard";
 import { setStatus } from "@/lib/status";

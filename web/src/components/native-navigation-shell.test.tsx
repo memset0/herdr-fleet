@@ -949,10 +949,9 @@ describe("closing from the keyboard", () => {
   });
 
 });
-// THE NOTCH IS RESERVED ONCE PER COLUMN. The band sits above the shell and spans every column, so
-// each rail hands the inset to it exactly as the header does (`app-header.tsx`). Found by upstream's
-// whole-layout count in `routes/root.test.tsx` after the 1.8.2 adoption: the rails kept reserving
-// while a strip was showing, which stood their titles an inset lower than the header beside them.
+// THE NOTCH IS RESERVED ONCE PER COLUMN. Since Collie 1.18 the strip band is an overlay hung below
+// the header, which owns the inset unconditionally (`app-header.tsx`); each rail is a column beside
+// the header and reserves it unconditionally too, so a strip coming or going moves no rail title.
 describe("the rails and the strip band", () => {
   function renderInBand(strip: boolean) {
     const router = createMemoryRouter(
@@ -989,10 +988,10 @@ describe("the rails and the strip band", () => {
     return found;
   }
 
-  it("gives the inset to the band while a strip is showing", async () => {
+  it("keeps the inset on each rail while a strip is showing", async () => {
     renderInBand(true);
     await screen.findByText("Update available");
-    expect(railReservations()).toHaveLength(0);
+    expect(railReservations()).toHaveLength(2);
     // The drawer is a fixed layer over the whole viewport, band included, so it keeps its own.
     expect(
       document.querySelector("#fleet-hierarchy-overlay [class*='safe-area-inset-top']"),

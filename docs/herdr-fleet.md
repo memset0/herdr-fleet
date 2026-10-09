@@ -10,9 +10,12 @@ for selecting Collie's native Pack authority. It does not implement SSH reachabi
 member, contact a peer, aggregate Hosts, distribute software, or replace Collie's native Pack
 router, loaders, and UI. Collie's native optional Web Push remains available unchanged.
 
-The full Collie Pack security harness for this baseline is verified on Bun 1.3.14. Its pinned-client
-TLS canary does not hold on Bun 1.3.12, so Pack or later multi-host behavior must not be enabled on an
-older, unverified Bun runtime. The first schema keeps Pack unconfigured and exposes no Pack route.
+Herdr Fleet runs on Bun 1.4.0 or later, on every machine. That is this product's own floor, above
+Collie's (`MIN_BUN` in `cli/update-check.ts`): from 1.4.0 a timeout signal stays armed after its last
+listener is removed, which keeps a speech operation's whole deadline in force between its phases
+without a fork-owned helper (`fleet-stt-deadline-compat`). The crew's pinned-client TLS canary does
+not hold on Bun 1.3.12, so no older runtime may run Pack or multi-host behavior either. The first
+schema keeps Pack unconfigured and exposes no Pack route.
 
 ## Private configuration
 
@@ -217,7 +220,19 @@ the current server-side session before clearing the cookie.
 All Lead document navigations, `/api/*` requests, and `/fleet/api/*` requests require a current session before Collie is contacted.
 Only the authentication stylesheet and an exact set of PWA update and boot-splash assets are public. The service
 worker sends every document navigation to the network first, so an expired or logged-out session
-cannot recover an old authenticated app shell. The public Gateway never exposes `/crew/*` or `/pack/*`.
+cannot recover an old authenticated app shell. Only when the network itself fails does it open the
+precached app shell, which holds no protected data, so Collie's offline reading can start on a cold
+open; any answer the Gateway gives, a `401` or a redirect to login included, wins and is never
+cached. The public Gateway never exposes `/crew/*` or `/pack/*`.
+
+Since Collie 1.18 pairing is always on: every `/api/*` route but `/api/health` and `/api/pair` needs a
+paired device's bearer token, reads included. On a lead the Gateway is that device. Before the Collie
+child starts, the supervisor revokes any device named `fleet-gateway` in the Collie state directory's
+`paired-devices.json`, enrols a fresh one through Collie's own pairing module and hands the token to
+the Gateway alone, in memory. The token is new on every start, only its hash reaches the registry,
+and a clean stop revokes it again. The Gateway refuses a browser's `POST /api/pair` and every device
+revocation with its own `403`, so the credential every request rides on cannot be revoked from the
+page. Nothing here needs `collie pair` or any other operator step, and a peer enrols nothing.
 
 Login and logout require an exact-origin POST. Return targets are relative application paths rather
 than user-provided URLs. Credential inputs, session files, attempt budgets, proxy bodies, headers,
@@ -257,7 +272,9 @@ The public HTTPS proxy must:
 5. Preserve no-store authentication responses and the Gateway's security headers.
 
 The Gateway builds a new narrow upstream header set. It never forwards the Fleet cookie, browser
-Authorization, forwarding headers, Tailscale identity, or device-trust assertions to Collie.
+Authorization, forwarding headers, Tailscale identity, or device-trust assertions to Collie. It adds its
+own pairing token as `Authorization`. On an HTML document it appends the fetched CJK fallback's one
+origin to `style-src` and `font-src` of Collie's `Content-Security-Policy`, and to nothing else.
 
 ## Lifecycle
 

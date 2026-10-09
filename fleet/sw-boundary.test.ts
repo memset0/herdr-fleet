@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 describe("service-worker authentication boundary", () => {
   test("registers network-first document navigation before precaching", () => {
     const source = readFileSync(resolve(import.meta.dir, "../web/src/sw.ts"), "utf8");
-    const navigation = source.indexOf("registerRoute(new NavigationRoute(({ request }) => fetch(request)))");
+    const navigation = source.indexOf("networkFirstNavigation(");
     // Upstream reads the injection point once into `PRECACHE_MANIFEST` (its precache-progress plugin
     // counts against it) and precaches that; either spelling is the precache, and it must be read
     // exactly once, after the network-first route is registered.

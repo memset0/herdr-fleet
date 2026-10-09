@@ -6,6 +6,7 @@ import { findOperatorFont, operatorFontValue, type OperatorFontFace } from "@/li
 import { useOperatorFonts } from "@/lib/operator-config";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 // The Typeface card — the APP's own face, per device.
 //
@@ -39,12 +40,12 @@ const NOTE_KEYS = {
   system: "settings.typeface.note.system",
   grotesk: "settings.typeface.note.grotesk",
   aldrich: "settings.typeface.note.aldrich",
-  maple: "settings.typeface.note.maple",
 } as const;
 
 /** Settings card: the app's own typeface. Device-local, like theme and language. */
 export function TypefaceControl() {
   useLocale();
+  useFleetLocale();
   const prefs = useDesignPrefs();
   const operatorFonts = useOperatorFonts();
 
@@ -119,7 +120,7 @@ export function TypefaceControl() {
             to a banner. Aldrich's is the one that has to be here: it discloses that the face has a
             single weight, so bold text under it is not heavier, which is a cost the reader should
             meet before they choose it and not afterwards. */}
-        <p className="px-4 py-2.5 text-xs text-muted-foreground">{t(noteKey(chosen))}</p>
+        <p className="px-4 py-2.5 text-xs text-muted-foreground">{chosen === "maple" ? ft("settings.typeface.note.maple") : t(noteKey(chosen))}</p>
       </div>
     </Card>
   );

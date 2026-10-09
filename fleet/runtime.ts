@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { GATEWAY_TOKEN_ENV } from "./collie-pairing.ts";
 import { collieChildEnv } from "./collie-env.ts";
 import { FLEET_TERMINAL_ENV, isFleetLeadConfig, type FleetConfig } from "./config.ts";
 import { sshLinkCommand } from "./pack-reachability.ts";
@@ -133,7 +134,16 @@ export function collieSpecEnv(config: FleetConfig, paths: RuntimePaths, inherite
   return collieChildEnv(config, paths.collieStateDir, sharedChildEnv(paths, inherited));
 }
 
-export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: NodeJS.ProcessEnv): ChildSpec[] {
+/**
+ * The children this generation runs. `collieToken` is the Gateway's pairing credential with the
+ * Collie child (fleet/collie-pairing.ts); it reaches the Gateway's environment and no other child's.
+ */
+export function childSpecs(
+  config: FleetConfig,
+  paths: RuntimePaths,
+  inherited: NodeJS.ProcessEnv,
+  collieToken?: string,
+): ChildSpec[] {
   const shared = sharedChildEnv(paths, inherited);
   const children: ChildSpec[] = [
     {
@@ -145,11 +155,13 @@ export function childSpecs(config: FleetConfig, paths: RuntimePaths, inherited: 
     },
   ];
   if (isFleetLeadConfig(config)) {
+    const gatewayEnv: NodeJS.ProcessEnv = { ...shared, HERDR_FLEET_SESSION_STATE: paths.sessionStatePath };
+    if (collieToken !== undefined) gatewayEnv[GATEWAY_TOKEN_ENV] = collieToken;
     children.push({
       name: "gateway",
       command: [process.execPath, "run", join(paths.pluginRoot, "fleet", "gateway-main.ts")],
       cwd: paths.pluginRoot,
-      env: { ...shared, HERDR_FLEET_SESSION_STATE: paths.sessionStatePath },
+      env: gatewayEnv,
       logPath: join(paths.stateDir, "gateway.log"),
     });
   } else {

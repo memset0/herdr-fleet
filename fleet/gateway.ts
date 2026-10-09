@@ -124,6 +124,11 @@ export interface GatewayOptions {
   readonly paneFit?: PaneFitRouteDeps;
   readonly limiter?: LoginRateLimiter;
   readonly fetcher?: FleetFetcher;
+  /**
+   * The Gateway's pairing credential with its own Collie child (fleet/collie-pairing.ts), carried on
+   * every request proxied to it. Absent sends none, as a Collie that needs no pairing would accept.
+   */
+  readonly collieToken?: string | undefined;
   readonly now?: () => number;
   /**
    * Told when a session is deliberately ended, so anything holding one can let go immediately rather
@@ -175,6 +180,25 @@ function publicAsset(pathname: string): boolean {
   return /^\/assets\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(pathname) && !pathname.endsWith(".map");
 }
 
+/**
+ * Collie's device writes: claiming a pairing code and revoking a paired device (v1.18.0 has exactly
+ * `POST /api/pair` and `POST /api/devices/revoke`; expiry is set from Collie's CLI only). Behind the
+ * Gateway the one paired device is the Gateway itself, enrolled at start (fleet/collie-pairing.ts),
+ * so a browser has nothing to pair and must not be able to revoke the credential every request it
+ * makes rides on. Every method on `/api/pair`, and every write under `/api/devices`, is refused.
+ */
+export function isPairingWrite(method: string, pathname: string): boolean {
+  if (pathname === "/api/pair" || pathname.startsWith("/api/pair/")) return true;
+  return (pathname === "/api/devices" || pathname.startsWith("/api/devices/")) && !safeMethod(method);
+}
+
+/**
+ * The refusal's body. Deliberately neither `device not paired` nor `device expired`: those two exact
+ * bodies make Collie's page wipe everything its pairing left on the device (web/src/lib/api.ts
+ * `notePairing`), and nothing about this device's standing has changed.
+ */
+export const PAIRING_REFUSAL = "pairing is managed by Herdr Fleet";
+
 function loopback(address: string): boolean {
   return address === "127.0.0.1" || address === "::1" || address.startsWith("::ffff:127.");
 }
@@ -207,6 +231,7 @@ export function createGatewayHandler(options: GatewayOptions) {
   const { config, sessions, settings } = options;
   const limiter = options.limiter ?? new LoginRateLimiter(config.auth.rateLimit);
   const fetcher = options.fetcher ?? fetch;
+  const collieToken = options.collieToken;
   const now = options.now ?? Date.now;
   const loginCsrfToken = options.loginCsrfToken ?? randomBytes(32).toString("base64url");
   if (!/^[A-Za-z0-9_-]{43}$/.test(loginCsrfToken)) throw new Error("login CSRF token source returned an invalid token");
@@ -229,7 +254,7 @@ export function createGatewayHandler(options: GatewayOptions) {
 
     if (publicAsset(url.pathname) && request.method === "GET") {
       try {
-        return withBaseHeaders(await proxyCollie(request, config, fetcher), "public");
+        return withBaseHeaders(await proxyCollie(request, config, fetcher, collieToken), "public");
       } catch {
         return text("upstream unavailable\n", 502);
       }
@@ -317,22 +342,24 @@ export function createGatewayHandler(options: GatewayOptions) {
       return text("forbidden\n", 403);
     }
 
+    if (isPairingWrite(request.method, url.pathname)) return text(`${PAIRING_REFUSAL}\n`, 403);
+
     if (url.pathname.startsWith(TODOIST_API + "/")) {
       if (!options.todoist) return json({ error: "not found" }, 404);
       return withBaseHeaders(await todoistResponse(request, options.todoist, session.sessionId,
-        () => fetchBindingInventory(request, config, options.fetcher)));
+        () => fetchBindingInventory(request, config, options.fetcher, collieToken)));
     }
     if (url.pathname.startsWith("/fleet/bindings/")) {
       if (!options.todoist || request.method !== "GET") return json({ error: "not found" }, 404);
       return withBaseHeaders(await bindingRedirect(url.pathname.slice("/fleet/bindings/".length), options.todoist,
-        () => fetchBindingInventory(request, config, options.fetcher)));
+        () => fetchBindingInventory(request, config, options.fetcher, collieToken)));
     }
 
     if (url.pathname === TAGS_PATH) {
       if (!options.tags) return json({ error: "not found" }, 404);
       if (request.method === "GET") {
         // Failed inventory never destroys existing records or guesses a migration.
-        const inventory = await fetchBindingInventory(request, config, options.fetcher).catch(() => []);
+        const inventory = await fetchBindingInventory(request, config, options.fetcher, collieToken).catch(() => []);
         if (inventory.length) {
           try { await options.tags.migrate(placeEvidence(inventory)); }
           catch { return json({ error: "unavailable" }, 503); }
@@ -416,7 +443,7 @@ export function createGatewayHandler(options: GatewayOptions) {
     }
 
     try {
-      return withBaseHeaders(await proxyCollie(request, config, fetcher));
+      return withBaseHeaders(await proxyCollie(request, config, fetcher, collieToken));
     } catch {
       return isApiPath(url.pathname)
         ? json({ error: "upstream unavailable" }, 502)

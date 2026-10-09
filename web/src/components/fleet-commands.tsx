@@ -38,8 +38,9 @@ import {
   returnFocusToComposer,
   unparkCaretForPrefix,
 } from "@/lib/fleet-composer-focus";
-import { t } from "@/lib/i18n";
+
 import { setStatus } from "@/lib/status";
+import { ft } from "@/lib/fleet-i18n";
 
 /**
  * The keyboard layer's one mount point: it holds the effective bindings, owns the single capture
@@ -244,14 +245,14 @@ export function FleetCommandsProvider({
       }
 
       if (!current.available(command.scope)) {
-        setStatus(t("fleet.command.unavailable", { name: command.name }), "warn");
+        setStatus(ft("fleet.command.unavailable", { name: command.name }), "warn");
         return;
       }
       const adapter =
         layers.current.map((layer) => layer()[id]).find((entry) => entry !== undefined) ??
         current.adapters[id];
       if (adapter === undefined) {
-        setStatus(t("fleet.command.unavailable", { name: command.name }), "warn");
+        setStatus(ft("fleet.command.unavailable", { name: command.name }), "warn");
         return;
       }
 
@@ -284,7 +285,7 @@ export function FleetCommandsProvider({
         if (failed) {
           // The action's own surface reports what went wrong where it can; this is the floor, so a
           // thrown adapter still tells the operator their key did not do the thing.
-          setStatus(t("fleet.command.failed", { name: command.name }), "error");
+          setStatus(ft("fleet.command.failed", { name: command.name }), "error");
           return;
         }
         if (isSelfEvident(id)) return;

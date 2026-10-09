@@ -1,12 +1,13 @@
 /// <reference lib="webworker" />
-import { addPlugins, precacheAndRoute } from "workbox-precaching";
+import { addPlugins, matchPrecache, precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { clientsClaim } from "workbox-core";
 
 import { decidePush, notificationPath, type NotifData, type PushPayload } from "./lib/push-decision";
 import { askInApp, openNotificationTarget, type OpenOutcome, type OpenTargetClient } from "./lib/notification-open";
 import { readPushTitles } from "./lib/push-title-store";
-import { FONT_URLS } from "./lib/sw-routes";
+import { FONT_URLS, navigationNetworkOnlyUnder } from "./lib/sw-routes";
+import { networkFirstNavigation } from "./lib/fleet-navigation";
 
 // Where this worker is mounted (ADR 0052): the directory it was fetched from, which is the mount
 // the app registered it under (lib/pwa.ts) — `/` at the origin root, `/collie/` behind a proxy that
@@ -33,13 +34,21 @@ declare const self: ServiceWorkerGlobalScope & {
 // Every document navigation goes to the network before Workbox's precache routes are installed.
 // The Gateway, not a previously authenticated app-shell cache, therefore decides whether the
 // current request still owns a live session. Collie's bridge already serves the SPA fallback for
-// online deep links; authenticated Fleet deliberately gives up offline document navigation while
-// retaining immutable JS/CSS/icons in the precache. DOWNSTREAM PORT (FORK.toml
-// authenticated-navigation-cache): upstream's precached-shell `NavigationRoute` (its SPA fallback,
-// with the `/api` and `/auth` denylist) is the one thing below that is not kept; the precache
-// manifest, its progress plugin and the mount helpers are upstream's. The Gateway serves Collie at
-// the root, so the network-first route needs no mount.
-registerRoute(new NavigationRoute(({ request }) => fetch(request)));
+// online deep links. Only a navigation whose request FAILS, outside upstream's network-only denylist,
+// is answered from the precached shell, so Collie's offline reading still opens on a cold start;
+// nothing is cached from the network (web/src/lib/fleet-navigation.ts). DOWNSTREAM PORT (FORK.toml
+// authenticated-navigation-cache): upstream's precached-shell `NavigationRoute` is the one thing below
+// that is not kept; the precache manifest, its progress plugin, the denylist and the mount helpers
+// are upstream's.
+registerRoute(
+  new NavigationRoute(
+    networkFirstNavigation(
+      (request) => fetch(request),
+      () => matchPrecache(under("/index.html")),
+      (path) => navigationNetworkOnlyUnder(MOUNT).some((re) => re.test(path)),
+    ),
+  ),
+);
 
 // ── App-shell caching (parity with the previous generateSW config) ──────────────────────────────
 //

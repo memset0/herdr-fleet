@@ -3,7 +3,6 @@ import { Loader2, Scaling } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { t } from "@/lib/i18n";
 import { normalizeScope, type Scope } from "@/lib/scope";
 import { setStatus } from "@/lib/status";
 import type { JsonValue } from "../../../bridge/json.ts";
@@ -14,6 +13,7 @@ import {
   type ManualPaneFitRequestResult,
   type PaneFitAvailability,
 } from "../../../fleet/ui/manual-pane-fit.ts";
+import { ft } from "@/lib/fleet-i18n";
 
 export type { PaneFitAvailability };
 
@@ -119,7 +119,7 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
     try {
       const result = await runManualPaneFit(scrollElement(), fontSize, (cols) => requestFit(paneId, cols, scope));
       if (result.ok) {
-        setStatus(t("settings.display.resize.success", { cols: result.cols, rows: result.rows }), "success");
+        setStatus(ft("settings.display.resize.success", { cols: result.cols, rows: result.rows }), "success");
         return;
       }
       const key = {
@@ -128,7 +128,7 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
         conflict: "settings.display.resize.conflict",
         failed: "settings.display.resize.failed",
       } as const;
-      setStatus(t(key[result.reason]), "error");
+      setStatus(ft(key[result.reason]), "error");
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -140,12 +140,12 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
       <div className="flex items-center justify-between gap-3 py-1.5">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 text-sm font-medium">
-            {t("settings.display.resize.label")}
+            {ft("settings.display.resize.label")}
             <Badge variant="outline" className="px-1.5 py-0 text-[10px] font-medium text-muted-foreground">
-              {t("settings.display.resize.badge")}
+              {ft("settings.display.resize.badge")}
             </Badge>
           </div>
-          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{t("settings.display.resize.hint")}</p>
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{ft("settings.display.resize.hint")}</p>
         </div>
         <Button
           className="shrink-0"
@@ -153,10 +153,10 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
           size="sm"
           disabled={!usable || busy}
           onClick={() => void fit()}
-          aria-label={t("settings.display.resize.aria")}
+          aria-label={ft("settings.display.resize.aria")}
         >
           {busy ? <Loader2 className="animate-spin" /> : <Scaling />}
-          {busy ? t("settings.display.resize.busy") : t("settings.display.resize.label")}
+          {busy ? ft("settings.display.resize.busy") : ft("settings.display.resize.label")}
         </Button>
       </div>
     ) : undefined;

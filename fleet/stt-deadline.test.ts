@@ -1,11 +1,16 @@
 import { expect, test, vi } from "bun:test";
 import { createSttDeadline, SttCancelledError, SttError } from "../bridge/stt/provider.ts";
-import { sttTimeoutSignal } from "./stt-deadline.ts";
+
+// THE RUNTIME FLOOR IS WHAT KEEPS A SPEECH DEADLINE ARMED (fleet-stt-deadline-compat). On Bun 1.3.14
+// a direct timeout signal stopped firing once its last abort listener was removed, and sequential
+// waits remove theirs between phases; a fork helper re-subscribed it. From Bun 1.4.0 the runtime
+// keeps it armed, upstream's own `createSttDeadline` runs unmodified, and these cases are what say so
+// on whatever runtime the suite runs on.
 
 test("a timeout remains armed across a gap with no wait listeners", () => {
   vi.useFakeTimers();
   try {
-    const signal = sttTimeoutSignal(20);
+    const signal = AbortSignal.timeout(20);
     const first = () => undefined;
     signal.addEventListener("abort", first);
     signal.removeEventListener("abort", first);

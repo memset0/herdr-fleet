@@ -3,7 +3,8 @@ import net from "node:net";
 import { join } from "node:path";
 
 import { assertCollieConfigFilesCede } from "./collie-env.ts";
-import { loadFleetConfig } from "./config.ts";
+import { enrolGatewayDevice, revokeGatewayDevice } from "./collie-pairing.ts";
+import { isFleetLeadConfig, loadFleetConfig } from "./config.ts";
 import { ManagedChild } from "./managed-child.ts";
 import { validatePackAuthority } from "./pack-authority.ts";
 import { assertLinkFiles, probeEndpoint } from "./pack-reachability.ts";
@@ -48,7 +49,13 @@ async function main(): Promise<void> {
   if (config.schemaVersion === 2 && config.role === "peer" && config.transport.mode === "ssh-reverse") {
     await assertLinkFiles(config.transport);
   }
-  const children = childSpecs(config, paths, process.env).map(
+  // A LEAD'S GATEWAY IS COLLIE'S ONE PAIRED DEVICE (ADR 0086). Enrolled here, after the trust state
+  // is validated and before any child exists, so Collie never writes its registry concurrently; the
+  // token lives in this process and the Gateway child's environment and nowhere else. A peer enrols
+  // nothing: no browser reaches its Collie, and the crew link keeps its own two factors.
+  const lead = isFleetLeadConfig(config);
+  const collieToken = lead ? await enrolGatewayDevice(paths.collieStateDir) : undefined;
+  const children = childSpecs(config, paths, process.env, collieToken).map(
     (spec) =>
       new ManagedChild({
         ...spec,
@@ -77,8 +84,9 @@ async function main(): Promise<void> {
       if (config.transport.mode === "external") return true;
       return await probeEndpoint(config.transport.peerBind);
     }
+    // `/api/health` is one of the two routes Collie answers without a pairing token (ADR 0086).
     const collie = await endpointReady(
-      endpoint(config.collie.host, config.collie.port, "/api/config"),
+      endpoint(config.collie.host, config.collie.port, "/api/health"),
       config.collie.host.includes(":") ? `[${config.collie.host}]:${config.collie.port}` : `${config.collie.host}:${config.collie.port}`,
     );
     if (!collie) return false;
@@ -174,6 +182,16 @@ async function main(): Promise<void> {
     healthTimer = null;
     await lifecycleLog(logPath, `stopping generation=${paths.generation} reason=${reason}`);
     await Promise.all(children.map((child) => child.stop()));
+    // The Gateway's credential ends with the generation that minted it. With no Collie child left
+    // running nothing can race this write, and a lead rolled back to a Collie that predates always-on
+    // pairing then starts from the registry it had.
+    if (lead) {
+      try {
+        await revokeGatewayDevice(paths.collieStateDir);
+      } catch (error) {
+        await lifecycleLog(logPath, `gateway device not revoked: ${error instanceof Error ? error.message : "unknown"}`);
+      }
+    }
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(paths.socketPath, { force: true });
     resolveDone?.();

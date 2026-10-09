@@ -1,12 +1,12 @@
 import { useState } from "react";
 
 import { FleetPromptPanel } from "@/components/fleet-prompt-panel";
-import { useLocale } from "@/hooks/use-locale";
 import * as api from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { t } from "@/lib/i18n";
 import type { Scope } from "@/lib/scope";
 import { setStatus } from "@/lib/status";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 /**
  * Renaming, where the keyboard is.
@@ -35,19 +35,19 @@ export interface FleetRenameDialogProps {
 }
 
 export function FleetRenameDialog({ target, scope, onClose, onRenamed }: FleetRenameDialogProps) {
-  useLocale();
+  useFleetLocale();
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const isTab = target.kind === "tab";
-  const title = t(isTab ? "fleet.rename.tab" : "fleet.rename.pane");
+  const title = ft(isTab ? "fleet.rename.tab" : "fleet.rename.pane");
 
   const submit = async (value: string) => {
     if (saving) return;
     const trimmed = value.trim();
     // A Tab must be named; a Pane's blank is Collie's own "clear the label" and is sent as one.
     if (isTab && trimmed === "") {
-      setError(t("fleet.rename.blank"));
+      setError(ft("fleet.rename.blank"));
       return;
     }
     setSaving(true);
@@ -80,7 +80,7 @@ export function FleetRenameDialog({ target, scope, onClose, onRenamed }: FleetRe
     <FleetPromptPanel
       title={title}
       initialValue={target.label}
-      hint={t("fleet.rename.hint")}
+      hint={ft("fleet.rename.hint")}
       error={error}
       busy={saving}
       onClose={onClose}

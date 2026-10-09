@@ -269,11 +269,28 @@ server_digest = "${"0".repeat(64)}"
 
   test("validates native Pack authority and link material before constructing children", () => {
     const source = readFileSync(resolve(import.meta.dir, "daemon.ts"), "utf8");
-    const children = source.indexOf("const children = childSpecs(config, paths, process.env)");
-    expect(source.indexOf("await validatePackAuthority(config, paths.collieStateDir);")).toBeLessThan(
-      children,
-    );
+    const children = source.indexOf("const children = childSpecs(config, paths, process.env, collieToken)");
+    const enrol = source.indexOf("await enrolGatewayDevice(paths.collieStateDir)");
+    expect(children).toBeGreaterThan(0);
+    expect(source.indexOf("await validatePackAuthority(config, paths.collieStateDir);")).toBeLessThan(enrol);
+    // The Gateway's pairing is written before any child exists, so Collie never races it.
+    expect(enrol).toBeGreaterThan(0);
+    expect(enrol).toBeLessThan(children);
     expect(source.indexOf("await assertLinkFiles(config.transport);")).toBeLessThan(children);
+  });
+
+  test("hands the Gateway's pairing token to the Gateway child alone", () => {
+    const paths = resolveRuntimePaths({
+      HERDR_FLEET_CONFIG: "/srv/fleet/fleet.toml",
+      HERDR_PLUGIN_STATE_DIR: "/srv/fleet/state",
+      HERDR_FLEET_GENERATION: "token-test",
+    });
+    const lead = childSpecs(fleetTestConfig(), paths, { PATH: "/usr/bin" }, "example-token");
+    const tokenHolders = lead.filter((spec) => Object.values(spec.env).includes("example-token"));
+    expect(tokenHolders.map((spec) => spec.name)).toEqual(["gateway"]);
+    expect(lead.find((spec) => spec.name === "gateway")?.env.HERDR_FLEET_COLLIE_TOKEN).toBe("example-token");
+    const peer = childSpecs(fleetTestPackPeerConfig(), paths, { PATH: "/usr/bin" });
+    expect(peer.some((spec) => "HERDR_FLEET_COLLIE_TOKEN" in spec.env)).toBe(false);
   });
 
   test("the plugin manifest delegates only to the thin Fleet launcher", () => {

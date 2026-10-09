@@ -48,13 +48,13 @@ export function placeEvidence(panes: readonly LocatedTerminal[]): PlaceEvidence[
 
 /** Uses the existing authenticated HTTP boundary, never another member's multiplexer socket. */
 export async function fetchBindingInventory(
-  request: Request, config: FleetLeadConfig, fetcher?: FleetFetcher,
+  request: Request, config: FleetLeadConfig, fetcher?: FleetFetcher, collieToken?: string,
 ): Promise<LocatedTerminal[]> {
   const read = async (host?: string) => {
     const url = new URL("/api/snapshot", config.public.origin);
     url.searchParams.set("sessions", "all");
     if (host) url.searchParams.set("host", host);
-    const response = await proxyCollie(new Request(url, { headers: request.headers, signal: AbortSignal.timeout(10_000) }), config, fetcher);
+    const response = await proxyCollie(new Request(url, { headers: request.headers, signal: AbortSignal.timeout(10_000) }), config, fetcher, collieToken);
     if (!response.ok) throw new Error("Terminal inventory unavailable");
     return parseJson(await response.text());
   };

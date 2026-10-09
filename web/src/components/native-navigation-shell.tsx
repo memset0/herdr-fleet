@@ -65,9 +65,7 @@ import { NativeNavigationTree } from "@/components/native-navigation-tree";
 import { FleetConfirmDialog } from "@/components/fleet-confirm-dialog";
 import { FleetRenameDialog, type RenameTarget } from "@/components/fleet-rename-dialog";
 import { FleetHostActions, FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
-import { useStripBandOpen } from "@/components/ui/strip-host";
 import { findPane, hostName, paneScope } from "@/lib/hosts";
-import { t } from "@/lib/i18n";
 import type { HomeData } from "@/lib/loaders";
 import { closePane, closeTab } from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
@@ -84,7 +82,7 @@ import { useSpaceActions } from "@/hooks/use-spaces";
 import { paneName } from "@/lib/pane-name";
 import { isReadOnly, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { useLocale } from "@/hooks/use-locale";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 interface NativeNavigationShellProps {
   data: HomeData;
@@ -119,7 +117,7 @@ export function NativeNavigationShell({
   children,
   preferenceStore = nativeNavigationPreferences,
 }: NativeNavigationShellProps) {
-  useLocale();
+  useFleetLocale();
   // One recorder for the app's lifetime: every right-click in the document is noted here so the row
   // actions a pointer opens can stand at the cursor. Mounted in the shell because the shell is what
   // outlives every navigation, and claimed only by a surface that opens right after the gesture.
@@ -217,7 +215,7 @@ export function NativeNavigationShell({
             hostId,
             // Naming a host is Collie's job; its resolver falls back to the id, and a solo snapshot
             // has no roster at all, so the tree says "this host" rather than inventing a name.
-            hostLabel: hostName(data.servers, hostId || undefined) ?? t("fleet.navigation.thisHost"),
+            hostLabel: hostName(data.servers, hostId || undefined) ?? ft("fleet.navigation.thisHost"),
             fault: hostFaults.get(hostId),
             version: classifyHostVersion({
               reported: memberVersions.get(hostId),
@@ -589,7 +587,7 @@ export function NativeNavigationShell({
       hierarchyOpen,
       toggleHierarchy,
       setTrigger,
-      paneSwitcher: { title: t("fleet.todoist.sidebar"), content: rightSidebar },
+      paneSwitcher: { title: ft("fleet.todoist.sidebar"), content: rightSidebar },
     }),
     [hierarchyOpen, toggleHierarchy, setTrigger, rightSidebar],
   );
@@ -615,7 +613,7 @@ export function NativeNavigationShell({
             name a face. Here rather than in a route because it must outlive every navigation. */}
         <FleetWebfonts />
         <Rail
-          title={t("fleet.navigation.hierarchy")}
+          title={ft("fleet.navigation.hierarchy")}
           width={preferences.left.preferredWidth}
           collapsed={railsCollapsed}
           // The pane-surface switch stands under the hierarchy because that is where the operator
@@ -628,11 +626,12 @@ export function NativeNavigationShell({
           side="left"
           width={preferences.left.preferredWidth}
           onWidth={(width) => preferenceStore.setWidth("left", width)}
-          label={t("fleet.navigation.resizeHierarchy")}
+          label={ft("fleet.navigation.resizeHierarchy")}
           collapsed={railsCollapsed}
         />
 
         <div
+          data-slot="native-route-column"
           aria-hidden={hierarchyOpen}
           inert={hierarchyOpen ? true : undefined}
           className="flex min-w-0 flex-1 flex-col"
@@ -644,11 +643,11 @@ export function NativeNavigationShell({
           side="right"
           width={preferences.right.preferredWidth}
           onWidth={(width) => preferenceStore.setWidth("right", width)}
-          label={t("fleet.navigation.resizeAgents")}
+          label={ft("fleet.navigation.resizeAgents")}
           collapsed={railsCollapsed}
         />
         <Rail
-          title={t("fleet.todoist.sidebar")}
+          title={ft("fleet.todoist.sidebar")}
           width={preferences.right.preferredWidth}
           collapsed={railsCollapsed}
         >
@@ -688,10 +687,10 @@ export function NativeNavigationShell({
         {closing !== null && (
           <FleetConfirmDialog
             key={closing.kind === "tab" ? closing.tabId : closing.paneId}
-            title={t(closing.kind === "tab" ? "fleet.confirm.closeTab" : "fleet.confirm.closePane", {
+            title={ft(closing.kind === "tab" ? "fleet.confirm.closeTab" : "fleet.confirm.closePane", {
               name: closing.label,
             })}
-            detail={t(closing.kind === "tab" ? "fleet.confirm.closeTabCost" : "fleet.confirm.closePaneCost")}
+            detail={ft(closing.kind === "tab" ? "fleet.confirm.closeTabCost" : "fleet.confirm.closePaneCost")}
             onClose={() => setClosing(null)}
             onConfirm={() => {
               const target = closing;
@@ -702,7 +701,7 @@ export function NativeNavigationShell({
                       ? await closeTab(target.tabId, data.scope)
                       : await closePane(target.paneId, data.scope);
                   if (!result.ok) {
-                    setStatus(describeApiError(result, t("fleet.confirm.failed")), "error");
+                    setStatus(describeApiError(result, ft("fleet.confirm.failed")), "error");
                     return;
                   }
                   // Closing the Pane on screen leaves nowhere to be; every other close only needs
@@ -798,11 +797,10 @@ function Rail({
   /** Held below the scrolling list, on the rail's own ground. Absent leaves the rail as it was. */
   footer?: ReactNode;
 }) {
-  // THE NOTCH IS RESERVED ONCE PER COLUMN, and the band above the shell spans every column. A rail
-  // is a column of its own beside the header, so it clears the inset exactly when the header does
-  // (`app-header.tsx`): while the band is showing a strip the band already paid for the notch, and a
-  // rail that reserved it as well stood its title an inset lower than the header beside it.
-  const bandOpen = useStripBandOpen();
+  // THE NOTCH IS RESERVED ONCE PER COLUMN. A rail is a column of its own beside the header, so it
+  // clears the inset exactly when the header does (`app-header.tsx`). Since Collie 1.18 the header
+  // owns the inset unconditionally — the strip band hangs below it as an overlay and never paints
+  // above it — so the rail reserves it unconditionally too.
   return (
     <aside
       aria-label={title}
@@ -823,13 +821,7 @@ function Rail({
         collapsed && "pointer-events-none opacity-0",
       )}
     >
-      <div
-        className={cn(
-          // The same handover curve as the header's, so the two columns move as one (COLLAPSE_MS).
-          "shrink-0 transition-[padding-top] duration-[240ms] ease-out motion-reduce:transition-none",
-          !bandOpen && "[padding-top:env(safe-area-inset-top)]",
-        )}
-      >
+      <div className="shrink-0 [padding-top:env(safe-area-inset-top)]">
         {/* The title sits DIRECTLY over its list. It carried the header's 60px floor so the three
             columns' first line agreed, but with no rule under it that agreement bought nothing and
             spent 30px of blank between a label and the thing it labels. */}
@@ -932,7 +924,7 @@ function HierarchyOverlay({
   onClose: () => void;
   children: ReactNode;
 }) {
-  const title = t("fleet.navigation.hierarchy");
+  const title = ft("fleet.navigation.hierarchy");
   return (
     <div
       aria-hidden={!open}
@@ -945,7 +937,7 @@ function HierarchyOverlay({
       <button
         type="button"
         tabIndex={open ? 0 : -1}
-        aria-label={t("fleet.navigation.close")}
+        aria-label={ft("fleet.navigation.close")}
         onClick={onClose}
         className={cn(
           "absolute inset-0 bg-black/45 transition-opacity duration-200 motion-reduce:transition-none",
@@ -977,7 +969,7 @@ function HierarchyOverlay({
             <button
               ref={closeRef}
               type="button"
-              aria-label={t("fleet.navigation.close")}
+              aria-label={ft("fleet.navigation.close")}
               onClick={onClose}
               className="grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >

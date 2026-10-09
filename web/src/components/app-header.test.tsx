@@ -271,6 +271,18 @@ describe("the header — the dog keys on trouble/lost, not the first not-live fr
       act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
       expect(screen.getByRole("button", { name: "Collie home — not connected" })).toBeInTheDocument();
     });
+
+    // DOWNSTREAM PORT (FORK.toml native-pane-chrome-port): the Pane route declines the mark, and the
+    // badge must not leave with it (fleet-pane-chrome).
+    it("stays in the row, with the mark's words, on a route that declines the mark", () => {
+      const fleetBadge = (root: ParentNode) => root.querySelector('[data-slot="fleet-lost-badge"]');
+      const { container } = renderHeader(<Header bridge="connected" error mark={false} onHome={() => {}} />);
+      expect(fleetBadge(container)).toBeNull();
+      act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
+      expect(screen.queryByRole("button", { name: "Collie home — not connected" })).toBeNull();
+      expect(fleetBadge(container)?.getAttribute("data-icon")).toBe("cloud-off");
+      expect(screen.getByRole("img", { name: "Collie home — not connected" })).toBeInTheDocument();
+    });
   });
 });
 

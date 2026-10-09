@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { en } from "@/lib/i18n/messages/en";
+import { en as fleetEn } from "@/lib/fleet-i18n/en";
 import type { SnapshotResponse } from "@/lib/types";
 import { fixtureSnapshot } from "@/test/handlers";
 
@@ -49,7 +50,7 @@ test("A: dashboard, pane A, switcher to pane B, then back is the dashboard", asy
   await page.getByRole("button", { name: en["chat.switcher.aria"] }).click();
   // DOWNSTREAM PORT (FORK.toml native-navigation-sidebars-port): the switcher sheet holds the Agents
   // rail, whose rows lead with the agent's logo and status rather than repeating its name.
-  await page.getByRole("dialog", { name: en["fleet.navigation.agents"] }).getByRole("button", { name: /^codex logo/u }).click();
+  await page.getByRole("dialog", { name: fleetEn["fleet.navigation.agents"] }).getByRole("button", { name: /^codex logo/u }).click();
   await landed(page, PANE_B);
 
   await page.goBack();

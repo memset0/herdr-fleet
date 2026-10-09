@@ -218,6 +218,21 @@ describe("Composer — the record control stands beside Send, not instead of it"
     expect(screen.getByPlaceholderText(/type a reply/i).className).not.toMatch(/(?:^|\s)pr-/);
   });
 
+  // Collie 1.18's left-hand layout mirrors the box in CSS and keeps the DOM order. The record
+  // control sits between Attach and Send in that order, so mirrored it stands directly beside Send
+  // on the field's side: Send, record, Attach, field (fleet-composer-voice).
+  it("mirrors with the left-hand layout and keeps record beside Send", async () => {
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer({ hand: "left" });
+    await screen.findByRole("button", { name: /record a voice message/i });
+    const box = document.querySelector<HTMLElement>('[data-slot="composer-box"]')!;
+    expect(box.className).toMatch(/(?:^|\s)flex-row-reverse(?=\s|$)/);
+    const order = [...box.querySelectorAll("textarea, button")]
+      .map((el) => (el.tagName === "TEXTAREA" ? "field" : el.getAttribute("aria-label")))
+      .filter((name): name is string => name !== null && ["field", "Attach file", "Record a voice message", "Send"].includes(name));
+    expect(order).toEqual(["field", "Attach file", "Record a voice message", "Send"]);
+  });
+
   it("keeps both once there is a draft, so a clause can be dictated into what you typed", async () => {
     const user = userEvent.setup();
     server.use(configHandler(CONFIG_WITH_STT));

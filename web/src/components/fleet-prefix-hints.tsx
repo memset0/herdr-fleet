@@ -1,8 +1,8 @@
 import type { CommandScope } from "../../../fleet/ui/commands/catalog.ts";
 import type { PrefixHints } from "../../../fleet/ui/commands/prefix-hints.ts";
-import { useLocale } from "@/hooks/use-locale";
-import { t } from "@/lib/i18n";
+
 import { cn } from "@/lib/utils";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 /**
  * What the pending prefix leads to, while it is pending.
@@ -24,11 +24,11 @@ import { cn } from "@/lib/utils";
  */
 
 const SCOPE_LABELS = {
-  global: () => t("fleet.command.scope.global"),
-  space: () => t("fleet.command.scope.space"),
-  tab: () => t("fleet.command.scope.tab"),
-  pane: () => t("fleet.command.scope.pane"),
-  navigation: () => t("fleet.command.scope.navigation"),
+  global: () => ft("fleet.command.scope.global"),
+  space: () => ft("fleet.command.scope.space"),
+  tab: () => ft("fleet.command.scope.tab"),
+  pane: () => ft("fleet.command.scope.pane"),
+  navigation: () => ft("fleet.command.scope.navigation"),
 } satisfies Record<CommandScope, () => string>;
 
 export interface FleetPrefixHintsProps {
@@ -41,7 +41,7 @@ export interface FleetPrefixHintsProps {
 }
 
 export function FleetPrefixHints({ hints, prefixLabel, isAvailable }: FleetPrefixHintsProps) {
-  useLocale();
+  useFleetLocale();
   if (hints === null || hints.groups.length === 0) return null;
 
   return (
@@ -55,10 +55,10 @@ export function FleetPrefixHints({ hints, prefixLabel, isAvailable }: FleetPrefi
           <kbd className="rounded border border-rule px-1.5 py-0.5 font-mono text-[11px] text-foreground">
             {prefixLabel}
           </kbd>
-          <span className="text-[11px] text-muted-foreground">{t("fleet.command.hints.waiting")}</span>
+          <span className="text-[11px] text-muted-foreground">{ft("fleet.command.hints.waiting")}</span>
           {hints.elided > 0 && (
             <span className="ml-auto text-[11px] text-muted-foreground">
-              {t("fleet.command.hints.more", { count: hints.elided })}
+              {ft("fleet.command.hints.more", { count: hints.elided })}
             </span>
           )}
         </div>

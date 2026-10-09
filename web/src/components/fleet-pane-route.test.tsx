@@ -4,6 +4,7 @@ import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PaneContentProps } from "./agent-chat";
+import { markLive } from "@/lib/liveness";
 import { ROOT_ROUTE_ID, type HomeData, type PaneData } from "@/lib/loaders";
 import type * as LoaderModule from "@/lib/loaders";
 import { shownLastSeenAt } from "@/routes/root";
@@ -22,9 +23,12 @@ vi.mock("@/lib/loaders", async (importOriginal) => ({
   ...(await importOriginal<typeof LoaderModule>()),
   paneLoader: (args: PaneLoaderArgs) => paneLoader(args),
 }));
+// The stand-in does what the real surface does once its stream opens: it has output, and it marks
+// the Pane live (Collie 1.18's liveness, which only a mirror read would otherwise set).
 vi.mock("@/components/fleet-terminal", () => ({
-  FleetTerminal: ({ onOutputChange }: PaneContentProps) => {
+  FleetTerminal: ({ paneId, scope, onOutputChange }: PaneContentProps) => {
     useEffect(() => onOutputChange(true), [onOutputChange]);
+    useEffect(() => markLive(paneId, Date.now(), scope), [paneId, scope]);
     return <div data-testid="terminal-surface">terminal output</div>;
   },
 }));

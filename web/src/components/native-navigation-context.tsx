@@ -1,8 +1,8 @@
 import { PanelLeft } from "lucide-react";
 import { createContext, useContext, type ReactNode } from "react";
 
-import { t } from "@/lib/i18n";
-import { useLocale } from "@/hooks/use-locale";
+
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 /**
  * The one seam between the Fleet navigation shell and the two Collie-owned surfaces that have to
@@ -61,7 +61,7 @@ export function useNativePaneSwitcher(): NativePaneSwitcherPresentation | null {
  */
 export function NativeHierarchyToggle() {
   const navigation = useContext(NativeNavigationContext);
-  useLocale();
+  useFleetLocale();
   if (navigation === null) return null;
   return (
     <button
@@ -69,7 +69,7 @@ export function NativeHierarchyToggle() {
       type="button"
       aria-expanded={navigation.hierarchyOpen}
       aria-controls="fleet-hierarchy-overlay"
-      aria-label={t("fleet.navigation.openHierarchy")}
+      aria-label={ft("fleet.navigation.openHierarchy")}
       onClick={navigation.toggleHierarchy}
       className="-ml-2 grid size-11 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground xl:hidden"
     >

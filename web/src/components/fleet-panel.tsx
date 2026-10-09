@@ -1,9 +1,9 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { useLocale } from "@/hooks/use-locale";
 import { isParkedElement, returnFocusToComposer } from "@/lib/fleet-composer-focus";
-import { t } from "@/lib/i18n";
+
 import { cn } from "@/lib/utils";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 /**
  * The panel the keyboard opens things on.
@@ -32,7 +32,7 @@ export interface FleetPanelProps {
 }
 
 export function FleetPanel({ open, onClose, label, className, children }: FleetPanelProps) {
-  useLocale();
+  useFleetLocale();
   const restoreTo = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -73,7 +73,7 @@ export function FleetPanel({ open, onClose, label, className, children }: FleetP
     >
       <button
         type="button"
-        aria-label={t("fleet.command.bar.dismiss")}
+        aria-label={ft("fleet.command.bar.dismiss")}
         onClick={onClose}
         className="absolute inset-0 bg-black/45"
       />

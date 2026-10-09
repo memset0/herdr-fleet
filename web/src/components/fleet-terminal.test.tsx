@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FROM_BROWSER, readBrowserMessage } from "../../../fleet/terminal/browser.ts";
@@ -114,6 +114,8 @@ class FakeSocket {
 vi.mock("@xterm/xterm", () => ({ Terminal: FakeTerminal }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: FakeFitAddon }));
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
+
+import { DEAD_DEBOUNCE_MS, LIVE_CAP_MS, isLive } from "@/lib/liveness";
 
 const { FleetTerminal } = await import("./fleet-terminal");
 
@@ -232,6 +234,26 @@ describe("connecting", () => {
     socket.fire("message", { data: frame.buffer.slice(0) });
     expect(terminal.written).toHaveLength(1);
     expect(new TextDecoder().decode(terminal.written[0]!)).toBe("hi");
+  });
+
+  // Collie 1.18 withholds a Pane's structural rows (rename, close, focus) unless the Pane is live,
+  // and only the mirror's read marks it. The terminal's open stream is this surface's read.
+  it("marks the Pane live while its stream is open, and not live once it closes", async () => {
+    vi.useFakeTimers();
+    try {
+      const { socket, paneId } = mount();
+      expect(isLive(paneId, {})).toBe(false);
+      socket.fire("open");
+      expect(isLive(paneId, {})).toBe(true);
+      // Kept live past Collie's own cap while the stream stays open.
+      act(() => vi.advanceTimersByTime(LIVE_CAP_MS + 1_000));
+      expect(isLive(paneId, {})).toBe(true);
+      socket.fire("close");
+      act(() => vi.advanceTimersByTime(DEAD_DEBOUNCE_MS + 10));
+      expect(isLive(paneId, {})).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows the Gateway's lifecycle word when it ends the connection", async () => {

@@ -13,10 +13,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PaneMeta } from "@/components/pane-meta";
 import { useDialogFocus } from "@/components/ui/sheet";
-import { useLocale } from "@/hooks/use-locale";
-import { t } from "@/lib/i18n";
+
 import { timeAgoShort } from "@/lib/format";
 import type { AgentView } from "@/lib/types";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 interface TagContextValue {
   client: PaneTagClient;
@@ -59,11 +59,11 @@ export function FleetPaneTagCommands({ pane }: { pane?: AgentView }) {
   const context = useContext(TagContext);
   useFleetCommandAdapters({
     "manage-pane-tags": () => {
-      if (!context) refuseCommand(t("fleet.command.unavailable", { name: commandById("manage-pane-tags").name }));
+      if (!context) refuseCommand(ft("fleet.command.unavailable", { name: commandById("manage-pane-tags").name }));
       context.open(null);
     },
     "edit-pane-tags": () => {
-      if (!context || !pane) refuseCommand(t("fleet.command.unavailable", { name: commandById("edit-pane-tags").name }));
+      if (!context || !pane) refuseCommand(ft("fleet.command.unavailable", { name: commandById("edit-pane-tags").name }));
       context.open(tagPanePlace(pane));
     },
   });
@@ -94,25 +94,25 @@ export function PaneTagLine({ agent, stamp }: { agent: AgentView; stamp?: number
 }
 
 export function PaneTagButton({ agent }: { agent: AgentView }) {
-  useLocale();
+  useFleetLocale();
   const context = useContext(TagContext);
   if (!context || agent.kind === "shell") return null;
-  return <Button type="button" variant="ghost" size="icon" data-slot="agent-tag-action" aria-label={t("fleet.tags.assign")} onClick={() => context.open(tagPanePlace(agent))}
+  return <Button type="button" variant="ghost" size="icon" data-slot="agent-tag-action" aria-label={ft("fleet.tags.assign")} onClick={() => context.open(tagPanePlace(agent))}
     className="size-7 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95">
     <Tags className="size-3.5" aria-hidden />
   </Button>;
 }
 
 export function ManagePaneTags({ settings = false }: { settings?: boolean }) {
-  useLocale();
+  useFleetLocale();
   const context = useContext(TagContext);
   if (!context) return null;
   const button = <Button type="button" variant="outline" size="sm" onClick={() => context.open(null)}>
-    <Tags className="size-4" aria-hidden />{t("fleet.tags.manage")}
+    <Tags className="size-4" aria-hidden />{ft("fleet.tags.manage")}
   </Button>;
   return settings ? <Card className="flex flex-col gap-3 p-4">
-    <div className="text-sm font-medium">{t("fleet.tags.title")}</div>
-    <p className="text-xs text-muted-foreground">{t("fleet.tags.shared")}</p>
+    <div className="text-sm font-medium">{ft("fleet.tags.title")}</div>
+    <p className="text-xs text-muted-foreground">{ft("fleet.tags.shared")}</p>
     <div>{button}</div>
   </Card> : button;
 }
@@ -122,7 +122,7 @@ const INPUT_CLASS = "min-w-0 rounded-md border border-input bg-transparent px-3 
 function TagEditor({ pane, state, client, onClose }: {
   pane: PanePlace | null; state: TagClientState; client: PaneTagClient; onClose: () => void;
 }) {
-  useLocale();
+  useFleetLocale();
   const panel = useRef<HTMLDivElement>(null);
   useDialogFocus(true, panel);
   const [query, setQuery] = useState("");
@@ -157,14 +157,14 @@ function TagEditor({ pane, state, client, onClose }: {
     element?.addEventListener("keydown", keydown);
     return () => element?.removeEventListener("keydown", keydown);
   }, [editing, onClose]);
-  const title = pane ? t("fleet.tags.assign") : t("fleet.tags.manage");
+  const title = pane ? ft("fleet.tags.assign") : ft("fleet.tags.manage");
   return <FleetPanel open label={title} onClose={onClose} className="max-h-[76dvh]">
     <div ref={panel} role="group" tabIndex={-1} className="flex min-h-0 flex-col">
       <div className="flex items-center justify-between gap-3 border-b border-rule px-4 py-3">
         <h2 className="text-sm font-medium">{title}</h2>
-        <Button type="button" variant="ghost" size="icon" aria-label={t("fleet.tags.close")} onClick={onClose}><X className="size-4" aria-hidden /></Button>
+        <Button type="button" variant="ghost" size="icon" aria-label={ft("fleet.tags.close")} onClick={onClose}><X className="size-4" aria-hidden /></Button>
       </div>
-      <p className="px-4 pt-3 text-xs text-muted-foreground">{t("fleet.tags.shared")}</p>
+      <p className="px-4 pt-3 text-xs text-muted-foreground">{ft("fleet.tags.shared")}</p>
       {editing ? <EditTag key={editing.tag.id} tag={editing.tag} busy={busy}
         onCancel={() => setEditing(null)} onSave={async (name, color) => {
           const saved = await mutate({ kind: "edit", id: editing.tag.id, name, color }, editing.version);
@@ -174,28 +174,28 @@ function TagEditor({ pane, state, client, onClose }: {
           event.preventDefault();
           if (pane && !busy && validTagName(normalized)) void mutate({ kind: "attach", pane, name: normalized });
         }}>
-          <input aria-label={t("fleet.tags.search")} placeholder={t("fleet.tags.search")} maxLength={MAX_NAME} value={query}
+          <input aria-label={ft("fleet.tags.search")} placeholder={ft("fleet.tags.search")} maxLength={MAX_NAME} value={query}
             onChange={(event) => setQuery(event.target.value)} className={`${INPUT_CLASS} flex-1`} />
           {pane && <Button type="submit" disabled={busy || !validTagName(normalized) || !!exact && assigned.has(exact.id)}>
-            {exact ? t("fleet.tags.add") : t("fleet.tags.create")}
+            {exact ? ft("fleet.tags.add") : ft("fleet.tags.create")}
           </Button>}
         </form>
         <div className="min-h-24 overflow-y-auto px-4 pb-4">
-          {visible.length === 0 && <p className="py-4 text-sm text-muted-foreground">{t("fleet.tags.empty")}</p>}
+          {visible.length === 0 && <p className="py-4 text-sm text-muted-foreground">{ft("fleet.tags.empty")}</p>}
           {visible.map((tag) => <div key={tag.id} className="flex min-h-11 items-center gap-2 border-b border-rule py-1 last:border-0">
             {pane ? <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-1">
               <input type="checkbox" checked={assigned.has(tag.id)} disabled={busy} aria-label={tag.name}
                 onChange={() => void mutate(assigned.has(tag.id) ? { kind: "detach", pane, id: tag.id } : { kind: "attach", pane, name: tag.name })} />
               <TagBadge tag={tag} />
             </label> : <div className="min-w-0 flex-1"><TagBadge tag={tag} /></div>}
-            <Button type="button" size="icon" variant="ghost" disabled={busy} aria-label={t("fleet.tags.editNamed", { name: tag.name })}
+            <Button type="button" size="icon" variant="ghost" disabled={busy} aria-label={ft("fleet.tags.editNamed", { name: tag.name })}
               onClick={() => { client.clearError(); setEditing({ tag, version: state.snapshot!.version }); }}><Pencil className="size-4" aria-hidden /></Button>
           </div>)}
         </div>
       </>}
       <div className="flex min-h-12 items-center justify-between gap-2 border-t border-rule px-4 py-2 text-xs text-muted-foreground" role="status">
-        <span>{state.busy ? t("fleet.tags.saving") : state.loading ? t("fleet.tags.loading") : !state.available ? t("fleet.tags.error.unavailable") : state.error ? t(`fleet.tags.error.${state.error}`) : ""}</span>
-        {!state.available && !state.loading && <Button type="button" size="sm" variant="outline" onClick={() => void client.refresh()}>{t("fleet.tags.retry")}</Button>}
+        <span>{state.busy ? ft("fleet.tags.saving") : state.loading ? ft("fleet.tags.loading") : !state.available ? ft("fleet.tags.error.unavailable") : state.error ? ft(`fleet.tags.error.${state.error}`) : ""}</span>
+        {!state.available && !state.loading && <Button type="button" size="sm" variant="outline" onClick={() => void client.refresh()}>{ft("fleet.tags.retry")}</Button>}
       </div>
     </div>
   </FleetPanel>;
@@ -208,14 +208,14 @@ function EditTag({ tag, busy, onCancel, onSave }: {
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { input.current?.focus(); }, []);
   return <form className="flex flex-col gap-4 overflow-y-auto p-4" onSubmit={(event) => { event.preventDefault(); if (!busy && validTagName(normalizeTagName(name))) void onSave(normalizeTagName(name), color); }}>
-    <p className="text-xs text-muted-foreground">{t("fleet.tags.globalEdit")}</p>
-    <label className="flex flex-col gap-1.5 text-sm">{t("fleet.tags.name")}
+    <p className="text-xs text-muted-foreground">{ft("fleet.tags.globalEdit")}</p>
+    <label className="flex flex-col gap-1.5 text-sm">{ft("fleet.tags.name")}
       <input ref={input} className={INPUT_CLASS} value={name} maxLength={MAX_NAME} onChange={(event) => setName(event.target.value)} />
     </label>
-    <label className="flex items-center gap-3 text-sm">{t("fleet.tags.color")}
+    <label className="flex items-center gap-3 text-sm">{ft("fleet.tags.color")}
       <input type="color" value={color} onChange={(event) => setColor(event.target.value)} className="h-9 w-12 cursor-pointer rounded border border-input bg-transparent" />
     </label>
-    <div className="flex flex-wrap gap-1" role="group" aria-label={t("fleet.tags.palette")}>
+    <div className="flex flex-wrap gap-1" role="group" aria-label={ft("fleet.tags.palette")}>
       {TAG_COLORS.map((value) => <button key={value} type="button" aria-label={value} aria-pressed={color === value} onClick={() => setColor(value)}
         className="flex size-9 items-center justify-center rounded-full border border-transparent aria-pressed:border-foreground focus-visible:outline-2 focus-visible:outline-ring">
         <span className="size-5 rounded-full" style={{ backgroundColor: value }} />
@@ -223,8 +223,8 @@ function EditTag({ tag, busy, onCancel, onSave }: {
     </div>
     <div><TagBadge tag={{ ...tag, name: name || tag.name, color }} /></div>
     <div className="flex justify-end gap-2">
-      <Button type="button" variant="outline" onClick={onCancel}>{t("fleet.tags.cancel")}</Button>
-      <Button type="submit" disabled={busy || !validTagName(normalizeTagName(name))}>{t("fleet.tags.save")}</Button>
+      <Button type="button" variant="outline" onClick={onCancel}>{ft("fleet.tags.cancel")}</Button>
+      <Button type="submit" disabled={busy || !validTagName(normalizeTagName(name))}>{ft("fleet.tags.save")}</Button>
     </div>
   </form>;
 }

@@ -8,8 +8,7 @@ import { commandRows, resolveBindings } from "../../../fleet/ui/commands/effecti
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { FleetCjkFallbackControl } from "@/components/fleet-webfonts";
-import { useLocale } from "@/hooks/use-locale";
-import { t } from "@/lib/i18n";
+
 import {
   fetchFleetSettings,
   notifyFleetSettingsSaved,
@@ -21,6 +20,7 @@ import {
   DEFAULT_PANE_SURFACE,
   paneSurfaceStore,
 } from "../../../fleet/ui/terminal/switch.ts";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 /**
  * Everything this fork adds to Settings, in one group, at the head of the page.
@@ -36,7 +36,7 @@ import {
  * INSTALLATION behaves is one file every browser reads.
  */
 export function FleetSettingsSection() {
-  useLocale();
+  useFleetLocale();
   return (
     <section aria-labelledby="fleet-settings-heading" className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -44,9 +44,9 @@ export function FleetSettingsSection() {
           id="fleet-settings-heading"
           className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
         >
-          {t("fleet.settings.title")}
+          {ft("fleet.settings.title")}
         </h2>
-        <p className="text-xs text-muted-foreground">{t("fleet.settings.description")}</p>
+        <p className="text-xs text-muted-foreground">{ft("fleet.settings.description")}</p>
       </div>
       <ManagePaneTags settings />
       <FleetTodoistSettings />
@@ -66,7 +66,7 @@ export function FleetSettingsSection() {
  * what the scope label says.
  */
 export function FleetPaneSurfaceControl() {
-  useLocale();
+  useFleetLocale();
   const surface = useSyncExternalStore(
     paneSurfaceStore.subscribe,
     paneSurfaceStore.snapshot,
@@ -78,15 +78,15 @@ export function FleetPaneSurfaceControl() {
         <div className="flex min-w-0 items-start gap-3">
           <SquareTerminal className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="font-medium">{t("fleet.settings.surface.title")}</div>
-            <p className="text-sm text-muted-foreground">{t("fleet.settings.surface.description")}</p>
+            <div className="font-medium">{ft("fleet.settings.surface.title")}</div>
+            <p className="text-sm text-muted-foreground">{ft("fleet.settings.surface.description")}</p>
           </div>
         </div>
         <FleetSettingScope scope="browser" />
       </div>
       <div className="flex items-center justify-between gap-4 border-t border-border px-4 py-3">
         <label htmlFor="pref-pane-surface" className="text-sm font-medium">
-          {t("fleet.settings.surface.label")}
+          {ft("fleet.settings.surface.label")}
         </label>
         <select
           id="pref-pane-surface"
@@ -96,8 +96,8 @@ export function FleetPaneSurfaceControl() {
           onChange={(event) => paneSurfaceStore.set(event.target.value === "terminal" ? "terminal" : "mirror")}
           className="min-h-11 shrink-0 appearance-none rounded-md border border-border/60 bg-background py-2 pl-3 pr-9 text-sm font-medium text-foreground"
         >
-          <option value="mirror">{t("fleet.settings.surface.mirror")}</option>
-          <option value="terminal">{t("fleet.settings.surface.terminal")}</option>
+          <option value="mirror">{ft("fleet.settings.surface.mirror")}</option>
+          <option value="terminal">{ft("fleet.settings.surface.terminal")}</option>
         </select>
       </div>
     </Card>
@@ -106,10 +106,10 @@ export function FleetPaneSurfaceControl() {
 
 /** The small label a Fleet card wears so its reach is never a guess. */
 export function FleetSettingScope({ scope }: { scope: "browser" | "install" }) {
-  useLocale();
+  useFleetLocale();
   return (
     <span className="shrink-0 rounded border border-rule px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-      {scope === "browser" ? t("fleet.settings.scope.browser") : t("fleet.settings.scope.install")}
+      {scope === "browser" ? ft("fleet.settings.scope.browser") : ft("fleet.settings.scope.install")}
     </span>
   );
 }
@@ -134,7 +134,7 @@ type SaveState =
  * somebody edited it on disk — and the answer carries what is actually there, so nothing is lost.
  */
 function FleetShortcutsControl() {
-  useLocale();
+  useFleetLocale();
   const [loaded, setLoaded] = useState<FleetSettingsDocument | null | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const [state, setState] = useState<SaveState>({ kind: "idle" });
@@ -194,9 +194,9 @@ function FleetShortcutsControl() {
         <div className="flex min-w-0 items-start gap-3">
           <Keyboard className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden />
           <div className="min-w-0">
-            <div className="font-medium">{t("fleet.settings.shortcuts.title")}</div>
+            <div className="font-medium">{ft("fleet.settings.shortcuts.title")}</div>
             <p className="text-sm text-muted-foreground">
-              {t("fleet.settings.shortcuts.description")}
+              {ft("fleet.settings.shortcuts.description")}
             </p>
           </div>
         </div>
@@ -205,7 +205,7 @@ function FleetShortcutsControl() {
 
       <div className="border-t border-border p-4">
         <textarea
-          aria-label={t("fleet.settings.shortcuts.title")}
+          aria-label={ft("fleet.settings.shortcuts.title")}
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
@@ -232,14 +232,14 @@ function FleetShortcutsControl() {
 
         <div className="flex justify-end">
           <Button type="button" onClick={() => void save()} disabled={state.kind === "saving"}>
-            {t("fleet.settings.shortcuts.save")}
+            {ft("fleet.settings.shortcuts.save")}
           </Button>
         </div>
       </div>
 
       <details className="border-t border-border">
         <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-          {t("fleet.settings.shortcuts.reference")}
+          {ft("fleet.settings.shortcuts.reference")}
         </summary>
         <ul className="max-h-72 overflow-y-auto px-4 pb-4">
           {reference.map((row) => (
@@ -251,7 +251,7 @@ function FleetShortcutsControl() {
                 <span className="font-mono text-xs text-muted-foreground">{row.command.id}</span>
               </span>
               <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                {row.labels.length === 0 ? t("fleet.command.bar.noBinding") : row.labels.join(", ")}
+                {row.labels.length === 0 ? ft("fleet.command.bar.noBinding") : row.labels.join(", ")}
               </span>
             </li>
           ))}
@@ -262,10 +262,10 @@ function FleetShortcutsControl() {
 }
 
 function SaveMessage({ state, risky }: { state: SaveState; risky: readonly string[] }) {
-  if (state.kind === "saving") return <>{t("fleet.settings.shortcuts.saving")}</>;
-  if (state.kind === "saved") return <>{t("fleet.settings.shortcuts.saved")}</>;
-  if (state.kind === "conflict") return <>{t("fleet.settings.shortcuts.conflict")}</>;
-  if (state.kind === "unavailable") return <>{t("fleet.settings.shortcuts.unavailable")}</>;
+  if (state.kind === "saving") return <>{ft("fleet.settings.shortcuts.saving")}</>;
+  if (state.kind === "saved") return <>{ft("fleet.settings.shortcuts.saved")}</>;
+  if (state.kind === "conflict") return <>{ft("fleet.settings.shortcuts.conflict")}</>;
+  if (state.kind === "unavailable") return <>{ft("fleet.settings.shortcuts.unavailable")}</>;
   if (state.kind === "invalid") {
     return (
       <>
@@ -274,7 +274,7 @@ function SaveMessage({ state, risky }: { state: SaveState; risky: readonly strin
     );
   }
   if (risky.length > 0) {
-    return <>{t("fleet.settings.shortcuts.risky", { bindings: risky.join(", ") })}</>;
+    return <>{ft("fleet.settings.shortcuts.risky", { bindings: risky.join(", ") })}</>;
   }
   return null;
 }

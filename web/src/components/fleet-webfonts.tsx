@@ -11,8 +11,7 @@ import { Card } from "@/components/ui/card";
 import { applyFleetWebfont, neededWebfont } from "@/lib/fleet-webfonts";
 import { useDesignPrefs } from "@/lib/design";
 import { useDisplayPrefs } from "@/hooks/use-display-prefs";
-import { useLocale } from "@/hooks/use-locale";
-import { t } from "@/lib/i18n";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 /**
  * Keeps the document's webfont state matching the three choices that can name one. Renders nothing.
@@ -60,7 +59,7 @@ export function FleetWebfonts() {
  * about a face rather than the name of one, so it goes through the dictionary.
  */
 export function FleetCjkFallbackControl() {
-  useLocale();
+  useFleetLocale();
   const chosen = useSyncExternalStore(
     fleetCjkFallback.subscribe,
     fleetCjkFallback.snapshot,
@@ -73,8 +72,8 @@ export function FleetCjkFallbackControl() {
         <div className="flex min-w-0 items-start gap-3">
           <Languages className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="font-medium">{t("settings.cjk.title")}</div>
-            <p className="text-sm text-muted-foreground">{t("settings.cjk.description")}</p>
+            <div className="font-medium">{ft("settings.cjk.title")}</div>
+            <p className="text-sm text-muted-foreground">{ft("settings.cjk.description")}</p>
           </div>
         </div>
       </div>
@@ -82,7 +81,7 @@ export function FleetCjkFallbackControl() {
       <div className="divide-y divide-border border-t border-border">
         <div className="flex items-center justify-between gap-4 px-4 py-3">
           <label htmlFor="pref-cjk-fallback" className="text-sm font-medium">
-            {t("settings.cjk.family")}
+            {ft("settings.cjk.family")}
           </label>
           <div className="relative shrink-0">
             <select
@@ -97,7 +96,7 @@ export function FleetCjkFallbackControl() {
               }}
               className="min-h-11 appearance-none rounded-md border border-border/60 bg-background py-2 pl-3 pr-9 text-sm font-medium text-foreground"
             >
-              <option value={CJK_FALLBACK_NONE}>{t("settings.cjk.none")}</option>
+              <option value={CJK_FALLBACK_NONE}>{ft("settings.cjk.none")}</option>
               {FLEET_WEBFONTS.map((font) => (
                 <option key={font.id} value={font.id}>
                   {font.label}
@@ -112,7 +111,7 @@ export function FleetCjkFallbackControl() {
         </div>
 
         <p className="px-4 py-2.5 text-xs text-muted-foreground">
-          {t(chosen === CJK_FALLBACK_NONE ? "settings.cjk.note.none" : "settings.cjk.note.provider")}
+          {ft(chosen === CJK_FALLBACK_NONE ? "settings.cjk.note.none" : "settings.cjk.note.provider")}
         </p>
       </div>
     </Card>

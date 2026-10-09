@@ -17,8 +17,8 @@ import { Collapse } from "@/components/ui/collapse";
 import { t } from "@/lib/i18n";
 import { statusLabel } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { useLocale } from "@/hooks/use-locale";
 import { useLongPress } from "@/hooks/use-long-press";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 interface NativeNavigationTreeProps {
   tree: NavigationTree;
@@ -38,7 +38,7 @@ export function NativeNavigationTree({
   onRowActions,
   preferenceStore = nativeNavigationPreferences,
 }: NativeNavigationTreeProps) {
-  useLocale();
+  useFleetLocale();
   const preferences = useSyncExternalStore(
     preferenceStore.subscribe,
     preferenceStore.snapshot,
@@ -64,14 +64,14 @@ export function NativeNavigationTree({
   // An empty solo snapshot has no spaces; named roster members still carry health/version evidence.
   const empty = tree.rows.every((row) => row.children.length === 0 && !row.hostId);
   if (empty) {
-    return <p className="px-3 py-6 text-sm text-muted-foreground">{t("fleet.navigation.empty")}</p>;
+    return <p className="px-3 py-6 text-sm text-muted-foreground">{ft("fleet.navigation.empty")}</p>;
   }
 
   const disclosed = new Set(preferences.disclosed);
   const spaceIsCurrent = tree.selection === null;
 
   return (
-    <nav aria-label={t("fleet.navigation.hierarchy")} className="flex flex-col p-1.5">
+    <nav aria-label={ft("fleet.navigation.hierarchy")} className="flex flex-col p-1.5">
       {tree.rows.map((row) => (
         <Row
           key={row.key}
@@ -192,8 +192,8 @@ function Row({
             aria-controls={childrenId}
             aria-label={
               open
-                ? t("fleet.navigation.collapse", { name: row.label })
-                : t("fleet.navigation.expand", { name: row.label })
+                ? ft("fleet.navigation.collapse", { name: row.label })
+                : ft("fleet.navigation.expand", { name: row.label })
             }
             onClick={() => onToggle(disclosureId)}
             className="grid w-5 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
@@ -298,7 +298,7 @@ function faultWord(fault: NavigationHostFault | undefined): string | null {
   if (fault === "incompatible") return t("connection.host.incompatible");
   if (fault === "refused") return t("connection.host.unreachablePlain");
   if (fault === "unknown") return t("connection.host.neverSeen");
-  if (fault === "slow") return t("connection.host.slowLink");
+  if (fault === "slow") return ft("connection.host.slowLink");
   return null;
 }
 
@@ -325,7 +325,7 @@ function HostGlyph({ hostId, fault }: { hostId: string; fault?: NavigationHostFa
 }
 
 function HostState({ fault }: { fault?: NavigationHostFault }) {
-  useLocale();
+  useFleetLocale();
   const word = faultWord(fault);
   if (word === null) return null;
   return (
@@ -336,23 +336,23 @@ function HostState({ fault }: { fault?: NavigationHostFault }) {
 }
 
 function HostVersion({ evidence }: { evidence: NavigationRow["version"] }) {
-  useLocale();
+  useFleetLocale();
   if (evidence === undefined) {
-    return <span className="block truncate text-[10px] leading-3 text-muted-foreground">{t("fleet.version.unknown")}</span>;
+    return <span className="block truncate text-[10px] leading-3 text-muted-foreground">{ft("fleet.version.unknown")}</span>;
   }
   const version =
     evidence.reported === null ? "" : `v${evidence.reported.replace(/^v/, "")}`;
   let label: string;
   if (evidence.state === "compatible") label = version;
-  else if (evidence.state === "outdated") label = t("fleet.version.outdated", { version });
-  else if (evidence.state === "manual-major") label = t("fleet.version.manualMajor", { version });
-  else if (evidence.state === "development") label = t("fleet.version.development", { version });
+  else if (evidence.state === "outdated") label = ft("fleet.version.outdated", { version });
+  else if (evidence.state === "manual-major") label = ft("fleet.version.manualMajor", { version });
+  else if (evidence.state === "development") label = ft("fleet.version.development", { version });
   else if (evidence.state === "last-reported") {
     label = evidence.development
-      ? t("fleet.version.lastReportedDevelopment", { version })
-      : t("fleet.version.lastReported", { version });
+      ? ft("fleet.version.lastReportedDevelopment", { version })
+      : ft("fleet.version.lastReported", { version });
   } else {
-    label = t("fleet.version.unknown");
+    label = ft("fleet.version.unknown");
   }
   const urgent = evidence.state === "outdated" || evidence.state === "manual-major";
   return (

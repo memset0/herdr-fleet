@@ -1,5 +1,3 @@
-import { sttTimeoutSignal } from "../../fleet/stt-deadline.ts";
-
 // ── SPEECH-TO-TEXT: ONE SEAM, ONE SHAPE, NOTHING ABOUT A VENDOR ──────────────────────────────
 //
 // The bridge knows exactly this much about transcription: bytes of a completed recording go in,
@@ -148,7 +146,7 @@ export interface SttDeadline {
  * rejection unobserved.
  */
 export function createSttDeadline(caller: AbortSignal | undefined, timeoutMs?: number): SttDeadline {
-  const timeoutSignal = timeoutMs === undefined ? undefined : sttTimeoutSignal(timeoutMs);
+  const timeoutSignal = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
   // `any` keeps the first source's reason, including when both were already stopped. Put the caller
   // first so caller cancellation wins that tie; retain the timeout source to classify its reason.
   let signal: AbortSignal;

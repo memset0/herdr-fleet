@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import type { FleetLeadConfig } from "./config.ts";
-import { createGatewayHandler, trustedClientSource, type GatewayOptions } from "./gateway.ts";
+import { PAIRING_REFUSAL, createGatewayHandler, trustedClientSource, type GatewayOptions } from "./gateway.ts";
+import { createTagStore } from "./pane-tags/store.ts";
 import type { FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import { SessionStore } from "./session-store.ts";
@@ -397,3 +398,53 @@ describe("manual Pane fit on the Gateway", () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe("the Gateway as Collie's paired device", () => {
+  test("refuses every pairing write before Collie, with a body that triggers no wipe", async () => {
+    const seen: string[] = [];
+    const { handler } = await setup(async (input) => {
+      seen.push(new URL(String(input)).pathname);
+      return new Response("{}", { headers: { "content-type": "application/json" } });
+    });
+    const cookie = await login(handler);
+    const write = (path: string, method = "POST") =>
+      handler(
+        request(path, { method, headers: { cookie, origin: config.public.origin, "content-type": "application/json" }, body: "{}" }),
+        { peerAddress: "127.0.0.1" },
+      );
+    for (const [path, method] of [["/api/pair", "POST"], ["/api/devices/revoke", "POST"], ["/api/devices", "DELETE"]] as const) {
+      const response = await write(path, method);
+      expect(response.status).toBe(403);
+      const body = (await response.text()).trim();
+      expect(body).toBe(PAIRING_REFUSAL);
+      expect(["device not paired", "device expired"]).not.toContain(body);
+    }
+    expect(seen).toEqual([]);
+    // Reading the device list is a read, and Collie answers it.
+    const list = await handler(request("/api/devices", { headers: { cookie } }), { peerAddress: "127.0.0.1" });
+    expect(list.status).toBe(200);
+    expect(seen).toEqual(["/api/devices"]);
+  });
+
+  test("sends its own pairing token on proxied requests and on its own inventory read", async () => {
+    const authorizations: (string | null)[] = [];
+    const root = await mkdtemp(join(tmpdir(), "herdr-fleet-gateway-tags-"));
+    roots.push(root);
+    const { handler } = await setup(
+      async (input, init) => {
+        authorizations.push(new Headers(init?.headers).get("authorization"));
+        const path = new URL(String(input)).pathname;
+        return path === "/api/snapshot"
+          ? new Response(JSON.stringify({ servers: [], agents: [], shellPanes: [] }), { headers: { "content-type": "application/json" } })
+          : new Response("{}", { headers: { "content-type": "application/json" } });
+      },
+      { collieToken: "gateway-token", tags: createTagStore(join(root, "pane-tags.json")) },
+    );
+    const cookie = await login(handler);
+    await handler(request("/api/config", { headers: { cookie, authorization: "Bearer browser" } }), { peerAddress: "127.0.0.1" });
+    await handler(request("/fleet/api/pane-tags", { headers: { cookie } }), { peerAddress: "127.0.0.1" });
+    expect(authorizations.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(authorizations)).toEqual(new Set(["Bearer gateway-token"]));
+  });
+});
+

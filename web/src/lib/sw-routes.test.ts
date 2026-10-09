@@ -196,7 +196,9 @@ describe("the service worker's runtime caching", () => {
 
   it("registers exactly two routes: the navigation fallback and the /fonts/ cache", () => {
     expect(SW_CODE.match(/registerRoute\(/g)?.length).toBe(2);
-    expect(SW_CODE).toContain("new NavigationRoute(createHandlerBoundToURL(");
+    // DOWNSTREAM PORT (FORK.toml authenticated-navigation-cache): Fleet's navigation route is
+    // network-first and falls back to the precached shell only when the request fails.
+    expect(SW_CODE).toContain("new NavigationRoute(\n    networkFirstNavigation(");
     expect(SW_CODE).toContain('url.pathname.startsWith(under("/fonts/"))');
   });
 

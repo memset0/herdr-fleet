@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { proxyCollie, upstreamRequestHeaders } from "./proxy.ts";
+import { proxyCollie, upstreamRequestHeaders, widenFontPolicy } from "./proxy.ts";
 import { fleetTestConfig } from "./test-helpers.ts";
 
 const config = fleetTestConfig();
@@ -89,5 +89,51 @@ describe("single Collie proxy", () => {
     expect(response.status).toBe(304);
     expect(response.headers.get("etag")).toBe('"pane-v1"');
     expect(response.headers.get("content-length")).toBeNull();
+  });
+
+  test("carries the Gateway's own pairing token, never the browser's", async () => {
+    const request = new Request("https://fleet.example.com/api/snapshot", {
+      headers: { authorization: "Bearer browser-supplied" },
+    });
+    expect(upstreamRequestHeaders(request, config, "gateway-token").get("authorization")).toBe("Bearer gateway-token");
+    expect(upstreamRequestHeaders(request, config).get("authorization")).toBeNull();
+    let sent: Headers | undefined;
+    await proxyCollie(request, config, async (_input, init) => {
+      sent = new Headers(init?.headers);
+      return new Response("{}");
+    }, "gateway-token");
+    expect(sent?.get("authorization")).toBe("Bearer gateway-token");
+  });
+});
+
+describe("the fetched font's origin in Collie's document policy", () => {
+  const COLLIE_CSP =
+    "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; " +
+    "style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'; " +
+    "manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; form-action 'self'";
+  const ORIGIN = "https://fonts.example.com";
+
+  test("admits the origin for stylesheets and fonts and for nothing else", () => {
+    const widened = widenFontPolicy(COLLIE_CSP, [ORIGIN]);
+    const directive = (name: string) => widened.split("; ").find((d) => d.startsWith(`${name} `)) ?? "";
+    expect(directive("style-src")).toBe(`style-src 'self' 'unsafe-inline' ${ORIGIN}`);
+    // Absent, it inherited default-src; spelled out, it keeps that and adds the origin alone.
+    expect(directive("font-src")).toBe(`font-src 'self' ${ORIGIN}`);
+    for (const name of ["default-src", "connect-src", "script-src", "worker-src", "base-uri", "frame-ancestors", "object-src", "form-action"]) {
+      expect(directive(name)).not.toContain(ORIGIN);
+    }
+  });
+
+  test("leaves a sandboxed policy alone", () => {
+    expect(widenFontPolicy("default-src 'none'; sandbox", [ORIGIN])).toBe("default-src 'none'; sandbox");
+  });
+
+  test("widens an HTML document Collie answers, and no other body", async () => {
+    const answer = (type: string) =>
+      proxyCollie(new Request("https://fleet.example.com/"), config, async () =>
+        new Response("x", { headers: { "content-type": type, "content-security-policy": COLLIE_CSP } }),
+      );
+    expect((await answer("text/html; charset=utf-8")).headers.get("content-security-policy")).toContain("font-src");
+    expect((await answer("application/json")).headers.get("content-security-policy")).toBe(COLLIE_CSP);
   });
 });

@@ -2,6 +2,7 @@ import { createTodoistService } from "./todoist/service.ts";
 import { createTodoistStore } from "./todoist/store.ts";
 import { dirname, isAbsolute, join } from "node:path";
 
+import { GATEWAY_TOKEN_ENV } from "./collie-pairing.ts";
 import { isFleetLeadConfig, loadFleetConfig, resolveFleetConfigPath } from "./config.ts";
 import { resolveHerdrCommand } from "./herdr-command.ts";
 import { startGateway } from "./server.ts";
@@ -28,6 +29,12 @@ async function main(): Promise<void> {
   const statePath = process.env.HERDR_FLEET_SESSION_STATE?.trim() ?? "";
   if (!isAbsolute(statePath)) throw new Error("HERDR_FLEET_SESSION_STATE must be an absolute path");
   const sessions = new SessionStore(statePath);
+  // The pairing credential the supervisor enrolled for this Gateway (fleet/collie-pairing.ts), read
+  // once and removed from this process's environment so no terminal attach or other child inherits
+  // it. Without it every proxied request would be refused by Collie, so the Gateway does not start.
+  const collieToken = process.env[GATEWAY_TOKEN_ENV]?.trim() ?? "";
+  delete process.env[GATEWAY_TOKEN_ENV];
+  if (collieToken === "") throw new Error(`${GATEWAY_TOKEN_ENV} is missing; the supervisor enrols the Gateway`);
   // The snapshot source is resolved once: a Pane is resolved against the multiplexer this machine
   // owns, and asking is what proves the Pane is still there.
   const socketPath = localSocketPath();
@@ -58,6 +65,7 @@ async function main(): Promise<void> {
   const server = startGateway({
     config,
     sessions,
+    collieToken,
     // Beside the private configuration, not in the state directory: bindings are the operator's own
     // choice, and a wiped state directory must not quietly return them to stock defaults.
     todoist: createTodoistService({ store: createTodoistStore(join(dirname(configPath), "todoist.json")), origin: config.public.origin }),

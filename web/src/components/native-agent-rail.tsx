@@ -15,8 +15,8 @@ import { paneRowKey } from "@/lib/hosts";
 import { usePins } from "@/lib/pins";
 import { ATTENTION, bucketOf, isUnseen, triage, type TriageKey, type TriageSection } from "@/lib/triage";
 import type { AgentView, BridgeStatus, ServerSummary, TabView } from "@/lib/types";
-import { t, tn } from "@/lib/i18n";
-import { useLocale } from "@/hooks/use-locale";
+import { t } from "@/lib/i18n";
+import { ft, ftn, useFleetLocale } from "@/lib/fleet-i18n";
 
 interface NativeAgentRailProps {
   agents: AgentView[];
@@ -84,7 +84,7 @@ export function NativeAgentRail({
   onOpen,
   onMarkAllSeen,
 }: NativeAgentRailProps) {
-  useLocale();
+  useFleetLocale();
   const pins = usePins();
   const [marking, setMarking] = useState(false);
   const container = useRef<HTMLElement>(null);
@@ -103,7 +103,7 @@ export function NativeAgentRail({
 
   if (agents.length === 0) {
     return (
-      <section aria-label={t("fleet.navigation.agents")} className="flex min-h-0 flex-1 flex-col">
+      <section aria-label={ft("fleet.navigation.agents")} className="flex min-h-0 flex-1 flex-col">
         <div className="p-1.5"><ManagePaneTags /></div>
         <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-muted-foreground">
           {error ? <WifiOff className="size-6" /> : <Inbox className="size-6" />}
@@ -179,7 +179,7 @@ export function NativeAgentRail({
   return (
     <section
       ref={container}
-      aria-label={t("fleet.navigation.agents")}
+      aria-label={ft("fleet.navigation.agents")}
       className="flex min-h-0 flex-1 flex-col"
     >
       <div className="flex flex-col gap-3 p-1.5">
@@ -196,12 +196,12 @@ export function NativeAgentRail({
               data-slot="mark-all-seen"
               disabled={marking}
               aria-busy={marking || undefined}
-              aria-label={tn("fleet.navigation.markAllSeenLabel", unseen.length)}
+              aria-label={ftn("fleet.navigation.markAllSeenLabel", unseen.length)}
               onClick={markAll}
               className="h-8 shrink-0 gap-1.5 px-2.5 text-xs"
             >
               <UnseenMark size="sm" />
-              {t("fleet.navigation.markAllSeen")}
+              {ft("fleet.navigation.markAllSeen")}
               <span className="font-mono tabular-nums text-muted-foreground">{unseen.length}</span>
             </Button>
           )}

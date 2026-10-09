@@ -1,6 +1,6 @@
 import { FleetPromptPanel } from "@/components/fleet-prompt-panel";
-import { useLocale } from "@/hooks/use-locale";
-import { t } from "@/lib/i18n";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
+
 
 /**
  * The question a close asks, in the terminal's own shape.
@@ -32,13 +32,13 @@ export interface FleetConfirmDialogProps {
 }
 
 export function FleetConfirmDialog({ title, detail, onConfirm, onClose }: FleetConfirmDialogProps) {
-  useLocale();
+  useFleetLocale();
   return (
     <FleetPromptPanel
-      title={`${title} ${t("fleet.confirm.prompt")}`}
+      title={`${title} ${ft("fleet.confirm.prompt")}`}
       detail={detail}
       initialValue="y"
-      hint={t("fleet.confirm.hint")}
+      hint={ft("fleet.confirm.hint")}
       onClose={onClose}
       onSubmit={(value) => {
         // Trimmed and case-insensitive, and compared against the one answer that means yes.

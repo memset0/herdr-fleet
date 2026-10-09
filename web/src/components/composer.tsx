@@ -70,6 +70,7 @@ import { RecordingStrip } from "@/components/recording-strip";
 import { useSttRecorder } from "@/hooks/use-stt-recorder";
 import { useHandsFree, useSttCapability } from "@/lib/stt";
 import { NoEchoNotice } from "@/components/no-echo-notice";
+import { ft } from "@/lib/fleet-i18n";
 
 export interface ComposerHandle {
   /** Focus the input and put the caret at the end — used by the mirror-tap-to-focus in AgentChat. */
@@ -720,7 +721,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     // The bridge's own words where it gave any — the operator's next move is on the host, and our
     // generic sentence would hide the one fact that tells them so.
     if (decision.refusal === "absent" && stt?.reason !== undefined) refuseCommand(stt.reason);
-    refuseCommand(translate(MIC_REFUSAL_MESSAGES[decision.refusal]));
+    refuseCommand(ft(MIC_REFUSAL_MESSAGES[decision.refusal]));
   };
   useFleetCommandAdapters({
     "start-mic-recording": () => runMicCommand("start"),

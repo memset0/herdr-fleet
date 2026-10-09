@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import type { PaneContentProps } from "@/components/agent-chat";
 import { Collapse } from "@/components/ui/collapse";
 import { fontStack, useDisplayPrefs, type FontFamily } from "@/hooks/use-display-prefs";
+import { markDead, markLive } from "@/lib/liveness";
 import { paneScopeKey } from "@/lib/scope";
 import { copyToClipboard, readOsc52, type CopyOutcome } from "../../../fleet/ui/terminal/clipboard.ts";
 import { terminalFontFamily } from "../../../fleet/ui/terminal/font.ts";
@@ -55,6 +56,8 @@ interface RetainedTerminal {
   readonly link: TerminalLink;
   /** Set when the connection ends, so a return knows to establish a new one. */
   ended: boolean;
+  /** True from the socket's open until its close: the Pane is answering through its real terminal. */
+  connected: boolean;
   hasOutput: boolean;
   /**
    * What the mounted surface wants to hear when the socket opens. Held on the entry rather than
@@ -146,18 +149,26 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
       // component, and a returning mount has to know whether what it takes back is still connected.
       let self: RetainedTerminal | null = null;
       const link = new TerminalLink(new WebSocket(terminalUrl(window.location.origin, paneId, scope)), {
-        onOpen: () => self?.opened?.(),
+        onOpen: () => {
+          if (self !== null) self.connected = true;
+          markLive(paneId, Date.now(), scope);
+          self?.opened?.();
+        },
         onOutput: (data) => {
           if (self !== null) self.hasOutput = true;
           terminal.write(data);
         },
         onNotice: (word) => setNotice(word),
         onClose: () => {
-          if (self !== null) self.ended = true;
+          if (self !== null) {
+            self.ended = true;
+            self.connected = false;
+          }
+          markDead(paneId, scope);
           setNotice((shown) => shown ?? "ended");
         },
       });
-      entry = { terminal, fit, element, link, ended: false, hasOutput: false, opened: null, face };
+      entry = { terminal, fit, element, link, ended: false, connected: false, hasOutput: false, opened: null, face };
       self = entry;
       if (!readOnly) terminal.onData((data) => link.type(encoder.encode(data)));
       terminal.parser.registerOscHandler(52, (data) => {
@@ -207,6 +218,17 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
       report();
     };
 
+    // COLLIE 1.18'S LIVENESS (lib/liveness.ts): a Pane is live while its last read succeeded, and
+    // the mirror's read is what marks it. This surface reads no mirror, so without a word from here
+    // the Pane would never be live and Collie would withhold its rename, close and focus rows as if
+    // the screen were a saved copy. An open terminal stream IS this Pane answering, so it marks the
+    // Pane live on open and well inside Collie's own cap while it stays open, and dead on close.
+    const keepLive = (): void => {
+      if (current.connected) markLive(paneId, Date.now(), scope);
+    };
+    keepLive();
+    const liveTimer = setInterval(keepLive, 30_000);
+
     report();
     // The first viewport is held until the socket opens, so the number is only real from then on.
     current.opened = () => setGeometry(current.link.geometry());
@@ -235,6 +257,7 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
 
     return () => {
       live = false;
+      clearInterval(liveTimer);
       parsed.dispose();
       document.fonts?.removeEventListener("loadingdone", settle);
       observer.disconnect();

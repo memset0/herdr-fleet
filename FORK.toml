@@ -2,9 +2,9 @@ schema_version = 2
 
 [upstream]
 url = "https://github.com/AltanS/collie.git"
-tag = "v1.17.2"
-tag_object = "b73f66bcafd40b75adc93abc838c7e5c49c30d00"
-commit = "3d562ae5f8ca1b5bcbf8c4cab10064c955d5c704"
+tag = "v1.18.0"
+tag_object = "990260b86d08b7e41f62fe5f2ed9a7e928d4b637"
+commit = "2ab62eaac43c8971fc698f81a2465d3059fce938"
 
 [[owned]]
 id = "development-workflow"
@@ -113,7 +113,11 @@ paths = [
   "web/src/components/native-navigation-tree.test.tsx",
   "web/src/components/native-navigation-tree.tsx",
   "web/src/lib/fleet-webfonts.test.ts",
-  "web/src/lib/fleet-webfonts.ts"
+  "web/src/lib/fleet-webfonts.ts",
+  "web/src/components/fleet-lost-badge.tsx",
+  "web/src/lib/fleet-i18n/**",
+  "web/src/lib/fleet-navigation.ts",
+  "web/src/lib/fleet-navigation.test.ts"
 ]
 contracts = [
   "private fleet.toml",
@@ -130,6 +134,9 @@ contracts = [
   "one fetched CJK fallback face",
   "one context menu and one centred prompt beside Collie's untouched sheets",
   "Host runtime-version evidence against the lead's own version, and page-build footer",
+  "Fleet's own interface strings in a fork-owned dictionary that follows Collie's locale and falls back to English",
+  "Collie's lost-connection badge kept on a header row that declines the mark",
+  "the Gateway as Collie's one paired device, its token in memory and rotated on every start",
 ]
 verify = [
   "fleet/auth.test.ts",
@@ -188,6 +195,10 @@ verify = [
   "web/src/components/native-navigation-tree.test.tsx",
   "web/src/components/native-navigation-shell.test.tsx",
   "fleet/upstream-version.test.ts",
+  "web/src/lib/fleet-i18n/fleet-i18n.test.tsx",
+  "fleet/stt-deadline.test.ts",
+  "fleet/collie-pairing.test.ts",
+  "web/src/lib/fleet-navigation.test.ts",
 ]
 
 [[owned]]
@@ -207,7 +218,7 @@ id = "native-row-actions-menu-port"
 intent = "Let a pointer's context gesture answer a row's actions with the fork's own context menu, while a touch keeps Collie's bottom sheet exactly as upstream wrote it."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/components/pane-strip.tsx#FleetPaneActions",
   "web/src/components/tab-strip.tsx#FleetTabActions"
@@ -228,7 +239,7 @@ id = "unnarrowed-pack-rows-port"
 intent = "Expose whole-pack rows and optional Fleet version evidence from the crew census without changing scoped lists or delaying the required snapshot."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/lib/loaders.ts#allWorkspaces?: WorkspaceView[]",
   "web/src/lib/loaders.test.ts#optional version discovery",
@@ -248,41 +259,41 @@ id = "repository-guidance"
 intent = "Keep canonical downstream guidance and local configuration exclusions explicit."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   ".gitignore#/fleet.toml",
   "AGENTS.md#Repository-specific OpenSpec and Git Workflow Requirements",
   "CLAUDE.md#AGENTS.md"
 ]
 verify = ["AGENTS.md", ".gitignore", "fleet/terminal/session.test.ts", "fleet/terminal/connection.test.ts", "fleet/terminal/spawn.test.ts"]
-reason = "Repository entrypoints and ignore rules are upstream-owned surfaces that every contributor consumes. This entry also carries the fork's recorded ADR 0008 departure: .adr/ is Collie's and is never written to, so the working agreement states the short downstream rule while the owning change's design explains it. The Pane's second surface uses terminal attach with automatic external-attachment takeover on lead and peer; it keeps one shared establishment and refuses another Fleet browser rather than displacing it. The mirror the ADR is about remains unchanged. The working agreement is the required normative entrypoint, so an owned document alone cannot replace this edit. Since Collie 1.8 upstream makes CLAUDE.md the canonical file and AGENTS.md a pointer to it; this fork keeps the reverse — AGENTS.md canonical and CLAUDE.md the relative symlink — and never reads upstream's CLAUDE.md into the link."
+reason = "Repository entrypoints and ignore rules are upstream-owned surfaces that every contributor consumes. Since the Collie 1.18.0 adoption the working agreement also states that Fleet's strings go through `ft()` and never into Collie's dictionaries, and that always-on pairing behind the Gateway is the Gateway's own device. This entry also carries the fork's recorded ADR 0008 departure: .adr/ is Collie's and is never written to, so the working agreement states the short downstream rule while the owning change's design explains it. The Pane's second surface uses terminal attach with automatic external-attachment takeover on lead and peer; it keeps one shared establishment and refuses another Fleet browser rather than displacing it. The mirror the ADR is about remains unchanged. The working agreement is the required normative entrypoint, so an owned document alone cannot replace this edit. Since Collie 1.8 upstream makes CLAUDE.md the canonical file and AGENTS.md a pointer to it; this fork keeps the reverse — AGENTS.md canonical and CLAUDE.md the relative symlink — and never reads upstream's CLAUDE.md into the link."
 
 [[invasive]]
 id = "fake-network-fleet-routes"
 intent = "Teach the shared MSW handlers about Fleet's own authenticated route."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["web/src/test/handlers.ts#Default happy-path handlers"]
 verify = ["web/src/routes/settings.test.tsx", "web/src/playground/app.test.tsx"]
 reason = "The app has an authenticated endpoint Collie does not, and the shared fake network is where every suite learns what the network answers. Settings returns 404 — exactly what a Collie with no Fleet Gateway in front of it answers — so Collie's own suites keep rendering Settings unchanged and the fork's editor simply does not appear. Without it the route's one fetch never settles under MSW and Settings playground renders may never settle. Version evidence needs no handler of its own: it rides the census, whose default solo-world 404 is upstream's. Manual Pane fit's availability read (`/fleet/api/pane-fit`) answers the same 404, so Collie's own Pane-page suites draw no Resize row, exactly as a Collie with no Gateway would."
 
 [[invasive]]
 id = "lint-parse-boundary"
-intent = "Register the fork's own JSON parse boundary in the linter's existing boundary override."
+intent = "Register the fork's own JSON parse boundaries in one override block of the fork's own."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [".oxlintrc.json#fleet/settings/document.ts"]
 verify = ["fleet/settings/document.test.ts", "fleet/settings/gateway-settings.test.ts"]
-reason = "ADR 0019 makes a finding fixable in code and never suppressible, and names one override class for files that ARE the I/O boundary the `no-runtime-typeof` rule tells you to parse at. The fork's settings document is that class a fourth time — one reader of an operator-authored JSON file, the Gateway route that replaces it, and that route's answer read back in the browser — so the three files join the existing list rather than carrying a disable comment. A fifth joins them with the Pane's terminal (attach-the-browser-to-the-real-terminal): `fleet/terminal/browser.ts` reads a viewport off a live WebSocket frame, and its one `typeof` is the object check that narrows an arbitrary parsed value to two integer fields before either becomes a real terminal's dimensions — the least trusted input in the list, and the only one whose parse result leaves the process. No rule is added, removed, or downgraded. Collie 1.17 added its own `bridge/machine-parse.ts` to the same list and a separate override for its Access gate; the fork's files follow upstream's in the list."
+reason = "ADR 0019 makes a finding fixable in code and never suppressible, and names one override class for files that ARE the I/O boundary the `no-runtime-typeof` rule tells you to parse at. The fork's settings document is that class a fourth time — one reader of an operator-authored JSON file, the Gateway route that replaces it, and that route's answer read back in the browser — so the three files join the existing list rather than carrying a disable comment. A fifth joins them with the Pane's terminal (attach-the-browser-to-the-real-terminal): `fleet/terminal/browser.ts` reads a viewport off a live WebSocket frame, and its one `typeof` is the object check that narrows an arbitrary parsed value to two integer fields before either becomes a real terminal's dimensions — the least trusted input in the list, and the only one whose parse result leaves the process. No rule is added, removed, or downgraded. Since the Collie 1.18.0 adoption the fork's files stand in an override block of their own, after upstream's Access-gate block, with their own comment and the same one rule turned off, so upstream's list and its comment are upstream's text and a sync no longer merges into them."
 
 [[invasive]]
 id = "plugin-identity"
 intent = "Expose the downstream identity, Herdr-owned lifecycle, and inherited native operator actions while retaining Collie provenance."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["herdr-plugin.toml#memset0.herdr-fleet"]
 verify = ["herdr-plugin.toml", "UPSTREAM.md", "fleet/lifecycle.test.ts"]
 reason = "Herdr reads plugin identity, build steps, and actions only from the upstream manifest path."
@@ -292,7 +303,7 @@ id = "downstream-version-line"
 intent = "Carry this product's own version and its own release history in the files upstream's version gate reads."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "CHANGELOG.md#private Fleet configuration",
   "cli/update-check.test.ts#COLLIE_CHANGELOG.md",
@@ -308,31 +319,24 @@ id = "fleet-build-port"
 intent = "Include fork-owned Fleet modules in existing root test and typecheck gates."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["package.json#./fleet", "tsconfig.json#\"fleet\""]
 verify = ["fleet/config.test.ts", "fleet/collie-env.test.ts"]
 reason = "The upstream root package and TypeScript configuration own the repository-wide verification entrypoints. Since Collie 1.17 the root tsconfig also excludes two contract tests that `tsconfig.contract.json` checks; `fleet` stays in the include beside that exclusion, and the root typecheck script is upstream's."
 
 [[invasive]]
 id = "native-agent-favorites-port"
-intent = "Expose native Agent favorites and own the shared typed dictionaries used by all Fleet labels, including runtime-version evidence and pane-tag controls."
+intent = "Expose native Agent favorites as a star on Collie's own rows, worded through Fleet's own dictionary."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/components/agent-list.tsx#togglePanePin",
   "web/src/components/agent-list.test.tsx#the star is this device's pin",
   "web/src/components/agent-card.tsx#onFavoriteToggle",
   "web/src/components/agent-card.test.tsx#AgentCard favorite control",
   "web/src/routes/home.test.tsx#agentRows",
-  "web/src/components/stable-order.test.tsx#native-agent-favorites-port",
-  "web/src/lib/i18n/messages/en.ts#home.favorite.add",
-  "web/src/lib/i18n/messages/de.ts#home.favorite.add",
-  "web/src/lib/i18n/messages/es.ts#home.favorite.add",
-  "web/src/lib/i18n/messages/ja.ts#home.favorite.add",
-  "web/src/lib/i18n/messages/ko.ts#home.favorite.add",
-  "web/src/lib/i18n/messages/zh.ts#home.favorite.add",
-  "web/src/lib/i18n/messages/zh-TW.ts#home.favorite.add"
+  "web/src/components/stable-order.test.tsx#native-agent-favorites-port"
 ]
 verify = [
   "fleet/ui/agent-favorites.test.ts",
@@ -340,18 +344,16 @@ verify = [
   "web/src/components/agent-card.test.tsx",
   "web/src/routes/home.test.tsx",
   "web/src/components/stable-order.test.tsx",
-  "web/src/lib/i18n/i18n.test.ts"
+  "web/src/lib/fleet-i18n/fleet-i18n.test.tsx"
 ]
-# All seven dictionaries also carry fleet.version.*; classifier and hierarchy coverage verify
-# their lead-relative runtime presentation, independent of connectivity.
-reason = "Collie's native rows own rendering and navigation, so they expose only a star state and toggle port; the star is Collie's own per-device pin (align-rail-with-collie-rows), so the dashboard list passes its own pin matcher and a toggle that calls Collie's setPinned through web/src/lib/fleet-roster.ts, and Fleet keeps no favourite store of its own — fleet/ui/agent-favorites.ts is only the one-shot reader that migrates a retired favourite record into pins. This entry also carries the dashboard route test's coverage of the content width the native navigation shell removes so the route fills its column (native-navigation-sidebars-port), and the seven typed dictionaries every downstream label lands in, including the CJK fallback card's (native-webfont-port) and fleet.version.* runtime evidence, because the manifest attributes each of those paths to exactly one entry. Since Collie 1.12 the dashboard lays rows out as workspace groups in place order under a Pinned group, not as triage sections, and rows gained pin, hidden-machine and host/cache chips; the star sits on every row beside them, pinning or unpinning the row exactly as the hold and the actions sheet do, so a starred row is in upstream's Pinned group in upstream's order and no group is re-partitioned. The dictionaries keep the home.favorite.add/remove keys as this entry's anchors, worded as pin and unpin in each language's own term for upstream's pin. The ATTENTION re-export this file used to carry is gone: upstream moved the set to web/src/lib/triage.ts, where the Fleet Agent rail now reads it. Upstream's cross-surface order test (web/src/components/stable-order.test.tsx, new by 1.12) reads the dashboard's order from every button in a group, so it reads only the buttons that carry the row's own slot, as this entry's other tests do; its expected orders are unchanged. Collie 1.17's order-toggle case reads the Pinned group's order from its buttons the same way, so it reads only the row-slot buttons too, with its expected order unchanged."
+reason = "Collie's native rows own rendering and navigation, so they expose only a star state and toggle port; the star is Collie's own per-device pin (align-rail-with-collie-rows), so the dashboard list passes its own pin matcher and a toggle that calls Collie's setPinned through web/src/lib/fleet-roster.ts, and Fleet keeps no favourite store of its own — fleet/ui/agent-favorites.ts is only the one-shot reader that migrates a retired favourite record into pins. This entry also carries the dashboard route test's coverage of the content width the native navigation shell removes so the route fills its column (native-navigation-sidebars-port), because the manifest attributes each path to exactly one entry. Collie's dictionaries are upstream's text since the 1.18.0 adoption: the star's two labels (home.favorite.add/remove, worded as pin and unpin in each language's own term for upstream's pin) and every other Fleet label live in the fork-owned web/src/lib/fleet-i18n, which follows Collie's active locale and falls back to English, so the card's port reads them through `ft` and subscribes with `useFleetLocale` beside upstream's own `useLocale`. Since Collie 1.12 the dashboard lays rows out as workspace groups in place order under a Pinned group, not as triage sections, and rows gained pin, hidden-machine and host/cache chips; the star sits on every row beside them, pinning or unpinning the row exactly as the hold and the actions sheet do, so a starred row is in upstream's Pinned group in upstream's order and no group is re-partitioned. The ATTENTION re-export this file used to carry is gone: upstream moved the set to web/src/lib/triage.ts, where the Fleet Agent rail now reads it. Upstream's cross-surface order test (web/src/components/stable-order.test.tsx, new by 1.12) reads the dashboard's order from every button in a group, so it reads only the buttons that carry the row's own slot, as this entry's other tests do; its expected orders are unchanged. Collie 1.17's order-toggle case reads the Pinned group's order from its buttons the same way, so it reads only the row-slot buttons too, with its expected order unchanged."
 
 [[invasive]]
 id = "pane-surface-route-port"
 intent = "Let a Pane be drawn as its mirror or as the terminal it mirrors, by pointing one route's element and loader at fork-owned drop-ins."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["web/src/router.tsx#FleetPaneRoute"]
 verify = [
   "fleet/ui/terminal/switch.test.ts",
@@ -363,37 +365,38 @@ verify = [
   "web/src/components/fleet-pane-surface-toggle.test.tsx",
   "web/src/components/fleet-terminal.test.tsx"
 ]
-reason = "The router names fork-owned surface and loader drop-ins while preserving its native route id. With the switch at its default the existing Pane loader runs; the terminal branch returns no mirror text, so polling does not read hidden output. Both surfaces now render the native DetailRoute frame through its separate body port, rather than replacing the whole frame and losing its header controls. Surface selection, terminal lifetime, geometry and clipboard behavior stay fork-owned, and the root connection banner continues to read the same no-mirror data shape."
+reason = "The router names fork-owned surface and loader drop-ins while preserving its native route id. With the switch at its default the existing Pane loader runs; the terminal branch returns no mirror text, so polling does not read hidden output. Both surfaces now render the native DetailRoute frame through its separate body port, rather than replacing the whole frame and losing its header controls. Surface selection, terminal lifetime, geometry and clipboard behavior stay fork-owned, and the root connection banner continues to read the same no-mirror data shape. Collie 1.18 withholds a Pane's structural rows unless its last read succeeded (lib/liveness.ts), and only the mirror's read marks that; the fork-owned terminal surface marks its Pane live while its stream is open and not live when it closes, through upstream's own `markLive`/`markDead`, so the route and the loader need no change for it."
 
 [[invasive]]
 id = "native-pane-content-port"
 intent = "Forward an optional Pane body while retaining the native route metadata, identity and AppBar owner."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["web/src/routes/detail.tsx#renderContent"]
 verify = ["web/src/components/fleet-pane-route.test.tsx", "web/src/routes/detail.test.tsx"]
 reason = "The native route already owns scoped Pane lookup, fresh-Pane fallback, closed-Pane recovery and navigation. Forwarding one optional typed content renderer into AgentChat preserves all of them and keeps the same frame mounted across surface changes. Reimplementing that frame in a terminal-only route duplicated its header and omitted identity/actions; this port is narrower than extracting or copying the header. AgentChat itself is attributed to native-pane-page-port, whose rationale covers the matching body slot and the Chat gate."
 
 [[invasive]]
 id = "authenticated-navigation-cache"
-intent = "Require a fresh Gateway decision before every document navigation."
+intent = "Require a fresh Gateway decision before every document navigation, and fall back to the precached shell only when the network fails."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/sw.ts#Authenticated app-shell boundary",
+  "web/src/lib/sw-routes.test.ts#authenticated-navigation-cache",
   "web/e2e/service-worker.spec.ts#network-first navigation by design"
 ]
-verify = ["fleet/sw-boundary.test.ts", "web/src/lib/sw-routes.test.ts", "web/e2e/service-worker.spec.ts"]
-reason = "The upstream service worker owns the app-shell navigation order and is the only place an authenticated document cache can be bypassed. Reviewed against Collie 1.17.2 and kept (its one worker change carries the push's machine into the notification data): upstream still answers every navigation outside its mount-scoped denylist (`navigationNetworkOnlyUnder(MOUNT)`: API, `/auth`, proxy namespaces, `/crew/v1`, `/standby`) from the precached shell, so an expired session could still recover a cached authenticated shell. The fork's network-first route is registered first and supersedes that whole route; only upstream's precached-shell `NavigationRoute` and its `createHandlerBoundToURL` and `navigationNetworkOnlyUnder` imports are dropped, while the `PRECACHE_MANIFEST` indirection, its progress plugin, the mount helpers, the in-app notification open and Collie 1.15's translated push titles (read from the Cache Storage table the page leaves, which network-first navigation never touches) stay upstream's. Collie is served at the root (Fleet resets and guards `COLLIE_BASE_PATH`), so the network-first route needs no mount. Collie 1.8's browser tier brought two cases this route contradicts by design, both resting on the old worker answering a navigation from its precache. The stuck-guard case asserts the guard's reload lands on the PRECACHED build A and that only a second tap escapes it; under network-first navigation that reload asks the server and lands on B, so the wedge the case pins cannot form. The manual-reload case reloads during a throttled install and expects the old worker's precached shell to boot at once; here the reload takes build B's shell from the server and then waits for B's entry chunk through the throttle the case holds until afterwards — the accepted cost of this route (a reload during a slow install waits for the new build rather than showing the old one), and never a 404. Those two cases alone are skipped at their first line with the reason `network-first navigation by design`; both still exist in 1.15.0's suite on the same premise (the old worker answering a reload from its precache), so both skips stay, and every other case in the file runs unchanged."
+verify = ["fleet/sw-boundary.test.ts", "web/src/lib/fleet-navigation.test.ts", "web/src/lib/sw-routes.test.ts", "web/e2e/service-worker.spec.ts"]
+reason = "The upstream service worker owns the app-shell navigation order and is the only place an authenticated document cache can be bypassed. Reviewed against Collie 1.17.2 and kept (its one worker change carries the push's machine into the notification data): upstream still answers every navigation outside its mount-scoped denylist (`navigationNetworkOnlyUnder(MOUNT)`: API, `/auth`, proxy namespaces, `/crew/v1`, `/standby`) from the precached shell, so an expired session could still recover a cached authenticated shell. The fork's network-first route is registered first and supersedes that whole route; only upstream's precached-shell `NavigationRoute` and its `createHandlerBoundToURL` and `navigationNetworkOnlyUnder` imports are dropped, while the `PRECACHE_MANIFEST` indirection, its progress plugin, the mount helpers, the in-app notification open and Collie 1.15's translated push titles (read from the Cache Storage table the page leaves, which network-first navigation never touches) stay upstream's. Collie is served at the root (Fleet resets and guards `COLLIE_BASE_PATH`), so the network-first route needs no mount. Collie 1.8's browser tier brought two cases this route contradicts by design, both resting on the old worker answering a navigation from its precache. The stuck-guard case asserts the guard's reload lands on the PRECACHED build A and that only a second tap escapes it; under network-first navigation that reload asks the server and lands on B, so the wedge the case pins cannot form. The manual-reload case reloads during a throttled install and expects the old worker's precached shell to boot at once; here the reload takes build B's shell from the server and then waits for B's entry chunk through the throttle the case holds until afterwards — the accepted cost of this route (a reload during a slow install waits for the new build rather than showing the old one), and never a 404. Those two cases alone are skipped at their first line with the reason `network-first navigation by design`; both still exist in 1.15.0's suite on the same premise (the old worker answering a reload from its precache), so both skips stay, and every other case in the file runs unchanged. Collie 1.18 brought an offline read-only mode that needs the app to open with no network, so the route now answers from the precached `index.html` when, and only when, the request itself fails and the path is outside upstream's network-only denylist (`navigationNetworkOnlyUnder`, upstream's again); any HTTP answer, a Gateway 401 or redirect included, is returned untouched and nothing is cached. The decision lives in the fork-owned web/src/lib/fleet-navigation.ts and sw.ts calls it. Collie 1.18's own source test of the worker (web/src/lib/sw-routes.test.ts, `registers exactly two routes`) names upstream's precached-shell route; it reads the fork's route instead, with the route count, the font cache case and every other assertion unchanged."
 
 [[invasive]]
 id = "native-manual-pane-fit-port"
 intent = "Give Fleet's manual Pane fit row one slot directly below Text size among the mirror's Display rows."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["web/src/components/display-prefs.tsx#afterTextSize"]
 verify = [
   "web/src/components/fleet-pane-fit.test.tsx",
@@ -409,7 +412,7 @@ id = "native-pane-page-port"
 intent = "Let the Pane page carry the fork's narrow ports: the content renderer and its Chat gate, the shell's switcher, the keyboard commands, the manual-fit hook, the declined column and the folded strip."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/components/agent-chat.tsx#useFleetPaneFit",
   "web/src/components/agent-chat.test.tsx#the Fleet shell's switcher port"
@@ -423,14 +426,14 @@ verify = [
   "web/e2e/codex-padding.spec.ts",
   "web/src/lib/i18n/i18n.test.ts"
 ]
-reason = "The Pane page is Collie's and every one of these is a port onto it, attributed here because this manifest allows one entry per path; each adds a hook call, a prop or a gate and no logic. MANUAL FIT (relocate-manual-pane-fit): one `useFleetPaneFit` call hands over what only this page knows — the Pane, its scope, the read-only and unreachable-host verdicts, whether the Pane is gone, the mirror's scrollport and the text size — and receives the Display row for native-manual-pane-fit-port's `afterTextSize` slot and the one fit function the `fit-pane-width` command calls. CONTENT RENDERER and CHAT GATE (pane-surface-route-port, native-pane-content-port): one optional typed `renderContent` replaces only the body, keeping the native AppBar, identity, actions and Find/Zen state; Collie's Chat body is offered only while no renderer is in place (`chatOffered = renderContent === undefined`), so the terminal surface offers no Chat switch, warms no live window and leaves the stored `paneView` alone; Find and Zen take the fork's terminal-aware `hasOutput`. SWITCHER (native-navigation-sidebars-port): the switcher sheet reads its content and title through one hook and stands its entry down at the shared rails' 80rem breakpoint. KEYBOARD (drive-the-fleet-from-the-keyboard): the Pane-scoped commands register through one hook, with a constant-key sender guarded by the same read-only and unreachable-host checks (Send Alt+Up's chord is verified by fixed-key-port.test.ts). DECLINED COLUMN (decline-the-centred-pane-column): upstream 28255ae and 3870c1c cap and centre this route with a ladder up to 1400px and a matching `wide` header claim; the fork spends that width on its navigation rails, so the wrapper keeps the phone bound alone and the header makes no width claim. The owner settled that on 2026-09-05; what would reopen it is the rails no longer claiming that width. The `wide` option is left where upstream put it, unclaimed. FOLDED STRIP (native-pane-chrome-port): the tab row's trailing fold control is left empty because the fold is automatic, and the strip band exposes optional ground/top-inset variables whose bare defaults are transparent/zero. The test file carries the cases for each, and Collie 1.17's Chat-by-default (ADR 0082) and Files view keep their own cases unchanged."
+reason = "The Pane page is Collie's and every one of these is a port onto it, attributed here because this manifest allows one entry per path; each adds a hook call, a prop or a gate and no logic. MANUAL FIT (relocate-manual-pane-fit): one `useFleetPaneFit` call hands over what only this page knows — the Pane, its scope, the read-only and unreachable-host verdicts, whether the Pane is gone, the mirror's scrollport and the text size — and receives the Display row for native-manual-pane-fit-port's `afterTextSize` slot and the one fit function the `fit-pane-width` command calls. CONTENT RENDERER and CHAT GATE (pane-surface-route-port, native-pane-content-port): one optional typed `renderContent` replaces only the body, keeping the native AppBar, identity, actions and Find/Zen state; Collie's Chat body is offered only while no renderer is in place (`chatOffered = renderContent === undefined`), so the terminal surface offers no Chat switch, warms no live window and leaves the stored `paneView` alone; Find and Zen take the fork's terminal-aware `hasOutput`. SWITCHER (native-navigation-sidebars-port): the switcher sheet reads its content and title through one hook and stands its entry down at the shared rails' 80rem breakpoint. KEYBOARD (drive-the-fleet-from-the-keyboard): the Pane-scoped commands register through one hook, with a constant-key sender guarded by the same read-only and unreachable-host checks (Send Alt+Up's chord is verified by fixed-key-port.test.ts). DECLINED COLUMN (decline-the-centred-pane-column): upstream 28255ae and 3870c1c cap and centre this route with a ladder up to 1400px and a matching `wide` header claim; the fork spends that width on its navigation rails, so the wrapper keeps the phone bound alone and the header makes no width claim. The owner settled that on 2026-09-05; what would reopen it is the rails no longer claiming that width. The `wide` option is left where upstream put it, unclaimed. FOLDED STRIP (native-pane-chrome-port): the tab row's trailing fold control is left empty because the fold is automatic, and the strip band exposes optional ground/top-inset variables whose bare defaults are transparent/zero. The test file carries the cases for each, and Collie 1.17's Chat-by-default (ADR 0082) and Files view keep their own cases unchanged. Collie 1.18's saved-copy Chat read (`savedCopy: stale`) joins the same warmed window and stays behind `chatOffered`; its manual fold control, reworked for the tab row's tap reach, stays absent from the trailing slot as before."
 
 [[invasive]]
 id = "crew-focus-audit-name-port"
 intent = "Record a forwarded focus in the lead's audit under the name the peer's own handler writes."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "bridge/crew/forward.ts#pane.focus",
   "bridge/crew/forward.test.ts#pane.focus"
@@ -443,7 +446,7 @@ id = "declined-centred-history-column"
 intent = "Keep the transcript on the same width as the Pane it belongs to, by declining upstream's centred column on both."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/routes/history.tsx#flex min-h-0 flex-1 flex-col",
   "web/e2e/codex-padding.spec.ts#decline-the-centred-pane-column"
@@ -459,7 +462,7 @@ id = "native-navigation-sidebars-port"
 intent = "Wrap Collie's native route outlet and header with permanently expanded local hierarchy and Agent rails while retaining the existing router, data loaders, Agent list, header contract, and Pane surfaces."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/routes/root.tsx#NativeNavigationShell",
   "web/src/components/app-header.tsx#leading?: ReactNode",
@@ -472,17 +475,9 @@ paths = [
   "web/src/routes/crew.tsx#flex min-h-0 w-full flex-1 flex-col",
   "web/src/routes/machines.tsx#flex min-h-0 w-full flex-1 flex-col",
   "web/src/routes/machine.tsx#flex min-h-0 w-full flex-1 flex-col",
-  "web/src/components/native-navigation-context.tsx#NativeNavigationProvider",
-  "web/src/components/native-navigation-shell.tsx#NativeNavigationShell",
-  "web/src/components/native-navigation-shell.test.tsx#NativeNavigationShell",
-  "web/src/components/native-navigation-tree.tsx#NativeNavigationTree",
-  "web/src/components/native-navigation-tree.test.tsx#NativeNavigationTree",
-  "web/src/components/native-agent-card.tsx#NativeAgentCard",
-  "web/src/components/native-agent-rail.tsx#NativeAgentRail",
-  "web/src/components/native-agent-rail.test.tsx#NativeAgentRail",
   "web/src/routes/root.test.tsx#fleet-hierarchy-overlay",
   "web/src/playground/sections/motion.test.tsx#within(within(card).getByRole(\"main\"))",
-  "web/e2e/smoke.spec.ts#page.getByRole(\"main\").getByText",
+  "web/e2e/smoke.spec.ts#page.getByRole(\"main\").getByRole(\"heading\"",
   "web/e2e/back-goes-up.spec.ts#native-navigation-sidebars-port",
   "web/e2e/pane-glide.spec.ts#native-navigation-sidebars-port",
   "web/e2e/pinned-panes.spec.ts#native-navigation-sidebars-port",
@@ -508,15 +503,15 @@ verify = [
   "web/src/components/agent-chat.test.tsx",
   "web/src/routes/home.test.tsx",
   "web/src/components/agent-list.test.tsx",
-  "web/src/lib/i18n/i18n.test.ts"
+  "web/src/lib/fleet-i18n/fleet-i18n.test.tsx"
 ]
-reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus the breakpoint at which the page hands upstream's actions belt no switcher handle (the grip above the composer that once carried a breakpoint class is gone since Collie 1.9), the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). The Settings route takes one further port from drive-the-fleet-from-the-keyboard: the fork's own settings are gathered into one group at the HEAD of the page, which is the page's only heading and a deliberate exception to the flat-stack rule stated at that line — the boundary between what this fork adds and what Collie ships is the one thing a reader of that page cannot otherwise see, and the CJK card moves into the group while every Collie card keeps its position and its reasoning. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-pane-page-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list. The rail's emphasis reads Collie's own ATTENTION set from web/src/lib/triage.ts rather than copying it, because which sections mean a person is wanted here is one rule and two versions of it would drift; it draws its section headers from triage's own section fields, since upstream removed the shared header helper with the dashboard's triage sections. The rails are the fleet's map, not a view of the dashboard: upstream's dashboard footer tabs (Crew, Dashboard and Files since Collie 1.17) sit in the app column beside them, and a machine hidden, or a tab or workspace filter chosen on the dashboard, changes nothing in either rail. A pin is the one device choice the Agents rail honours, because its star is upstream's pin (align-rail-with-collie-rows): the rail leads with a Pinned group in upstream's pinned order, and its row is drawn at upstream's agent-row density with upstream's dot, unseen mark, pane meta and round star. The Agents rail stands from 96rem and the hierarchy from 80rem, capped below 96rem so the route column keeps at least 66rem. Settings keeps the fork group at its head beside upstream's newer cards. Collie 1.8 added three tests that look at the whole layout and so meet the rails; each takes one scoping port and no assertion is weakened for the route column itself. The safe-area count in routes/root.test.tsx counts the app's own column: the two rails are columns beside it that yield the inset to the strip band exactly as the header does (asserted in the fork's shell test, after that count exposed the rails still reserving it under an open band), and the hierarchy drawer is a fixed layer over the whole viewport that clears the notch for itself as upstream's sheet primitive does. The playground walkthrough (motion.test.tsx) and the browser-tier smoke case (e2e/smoke.spec.ts) find a pane row or workspace label that the Agents or Herds rail also lists, so both look inside the route's own main region; the smoke case's first match was the rail's copy, hidden below the rail breakpoint. Collie 1.12–1.14's browser tier meets the shell in four more files, settled the same way. The dashboard footer's all-clear case looks inside main, since the Agents rail says the same line. Two cases drive the Pane switcher: it holds the Agents rail here, so the back-goes-up hop finds the rail's dialog and its codex row by logo (and passes only because the shell opens every pane through upstream's ADR 0067 `open`, a replace from a pane), while the pinned-panes switcher case is skipped, because that sheet holds the Agents rail, whose own Pinned group is drawn in the rail's markup rather than upstream's switcher sections and is covered by web/src/components/native-agent-rail.test.tsx. The pinned-panes Changes case counts only the buttons carrying the row's slot, because every agent row also carries its star (native-agent-favorites-port). Six cases whose up control is the Collie mark on the Pane header — back-goes-up D and its slide case, and four pane-glide back-arrow cases — are skipped, because this route declines the mark (the mark claim above). Collie 1.15 made Settings an index of sections: the fork group stands at the head of the index, above the section rows, and the shared section shell (web/src/components/settings-page.tsx) loses the same reading-column cap and header claim the index does, so every Settings page fills the route column. Upstream's index test asserts the index carries no control of its own; it counts only the controls outside the fork's group, which stands there by design. The pane switcher's Place, Activity and cache orders (Collie 1.15) order upstream's switcher sections, which the sheet here does not draw because it holds the Agents rail; like a hidden machine or a dashboard tab, that order is a dashboard choice the rails do not follow, and so is the dashboard's own Activity or Cache order (Collie 1.17). Collie 1.17 added the Machines list and one machine's page (`/machines`, `/machines/:id`) with the same reading-column cap and header claim the Crew page had, so both lose them as Crew did. The dashboard footer's all-clear case now opens upstream's needs-you switch rather than the retired Focus tab, and still looks inside main."
+reason = "The root outlet, the one header, the Pane page and the four routes that opted into a reading column are Collie-owned. Each keeps its own behavior and receives only a narrow port: one optional leading node on the header row, one mark primitive in its claim, one hook the Pane page reads for its existing switcher sheet plus the breakpoint at which the page hands upstream's actions belt no switcher handle (the grip above the composer that once carried a breakpoint class is gone since Collie 1.9), the shell/header nesting in the root route, and the removal of a content cap with its matching width claim, and the mount of the CJK fallback settings card (native-webfont-port). The Settings route takes one further port from drive-the-fleet-from-the-keyboard: the fork's own settings are gathered into one group at the HEAD of the page, which is the page's only heading and a deliberate exception to the flat-stack rule stated at that line — the boundary between what this fork adds and what Collie ships is the one thing a reader of that page cannot otherwise see, and the CJK card moves into the group while every Collie card keeps its position and its reasoning. This manifest attributes each upstream path to exactly one entry, so the Pane page's switcher port (web/src/components/agent-chat.tsx, web/src/components/agent-chat.test.tsx) rides the native-pane-page-port declaration and the dashboard route's own test (web/src/routes/home.test.tsx) rides native-agent-favorites-port; both reasons name this shell. All state, derivation, elision, bounds, preference and presentation behavior remains under fleet/ui and the fork-owned components, and Agent rendering stays in the existing shared list. The rail's emphasis reads Collie's own ATTENTION set from web/src/lib/triage.ts rather than copying it, because which sections mean a person is wanted here is one rule and two versions of it would drift; it draws its section headers from triage's own section fields, since upstream removed the shared header helper with the dashboard's triage sections. The rails are the fleet's map, not a view of the dashboard: upstream's dashboard footer tabs (Crew, Dashboard and Files since Collie 1.17) sit in the app column beside them, and a machine hidden, or a tab or workspace filter chosen on the dashboard, changes nothing in either rail. A pin is the one device choice the Agents rail honours, because its star is upstream's pin (align-rail-with-collie-rows): the rail leads with a Pinned group in upstream's pinned order, and its row is drawn at upstream's agent-row density with upstream's dot, unseen mark, pane meta and round star. The Agents rail stands from 96rem and the hierarchy from 80rem, capped below 96rem so the route column keeps at least 66rem. Settings keeps the fork group at its head beside upstream's newer cards. Collie 1.8 added three tests that look at the whole layout and so meet the rails; each takes one scoping port and no assertion is weakened for the route column itself. The safe-area count in routes/root.test.tsx counts the app's own column: the two rails are columns beside it, and since Collie 1.18 (the strip band became an overlay hung below a header that owns the inset unconditionally) each rail reserves the inset unconditionally too (asserted in the fork's shell test); the hierarchy drawer is a fixed layer over the whole viewport that clears the notch for itself as upstream's sheet primitive does. Collie 1.18's root layout nests the band and the outlet inside the header host; the shell wraps that host, so the header, its band and the route all stand in the route column, and the layout-order case reads the header as the first child of the shell's route column (`native-route-column`) rather than of the app's. The rails' own files, already owned by fleet-runtime, are not listed here. The playground walkthrough (motion.test.tsx) and the browser-tier smoke case (e2e/smoke.spec.ts) find a pane row or workspace label that the Agents or Herds rail also lists, so both look inside the route's own main region; the smoke case's first match was the rail's copy, hidden below the rail breakpoint, and since Collie 1.18 it asks for upstream's own workspace heading, still inside main. Collie 1.12–1.14's browser tier meets the shell in four more files, settled the same way. The dashboard footer's all-clear case looks inside main, since the Agents rail says the same line. Two cases drive the Pane switcher: it holds the Agents rail here, so the back-goes-up hop finds the rail's dialog and its codex row by logo (and passes only because the shell opens every pane through upstream's ADR 0067 `open`, a replace from a pane), while the pinned-panes switcher case is skipped, because that sheet holds the Agents rail, whose own Pinned group is drawn in the rail's markup rather than upstream's switcher sections and is covered by web/src/components/native-agent-rail.test.tsx. The pinned-panes Changes case counts only the buttons carrying the row's slot, because every agent row also carries its star (native-agent-favorites-port). Six cases whose up control is the Collie mark on the Pane header — back-goes-up D and its slide case, and four pane-glide back-arrow cases — are skipped, because this route declines the mark (the mark claim above). Collie 1.15 made Settings an index of sections: the fork group stands at the head of the index, above the section rows, and the shared section shell (web/src/components/settings-page.tsx) loses the same reading-column cap and header claim the index does, so every Settings page fills the route column. Upstream's index test asserts the index carries no control of its own; it counts only the controls outside the fork's group, which stands there by design. The pane switcher's Place, Activity and cache orders (Collie 1.15) order upstream's switcher sections, which the sheet here does not draw because it holds the Agents rail; like a hidden machine or a dashboard tab, that order is a dashboard choice the rails do not follow, and so is the dashboard's own Activity or Cache order (Collie 1.17). Collie 1.17 added the Machines list and one machine's page (`/machines`, `/machines/:id`) with the same reading-column cap and header claim the Crew page had, so both lose them as Crew did. The dashboard footer's all-clear case now opens upstream's needs-you switch rather than the retired Focus tab, and still looks inside main."
 [[invasive]]
 id = "native-pane-chrome-port"
-intent = "Let the Pane screen decline the shared mark on the fork's chrome ground, without moving product logic into Collie-owned files."
+intent = "Let the Pane screen decline the shared mark on the fork's chrome ground, and keep the lost-connection badge the mark would carry, without moving product logic into Collie-owned files."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/components/collie-home.tsx#paper?: string"
 ]
@@ -525,13 +520,13 @@ verify = [
   "web/src/components/agent-chat.test.tsx",
   "web/src/components/composer.test.tsx"
 ]
-reason = "Moving the header onto the chrome ground breaks the mark's knockout, which was written as the page colour inside the drawing. The mark takes the ground as a value with the page as its default, so a caller that says nothing gets Collie's own rendering and the existing coupling test keeps failing when the fill and the knockout disagree. The rest of this capability rides paths this manifest has already attributed once: the Pane page's empty strip-row trailing slot under native-pane-page-port, and the header's mark claim under native-navigation-sidebars-port. align-rail-with-collie-rows removed the fork's own state badge from the strip row and its state word from the folded bar, because Collie's dots and header mark already state it and the fork's copies made five; the folded bar's trailing port went with the word, and web/src/components/strips-summary.tsx is upstream's file again. Collie 1.14.2 retired the rest: it removed the composer's status band (so the fork's status-word switch and dock anchor had nothing to switch), replaced the control row with its actions belt whose pills already read as one rank, and names the machine on the pane header's path line, so those ports were dropped rather than carried."
+reason = "Moving the header onto the chrome ground breaks the mark's knockout, which was written as the page colour inside the drawing. The mark takes the ground as a value with the page as its default, so a caller that says nothing gets Collie's own rendering and the existing coupling test keeps failing when the fill and the knockout disagree. Collie 1.18 hangs a lost-connection badge on the mark so the state survives a dismissed strip; on a route that declines the mark the header draws the fork-owned web/src/components/fleet-lost-badge.tsx in its place (one import and one branch in app-header.tsx, which native-navigation-sidebars-port carries), with the mark's own icon and words. The rest of this capability rides paths this manifest has already attributed once: the Pane page's empty strip-row trailing slot under native-pane-page-port, and the header's mark claim under native-navigation-sidebars-port. align-rail-with-collie-rows removed the fork's own state badge from the strip row and its state word from the folded bar, because Collie's dots and header mark already state it and the fork's copies made five; the folded bar's trailing port went with the word, and web/src/components/strips-summary.tsx is upstream's file again. Collie 1.14.2 retired the rest: it removed the composer's status band (so the fork's status-word switch and dock anchor had nothing to switch), replaced the control row with its actions belt whose pills already read as one rank, and names the machine on the pane header's path line, so those ports were dropped rather than carried."
 [[invasive]]
 id = "native-webfont-port"
 intent = "Put one fetched fallback face under every font stack, after the operator's own and before the system's, and offer it and its Latin twin in the existing pickers."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/index.css#--font-cjk",
   "web/src/hooks/use-display-prefs.ts#maple",
@@ -539,24 +534,23 @@ paths = [
   "web/public/theme-init.js#font-maple",
   "web/src/components/typeface-control.tsx#maple",
   "web/src/components/typeface-control.test.tsx#Maple Mono NF CN",
-  "web/src/components/font-settings.tsx#maple",
-  "bridge/server.ts#FLEET_FONT_ORIGIN"
+  "web/src/components/font-settings.tsx#maple"
 ]
 verify = [
   "fleet/ui/webfonts.test.ts",
   "web/src/lib/fleet-webfonts.test.ts",
   "web/src/components/typeface-control.test.tsx",
   "web/src/fonts.test.ts",
-  "web/src/lib/i18n/i18n.test.ts"
+  "web/src/lib/fleet-i18n/fleet-i18n.test.tsx"
 ]
-reason = "The CSP origin in bridge/server.ts is this entry's own: the fetched fallback needs its provider origin in style-src and font-src, and script-src and connect-src are deliberately untouched, so that origin can serve no code and the app can open no channel to it. A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and the six typed dictionaries ride native-agent-favorites-port."
+reason = "The fetched fallback needs its provider origin in style-src and font-src of the document's policy. Since the Collie 1.18.0 adoption that is no edit of Collie's: the Gateway appends the catalog's one origin to those two directives of the HTML documents it proxies (fleet/proxy.ts `widenFontPolicy`), script-src, connect-src, frames and base-uri untouched, so the origin can serve no code and the app can open no channel to it, and bridge/server.ts is upstream's text again. Browsers reach Collie only through the Gateway. A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and its strings are Fleet's own (web/src/lib/fleet-i18n). The Typeface card's Maple note is read through `ft` where upstream's note table cannot name a Fleet key."
 
 [[invasive]]
 id = "private-fact-guard-port"
 intent = "Add a fifth commit-time guard to the hook that already runs four, without changing any of them."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "scripts/git-hooks/pre-commit#SKIP_PRIVACY_CHECK",
   "scripts/pre-commit.test.sh#SKIP_PRIVACY_CHECK=1"
@@ -569,7 +563,7 @@ id = "composer-voice-rank-port"
 intent = "Let the composer's suite and its operator documentation describe a record control that stands beside Send, so voice can be dictated in turns."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/components/composer.tsx#useFleetCommandAdapters",
   "web/src/components/composer.test.tsx#Fleet task delivery",
@@ -581,14 +575,14 @@ verify = [
   "web/src/components/composer.test.tsx",
   "fleet/ui/mic-commands.test.ts"
 ]
-reason = "The composer is attributed here since manual Pane fit left Collie (relocate-manual-pane-fit). Its ports: the record control lifted out of the trailing slot to stand, at the box's own size, after attach and before Send inside upstream's one-box composer (Collie 1.14.2), so a draft can be dictated in turns — this REVERSES upstream abdbf45, which collapsed the two into one slot, so a sync resolves that hunk toward the fork and lets this entry's suite decide; Send refuses on `!hasDraft || recorder.busy`. The composer also hands the keyboard commands the exact activate/deactivate pair behind its visible Type control (drive-the-fleet-from-the-keyboard), and exposes its existing draft/submit flow through `useFleetTaskComposer` for terminal-bound task delivery (fleet-terminal-bindings), whose case is the composer test's one fork case. No logic moves into the file. The suite and the operator document are the two other upstream paths this capability touches. The suite is the boundary that matters at a sync: upstream's own cases assert the shared slot — the microphone as the box's trailing control while the draft is empty (attachments included since Collie 1.14), and the swap on the first and last character typed — and those cases are the specification of the limit this fork removes, so they are rewritten rather than kept beside their replacements. Every case for behaviour that did not change is untouched: the absent provider, the unavailable provider wearing the bridge's reason, the caret splice, the mid-recording discard on a pane change, the hands-free send and its fallback. The document is corrected for the same reason and no other — it states in words that the microphone is the trailing control for as long as the box is empty, which is the sentence this change makes false. The composer's microphone commands are one more port on it: one `useFleetCommandAdapters` registration for the three microphone commands. It is three closures over `decideMicCommand`, which is where the whole decision lives — including which refusal a command hit — so the upstream file gains a call and no logic. It has to be registered there and nowhere else, because the recorder is that component's own state and lifting it would move the microphone's lifecycle away from the draft it writes into."
+reason = "The composer is attributed here since manual Pane fit left Collie (relocate-manual-pane-fit). Its ports: the record control lifted out of the trailing slot to stand, at the box's own size, after attach and before Send inside upstream's one-box composer (Collie 1.14.2), so a draft can be dictated in turns — this REVERSES upstream abdbf45, which collapsed the two into one slot, so a sync resolves that hunk toward the fork and lets this entry's suite decide; Send refuses on `!hasDraft || recorder.busy`. The composer also hands the keyboard commands the exact activate/deactivate pair behind its visible Type control (drive-the-fleet-from-the-keyboard), and exposes its existing draft/submit flow through `useFleetTaskComposer` for terminal-bound task delivery (fleet-terminal-bindings), whose case is the composer test's one fork case. No logic moves into the file. Collie 1.18's left-hand layout mirrors the box in CSS and keeps the DOM order, so the record control, standing between Attach and Send in that order, mirrors with it and stays beside Send (composer-stt.test.tsx carries the case); its offline rule (`offline`) refuses the record control and joins the fork's two refusals on Send; the microphone commands' refusal sentences are Fleet's own strings, read through `ft`. The suite and the operator document are the two other upstream paths this capability touches. The suite is the boundary that matters at a sync: upstream's own cases assert the shared slot — the microphone as the box's trailing control while the draft is empty (attachments included since Collie 1.14), and the swap on the first and last character typed — and those cases are the specification of the limit this fork removes, so they are rewritten rather than kept beside their replacements. Every case for behaviour that did not change is untouched: the absent provider, the unavailable provider wearing the bridge's reason, the caret splice, the mid-recording discard on a pane change, the hands-free send and its fallback. The document is corrected for the same reason and no other — it states in words that the microphone is the trailing control for as long as the box is empty, which is the sentence this change makes false. The composer's microphone commands are one more port on it: one `useFleetCommandAdapters` registration for the three microphone commands. It is three closures over `decideMicCommand`, which is where the whole decision lives — including which refusal a command hit — so the upstream file gains a call and no logic. It has to be registered there and nowhere else, because the recorder is that component's own state and lifting it would move the microphone's lifecycle away from the draft it writes into."
 
 [[invasive]]
 id = "fork-gate-in-ci"
 intent = "Run the fork boundary gate in the workflow that already decides whether a change passes."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [".github/workflows/ci.yml#bun run test:fork"]
 verify = [
   "scripts/check-fork.test.ts",
@@ -601,7 +595,7 @@ id = "no-automatic-release-publication"
 intent = "Stop a pushed tag from publishing a GitHub Release, without changing what the release recipe builds."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   ".github/workflows/release.yml#workflow_dispatch",
   "scripts/check-tag.sh#MARKED"
@@ -616,7 +610,7 @@ id = "upstream-removal-clock"
 intent = "Run Collie's version-scheduled removal checks against the Collie release this tree carries, not against this product's own version line."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["cli/program.test.ts#upstreamVersion()"]
 verify = [
   "cli/program.test.ts",
@@ -629,7 +623,7 @@ id = "downstream-docs"
 intent = "Keep the Fleet runtime's own manual page in docs/ without making it a `collie` binary page."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["cli/docs-embed.test.ts#herdr-fleet.md"]
 verify = ["cli/docs-embed.test.ts"]
 reason = "Collie 1.8 embeds its operator manual in the binary from a hand-written list in cli/docs-embed.ts and its test requires every docs/*.md on disk to be in that list; upstream's later pages join that list, and the one exclusion is unchanged. docs/herdr-fleet.md is the fork-owned Fleet page (fleet-runtime): it documents the Gateway, the Pane terminal surface and Fleet's configuration, none of which the `collie` binary serves, so embedding it would add a page to `collie docs` and to the table `collie skill` prints for agents, and it would need an edit to the upstream registry module that nothing else declares. Excluding that one stem from the test's disk listing costs the same single invasive path and changes no shipped behavior, so it is the narrower port; the page stays where upstream's docs live because that is where an operator of this product looks."
@@ -639,7 +633,7 @@ id = "codex-headless-status-row-port"
 intent = "TEMPORARY compatibility port: read a headless Codex's multi-item status row, and its right-aligned notice, as the status row it is, until upstream reads it itself."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/lib/harness/codex/markers.ts#withFleetCodexStatusSegments(splitPaintedGaps(folded))",
   "web/src/lib/harness/invariants.test.ts#DOWNSTREAM PORT (FORK.toml codex-headless-status-row-port)"
@@ -654,21 +648,11 @@ verify = [
 reason = "temporary until upstream reads headless multi-item status rows; retire at the sync adopting that release. Codex 0.156.1 with no colour answered and a user-configured multi-item status_line; upstream unaware as of v1.15.0 and still at v1.17.2, which leaves markers.ts untouched; its own notice rule says no headless notice was captured and whose paint-invariance suite pinned this repaint as a known gap. Three renderings broke isStyledStatusRow: from the fourth item the space before a separator is painted in the item's colour (`main␠` + `· `), the gap and the notice's `⚠ ` merge into one unpainted segment, and the notice's glue text and bold key carry no colour. So composerReady was false and, Codex declaring no modalOnScreen, an idle pane wore the unread-dialog card. The decision lives in the fork-owned web/src/lib/fleet-codex-status-row.ts: withFleetCodexStatusSegments repairs the two splits on the folded segments before upstream's loop runs — since Collie 1.15.0 on what upstream's own splitPaintedGaps (#317, a goal notice's padding painted in the field's colour) hands back, so the two repairs layer on upstream's and touch none of its cases, exactly as the owner's upstream pull request integrates them — and fleetReadsUnpaintedNotice lets isRightNotice accept an uncoloured notice segment only when the row's separators are themselves plain. The markers.ts port is one import, the normalising call (the anchor), one parameter on isRightNotice, its one refusal line asking the helper, and the paint passed at its call site; re-implementing the notice check in the helper would duplicate upstream's bounds, and pre-marking segments dim would misstate the paint and loosen the inner-gap rule, so both were rejected. invariants.test.ts loses the known-gap entry the suite itself says to delete once the reader learns the paint (left in, its it.fails turns red); the anchor comment marks the spot. Every upstream fixture replays unchanged, the #317 goal-notice capture and the Codex 0.159.2 captures included; Collie 1.15.0 reads the goal padding and still not the headless multi-item row, so the port stays. THIS PORT IS TEMPORARY: an upstream issue and pull request are opened from the owner's own fork of Collie, and at the first upstream sync that adopts a release carrying that fix, markers.ts and invariants.test.ts return to upstream's text and this entry, the helper, its suite, its fixtures and the codex-status-row-compat owned entry are removed."
 
 [[invasive]]
-id = "stt-deadline-runtime-port"
-intent = "Keep a whole-operation speech deadline armed between sequential waits on the supported runtime."
-strategy = "adapt"
-review = "every-upstream-sync"
-reviewed = "v1.17.2"
-paths = ["bridge/stt/provider.ts#sttTimeoutSignal(timeoutMs)"]
-verify = ["fleet/stt-deadline.test.ts", "bridge/stt/provider.test.ts", "bridge/stt/codex.test.ts"]
-reason = "Bun 1.3.14 disarms a direct timeout when a completed phase removes its last abort listener. The next wait then has no deadline; the unchanged upstream stalled-disposal test and a real-clock reproduction both hang. The fork-owned helper links the native signal once, keeping it subscribed across phases. This is one imported constructor replacement; budgets, caller composition, reason classification and all provider business logic stay upstream's. Reconsider the workaround when adopting an upstream or runtime fix."
-
-[[invasive]]
 id = "stable-table-corpus-test"
 intent = "Make the exhaustive table corpus assertion independent of directory enumeration order."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = ["web/src/lib/table-run.test.ts#readdirSync(DIR).filter((f) => f.endsWith(\".txt\")).toSorted()"]
 verify = ["web/src/lib/table-run.test.ts"]
 reason = "The expected corpus is already lexical but readdirSync promises no portable order. Sorting the input filenames preserves every capture and expectation. The assertion lives inside this upstream test, so a one-call ordering correction is narrower than intercepting filesystem reads or changing the test runner. Production rendering is unchanged."
@@ -678,7 +662,7 @@ id = "terminal-binding-pin-port"
 intent = "Delegate native pin identity and exact legacy conversion to Fleet's shared terminal binding layer."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/lib/pins.ts#bindingPlace",
   "web/src/lib/solo-baseline.test.ts#bindingId",
@@ -690,17 +674,17 @@ paths = [
   "CREW_PROTOCOL.md#Fleet optional terminal identity extension"
 ]
 verify = ["fleet/bindings/identity.test.ts", "fleet/bindings/projection.test.ts", "web/src/lib/fleet-terminal-bindings.test.ts", "bridge/solo-baseline.test.ts", "bridge/state-engine.test.ts"]
-reason = "The existing local pin store owns every native pin entrypoint. One identity helper and one migration entrypoint keep them consistent without a second store. The browser baseline's exhaustive field inventory must admit the optional identity fields without changing its upstream fixture. Optional bindingId and bindingSession flow from the Herdr adapter through the engine and the bridge pane types, as two optional fields each; they preserve canonical session identity when ordinary snapshot scoping drops the display-session tag. The bridge's exhaustive wire-key inventory admits them without changing its legacy fixture, and CREW_PROTOCOL.md documents them as additive-optional identity under section 7.1. The browser AgentView's two matching optional fields share web/src/lib/types.ts with FleetVersionView and ride unnarrowed-pack-rows-port's declaration of that file. These ports rode the manual-fit entry until that feature left Collie (relocate-manual-pane-fit)."
+reason = "The existing local pin store owns every native pin entrypoint. One identity helper and one migration entrypoint keep them consistent without a second store. The browser baseline's exhaustive field inventory must admit the optional identity fields without changing its upstream fixture. Optional bindingId and bindingSession flow from the Herdr adapter through the engine and the bridge pane types, as two optional fields each (the adapter's `bindingSession` argument stands beside Collie 1.18's per-workspace repo lookup, and both baselines admit 1.18's `gitHead` beside them); they preserve canonical session identity when ordinary snapshot scoping drops the display-session tag. The bridge's exhaustive wire-key inventory admits them without changing its legacy fixture, and CREW_PROTOCOL.md documents them as additive-optional identity under section 7.1. The browser AgentView's two matching optional fields share web/src/lib/types.ts with FleetVersionView and ride unnarrowed-pack-rows-port's declaration of that file. These ports rode the manual-fit entry until that feature left Collie (relocate-manual-pane-fit)."
 
 [[invasive]]
 id = "host-workspace-form-port"
 intent = "Reuse the existing new-space form for a Host row without automatic retargeting."
 strategy = "adapt"
 review = "every-upstream-sync"
-reviewed = "v1.17.2"
+reviewed = "v1.18.0"
 paths = [
   "web/src/components/new-space-sheet.tsx#fixedHost",
   "web/src/components/new-space-sheet.test.tsx#fixed Host"
 ]
 verify = ["web/src/components/new-space-sheet.test.tsx", "web/src/components/fleet-host-actions.test.tsx"]
-reason = "The native form owns optional name/directory inputs, folder reads and submit behavior. One optional fixedHost field bypasses Host-picker fallback, keeps the selected Host fixed and emits the supplied explicit scope; absent callers remain unchanged. Reusing that port avoids copying the form into a downstream component. Host menu routing, capability/write gates and creation remain in owned modules."
+reason = "The native form owns optional name/directory inputs, folder reads and submit behavior. One optional fixedHost field bypasses Host-picker fallback, keeps the selected Host fixed and emits the supplied explicit scope; absent callers remain unchanged. Collie 1.18's branch-off mode (ADR 0089) hides the same Host row for its own reason; the two conditions stand side by side. Reusing that port avoids copying the form into a downstream component. Host menu routing, capability/write gates and creation remain in owned modules."

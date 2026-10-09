@@ -13,8 +13,8 @@ import { paneCwdLine, paneName, panePlaceParts, soleTabName } from "@/lib/pane-n
 import { statusLabel, statusLabelPast } from "@/lib/types";
 import type { AgentView } from "@/lib/types";
 import { useLocale } from "@/hooks/use-locale";
-import { t } from "@/lib/i18n";
 import { useLongPress } from "@/hooks/use-long-press";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 interface AgentCardProps {
   agent: AgentView;
@@ -137,6 +137,7 @@ export function AgentCard({
   stale = false,
 }: AgentCardProps) {
   useLocale();
+  useFleetLocale();
   // Inert when `onHold` is undefined: every handler returns at once, the native context menu stays,
   // and no click is swallowed, so a row with no hold behaves exactly as it did.
   const hold = useLongPress(onHold);
@@ -424,7 +425,7 @@ export function AgentCard({
       <button
         type="button"
         aria-pressed={favorite}
-        aria-label={favorite ? t("home.favorite.remove", { name: primary }) : t("home.favorite.add", { name: primary })}
+        aria-label={favorite ? ft("home.favorite.remove", { name: primary }) : ft("home.favorite.add", { name: primary })}
         onClick={onFavoriteToggle}
         className={cn(
           "absolute right-1.5 top-1.5 flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:scale-95",

@@ -416,8 +416,10 @@ lint guard, the crew-wire guard, the `flake.lock` guard or the privacy guard.
   ADR 0018's replace-law to cover it.
 - **Every user-facing string goes through `t()`/`tn()` from `@/lib/i18n`**, and a component that
   calls them subscribes via `useLocale()` so it re-renders on a locale (or lazy-dictionary) change.
-  `messages/en.ts` is the source of truth; all six dictionary files change together, enforced by
-  `tsc`. Not translated: terminal/agent output, quick replies, menu/dialog labels the screen printed,
+  `messages/en.ts` is the source of truth; every dictionary file changes together, enforced by
+  `tsc`. **Herdr Fleet's own strings never enter those files:** they go through `ft()`/`ftn()` from
+  `@/lib/fleet-i18n`, which follows Collie's locale and falls back to English, and a component that
+  calls them subscribes with `useFleetLocale()`. Not translated: terminal/agent output, quick replies, menu/dialog labels the screen printed,
   key caps, crew role names, push notifications, service-worker strings, crew-link errors, and the
   slash-command descriptions in `web/src/lib/agent-commands.ts` (another tool's vocabulary — deferred)
   ([ADR 0030](./.adr/0030-the-ui-is-translated-by-a-typed-dictionary-not-a-library.md)).
@@ -541,11 +543,13 @@ configuration keeps the egress on loopback, and the wire identity is probed hone
 ([ADR 0029](./.adr/0029-speech-to-text-is-a-provider-seam-collie-owns.md)). Setup is a CLI act, never
 a web form, for the reason pairing is.
 
-**Two device gates guard writes, independently, and compose by AND.** `COLLIE_DEVICE_HEADER` trusts
-a name a proxy injects; **pairing** (`bridge/pairing.ts`, `collie pair` / `collie devices`) requires a
-bearer credential the device holds, and is on exactly when the registry is non-empty. Reads stay
-ungated by both. Neither applies to `/crew/v1/*`, which has its own two factors. The reasoning sits in
-`bridge/pairing.ts`'s header; don't collapse the two gates into one.
+**Two device gates, independently, compose by AND.** `COLLIE_DEVICE_HEADER` trusts a name a proxy
+injects and guards writes; **pairing** (`bridge/pairing.ts`, `collie pair` / `collie devices`)
+requires a bearer credential the device holds and, since Collie 1.18 (ADR 0086), is always on and
+guards reads too. Neither applies to `/crew/v1/*`, which has its own two factors. The reasoning sits
+in `bridge/pairing.ts`'s header; don't collapse the two gates into one. **Behind the Fleet Gateway the
+Gateway is the one paired device** (`fleet/collie-pairing.ts`): a lead enrols it before the Collie
+child starts, keeps the token in memory, and the Gateway refuses a browser's pair or revoke.
 
 **Collie manages exactly one front door: `tailscale serve`** — the CLI (`cli/serve.ts`) publishes it,
 records the mapping in `tailscale-managed-handler`, and only ever tears down a mapping matching that

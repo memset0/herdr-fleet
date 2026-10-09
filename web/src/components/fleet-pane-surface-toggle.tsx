@@ -1,14 +1,14 @@
 import { useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/button";
-import { useLocale } from "@/hooks/use-locale";
-import { t } from "@/lib/i18n";
+
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_PANE_SURFACE,
   paneSurfaceStore,
   type PaneSurface,
 } from "../../../fleet/ui/terminal/switch.ts";
+import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 /**
  * The pane-surface switch, where the operator is when they want it.
@@ -23,14 +23,14 @@ import {
  * reduced motion removes the slide. Both navigation surfaces share this exact control.
  */
 export function FleetPaneSurfaceToggle() {
-  useLocale();
+  useFleetLocale();
   const surface = useSyncExternalStore(
     paneSurfaceStore.subscribe,
     paneSurfaceStore.snapshot,
     () => DEFAULT_PANE_SURFACE,
   );
   return (
-    <div role="radiogroup" aria-label={t("fleet.settings.surface.title")} className="relative mx-3 grid grid-cols-2">
+    <div role="radiogroup" aria-label={ft("fleet.settings.surface.title")} className="relative mx-3 grid grid-cols-2">
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 inset-y-1 rounded-md border border-border bg-muted/60 p-0.5">
         <div
           className={cn(

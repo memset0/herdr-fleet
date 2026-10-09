@@ -22,6 +22,17 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Changed
 
 - **Adopted Collie 1.18.0.** Pairing on every read, twelve languages, a left-hand layout, secret masking, offline reading and the one dashboard control bar arrive from upstream; the fork's rails, mic-and-send split and terminal surface sit beside them.
+- **The Gateway is Collie's one paired device.** A lead enrols it in Collie's own registry before the child starts, with a fresh token held only in memory, sends it on every proxied request and refuses a browser's pair or revoke; no `collie pair` is needed.
+- **Fleet's strings live in their own dictionary.** `ft()` follows Collie's language and reads English where Fleet has no translation; Collie's twelve dictionaries are upstream's text again.
+- **The CJK font origin is added by the Gateway.** It widens `style-src` and `font-src` of the documents it proxies, so Collie's own policy is no longer edited.
+- **Bun 1.4.0 is the floor.** It keeps a speech deadline armed between phases, so the fork's timeout helper is gone and upstream's own deadline runs.
+- **An offline cold start opens the app.** Navigation stays network-first; only a failed request falls back to the precached shell, so Collie's saved copy can be read.
+- **The record control mirrors with the left-hand layout.** It stays directly beside Send on either hand.
+
+### Fixed
+
+- **The Pane header keeps the lost-connection badge.** It declines the Collie mark, so the badge Collie hangs on the mark is drawn in the row on its own.
+- **The Maple Mono typeface shows its own note.** It read the note for an operator's face.
 
 ## [3.12.0] - 2026-10-09
 
