@@ -24,7 +24,7 @@ import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 import { isFleetBuild } from "@/lib/fleet-build";
 
 /**
- * Everything this fork adds to Settings, in one group, at the head of the page.
+ * Everything this fork adds to Settings, in one group, below the native settings rows.
  *
  * COLLIE'S SETTINGS PAGE HAS NO HEADINGS, and that is written down at the line this group now sits
  * above: a flat stack of cards, on the argument that the first heading implies four more. This is

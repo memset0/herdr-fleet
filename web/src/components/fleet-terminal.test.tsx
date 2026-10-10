@@ -1,3 +1,4 @@
+import { fleetCjkFallback, fleetUiCjkFallback } from "../../../fleet/ui/webfonts.ts";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -149,6 +150,7 @@ function mount(over: { readOnly?: boolean } = {}) {
 }
 
 beforeEach(() => {
+  act(() => { fleetCjkFallback.set("none"); fleetCjkFallback.setOnly(false); fleetUiCjkFallback.set("none"); fleetUiCjkFallback.setOnly(false); });
   FakeTerminal.instances.length = 0;
   FakeSocket.instances.length = 0;
   writeText.mockReset();
@@ -185,7 +187,7 @@ describe("the face it draws and measures with", () => {
       "--font-mono",
       '"Nerd Font Symbols", "JetBrains Mono", var(--font-cjk), monospace',
     );
-    document.documentElement.style.setProperty("--font-cjk", '"Maple Mono NF CN"');
+    act(() => fleetCjkFallback.set("maple-mono-cn"));
     const { terminal } = mount();
     expect(terminal.options.fontFamily).toBe(
       '"Nerd Font Symbols", "JetBrains Mono", "Maple Mono NF CN", monospace',
@@ -427,4 +429,22 @@ describe("leaving and coming back", () => {
     expect(FakeTerminal.instances).toHaveLength(2);
     expect(FakeSocket.instances).toHaveLength(2);
   });
+});
+
+
+it("updates real terminal font measurement when its exclusive mode changes, independently of UI", async () => {
+  document.documentElement.style.setProperty("--font-mono", '"Nerd Font Symbols", "JetBrains Mono", var(--font-cjk), monospace');
+  const { terminal } = mount();
+  act(() => fleetCjkFallback.set("maple-mono-cn"));
+  await waitFor(() => expect(terminal.options.fontFamily).toContain("Maple Mono NF CN"));
+  expect(terminal.options.fontFamily).toContain("JetBrains Mono");
+  act(() => fleetCjkFallback.setOnly(true));
+  await waitFor(() => expect(terminal.options.fontFamily).not.toContain("JetBrains Mono"));
+  expect(terminal.options.fontFamily).toContain("Nerd Font Symbols");
+  const family = terminal.options.fontFamily;
+  act(() => { fleetUiCjkFallback.set("lxgw-wenkai"); fleetUiCjkFallback.setOnly(true); });
+  expect(terminal.options.fontFamily).toBe(family);
+  act(() => fleetCjkFallback.set("none"));
+  await waitFor(() => expect(terminal.options.fontFamily).toContain("JetBrains Mono"));
+  expect(terminal.options.fontFamily).not.toContain("Maple Mono NF CN");
 });

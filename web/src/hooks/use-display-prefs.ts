@@ -1,3 +1,4 @@
+import { fleetMirrorFontStack } from "@/lib/fleet-webfonts";
 import { fleetChatFontMinimum } from "@/lib/fleet-chat-density";
 import { useCallback, useState } from "react";
 import type { CSSProperties } from "react";
@@ -130,9 +131,6 @@ export const FONT_FAMILIES = [
   "roboto",
   "dejavu",
   "courier",
-  // DOWNSTREAM PORT — the provider face Fleet already fetches for its CJK fallback. Maple Mono NF CN
-  // contains Maple Mono's Latin, so this entry and that fallback are one family and one download.
-  "maple",
 ] as const;
 
 export type FontFamily = (typeof FONT_FAMILIES)[number];
@@ -182,9 +180,6 @@ export const FONT_STACKS = {
   // The universal fallback face, and the only genuinely different silhouette on offer: thin,
   // wide-spaced, serifed. Present on Windows, macOS and iOS; Linux resolves it via fontconfig.
   courier: `${NERD}, "Courier New", Courier, ${TAIL}`,
-  // Fetched from a provider rather than found on the device, so it is the one entry that can be
-  // absent — and when it is, the tail answers exactly as it does for every other family.
-  maple: `${NERD}, "Maple Mono NF CN", ${TAIL}`,
 } satisfies Record<FontFamily, string | undefined>;
 
 /** A family's `font-family` value, or undefined for "system" — where the app default already
@@ -227,7 +222,7 @@ const MIRROR_FONT_CLASS = "[&_.font-mono]:[font-family:inherit]";
  *  yields an empty class and no style at all, so an install that never opened the setting renders
  *  from the stylesheet alone, byte for byte as before. */
 export function mirrorFont(family: FontFamily): MirrorFont {
-  const stack = fontStack(family);
+  const stack = fleetMirrorFontStack(fontStack(family));
   if (stack === undefined) return MIRROR_FONT_NONE;
   return { className: MIRROR_FONT_CLASS, style: { fontFamily: stack } };
 }

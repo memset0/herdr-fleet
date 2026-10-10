@@ -16,6 +16,9 @@ function cjk() {
 
 afterEach(() => {
   link()?.remove();
+  applyFleetUiWebfont(null);
+  document.documentElement.classList.remove("fleet-terminal-cjk-only");
+  document.documentElement.style.removeProperty("--fleet-terminal-font");
   document.documentElement.style.removeProperty("--font-cjk");
 });
 
@@ -80,13 +83,13 @@ describe("the default UI stack a running page resolves", () => {
   const families = (stack: string) => stack.split(",").map((part) => part.trim()).filter(Boolean);
 
   it("carries the fallback position between the chosen face and the system tail", () => {
-    expect(families(unlayered).slice(0, 3)).toEqual(['"Aldrich"', '"Aldrich Fallback"', "var(--font-cjk)"]);
+    expect(families(unlayered).slice(0, 3)).toEqual(['"Aldrich"', '"Aldrich Fallback"', "var(--font-ui-cjk)"]);
   });
 
   it("is Collie's own default stack with that one position added", () => {
     const mirror = /:root \{\s*--font-sans:\s*([\s\S]*?);/.exec(html)?.[1] ?? "";
     expect(mirror).not.toBe("");
-    expect(families(unlayered).filter((family) => family !== "var(--font-cjk)")).toEqual(families(mirror));
+    expect(families(unlayered).filter((family) => family !== "var(--font-ui-cjk)")).toEqual(families(mirror));
   });
 
   it("loads after the splash mirror it has to win against", () => {
@@ -105,14 +108,14 @@ it("loads UI and mono faces independently and deduplicates shared roles", () => 
   expect(wenkai).not.toBeNull();
   const fallback = neededWebfont({ cjkFallback: "maple-mono-cn", designFont: "source-han-sans", terminalFont: "system" });
   applyFleetWebfont(fallback);
-  applyFleetUiWebfont(neededUiWebfont("source-han-sans", fallback));
+  applyFleetUiWebfont(neededUiWebfont("source-han-sans"));
   expect(document.getElementById("fleet-ui-webfont-stylesheet")?.getAttribute("href")).toBe(han?.href);
   expect(cjk()).toBe(`"${MAPLE.family}"`);
-  applyFleetUiWebfont(neededUiWebfont("lxgw-wenkai", fallback));
+  applyFleetUiWebfont(neededUiWebfont("lxgw-wenkai"));
   expect(document.getElementById("fleet-ui-webfont-stylesheet")?.getAttribute("href")).toBe(wenkai?.href);
   expect(link()?.getAttribute("href")).toBe(MAPLE.href);
-  expect(neededUiWebfont("maple", fallback)).toBeNull();
-  applyFleetUiWebfont(neededUiWebfont("maple", fallback));
+  expect(neededUiWebfont("maple-mono-cn")).toEqual(MAPLE);
+  applyFleetUiWebfont(neededUiWebfont("maple-mono-cn"), fallback);
   expect(document.getElementById("fleet-ui-webfont-stylesheet")).toBeNull();
   expect(link()).not.toBeNull();
 });

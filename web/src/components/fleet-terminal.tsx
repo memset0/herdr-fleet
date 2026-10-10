@@ -1,7 +1,8 @@
+import { fleetCjkFallback, fleetWebfont, exclusiveCjkStack, CJK_FALLBACK_UNSET_FAMILY } from "../../../fleet/ui/webfonts.ts";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 
 import type { PaneContentProps } from "@/components/agent-chat";
 import { Collapse } from "@/components/ui/collapse";
@@ -97,8 +98,10 @@ function readRootProperty(property: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(property);
 }
 
-function faceFor(family: FontFamily, size: number): TerminalFace {
-  return { family: terminalFontFamily(fontStack(family), readRootProperty), size };
+function faceFor(family: FontFamily, size: number, cjk: string, only: boolean): TerminalFace {
+  const font = fleetWebfont(cjk);
+  const primary = only && font ? exclusiveCjkStack(font, "terminal") : fontStack(family);
+  return { family: terminalFontFamily(primary, property => property === "--font-cjk" ? `"${font?.family ?? CJK_FALLBACK_UNSET_FAMILY}"` : readRootProperty(property)), size };
 }
 
 export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChange }: PaneContentProps) {
@@ -110,7 +113,9 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
   const [mouseReporting, setMouseReporting] = useState(false);
   const { prefs } = useDisplayPrefs();
   const key = paneScopeKey(scope, paneId);
-  const face = faceFor(prefs.fontFamily, prefs.fontSize);
+  const cjk = useSyncExternalStore(fleetCjkFallback.subscribe, fleetCjkFallback.snapshot, fleetCjkFallback.snapshot);
+  const only = useSyncExternalStore(fleetCjkFallback.subscribe, fleetCjkFallback.only, fleetCjkFallback.only);
+  const face = faceFor(prefs.fontFamily, prefs.fontSize, cjk, only);
   const { open: findOpen, query: findQuery, current: currentMatch, onMatchCount } = find;
   const [searchSource, setSearchSource] = useState<{ terminal: Terminal } | null>(null);
   const finding = useRef(findOpen);

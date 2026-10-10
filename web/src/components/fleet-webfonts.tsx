@@ -5,111 +5,76 @@ import {
   CJK_FALLBACK_NONE,
   FLEET_WEBFONTS,
   fleetCjkFallback,
+  fleetUiCjkFallback,
+  type CjkRole,
   isCjkFallback,
 } from "../../../fleet/ui/webfonts.ts";
+import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/ui/card";
 import { applyFleetWebfont, applyFleetUiWebfont, neededWebfont, neededUiWebfont } from "@/lib/fleet-webfonts";
 import { useDesignPrefs } from "@/lib/design";
 import { useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
-/**
- * Keeps the document's webfont state matching the three choices that can name one. Renders nothing.
- *
- * Mounted by the navigation shell, which is on screen for the life of the app, so the face is
- * resolved once per change and not once per route.
- *
- * ONE LIMITATION, STATED. `useDisplayPrefs` is a per-component `useState` over localStorage rather
- * than a shared store, so the terminal family read here is the one this component mounted with. A
- * device that turns the CJK fallback OFF and then picks Maple Mono as its terminal face in the same
- * session gets it on the next load. With the fallback at its default the stylesheet is already
- * loaded, so the case needs both halves to be unusual before it is reachable at all.
- */
+/** Apply the two independent browser-local font roles for the app lifetime. */
 export function FleetWebfonts() {
   const cjkFallback = useSyncExternalStore(
     fleetCjkFallback.subscribe,
     fleetCjkFallback.snapshot,
     fleetCjkFallback.snapshot,
   );
+  const uiFallback = useSyncExternalStore(fleetUiCjkFallback.subscribe, fleetUiCjkFallback.snapshot, fleetUiCjkFallback.snapshot);
+  const uiOnly = useSyncExternalStore(fleetUiCjkFallback.subscribe, fleetUiCjkFallback.only, fleetUiCjkFallback.only);
+  const terminalOnly = useSyncExternalStore(fleetCjkFallback.subscribe, fleetCjkFallback.only, fleetCjkFallback.only);
   const design = useDesignPrefs();
   const { prefs } = useDisplayPrefs();
 
   useEffect(() => {
-    const fallback = neededWebfont({ cjkFallback, designFont: design.font, terminalFont: prefs.fontFamily });
-    applyFleetWebfont(fallback);
-    applyFleetUiWebfont(neededUiWebfont(design.font, fallback));
-  }, [cjkFallback, design.font, prefs.fontFamily]);
+    const fallback = neededWebfont({ cjkFallback, uiFallback, designFont: design.font, terminalFont: prefs.fontFamily });
+    applyFleetWebfont(fallback, FLEET_WEBFONTS.find(font => font.id === cjkFallback) ?? null, terminalOnly);
+    applyFleetUiWebfont(neededUiWebfont(uiFallback), fallback, uiOnly);
+  }, [cjkFallback, uiFallback, uiOnly, terminalOnly, design.font, prefs.fontFamily]);
 
   return null;
 }
 
-/**
- * Settings card: the face that answers for the codepoints the chosen one does not draw.
- *
- * It sits beside the app's typeface and the terminal's font because it is the third answer to the
- * same question, and it is ONE setting rather than two on purpose: the fallback is the same face in
- * both places, and offering a separate one for chrome and for the mirror would be two ways to make
- * a Chinese line and a Latin line disagree about their own width.
- *
- * FAMILY NAMES ARE PROPER NOUNS and are not translated. The note under the select is a sentence
- * about a face rather than the name of one, so it goes through the dictionary.
- */
+/** Role selectors and exclusive switches stay together below native settings. */
 export function FleetCjkFallbackControl() {
   useFleetLocale();
-  const chosen = useSyncExternalStore(
-    fleetCjkFallback.subscribe,
-    fleetCjkFallback.snapshot,
-    fleetCjkFallback.snapshot,
-  );
+  return <Card className="gap-0 py-0">
+    <div className="flex items-start gap-3 p-4">
+      <Languages className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+      <div className="min-w-0"><div className="font-medium">{ft("settings.cjk.title")}</div><p className="text-sm text-muted-foreground">{ft("settings.cjk.description")}</p></div>
+    </div>
+    <div className="divide-y divide-border border-t border-border">
+      <CjkRoleControl fontRole="ui" />
+      <CjkRoleControl fontRole="terminal" />
+    </div>
+    <p className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">{ft("settings.cjk.note.provider")}</p>
+  </Card>;
+}
 
-  return (
-    <Card className="gap-0 py-0">
-      <div className="flex items-center justify-between gap-4 p-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <Languages className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <div className="font-medium">{ft("settings.cjk.title")}</div>
-            <p className="text-sm text-muted-foreground">{ft("settings.cjk.description")}</p>
-          </div>
-        </div>
+function CjkRoleControl({ fontRole: role }: { fontRole: CjkRole }) {
+  const store = role === "ui" ? fleetUiCjkFallback : fleetCjkFallback;
+  const chosen = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
+  const only = useSyncExternalStore(store.subscribe, store.only, store.only);
+  const label = ft(role === "ui" ? "settings.cjk.ui" : "settings.cjk.terminal");
+  const id = `pref-cjk-${role}`;
+  return <div className="space-y-2 px-4 py-3">
+    <div className="flex items-center justify-between gap-3">
+      <label htmlFor={id} className="min-w-0 text-sm font-medium">{label}</label>
+      <div className="relative min-w-0 shrink-0">
+        <select id={id} value={chosen} onChange={event => { if (isCjkFallback(event.target.value, role)) store.set(event.target.value); }}
+          className="min-h-11 max-w-[min(55vw,18rem)] appearance-none rounded-md border border-border/60 bg-background py-2 pl-3 pr-9 text-sm font-medium text-foreground">
+          <option value={CJK_FALLBACK_NONE}>{ft("settings.cjk.none")}</option>
+          {FLEET_WEBFONTS.filter(font => role === "ui" || font.monospace).map(font => <option key={font.id} value={font.id}>{font.label}</option>)}
+        </select>
+        <ChevronDown aria-hidden className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
       </div>
-
-      <div className="divide-y divide-border border-t border-border">
-        <div className="flex items-center justify-between gap-4 px-4 py-3">
-          <label htmlFor="pref-cjk-fallback" className="text-sm font-medium">
-            {ft("settings.cjk.family")}
-          </label>
-          <div className="relative shrink-0">
-            <select
-              id="pref-cjk-fallback"
-              value={chosen}
-              // A DOM value is a plain string whatever the options say, so it is checked against the
-              // closed catalog here rather than asserted — the value becomes a family name and a
-              // stylesheet URL, and neither may come from unvalidated text.
-              onChange={(event) => {
-                const next = event.target.value;
-                if (isCjkFallback(next)) fleetCjkFallback.set(next);
-              }}
-              className="min-h-11 appearance-none rounded-md border border-border/60 bg-background py-2 pl-3 pr-9 text-sm font-medium text-foreground"
-            >
-              <option value={CJK_FALLBACK_NONE}>{ft("settings.cjk.none")}</option>
-              {FLEET_WEBFONTS.filter(font => font.monospace).map((font) => (
-                <option key={font.id} value={font.id}>
-                  {font.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown
-              aria-hidden="true"
-              className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            />
-          </div>
-        </div>
-
-        <p className="px-4 py-2.5 text-xs text-muted-foreground">
-          {ft(chosen === CJK_FALLBACK_NONE ? "settings.cjk.note.none" : "settings.cjk.note.provider")}
-        </p>
-      </div>
-    </Card>
-  );
+    </div>
+    <div className="flex items-center justify-between gap-3">
+      <label htmlFor={`${id}-only`} className="text-xs text-muted-foreground">{ft("settings.cjk.only")}</label>
+      <Switch id={`${id}-only`} aria-label={`${label}: ${ft("settings.cjk.only")}`} checked={only} disabled={chosen === CJK_FALLBACK_NONE} onCheckedChange={value => store.setOnly(value)} />
+    </div>
+  </div>;
 }

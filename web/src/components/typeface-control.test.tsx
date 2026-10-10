@@ -43,10 +43,6 @@ describe("TypefaceControl", () => {
       "System default",
       "Space Grotesk",
       "Aldrich",
-      // DOWNSTREAM — the provider face Fleet also uses as its CJK fallback.
-      "Maple Mono NF CN",
-      "思源黑体 · Source Han Sans",
-      "霞鹜文楷 · LXGW WenKai",
     ]);
     expect(select).toHaveValue("aldrich");
     // The default wears no class — that is what keeps JavaScript off the first-paint path for a
@@ -88,9 +84,6 @@ describe("TypefaceControl", () => {
       "System default",
       "Space Grotesk",
       "Aldrich",
-      "Maple Mono NF CN",
-      "思源黑体 · Source Han Sans",
-      "霞鹜文楷 · LXGW WenKai",
       "Departure Mono",
     ]);
 
@@ -111,8 +104,7 @@ describe("TypefaceControl", () => {
     render(<TypefaceControl />);
 
     const select = await screen.findByLabelText("Family");
-    // The four shipped keys and nothing the operator sent that this client refused.
-    expect(within(select).getAllByRole("option")).toHaveLength(6);
+    expect(within(select).getAllByRole("option")).toHaveLength(3);
   });
 
   // The offline / deleted-row case. The select must not silently show its first option ("System
@@ -140,19 +132,4 @@ describe("TypefaceControl", () => {
     await user.selectOptions(await screen.findByLabelText("Family"), "aldrich");
     expect(container.textContent).toContain("One weight");
   });
-});
-
-
-it("persists proportional UI choices and reconciles stale font classes", async () => {
-  config({});
-  render(<TypefaceControl />);
-  const select = await screen.findByLabelText("Family");
-  const user = userEvent.setup();
-  for (const font of ["source-han-sans", "lxgw-wenkai", "maple", "system"]) {
-    await user.selectOptions(select, font);
-    expect(document.documentElement).toHaveClass(`font-${font}`);
-    expect(document.documentElement.classList.length).toBe(1);
-    __resetDesign();
-    expect(designPrefs().font).toBe(font);
-  }
 });

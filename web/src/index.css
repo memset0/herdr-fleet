@@ -577,14 +577,14 @@
      below hold the others. See the @font-face block for what "chrome only" means and why the
      stand-in family in the middle of the stack is not optional. */
   --font-sans:
-    "Aldrich", "Aldrich Fallback", var(--font-cjk), ui-sans-serif, system-ui,
+    "Aldrich", "Aldrich Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 
   /* The CONTENT stack: exactly what the app rendered in before the UI typeface arrived. Anything an
      agent or a machine authored wears this, so the custom face never dresses someone else's words
      (see the boundary note below). It is a plain system stack on purpose — it ships no bytes. */
   --font-content:
-    var(--font-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    ui-sans-serif, var(--font-ui-cjk), system-ui, -apple-system, "Segoe UI",
     Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 }
 
@@ -821,13 +821,14 @@
  * a face for those codepoints AFTER the operator's own and BEFORE the system's, which is the only
  * position that adds coverage without changing anyone's choice.
  *
- * IT IS A NAME AND NEVER AN EMPTY VALUE. `var(--font-cjk)` resolving to nothing would put two commas
+ * IT IS A NAME AND NEVER AN EMPTY VALUE. `var(--font-ui-cjk)` resolving to nothing would put two commas
  * side by side and invalidate the whole declaration, so "off" is spelled as a family name that
  * matches nothing and the browser simply steps over it — which is byte-for-byte the behaviour every
  * one of these stacks had before this line existed. `lib/fleet-webfonts.ts` writes the real name
  * onto the root when a face is chosen. */
 :root {
   --font-cjk: "Herdr Fleet CJK Unset";
+  --font-ui-cjk: "Herdr Fleet CJK Unset";
   /* THE DEFAULT FACE'S STACK, AGAIN, OUT HERE. Collie's index.html re-declares the default
      --font-sans in an inline, UNLAYERED :root block (the boot splash's mirror), and an unlayered
      declaration beats the @theme one above whatever its specificity, so the hole in the @theme stack
@@ -836,7 +837,7 @@
      order. Every :root.font-* block below is (0,2,0) and still wins over it for its own choice.
      Keep the faces in step with the @theme --font-sans above. */
   --font-sans:
-    "Aldrich", "Aldrich Fallback", var(--font-cjk), ui-sans-serif, system-ui,
+    "Aldrich", "Aldrich Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
@@ -845,34 +846,15 @@
      --font-content uses, spelled out rather than aliased — the two are equal today by coincidence
      of both wanting "the system face", not because one is defined as the other. */
   --font-sans:
-    var(--font-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    ui-sans-serif, var(--font-ui-cjk), system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   --default-font-family: var(--font-sans);
 }
 :root.font-grotesk {
   --font-sans:
-    "Space Grotesk", "Space Grotesk Fallback", var(--font-cjk), ui-sans-serif,
+    "Space Grotesk", "Space Grotesk Fallback", var(--font-ui-cjk), ui-sans-serif,
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
-  --default-font-family: var(--font-sans);
-}
-/* DOWNSTREAM PORT — the provider face, as the app's own. It is a monospace family used as an
-   interface face on purpose: it is the same download the CJK fallback already pulls, so choosing it
-   here costs nothing a reader has not already paid, and its CJK is drawn at exactly twice the Latin
-   advance. Unreachable provider, unfetched face: the stack falls through to the shipped default,
-   never to a bare sans-serif — the same shape `:root.font-operator` below argues for. */
-:root.font-maple {
-  --font-sans:
-    "Maple Mono NF CN", "Aldrich", "Aldrich Fallback", ui-sans-serif, system-ui,
-    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --default-font-family: var(--font-sans);
-}
-:root.font-source-han-sans {
-  --font-sans: "Noto Sans CJK", var(--font-cjk), ui-sans-serif, system-ui, sans-serif;
-  --default-font-family: var(--font-sans);
-}
-:root.font-lxgw-wenkai {
-  --font-sans: "LXGW WenKai", var(--font-cjk), ui-sans-serif, system-ui, sans-serif;
   --default-font-family: var(--font-sans);
 }
 /* An operator's own face (theme.toml, ADR 0033). The FAMILY NAME is the one thing this file cannot
@@ -892,7 +874,7 @@
 :root.font-operator {
   --font-sans:
     var(--font-operator-family, "Aldrich"), "Aldrich", "Aldrich Fallback",
-    var(--font-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    ui-sans-serif, var(--font-ui-cjk), system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
@@ -1253,4 +1235,8 @@
   --belt-icon: round(calc(1rem * var(--belt-scale)), 1px);
   --belt-text: calc(0.75rem * var(--belt-scale));
   --belt-rule: round(calc(1.25rem * var(--belt-scale)), 1px);
+}
+
+:root.fleet-terminal-cjk-only .font-mono {
+  font-family: var(--fleet-terminal-font);
 }

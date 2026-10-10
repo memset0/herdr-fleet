@@ -438,7 +438,8 @@ lint guard, the crew-wire guard, the `flake.lock` guard or the privacy guard.
   the rule: **the chosen face never dresses verbatim monospace content**. The owner-requested Fleet
   exception to [ADR 0033](./.adr/0033-the-app-face-is-a-device-preference.md) makes Chat prose use
   the UI stack through the owned shell; code, terminal, composer and other content surfaces retain
-  their independent typography. Proportional CJK UI faces never become terminal fallback choices.
+  their independent typography. Fleet CJK fonts live in a separate role-aware fallback card below native settings, with independent
+  CJK-only switches; native font pickers stay upstream. Proportional faces never become terminal fallbacks.
 - **The bundled Nerd Font subsets stay lazy and out of the precache** — `unicode-range` per face,
   version in the filename, cached first-use by `sw.ts`. Don't add them to `globPatterns`, don't
   widen a range, don't move subsetting into the build; the reasoning for each sits at the line that

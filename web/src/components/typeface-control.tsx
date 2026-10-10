@@ -6,14 +6,13 @@ import { findOperatorFont, operatorFontValue, type OperatorFontFace } from "@/li
 import { useOperatorFonts } from "@/lib/operator-config";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
-import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
 // The Typeface card — the APP's own face, per device.
 //
 // This setting exists because the one that used to be here didn't. The face was the maker's choice
 // and the code said so in two places ("round-4 F-D1"); the maker asked for the setting, and ADR 0033
 // records what fell and what replaced it. What SURVIVED is the other half of that rule and it is
-// unchanged outside Fleet Chat: the chosen face dresses chrome. Fleet Chat prose follows it through an owned-shell override. Nothing here touches
+// still absolute: the chosen face dresses chrome and never an agent's words. Nothing here touches
 // --font-mono or --font-content, and nothing here may learn to.
 //
 // IT SITS DIRECTLY ABOVE THE TERMINAL FONT CARD, and there is deliberately NO section heading over
@@ -33,9 +32,6 @@ import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 const FAMILY_LABELS = {
   grotesk: "Space Grotesk",
   aldrich: "Aldrich",
-  maple: "Maple Mono NF CN",
-  "source-han-sans": "思源黑体 · Source Han Sans",
-  "lxgw-wenkai": "霞鹜文楷 · LXGW WenKai",
 } satisfies Record<Exclude<(typeof SHIPPED_FONTS)[number], "system">, string>;
 
 const NOTE_KEYS = {
@@ -47,7 +43,6 @@ const NOTE_KEYS = {
 /** Settings card: the app's own typeface. Device-local, like theme and language. */
 export function TypefaceControl() {
   useLocale();
-  useFleetLocale();
   const prefs = useDesignPrefs();
   const operatorFonts = useOperatorFonts();
 
@@ -66,7 +61,7 @@ export function TypefaceControl() {
           <CaseSensitive className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
             <div className="font-medium">{t("settings.typeface.title")}</div>
-            <p className="text-sm text-muted-foreground">{ft("fleet.settings.typeface.description")}</p>
+            <p className="text-sm text-muted-foreground">{t("settings.typeface.description")}</p>
           </div>
         </div>
       </div>
@@ -94,7 +89,7 @@ export function TypefaceControl() {
                 if (face === null) setDesignFont(next);
                 else setDesignFont(next, face);
               }}
-              className="min-h-11 max-w-[min(55vw,18rem)] appearance-none rounded-md border border-border/60 bg-background py-2 pl-3 pr-9 text-sm font-medium text-foreground"
+              className="min-h-11 appearance-none rounded-md border border-border/60 bg-background py-2 pl-3 pr-9 text-sm font-medium text-foreground"
             >
               {SHIPPED_FONTS.map((font) => (
                 <option key={font} value={font}>
@@ -122,7 +117,7 @@ export function TypefaceControl() {
             to a banner. Aldrich's is the one that has to be here: it discloses that the face has a
             single weight, so bold text under it is not heavier, which is a cost the reader should
             meet before they choose it and not afterwards. */}
-        <p className="px-4 py-2.5 text-xs text-muted-foreground">{chosen === "source-han-sans" || chosen === "lxgw-wenkai" ? ft("settings.typeface.note.proportional") : chosen === "maple" ? ft("settings.typeface.note.maple") : t(noteKey(chosen))}</p>
+        <p className="px-4 py-2.5 text-xs text-muted-foreground">{t(noteKey(chosen))}</p>
       </div>
     </Card>
   );

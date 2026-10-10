@@ -43,7 +43,7 @@ describe("fleet webfont catalog", () => {
       expect(new URL(font.href).protocol).toBe("https:");
       expect(font.label.length).toBeGreaterThan(0);
     }
-    expect(fleetWebfont(DEFAULT_CJK_FALLBACK)).not.toBeNull();
+    expect(fleetWebfont("maple-mono-cn")).not.toBeNull();
     expect(fleetWebfont(CJK_FALLBACK_NONE)).toBeNull();
     expect(fleetWebfont("../../etc/passwd")).toBeNull();
   });
@@ -99,10 +99,10 @@ describe("fleet CJK fallback preference", () => {
     expect(store.snapshot()).toBe(DEFAULT_CJK_FALLBACK);
     expect(notified).toBe(0);
 
-    store.set(CJK_FALLBACK_NONE);
-    expect(store.snapshot()).toBe(CJK_FALLBACK_NONE);
+    store.set("maple-mono-cn");
+    expect(store.snapshot()).toBe("maple-mono-cn");
     expect(notified).toBe(1);
-    expect(parseCjkFallback(storage.value)).toBe(CJK_FALLBACK_NONE);
+    expect(parseCjkFallback(storage.value)).toBe("maple-mono-cn");
 
     storage.throwOnSet = true;
     store.set(DEFAULT_CJK_FALLBACK);
@@ -114,4 +114,36 @@ describe("fleet CJK fallback preference", () => {
     storage.throwOnGet = true;
     expect(new FleetCjkFallbackStore(storage).snapshot()).toBe(DEFAULT_CJK_FALLBACK);
   });
+});
+
+
+test("role stores default to None and keep font/mode choices independent", () => {
+  const data = new Map<string, string>();
+  const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); } };
+  const ui = new FleetCjkFallbackStore(storage, "ui");
+  const terminal = new FleetCjkFallbackStore(storage);
+  expect(ui.snapshot()).toBe("none"); expect(terminal.snapshot()).toBe("none");
+  ui.set("source-han-sans"); ui.setOnly(true);
+  terminal.set("lxgw-wenkai"); expect(terminal.snapshot()).toBe("none");
+  terminal.set("maple-mono-cn");
+  expect(ui.snapshot()).toBe("source-han-sans"); expect(ui.only()).toBe(true); expect(terminal.only()).toBe(false);
+  expect(new FleetCjkFallbackStore(storage, "ui").only()).toBe(true);
+  expect(new FleetCjkFallbackStore(storage).snapshot()).toBe("maple-mono-cn");
+});
+
+test("migrates explicit shared fallback and fetched native primary choices once", () => {
+  const data = new Map<string, string>([[CJK_FALLBACK_STORAGE_KEY, JSON.stringify({ version: 1, font: "maple-mono-cn" })]]);
+  const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); } };
+  expect(new FleetCjkFallbackStore(storage, "ui").snapshot()).toBe("maple-mono-cn");
+  data.delete("herdr-fleet:ui-cjk-fallback:v1");
+  data.set("collie:design:v1", JSON.stringify({ font: "lxgw-wenkai" }));
+  const ui = new FleetCjkFallbackStore(storage, "ui");
+  expect(ui.snapshot()).toBe("lxgw-wenkai"); expect(ui.only()).toBe(true);
+  expect(JSON.parse(data.get("collie:design:v1") ?? "{}").font).toBe("aldrich");
+  ui.set("none");
+  expect(new FleetCjkFallbackStore(storage, "ui").snapshot()).toBe("none");
+  data.set("collie:display-prefs:v4", JSON.stringify({ fontFamily: "maple", fontSize: 12 }));
+  const term = new FleetCjkFallbackStore(storage);
+  expect(term.snapshot()).toBe("maple-mono-cn"); expect(term.only()).toBe(true);
+  expect(JSON.parse(data.get("collie:display-prefs:v4") ?? "{}")).toEqual({ fontFamily: "system", fontSize: 12 });
 });

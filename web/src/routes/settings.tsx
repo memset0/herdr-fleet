@@ -141,13 +141,6 @@ export function SettingsRoute() {
       <BandMain base={16} className="relative flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto p-4">
         <InstallControl />
 
-        {/* DOWNSTREAM PORT — the fork's own settings, gathered into one group at the head of the
-            index so the boundary between what this fork adds and what Collie ships is visible
-            without reading the code. It is the page's only heading, and deliberately so; the
-            section rows below and every card inside them keep the order and the reasoning they
-            already had. */}
-        <FleetSettingsSection />
-
         {/* ONE card holding four rows, not four cards. They are a single list of siblings, and four
             separated cards would say they are four unrelated subjects. The divider is on the button
             rather than between them so the last row has none. */}
@@ -168,6 +161,8 @@ export function SettingsRoute() {
             </button>
           ))}
         </Card>
+
+        <FleetSettingsSection />
 
         {/* Pinned to the bottom with `mt-auto`, exactly where it was before the split. */}
         <div className="mt-auto flex flex-col gap-2 pt-4">

@@ -78,6 +78,7 @@ paths = [
   "web/src/components/fleet-row-actions.test.tsx",
   "web/src/components/fleet-row-actions.tsx",
   "web/src/components/fleet-webfonts.tsx",
+  "web/src/components/fleet-webfonts.test.tsx",
   "web/src/components/fleet-commands.tsx",
   "web/src/components/fleet-commands.test.tsx",
   "web/src/components/fleet-command-bar.tsx",
@@ -524,19 +525,14 @@ verify = [
 reason = "The header's mark claim and the badge it leaves behind are this capability's ports, and app-header.tsx carries them: one `mark` field on the route's claim (default true, so every route that says nothing keeps the mark), and on a route that declines it, while the connection is lost, the fork-owned web/src/components/fleet-lost-badge.tsx in the mark's place with the mark's own icon and words (one import and one branch). The same file's optional `leading` slot, the Fleet shell's hierarchy trigger, rides this declaration because the manifest allows one entry per path (native-navigation-sidebars-port). The Pane route declines the mark only inside the Fleet shell (agent-chat.tsx, native-pane-page-port), so a bundle with no shell draws upstream's header everywhere. The header no longer changes its fill (reduce-fork-footprint): moving it onto the chrome ground broke the mark's knockout, which was written as the page colour, and the fork once fixed that with a `paper` prop on collie-home.tsx and a `bg-chrome` fill here; the Fleet shell now scopes `--background` to the chrome value on the header it holds, so upstream's fill and upstream's knockout move together and collie-home.tsx is upstream's text. Both ports are cased in the fork-owned web/src/components/fleet-app-header.test.tsx, so upstream's header suite, including its fill-and-knockout coupling case, is upstream's text. align-rail-with-collie-rows removed the fork's own state badge from the strip row and its state word from the folded bar, and Collie 1.14.2 retired the composer status band, the control row and the dock anchor ports; the Pane page's empty strip-row trailing slot rides native-pane-page-port."
 [[invasive]]
 id = "native-webfont-port"
-intent = "Put one fetched fallback face under every font stack, after the operator's own and before the system's, and offer it and its Latin twin in the existing pickers."
+intent = "Apply independent UI and monospace CJK fallback/only modes while leaving native font pickers untouched."
 strategy = "adapt"
 review = "every-upstream-sync"
 reviewed = "v1.19.0"
 paths = [
   "web/src/index.css#--font-cjk",
   "DESIGN.md#Fleet exception: Chat prose",
-  "web/src/hooks/use-display-prefs.ts#maple",
-  "web/src/lib/design.ts#maple",
-  "web/public/theme-init.js#font-maple",
-  "web/src/components/typeface-control.tsx#maple",
-  "web/src/components/typeface-control.test.tsx#Maple Mono NF CN",
-  "web/src/components/font-settings.tsx#maple"
+  "web/src/hooks/use-display-prefs.ts#fleetMirrorFontStack",
 ]
 verify = [
   "fleet/ui/webfonts.test.ts",
@@ -545,7 +541,8 @@ verify = [
   "web/src/fonts.test.ts",
   "web/src/lib/fleet-i18n/fleet-i18n.test.tsx"
 ]
-reason = "add-proportional-ui-webfonts extends existing UI preset, class, pre-paint and CSS ports with two proportional faces; the picker uses a bounded width and Fleet copy. Chat prose follows UI only through the owned shell, leaving code mono. Runtime reconciliation also honors the existing Maple class. configure-chat-density also delegates the Fleet-only Chat size floor to an owned model through the existing display preference hook; bare Collie retains its native floor. The fetched fallback needs its provider origin in style-src and font-src of the document's policy. Since the Collie 1.18.0 adoption that is no edit of Collie's: the Gateway appends the catalog's one origin to those two directives of the HTML documents it proxies (fleet/proxy.ts `widenFontPolicy`), script-src, connect-src, frames and base-uri untouched, so the origin can serve no code and the app can open no channel to it, and bridge/server.ts is upstream's text again. Browsers reach Collie only through the Gateway. A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and its strings are Fleet's own (web/src/lib/fleet-i18n). The Typeface card's Maple note is read through `ft` where upstream's note table cannot name a Fleet key."
+reason = "Role-specific fallback variables belong in existing font stacks, and native mirror surfaces delegate only their resolved stack to an owned helper for exclusive mode. Native UI/terminal picker, design and pre-paint files are restored to Collie v1.19.0, reducing five invasive paths. Catalog choices, loading, modes and migration are owned. The existing Chat floor remains delegated to the owned density model. The Gateway widens only style-src/font-src to the catalog provider origin. Chat prose follows UI only through the owned shell; DESIGN.md records that owner-requested exception."
+
 
 [[invasive]]
 id = "private-fact-guard-port"
