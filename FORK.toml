@@ -62,6 +62,7 @@ paths = [
   "scripts/herdr-fleet.sh",
   "web/src/components/native-agent-card.tsx",
   "web/src/components/fleet-chat-typography.tsx",
+  "web/src/lib/fleet-chat-density.ts",
   "web/src/components/ui/numeric-setting-row.tsx",
   "web/src/components/fleet-chat-typography.test.tsx",
   "web/src/components/native-agent-rail.test.tsx",
@@ -543,7 +544,7 @@ verify = [
   "web/src/fonts.test.ts",
   "web/src/lib/fleet-i18n/fleet-i18n.test.tsx"
 ]
-reason = "The fetched fallback needs its provider origin in style-src and font-src of the document's policy. Since the Collie 1.18.0 adoption that is no edit of Collie's: the Gateway appends the catalog's one origin to those two directives of the HTML documents it proxies (fleet/proxy.ts `widenFontPolicy`), script-src, connect-src, frames and base-uri untouched, so the origin can serve no code and the app can open no channel to it, and bridge/server.ts is upstream's text again. Browsers reach Collie only through the Gateway. A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and its strings are Fleet's own (web/src/lib/fleet-i18n). The Typeface card's Maple note is read through `ft` where upstream's note table cannot name a Fleet key."
+reason = "configure-chat-density also delegates the Fleet-only Chat size floor to an owned model through the existing display preference hook; bare Collie retains its native floor. The fetched fallback needs its provider origin in style-src and font-src of the document's policy. Since the Collie 1.18.0 adoption that is no edit of Collie's: the Gateway appends the catalog's one origin to those two directives of the HTML documents it proxies (fleet/proxy.ts `widenFontPolicy`), script-src, connect-src, frames and base-uri untouched, so the origin can serve no code and the app can open no channel to it, and bridge/server.ts is upstream's text again. Browsers reach Collie only through the Gateway. A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and its strings are Fleet's own (web/src/lib/fleet-i18n). The Typeface card's Maple note is read through `ft` where upstream's note table cannot name a Fleet key."
 
 [[invasive]]
 id = "private-fact-guard-port"
@@ -653,3 +654,13 @@ paths = [
 ]
 verify = ["fleet/bindings/identity.test.ts", "fleet/bindings/projection.test.ts", "web/src/lib/fleet-terminal-bindings.test.ts", "bridge/solo-baseline.test.ts", "bridge/state-engine.test.ts"]
 reason = "The existing local pin store owns every native pin entrypoint. One identity helper and one migration entrypoint keep them consistent without a second store. The browser baseline's exhaustive field inventory must admit the optional identity fields without changing its upstream fixture. Optional bindingId and bindingSession flow from the Herdr adapter through the engine and the bridge pane types, as two optional fields each (the adapter's `bindingSession` argument stands beside Collie 1.18's per-workspace repo lookup, and both baselines admit 1.18's `gitHead` beside them); they preserve canonical session identity when ordinary snapshot scoping drops the display-session tag. The bridge's exhaustive wire-key inventory admits them without changing its legacy fixture, and CREW_PROTOCOL.md documents them as additive-optional identity under section 7.1. The browser AgentView's two matching optional fields are web/src/lib/types.ts's only fork lines, declared here (the version view that once shared the file lives in the fork-owned web/src/lib/fleet-version-view.ts). These ports rode the manual-fit entry until that feature left Collie (relocate-manual-pane-fit)."
+
+[[invasive]]
+id = "native-chat-density-markers"
+intent = "Expose vertically padded Chat content areas to scoped, opt-in density preferences."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.19.0"
+paths = ["web/src/components/chat-cards.tsx#data-chat-inset"]
+verify = ["web/src/components/fleet-chat-typography.test.tsx", "web/src/components/chat-cards.test.tsx"]
+reason = "Native cards own their content padding, so an inert attribute marks only these areas; the owned shell supplies density styles when a reader chooses them. Existing layout, interactive minimum heights and stream paint-containment wrappers stay native."

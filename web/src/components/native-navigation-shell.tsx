@@ -619,7 +619,7 @@ function FleetNavigationShell({
       <div
         data-slot="native-navigation-shell"
         style={chatTypography?.style}
-        className="relative flex min-h-0 flex-1 overflow-hidden [--fleet-tab-band-ground:var(--color-chrome)] [--fleet-tab-band-inset:4px] [&_[data-slot=session-stream]]:[letter-spacing:var(--fleet-chat-letter-spacing,normal)]"
+        className={cn("relative flex min-h-0 flex-1 overflow-hidden [--fleet-tab-band-ground:var(--color-chrome)] [--fleet-tab-band-inset:4px] [&_[data-slot=session-stream]]:[letter-spacing:var(--fleet-chat-letter-spacing,normal)]", chatTypography?.classes)}
       >
         {/* Renders nothing; keeps the document's webfont state matching the three settings that can
             name a face. Here rather than in a route because it must outlive every navigation. */}

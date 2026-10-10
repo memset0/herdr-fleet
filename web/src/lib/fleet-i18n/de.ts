@@ -4,6 +4,20 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const de: FleetDictionary = {
+  "fleet.chat.density.default": "Standard",
+  "fleet.chat.density.hint": "Nur Chat-Inhalt; jede Einstellung einzeln zurücksetzen.",
+  "fleet.chat.density.lineHeight.label": "Zeilenhöhe",
+  "fleet.chat.density.lineHeight.reduce": "Verringern Chat Zeilenhöhe",
+  "fleet.chat.density.lineHeight.increase": "Erhöhen Chat Zeilenhöhe",
+  "fleet.chat.density.lineHeight.reset": "Zurücksetzen Chat Zeilenhöhe",
+  "fleet.chat.density.blockPadding.label": "Vertikaler Blockabstand innen",
+  "fleet.chat.density.blockPadding.reduce": "Verringern Chat Vertikaler Blockabstand innen",
+  "fleet.chat.density.blockPadding.increase": "Erhöhen Chat Vertikaler Blockabstand innen",
+  "fleet.chat.density.blockPadding.reset": "Zurücksetzen Chat Vertikaler Blockabstand innen",
+  "fleet.chat.density.blockGap.label": "Abstand zwischen Blöcken",
+  "fleet.chat.density.blockGap.reduce": "Verringern Chat Abstand zwischen Blöcken",
+  "fleet.chat.density.blockGap.increase": "Erhöhen Chat Abstand zwischen Blöcken",
+  "fleet.chat.density.blockGap.reset": "Zurücksetzen Chat Abstand zwischen Blöcken",
   "fleet.chat.spacing.label": "Zeichenabstand",
   "fleet.chat.spacing.hint": "Negative Werte machen Chat-Text kompakter.",
   "fleet.chat.spacing.reduce": "Chat-Zeichenabstand verringern",

@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Tune Chat typography and content spacing independently.** Allow 10px text, tighter letter spacing, line height, block padding and gaps with individual resets.
+
 ### Packaging
 
 - **Reuse one labelled numeric settings row for display controls.** Preserve bounded stepping, reset and native button hit areas.

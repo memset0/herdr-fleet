@@ -4,6 +4,20 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const ja: FleetDictionary = {
+  "fleet.chat.density.default": "標準",
+  "fleet.chat.density.hint": "Chat の内容のみ。各設定は個別にリセットできます。",
+  "fleet.chat.density.lineHeight.label": "行の高さ",
+  "fleet.chat.density.lineHeight.reduce": "減らす Chat 行の高さ",
+  "fleet.chat.density.lineHeight.increase": "増やす Chat 行の高さ",
+  "fleet.chat.density.lineHeight.reset": "リセット Chat 行の高さ",
+  "fleet.chat.density.blockPadding.label": "ブロック上下の余白",
+  "fleet.chat.density.blockPadding.reduce": "減らす Chat ブロック上下の余白",
+  "fleet.chat.density.blockPadding.increase": "増やす Chat ブロック上下の余白",
+  "fleet.chat.density.blockPadding.reset": "リセット Chat ブロック上下の余白",
+  "fleet.chat.density.blockGap.label": "ブロック間の余白",
+  "fleet.chat.density.blockGap.reduce": "減らす Chat ブロック間の余白",
+  "fleet.chat.density.blockGap.increase": "増やす Chat ブロック間の余白",
+  "fleet.chat.density.blockGap.reset": "リセット Chat ブロック間の余白",
   "fleet.chat.spacing.label": "文字間隔",
   "fleet.chat.spacing.hint": "負の値で Chat の文字間隔を狭くします。",
   "fleet.chat.spacing.reduce": "Chat の文字間隔を狭くする",

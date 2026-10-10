@@ -1,3 +1,4 @@
+import { fleetChatFontMinimum } from "@/lib/fleet-chat-density";
 import { useCallback, useState } from "react";
 import type { CSSProperties } from "react";
 import { asJsonBoolean, asJsonNumber, asJsonString, parseJsonObject } from "@/lib/json";
@@ -242,7 +243,7 @@ export const FONT_MAX = 16;
 export const DRAFT_FONT_MIN = 13;
 export const DRAFT_FONT_MAX = 16;
 /** The chat stream's own range — see `chatFontSize` on {@link DisplayPrefs} for why it is its own. */
-export const CHAT_FONT_MIN = 12;
+export const CHAT_FONT_MIN = fleetChatFontMinimum();
 export const CHAT_FONT_MAX = 20;
 const DEFAULTS: DisplayPrefs = {
   wrap: true,

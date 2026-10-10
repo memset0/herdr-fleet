@@ -8,7 +8,7 @@ function Probe() {
   const prefs = useFleetChatTypography();
   return <div data-testid="scope" style={prefs?.style}><FleetChatSpacingControls /></div>;
 }
-beforeEach(() => localStorage.removeItem(CHAT_SPACING_KEY));
+beforeEach(() => { localStorage.removeItem(CHAT_SPACING_KEY); localStorage.removeItem("fleet:chat-density:v1"); });
 it("tightens, persists and resets Chat letter spacing", async () => {
   const user = userEvent.setup();
   const view = render(<FleetChatTypographyProvider><Probe /></FleetChatTypographyProvider>);
@@ -25,7 +25,7 @@ it("bounds persisted numeric values and follows storage updates safely", () => {
   localStorage.setItem(CHAT_SPACING_KEY, "-5");
   const view = render(<FleetChatTypographyProvider><Probe /></FleetChatTypographyProvider>);
   expect(screen.getByRole("button", { name: "Tighten Chat letter spacing" })).toBeDisabled();
-  expect(view.getByTestId("scope").style.getPropertyValue("--fleet-chat-letter-spacing")).toBe("-0.08em");
+  expect(view.getByTestId("scope").style.getPropertyValue("--fleet-chat-letter-spacing")).toBe("-0.12em");
   act(() => { localStorage.setItem(CHAT_SPACING_KEY, "50"); window.dispatchEvent(new StorageEvent("storage", { key: CHAT_SPACING_KEY })); });
   expect(screen.getByRole("button", { name: "Widen Chat letter spacing" })).toBeDisabled();
   act(() => { localStorage.setItem(CHAT_SPACING_KEY, "invalid"); window.dispatchEvent(new StorageEvent("storage", { key: CHAT_SPACING_KEY })); });
@@ -49,4 +49,38 @@ it("offers spacing below native Chat size and omits it for a terminal body", asy
   expect(stepChatFontSize).toHaveBeenCalledWith(-1);
   view.rerender(display("terminal"));
   expect(screen.queryByRole("button", { name: "Tighten Chat letter spacing" })).toBeNull();
+});
+
+it("preserves native density until chosen and resets preferences independently", async () => {
+  const user = userEvent.setup();
+  const view = render(<FleetChatTypographyProvider><Probe /></FleetChatTypographyProvider>);
+  const scope = view.getByTestId("scope");
+  expect(scope.style.getPropertyValue("--fleet-chat-line-height")).toBe("");
+  expect(scope.style.getPropertyValue("--fleet-chat-block-padding")).toBe("");
+  await user.click(screen.getByRole("button", { name: "Reduce Chat line height" }));
+  await user.click(screen.getByRole("button", { name: "Reduce Chat block vertical padding" }));
+  await user.click(screen.getByRole("button", { name: "Reduce Chat between-block gap" }));
+  expect(scope.style.getPropertyValue("--fleet-chat-line-height")).toBe("1.55");
+  expect(scope.style.getPropertyValue("--fleet-chat-block-padding")).toBe("7px");
+  expect(scope.style.getPropertyValue("--fleet-chat-block-gap")).toBe("7px");
+  view.unmount();
+  const reopened = render(<FleetChatTypographyProvider><Probe /></FleetChatTypographyProvider>);
+  const restored = reopened.getByTestId("scope");
+  expect(restored.style.getPropertyValue("--fleet-chat-block-padding")).toBe("7px");
+  await user.click(screen.getByRole("button", { name: "Reset Chat block vertical padding" }));
+  expect(restored.style.getPropertyValue("--fleet-chat-block-padding")).toBe("");
+  expect(restored.style.getPropertyValue("--fleet-chat-block-gap")).toBe("7px");
+  expect(restored.style.getPropertyValue("--fleet-chat-line-height")).toBe("1.55");
+});
+it("bounds density storage events and rejects malformed records", () => {
+  const key = "fleet:chat-density:v1";
+  localStorage.setItem(key, JSON.stringify({ version: 1, lineHeight: -1, blockPadding: 100, blockGap: "invalid" }));
+  const view = render(<FleetChatTypographyProvider><Probe /></FleetChatTypographyProvider>);
+  const scope = view.getByTestId("scope");
+  expect(scope.style.getPropertyValue("--fleet-chat-line-height")).toBe("1.1");
+  expect(scope.style.getPropertyValue("--fleet-chat-block-padding")).toBe("16px");
+  expect(scope.style.getPropertyValue("--fleet-chat-block-gap")).toBe("");
+  act(() => { localStorage.setItem(key, "invalid"); window.dispatchEvent(new StorageEvent("storage", { key })); });
+  expect(scope.style.getPropertyValue("--fleet-chat-line-height")).toBe("");
+  expect(scope.style.getPropertyValue("--fleet-chat-block-padding")).toBe("");
 });

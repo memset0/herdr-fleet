@@ -211,7 +211,7 @@ export const ToolGroup = memo(
             <button
               type="button"
               aria-expanded
-              className={cn(FOLD_ROW, "justify-start rounded-md border border-border")}
+              data-chat-inset className={cn(FOLD_ROW, "justify-start rounded-md border border-border")}
               onClick={() => setOpen(false)}
             >
               <ChevronRight className="size-3.5 shrink-0 rotate-90" />
@@ -222,7 +222,7 @@ export const ToolGroup = memo(
               <button
                 type="button"
                 aria-expanded={false}
-                className={cn(FOLD_ROW, "justify-start rounded-md border border-border")}
+                data-chat-inset className={cn(FOLD_ROW, "justify-start rounded-md border border-border")}
                 onClick={() => setOpen(true)}
               >
                 <ChevronRight className="size-3.5 shrink-0" />
@@ -346,7 +346,7 @@ const NOTICE_FOLD_CHARS = 160;
  */
 function Notice({ item }: { item: Extract<ChatItem, { kind: "notice" }> }) {
   const folds = item.note === true && (item.text.length > NOTICE_FOLD_CHARS || item.text.includes("\n"));
-  if (!folds) return <p className="py-1 text-center text-xs text-muted-foreground">{item.text}</p>;
+  if (!folds) return <p data-chat-inset className="py-1 text-center text-xs text-muted-foreground">{item.text}</p>;
   return (
     <Disclosure label={t("transcript.systemLabel")} icon={ChevronRight}>
       {() => <MarkdownText text={item.text} className="px-5 pb-1 text-sm text-muted-foreground" />}
@@ -363,7 +363,7 @@ function Notice({ item }: { item: Extract<ChatItem, { kind: "notice" }> }) {
 function Compacted({ item }: { item: Extract<ChatItem, { kind: "compacted" }> }) {
   if (item.text === undefined) {
     return (
-      <p className="py-1 text-center text-xs text-muted-foreground">
+      <p data-chat-inset className="py-1 text-center text-xs text-muted-foreground">
         {t("transcript.summaryLabel")}
         {item.ts && ` · ${clockTimeOf(item.ts)}`}
       </p>
@@ -394,7 +394,7 @@ function Compacted({ item }: { item: Extract<ChatItem, { kind: "compacted" }> })
 function UserTurn({ text, ts }: { text: string; ts?: string }) {
   const time = ts ? clockTimeOf(ts) : "";
   return (
-    <div className="rounded-md border border-status-working/25 bg-status-working/8 px-3 py-2">
+    <div data-chat-inset className="rounded-md border border-status-working/25 bg-status-working/8 px-3 py-2">
       <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-status-working">
         <User className="size-3.5" />
         {/* The transcript's own word for the reader, so History and Chat never disagree. */}
@@ -427,7 +427,7 @@ export function Disclosure({
   const [open, setOpen] = useState(false);
   return (
     <div className="flex flex-col">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={cn(FOLD_ROW, "justify-start px-0")}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} data-chat-inset className={cn(FOLD_ROW, "justify-start px-0")}>
         <Icon className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
         {label}
       </button>
@@ -503,7 +503,7 @@ function ToolHead({
   exitCode?: number;
 }) {
   return (
-    <div className="flex min-h-9 min-w-0 items-center gap-2 px-3 py-1.5 text-xs">
+    <div data-chat-inset className="flex min-h-9 min-w-0 items-center gap-2 px-3 py-1.5 text-xs">
       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="shrink-0 font-medium">{label}</span>
       <span className="flex min-w-0 flex-1 items-center">{children}</span>
@@ -614,6 +614,7 @@ function WaitingArea({ waiting, line }: { waiting?: CardWaiting; line?: boolean 
       <Collapse open={body === undefined && note !== undefined}>
         {note && (
           <p
+            data-chat-inset
             className={cn(
               "flex items-start gap-2 text-xs text-muted-foreground",
               line ? "px-2 pb-1.5" : "border-t border-border px-3 py-2.5",
@@ -804,7 +805,7 @@ function QuestionTool({
           swaps a sentence for a sentence rather than opening a second line under the first. */}
       <WaitingArea waiting={waiting && { ...waiting, note: undefined }} />
       {(asking || status === "denied") && (
-        <p className="border-t border-border px-3 py-2.5 text-xs text-muted-foreground">
+        <p data-chat-inset className="border-t border-border px-3 py-2.5 text-xs text-muted-foreground">
           {status === "denied"
             ? t("chat.question.dismissed")
             : (waiting?.note ?? t("chat.question.waiting"))}
@@ -829,7 +830,7 @@ function QuestionBlock({
   const typed = chosen?.filter((c) => !labels.has(c)) ?? [];
   return (
     <div className="border-t border-border">
-      <div className="flex flex-col gap-0.5 px-3 py-2.5">
+      <div data-chat-inset className="flex flex-col gap-0.5 px-3 py-2.5">
         {title && <SectionLabel placement="above">{title}</SectionLabel>}
         <p className="font-content whitespace-pre-wrap break-words text-sm">{question.question}</p>
         {question.multiple && <p className="text-xs text-muted-foreground">{t("chat.question.multiple")}</p>}
@@ -870,7 +871,7 @@ function QuestionRow({
   muted?: boolean;
 }) {
   return (
-    <li aria-current={picked || undefined} className="flex items-start gap-2 px-3 py-1.5">
+    <li aria-current={picked || undefined} data-chat-inset className="flex items-start gap-2 px-3 py-1.5">
       <span aria-hidden className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
         {picked && <Check className="size-3.5 text-status-done" />}
       </span>
@@ -941,9 +942,9 @@ function LineTool({
       ) : (
         <div className="flex min-h-7 min-w-0 items-center gap-2 px-2 text-xs">{row}</div>
       )}
-      {body && <p className="font-content whitespace-pre-wrap break-words px-2 pb-1.5 text-sm">{body}</p>}
+      {body && <p data-chat-inset className="font-content whitespace-pre-wrap break-words px-2 pb-1.5 text-sm">{body}</p>}
       {open && output !== undefined && (
-        <pre className="mx-2 mb-2 max-h-80 overflow-auto rounded-md border border-border bg-background px-2 py-1.5 font-mono text-[11px] leading-snug [font-variant-ligatures:none] whitespace-pre-wrap break-words">
+        <pre data-chat-inset className="mx-2 mb-2 max-h-80 overflow-auto rounded-md border border-border bg-background px-2 py-1.5 font-mono text-[11px] leading-snug [font-variant-ligatures:none] whitespace-pre-wrap break-words">
           <PathText text={output} />
         </pre>
       )}
@@ -966,13 +967,13 @@ function CommandBlock({ command, output, preview }: { command: string; output?: 
   return (
     <>
       <div className={cn("mx-2 mb-2 overflow-hidden rounded-md font-mono text-[11px] leading-[1.4]", MIRROR_SPACE, MIRROR_INVERT)}>
-        <div className="px-2.5 py-2">
+        <div data-chat-inset className="px-2.5 py-2">
           <div className="line-clamp-6 whitespace-pre-wrap break-words">
             <span className="text-[#23d18b]">$</span> {command}
           </div>
         </div>
         {open && lines.length > 0 && (
-          <pre className="m-0 overflow-x-auto border-t border-white/10 px-2.5 py-2 whitespace-pre">{shown.join("\n")}</pre>
+          <pre data-chat-inset className="m-0 overflow-x-auto border-t border-white/10 px-2.5 py-2 whitespace-pre">{shown.join("\n")}</pre>
         )}
       </div>
       {/* Output that arrives after the card is on screen (the run the reader just allowed) slides
@@ -985,7 +986,7 @@ function CommandBlock({ command, output, preview }: { command: string; output?: 
             type="button"
             aria-expanded={open}
             onClick={() => setOpen(!open)}
-            className={cn(FOLD_ROW, "flex-1 tabular-nums")}
+            data-chat-inset className={cn(FOLD_ROW, "flex-1 tabular-nums")}
           >
             <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
             {open ? t("chat.card.output.hide") : tn("chat.card.output.show", lines.length)}
@@ -994,7 +995,7 @@ function CommandBlock({ command, output, preview }: { command: string; output?: 
             <button
               type="button"
               onClick={() => setAll(!all)}
-              className={cn(FOLD_ROW, "flex-1 border-l border-border tabular-nums")}
+              data-chat-inset className={cn(FOLD_ROW, "flex-1 border-l border-border tabular-nums")}
             >
               {all ? t("chat.card.output.showLast", { count: TAIL }) : tn("chat.card.output.showAll", lines.length)}
             </button>
@@ -1045,7 +1046,7 @@ function HunkDiff({ hunks, path, limit }: { hunks: Hunk[]; path: string; limit: 
           type="button"
           aria-expanded={open}
           onClick={() => setOpen(!open)}
-          className={cn(FOLD_ROW, "border-t border-border tabular-nums")}
+          data-chat-inset className={cn(FOLD_ROW, "border-t border-border tabular-nums")}
         >
           {open ? t("chat.card.diff.less") : tn("chat.card.output.showAll", total)}
         </button>
@@ -1103,7 +1104,7 @@ function PlainDiff({ hunks, path, limit }: { hunks: Hunk[]; path: string; limit:
     <div className="font-mono text-xs leading-5 [font-variant-ligatures:none]">
       {rows.map((r, i) =>
         "sep" in r ? (
-          <div key={i} className="border-y border-border px-3 py-1 text-muted-foreground">
+          <div key={i} data-chat-inset className="border-y border-border px-3 py-1 text-muted-foreground">
             ⋯
           </div>
         ) : (

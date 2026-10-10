@@ -4,6 +4,20 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const es: FleetDictionary = {
+  "fleet.chat.density.default": "Original",
+  "fleet.chat.density.hint": "Solo contenido del chat; cada ajuste se restablece por separado.",
+  "fleet.chat.density.lineHeight.label": "Altura de línea",
+  "fleet.chat.density.lineHeight.reduce": "Reducir Chat Altura de línea",
+  "fleet.chat.density.lineHeight.increase": "Aumentar Chat Altura de línea",
+  "fleet.chat.density.lineHeight.reset": "Restablecer Chat Altura de línea",
+  "fleet.chat.density.blockPadding.label": "Relleno vertical de bloques",
+  "fleet.chat.density.blockPadding.reduce": "Reducir Chat Relleno vertical de bloques",
+  "fleet.chat.density.blockPadding.increase": "Aumentar Chat Relleno vertical de bloques",
+  "fleet.chat.density.blockPadding.reset": "Restablecer Chat Relleno vertical de bloques",
+  "fleet.chat.density.blockGap.label": "Espacio entre bloques",
+  "fleet.chat.density.blockGap.reduce": "Reducir Chat Espacio entre bloques",
+  "fleet.chat.density.blockGap.increase": "Aumentar Chat Espacio entre bloques",
+  "fleet.chat.density.blockGap.reset": "Restablecer Chat Espacio entre bloques",
   "fleet.chat.spacing.label": "Espaciado de letras",
   "fleet.chat.spacing.hint": "Los valores negativos compactan el texto de Chat.",
   "fleet.chat.spacing.reduce": "Reducir el espaciado de Chat",

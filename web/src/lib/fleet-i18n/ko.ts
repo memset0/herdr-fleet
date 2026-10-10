@@ -4,6 +4,20 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const ko: FleetDictionary = {
+  "fleet.chat.density.default": "기본",
+  "fleet.chat.density.hint": "Chat 내용에만 적용되며 각 설정을 따로 초기화합니다.",
+  "fleet.chat.density.lineHeight.label": "줄 높이",
+  "fleet.chat.density.lineHeight.reduce": "줄이기 Chat 줄 높이",
+  "fleet.chat.density.lineHeight.increase": "늘리기 Chat 줄 높이",
+  "fleet.chat.density.lineHeight.reset": "초기화 Chat 줄 높이",
+  "fleet.chat.density.blockPadding.label": "블록 위아래 안쪽 여백",
+  "fleet.chat.density.blockPadding.reduce": "줄이기 Chat 블록 위아래 안쪽 여백",
+  "fleet.chat.density.blockPadding.increase": "늘리기 Chat 블록 위아래 안쪽 여백",
+  "fleet.chat.density.blockPadding.reset": "초기화 Chat 블록 위아래 안쪽 여백",
+  "fleet.chat.density.blockGap.label": "블록 사이 간격",
+  "fleet.chat.density.blockGap.reduce": "줄이기 Chat 블록 사이 간격",
+  "fleet.chat.density.blockGap.increase": "늘리기 Chat 블록 사이 간격",
+  "fleet.chat.density.blockGap.reset": "초기화 Chat 블록 사이 간격",
   "fleet.chat.spacing.label": "글자 간격",
   "fleet.chat.spacing.hint": "음수 값은 Chat 텍스트를 더 촘촘하게 만듭니다.",
   "fleet.chat.spacing.reduce": "Chat 글자 간격 줄이기",

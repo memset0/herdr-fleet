@@ -3,6 +3,20 @@
 // web/src/lib/i18n/messages/ carry none of these (FORK.toml fleet-runtime).
 
 export const en = {
+  "fleet.chat.density.default": "Native",
+  "fleet.chat.density.hint": "Chat content only; each setting resets separately.",
+  "fleet.chat.density.lineHeight.label": "Line height",
+  "fleet.chat.density.lineHeight.reduce": "Reduce Chat line height",
+  "fleet.chat.density.lineHeight.increase": "Increase Chat line height",
+  "fleet.chat.density.lineHeight.reset": "Reset Chat line height",
+  "fleet.chat.density.blockPadding.label": "Block vertical padding",
+  "fleet.chat.density.blockPadding.reduce": "Reduce Chat block vertical padding",
+  "fleet.chat.density.blockPadding.increase": "Increase Chat block vertical padding",
+  "fleet.chat.density.blockPadding.reset": "Reset Chat block vertical padding",
+  "fleet.chat.density.blockGap.label": "Between-block gap",
+  "fleet.chat.density.blockGap.reduce": "Reduce Chat between-block gap",
+  "fleet.chat.density.blockGap.increase": "Increase Chat between-block gap",
+  "fleet.chat.density.blockGap.reset": "Reset Chat between-block gap",
   "fleet.chat.spacing.label": "Letter spacing",
   "fleet.chat.spacing.hint": "Negative values make Chat text tighter.",
   "fleet.chat.spacing.reduce": "Tighten Chat letter spacing",

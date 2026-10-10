@@ -4,6 +4,20 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const zhTW: FleetDictionary = {
+  "fleet.chat.density.default": "預設",
+  "fleet.chat.density.hint": "僅影響 Chat 內容；每項可單獨重設。",
+  "fleet.chat.density.lineHeight.label": "行高",
+  "fleet.chat.density.lineHeight.reduce": "減小 Chat 行高",
+  "fleet.chat.density.lineHeight.increase": "增大 Chat 行高",
+  "fleet.chat.density.lineHeight.reset": "重設 Chat 行高",
+  "fleet.chat.density.blockPadding.label": "內容區塊上下內距",
+  "fleet.chat.density.blockPadding.reduce": "減小 Chat 內容區塊上下內距",
+  "fleet.chat.density.blockPadding.increase": "增大 Chat 內容區塊上下內距",
+  "fleet.chat.density.blockPadding.reset": "重設 Chat 內容區塊上下內距",
+  "fleet.chat.density.blockGap.label": "內容區塊間距",
+  "fleet.chat.density.blockGap.reduce": "減小 Chat 內容區塊間距",
+  "fleet.chat.density.blockGap.increase": "增大 Chat 內容區塊間距",
+  "fleet.chat.density.blockGap.reset": "重設 Chat 內容區塊間距",
   "fleet.chat.spacing.label": "字元間距",
   "fleet.chat.spacing.hint": "負值讓 Chat 文字更緊湊。",
   "fleet.chat.spacing.reduce": "縮緊 Chat 字元間距",
