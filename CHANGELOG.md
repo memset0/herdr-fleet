@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Adjust Chat letter spacing beside its native text size.** Add bounded browser-local controls and reset without changing terminal or composer typography.
+
 ## [3.15.0] - 2026-10-10
 
 **Every member redeploys, lead first; no operator configuration changes.** This release adopts Collie

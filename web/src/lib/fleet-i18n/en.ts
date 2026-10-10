@@ -3,6 +3,12 @@
 // web/src/lib/i18n/messages/ carry none of these (FORK.toml fleet-runtime).
 
 export const en = {
+  "fleet.chat.spacing.label": "Letter spacing",
+  "fleet.chat.spacing.hint": "Negative values make Chat text tighter.",
+  "fleet.chat.spacing.reduce": "Tighten Chat letter spacing",
+  "fleet.chat.spacing.increase": "Widen Chat letter spacing",
+  "fleet.chat.spacing.reset": "Reset Chat letter spacing",
+
   "fleet.todoist.displayScope": "Display scope",
   "fleet.todoist.projects": "Projects",
   "fleet.todoist.filters": "Filters",

@@ -4,6 +4,12 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const de: FleetDictionary = {
+  "fleet.chat.spacing.label": "Zeichenabstand",
+  "fleet.chat.spacing.hint": "Negative Werte machen Chat-Text kompakter.",
+  "fleet.chat.spacing.reduce": "Chat-Zeichenabstand verringern",
+  "fleet.chat.spacing.increase": "Chat-Zeichenabstand erhöhen",
+  "fleet.chat.spacing.reset": "Chat-Zeichenabstand zurücksetzen",
+
   "fleet.todoist.displayScope": "Anzeigebereich",
   "fleet.todoist.projects": "Projekte",
   "fleet.todoist.filters": "Filter",

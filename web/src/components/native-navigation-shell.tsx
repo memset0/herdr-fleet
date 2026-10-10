@@ -58,6 +58,7 @@ import {
 import { usePointerMenuGestures } from "@/components/fleet-context-menu";
 import { FleetPaneTagsProvider, FleetPaneTagCommands } from "@/components/fleet-pane-tags";
 import { FleetNavigationFooter } from "@/components/fleet-navigation-footer";
+import { FleetChatTypographyProvider, useFleetChatTypography } from "@/components/fleet-chat-typography";
 import { FleetWebfonts } from "@/components/fleet-webfonts";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { NativeNavigationProvider } from "@/components/native-navigation-context";
@@ -118,7 +119,7 @@ export function NativeNavigationShell(props: NativeNavigationShellProps) {
   // no rails, no navigation context, so the header's leading trigger and the Pane page's switcher
   // port answer nothing and the Pane keeps its mark (lib/fleet-build.ts).
   if (!isFleetBuild()) return props.children;
-  return <FleetNavigationShell {...props} />;
+  return <FleetChatTypographyProvider><FleetNavigationShell {...props} /></FleetChatTypographyProvider>;
 }
 
 function FleetNavigationShell({
@@ -127,6 +128,7 @@ function FleetNavigationShell({
   preferenceStore = nativeNavigationPreferences,
 }: NativeNavigationShellProps) {
   useFleetLocale();
+  const chatTypography = useFleetChatTypography();
   // One recorder for the app's lifetime: every right-click in the document is noted here so the row
   // actions a pointer opens can stand at the cursor. Mounted in the shell because the shell is what
   // outlives every navigation, and claimed only by a surface that opens right after the gesture.
@@ -616,7 +618,8 @@ function FleetNavigationShell({
       <NativeNavigationProvider value={navigation}>
       <div
         data-slot="native-navigation-shell"
-        className="relative flex min-h-0 flex-1 overflow-hidden [--fleet-tab-band-ground:var(--color-chrome)] [--fleet-tab-band-inset:4px]"
+        style={chatTypography?.style}
+        className="relative flex min-h-0 flex-1 overflow-hidden [--fleet-tab-band-ground:var(--color-chrome)] [--fleet-tab-band-inset:4px] [&_[data-slot=session-stream]]:[letter-spacing:var(--fleet-chat-letter-spacing,normal)]"
       >
         {/* Renders nothing; keeps the document's webfont state matching the three settings that can
             name a face. Here rather than in a route because it must outlive every navigation. */}

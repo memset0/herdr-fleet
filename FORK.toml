@@ -61,6 +61,8 @@ paths = [
   "fleet/**",
   "scripts/herdr-fleet.sh",
   "web/src/components/native-agent-card.tsx",
+  "web/src/components/fleet-chat-typography.tsx",
+  "web/src/components/fleet-chat-typography.test.tsx",
   "web/src/components/native-agent-rail.test.tsx",
   "web/src/components/native-agent-rail.tsx",
   "web/src/components/native-navigation-context.tsx",
@@ -409,7 +411,7 @@ verify = [
   "fleet/manual-pane-fit/local.test.ts",
   "fleet/manual-pane-fit/controller.test.ts"
 ]
-reason = "Manual Pane fit is Fleet's end to end (relocate-manual-pane-fit): the Gateway serves `POST /fleet/api/pane/:id/resize` and `GET /fleet/api/pane-fit`, a lead Pane is fitted through the lead's own retained no-takeover controller and a member's Pane by that member's own terminal service, and the row, its availability read, its measurement and its result policy live in web/src/components/fleet-pane-fit.tsx and fleet/. Collie's bridge, mux capability table, state engine, crew link and browser API carry none of it any more. What cannot leave Collie is WHERE the row stands: Collie 1.15's Display sheet draws the body on screen's rows, and Resize belongs directly below Text size among the mirror's rows and never among Chat's. One optional ReactNode slot on that sheet is the narrowest port that places it; drawing the row from outside would need the sheet's own layout. The Pane page's one hook call that fills the slot rides native-pane-page-port, which this manifest has attributed that file to."
+reason = "Manual Pane fit is Fleet's end to end (relocate-manual-pane-fit): the Gateway serves `POST /fleet/api/pane/:id/resize` and `GET /fleet/api/pane-fit`, a lead Pane is fitted through the lead's own retained no-takeover controller and a member's Pane by that member's own terminal service, and the row, its availability read, its measurement and its result policy live in web/src/components/fleet-pane-fit.tsx and fleet/. Collie's bridge, mux capability table, state engine, crew link and browser API carry none of it any more. What cannot leave Collie is WHERE the row stands: Collie 1.15's Display sheet draws the body on screen's rows, and Resize belongs directly below Text size among the mirror's rows and never among Chat's. One optional ReactNode slot on that sheet is the narrowest port that places it; drawing the row from outside would need the sheet's own layout. The Pane page's one hook call that fills the slot rides native-pane-page-port, which this manifest has attributed that file to. The same Display file also mounts the owned Chat spacing controls below Chat Text size; they render nothing without the owned provider. The stream uses its existing session-stream data slot via the owned shell, so no new stream port is needed."
 
 [[invasive]]
 id = "native-pane-page-port"

@@ -4,6 +4,12 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const zhTW: FleetDictionary = {
+  "fleet.chat.spacing.label": "字元間距",
+  "fleet.chat.spacing.hint": "負值讓 Chat 文字更緊湊。",
+  "fleet.chat.spacing.reduce": "縮緊 Chat 字元間距",
+  "fleet.chat.spacing.increase": "放寬 Chat 字元間距",
+  "fleet.chat.spacing.reset": "恢復 Chat 預設字元間距",
+
   "fleet.todoist.displayScope": "顯示範圍",
   "fleet.todoist.projects": "專案",
   "fleet.todoist.filters": "篩選器",

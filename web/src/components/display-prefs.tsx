@@ -1,3 +1,4 @@
+import { FleetChatSpacingControls } from "@/components/fleet-chat-typography";
 import type { ReactNode } from "react";
 import { AArrowDown, AArrowUp } from "lucide-react";
 
@@ -229,6 +230,7 @@ export function DisplayPrefsContent({
             max={CHAT_FONT_MAX}
             step={paneView.stepChatFontSize}
           />
+          <FleetChatSpacingControls />
           <Row
             label={t("settings.tools.title")}
             hint={t("settings.tools.description")}

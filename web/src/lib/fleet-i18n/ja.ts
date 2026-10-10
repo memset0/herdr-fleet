@@ -4,6 +4,12 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const ja: FleetDictionary = {
+  "fleet.chat.spacing.label": "文字間隔",
+  "fleet.chat.spacing.hint": "負の値で Chat の文字間隔を狭くします。",
+  "fleet.chat.spacing.reduce": "Chat の文字間隔を狭くする",
+  "fleet.chat.spacing.increase": "Chat の文字間隔を広くする",
+  "fleet.chat.spacing.reset": "Chat の文字間隔をリセット",
+
   "fleet.todoist.displayScope": "表示範囲",
   "fleet.todoist.projects": "プロジェクト",
   "fleet.todoist.filters": "フィルター",

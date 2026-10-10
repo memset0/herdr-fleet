@@ -4,6 +4,12 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const ko: FleetDictionary = {
+  "fleet.chat.spacing.label": "글자 간격",
+  "fleet.chat.spacing.hint": "음수 값은 Chat 텍스트를 더 촘촘하게 만듭니다.",
+  "fleet.chat.spacing.reduce": "Chat 글자 간격 줄이기",
+  "fleet.chat.spacing.increase": "Chat 글자 간격 늘리기",
+  "fleet.chat.spacing.reset": "Chat 글자 간격 초기화",
+
   "fleet.todoist.displayScope": "표시 범위",
   "fleet.todoist.projects": "프로젝트",
   "fleet.todoist.filters": "필터",
