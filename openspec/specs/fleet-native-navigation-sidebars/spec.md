@@ -968,29 +968,33 @@ batch endpoint or a client-side seen state for this.
 
 ### Requirement: A Host row creates a workspace on its own machine
 
-A Host row SHALL expose a New workspace action through the existing pointer context menu and touch actions sheet, including Hosts with no workspaces. Activating the action SHALL open the existing creation form with the selected Host fixed and its primary session addressed, independently of the current route's Host or session. The form SHALL preserve optional name/directory fields and use the existing create, revalidation, fresh-pane navigation and error reporting. Closing without creating SHALL perform no write. The target MUST NOT silently fall back to a different Host.
+A Host row SHALL expose a New workspace action through the existing pointer context menu and touch actions sheet, including Hosts with no workspaces. Activating the action SHALL open the adopted Collie's New page with the selected Host named in the page's own machine address parameter, and with no Pane and no named session in that address, so the page addresses the Host's primary session independently of the current route's Host or session. The page's own machine select, folder field, start, revalidation, fresh-pane navigation and error reporting SHALL be used unchanged. Leaving the page without starting SHALL perform no write. The fork SHALL NOT patch the New page to fix its machine: the operator may still choose another machine in the page's own select, and the selected Host is the page's initial choice whenever that Host accepts writes.
 
-The action SHALL respect device/pairing refusals, the selected Host's write refusal and its create-space capability. Refused or incompatible Hosts SHALL show the existing refusal instead of a live create action; unsupported multiplexers SHALL show their capability note. A Host becoming unavailable while the form is open SHALL prevent creation rather than retarget it. Creating SHALL leave other row actions unchanged.
+The action SHALL respect device/pairing refusals, the selected Host's write refusal and its create-space capability. Refused or incompatible Hosts SHALL show the existing refusal instead of a live create action; unsupported multiplexers SHALL show their capability note. Opening the action SHALL leave other row actions unchanged.
 
 #### Scenario: Operator right-clicks a Host
 - **WHEN** the operator right-clicks a writable Host
 - **THEN** the pointer menu offers New workspace without disclosing or navigating the Host row
 
 #### Scenario: Operator creates on another Host
-- **WHEN** the operator opens the form for a Host different from the route's Host and submits it
-- **THEN** creation and fresh-pane navigation address that selected Host's primary session, with no ambient scope inheritance
+- **WHEN** the operator activates New workspace on a Host different from the route's Host
+- **THEN** the New page opens with that Host chosen in its machine select, and a start from it addresses that Host's primary session with no ambient scope inheritance
+
+#### Scenario: Operator creates on the lead
+- **WHEN** the operator activates New workspace on the lead's Host row
+- **THEN** the New page opens with the lead chosen, addressing the lead's primary session
 
 #### Scenario: Operator long-presses an empty Host
 - **WHEN** a touch operator long-presses a Host with no workspaces
-- **THEN** its actions sheet offers the same create form and fixed target
+- **THEN** its actions sheet offers the same New workspace action and opens the same page for that Host
 
 #### Scenario: Creation is refused
 - **WHEN** pairing, device authorization, the selected Host's health or its multiplexer refuses creation
-- **THEN** the relevant existing refusal is shown and no create request is sent to another Host
+- **THEN** the relevant existing refusal is shown in place of the action and the New page is not opened for another Host
 
 #### Scenario: Target stops accepting writes
-- **WHEN** the fixed Host becomes unavailable while the form is open
-- **THEN** submitting creates nothing and the target never changes
+- **WHEN** the selected Host stops accepting writes after the New page opened on it
+- **THEN** the page refuses the start with that Host's own refusal, and nothing is started on another Host unless the operator chooses it in the page's select
 
 ### Requirement: Todoist shares the right navigation surface
 The right rail SHALL offer Agents and Todoist views without removing the existing Agent controls. Narrow layouts SHALL expose the same Todoist functionality through an accessible surface. The rail SHALL show the display scope selected in Settings or directly in the rail, identify each task's project and allow task view switching; All SHALL be the default available selection. Opening or closing the surface SHALL preserve native route and keyboard-focus behavior.

@@ -35,12 +35,12 @@
 
 ## 7. Release and level
 
-- [ ] 7.1 Read the remote's newest tag; cut `chore(release): 3.15.0`; annotated tag `v3.15.0`, pushed by name
-- [ ] 7.2 Level the lead, then each member; verify the census, the Gateway path, the New page start on the lead and a member, pairing refusal; close the throwaway workspaces
+- [x] 7.1 Read the remote's newest tag; cut `chore(release): 3.15.0`; annotated tag `v3.15.0`, pushed by name
+- [x] 7.2 Level the lead, then each member; verify the census, the Gateway path, the New page start on the lead and a member, pairing refusal; close the throwaway workspaces
 
 ## 8. Archive
 
-- [ ] 8.1 Sync specs, validate, archive, commit and push
+- [x] 8.1 Sync specs, validate, archive, commit and push
 
 ## Phase record
 
@@ -54,3 +54,13 @@
 - 6.2 A local Fleet build served against a sandbox Collie 1.19 bridge: the dashboard inside both rails,
   `/new` at desktop and phone widths, a Host row's pointer menu offering New space, its navigation to
   `/new`, and a shell started from the page landing on its new Pane.
+- 7.1 `chore(release): 3.15.0` is `167a881e`, annotated tag `v3.15.0` pushed by name; no GitHub Release,
+  no upstream tag on the remote.
+- 7.2 The lead, the designated member and the personal-computer member all report `3.15.0` and
+  `reachable` in the lead's census; the fourth member was not touched and stays unreachable. Through
+  the public Gateway with a temporary session (logged out afterwards, `401` after): `/api/launchers`
+  answers 1.19's shape on the lead and on both members; `POST /api/pair` and `POST /api/devices/revoke`
+  answer `403` with the Gateway's own body; `forget-device` answers `404`; the registry's only label is
+  `fleet-gateway`. A Host row's New space opened `/new?machine=<host>` for the lead and for the designated
+  member, the page's select showed that Host, and a shell started from it opened its Pane on that
+  machine. Both throwaway workspaces were closed.
