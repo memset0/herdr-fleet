@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.15.1] - 2026-10-10
+
 ### Added
 
-- **Adjust Chat letter spacing beside its native text size.** Add bounded browser-local controls and reset without changing terminal or composer typography.
+- **Adjust Chat letter spacing beside its native text size.** Add bounded browser-local controls and reset without changing terminal or composer typography. ([c17b55c4](https://github.com/memset0/herdr-fleet/commit/c17b55c4))
 
 ## [3.15.0] - 2026-10-10
 
