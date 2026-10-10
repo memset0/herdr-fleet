@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.15.5] - 2026-10-10
+
 ### Changed
 
-- **Separate UI and terminal CJK fonts below native settings.** Add independent fallback-only switches, English font labels and choice migration; restore native font pickers.
+- **Separate UI and terminal CJK fonts below native settings.** Add independent fallback-only switches, English font labels and choice migration; restore native font pickers. ([7e0dfaeb](https://github.com/memset0/herdr-fleet/commit/7e0dfaeb))
 
 ## [3.15.4] - 2026-10-10
 
