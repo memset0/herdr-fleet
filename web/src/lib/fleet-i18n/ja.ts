@@ -111,6 +111,8 @@ export const ja: FleetDictionary = {
   "fleet.tags.error.missing": "このタグは存在しません。",
   "fleet.tags.error.invalid": "タグの名前と色を確認してください。",
   "fleet.tags.error.unavailable": "タグを利用できません。再試行して最新の状態を読み込んでください。",
+  "fleet.settings.typeface.description": "このブラウザーの UI と Chat 本文のフォント。",
+  "settings.typeface.note.proportional": "必要に応じて読み込む中国語のプロポーショナルフォント。端末のフォントは変わりません。",
   "settings.typeface.note.maple": "CJK が正確に 2:1 の等幅書体。同梱ではなく取得します。",
   "settings.cjk.title": "CJK フォールバック",
   "settings.cjk.description": "選んだ書体が描けない文字を、UI とミラーの両方で描きます。",

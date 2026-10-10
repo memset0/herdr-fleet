@@ -1,11 +1,12 @@
 import {
   CJK_FALLBACK_UNSET_FAMILY,
   fleetWebfont,
+  FLEET_WEBFONTS,
   type FleetWebfont,
 } from "../../../fleet/ui/webfonts.ts";
 
 /**
- * The DOM half of the Fleet webfont seam: one `<link>` and one custom property, both idempotent.
+ * The DOM half of the Fleet webfont seam: independent idempotent UI/fallback links and one fallback property.
  *
  * Everything that decides WHICH face lives in `fleet/ui/webfonts.ts` as data; this file only writes
  * what it is handed. The two things it writes are the two things a font stack needs — the rules that
@@ -16,48 +17,36 @@ import {
 const LINK_ID = "fleet-webfont-stylesheet";
 const CJK_PROPERTY = "--font-cjk";
 
-/** The element is REUSED rather than recreated, so switching faces never drops the old one's rules
- *  mid-paint and never leaves two stylesheets fighting over one family name. */
-function link(): HTMLLinkElement | null {
-  const existing = document.getElementById(LINK_ID);
-  if (existing instanceof HTMLLinkElement) return existing;
-  return null;
-}
-
-/**
- * Make the document's webfont state match `font`: `null` removes both writes.
- *
- * Safe to call on every render — it compares before it writes, so a no-op costs two property reads.
- * Called only from an effect, so a document is a precondition rather than something to test for.
- */
-export function applyFleetWebfont(font: FleetWebfont | null): void {
-  const root = document.documentElement;
-  const current = link();
-
-  if (font === null) {
-    current?.remove();
-    // The stack keeps its shape and simply falls through: the unset name matches nothing.
-    root.style.setProperty(CJK_PROPERTY, `"${CJK_FALLBACK_UNSET_FAMILY}"`);
+/** Reuse each role's stylesheet and never disturb the other role. */
+function applyStylesheet(id: string, font: FleetWebfont | null): void {
+  const current = document.getElementById(id);
+  if (font === null) { current?.remove(); return; }
+  if (current instanceof HTMLLinkElement) {
+    if (current.href !== font.href) current.href = font.href;
     return;
   }
+  const element = document.createElement("link");
+  element.id = id;
+  element.rel = "stylesheet";
+  element.crossOrigin = "anonymous";
+  element.referrerPolicy = "no-referrer";
+  element.href = font.href;
+  document.head.append(element);
+}
 
-  if (current === null) {
-    const element = document.createElement("link");
-    element.id = LINK_ID;
-    element.rel = "stylesheet";
-    // The provider is third-party and the sheet is public: ask for it without credentials, and let
-    // the app's own `referrer-policy: no-referrer` keep the private origin out of the request.
-    element.crossOrigin = "anonymous";
-    element.href = font.href;
-    document.head.append(element);
-  } else if (current.href !== font.href) {
-    current.href = font.href;
-  }
+export function applyFleetWebfont(font: FleetWebfont | null): void {
+  applyStylesheet(LINK_ID, font);
+  document.documentElement.style.setProperty(CJK_PROPERTY, `"${font?.family ?? CJK_FALLBACK_UNSET_FAMILY}"`);
+}
 
-  const family = `"${font.family}"`;
-  if (root.style.getPropertyValue(CJK_PROPERTY) !== family) {
-    root.style.setProperty(CJK_PROPERTY, family);
-  }
+export function applyFleetUiWebfont(font: FleetWebfont | null): void {
+  applyStylesheet("fleet-ui-webfont-stylesheet", font);
+}
+
+/** The primary UI sheet, unless the fallback sheet already supplies that face. */
+export function neededUiWebfont(designFont: string, fallback: FleetWebfont | null): FleetWebfont | null {
+  const chosen = FLEET_WEBFONTS.find(font => font.uiKey === designFont) ?? null;
+  return chosen?.id === fallback?.id ? null : chosen;
 }
 
 /**
@@ -72,7 +61,7 @@ export function neededWebfont(input: {
   terminalFont: string;
 }): FleetWebfont | null {
   const chosen = fleetWebfont(input.cjkFallback);
-  if (chosen !== null) return chosen;
+  if (chosen?.monospace) return chosen;
   // The Latin pickers name the same family under a shorter key; both are the one catalog entry.
   if (input.designFont === "maple" || input.terminalFont === "maple") {
     return fleetWebfont("maple-mono-cn");

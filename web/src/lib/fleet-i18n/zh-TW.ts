@@ -111,6 +111,8 @@ export const zhTW: FleetDictionary = {
   "fleet.tags.error.missing": "此標籤已不存在。",
   "fleet.tags.error.invalid": "請檢查標籤名稱與顏色。",
   "fleet.tags.error.unavailable": "標籤暫時無法使用，請重試以載入最新狀態。",
+  "fleet.settings.typeface.description": "此瀏覽器的介面和 Chat 正文字體。",
+  "settings.typeface.note.proportional": "非等寬中文 UI 字體，按需載入；終端仍使用自己的字體。",
   "settings.typeface.note.maple": "中英寬度嚴格 2:1 的等寬字型。需要時才取得，不隨安裝散布。",
   "settings.cjk.title": "中日韓備援字型",
   "settings.cjk.description": "補齊所選字型畫不出的字，介面與終端機鏡像都會生效。",

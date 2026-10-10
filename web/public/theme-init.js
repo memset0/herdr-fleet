@@ -56,6 +56,8 @@
     // @font-face rules arrive with the stylesheet the app injects, so this face paints in the
     // stack's next entry for one frame rather than in a wrong one forever.
     else if (d.font === "maple") root.classList.add("font-maple");
+    else if (d.font === "source-han-sans") root.classList.add("font-source-han-sans");
+    else if (d.font === "lxgw-wenkai") root.classList.add("font-lxgw-wenkai");
   } catch {
     // A truncated write, a hand-edited blob, or private mode. The default face is the right answer
     // to all three, and it is the one already in the stylesheet.

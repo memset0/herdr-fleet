@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Choose proportional Chinese UI fonts for chrome and Chat.** Add Source Han Sans and LXGW WenKai with independent monospace fallback loading.
+
 ## [3.15.3] - 2026-10-10
 
 The prematurely pushed v3.15.2 tag points to an unversioned functional commit and was never deployed. This release records the completed density controls.

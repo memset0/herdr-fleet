@@ -111,6 +111,8 @@ export const zh: FleetDictionary = {
   "fleet.tags.error.missing": "此标签已不存在。",
   "fleet.tags.error.invalid": "请检查标签名称和颜色。",
   "fleet.tags.error.unavailable": "标签暂不可用，请重试以加载最新状态。",
+  "fleet.settings.typeface.description": "此浏览器的界面和 Chat 正文字体。",
+  "settings.typeface.note.proportional": "非等宽中文 UI 字体，按需加载；终端仍使用自己的字体。",
   "settings.typeface.note.maple": "中英宽度严格 2:1 的等宽字体。按需获取，不随安装分发。",
   "settings.cjk.title": "中日韩兜底字体",
   "settings.cjk.description": "补齐所选字体画不出的字，界面和终端镜像都生效。",

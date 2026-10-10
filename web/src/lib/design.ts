@@ -38,7 +38,7 @@ const STORAGE_KEY = "collie:design:v1";
 // `maple` is a DOWNSTREAM PORT and the one entry here that is not shipped: it is fetched from the
 // same provider as Fleet's CJK fallback, so choosing it costs a reader nothing they have not already
 // paid, and an unreachable provider leaves index.css's stack falling through to Aldrich.
-export const SHIPPED_FONTS = ["system", "grotesk", "aldrich", "maple"] as const;
+export const SHIPPED_FONTS = ["system", "grotesk", "aldrich", "maple", "source-han-sans", "lxgw-wenkai"] as const;
 
 export type ShippedFont = (typeof SHIPPED_FONTS)[number];
 
@@ -88,11 +88,14 @@ export function isDesignFont(value: string): boolean {
 export function fontClass(font: string): string {
   if (font === "system") return "font-system";
   if (font === "grotesk") return "font-grotesk";
+  if (font === "maple") return "font-maple";
+  if (font === "source-han-sans") return "font-source-han-sans";
+  if (font === "lxgw-wenkai") return "font-lxgw-wenkai";
   if (font.startsWith(OPERATOR_FONT_PREFIX)) return "font-operator";
   return "";
 }
 
-const FONT_CLASSES = ["font-system", "font-grotesk", "font-operator"] as const;
+const FONT_CLASSES = ["font-system", "font-grotesk", "font-maple", "font-source-han-sans", "font-lxgw-wenkai", "font-operator"] as const;
 
 function load(): DesignPrefs {
   try {

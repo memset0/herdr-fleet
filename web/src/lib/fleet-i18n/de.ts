@@ -111,6 +111,8 @@ export const de: FleetDictionary = {
   "fleet.tags.error.missing": "Dieser Tag existiert nicht mehr.",
   "fleet.tags.error.invalid": "Prüfe den Namen und die Farbe des Tags.",
   "fleet.tags.error.unavailable": "Tags sind nicht verfügbar. Lade den aktuellen Stand erneut.",
+  "fleet.settings.typeface.description": "Schrift für Oberfläche und Chat-Text in diesem Browser.",
+  "settings.typeface.note.proportional": "Proportionale chinesische Schrift, bei Bedarf geladen. Das Terminal behält seine Schrift.",
   "settings.typeface.note.maple": "Eine dicktengleiche Schrift mit echtem 2:1-CJK. Wird geladen, nicht mitgeliefert.",
   "settings.cjk.title": "CJK-Ersatzschrift",
   "settings.cjk.description": "Zeichnet, was die gewählten Schriften nicht können — in der Oberfläche und im Spiegel.",

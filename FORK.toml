@@ -141,7 +141,7 @@ contracts = [
   "explicit manual Pane fit served by the Gateway and each Host's own terminal service",
   "permanently expanded native navigation rails",
   "every pack member in both navigation rails",
-  "one fetched CJK fallback face",
+  "one fetched monospace CJK fallback plus an independently fetched proportional UI face",
   "one context menu and one centred prompt beside Collie's untouched sheets",
   "Host runtime-version evidence against the lead's own version, and page-build footer",
   "Fleet's own interface strings in a fork-owned dictionary that follows Collie's locale and falls back to English",
@@ -530,6 +530,7 @@ review = "every-upstream-sync"
 reviewed = "v1.19.0"
 paths = [
   "web/src/index.css#--font-cjk",
+  "DESIGN.md#Fleet exception: Chat prose",
   "web/src/hooks/use-display-prefs.ts#maple",
   "web/src/lib/design.ts#maple",
   "web/public/theme-init.js#font-maple",
@@ -544,7 +545,7 @@ verify = [
   "web/src/fonts.test.ts",
   "web/src/lib/fleet-i18n/fleet-i18n.test.tsx"
 ]
-reason = "configure-chat-density also delegates the Fleet-only Chat size floor to an owned model through the existing display preference hook; bare Collie retains its native floor. The fetched fallback needs its provider origin in style-src and font-src of the document's policy. Since the Collie 1.18.0 adoption that is no edit of Collie's: the Gateway appends the catalog's one origin to those two directives of the HTML documents it proxies (fleet/proxy.ts `widenFontPolicy`), script-src, connect-src, frames and base-uri untouched, so the origin can serve no code and the app can open no channel to it, and bridge/server.ts is upstream's text again. Browsers reach Collie only through the Gateway. A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and its strings are Fleet's own (web/src/lib/fleet-i18n). The Typeface card's Maple note is read through `ft` where upstream's note table cannot name a Fleet key."
+reason = "add-proportional-ui-webfonts extends existing UI preset, class, pre-paint and CSS ports with two proportional faces; the picker uses a bounded width and Fleet copy. Chat prose follows UI only through the owned shell, leaving code mono. Runtime reconciliation also honors the existing Maple class. configure-chat-density also delegates the Fleet-only Chat size floor to an owned model through the existing display preference hook; bare Collie retains its native floor. The fetched fallback needs its provider origin in style-src and font-src of the document's policy. Since the Collie 1.18.0 adoption that is no edit of Collie's: the Gateway appends the catalog's one origin to those two directives of the HTML documents it proxies (fleet/proxy.ts `widenFontPolicy`), script-src, connect-src, frames and base-uri untouched, so the origin can serve no code and the app can open no channel to it, and bridge/server.ts is upstream's text again. Browsers reach Collie only through the Gateway. A CJK face cannot be shipped — a full one is tens of megabytes paid by every install on every update — so it is fetched in unicode-range chunks and named in the stacks. Every stack lives in index.css and in one JS tail, so the fallback is one `var()` hole in each: unset it names a family nothing matches and the stacks are byte-for-byte what they were. The two pickers gain the same face as a Latin choice because it is the same download. Two paths this capability also touches are attributed elsewhere by this manifest, which allows one entry per path: the settings card's mount in web/src/routes/settings.tsx rides native-navigation-sidebars-port, and its strings are Fleet's own (web/src/lib/fleet-i18n). The Typeface card's Maple note is read through `ft` where upstream's note table cannot name a Fleet key."
 
 [[invasive]]
 id = "private-fact-guard-port"

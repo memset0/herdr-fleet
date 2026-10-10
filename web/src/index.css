@@ -867,6 +867,14 @@
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
+:root.font-source-han-sans {
+  --font-sans: "Noto Sans CJK", var(--font-cjk), ui-sans-serif, system-ui, sans-serif;
+  --default-font-family: var(--font-sans);
+}
+:root.font-lxgw-wenkai {
+  --font-sans: "LXGW WenKai", var(--font-cjk), ui-sans-serif, system-ui, sans-serif;
+  --default-font-family: var(--font-sans);
+}
 /* An operator's own face (theme.toml, ADR 0033). The FAMILY NAME is the one thing this file cannot
    know, so `lib/operator-fonts.ts` injects a <style> element that sets `--font-operator-family` and
    declares the matching `@font-face` — one validated name and one validated URL, nothing else. The

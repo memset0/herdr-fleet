@@ -422,6 +422,8 @@ taught to.** An operator's own face is subject to the same line: bringing a font
 chrome may wear, never what it may dress. **If you cannot tell whether a surface is chrome or
 content, it is content.** Full argument at the `@font-face` block in `index.css`.
 
+Fleet exception: Chat prose follows the selected UI font through the owned shell. Verbatim code, terminal, composer and content outside Chat retain their independent fonts. This supersedes the prose rule above only for Fleet Chat.
+
 ### Mono vs sans, inside chrome
 
 Within chrome the split is by **who authored the string**, not by how technical it looks.

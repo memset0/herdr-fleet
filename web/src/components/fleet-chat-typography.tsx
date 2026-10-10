@@ -46,7 +46,7 @@ export function FleetChatTypographyProvider({ children }: { children: ReactNode 
   const value = useMemo(() => {
     // SAFETY: this one custom property contains only a bounded numeric em value or the normal keyword.
     const style = { "--fleet-chat-letter-spacing": spacing === 0 ? "normal" : `${spacing}em` } as CSSProperties;
-    const classes: string[] = [];
+    const classes: string[] = ["[&_[data-slot=session-stream]_.font-content]:[font-family:var(--font-sans)]"];
     if (density.lineHeight !== null) {
       Object.assign(style, { "--fleet-chat-line-height": String(density.lineHeight) });
       classes.push("[&_[data-slot=session-stream]_*]:[line-height:var(--fleet-chat-line-height)]");

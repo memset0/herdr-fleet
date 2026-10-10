@@ -110,6 +110,8 @@ export const en = {
   "fleet.tags.error.missing": "This tag no longer exists.",
   "fleet.tags.error.invalid": "Check the tag name and color.",
   "fleet.tags.error.unavailable": "Tags are unavailable. Retry to load the current state.",
+  "fleet.settings.typeface.description": "The interface and Chat prose font for this browser.",
+  "settings.typeface.note.proportional": "Proportional Chinese UI font, loaded on demand. Terminal text keeps its own font.",
   "settings.typeface.note.maple": "A monospace face with true 2:1 CJK. Fetched, not shipped.",
   "settings.cjk.title": "CJK fallback",
   "settings.cjk.description": "Draws what your chosen faces do not, in chrome and in the mirror.",

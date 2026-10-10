@@ -111,6 +111,8 @@ export const es: FleetDictionary = {
   "fleet.tags.error.missing": "Esta etiqueta ya no existe.",
   "fleet.tags.error.invalid": "Revisa el nombre y el color de la etiqueta.",
   "fleet.tags.error.unavailable": "Las etiquetas no están disponibles. Reintenta para cargar el estado actual.",
+  "fleet.settings.typeface.description": "Fuente de la interfaz y del texto del chat en este navegador.",
+  "settings.typeface.note.proportional": "Fuente china proporcional, cargada bajo demanda. El terminal conserva su fuente.",
   "settings.typeface.note.maple": "Una monoespaciada con CJK 2:1 real. Se descarga, no viene incluida.",
   "settings.cjk.title": "Reserva CJK",
   "settings.cjk.description": "Dibuja lo que tus tipografías elegidas no dibujan, en la interfaz y en el espejo.",

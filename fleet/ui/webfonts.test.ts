@@ -52,6 +52,8 @@ describe("fleet webfont catalog", () => {
     expect(isCjkFallback(CJK_FALLBACK_NONE)).toBe(true);
     expect(isCjkFallback(DEFAULT_CJK_FALLBACK)).toBe(true);
     expect(isCjkFallback("https://elsewhere.example/font.css")).toBe(false);
+    expect(isCjkFallback("source-han-sans")).toBe(false);
+    expect(isCjkFallback("lxgw-wenkai")).toBe(false);
     expect(isCjkFallback("")).toBe(false);
   });
 });

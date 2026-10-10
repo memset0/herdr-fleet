@@ -111,6 +111,8 @@ export const ko: FleetDictionary = {
   "fleet.tags.error.missing": "이 태그는 더 이상 존재하지 않습니다.",
   "fleet.tags.error.invalid": "태그 이름과 색상을 확인하세요.",
   "fleet.tags.error.unavailable": "태그를 사용할 수 없습니다. 최신 상태를 불러오려면 다시 시도하세요.",
+  "fleet.settings.typeface.description": "이 브라우저의 UI 및 Chat 본문 글꼴입니다.",
+  "settings.typeface.note.proportional": "필요할 때 로드하는 중국어 비고정폭 글꼴입니다. 터미널 글꼴은 유지됩니다.",
   "settings.typeface.note.maple": "CJK가 정확히 2:1인 고정폭 서체입니다. 내장이 아니라 내려받습니다.",
   "settings.cjk.title": "CJK 대체 서체",
   "settings.cjk.description": "선택한 서체가 그리지 못하는 글자를 UI와 미러 양쪽에서 그립니다.",

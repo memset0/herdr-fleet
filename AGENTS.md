@@ -435,8 +435,10 @@ lint guard, the crew-wire guard, the `flake.lock` guard or the privacy guard.
   Aldrich (default), plus whatever the operator declared, applied pre-paint as a root class by
   `web/public/theme-init.js` and stored in `collie:design:v1` (`web/src/lib/design.ts`). CSS owns
   every stack; JavaScript only swaps a class name. What survives the reversal is the other half of
-  the rule: **the chosen face never dresses agent-authored text** — `font-mono` and `font-content`
-  are untouched by it ([ADR 0033](./.adr/0033-the-app-face-is-a-device-preference.md)).
+  the rule: **the chosen face never dresses verbatim monospace content**. The owner-requested Fleet
+  exception to [ADR 0033](./.adr/0033-the-app-face-is-a-device-preference.md) makes Chat prose use
+  the UI stack through the owned shell; code, terminal, composer and other content surfaces retain
+  their independent typography. Proportional CJK UI faces never become terminal fallback choices.
 - **The bundled Nerd Font subsets stay lazy and out of the precache** — `unicode-range` per face,
   version in the filename, cached first-use by `sw.ts`. Don't add them to `globPatterns`, don't
   widen a range, don't move subsetting into the build; the reasoning for each sits at the line that

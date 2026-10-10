@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { CJK_FALLBACK_NONE, fleetWebfont } from "../../../fleet/ui/webfonts.ts";
-import { applyFleetWebfont, neededWebfont } from "./fleet-webfonts";
+import { applyFleetWebfont, applyFleetUiWebfont, neededWebfont, neededUiWebfont } from "./fleet-webfonts";
 
 const MAPLE = fleetWebfont("maple-mono-cn")!;
 
@@ -95,4 +95,24 @@ describe("the default UI stack a running page resolves", () => {
     expect(html.indexOf("<style>")).toBeGreaterThan(-1);
     expect(html).not.toMatch(/<link[^>]+rel="stylesheet"/);
   });
+});
+
+
+it("loads UI and mono faces independently and deduplicates shared roles", () => {
+  const han = fleetWebfont("source-han-sans");
+  const wenkai = fleetWebfont("lxgw-wenkai");
+  expect(han).not.toBeNull();
+  expect(wenkai).not.toBeNull();
+  const fallback = neededWebfont({ cjkFallback: "maple-mono-cn", designFont: "source-han-sans", terminalFont: "system" });
+  applyFleetWebfont(fallback);
+  applyFleetUiWebfont(neededUiWebfont("source-han-sans", fallback));
+  expect(document.getElementById("fleet-ui-webfont-stylesheet")?.getAttribute("href")).toBe(han?.href);
+  expect(cjk()).toBe(`"${MAPLE.family}"`);
+  applyFleetUiWebfont(neededUiWebfont("lxgw-wenkai", fallback));
+  expect(document.getElementById("fleet-ui-webfont-stylesheet")?.getAttribute("href")).toBe(wenkai?.href);
+  expect(link()?.getAttribute("href")).toBe(MAPLE.href);
+  expect(neededUiWebfont("maple", fallback)).toBeNull();
+  applyFleetUiWebfont(neededUiWebfont("maple", fallback));
+  expect(document.getElementById("fleet-ui-webfont-stylesheet")).toBeNull();
+  expect(link()).not.toBeNull();
 });

@@ -8,7 +8,7 @@ import {
   isCjkFallback,
 } from "../../../fleet/ui/webfonts.ts";
 import { Card } from "@/components/ui/card";
-import { applyFleetWebfont, neededWebfont } from "@/lib/fleet-webfonts";
+import { applyFleetWebfont, applyFleetUiWebfont, neededWebfont, neededUiWebfont } from "@/lib/fleet-webfonts";
 import { useDesignPrefs } from "@/lib/design";
 import { useDisplayPrefs } from "@/hooks/use-display-prefs";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
@@ -35,13 +35,9 @@ export function FleetWebfonts() {
   const { prefs } = useDisplayPrefs();
 
   useEffect(() => {
-    applyFleetWebfont(
-      neededWebfont({
-        cjkFallback,
-        designFont: design.font,
-        terminalFont: prefs.fontFamily,
-      }),
-    );
+    const fallback = neededWebfont({ cjkFallback, designFont: design.font, terminalFont: prefs.fontFamily });
+    applyFleetWebfont(fallback);
+    applyFleetUiWebfont(neededUiWebfont(design.font, fallback));
   }, [cjkFallback, design.font, prefs.fontFamily]);
 
   return null;
@@ -97,7 +93,7 @@ export function FleetCjkFallbackControl() {
               className="min-h-11 appearance-none rounded-md border border-border/60 bg-background py-2 pl-3 pr-9 text-sm font-medium text-foreground"
             >
               <option value={CJK_FALLBACK_NONE}>{ft("settings.cjk.none")}</option>
-              {FLEET_WEBFONTS.map((font) => (
+              {FLEET_WEBFONTS.filter(font => font.monospace).map((font) => (
                 <option key={font.id} value={font.id}>
                   {font.label}
                 </option>

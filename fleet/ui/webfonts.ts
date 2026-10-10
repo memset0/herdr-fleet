@@ -24,6 +24,10 @@ import { jsonRecord, jsonStringField } from "../../bridge/stt/json.ts";
 export interface FleetWebfont {
   /** Stored value and select key. Kebab-case, stable across releases. */
   id: string;
+  /** A monospace face eligible for terminal CJK fallback. */
+  monospace: boolean;
+  /** The existing UI Typeface preference key. */
+  uiKey: string;
   /** The exact family name the provider's stylesheet declares. */
   family: string;
   /** The provider stylesheet, which declares that family in `unicode-range` chunks. */
@@ -35,7 +39,7 @@ export interface FleetWebfont {
 /**
  * The catalog, and it is CLOSED.
  *
- * One entry today. The value that reaches `--font-cjk` and the URL that reaches a `<link>` both come
+ * Monospace fallback and proportional UI entries. The value that reaches `--font-cjk` and the URL that reaches a `<link>` both come
  * from here and never from stored text, so a hand-edited preference can name a face this list does
  * not have and get the default instead of a family name or an origin of its own choosing.
  *
@@ -46,9 +50,23 @@ export interface FleetWebfont {
 export const FLEET_WEBFONTS: readonly FleetWebfont[] = [
   {
     id: "maple-mono-cn",
+    monospace: true,
+    uiKey: "maple",
     family: "Maple Mono NF CN",
     href: "https://fontsapi.zeoseven.com/442/main/result.css",
     label: "Maple Mono NF CN",
+  },
+  {
+    id: "source-han-sans", uiKey: "source-han-sans", monospace: false,
+    family: "Noto Sans CJK",
+    href: "https://fontsapi.zeoseven.com/69/main/result.css",
+    label: "思源黑体 · Source Han Sans",
+  },
+  {
+    id: "lxgw-wenkai", uiKey: "lxgw-wenkai", monospace: false,
+    family: "LXGW WenKai",
+    href: "https://fontsapi.zeoseven.com/292/main/result.css",
+    label: "霞鹜文楷 · LXGW WenKai",
   },
 ];
 
@@ -77,7 +95,7 @@ export function fleetWebfont(id: string): FleetWebfont | null {
 
 /** Total over any string: a known id, or `none`. Anything else is not a choice this app offers. */
 export function isCjkFallback(value: string): boolean {
-  return value === CJK_FALLBACK_NONE || fleetWebfont(value) !== null;
+  return value === CJK_FALLBACK_NONE || fleetWebfont(value)?.monospace === true;
 }
 
 export function parseCjkFallback(raw: string | null): string {
