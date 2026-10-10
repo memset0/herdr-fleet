@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Packaging
+
+- **Reuse one labelled numeric settings row for display controls.** Preserve bounded stepping, reset and native button hit areas.
+
 ## [3.15.1] - 2026-10-10
 
 ### Added

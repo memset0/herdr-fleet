@@ -62,6 +62,7 @@ paths = [
   "scripts/herdr-fleet.sh",
   "web/src/components/native-agent-card.tsx",
   "web/src/components/fleet-chat-typography.tsx",
+  "web/src/components/ui/numeric-setting-row.tsx",
   "web/src/components/fleet-chat-typography.test.tsx",
   "web/src/components/native-agent-rail.test.tsx",
   "web/src/components/native-agent-rail.tsx",
