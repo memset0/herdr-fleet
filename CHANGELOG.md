@@ -19,10 +19,18 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.15.0] - 2026-10-10
+
+**Every member redeploys, lead first; no operator configuration changes.** This release adopts Collie
+1.19.0, whose New page replaces the new-space sheet; a member still on 3.14.0 answers that page as an
+older Collie until it is levelled. Behind the Gateway every browser is the one paired device, so
+launchers added from the New page are shared by every admitted operator and survive restarts, and
+one-off command runs are on for that operator, who can already type into any Pane.
+
 ### Changed
 
-- **Adopted Collie 1.19.0.** The New page replaces the new-space sheet and starts agents, launcher rows, a shell or a one-off command by id; launchers added from a phone, a recent-command history, worktree folders, model labels and an editable Keys pad arrive from upstream beside the fork's rails, mic-and-send split and terminal surface.
-- **A Host row's New space opens Collie's New page on that machine.** The deleted new-space sheet's fixed-Host port is retired; the page's own `?machine=` preselects the Host (one invasive path fewer).
+- **Adopted Collie 1.19.0.** The New page replaces the new-space sheet and starts agents, launcher rows, a shell or a one-off command by id; launchers added from a phone, a recent-command history, worktree folders, model labels and an editable Keys pad arrive from upstream beside the fork's rails, mic-and-send split and terminal surface. ([c6767b1](https://github.com/memset0/herdr-fleet/commit/c6767b1))
+- **A Host row's New space opens Collie's New page on that machine.** The deleted new-space sheet's fixed-Host port is retired; the page's own `?machine=` preselects the Host (one invasive path fewer). ([4eb4f07](https://github.com/memset0/herdr-fleet/commit/4eb4f07))
 
 ## [3.14.0] - 2026-10-09
 
