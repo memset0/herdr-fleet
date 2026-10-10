@@ -6,6 +6,8 @@
 ## 2. Delivery
 
 - [x] 2.1 Verify both fonts and Chinese Chat prose at phone width; run focused tests, types, scoped lint, fork/privacy and strict OpenSpec validation.
-- [ ] 2.2 Publish a frontend PATCH, deploy and verify the served version before syncing and archiving this change.
+- [x] 2.2 Publish a frontend PATCH, deploy and verify the served version before syncing and archiving this change.
 
 Verification: 7 catalog cases and 62 focused DOM/picker/pre-paint/font/locale cases passed. Both type checks, scoped lint and fork/privacy checks passed. At a 390px touch viewport, both provider faces loaded, browser platform-font evidence confirmed real glyph rendering, Chat prose followed UI while code/mirror/draft stayed mono, density persisted and no horizontal overflow occurred.
+
+Delivered as frontend PATCH 3.15.4; published tag and served bundle verified before archive.
