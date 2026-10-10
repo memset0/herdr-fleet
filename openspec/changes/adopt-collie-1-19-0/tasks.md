@@ -30,8 +30,8 @@
 
 ## 6. Verify
 
-- [ ] 6.1 Push `main` unreleased (`SKIP_TESTS=1`); run the full suites against that commit on the designated member; classify every failure against the 3.14.0 baseline
-- [ ] 6.2 Headless Chromium on a local Fleet build: `/new` from a Host row and the dashboard shell
+- [x] 6.1 Push `main` unreleased (`SKIP_TESTS=1`); run the full suites against that commit on the designated member; classify every failure against the 3.14.0 baseline
+- [x] 6.2 Headless Chromium on a local Fleet build: `/new` from a Host row and the dashboard shell
 
 ## 7. Release and level
 
@@ -41,3 +41,16 @@
 ## 8. Archive
 
 - [ ] 8.1 Sync specs, validate, archive, commit and push
+
+## Phase record
+
+- 6.1 Full suites on the designated member at `0862a75d` (not yet pushed; reached by bundle), Bun 1.4.2:
+  both typechecks, full lint, `test:fork`, privacy, version, fleet 720 / 0, cli 1956 / 0, scripts
+  281 / 0, crew 66 / 0, bridge file by file 174 files 5350 / 0, every shell suite, build. Web vitest
+  408 files: 20964 pass / 32 expected fail / 44 todo, 2 failed and 1 unhandled error, all three in
+  files this adoption did not change and all passing in isolation twice: `detail-offline` (the known
+  load-sensitive timeout), the opencode picker corpus case (5 s budget, 8.4 s under load) and a
+  fake IndexedDB timer firing after `fleet-version-loader.test.ts`'s teardown. Browser tier not run.
+- 6.2 A local Fleet build served against a sandbox Collie 1.19 bridge: the dashboard inside both rails,
+  `/new` at desktop and phone widths, a Host row's pointer menu offering New space, its navigation to
+  `/new`, and a shell started from the page landing on its new Pane.
