@@ -19,13 +19,17 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.15.3] - 2026-10-10
+
+The prematurely pushed v3.15.2 tag points to an unversioned functional commit and was never deployed. This release records the completed density controls.
+
 ### Changed
 
-- **Tune Chat typography and content spacing independently.** Allow 10px text, tighter letter spacing, line height, block padding and gaps with individual resets.
+- **Tune Chat typography and content spacing independently.** Allow 10px text, tighter letter spacing, line height, block padding and gaps with individual resets. ([7c7a2afd](https://github.com/memset0/herdr-fleet/commit/7c7a2afd))
 
 ### Packaging
 
-- **Reuse one labelled numeric settings row for display controls.** Preserve bounded stepping, reset and native button hit areas.
+- **Reuse one labelled numeric settings row for display controls.** Preserve bounded stepping, reset and native button hit areas. ([617f41b3](https://github.com/memset0/herdr-fleet/commit/617f41b3))
 
 ## [3.15.1] - 2026-10-10
 
