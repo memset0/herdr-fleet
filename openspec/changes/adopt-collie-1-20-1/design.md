@@ -55,6 +55,12 @@ new upstream logic — rejected); wrapping the level source at the composer's ca
 never hears speech (no new path, but the bars' speaking ink and the reduced-motion display go flat —
 rejected); a Fleet setting (the owner decided off; no setting).
 
+OK stands on the record control. Upstream's bar puts OK at the row's trailing end, where upstream's
+microphone is; here that end is Send, one control further out. The composer passes the bar a padding
+class (its existing `padClassName` prop) that insets the row's trailing end by Send's width and the
+box's gap, so OK lands on the record control and the tap that started a clip finishes it — no new
+upstream path, and upstream's browser case for OK's spot passes unchanged.
+
 Interactions: hands-free decides what happens to a transcript after the clip ends and is untouched —
 with hands-free on, OK finishes and the transcript is sent as upstream sends it. The fork's microphone
 keyboard commands (`decideMicCommand`) start, finish and discard through the composer's recorder, so
@@ -102,6 +108,10 @@ protected data, and the worker has no `/api/` route. `fleet-public-authenticatio
   front; the fix belongs upstream, and the phone engine avoids it. Left for the owner.
 
 ### 4. Overlaps
+
+- The main script crossed the service worker's 2 MiB precache limit (2.11 MB), which fails the
+  production build. The fork-owned Pane route now loads the terminal surface and its emulator lazily
+  in their own chunk (still precached), taking the main script to 1.76 MB without an upstream edit.
 
 - Pairing names (1.20.0) refuse control and invisible characters; the Gateway's label is plain ASCII.
 - The removed worktree routes and web pieces have no fork caller.
