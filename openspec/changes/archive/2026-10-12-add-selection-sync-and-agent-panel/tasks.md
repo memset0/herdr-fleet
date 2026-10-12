@@ -13,4 +13,4 @@
 
 - [x] 3.1 Run both typechecks, lint, focused and broader suites, and build; resolve regressions and verify a mobile browser preview.
 - [x] 3.2 Align docs, CHANGELOG and FORK.toml; pass boundary and public-tree audits and strict OpenSpec validation before archive.
-- [ ] 3.3 Assess release axis and verify the lead deployment through the documented product flow; record deployment evidence before automatic sync/archive and exact commit/push.
+- [x] 3.3 Assess release axis and verify the lead deployment through the documented product flow; record deployment evidence before automatic sync/archive and exact commit/push.

@@ -9,7 +9,7 @@ routing, polling, and backend behavior.
 ## Requirements
 
 ### Requirement: Agent favorites use stable browser-local identity
-Herdr Fleet SHALL keep no favourite state of its own. A "favourite" is the adopted Collie's own
+For native Agent-list and Agent-rail pin entrypoints, Herdr Fleet SHALL keep no favourite state of its own. A "favourite" is the adopted Collie's own
 per-device pin: the star a row carries reads and writes Collie's pin store, so pinning from the star
 and pinning from Collie's own hold or actions sheet are one mechanism with two entry points. Bounds, browser locality and native entrypoints remain Collie's. For stable terminal identities, pin matching SHALL delegate to the Fleet terminal-binding contract and remain independent of layout and workspace names. Legacy rows SHALL migrate only under that contract; unsupported rows retain their existing place behavior.
 

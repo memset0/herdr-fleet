@@ -33,7 +33,7 @@ Fleet SHALL resolve durable references to their current pane locations. Missing,
 - **THEN** the link resolves to that terminal's current native pane route
 
 ### Requirement: Consumers share association semantics without sharing storage scope
-Fleet SHALL provide idempotent attach, detach and lookup behavior through one binding interface, with namespaced relation kinds. Favorites SHALL remain browser-local; tags and Todoist relations SHALL remain lead-persisted. Existing pin entrypoints SHALL continue to share one pin store.
+Fleet SHALL provide idempotent attach, detach and lookup behavior through one binding interface, with namespaced relation kinds. Native favorites SHALL remain browser-local; tags and Todoist relations SHALL remain lead-persisted. Existing pin entrypoints SHALL continue to share one pin store.
 
 #### Scenario: An association is attached twice
 - **WHEN** a consumer repeats the same terminal/resource attachment
