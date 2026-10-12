@@ -16,14 +16,14 @@ Collie gives the two controls one slot and draws the microphone only while the b
 allows exactly one dictation per message; this is where Herdr Fleet departs from it.
 
 **Send is refused while a clip is running**, on the button and on `Ctrl`/`Cmd`+`Enter` alike — the
-message would go without the words still being spoken into it. Stop the clip, or discard it with the
-`✕` on the recording strip, and Send comes back.
+message would go without the words still being spoken into it. Finish the clip with OK, or throw it
+away with the bin, and Send comes back.
 
 While you speak, a recorder covers the whole composer, belt and box, and adds no height, so the
 screen above never moves. **OK** stands where the mic was and finishes the clip. The **bin** at the far
-end throws it away, and still cancels while the clip is being transcribed. Once you have spoken, two
-seconds of quiet finish the clip for you; a ring closes round OK to show it, and speaking again
-starts the count over. Before the first word nothing finishes it on its own.
+end throws it away, and still cancels while the clip is being transcribed. Upstream Collie finishes
+the clip after two seconds of quiet once you have spoken; **Herdr Fleet does not**: a pause to think
+never ends a clip, no countdown ring is drawn, and only OK, the bin or the recording limit end it.
 
 **It does not exist until you set up a provider.** Run `collie stt setup`, or set up Whistle (below).
 No button is drawn, no audio leaves the phone, no credential is held, no child process runs. Absent,

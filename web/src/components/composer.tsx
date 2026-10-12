@@ -2181,6 +2181,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               one the hand cannot go to without looking first. */}
           {micShown && (
             <Button
+              // The takeover hands focus back to the first `composer-primary` in the row when it goes
+              // (above), and a clip is started here, so here is where it comes back: Send may be
+              // refusing an empty box and could not take it.
+              data-slot="composer-primary"
               type="button"
               size="icon"
               // `outline`, not `default`: Send is the row's primary action now, in every state. A

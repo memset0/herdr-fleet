@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 
 import type { LevelSource } from "@/lib/audio-meter";
 import { createSpeechEndpoint } from "@/lib/speech-endpoint";
+import { fleetSpeechEndpoint } from "@/lib/fleet-voice-finish";
 import { BAR_REST } from "@/lib/voice-levels";
 
 // THE VOICE TAKEOVER'S PER-FRAME LOOP. It reads the level source once per animation frame, feeds the
@@ -80,7 +81,8 @@ export function useVoiceLevels({ source, mode, count, reduced, onFinish }: Voice
     painted.current = true;
     if (source === null) return;
 
-    const endpoint = createSpeechEndpoint();
+    // DOWNSTREAM PORT (FORK.toml composer-voice-rank-port): a Fleet build never finishes on silence.
+    const endpoint = fleetSpeechEndpoint(createSpeechEndpoint());
     const heights = new Float32Array(count);
     let word: LevelWord | null = null;
     let lastRing = -1;

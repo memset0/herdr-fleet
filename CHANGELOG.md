@@ -22,6 +22,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Changed
 
 - **Adopted Collie 1.20.1.** Settings → Voice with host Whistle and on-phone speech, the recorder bar over the composer, pi and OmO question buttons, Grok resume following, copy icons and update-card retries arrive from upstream beside the fork's rails, record control beside Send and terminal surface.
+- **Dictation never ends on silence in Herdr Fleet.** Upstream's recorder bar covers the composer while a clip runs, but its two-second quiet countdown is off: a clip ends only on OK, the bin or the recording limit, and closing the bar returns focus to the record control beside Send.
 
 ### Fixed
 
