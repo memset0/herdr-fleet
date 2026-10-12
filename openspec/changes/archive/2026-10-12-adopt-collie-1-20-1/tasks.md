@@ -35,8 +35,8 @@
 
 ## 7. Release and level
 
-- [ ] 7.1 Read the remote's newest tag; cut `chore(release): 3.16.0`; annotated tag `v3.16.0`, pushed by name
-- [ ] 7.2 Level the lead, then each member; verify the census, the Gateway path (snapshot, a write on the lead and a member, Settings → Voice, pairing refusal); close the throwaway workspaces
+- [x] 7.1 Read the remote's newest tag; cut `chore(release): 3.16.0`; annotated tag `v3.16.0`, pushed by name
+- [x] 7.2 Level the lead, then each member; verify the census, the Gateway path (snapshot, a write on the lead and a member, Settings → Voice, pairing refusal); close the throwaway workspaces
 
 ## 8. Archive
 
@@ -57,3 +57,15 @@
   the composer with OK on the record control's exact centre and the bin at the far end; after speech
   and 4.5 s of quiet the clip is still listening, the ring is hidden and OK is live; Settings → Voice
   and Host speech render inside the Fleet shell, the setup line naming the Gateway's device label.
+- 7.1 `chore(release): 3.16.0` is `ef21707d`, annotated tag `v3.16.0` pushed by name; no GitHub Release,
+  no upstream tag on the remote. `origin/main` had moved to 3.15.7 during the work and was integrated
+  by an ordinary merge before the release.
+- 7.2 The lead was levelled from the release commit; the designated member through its own node
+  controller's tagged update; the personal-computer member updated itself. The lead's census reports
+  all three on `3.16.0`; the fourth member was not touched. Through the public Gateway with a temporary
+  session (logged out afterwards, `401` after): snapshot `200` with all three hosts; a shell started on
+  the lead and on the designated member took a write and echoed it back, and both were closed; Settings →
+  Voice and `/api/stt/host` answer `200` (host speech left as configured); the engine's wasm, glue and
+  worker arrive with their own types and the worker policy, and redirect to login without a session;
+  the document's policy carries `worker-src 'self'` and the font origin on style/font only;
+  `POST /api/pair` answers `403` with the Gateway's own body.

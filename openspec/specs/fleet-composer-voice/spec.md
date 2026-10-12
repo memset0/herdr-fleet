@@ -21,9 +21,11 @@ of it, and the attach control on the field's side of the record control, so the 
 thumb reaches for stay together at the box's outer edge in either hand. The tab order SHALL be the
 one upstream's layout gives, unchanged by the mirroring.
 
-Both controls MUST keep the behavior they had as one shared slot: the record control starts a clip,
-ends a clip and carries the bridge's own reason when the provider cannot serve; the send control
-sends, and answers the destructive-input and override confirmations where those are armed.
+Both controls MUST keep the behavior they had as one shared slot: the record control starts a clip
+and carries the bridge's own reason when the provider cannot serve; the send control sends, and
+answers the destructive-input and override confirmations where those are armed. Since Collie 1.20 a
+running clip is shown by the adopted recorder bar, which covers the composer and stands its finish
+control on the record control's own place, so the clip is ended from the spot that started it.
 
 #### Scenario: Operator has written a draft and wants to dictate the next clause
 - **WHEN** the draft holds text and the bridge publishes a usable provider
@@ -95,3 +97,32 @@ record control no longer stands in front of the send control on an empty draft.
 #### Scenario: The composer is armed for direct typing
 - **WHEN** the composer is typing into the terminal directly
 - **THEN** the trailing control remains the one that ends that mode, and the draft's contents do not decide whether it may be activated
+
+### Requirement: A clip ends only when the operator ends it
+While a clip is being recorded, Herdr Fleet SHALL draw the adopted Collie's recorder bar over the
+composer, with its finish control standing where the record control stood. In a Fleet build the
+recorder MUST NOT finish a clip because the operator stopped speaking: no quiet countdown SHALL be
+drawn and no silence SHALL stop or transcribe the clip. A clip SHALL end only when the operator
+activates the finish control (or a binding that does the same), discards the clip, or the adopted
+Collie's own recording limit is reached.
+
+Upstream finishes a clip after two seconds of quiet once speech was heard. The operator dictates in
+turns and pauses to think mid-sentence, so a pause that sends half a thought for transcription is
+the failure this requirement removes. What happens to a finished clip's transcript, hands-free
+sending included, is the adopted Collie's and is unchanged.
+
+#### Scenario: The operator pauses mid-dictation
+- **WHEN** a clip is recording in a Fleet build, speech has been heard, and the room stays quiet for longer than upstream's countdown
+- **THEN** the clip keeps recording, no countdown is drawn, and nothing is transcribed
+
+#### Scenario: The operator finishes the clip
+- **WHEN** a clip is recording in a Fleet build and the operator activates the finish control
+- **THEN** the clip stops and is transcribed exactly as the adopted Collie does
+
+#### Scenario: The operator discards the clip
+- **WHEN** a clip is recording in a Fleet build and the operator activates the discard control
+- **THEN** the clip is thrown away and nothing is transcribed
+
+#### Scenario: A bundle built without the Fleet statement
+- **WHEN** the web application is built without the Fleet build statement
+- **THEN** the recorder bar finishes on silence exactly as the adopted Collie does
