@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { rosterEntryKey } from "../../../fleet/ui/pane-roster.ts";
 import { paneRosterFrom, pinnedAgents, togglePanePin } from "@/lib/fleet-roster";
 import { ManagePaneTags } from "@/components/fleet-pane-tags";
-import { NativeAgentCard } from "@/components/native-agent-card";
+import { NativeAgentCard, type NativeAgentCardProps } from "@/components/native-agent-card";
 import { SectionHeader } from "@/components/section-header";
 import { StatusSummaryLine } from "@/components/status-counts";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,8 @@ interface NativeAgentRailProps {
   /** `rosterEntryKey` of the Pane the route is showing, or null on any other route. */
   currentKey?: string | null;
   onOpen: (agent: AgentView) => void;
+  /** Panel gestures and actions reuse the same ordered rows. */
+  rowPresentation?: (agent: AgentView) => Pick<NativeAgentCardProps, "actions" | "unavailable" | "interaction" | "current">;
   /**
    * Mark these unseen panes seen and resolve once the route data has revalidated. Present, the rail
    * offers its mark-all-seen control while any listed pane is unseen; absent, it offers none.
@@ -83,6 +85,7 @@ export function NativeAgentRail({
   currentKey = null,
   onOpen,
   onMarkAllSeen,
+  rowPresentation,
 }: NativeAgentRailProps) {
   useFleetLocale();
   const pins = usePins();
@@ -172,6 +175,7 @@ export function NativeAgentRail({
         }}
         onOpen={() => onOpen(agent)}
         {...(age ? { age } : {})}
+        {...rowPresentation?.(agent)}
       />
     );
   };

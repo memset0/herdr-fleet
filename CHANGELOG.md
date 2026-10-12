@@ -11,19 +11,21 @@ number. The format follows [Keep a Changelog](https://keepachangelog.com/) and t
 [Semantic Versioning](https://semver.org/) on the axis stated in [`AGENTS.md`](./AGENTS.md) →
 *Versioning and releases*.
 
-Work that has landed but is not released yet collects under `## [Unreleased]
-
-## [3.15.6] - 2026-10-12
-
-Lead-only release: rebuild and restart Fleet on the lead; members need no redeployment.
-
-`; the release commit
+Work that has landed but is not released yet collects under `## [Unreleased]`; the release commit
 renames that heading to `## [x.y.z] - YYYY-MM-DD`, appends each line's short commit hash, and opens
 an empty one above it. The newest *numbered* `## [x.y.z]` heading, which the Unreleased heading is
 not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json`
 (enforced by `scripts/check-version.sh`).
 
 ## [Unreleased]
+
+### Fixed
+
+- **Align touch panel lists, gestures, layout and selection sharing.** Reuse grouped Agent rows, carry long-press drags, fit the grid to content and publish ordinary Pane choices safely.
+
+## [3.15.6] - 2026-10-12
+
+Lead-only release: rebuild and restart Fleet on the lead; members need no redeployment.
 
 ### Added
 

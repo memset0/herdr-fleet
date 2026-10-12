@@ -1,5 +1,5 @@
 import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { useLocation, useParams } from "react-router";
+import { useLocation, useMatch } from "react-router";
 import { Link2, Link2Off, LoaderCircle } from "lucide-react";
 import { terminalReference } from "../../../fleet/bindings/identity.ts";
 import { createViewClient, type ViewClient, type ViewClientState } from "@/lib/fleet-view-state";
@@ -20,7 +20,7 @@ export function useFleetView() { return useContext(ViewContext); }
 /** Owns the optional stream across normal routes and the fullscreen panel. */
 export function FleetViewExperience({ data, children }: { data: HomeData; children: ReactNode }) {
   const location = useLocation();
-  const { paneId } = useParams();
+  const paneId = useMatch("/pane/:paneId/*")?.params.paneId;
   const nav = useNav();
   const client = useMemo(() => createViewClient(), []);
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot);
@@ -61,6 +61,8 @@ export function FleetViewExperience({ data, children }: { data: HomeData; childr
       await Promise.all([client.refresh(), load()]);
       if (active === controller) active = null;
       if (!stopped) timer = setTimeout(() => void poll(), 1500);
+      // Visibility may return while the aborted request is still unwinding.
+      if (!stopped && !document.hidden && controller.signal.aborted) { clearTimeout(timer); void poll(); }
     };
     const visibility = () => {
       clearTimeout(timer);
@@ -75,7 +77,7 @@ export function FleetViewExperience({ data, children }: { data: HomeData; childr
   useEffect(() => {
     if (!state.joined || !state.available) { followed.current = null; return; }
     const snapshot = state.snapshot;
-    if (!state.available || state.busy || !snapshot?.selection) return;
+    if (!state.available || client.getSnapshot().busy || !snapshot?.selection) return;
     const stamp = `${snapshot.generation}:${snapshot.revision}`;
     const resolved = resolvePanelTerminal(snapshot.selection, inventory);
     if (resolved.status !== "resolved") { followed.current = null; return; }

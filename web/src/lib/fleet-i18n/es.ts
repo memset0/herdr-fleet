@@ -19,7 +19,7 @@ export const es: FleetDictionary = {
   "fleet.panel.unavailable": "Unavailable",
   "fleet.panel.conflict": "This slot changed elsewhere. Try again.",
   "fleet.panel.chooseSlot": "Tap a slot to place this Agent.",
-  "fleet.panel.hint": "Hold the handle to drag, or select it then tap a slot.",
+  "fleet.panel.hint": "Hold an Agent card to drag, or select its handle then tap a slot.",
   "fleet.panel.cancel": "Cancel",
   "fleet.panel.allAgents": "All Agents · {count}",
   "fleet.panel.assign": "Place {name} in a slot",

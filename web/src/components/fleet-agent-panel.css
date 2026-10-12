@@ -1,5 +1,5 @@
-.fleet-panel-body { display: flex; flex: 1; min-height: 0; flex-direction: column; }
-.fleet-panel-grid-region { flex: 0 0 50%; min-height: 0; overflow: auto; padding: 0.5rem 0.75rem; overscroll-behavior: contain; }
+.fleet-panel-body { display: flex; flex: 1; min-height: 0; flex-direction: column; container-type: size; }
+.fleet-panel-grid-region { flex: 0 1 auto; max-height: calc(100% - min(16rem, 40%)); min-height: 0; overflow: auto; padding: 0.5rem 0.75rem; overscroll-behavior: contain; }
 .fleet-panel-grid { display: grid; grid-template-columns: repeat(var(--panel-columns), minmax(4rem, 1fr)); gap: 0.5rem; }
 .fleet-panel-slot { container: panel-slot / inline-size; }
 .fleet-panel-tile-meta { display: none; }
@@ -11,7 +11,7 @@
 .fleet-panel-queue { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-inline: 0.75rem; }
 @media (orientation: landscape) {
   .fleet-panel-body { flex-direction: row; }
-  .fleet-panel-grid-region { flex-basis: 55%; min-width: 0; }
+  .fleet-panel-grid-region { flex: 0 0 auto; max-height: none; width: calc((100cqh - 1rem - (var(--panel-rows) - 1) * 0.5rem) / var(--panel-rows) * var(--panel-columns) + (var(--panel-columns) - 1) * 0.5rem + 1.5rem); max-width: calc(100% - min(20rem, 40%)); min-width: 0; }
   .fleet-panel-queue { border-left: 1px solid var(--rule); }
 }
 .fleet-panel-feedback { pointer-events: none; color: var(--status-idle); background: color-mix(in oklch, currentColor 18%, transparent); animation: fleet-panel-flash 1.4s ease-out both; }
@@ -24,3 +24,6 @@
 @media (prefers-reduced-motion: reduce) {
   .fleet-panel-feedback, .fleet-panel-check { animation: none; }
 }
+
+.fleet-panel-queue [data-slot="native-agent-card"] { user-select: none; -webkit-touch-callout: none; }
+.fleet-panel-drag-preview { position: fixed; z-index: 100; pointer-events: none; transform: translate(-50%, -120%); display: flex; align-items: center; gap: .5rem; max-width: 15rem; padding: .75rem; border: 1px solid var(--primary); border-radius: .5rem; background: var(--card); color: var(--foreground); box-shadow: 0 4px 16px #0004; font-size: .875rem; }
