@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.16.1] - 2026-10-12
+
+Lead-only frontend release: rebuild Fleet on the lead; members need no redeployment.
+
 ### Fixed
 
-- **Keep panel Agents unique and reserve dragging for handles.** Filter merged member responses, preserve native grouped time order, and start touch dragging immediately from the six-dot handle.
+- **Keep panel Agents unique and reserve dragging for handles.** Filter merged member responses, preserve native grouped time order, and start touch dragging immediately from the six-dot handle. ([ffc06a3e7](https://github.com/memset0/herdr-fleet/commit/ffc06a3e7))
 
 ## [3.16.0] - 2026-10-12
 
