@@ -19,15 +19,19 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.16.0] - 2026-10-12
+
+Minor release adopting Collie 1.20.1: redeploy the lead first, then every member. No configuration key, enrolment step or state file changes. Whistle and the phone speech engine stay off until an operator chooses them in Settings → Voice.
+
 ### Changed
 
-- **Adopted Collie 1.20.1.** Settings → Voice with host Whistle and on-phone speech, the recorder bar over the composer, pi and OmO question buttons, Grok resume following, copy icons and update-card retries arrive from upstream beside the fork's rails, record control beside Send and terminal surface.
-- **Dictation never ends on silence in Herdr Fleet.** Upstream's recorder bar covers the composer while a clip runs, but its two-second quiet countdown is off: a clip ends only on OK, the bin or the recording limit, and closing the bar returns focus to the record control beside Send. Its OK stands on the record control, so the tap that started a clip finishes it.
+- **Adopted Collie 1.20.1.** Settings → Voice with host Whistle and on-phone speech, the recorder bar over the composer, pi and OmO question buttons, Grok resume following, copy icons and update-card retries arrive from upstream beside the fork's rails, record control beside Send and terminal surface. ([40d707647](https://github.com/memset0/herdr-fleet/commit/40d707647))
+- **Dictation never ends on silence in Herdr Fleet.** Upstream's recorder bar covers the composer while a clip runs, but its two-second quiet countdown is off: a clip ends only on OK, the bin or the recording limit, and closing the bar returns focus to the record control beside Send. Its OK stands on the record control, so the tap that started a clip finishes it. ([fa6d63dc6](https://github.com/memset0/herdr-fleet/commit/fa6d63dc6)), ([8ed039527](https://github.com/memset0/herdr-fleet/commit/8ed039527))
 
 ### Fixed
 
-- **The app's main bundle fits the offline precache again.** The terminal surface and its emulator load on first use in a chunk of their own, so the main script stays under the service worker's 2 MiB precache limit that Collie 1.20's speech code pushed it past.
-- **Microphone keyboard commands follow the phone engine and its failed clip.** An on-phone engine counts as available, and every command refuses while a clip the phone could not transcribe waits for Send to host or the bin.
+- **The app's main bundle fits the offline precache again.** The terminal surface and its emulator load on first use in a chunk of their own, so the main script stays under the service worker's 2 MiB precache limit that Collie 1.20's speech code pushed it past. ([8ed039527](https://github.com/memset0/herdr-fleet/commit/8ed039527))
+- **Microphone keyboard commands follow the phone engine and its failed clip.** An on-phone engine counts as available, and every command refuses while a clip the phone could not transcribe waits for Send to host or the bin. ([40d707647](https://github.com/memset0/herdr-fleet/commit/40d707647))
 
 ## [3.15.7] - 2026-10-12
 
