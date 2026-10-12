@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.15.7] - 2026-10-12
+
+Lead-only frontend release: rebuild Fleet on the lead; members need no redeployment or restart.
+
 ### Fixed
 
-- **Align touch panel lists, gestures, layout and selection sharing.** Reuse grouped Agent rows, carry long-press drags, fit the grid to content and publish ordinary Pane choices safely.
+- **Align touch panel lists, gestures, layout and selection sharing.** Reuse grouped Agent rows, carry long-press drags, fit the grid to content and publish ordinary Pane choices safely. ([0880b235f](https://github.com/memset0/herdr-fleet/commit/0880b235f))
 
 ## [3.15.6] - 2026-10-12
 
