@@ -11,7 +11,13 @@ number. The format follows [Keep a Changelog](https://keepachangelog.com/) and t
 [Semantic Versioning](https://semver.org/) on the axis stated in [`AGENTS.md`](./AGENTS.md) →
 *Versioning and releases*.
 
-Work that has landed but is not released yet collects under `## [Unreleased]`; the release commit
+Work that has landed but is not released yet collects under `## [Unreleased]
+
+## [3.15.6] - 2026-10-12
+
+Lead-only release: rebuild and restart Fleet on the lead; members need no redeployment.
+
+`; the release commit
 renames that heading to `## [x.y.z] - YYYY-MM-DD`, appends each line's short commit hash, and opens
 an empty one above it. The newest *numbered* `## [x.y.z]` heading, which the Unreleased heading is
 not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json`
@@ -21,12 +27,12 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Added
 
-- **Share Pane selection and control Agents from a touch panel.** Add opt-in central selection and a fullscreen `/panel` with shared square slots, drag replacement, adaptive orientation, grid controls and status-transition feedback.
+- **Share Pane selection and control Agents from a touch panel.** Add opt-in central selection and a fullscreen `/panel` with shared square slots, drag replacement, adaptive orientation, grid controls and status-transition feedback. ([875406f77](https://github.com/memset0/herdr-fleet/commit/875406f77))
 
 ### Fixed
 
-- **Keep CLI fixtures independent of host tools and ownership.** Use a synthetic shim name and non-root loose-install fixture without changing production behavior or assertions.
-- **Prepare and drain page fixtures within their setup lifecycle.** Preload fresh offline-page modules and await version-cache writes before database teardown.
+- **Keep CLI fixtures independent of host tools and ownership.** Use a synthetic shim name and non-root loose-install fixture without changing production behavior or assertions. ([875406f77](https://github.com/memset0/herdr-fleet/commit/875406f77))
+- **Prepare and drain page fixtures within their setup lifecycle.** Preload fresh offline-page modules and await version-cache writes before database teardown. ([875406f77](https://github.com/memset0/herdr-fleet/commit/875406f77))
 
 ## [3.15.5] - 2026-10-10
 
