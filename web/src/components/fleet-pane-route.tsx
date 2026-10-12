@@ -1,7 +1,6 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useRef, useSyncExternalStore } from "react";
 import { useRevalidator } from "react-router";
 
-import { FleetTerminal } from "@/components/fleet-terminal";
 import type { PaneContentProps } from "@/components/agent-chat";
 import { paneLoader, type PaneData } from "@/lib/loaders";
 import { internScope, scopeFromUrl } from "@/lib/scope";
@@ -12,9 +11,20 @@ import {
   type PaneSurface,
 } from "../../../fleet/ui/terminal/switch.ts";
 
+/**
+ * The terminal surface and the emulator it carries load on first use, in a chunk of their own: most
+ * Panes are read through the mirror, and the emulator is the largest single thing Fleet adds to the
+ * app. The chunk is still precached, so an installed app opens it offline as before.
+ */
+const FleetTerminal = lazy(async () => ({ default: (await import("@/components/fleet-terminal")).FleetTerminal }));
+
 /** The browser-local switch replaces only the native Pane's body, never its header or route. */
 function terminalContent(props: PaneContentProps) {
-  return <FleetTerminal {...props} />;
+  return (
+    <Suspense fallback={null}>
+      <FleetTerminal {...props} />
+    </Suspense>
+  );
 }
 
 /** Subscribe to the one switch. The server-render fallback is the default, as everywhere else. */

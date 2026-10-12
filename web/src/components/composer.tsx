@@ -2323,7 +2323,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           elapsed={recorder.elapsedLabel}
           source={recorder.meter}
           hand={hand}
-          padClassName={blockPad}
+          // OK STANDS ON THE RECORD CONTROL, beside Send here rather than in Send's place: the row is
+          // inset at its trailing end by Send's own size and the box's gap (36 + 4px, on top of its
+          // 4px padding), so the tap that started the clip finishes it (composer-voice-rank-port).
+          padClassName={cn(blockPad, hand === "left" ? "[&>[data-slot=voice-takeover-row]]:pl-11" : "[&>[data-slot=voice-takeover-row]]:pr-11")}
           keyboardOpened={openedByKeyboard.current}
           sends={handsFree && !hasDraft && noEcho === null}
           engine={recorder.engine}

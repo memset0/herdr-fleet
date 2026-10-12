@@ -22,10 +22,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Changed
 
 - **Adopted Collie 1.20.1.** Settings → Voice with host Whistle and on-phone speech, the recorder bar over the composer, pi and OmO question buttons, Grok resume following, copy icons and update-card retries arrive from upstream beside the fork's rails, record control beside Send and terminal surface.
-- **Dictation never ends on silence in Herdr Fleet.** Upstream's recorder bar covers the composer while a clip runs, but its two-second quiet countdown is off: a clip ends only on OK, the bin or the recording limit, and closing the bar returns focus to the record control beside Send.
+- **Dictation never ends on silence in Herdr Fleet.** Upstream's recorder bar covers the composer while a clip runs, but its two-second quiet countdown is off: a clip ends only on OK, the bin or the recording limit, and closing the bar returns focus to the record control beside Send. Its OK stands on the record control, so the tap that started a clip finishes it.
 
 ### Fixed
 
+- **The app's main bundle fits the offline precache again.** The terminal surface and its emulator load on first use in a chunk of their own, so the main script stays under the service worker's 2 MiB precache limit that Collie 1.20's speech code pushed it past.
 - **Microphone keyboard commands follow the phone engine and its failed clip.** An on-phone engine counts as available, and every command refuses while a clip the phone could not transcribe waits for Send to host or the bin.
 
 ## [3.15.7] - 2026-10-12
