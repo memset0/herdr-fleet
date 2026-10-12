@@ -30,8 +30,8 @@
 
 ## 6. Verify
 
-- [ ] 6.1 Push `main` unreleased (`SKIP_TESTS=1`); run the full suites against that commit on the designated member; classify every failure against the 3.15.6 baseline
-- [ ] 6.2 Headless Chromium on a local Fleet build: composer idle (record control beside Send), the recorder bar while recording with no finish on silence, Settings → Voice, at desktop and phone widths, light and dark
+- [x] 6.1 Push `main` unreleased (`SKIP_TESTS=1`); run the full suites against that commit on the designated member; classify every failure against the 3.15.6 baseline
+- [x] 6.2 Headless Chromium on a local Fleet build: composer idle (record control beside Send), the recorder bar while recording with no finish on silence, Settings → Voice, at desktop and phone widths, light and dark
 
 ## 7. Release and level
 
@@ -41,3 +41,19 @@
 ## 8. Archive
 
 - [ ] 8.1 Sync specs, validate, archive, commit and push
+
+## Phase record
+
+- 6.1 Full suites on the designated member at `3ce37c69` (reached by bundle before any push), Bun 1.4.2:
+  both typechecks, full lint, `test:fork` (981 owned / 70 invasive), version, cli 2048 / 0, scripts
+  281 / 0, fleet 735 / 0, crew 66 / 0, bridge file by file 182 files all clean, every shell suite,
+  web 442 files: 24395 pass / 32 expected fail / 49 todo, no failure, build. The first run at
+  `925f97f2` had the same results except the build, which failed: the main script (2.11 MB) crossed
+  the worker's 2 MiB precache limit; the lazy terminal chunk fixed it (1.76 MB). Locally: upstream's
+  browser cases `voice-takeover`, `stt-phone`, `stt-worker-csp` and `service-worker` pass on the phone
+  project (the two `service-worker` skips are the fork's declared ones).
+- 6.2 Headless Chromium on a local Fleet build with stubbed routes and a synthetic microphone, at
+  1600×900 and 390×844, light and dark: the record control stands beside Send; the recorder bar covers
+  the composer with OK on the record control's exact centre and the bin at the far end; after speech
+  and 4.5 s of quiet the clip is still listening, the ring is hidden and OK is live; Settings → Voice
+  and Host speech render inside the Fleet shell, the setup line naming the Gateway's device label.
