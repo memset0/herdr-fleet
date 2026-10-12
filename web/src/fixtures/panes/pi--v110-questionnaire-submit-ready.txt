@@ -1,0 +1,40 @@
+[0m[38;2;205;154;34m[Extensions][0m                                                                                                            
+[0m[38;2;126;136;142m  questionnaire.ts[0m                                                                                                      
+
+[0m[48;2;33;59;73m                                                                                                                        [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCall the questionnaire tool exactly once with exactly these arguments and write no text: {"questions": [{"id": "size", [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73m"label": "Size", "prompt": "Which size should the probe use?", "options": [{"value": "s", "label": "Small"}, {"value": [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73m"m", "label": "Medium", "description": "The usual choice."}, {"value": "l", "label": "Large"}]}]}[0m[48;2;33;59;73m                      [0m
+[0m[48;2;33;59;73m                                                                                                                        [0m
+
+[0m[48;2;37;65;49m                                                                                                                        [0m
+[0m[48;2;37;65;49m [0m[1m[38;2;222;224;225m[48;2;37;65;49mquestionnaire [0m[38;2;157;165;169m[48;2;37;65;49m1 question[0m[38;2;126;136;142m[48;2;37;65;49m (Size)[0m[48;2;37;65;49m                                                                                        [0m
+[0m[48;2;37;65;49m [0m[38;2;205;154;34m[48;2;37;65;49mCancelled[0m[48;2;37;65;49m                                                                                                              [0m
+[0m[48;2;37;65;49m                                                                                                                        [0m
+
+[0m[48;2;33;59;73m                                                                                                                        [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCall the questionnaire tool exactly once with exactly these arguments and write no text: {"questions": [{"id":         [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73m"color", "label": "Color", "prompt": "Pick a color for the Collie probe?", "options": [{"value": "r", "label": "Red"}, [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73m{"value": "g", "label": "Green"}, {"value": "b", "label": "Blue"}]}, {"id": "size", "label": "Size", "prompt": "Which  [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73msize should the probe use?", "options": [{"value": "s", "label": "Small"}, {"value": "l", "label": "Large",            [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73m"description": "Twice the small one."}]}]}[0m[48;2;33;59;73m                                                                             [0m
+[0m[48;2;33;59;73m                                                                                                                        [0m
+
+[0m[48;2;52;56;58m                                                                                                                        [0m
+[0m[48;2;52;56;58m [0m[1m[38;2;222;224;225m[48;2;52;56;58mquestionnaire [0m[38;2;157;165;169m[48;2;52;56;58m2 questions[0m[38;2;126;136;142m[48;2;52;56;58m (Color, Size)[0m[48;2;52;56;58m                                                                                [0m
+[0m[48;2;52;56;58m                                                                                                                        [0m
+
+[0m[38;2;167;152;215m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ ← [0m[38;2;104;183;141m ■ Color [0m [0m[38;2;104;183;141m ■ Size [0m [0m[38;2;222;224;225m[48;2;33;59;73m ✓ Submit [0m →
+
+ [0m[1m[38;2;167;152;215mReady to submit[0m
+
+ [0m[38;2;157;165;169mColor: [0m[38;2;222;224;225mGreen[0m
+ [0m[38;2;157;165;169mSize: [0m[38;2;222;224;225mSmall[0m
+
+ [0m[38;2;104;183;141mPress Enter to submit[0m
+
+ [0m[38;2;126;136;142mTab/←→ navigate • ↑↓ select • Enter confirm • Esc cancel[0m
+[0m[38;2;167;152;215m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;126;136;142m/tmp/pi-cap-cwd[0m
+[0m[38;2;126;136;142m↑2.7k ↓222 $0.001 0.1%/1.0M (auto)                                                google/gemini-3.5-flash-lite • minimal[0m

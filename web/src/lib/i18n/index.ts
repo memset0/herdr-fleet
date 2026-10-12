@@ -2,6 +2,7 @@ import { hasDocument } from "../env";
 import { DEFAULT_LOCALE, isLocale, type Locale } from "./locale";
 import { en, type Dictionary, type MessageKey } from "./messages/en";
 import { interpolate, type TemplateVars } from "./template";
+import { reloadOnChunkError } from "../chunk-reload";
 
 // The translation runtime: one module-scoped store, one lookup function, one plural function.
 //
@@ -112,7 +113,7 @@ function notify(locale: Locale): void {
  *  English serving, which is exactly the degraded state the fallback exists for. */
 async function fetchDictionary(locale: Exclude<Locale, typeof DEFAULT_LOCALE>): Promise<void> {
   try {
-    const dictionary = await LOADERS[locale]();
+    const dictionary = await reloadOnChunkError(LOADERS[locale]);
     loaded.set(locale, dictionary);
     // Only notify if this is still the locale on screen — a fast en→de→en toggle must not repaint
     // the app in German because the German chunk finally arrived.

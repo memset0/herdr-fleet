@@ -381,9 +381,11 @@ describe("Composer — a finished clip", () => {
     // and the typing happens DURING the clip — which is the one way a transcript can still meet a
     // non-empty draft, and the reason the caret insert below is not dead code.
     const recorder = await startRecording(user);
-    expect(await screen.findByText(/recording/i)).toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: /voice input/i })).toBeInTheDocument();
     const box = screen.getByPlaceholderText(/type a reply/i);
-    await user.type(box, "hello world");
+    // The takeover makes the box inert, so a person can no longer type during a clip; a draft can
+    // still appear under it (a restored or terminal-side one), which is the case this pins.
+    fireEvent.change(box, { target: { value: "hello world" } });
     // Caret between the two words — dictating a clause into the middle of a sentence is the point.
     act(() => {
       if (box instanceof HTMLTextAreaElement) box.setSelectionRange(5, 5);
@@ -393,14 +395,8 @@ describe("Composer — a finished clip", () => {
     await waitFor(() => expect(box).toHaveValue("hello there world"));
     // One clip, one POST, and the container names itself so the bridge can pick a demuxer.
     expect(posted).toMatch(/^audio\//);
-    // The armed strip is gone and the microphone is idle again. AWAITED, because the strip now
-    // leaves through `Collapse` (DESIGN.md §1) — which holds its child for the 240ms exit so the box
-    // slides shut on the words rather than on nothing, and only unmounts at the end. Asserting on
-    // the tick after the transcript would be asserting that the strip is torn out of the flow, which
-    // is the fault the wrapper exists to stop; composer.test.tsx pins the wrapper structurally.
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /discard recording/i })).toBeNull(),
-    );
+    // The takeover is gone and the composer is back.
+    await waitFor(() => expect(screen.queryByRole("group", { name: /voice input/i })).toBeNull());
   });
 
   it("is discarded — and never uploaded — when the pane changes mid-recording", async () => {
@@ -412,15 +408,13 @@ describe("Composer — a finished clip", () => {
     );
     renderSwitchablePane();
     const recorder = await startRecording(user);
-    expect(await screen.findByText(/recording/i)).toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: /voice input/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "switch pane" }));
     // Whatever the browser delivers after the discard belongs to an operation that no longer exists.
     act(() => recorder.finish());
 
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /discard recording/i })).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByRole("group", { name: /voice input/i })).toBeNull());
     expect(posts).toBe(0);
   });
 });
@@ -460,7 +454,7 @@ describe("Composer — hands-free", () => {
     // Typed DURING the clip — see the caret case above for why that is the only way here.
     const recorder = await startRecording(user);
     const box = screen.getByPlaceholderText(/type a reply/i);
-    await user.type(box, "typed by hand");
+    fireEvent.change(box, { target: { value: "typed by hand" } });
     act(() => recorder.finish());
 
     // Merging dictated words onto typed ones and sending the result would send a sentence nobody
@@ -483,12 +477,176 @@ describe("Composer — a refused transcription", () => {
     act(() => recorder.finish());
 
     await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(expected));
-    // Nothing reached the draft, and the audio is not held for a retry — the strip is gone, so
+    // Nothing reached the draft, and the audio is not held for a retry — the takeover is gone, so
     // there is no clip left to stop or discard.
     expect(screen.getByPlaceholderText(/type a reply/i)).toHaveValue("");
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /discard recording/i })).toBeNull(),
+    await waitFor(() => expect(screen.queryByRole("group", { name: /voice input/i })).toBeNull());
+  });
+});
+
+// THE VOICE TAKEOVER (design 3.3). A tap on the mic covers the whole chrome block without adding a
+// pixel to it. jsdom has no layout, so the zero-shift property is pinned by its CAUSES: the takeover
+// is an `absolute inset-0` SIBLING of the composer (inside agent-chat's `relative` chrome block, which
+// this suite does not mount), and the real composer stays in flow beneath it, invisible and inert,
+// the same nodes, never remounted. The measured proof is the browser case in
+// web/e2e/voice-takeover.spec.ts.
+describe("Composer — the voice takeover", () => {
+  function block(): HTMLElement {
+    const box = document.querySelector('[data-slot="composer-box"]');
+    const el = box?.closest("div.relative.bg-chrome");
+    if (!(el instanceof HTMLElement)) throw new Error("no composer block");
+    return el;
+  }
+
+  it("covers the block with an absolute sibling, and leaves the real composer in flow, inert and unseen", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer();
+    await screen.findByRole("button", { name: /record a voice message/i });
+    const blockBefore = block();
+    const boxBefore = document.querySelector('[data-slot="composer-box"]');
+    const fieldBefore = screen.getByPlaceholderText(/type a reply/i);
+    expect(screen.queryByRole("group", { name: /voice input/i })).toBeNull();
+    expect(blockBefore).not.toHaveAttribute("inert");
+
+    await user.click(screen.getByRole("button", { name: /record a voice message/i }));
+    const region = await screen.findByRole("group", { name: /voice input/i });
+
+    // The takeover is positioned over the whole box, and takes no place in the flow.
+    expect(region.className).toMatch(/\babsolute\b/);
+    expect(region.className).toMatch(/\binset-0\b/);
+    expect(region.parentElement).toBe(block().parentElement);
+    // The composer stays laid out: the same nodes, not remounted, hidden and inert in place.
+    expect(block()).toBe(blockBefore);
+    expect(document.querySelector('[data-slot="composer-box"]')).toBe(boxBefore);
+    expect(screen.getByPlaceholderText(/type a reply/i)).toBe(fieldBefore);
+    expect(block()).toHaveAttribute("inert");
+    expect(block().className).toContain("invisible");
+    expect(block().className).not.toMatch(/\bhidden\b|\bcontents\b/);
+  });
+
+  it("gives the block back with the same nodes when the clip is thrown away", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer();
+    const fieldBefore = screen.getByPlaceholderText(/type a reply/i);
+    await user.click(await screen.findByRole("button", { name: /record a voice message/i }));
+    await user.click(await screen.findByRole("button", { name: /discard recording/i }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: /voice input/i })).toBeNull());
+    expect(screen.getByPlaceholderText(/type a reply/i)).toBe(fieldBefore);
+    expect(block()).not.toHaveAttribute("inert");
+    expect(block().className).not.toContain("invisible");
+  });
+
+  it("wears the block's own bottom padding, with the keyboard up or down", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer({ composing: true });
+    await user.click(await screen.findByRole("button", { name: /record a voice message/i }));
+    const region = await screen.findByRole("group", { name: /voice input/i });
+    expect(block().className).toMatch(/\bpb-2\b/);
+    expect(region.className).toMatch(/\bpb-2\b/);
+  });
+
+  it("OK finishes and transcribes, and the transcript lands in the box", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT), sttHandler("hello"));
+    renderComposer();
+    const recorder = await startRecording(user);
+    act(() => recorder.emit(1024));
+    await user.click(await screen.findByRole("button", { name: /finish and transcribe/i }));
+    expect(recorder.state).toBe("inactive");
+    await waitFor(() => expect(screen.getByPlaceholderText(/type a reply/i)).toHaveValue("hello"));
+    await waitFor(() => expect(screen.queryByRole("group", { name: /voice input/i })).toBeNull());
+  });
+
+  it("cancels an in-flight transcription from the bin: the request is aborted and the answer dropped", async () => {
+    const user = userEvent.setup();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let aborted = false;
+    let started = false;
+    server.use(
+      configHandler(CONFIG_WITH_STT),
+      http.post("/api/stt", async ({ request }) => {
+        started = true;
+        request.signal.addEventListener("abort", () => {
+          aborted = true;
+        });
+        await gate;
+        return HttpResponse.json({ ok: true, text: "never lands" });
+      }),
     );
+    renderComposer();
+    const recorder = await startRecording(user);
+    act(() => recorder.finish());
+    await waitFor(() => expect(started).toBe(true));
+    const ok = await screen.findByRole("button", { name: /finish and transcribe/i });
+    expect(ok).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(/transcribing/i);
+
+    await user.click(screen.getByRole("button", { name: /discard recording/i }));
+    await waitFor(() => expect(screen.queryByRole("group", { name: /voice input/i })).toBeNull());
+    await waitFor(() => expect(aborted).toBe(true));
+    release();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.getByPlaceholderText(/type a reply/i)).toHaveValue("");
+    expect(screen.getByTestId("status")).toHaveTextContent("");
+  });
+
+  it("discards on Escape without uploading", async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    server.use(configHandler(CONFIG_WITH_STT), sttHandler("x", () => (posts += 1)));
+    renderComposer();
+    const recorder = await startRecording(user);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("group", { name: /voice input/i })).toBeNull());
+    act(() => recorder.finish());
+    expect(posts).toBe(0);
+  });
+
+  it("moves focus to OK on open and back to the round button on close", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer();
+    await user.click(await screen.findByRole("button", { name: /record a voice message/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /finish and transcribe/i })).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: /discard recording/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /record a voice message/i })).toHaveFocus());
+  });
+
+  it("says OK will send when hands-free will send the transcript", async () => {
+    const user = userEvent.setup();
+    setHandsFreeEnabled(true);
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer();
+    await user.click(await screen.findByRole("button", { name: /record a voice message/i }));
+    expect(await screen.findByRole("button", { name: /transcribe and send/i })).toBeInTheDocument();
+  });
+
+  it("mirrors for the left hand: OK takes the mic's side", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer({ hand: "left" });
+    await user.click(await screen.findByRole("button", { name: /record a voice message/i }));
+    const row = (await screen.findByRole("group", { name: /voice input/i })).querySelector('[data-slot="voice-takeover-row"]');
+    expect(row?.className).toContain("flex-row-reverse");
+    expect(document.querySelector('[data-slot="composer-box"]')?.className).toContain("flex-row-reverse");
+  });
+
+  it("the armed strip is gone: no Stop link and no 'Recording m:ss' line", async () => {
+    const user = userEvent.setup();
+    server.use(configHandler(CONFIG_WITH_STT));
+    renderComposer();
+    await startRecording(user);
+    await screen.findByRole("group", { name: /voice input/i });
+    expect(screen.queryByRole("button", { name: /^stop$/i })).toBeNull();
+    expect(screen.queryByText(/^recording /i)).toBeNull();
   });
 });
 

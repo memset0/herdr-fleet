@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { X509Certificate } from "node:crypto";
 import { join } from "node:path";
 
+import { peerStore } from "../bridge/crew/fixtures.ts";
+import { crewRuntimePath, formatMarker, markerFor } from "../bridge/crew/staleness.ts";
+import { serializeTrustStore } from "../bridge/crew/trust-store.ts";
 import { hostFor } from "../bridge/host.ts";
 
 import {
@@ -157,6 +161,7 @@ const deadNet: Net = {
   getJson: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
   download: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
   probe: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
+  tlsCertificate: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
 };
 
 /** `git symbolic-ref -q HEAD` answering non-zero is what "detached, i.e. Herdr-managed" means. */
@@ -1281,6 +1286,7 @@ function binaryHarness(over: BinaryOptions = {}): Harness {
   const health = healthNet(over.health, NEW);
   const net: Net = {
     probe: () => Promise.resolve({ ok: false, failure: { status: null, message: "no probe in this case" } }),
+    tlsCertificate: () => Promise.resolve({ ok: false, failure: { status: null, message: "no probe in this case" } }),
     getJson: (url) => {
       if (url.includes("/api/health")) return health();
       if (url.includes("api.github.com")) {
@@ -2648,6 +2654,39 @@ describe("the detached updater's health gate", () => {
     expect(await runner(dead, BINARY_APPLY)).toBe(EXIT.FAIL);
     expect(parseUpdateRun(dead.files.read(RUN_FILE))?.state).toBe("rolled-back");
     expect(dead.exec.calls.filter((c) => c.endsWith("current/bin/collie restart")).length).toBe(2);
+  });
+
+  // #410: a peer with no standby door serves only mutual TLS. Its gate reads the certificate on the
+  // port and the runtime marker the bridge wrote at boot, against the moment `runApply` restarted it.
+  describe("a crew peer with no standby door", () => {
+    const peerHarness = (bootedAt: number) => {
+      const h = binaryHarness({ env: { COLLIE_UPDATE_HEALTH_TIMEOUT_MS: "1000" } });
+      h.files.write(`${STATE}/crew-trust.json`, serializeTrustStore(peerStore()));
+      h.files.write(crewRuntimePath(STATE), formatMarker(markerFor(peerStore(), bootedAt, FAKE_PID)));
+      const own = new X509Certificate(peerStore().self.certPem).fingerprint256;
+      h.deps = {
+        ...h.deps,
+        net: { ...h.deps.net, tlsCertificate: () => Promise.resolve({ ok: true as const, fingerprint256: own }) },
+        exec: { ...h.exec, processLookup: () => ({ kind: "running" as const, command: "collie" }) },
+      };
+      return h;
+    };
+
+    test("passes on its own certificate and a marker written after the restart", async () => {
+      const h = peerHarness(Number.MAX_SAFE_INTEGER);
+      expect(await runner(h, BINARY_APPLY)).toBe(EXIT.OK);
+      expect(parseUpdateRun(h.files.read(RUN_FILE))?.state).toBe("done");
+    });
+
+    test("a marker older than the restart is the old process: the update does not pass", async () => {
+      const h = peerHarness(0);
+      expect(await runner(h, BINARY_APPLY)).toBe(EXIT.FAIL);
+      const record = parseUpdateRun(h.files.read(RUN_FILE));
+      expect(record?.state).toBe("stuck");
+      expect(record?.reason).toContain("has not booted since the restart");
+      // The forward restart, then the rollback's own.
+      expect(h.exec.calls.filter((c) => c.endsWith("current/bin/collie restart")).length).toBe(2);
+    });
   });
 
   test("a deposed peer answering health is not a success — it is rolled back like any other failure", async () => {

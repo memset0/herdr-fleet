@@ -8,3 +8,7 @@
 # A shell script is read by `sh`, which cannot take a CRLF line. A Windows checkout with autocrlf would
 # turn the installer the CLI embeds (and `crew add` sends to a POSIX host) into one.
 *.sh text eol=lf
+
+# The vendored speech engine is pinned by hash (ADR 0096). A Windows checkout with autocrlf would
+# rewrite the glue's line endings and the served bytes would no longer be the hashed bytes.
+web/public/stt/** -text

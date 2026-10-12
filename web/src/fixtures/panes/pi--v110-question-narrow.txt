@@ -1,0 +1,40 @@
+ [0m[38;2;126;136;142mPress ctrl+o to show full startup help and       [0m
+ [0m[38;2;126;136;142mloaded resources.[0m                                
+                                                  
+ [0m[38;2;126;136;142mPi can explain its own features and look up its  [0m
+ [0m[38;2;126;136;142mdocs. Ask it how to use or extend Pi.[0m            
+
+[0m[38;2;205;154;34m[Extensions][0m                                      
+[0m[38;2;126;136;142m  question.ts[0m                                     
+
+[0m[48;2;33;59;73m                                                  [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCall the question tool exactly once with exactly [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mthese arguments and write no text: {"question":  [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73m"Pick a color for the Collie probe?", "options": [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73m[{"label": "Red", "description": "Warm and       [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mloud."}, {"label": "Green", "description": "Calm [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mand natural."}, {"label": "Blue", "description": [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73m"Cool and deep."}]}[0m[48;2;33;59;73m                              [0m
+[0m[48;2;33;59;73m                                                  [0m
+
+[0m[48;2;52;56;58m                                                  [0m
+[0m[48;2;52;56;58m [0m[1m[38;2;222;224;225m[48;2;52;56;58mquestion [0m[38;2;157;165;169m[48;2;52;56;58mPick a color for the Collie probe?[0m[48;2;52;56;58m      [0m
+[0m[48;2;52;56;58m [0m[38;2;126;136;142m[48;2;52;56;58m  Options: 1. Red, 2. Green, 3. Blue, 4. Type    [0m
+[0m[48;2;52;56;58m [0m[38;2;126;136;142m[48;2;52;56;58msomething.[0m[48;2;52;56;58m                                       [0m
+[0m[48;2;52;56;58m                                                  [0m
+
+[0m[38;2;167;152;215m──────────────────────────────────────────────────[0m
+ [0m[38;2;222;224;225mPick a color for the Collie probe?[0m
+
+[0m[38;2;167;152;215m> 1. Red[0m
+     [0m[38;2;157;165;169mWarm and loud.[0m
+  [0m[38;2;222;224;225m2. Green[0m
+     [0m[38;2;157;165;169mCalm and natural.[0m
+  [0m[38;2;222;224;225m3. Blue[0m
+     [0m[38;2;157;165;169mCool and deep.[0m
+  [0m[38;2;222;224;225m4. Type something.[0m
+
+ [0m[38;2;126;136;142m↑↓ navigate • Enter to select • Esc to cancel[0m
+[0m[38;2;167;152;215m──────────────────────────────────────────────────[0m
+[0m[38;2;126;136;142m/tmp/pi-cap-cwd[0m
+[0m[38;2;126;136;142m↑690 ↓70 $0.000 0.1%/1.0M (auto)  google/gemini-3.[0m

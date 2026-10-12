@@ -1,16 +1,17 @@
 import { graphemeSegmenter } from "../../env";
+import { collapsesAsPaste } from "./paste";
 
-// opencode's editor is not known to collapse large pastes into an opaque chip in any captured state
-// (the draft is always the user's words — see chrome.ts's draftIsOpaque). The chunking below is
-// therefore the same conservative transport split omp's uses, minus omp's own quirks: keep each
-// transport paste small enough that the literal echo stays on screen for the reply guard to verify,
-// and never end a chunk where the next begins with a character that could read as an accidental
-// command. If a capture ever shows opencode collapsing a paste, capture it and teach the adapter
-// rather than raising these bounds.
+// A reply opencode would summarise as a paste goes out as ONE part, framed as a bracketed paste
+// (paste.ts has the probe and the reason: typing a long draft in is slower than the guard can wait
+// for). Everything else is short enough to be inserted literally and is typed, split by the same
+// conservative transport bounds omp uses, minus omp's own quirks: keep each part small enough that
+// the literal echo stays on screen for the reply guard to verify, and never end a part where the
+// next begins with a character that could read as an accidental command.
 const MAX_CHUNK_CHARS = 512;
 const MAX_CHUNK_NEWLINES = 4;
 
 export function opencodeReplyChunks(text: string): string[] {
+  if (collapsesAsPaste(text)) return [text];
   const segmenter = graphemeSegmenter();
   const characters = segmenter
     ? Array.from(segmenter.segment(text), (s) => s.segment)

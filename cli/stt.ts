@@ -11,13 +11,15 @@ import {
   STT_FILENAME,
   STT_PROVIDERS,
   sttEnvSettings,
+  writeSttSettingsFile,
   type CodexSttSettings,
   MAX_LOCAL_CLI_ARGS,
   type SttProviderName,
   type SttSettings,
   type SttWireIdentity,
 } from "../bridge/stt/config.ts";
-import { CODEX_TRANSCRIBE_URL, probeCodexIdentity, silentWavBytes } from "../bridge/stt/codex.ts";
+import { CODEX_TRANSCRIBE_URL, silentWavBytes } from "../bridge/stt/codex.ts";
+import { codexConsentLines, probeCodexSetup } from "../bridge/stt/codex-setup.ts";
 import { silentMp4AacBytes, silentWebmOpusBytes } from "../bridge/stt/probe-clips.ts";
 import { createSttProvider } from "../bridge/stt/index.ts";
 import { jsonStringField } from "../bridge/stt/json.ts";
@@ -26,6 +28,7 @@ import { SttError, type SttAudio, type SttProvider, type SttResult } from "../br
 import type { CliContext } from "./context.ts";
 import { EXIT, type Io } from "./io.ts";
 import { parseCrewArgs } from "./crew.ts";
+import { cmdSttWhistle, modelStatus, type WhistleSeams } from "./stt-whistle.ts";
 import type { Exec, Files } from "./sys.ts";
 
 // `stt setup | test | status | off` — the operator's half of speech-to-text (ADR 0029).
@@ -35,7 +38,10 @@ import type { Exec, Files } from "./sys.ts";
 // provider key into the state dir, or — on the codex provider — records the operator's consent to put
 // somebody else's name on the wire. Neither decision can be authorised by a page loaded over the
 // front door; the shell on the host IS the proof, exactly as it is for enrolment (see the header of
-// `cli/pairing.ts`). There is no web setup form and there is not going to be one.
+// `cli/pairing.ts`). There is no web setup form for a key or a command, and there is not going to be
+// one. Two narrow exceptions take no key and no command: Whistle (ADR 0096), and switching the host
+// to codex after the same consent, shown in full and accepted with a tap (ADR 0097). The consent's
+// words and the probe are shared with that switch (`bridge/stt/codex-setup.ts`), so they cannot drift.
 //
 // ── THE THREE THINGS THIS MODULE OWES THE BRIDGE ─────────────────────────────
 //  1. It writes `<stateDir>/stt.json`, and the bridge re-reads that file behind an mtime check
@@ -50,7 +56,7 @@ import type { Exec, Files } from "./sys.ts";
 // does not pretend to have one: the prompt says out loud where the value is about to land.
 
 /** The `stt` sub-verbs, in the order the usage block prints them. */
-export const STT_SUBCOMMANDS = ["setup", "test", "status", "off"] as const;
+export const STT_SUBCOMMANDS = ["setup", "whistle", "test", "status", "off"] as const;
 
 /** Flags `setup` takes with no value. Everything else is `--name value` / `--name=value`. */
 const BARE_FLAGS = ["accept-risk"] as const;
@@ -93,6 +99,13 @@ export interface SttDeps {
    * the same check the bridge's own status runs.
    */
   commandProblem?(path: string): string | null;
+  /** `stt whistle`'s model store: a stand-in fetch and pin for the tests. Production leaves it. */
+  whistle?: WhistleSeams;
+  /**
+   * Draws a download's progress line, on a terminal only. Absent means "not a terminal", so a piped
+   * or logged run gets the start and the end and no carriage returns.
+   */
+  progress?(text: string): void;
 }
 
 const settingsPath = (deps: SttDeps): string => join(deps.ctx.stateDir, STT_FILENAME);
@@ -173,14 +186,11 @@ export async function cmdSttSetup(deps: SttDeps, args: readonly string[]): Promi
   // Written through a temporary name in the same directory and renamed into place: a `setup` that
   // died mid-write must leave the previous configuration intact, never a half-file the bridge would
   // then read as "the operator turned this off".
+  // `writeSttSettingsFile` is the one writer: 0600, through a temporary name renamed into place.
   const path = settingsPath(deps);
-  const temporary = `${path}.tmp`;
   try {
-    deps.files.mkdirp(deps.ctx.stateDir, 0o700);
-    deps.files.write(temporary, `${JSON.stringify(document, null, 2)}\n`, 0o600);
-    deps.files.rename(temporary, path);
+    writeSttSettingsFile(deps.ctx.stateDir, document, deps.files);
   } catch (err) {
-    deps.files.remove(temporary);
     deps.io.err(`error: could not write ${path} — ${err instanceof Error ? err.message : String(err)}`);
     return EXIT.FAIL;
   }
@@ -192,16 +202,24 @@ export async function cmdSttSetup(deps: SttDeps, args: readonly string[]): Promi
   return EXIT.OK;
 }
 
+/** The providers `setup` asks about. Whistle is not one: it has no question, see {@link chooseProvider}. */
+const SETUP_PROVIDERS = STT_PROVIDERS.filter((p): p is Exclude<SttProviderName, "whistle"> => p !== "whistle");
+
 /** Which provider, from the flag or from the operator. `null` when there is no usable answer. */
 async function chooseProvider(
   deps: SttDeps,
   flag: string | undefined,
-): Promise<SttProviderName | null> {
+): Promise<Exclude<SttProviderName, "whistle"> | null> {
   const named = flag ?? (await askProvider(deps));
   if (named === null) return null;
-  const known = STT_PROVIDERS.find((p) => p === named);
+  // Whistle has nothing to ask and is set up by its own verb, which also fetches the model.
+  if (named === "whistle") {
+    deps.io.err("error: Whistle is set up with `collie stt whistle --host`, or from Settings → Speech. Nothing was written.");
+    return null;
+  }
+  const known = SETUP_PROVIDERS.find((p) => p === named);
   if (known === undefined) {
-    deps.io.err(`error: unknown provider \`${named}\` — expected ${STT_PROVIDERS.join(" or ")}.`);
+    deps.io.err(`error: unknown provider \`${named}\` — expected ${SETUP_PROVIDERS.join(" or ")}.`);
     for (const line of SETUP_USAGE) deps.io.err(line);
     return null;
   }
@@ -332,20 +350,11 @@ async function askAt(
 function consentParagraph(deps: SttDeps, codexPath: string): void {
   deps.io.out("");
   deps.io.out("── Read this before you accept ──────────────────────────────────────────────");
-  deps.io.out(`  Recordings would be sent to ${CODEX_TRANSCRIBE_URL}.`);
-  deps.io.out("  That endpoint is PRIVATE and UNSUPPORTED. It is undocumented, nobody owes Collie");
-  deps.io.out("  compatibility with it, and it may stop working at any time without notice.");
-  deps.io.out("");
-  deps.io.out(`  Every request is authorised by a short-lived token from YOUR sign-in at ${codexPath}.`);
-  deps.io.out("  So YOUR ChatGPT account carries the exposure: the rate limits are yours, and so is");
-  deps.io.out("  any suspension or ban that comes of using a private endpoint this way.");
-  deps.io.out("");
-  deps.io.out("  Collie asks the endpoint under its OWN name first. If that is refused, the fallback");
-  deps.io.out("  wears the Codex CLI's headers — that is impersonation, and accepting here is what");
-  deps.io.out("  permits it. Whichever identity is accepted gets written into the config, in a word");
-  deps.io.out("  you can read back with `collie stt status`.");
-  deps.io.out("");
-  deps.io.out("  Nothing has run yet. Nothing is written unless you accept.");
+  // The words are bridge/stt/codex-setup.ts's, the same ones Settings shows before its "I accept".
+  codexConsentLines(codexPath).forEach((paragraph, index) => {
+    if (index > 0) deps.io.out("");
+    for (const line of paragraph) deps.io.out(`  ${line}`);
+  });
   deps.io.out("─────────────────────────────────────────────────────────────────────────────");
 }
 
@@ -363,10 +372,11 @@ async function setupCodex(
 
   deps.io.out("");
   deps.io.out("Probing the endpoint — honest identity first…");
-  const settings: CodexSttSettings = { provider: "codex", codexBin, wireIdentity: "honest" };
   let identity: SttWireIdentity;
+  let document: RawSettings;
   try {
-    identity = await (deps.probe ?? probeCodexIdentity)(settings);
+    // The same probe, and the same document, as the Settings switch (bridge/stt/host-http.ts).
+    ({ identity, document } = await probeCodexSetup(codexBin, deps.probe));
   } catch (err) {
     // Including the sign-in failures `bridge/stt/codex-auth.ts` re-throws by name: "Codex is not
     // signed in — run `codex login`" is a different sentence from "both identities were refused",
@@ -386,7 +396,7 @@ async function setupCodex(
     deps.io.out("  ✓ The endpoint accepted Collie under its own name. No impersonation is configured;");
     deps.io.out("    the recorded identity is `honest`, and no `originator` header is ever sent.");
   }
-  return { provider: "codex", codexBin, wireIdentity: identity };
+  return document;
 }
 
 /**
@@ -600,6 +610,46 @@ const STT_PROBE_CLIPS = [
 ] as const;
 
 /**
+ * The one clip `stt test` sends to a provider that takes `wav-16k` only (the built-in Whistle host).
+ *
+ * Phones convert every recording to 16 kHz mono WAV before they upload it to such a provider, so the
+ * 8 kHz setup probe and the webm and mp4 clips are all things the provider would refuse and no phone
+ * would ever send. Testing it with them reports a failure that does not exist.
+ */
+const STT_WAV_16K_CLIP: SttProbeClip = {
+  mimeType: "audio/wav",
+  detail: ", 16 kHz",
+  filename: "collie-stt-test.wav",
+  audience: "what phones send to a Whistle host",
+  bytes: () => silentWavBytes(200, 16_000),
+};
+
+interface SttProbeClip {
+  mimeType: string;
+  /** Extra words after the content type in the printed label. */
+  detail?: string;
+  filename: string;
+  audience: string;
+  bytes: () => Uint8Array<ArrayBuffer>;
+}
+
+/** The clips to send to one provider, and the line that explains a shortened list (or `null`). */
+interface SttProbePlan {
+  clips: readonly SttProbeClip[];
+  note: string | null;
+}
+
+function probeClipsFor(provider: SttProvider): SttProbePlan {
+  if (provider.input === "wav-16k") {
+    return {
+      clips: [STT_WAV_16K_CLIP],
+      note: "note:     webm and mp4 are skipped, because phones convert recordings to 16 kHz WAV for this provider.",
+    };
+  }
+  return { clips: STT_PROBE_CLIPS, note: null };
+}
+
+/**
  * `collie stt test` — one real round trip per container the phone can produce.
  *
  * Each clip is a fifth of a second of generated digital silence. A silent clip legitimately
@@ -615,15 +665,17 @@ export async function cmdSttTest(deps: SttDeps): Promise<number> {
   const settings = loadSettings(deps);
   if (settings === null) return EXIT.FAIL;
 
-  const provider = (deps.create ?? createSttProvider)(settings);
+  const provider = deps.create?.(settings) ?? createSttProvider(settings, { stateDir: deps.ctx.stateDir });
   const clock = deps.now ?? Date.now;
   deps.io.out(`provider: ${describeProvider(settings)}`);
 
   const refused: string[] = [];
   let wavPassed = false;
+  const { clips, note } = probeClipsFor(provider);
+  if (note !== null) deps.io.out(note);
   try {
-    for (const clip of STT_PROBE_CLIPS) {
-      const label = `sending:  0.2 s of generated silence as ${clip.mimeType} (${clip.audience}) …`;
+    for (const clip of clips) {
+      const label = `sending:  0.2 s of generated silence as ${clip.mimeType}${clip.detail ?? ""} (${clip.audience}) …`;
       const started = clock();
       try {
         const result = await transcribeProbe(provider, {
@@ -659,7 +711,7 @@ export async function cmdSttTest(deps: SttDeps): Promise<number> {
   }
 
   if (refused.length === 0) return EXIT.OK;
-  deps.io.err(`error: the provider refused ${refused.length} of ${STT_PROBE_CLIPS.length} clips.`);
+  deps.io.err(`error: the provider refused ${refused.length} of ${clips.length} ${clips.length === 1 ? "clip" : "clips"}.`);
   if (wavPassed) sayContainerRefusal(deps, refused);
   return EXIT.FAIL;
 }
@@ -719,6 +771,7 @@ function describeProvider(settings: SttSettings): string {
   if (settings.provider === "local-cli") {
     return `local-cli (${settings.command}, ${settings.args.length} argument(s) before the recording)`;
   }
+  if (settings.provider === "whistle") return "whistle (Collie's own engine, the model in the state dir)";
   const language = settings.language === undefined ? "auto-detect" : settings.language;
   return `openai-compatible (${settings.baseUrl}, model ${settings.model}, language ${language})`;
 }
@@ -732,7 +785,7 @@ function describeProvider(settings: SttSettings): string {
  * environment variable silently outranks the file `stt setup` wrote, and an operator staring at a
  * correct `stt.json` needs to be told that in one line rather than deduce it.
  */
-export function cmdSttStatus(deps: SttDeps): number {
+export async function cmdSttStatus(deps: SttDeps): Promise<number> {
   const file = readFileSettings(deps);
   const env = sttEnvSettings(deps.ctx.env);
   const warnings: string[] = [];
@@ -752,7 +805,10 @@ export function cmdSttStatus(deps: SttDeps): number {
   if (settings === null) {
     if (warnings.length === 0) {
       deps.io.out("speech-to-text: off — nothing configured. Run `collie stt setup` to turn it on.");
-      deps.io.out(`  config    ${path} (absent)`);
+      // A file that names no provider (a bare change stamp, written when a paired device turned speech
+      // Off) is there, so "absent" would be wrong.
+      deps.io.out(`  config    ${path} (${deps.files.exists(path) ? "no provider" : "absent"})`);
+      await heldModelRow(deps);
       return EXIT.OK;
     }
     // Present but unusable is a real problem, not an "off": something was configured and it is being
@@ -760,6 +816,7 @@ export function cmdSttStatus(deps: SttDeps): number {
     deps.io.out("speech-to-text: off — the configuration on this machine cannot be used.");
     for (const line of warnings) deps.io.err(`  ${line}`);
     deps.io.out(`  config    ${path}`);
+    await heldModelRow(deps);
     return EXIT.FAIL;
   }
 
@@ -795,6 +852,9 @@ export function cmdSttStatus(deps: SttDeps): number {
       deps.io.err("       Fix the file, or run `collie stt setup --provider local-cli` again.");
       return EXIT.FAIL;
     }
+  } else if (settings.provider === "whistle") {
+    row("engine", "Collie's own, in a child of this binary", "fixed");
+    row("model", (await modelStatus(deps)).line, "state dir");
   } else {
     row("endpoint", settings.baseUrl, source("baseUrl"));
     row("model", settings.model, source("model", "default"));
@@ -806,7 +866,18 @@ export function cmdSttStatus(deps: SttDeps): number {
     );
   }
   deps.io.out(`  config    ${path}${deps.files.exists(path) ? "" : " (absent)"}`);
+  if (settings.provider !== "whistle") await heldModelRow(deps);
   return EXIT.OK;
+}
+
+/**
+ * The Whistle model's row when a model, or the start of one, is on this host while Whistle is not the
+ * host engine: phones can still use it, and `collie stt whistle --remove` is how it goes. Silent when
+ * there is none, so a host that never heard of Whistle reads exactly as before.
+ */
+async function heldModelRow(deps: SttDeps): Promise<void> {
+  const model = await modelStatus(deps);
+  if (model.present) deps.io.out(`  whistle   ${model.line} (the model only; not this host's engine)`);
 }
 
 /**
@@ -845,17 +916,23 @@ function keyLabel(apiKey: string | undefined): string {
 export function cmdSttOff(deps: SttDeps): number {
   const path = settingsPath(deps);
   const existed = deps.files.exists(path);
+  const named = readFileSettings(deps).provider;
+  const wasWhistle = named === "whistle";
   try {
     deps.files.remove(path);
   } catch (err) {
     deps.io.err(`error: could not remove ${path} — ${err instanceof Error ? err.message : String(err)}`);
     return EXIT.FAIL;
   }
-  deps.io.out(
-    existed
-      ? `✓ removed ${path} — speech-to-text is off from the next request (no restart needed).`
-      : `speech-to-text was already off — no ${path} to remove.`,
-  );
+  // A file with no provider (a bare change stamp from a paired device) is removed, but it was not
+  // switching anything on, so "off from the next request" would be a claim about a change that is not one.
+  if (!existed) deps.io.out(`speech-to-text was already off — no ${path} to remove.`);
+  else if (named === undefined) deps.io.out(`speech-to-text was already off — removed ${path}, which named no provider.`);
+  else deps.io.out(`✓ removed ${path} — speech-to-text is off from the next request (no restart needed).`);
+  if (wasWhistle) {
+    deps.io.out(`  The Whistle model stays in ${join(deps.ctx.stateDir, "whistle")}, so phones can still use it.`);
+    deps.io.out("  To delete it, run `collie stt whistle --remove`.");
+  }
   reportEnvOverrides(deps, "off");
   return EXIT.OK;
 }
@@ -893,10 +970,12 @@ export async function cmdStt(deps: SttDeps, args: readonly string[]): Promise<nu
   switch (sub) {
     case "setup":
       return await cmdSttSetup(deps, rest);
+    case "whistle":
+      return await cmdSttWhistle(deps, rest);
     case "test":
       return await cmdSttTest(deps);
     case "status":
-      return cmdSttStatus(deps);
+      return await cmdSttStatus(deps);
     case "off":
       return cmdSttOff(deps);
     default:
@@ -905,6 +984,7 @@ export async function cmdStt(deps: SttDeps, args: readonly string[]): Promise<nu
       }
       deps.io.err(sttUsage());
       deps.io.err("  setup    pick a provider and write it into the state dir (interactive or by flag)");
+      deps.io.err("  whistle  fetch Whistle's model, so phones can use it; --host makes it this host's engine");
       deps.io.err("  test     one real round trip through what is configured");
       deps.io.err("  status   the provider, where each setting came from, and whether it is on");
       deps.io.err("  off      remove stt.json — speech-to-text is absent again");

@@ -101,15 +101,18 @@ describe("the Windows check runs the flake's Bun", () => {
     expect(String(setup[0]?.with?.["bun-version"])).toBe(flakeBunVersion());
   });
 
-  test("windows-suites.ps1 gives each suite its own skip budget, 28 in all, each skip named", () => {
+  test("windows-suites.ps1 gives each suite its own skip budget, 30 in all, each skip named", () => {
     const script = readFileSync(join(ROOT, "scripts", "windows-suites.ps1"), "utf8");
     const budget = (suite: string): number => Number(new RegExp(`\\[int\\]\\$MaxSkips${suite} = (\\d+)`).exec(script)?.[1] ?? Number.NaN);
-    expect([budget("Bridge"), budget("Cli"), budget("Scripts")]).toEqual([4, 1, 23]);
-    // The bridge allowance is exactly the local-cli tests that stay POSIX-only, and the comment names them.
+    expect([budget("Bridge"), budget("Cli"), budget("Scripts")]).toEqual([5, 2, 23]);
+    // The bridge allowance is the local-cli tests that stay POSIX-only plus the one real-engine Whistle
+    // case that needs the uncommitted model; the comment names them all.
     const localCli = readFileSync(join(ROOT, "bridge", "stt", "local-cli.test.ts"), "utf8");
     const posixOnly = [...localCli.matchAll(/test\.if\(posix\)\("([^"]+)"/g)].map((m) => m[1]!);
-    expect(posixOnly).toHaveLength(budget("Bridge"));
+    expect(posixOnly).toHaveLength(budget("Bridge") - 1);
     for (const name of posixOnly) expect(script).toContain(name);
+    expect(script).toContain("a 13 s WAV becomes text through a real child of this Collie");
+    expect(script).toContain("a child of this checkout's CLI turns 10.4 s of speech into text");
     expect(script).not.toContain("[int]$MaxSkips = ");
     expect(script).toContain("if ($skip -gt $skipBudget[$name])");
   });

@@ -267,6 +267,16 @@ ${envEntries}
  */
 export const TASK_REVIVE_INTERVAL = "PT5M";
 
+/**
+ * The task's Task Scheduler priority (0 is highest, 10 lowest), written as `<Priority>` in the task's
+ * settings. Left out, Task Scheduler uses 7, which runs the launcher and the bridge it spawns at
+ * memory priority 2 and I/O priority 1, below the normal apps at 5 and 2, so Windows pages Collie out
+ * first when memory runs low and the bridge answers nothing for minutes (#386). 4 runs it at 5 and 2.
+ * The bridge inherits it from the launcher, so a launcher that started under the old task keeps 7
+ * until it is started again.
+ */
+export const TASK_PRIORITY = 4;
+
 /** What the task XML needs that the {@link ServiceSpec} does not carry. */
 export interface TaskOptions {
   /** `DOMAIN\user`, as `whoami` prints it. The task starts at THIS user's logon and runs as them. */
@@ -399,6 +409,7 @@ export function taskXml(spec: ServiceSpec, opts: TaskOptions): string {
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>true</StartWhenAvailable>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>${TASK_PRIORITY}</Priority>
     <RestartOnFailure>
       <Interval>PT1M</Interval>
       <Count>999</Count>

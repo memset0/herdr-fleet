@@ -22,6 +22,7 @@ import { stampSend } from "@/lib/poll-intent";
 import { useBusyWhile } from "@/lib/busy";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { TOOLBAR_TAP_TARGET } from "@/components/ui/tap-target";
 import { ChatInput } from "@/components/ui/chat/chat-input";
 import { NavTray } from "@/components/nav-tray";
 import { KeyBoardEditor } from "@/components/key-board-editor";
@@ -67,7 +68,8 @@ import { useLive } from "@/lib/liveness";
 import { OfflineDraftNote, TerminalDraftPreview } from "@/components/terminal-draft-preview";
 import { scopeKey, type Scope } from "@/lib/scope";
 import { DirectTypingStrip } from "@/components/direct-typing-strip";
-import { RecordingStrip } from "@/components/recording-strip";
+import { VoiceTakeover } from "@/components/voice-takeover";
+import { usePhoneEngineUse } from "@/hooks/use-phone-engine";
 import { useSttRecorder } from "@/hooks/use-stt-recorder";
 import { useHandsFree, useSttCapability } from "@/lib/stt";
 import { NoEchoNotice } from "@/components/no-echo-notice";
@@ -289,6 +291,7 @@ const MIC_REFUSAL_MESSAGES = {
   direct: "fleet.command.mic.direct",
   sending: "fleet.command.mic.sending",
   transcribing: "fleet.command.mic.transcribing",
+  failed: "fleet.command.mic.failed",
   "already-recording": "fleet.command.mic.alreadyRecording",
   "not-recording": "fleet.command.mic.notRecording",
 } as const satisfies Record<MicRefusal, string>;
@@ -296,24 +299,9 @@ const MIC_REFUSAL_MESSAGES = {
 /** How long the attach button holds its pressed tone, in ms. Just under the sheet's own 240ms
  *  entrance, so the flash hands over to the sheet rather than lingering behind it. */
 const ATTACH_PRESS_MS = 220;
+/** Frames the composer keeps asking for focus back after the voice takeover goes (about 250 ms at 60 Hz). */
+const TAKEOVER_FOCUS_FRAMES = 15;
 
-/**
- * The 44px tap floor, bought back as HIT AREA by the two buttons inside the composer's box.
- *
- * DESIGN.md §6 states the floor and also states this trade: where drawn height is expensive, a
- * control may measure less and reach out with a transparent `::before`, exactly as
- * `STRIP_TAP_TARGET` does for the strips. It is expensive here. The two buttons stand INSIDE the
- * composer's box, on the field's own row, so their face sets the height of an empty composer, and
- * every pixel of it is a pixel of mirror the operator stops seeing.
- *
- * The arithmetic, and it is the whole reason this is a constant and not a class at two call sites:
- * the face is `size-9`, 36px, and `-inset-1` reaches 4px out on all four sides, so 36 + 8 = 44 in
- * BOTH axes. The box's own `p-1` is 4px, so the reach stays inside the border and the box's inner
- * height is exactly that 44px: one row. Beside the field the reach runs into the row's `gap-1`, so
- * no hit box crosses the textarea's own edge. Change the face, the inset, the box's padding or the
- * gap and all of these facts must be re-checked together (ADR 0057, amended 2026-09-22).
- */
-const TOOLBAR_TAP_TARGET = "relative before:absolute before:-inset-1 before:content-['']";
 
 /**
  * A photo chip's thumbnail source: a blob URL for the picked file, valid for this page session only
@@ -669,13 +657,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // predicate in lib/stt.ts, so the button here and the row in Settings can never disagree. Absent
   // is the feature being off: no button at all, not a disabled one.
   const stt = useSttCapability();
+  // THE TWO ENGINES (ADR 0096). The microphone exists when the host has a provider, or when this
+  // device chose "On this phone" and the phone can run it. It is ENABLED when the host's provider can
+  // serve, or the phone engine is the one that will run: a phone-only device has no host provider
+  // to be unavailable. The engine is the phone's whenever the device chose it and the browser can run
+  // it; the recorder reads that once, as the clip starts. A phone whose copy is gone stays on the
+  // phone engine (`paused`): the clip fails there with the reason and offers Send to host as a tap,
+  // and never reaches the host by itself (ADR 0096 Decision 12).
+  const phoneUse = usePhoneEngineUse();
+  const phoneUsable = phoneUse === "phone";
+  const micShown = stt !== null || phoneUsable;
+  const micAvailable = phoneUsable || stt?.available === true;
   const handsFree = useHandsFree();
   // The microphone is armed state, and it obeys the same rules as "Type into terminal": it dies on a
   // pane switch, on any composer lock, and on a hidden page, and it is never persisted. The clip is
   // DISCARDED on each of those, not finished — see the hook's header for why an orphaned transcript
   // is worse than no transcript.
   const recorder = useSttRecorder({
-    enabled: stt?.available === true && !locked && !direct.active,
+    enabled: micAvailable && !locked && !direct.active,
+    engine: phoneUse === "host" ? "host" : "phone",
+    host: stt,
     paneKey: `${scopeId}\0${paneId}`,
     suspended: locked || direct.active,
     onTranscript: acceptTranscript,
@@ -691,7 +692,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // the mark just reads what the composer already knows.
   //
   // NOT the poll, and not `recorder.busy`: the poll is ambient (lib/busy.ts says why at the counter),
-  // and a RECORDING is the operator working, not the app — the microphone strip below already says
+  // and a RECORDING is the operator working, not the app — the voice takeover already says
   // so, in words, and a spinning mark would claim the phone was busy while it waits on a human.
   useBusyWhile(sending);
   useBusyWhile(uploading);
@@ -717,7 +718,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // state to look at, so a refusal is a sentence, and nothing else happens.
   const runMicCommand = (command: MicCommand) => {
     const decision = decideMicCommand(command, {
-      available: stt !== null && stt.available,
+      available: micAvailable,
       locked,
       directTyping: direct.active,
       sending,
@@ -741,6 +742,48 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     "stop-mic-recording": () => runMicCommand("stop"),
     "toggle-mic-recording": () => runMicCommand("toggle"),
   });
+
+  // ── THE VOICE TAKEOVER (design 3.3) ───────────────────────────────────────────────────────────
+  //
+  // Open for exactly as long as a clip exists: the permission prompt, the recording and the
+  // transcription. It is drawn absolutely over this block (below), so opening it moves nothing.
+  const takeoverOpen = recorder.busy;
+  // The block's bottom padding. Named once because the takeover repeats it on its own column, which
+  // is what puts OK on the mic's exact spot. See `composing` on the props above for the why.
+  const blockPad = composing ? "pb-2" : "pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]";
+  const blockRef = useRef<HTMLDivElement>(null);
+  const openedByKeyboard = useRef(false);
+  // When the takeover goes away, focus goes back to the round button at the end of the row (the mic,
+  // or Send once a transcript landed), but only if focus was on the takeover or nowhere: a pane
+  // switch that moved focus elsewhere is not ours to take back.
+  const wasTakeoverOpen = useRef(false);
+  useEffect(() => {
+    const returning = wasTakeoverOpen.current && !takeoverOpen;
+    wasTakeoverOpen.current = takeoverOpen;
+    if (!returning) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body && !blockRef.current?.contains(active)) return;
+    // The controls were `inert` and `invisible` a moment ago, and WebKit does not count them
+    // focusable until it has painted them back: the buttons carry `transition-all`, which includes
+    // `visibility`, so for the first frame or few after the takeover goes the round button still
+    // computes `hidden` there and `focus()` is a silent no-op (measured: about 1 run in 20 in
+    // `voice-takeover.spec.ts`, a keyboard user left with focus on the body). So ask each frame
+    // until the focus took, for at most a quarter of a second, and stop the moment it took or the
+    // operator put focus somewhere of their own.
+    let frame = 0;
+    let frames = 0;
+    const settle = () => {
+      const target = blockRef.current?.querySelector<HTMLElement>('[data-slot="composer-primary"]');
+      if (!target) return;
+      const now = document.activeElement;
+      if (now !== null && now !== document.body && !blockRef.current?.contains(now)) return;
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target || (frames += 1) >= TAKEOVER_FOCUS_FRAMES) return;
+      frame = requestAnimationFrame(settle);
+    };
+    frame = requestAnimationFrame(settle);
+    return () => cancelAnimationFrame(frame);
+  }, [takeoverOpen]);
 
   /**
    * What happens to a finished transcript.
@@ -1545,14 +1588,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   return (
     <>
       <div
+        ref={blockRef}
         className={cn(
           // `relative` anchors the floating draft notice when no slot was handed in (ADR 0061).
           "relative bg-chrome px-3",
-          // See `composing` on the props above: the inset reserves room for the home indicator, and
-          // while the keyboard is up the keyboard is already covering it. Paying it twice costs
-          // ~24px on the one screen that has none.
-          composing ? "pb-2" : "pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]",
+          blockPad,
+          // THE COMPOSER, KEPT LAID OUT UNDER THE VOICE TAKEOVER. `invisible` hides the real controls
+          // and `inert` takes them out of focus, taps and the screen-reader tree, and both leave the
+          // box in flow, so the block keeps exactly the height it had. The takeover is drawn over it
+          // as a sibling, `absolute inset-0` in the chrome block that holds both
+          // (components/voice-takeover.tsx). That is the whole of the zero-shift argument.
+          takeoverOpen && "invisible",
         )}
+        inert={takeoverOpen}
       >
         {/* Pending-send preview: visible from send until the mirror echoes back (or 6s). Shows the
             user what landed so they don't double-tap while waiting for the terminal to update.
@@ -1820,27 +1868,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             />
           )}
         </Collapse>
-        {/* THE ARMED-MODE SLOT — one Collapse, two strips, because they are one idea: a mode this
-            composer is holding open, said in words where the eye already looks. Grouping them keeps
-            the arrival to a single 240ms slide when one hands over to the other (stop typing, start
-            dictating), instead of two boxes fighting over the same row. Both are CONDITIONS with
-            their own controls — Stop, and the recorder's separate ✕ — so neither belongs in the top
-            pills, which carry no controls at all. */}
-        <Collapse open={direct.active || (recorder.busy && recorder.phase !== "requesting")}>
+        {/* THE ARMED-MODE SLOT — "Type into terminal" is a mode this composer holds open, said in
+            words where the eye already looks. It is a CONDITION with its own control (Stop), so it
+            belongs here and not in the top pills, which carry no controls at all. It shared this
+            slot with the microphone's strip until the voice takeover replaced that strip; the
+            microphone's armed state is the takeover now, drawn over the block and not in this flow. */}
+        <Collapse open={direct.active}>
           {/* Armed indicator for direct typing, deliberately NOT only on the button and textarea —
               see the component. */}
           {direct.active && <DirectTypingStrip onStop={() => direct.deactivate()} />}
-          {/* The microphone's armed strip. Stop and ✕ are different actions: one transcribes the
-              clip, the other throws it away. */}
-          {recorder.busy && recorder.phase !== "requesting" && (
-            <RecordingStrip
-              elapsed={recorder.elapsedLabel}
-              transcribing={recorder.phase === "transcribing"}
-              handsFree={handsFree && !hasDraft && noEcho === null}
-              onStop={recorder.stopAndSend}
-              onDiscard={recorder.discard}
-            />
-          )}
         </Collapse>
         {/* A draft too large for the disk tier (lib/drafts.ts). It survives a pane switch — the
             memory tier holds it whole — but not the app closing, and that difference is invisible
@@ -2143,7 +2179,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               child and the confirm buttons do not shrink, so their words still get their natural width
               without taking it from here; and a control that comes and goes with a confirm state is
               one the hand cannot go to without looking first. */}
-          {stt !== null && (
+          {micShown && (
             <Button
               type="button"
               size="icon"
@@ -2153,23 +2189,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               variant={recorder.busy ? "destructive" : "outline"}
               className={cn(TOOLBAR_TAP_TARGET, "size-9 shrink-0 rounded-full")}
               disabled={
-                !stt.available || locked || offline || direct.active || sending || recorder.phase === "transcribing"
+                !micAvailable || locked || offline || direct.active || sending || recorder.phase === "transcribing"
               }
               aria-pressed={recorder.busy}
               // The bridge's own words when it cannot serve — the operator's next move is on the
               // host, so the button says what is wrong rather than just refusing.
               aria-label={
-                !stt.available
-                  ? (stt.reason ?? translate("composer.mic.unavailable"))
+                !micAvailable
+                  ? (stt?.reason ?? translate("composer.mic.unavailable"))
                   : recorder.phase === "recording"
                     ? translate("composer.mic.stopAria")
                     : translate("composer.mic.recordAria")
               }
-              title={stt.available ? undefined : stt.reason}
+              title={micAvailable ? undefined : stt?.reason}
               // Leaves the field's focus and the soft keyboard where they are, so the caret this
               // clip's transcript will splice into is still the one the operator left.
               onPointerDown={(e) => e.preventDefault()}
-              onClick={() => (recorder.phase === "recording" ? recorder.stopAndSend() : recorder.start())}
+              onClick={(e) => {
+                // `detail` is 0 for a click the keyboard made: the takeover then shows its focus mark.
+                openedByKeyboard.current = e.detail === 0;
+                if (recorder.phase === "recording") recorder.stopAndSend();
+                else recorder.start();
+              }}
             >
               {recorder.phase === "transcribing" ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -2219,6 +2260,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             </Button>
           ) : (
             <Button
+              data-slot="composer-primary"
               size="icon"
               className={cn(TOOLBAR_TAP_TARGET, "size-9 shrink-0 rounded-full")}
               onClick={direct.active ? () => direct.deactivate() : onSendClick}
@@ -2266,6 +2308,27 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           )}
         </div>
       </div>
+
+      {/* THE VOICE TAKEOVER (design 3.3): over the whole chrome block, in its own box, from the mic's
+          tap until the transcript lands or the clip is thrown away. A sibling of the composer above,
+          positioned against the `relative` chrome block that holds both (agent-chat.tsx).
+          See components/voice-takeover.tsx. */}
+      {recorder.phase !== "idle" && (
+        <VoiceTakeover
+          phase={recorder.phase}
+          elapsed={recorder.elapsedLabel}
+          source={recorder.meter}
+          hand={hand}
+          padClassName={blockPad}
+          keyboardOpened={openedByKeyboard.current}
+          sends={handsFree && !hasDraft && noEcho === null}
+          engine={recorder.engine}
+          failure={recorder.failure}
+          onSendToHost={recorder.canSendToHost ? recorder.sendToHost : null}
+          onStop={recorder.stopAndSend}
+          onDiscard={recorder.discard}
+        />
+      )}
 
       {/* Slash-command palette */}
       <CommandPalette

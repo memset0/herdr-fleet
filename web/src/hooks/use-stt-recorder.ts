@@ -1,31 +1,63 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as api from "@/lib/api";
+import { createAudioMeter, type AudioMeter } from "@/lib/audio-meter";
 import { t } from "@/lib/i18n";
 import {
   MAX_STT_AUDIO_BYTES,
-  MAX_STT_DURATION_MS,
+  noteSttProbe,
   pickRecordingMimeType,
+  recordingLimitMs,
   requestedRecordingBitrate,
   sttErrorMessage,
+  transcribeOnPhone,
+  type SttEngineChoice,
 } from "@/lib/stt";
+import { encodeWav16, toPcm16k } from "@/lib/stt-pcm";
+import type { SttCapability } from "@/lib/types";
 
-/** Where one clip is in its life. `requesting` is the browser's permission prompt. */
-export type SttPhase = "idle" | "requesting" | "recording" | "transcribing";
+/**
+ * Where one clip is in its life. `requesting` is the browser's permission prompt. `failed` is only
+ * the phone engine failing: the takeover stays open with the sentence, and the clip stays in memory
+ * until the person sends it to the host or throws it away.
+ */
+export type SttPhase = "idle" | "requesting" | "recording" | "transcribing" | "failed";
 
-/** One composer's microphone. Everything the button and the strip above it need. */
+/** One composer's microphone. Everything the button and the voice takeover need. */
 export interface SttRecorder {
   phase: SttPhase;
-  /** `m:ss` since the recording started — the elapsed readout on the armed strip. */
+  /** `m:ss` since the recording started — the elapsed readout on the voice takeover. */
   elapsedLabel: string;
+  /** The engine this clip uses, fixed when the clip starts. */
+  engine: SttEngineChoice;
+  /** In the `failed` phase: why the phone could not transcribe the clip, in words. Otherwise `null`. */
+  failure: string | null;
+  /** True in the `failed` phase while the host has an available provider: "Send to host" may be offered. */
+  canSendToHost: boolean;
+  /**
+   * Upload the clip the phone could not transcribe to the host, in the host's format (a 16 kHz WAV for
+   * `whistle`, the original recording otherwise). One tap per clip, never automatic (ADR 0096
+   * Decision 12). A no-op unless `failed` and the host can serve.
+   */
+  sendToHost: () => void;
   /** True for every phase but `idle`: a clip is being recorded or is in flight. */
   busy: boolean;
   /** Ask for the microphone and start. A no-op unless idle. */
   start: () => void;
   /** Stop and transcribe. A no-op unless recording. */
   stopAndSend: () => void;
-  /** Throw the clip away — no upload, nothing kept. Safe in any phase. */
+  /**
+   * Throw the clip away — no upload, nothing kept. Safe in any phase, and in `transcribing` it ABORTS
+   * the request in flight and drops whatever it would have answered (the operation identity is
+   * cleared first, so the answer finds a stale operation and is ignored).
+   */
   discard: () => void;
+  /**
+   * The level meter on this clip's stream, for the takeover to read per frame; `null` when there is
+   * no clip, no Web Audio, or the clip is over. Made inside the tap that called `start`
+   * (lib/audio-meter.ts says why), closed on every path `teardown` covers.
+   */
+  meter: AudioMeter | null;
 }
 
 interface SttRecorderOptions {
@@ -42,6 +74,10 @@ interface SttRecorderOptions {
   suspended: boolean;
   onTranscript: (text: string) => void;
   onError: (message: string) => void;
+  /** Which engine the next clip uses. Read when the clip starts, so a change mid-clip does not move it. Default `host`. */
+  engine?: SttEngineChoice;
+  /** The host's provider, or `null` when there is none. Gives the upload format and the recording cap. */
+  host?: SttCapability | null;
 }
 
 function elapsedLabel(ms: number): string {
@@ -74,9 +110,15 @@ export function useSttRecorder({
   suspended,
   onTranscript,
   onError,
+  engine = "host",
+  host = null,
 }: SttRecorderOptions): SttRecorder {
   const [phase, setPhase] = useState<SttPhase>("idle");
+  const [clipEngine, setClipEngine] = useState<SttEngineChoice>("host");
+  const [failure, setFailure] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [meter, setMeter] = useState<AudioMeter | null>(null);
+  const meterRef = useRef<AudioMeter | null>(null);
   // The live phase for the async continuations below, which run between renders and must not read a
   // value that is one render behind.
   const phaseRef = useRef<SttPhase>("idle");
@@ -95,6 +137,14 @@ export function useSttRecorder({
   const onErrorRef = useRef(onError);
   onTranscriptRef.current = onTranscript;
   onErrorRef.current = onError;
+  const engineOptionRef = useRef(engine);
+  const hostRef = useRef(host);
+  engineOptionRef.current = engine;
+  hostRef.current = host;
+  // The engine the clip in flight started with, and — only in the `failed` phase — the clip itself.
+  const engineRef = useRef<SttEngineChoice>("host");
+  const clipRef = useRef<Blob | null>(null);
+  const clipMsRef = useRef(0);
 
   function setPhaseNow(next: SttPhase): void {
     phaseRef.current = next;
@@ -144,6 +194,13 @@ export function useSttRecorder({
     streamRef.current = null;
   }
 
+  // The meter shares the stream and the lifetime of the clip: closed wherever the tracks are.
+  function closeMeter(publish: boolean): void {
+    meterRef.current?.close();
+    meterRef.current = null;
+    if (publish) setMeter(null);
+  }
+
   /**
    * Drop the current operation and release everything it holds. `publish` is false only from the
    * unmount path, where a state update would be a no-op React warns about.
@@ -157,9 +214,12 @@ export function useSttRecorder({
     operation?.abort();
     clearTimers();
     releaseWakeLock();
-    // The audio itself goes here, and it goes on every path — a failure keeps nothing (ADR 0029).
+    // The audio itself goes here, and it goes on every path (ADR 0029). The one exception is the
+    // `failed` phase, which holds the finished clip in memory so "Send to host" has something to send;
+    // every way out of that phase passes through here.
     chunksRef.current = [];
     bytesRef.current = 0;
+    clipRef.current = null;
     const recorder = recorderRef.current;
     recorderRef.current = null;
     if (recorder && recorder.state !== "inactive") {
@@ -170,8 +230,10 @@ export function useSttRecorder({
       }
     }
     stopTracks();
+    closeMeter(publish);
     if (publish) {
       setElapsedMs(0);
+      setFailure(null);
       setPhaseNow("idle");
     }
   }
@@ -184,12 +246,76 @@ export function useSttRecorder({
     onErrorRef.current(message);
   }
 
+  /** The end of a clip that produced words: trim, hand over, or say nothing was heard. */
+  function finishWith(rawText: string): void {
+    const text = rawText.trim();
+    teardown(true);
+    if (text === "") {
+      onErrorRef.current(t("stt.error.noSpeechHeard"));
+      return;
+    }
+    onTranscriptRef.current(text);
+  }
+
   async function transcribe(operation: AbortController, clip: Blob): Promise<void> {
     if (!isCurrent(operation)) return;
     setPhaseNow("transcribing");
+    if (engineRef.current === "phone") await transcribeOnDevice(operation, clip);
+    else await uploadToHost(operation, clip);
+  }
+
+  /** The phone engine: decode, transcribe in the worker, and never touch the network. */
+  async function transcribeOnDevice(operation: AbortController, clip: Blob): Promise<void> {
+    let pcm: Float32Array;
+    try {
+      pcm = await toPcm16k(clip);
+    } catch {
+      if (isCurrent(operation)) failOnPhone(operation, clip, t("stt.error.phone.undecodable"));
+      return;
+    }
+    if (!isCurrent(operation)) return;
+    const result = await transcribeOnPhone(pcm, operation.signal);
+    if (!isCurrent(operation)) return;
+    if (!result.ok) {
+      failOnPhone(operation, clip, result.message);
+      // After the sentence is up: noting a second crash can take the phone engine off the choices,
+      // and the composer then reacts to it.
+      if (result.probe !== undefined) noteSttProbe(result.probe);
+      return;
+    }
+    finishWith(result.text);
+  }
+
+  /** Keep the takeover open with the sentence, and keep the clip for "Send to host". */
+  function failOnPhone(operation: AbortController, clip: Blob, message: string): void {
+    if (!isCurrent(operation)) return;
+    clipRef.current = clip;
+    setFailure(message);
+    setPhaseNow("failed");
+  }
+
+  /** The host: the recording as the browser made it, or a 16 kHz WAV when the provider asks for one. */
+  async function uploadToHost(operation: AbortController, clip: Blob): Promise<void> {
+    let body = clip;
+    const capability = hostRef.current;
+    if (capability?.input === "wav-16k") {
+      // A clip the phone engine recorded for up to five minutes may be longer than this provider takes.
+      const cap = recordingLimitMs("host", capability);
+      if (clipMsRef.current > cap + 1500) {
+        fail(operation, t("stt.error.tooLong"));
+        return;
+      }
+      try {
+        body = encodeWav16(await toPcm16k(clip));
+      } catch {
+        fail(operation, t("stt.error.phone.undecodable"));
+        return;
+      }
+      if (!isCurrent(operation)) return;
+    }
     let result: api.SttResult;
     try {
-      result = await api.transcribeAudio(clip, operation.signal);
+      result = await api.transcribeAudio(body, operation.signal);
     } catch {
       // A throw here is transport only — offline, or the request's own deadline. Every refusal the
       // bridge authored comes back as a value.
@@ -201,14 +327,22 @@ export function useSttRecorder({
       fail(operation, sttErrorMessage(result));
       return;
     }
-    const text = result.text.trim();
-    teardown(true);
-    if (text === "") {
-      onErrorRef.current(t("stt.error.noSpeechHeard"));
-      return;
-    }
-    onTranscriptRef.current(text);
+    finishWith(result.text);
   }
+
+  const sendToHost = useCallback(() => {
+    const operation = operationRef.current;
+    const clip = clipRef.current;
+    if (phaseRef.current !== "failed" || operation === null || clip === null) return;
+    if (hostRef.current?.available !== true) return;
+    // One tap, one upload: the clip leaves the `failed` slot as it goes.
+    clipRef.current = null;
+    engineRef.current = "host";
+    setClipEngine("host");
+    setFailure(null);
+    setPhaseNow("transcribing");
+    void uploadToHost(operation, clip);
+  }, []);
 
   const stopAndSend = useCallback(() => {
     const operation = operationRef.current;
@@ -239,12 +373,20 @@ export function useSttRecorder({
     }
     const operation = new AbortController();
     operationRef.current = operation;
+    const clipEngineNow = engineOptionRef.current;
+    engineRef.current = clipEngineNow;
+    setClipEngine(clipEngineNow);
+    // Inside the tap, so the audio context can be resumed under the user's gesture.
+    const levelMeter = createAudioMeter();
+    meterRef.current = levelMeter;
+    setMeter(levelMeter);
     setElapsedMs(0);
     setPhaseNow("requesting");
     void (async () => {
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // One channel: speech is mono, and a stereo stream would double the decode of a long clip.
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
       } catch {
         fail(operation, t("stt.error.micRefused"));
         return;
@@ -254,6 +396,7 @@ export function useSttRecorder({
         return;
       }
       streamRef.current = stream;
+      levelMeter?.attach(stream);
       let recorder: MediaRecorder;
       try {
         recorder = new MediaRecorder(stream, {
@@ -292,9 +435,11 @@ export function useSttRecorder({
         clearTimers();
         recorderRef.current = null;
         stopTracks();
+        closeMeter(true);
         const chunks = chunksRef.current;
         chunksRef.current = [];
         bytesRef.current = 0;
+        clipMsRef.current = Date.now() - startedAtRef.current;
         const clip = new Blob(chunks, { type: mimeType });
         if (clip.size === 0) {
           fail(operation, t("stt.error.nothingRecorded"));
@@ -315,19 +460,26 @@ export function useSttRecorder({
       tickRef.current = setInterval(() => {
         if (isCurrent(operation)) setElapsedMs(Date.now() - startedAtRef.current);
       }, 1000);
-      hardStopRef.current = setTimeout(() => stopAndSend(), MAX_STT_DURATION_MS);
+      hardStopRef.current = setTimeout(() => stopAndSend(), recordingLimitMs(clipEngineNow, hostRef.current));
     })();
   }, [enabled, stopAndSend]);
 
-  // The three effects below are LIFECYCLE handlers, not reactive computations. `discard` is stable
+  // The effects below are LIFECYCLE handlers, not reactive computations. `discard` is stable
   // (useCallback with no dependencies), so each fires on its own condition and nothing else.
 
-  // The pane moved, or the composer stopped accepting writes, or the feature went away. Same rule
+  // The pane moved, or the composer stopped accepting writes. Same rule
   // the armed typing mode follows: the view this was armed against is gone, so the clip goes too.
   useEffect(() => {
     if (phaseRef.current === "idle") return;
     discard();
-  }, [paneKey, suspended, enabled, discard]);
+  }, [paneKey, suspended, discard]);
+
+  // The feature went away. Not in the `failed` phase: a second phone crash takes the phone engine off
+  // the choices, and that must not wipe the sentence that says so.
+  useEffect(() => {
+    if (phaseRef.current === "idle" || phaseRef.current === "failed") return;
+    discard();
+  }, [enabled, discard]);
 
   // A hidden page discards outright, with no message: a phone suspends the recorder when it
   // backgrounds, so what would come back is a truncated clip the operator never chose to send.
@@ -350,9 +502,14 @@ export function useSttRecorder({
   return {
     phase,
     elapsedLabel: elapsedLabel(elapsedMs),
+    engine: clipEngine,
+    failure,
+    canSendToHost: phase === "failed" && host?.available === true,
+    sendToHost,
     busy: phase !== "idle",
     start,
     stopAndSend,
     discard,
+    meter,
   };
 }

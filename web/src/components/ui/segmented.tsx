@@ -29,6 +29,12 @@ export interface SegmentedOption<V extends string | number> {
   icon?: ReactNode;
   /** ALREADY TRANSLATED. The tooltip of an icon segment, when it should say more than `label`. */
   title?: string;
+  /**
+   * This one segment is inert while the others are not: a choice that cannot be made here, with the
+   * reason written by the caller beside the row (the Speech engine's "This phone"). The segment keeps
+   * its place and its width, so nothing moves. `disabled` on the row makes every segment inert.
+   */
+  disabled?: boolean;
 }
 
 export interface SegmentedProps<V extends string | number> {
@@ -99,7 +105,7 @@ export function Segmented<V extends string | number>({
             // An icon segment has no visible word, so its name is always said.
             aria-label={said.length === 0 ? (iconic ? option.label : undefined) : `${option.label}, ${said.join(", ")}`}
             title={iconic ? (option.title ?? option.label) : undefined}
-            disabled={disabled}
+            disabled={disabled || option.disabled === true}
             onClick={() => {
               // A choice is never un-picked, and a caller that posts on change is not asked to post
               // twice for a tap on the segment that is already on.

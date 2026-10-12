@@ -38,3 +38,17 @@ export async function serveWithShellCsp(page: Page): Promise<string> {
   });
   return policy;
 }
+
+/**
+ * The policy the bridge sends with every `.js` under `stt/` (ADR 0096 Decision 8): the speech worker
+ * and the engine glue. Read from `bridge/server.ts` for the same reason {@link shellCsp} is, and it
+ * fails loudly when the constant moves.
+ */
+export function sttWorkerCsp(): string {
+  const source = readFileSync(new URL("../../../bridge/server.ts", import.meta.url), "utf8");
+  const declaration = /export const STT_WORKER_CSP =\s*"([^"\n]*)";/.exec(source);
+  if (declaration === null) throw new Error("bridge/server.ts no longer declares `export const STT_WORKER_CSP = \"…\";`");
+  const policy = declaration[1]!;
+  if (!policy.includes("'wasm-unsafe-eval'")) throw new Error(`the worker CSP read from the bridge looks wrong: ${policy}`);
+  return policy;
+}

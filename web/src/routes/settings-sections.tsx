@@ -12,7 +12,7 @@ import { CrewSettingsCard } from "@/components/crew-settings-card";
 import { KeepChatControl } from "@/components/keep-chat-control";
 import { FontSettingsControl } from "@/components/font-settings";
 import { HandControl } from "@/components/hand-control";
-import { HandsFreeControl } from "@/components/hands-free-control";
+import { SpeechControl } from "@/components/speech-control";
 import { HapticsControl } from "@/components/haptics-control";
 import { HarnessBarControl } from "@/components/harness-bar-control";
 import { LanguageControl } from "@/components/language-control";
@@ -30,7 +30,9 @@ import { UpdatesSettingsCard } from "@/components/updates-settings-card";
 import { ZenControl } from "@/components/zen-control";
 import { useServerDiagnostics } from "@/hooks/use-server-diagnostics";
 import { EMPTY_DEVICES, type DevicesData } from "@/lib/loaders";
+import { settingsSectionPath } from "@/lib/nav";
 import { useOptionalRootData } from "@/lib/route-data";
+import { useScope } from "@/lib/session";
 
 // ── THE SETTINGS SECTIONS ───────────────────────────────────────────────────────────────────────
 //
@@ -54,6 +56,10 @@ import { useOptionalRootData } from "@/lib/route-data";
 //              different, including what the mirror renders with.
 // Device     — how this phone TREATS you. Feedback, input, and what the pane menu is allowed to
 //              offer. Nothing here changes a pixel until you do something.
+// Voice      — how your voice becomes text: a hub with this phone's own choice and hands-free, and
+//              two pages below it, Host speech (the host's option, for every device) and Whistle
+//              model (its copies). Its row is never hidden; a host that offers nothing gets a page
+//              that says so.
 // Alerts     — when Collie speaks up, on this device and bridge-wide.
 // System     — what this thing is talking to, and whether it is well. Diagnostics and access.
 // Experiments— what is not finished. The odd one out: it is the only section that can be absent,
@@ -102,8 +108,6 @@ export function SettingsDeviceRoute() {
     <SettingsPage title="settings.section.device.title">
       {/* Renders nothing where vibrate is unsupported. */}
       <HapticsControl />
-      {/* Renders nothing where no provider is configured or the browser cannot record. */}
-      <HandsFreeControl />
       {/* AVAILABILITY ONLY. This row does not turn zen on — it decides whether the pane's actions
           sheet offers the "Zen mode" row at all. Off by default, because zen takes away every way
           back except one floating button. */}
@@ -116,6 +120,37 @@ export function SettingsDeviceRoute() {
       {/* The ONLY way back to a tour that was interrupted — the tour is marked seen the moment it
           opens. An action, so the row ends in a button rather than a Switch. */}
       <TourControl />
+    </SettingsPage>
+  );
+}
+
+export function SettingsVoiceRoute() {
+  return (
+    <SettingsPage title="settings.section.voice.title">
+      {/* The hub (ADR 0096, ADR 0097): what happens when the mic is pressed, this phone's own choice,
+          one row for the host's option with a way in, hands-free, and one row for the model. Says why
+          it is empty on a host that offers nothing, since the index row is never hidden. */}
+      <SpeechControl page="hub" />
+    </SettingsPage>
+  );
+}
+
+/** Settings → Voice → Host speech: the host's five options, for every device on it. */
+export function SettingsVoiceHostRoute() {
+  const scope = useScope();
+  return (
+    <SettingsPage title="settings.voice.hostPage.title" parent={settingsSectionPath("voice", scope)}>
+      <SpeechControl page="host" />
+    </SettingsPage>
+  );
+}
+
+/** Settings → Voice → Whistle model: the model's credit and its two copies, on the host and on this phone. */
+export function SettingsVoiceModelRoute() {
+  const scope = useScope();
+  return (
+    <SettingsPage title="settings.voice.model.title" parent={settingsSectionPath("voice", scope)}>
+      <SpeechControl page="model" />
     </SettingsPage>
   );
 }

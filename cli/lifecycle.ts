@@ -47,6 +47,7 @@ import {
   systemdUnit,
   taskFilePath,
   type TaskOptions,
+  TASK_PRIORITY,
   taskPercentPath,
   taskXml,
   unitFilePath,
@@ -599,6 +600,23 @@ function registerTask(deps: LifecycleDeps): boolean {
   return false;
 }
 
+/**
+ * Register the task again when the one on file is not at {@link TASK_PRIORITY} (#386): tasks written
+ * before 1.20.0 carry no priority, so Task Scheduler runs them at 7, below normal apps, and Windows
+ * pages the bridge out first under memory pressure. `restart` is where `collie update` ends, through
+ * the new binary, so every update repairs the task. A task already at 4 costs one query and nothing
+ * else; a PowerShell that cannot answer changes nothing. Registering replaces the definition and
+ * leaves the running launcher alone, but a process keeps the priority it started with and the bridge
+ * inherits it from the launcher, so the running one carries the old priority until `stop` and `start`
+ * (or the next logon) starts a new launcher: the one line printed here says so.
+ */
+function renewTaskPriority(deps: LifecycleDeps): void {
+  const query = queryTask(deps.exec, taskName(deps), deps.host);
+  if (query === undefined || (query !== null && query.priority === TASK_PRIORITY)) return;
+  if (!registerTask(deps)) return;
+  deps.io.out("the task now runs Collie at normal priority; the running launcher keeps its old one until you run `collie stop` and `collie start`");
+}
+
 /** What Windows says when an account may not log on as a batch job: 0x80070569, in any language's text. */
 const BATCH_LOGON_REFUSED = /0x80070569|not been granted the requested logon type/i;
 
@@ -814,6 +832,8 @@ async function restartTaskScheduler(deps: LifecycleDeps): Promise<number | null>
   if (launcher.kind === "gone" || !isTaskLauncher(launcher.command, record.format, root, instance, deps.host)) return null;
   if (record.format === 1 && registerTask(deps)) {
     deps.io.out("the task now runs Collie's own launcher from the next logon; until then the old one keeps the bridge up");
+  } else if (record.format !== 1) {
+    renewTaskPriority(deps);
   }
 
   // Said to the launcher before the kill: a killed bridge reads as a crash on Windows, and a crash
@@ -1282,14 +1302,21 @@ export async function statusView(deps: LifecycleDeps): Promise<StatusView> {
   if (deps.ctx.instance !== null) rows.push({ label: "instance", value: deps.ctx.instance });
   rows.push({ label: "service", value: serviceDescription(deps) });
   // F13: the address the bridge BOUND, not a hardcoded loopback string — see `localBridgeUrl`.
-  rows.push({ label: "local", value: localBridgeUrl(deps.ctx.env, deps.ctx.port) });
+  // A peer's main listener is mutual TLS only (ADR 0013), so an `http://` address there never
+  // answers. Name it as the crew link it is.
+  const isPeer = crewModeOnDisk(deps) === "peer";
+  const localUrl = localBridgeUrl(deps.ctx.env, deps.ctx.port);
+  rows.push({
+    label: "local",
+    value: isPeer ? `${localUrl.replace(/^http:/, "https:")} (crew link, mutual TLS only)` : localUrl,
+  });
   // The front-door row, and the one machine that has no front door to describe. A PEER publishes
   // none (ADR 0013) — `cmdServe` refuses the publish and says so — so a `tailnet` row here was a row
   // about a door that is not there, offering a loopback URL that is not even a peer's bind (the
   // `local` row above says what is). Asked of the same function that takes the publish decision, so
   // the banner and the refusal can never disagree. The crew's door is named instead, because "where
   // do I point my phone?" still has an answer on a peer: the lead's (F24).
-  if (crewModeOnDisk(deps) === "peer") {
+  if (isPeer) {
     rows.push({ label: "crew", value: "peer — no front door here; the lead's door serves the crew (ADR 0013)" });
   } else if (deps.ctx.env.COLLIE_SKIP_SERVE === "1") {
     const url = configuredPublicUrl(deps.ctx.env);

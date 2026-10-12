@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 import { act } from "react";
 
-import { BottomSheet, SideSheet, useAnySheetOpen } from "./sheet";
+import { BottomSheet, useAnySheetOpen } from "./sheet";
 
 // Focus + labelling: the sheets are role=dialog/aria-modal, so they should be named by their title,
 // move focus inside on open, restore it on close, and expose exactly ONE accessible "Close" (the
@@ -20,9 +20,9 @@ describe("sheet — focus & labelling", () => {
   it("exposes a single accessible Close (✕); the backdrop is aria-hidden but still dismisses on a real tap (down+up on it)", () => {
     const onClose = vi.fn();
     const { container } = render(
-      <SideSheet open onClose={onClose} title="Navigate">
+      <BottomSheet open onClose={onClose} title="Navigate">
         body
-      </SideSheet>,
+      </BottomSheet>,
     );
     // Only the header ✕ is in the a11y tree now — no giant duplicate "Close" from the backdrop.
     expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);

@@ -186,6 +186,12 @@ describe("wipeDevice — a pairing that ended", () => {
     expect(deleted.toSorted()).toEqual(["collie-fonts", "collie-push-titles", "collie-push-titles:/collie/"]);
   });
 
+  it("takes the speech cache too: the model was fetched with the token, so it leaves with it (ADR 0096)", async () => {
+    const { deleted } = stubCaches(["collie-stt", "collie-stt:/collie/", "workbox-precache-v2-https://collie.example/"]);
+    await wipeDevice("unpair");
+    expect(deleted.toSorted()).toEqual(["collie-stt", "collie-stt:/collie/"]);
+  });
+
   it("leaves the preferences alone", async () => {
     seed();
     await wipeDevice("unpair");

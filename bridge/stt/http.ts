@@ -1,6 +1,7 @@
 import { apiError, type ApiErrorDetail, type ErrorCode } from "../error-codes.ts";
 import type { SttCapability } from "../types.ts";
 import { createSttDeadline, SttBusyError, SttCancelledError, SttError, type SttProvider } from "./provider.ts";
+import { wavHeaderProblem } from "./wav.ts";
 
 // ── THE ROUTE'S OWN RULES, AWAY FROM Bun.serve ───────────────────────────────────────────────
 //
@@ -87,6 +88,9 @@ export async function sttCapability(provider: SttProvider | null): Promise<SttCa
   const wire: SttCapability = { provider: provider.id, available: status.available };
   // Assigned, never spread in as `undefined`: an available provider carries NO `reason` key.
   if (status.reason !== undefined) wire.reason = status.reason;
+  // The same rule: only the `whistle` provider has either, and every other body stays as it was.
+  if (provider.input !== undefined) wire.input = provider.input;
+  if (provider.maxDurationMs !== undefined) wire.maxDurationMs = provider.maxDurationMs;
   return wire;
 }
 
@@ -130,6 +134,12 @@ export async function transcribeRequest(
   if (extension === undefined) {
     return fail(415, "invalid", "stt.bad_format");
   }
+  // A provider that takes one shape (whistle: 16 kHz mono 16-bit WAV, ADR 0096) is asked for it by
+  // name, and anything else is refused here, before a slot is taken or a byte is read.
+  const wavOnly = provider.input === "wav-16k";
+  if (wavOnly && container !== "audio/wav") {
+    return fail(415, "invalid", "stt.wav_required");
+  }
 
   // Admission is taken AFTER the cheap refusals and BEFORE the body is read: a slow upload holds a
   // slot for exactly as long as it is really occupying memory, and a malformed request never
@@ -147,6 +157,12 @@ export async function transcribeRequest(
       return fail(400, "invalid", "stt.unreadable");
     }
     if (audio.byteLength === 0) return fail(400, "invalid", "stt.empty");
+    // The header is checked before a child is started: the engine has no decoder to fall back on,
+    // and a file it cannot read should cost a parse, not a process. 8 MiB holds 4.3 minutes of it,
+    // so the size cap above still bounds the recording; the provider's 4-minute cap is the phone's.
+    if (wavOnly && wavHeaderProblem(audio) !== null) {
+      return fail(415, "invalid", "stt.wav_required", undefined, audio.byteLength);
+    }
     // The declared length may have been absent or a lie; this is the measurement that counts.
     if (audio.byteLength > MAX_STT_AUDIO_BYTES) {
       return fail(

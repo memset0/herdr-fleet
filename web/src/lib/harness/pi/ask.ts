@@ -1,0 +1,557 @@
+// ONE reader for every pi-family question screen (.adr/0098). It names no extension and no tool:
+// it reads a dialog by its SHAPE and takes every key from its FOOTER (footer.ts).
+//
+// Herdr reports stock pi and OmO alike as `agent: "pi"`, and pi's question tools are extensions:
+// pi's own stock examples (`question`, `questionnaire`), OmO's built-in ask, and many more on npm.
+// One grammar per extension cannot keep up, so this module reads what they share. The captures that
+// prove each piece are named where the piece is read; the table of what lifts is in the ADR.
+//
+// THE SHAPE, bottom up, at the buffer tail. Anything else is a decline (raw mirror plus the Escape
+// card):
+//
+//   ──────────────────────────────────────     top rule: full width, same length and colour as the bottom
+//    Ask user · 30m                            header rows, one space in: an optional title (OmO), an
+//    ←  □ Color   □ Size   ✓ Submit  →         optional tab strip, then the question, wrapped
+//    Pick a color for the Collie probe?
+//                                              blank rows
+//   > 1. Red                                   options, numbered 1..n (n ≤ 9), contiguous, one pointer
+//        Warm and loud.                        description rows at the label's column
+//     2. Green
+//     3. Type something.                       an optional free-text row, last, numbered or not
+//                                              blank rows
+//    Submit (0/1 answered) — Enter advances    up to two trailer rows, one space in (OmO)
+//    ↑↓ navigate • Enter to select • Esc …     the footer, one space in, styled, up to three rows
+//                                              at most one blank row
+//   ──────────────────────────────────────     bottom rule
+//   /tmp/project                               one to four styled status rows, no rule among them
+//
+// Two pointer columns are read: column 0 (`> 1.`, stock pi and the PR 397 extension) and column 1
+// (` → 1.`, OmO). The pointer glyph is `>` or `→`, the two the captures show; Claude's `❯` is not one.
+//
+// THE PLAN comes from the footer alone, and only these four plans exist:
+//   a. Up/Down named as moving and Enter named as select or confirm: a walked pointer list
+//      (pointerWalk, ADR 0055/0080). The arrows go first; Enter only after a fresh read shows the
+//      pointer on the tapped row. No digit, even where the rows are numbered (ADR 0009).
+//   b. `1-9 select` and Enter NOT named as select: the digit alone, and only on a one-question dialog
+//      (no tab strip, or a strip with one question chip). The digit is a key the footer printed.
+//   c. A footer that names digits only as typed text adds nothing; (a) still applies.
+//   e. A tab strip with several questions: a question page lifts by (a) only, captioned with the
+//      current chip's label, and the Submit page lifts as a wizard review only when the screen names
+//      Enter as submit and every question has an answer row.
+// Multi-select (checkbox rows) is not lifted here; it stays raw (see the ADR). The footer's Esc hint
+// becomes the last row, sending Escape, in the footer's own words.
+//
+// The free-text row is never a button. It is the `free-text` field of the model, read so the walk
+// knows the row is there; a screen whose pointer stands on it stays raw, and nothing here types.
+//
+// Pure functions over StyledLine[], tail-anchored, fail closed.
+
+import { lineText, type StyledLine } from "../../blocks";
+import { pointerWalk } from "../menu-hints";
+import type { PromptFeedback, PromptModel, PromptOption } from "../prompt-model";
+import type { WizardAnswer, WizardModel, WizardStepChip } from "../wizard-model";
+import { parsePiFooter, type PiFooter } from "./footer";
+
+/** A full-width rule: pi's editor rules and every question extension's own top and bottom rule. */
+const RULE = /^─{8,}$/;
+/** Status rows pi paints under its editor: stock 2 (cwd, stats), OmO 3, the PR 397 powerbar 1. */
+const MAX_STATUS_ROWS = 4;
+/** A narrow pane wraps the footer; the PR 397 capture at 50 columns needs two rows. */
+const MAX_FOOTER_ROWS = 3;
+/** How far up the top rule may be. The bound keeps a scan out of scrollback. */
+const MAX_BODY_ROWS = 200;
+/** OmO's status line under its options (`Submit (0/1 answered) — Enter advances`). */
+const MAX_TRAILER_ROWS = 2;
+/** The bridge's cap on a bound region less a margin, as omp/ask.ts. */
+const MAX_REGION_CHARS = 32_000;
+const POINTERS = new Set([">", "→"]);
+/** The free-text row's label: `Type something.` (stock, PR 397), `Type your own answer...` (OmO). The
+ *  `✎` follows it while its inline editor is open. */
+const FREE_TEXT = /^Type\b.*(?:\.|…)(?: ✎)?$/;
+/** A header row, one space in. */
+const HEADER_ROW = /^ \S/;
+
+/** The frame every pi question screen shares: the two rules and the footer between them. */
+export interface PiFrame {
+  top: number;
+  bottom: number;
+  /** First and last row of the footer (inclusive). */
+  footerStart: number;
+  footerEnd: number;
+  footer: PiFooter;
+  texts: string[];
+}
+
+function styledRow(line: StyledLine): boolean {
+  return line.segments.some((s) => s.text.trim() !== "" && (s.fg !== undefined || s.muted));
+}
+
+function ruleColor(line: StyledLine): string | undefined {
+  return line.segments.find((s) => s.text.trim() !== "")?.fg;
+}
+
+/**
+ * The bottom rule of the live tail: a full rule with one to four status rows under it and nothing
+ * else, or null. pi always paints at least one status row under the area a dialog replaces (every pi
+ * frame in the corpus has one to three), so a rule-bounded block with nothing under it is text that
+ * scrolled to the tail, such as a dialog quoted in agent prose after pi exited
+ * (pi/ask.test.ts, "a quoted dialog is not a dialog"). Status rows are styled (pi paints them muted or coloured)
+ * and never a rule; a plain row under the frame is output written after it
+ * (pi--prose-quoted-dialog-then-shell.txt).
+ */
+function statusTailBottom(lines: StyledLine[], texts: string[], end: number): number | null {
+  let bottom = end;
+  while (bottom >= 0 && end - bottom <= MAX_STATUS_ROWS && !RULE.test(texts[bottom]!)) bottom--;
+  if (bottom < 0 || !RULE.test(texts[bottom]!) || end - bottom > MAX_STATUS_ROWS || end === bottom) return null;
+  for (let i = bottom + 1; i <= end; i++) {
+    if (texts[i] === "") continue;
+    if (/^\s*─{3,}/.test(texts[i]!) || !styledRow(lines[i]!)) return null;
+  }
+  return bottom;
+}
+
+/** Read the frame at the tail of `lines`, or null. Says nothing yet about what is inside it. */
+export function readPiFrame(lines: StyledLine[]): PiFrame | null {
+  const texts = lines.map((l) => lineText(l).trimEnd());
+  let end = texts.length - 1;
+  while (end >= 0 && texts[end] === "") end--;
+  if (end < 0) return null;
+
+  const bottom = statusTailBottom(lines, texts, end);
+  if (bottom === null || bottom < 3) return null;
+
+  // The footer: OmO leaves one blank row above the rule, stock pi none.
+  let footerEnd = bottom - 1;
+  if (texts[footerEnd] === "") footerEnd--;
+  let best: { start: number; footer: PiFooter } | null = null;
+  for (let k = 1; k <= MAX_FOOTER_ROWS; k++) {
+    const start = footerEnd - k + 1;
+    // A footer row is painted (dim or coloured) in every capture. A plain row is text someone typed,
+    // such as a key hint quoted in a draft (pi/ask.test.ts, "quoted key hints").
+    if (start <= 0 || !HEADER_ROW.test(texts[start]!) || !styledRow(lines[start]!)) break;
+    const footer = parsePiFooter(texts.slice(start, footerEnd + 1).map((t) => t.trim()).join(" "));
+    if (footer !== null) best = { start, footer };
+  }
+  if (best === null) return null;
+
+  // The top rule: the first full rule above, of the bottom rule's length and colour.
+  // An indented rule is an inline editor's border (` ────`, pi--v110-single-editor-open.txt) and is
+  // passed over here; the rows it sits in are judged by the reader, not by the frame.
+  let top = best.start - 1;
+  while (top >= 0 && !RULE.test(texts[top]!)) {
+    if (best.start - top > MAX_BODY_ROWS) return null;
+    top--;
+  }
+  if (top < 0 || texts[top] !== texts[bottom] || ruleColor(lines[top]!) !== ruleColor(lines[bottom]!)) return null;
+  return { top, bottom, footerStart: best.start, footerEnd, footer: best.footer, texts };
+}
+
+/**
+ * Positive evidence that a pi modal is up (the unread-dialog card's fifth condition, ADR 0053): a
+ * rule-bounded frame at the tail whose footer names an Escape key. A composer prints no footer, so a
+ * live editor never answers true.
+ */
+export function piModalOnScreen(lines: StyledLine[]): boolean {
+  if (readPiFrame(lines)?.footer.escapeVerb != null) return true;
+  return coreModalFooter(lines);
+}
+
+/**
+ * pi's own pickers (`/model`, pi--v110-core-selector.txt) print a `·`-separated footer two spaces in,
+ * directly above the bottom rule: `Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to
+ * cancel`. Read for the card's evidence only; nothing is lifted from it.
+ */
+function coreModalFooter(lines: StyledLine[]): boolean {
+  const texts = lines.map((l) => lineText(l).trimEnd());
+  let end = texts.length - 1;
+  while (end >= 0 && texts[end] === "") end--;
+  const bottom = statusTailBottom(lines, texts, end);
+  if (bottom === null || bottom < 1) return false;
+  const row = lines[bottom - 1]!;
+  if (!styledRow(row)) return false;
+  return parsePiFooter(texts[bottom - 1]!)?.escapeVerb != null;
+}
+
+/** One option row, read. */
+interface OptionRow {
+  label: string;
+  /** The row's number as printed, or null for an unnumbered free-text row. */
+  n: number | null;
+  pointed: boolean;
+  checkbox: boolean;
+  freeText: boolean;
+  description?: string;
+  /** Index into `texts`. */
+  row: number;
+}
+
+/** One chip of a tab strip. */
+interface Chip {
+  label: string;
+  answered: boolean;
+  current: boolean;
+  submit: boolean;
+}
+
+interface Strip {
+  row: number;
+  chips: Chip[];
+}
+
+export type PiQuestion =
+  | { kind: "prompt-select"; model: PromptModel; startLine: number }
+  | { kind: "wizard"; model: WizardModel; startLine: number };
+
+/**
+ * Detect a pi-family question screen at the tail of `lines` and the block it lifts as, or null.
+ */
+export function detectPiQuestion(lines: StyledLine[]): PiQuestion | null {
+  const frame = readPiFrame(lines);
+  if (frame === null) return null;
+  const { texts, top, bottom, footer } = frame;
+  if (footer.escapeVerb === null) return null;
+
+  // Header rows, then the options, then trailer rows; every body row must be one of these.
+  let at = top + 1;
+  const bodyEnd = frame.footerStart; // exclusive
+  const header: number[] = [];
+  let pointerCol: 0 | 1 | null = null;
+  while (at < bodyEnd) {
+    pointerCol = optionStart(texts[at]!);
+    if (pointerCol !== null) break;
+    if (texts[at] !== "" && !HEADER_ROW.test(texts[at]!)) return null;
+    header.push(at);
+    at++;
+  }
+
+  const strip = readStrip(lines, header);
+  if (strip === "invalid") return null;
+
+  const region = texts.slice(top, bottom + 1);
+  const signature = region.join("\n");
+  if (signature.length > MAX_REGION_CHARS) return null;
+
+  if (pointerCol === null) {
+    // No options: only the Submit page of a tabbed dialog lifts.
+    return strip === null ? null : readSubmitPage(frame, header, strip, signature);
+  }
+
+  const options = readOptions(texts, at, bodyEnd, pointerCol);
+  if (options === null) return null;
+  // Trailer rows: blank, or at most two header-like rows that are not a rule or an editor.
+  let trailers = 0;
+  let counter: { answered: number; total: number } | null = null;
+  for (let i = options.end; i < bodyEnd; i++) {
+    const t = texts[i]!;
+    if (t === "") continue;
+    if (!HEADER_ROW.test(t) || /^ [─>]/.test(t) || ++trailers > MAX_TRAILER_ROWS) return null;
+    // An answered counter (`Submit (0/1 answered)`, pi--omo-v5130-single-described.txt) is a second
+    // count of the questions; read it so it can only narrow what lifts.
+    const m = /\((\d+)\/(\d+) answered\)/.exec(t);
+    if (m !== null) {
+      if (counter !== null) return null;
+      counter = { answered: Number(m[1]), total: Number(m[2]) };
+    }
+  }
+  const rows = options.rows;
+  // Checkbox rows, or a footer that gives Space a tick or a toggle, are a multi-select question,
+  // which this reader leaves raw (.adr/0098). OmO's multi-select prints no checkbox at all and says
+  // so only in its footer (`space toggle  enter toggle`, pi--omo-v5130-multi.txt).
+  if (rows.some((r) => r.checkbox) || footer.spaceToggles) return null;
+
+  const questionRows = strip === null ? header : header.filter((r) => r > strip.row);
+  const question = questionRows
+    .map((r) => texts[r]!.trim())
+    .filter((t) => t.length > 0)
+    .join(" ");
+  if (question.length === 0) return null;
+
+  const questions = strip === null ? 1 : strip.chips.filter((c) => !c.submit).length;
+  if (counter !== null && counter.total !== questions) return null;
+  const pointed = rows.findIndex((r) => r.pointed);
+  const free = rows.at(-1)!.freeText ? rows.at(-1)! : null;
+  // A pointer on the free-text row stays raw: one keystroke there (Enter) opens the extension's own
+  // editor, and the phone never types into it (pi--v0871-question-other-focused.txt,
+  // pi--omo-v5130-single-other-focused.txt).
+  if (free?.pointed === true) return null;
+  const choices = free === null ? rows : rows.slice(0, -1);
+  if (choices.length < 1) return null;
+
+  let plan: "walk" | "digit";
+  if (footer.arrowsMove && footer.enter === "select") plan = "walk";
+  else if (footer.digitsSelect && footer.enter !== "select" && questions === 1) plan = "digit";
+  else return null;
+  if (plan === "digit" && choices.some((r) => r.n === null)) return null;
+  // A digit on a question already answered is a state no capture shows; fail closed (PR 412's notes).
+  if (plan === "digit" && counter !== null && counter.answered !== 0) return null;
+
+  let caption: string | undefined;
+  if (strip !== null && questions > 1) {
+    // A page of several questions: (a) only, and the page must be named by its current chip.
+    if (plan !== "walk") return null;
+    const current = strip.chips.filter((c) => c.current);
+    if (current.length !== 1 || current[0]!.submit) return null;
+    caption = current[0]!.label;
+  }
+
+  const glyph = texts[rows[pointed]!.row]![pointerCol]!;
+  const options_: PromptOption[] = choices.map((r, i) => {
+    const option: PromptOption =
+      plan === "walk"
+        ? { label: r.label, keys: pointerWalk(pointed, i), keyLabel: i === pointed ? glyph : "" }
+        : { label: r.label, keys: [String(r.n)] };
+    if (r.description !== undefined) option.description = r.description;
+    return option;
+  });
+  options_.push({ label: capitalise(footer.escapeVerb), keys: ["Escape"], keyLabel: "Esc" });
+
+  const model: PromptModel = {
+    question,
+    options: options_,
+    family: "select",
+    signature,
+    coreSignature: coreSignatureOf(texts, top, bottom, rows[pointed]!.row, pointerCol, header, strip),
+  };
+  if (caption !== undefined) model.caption = caption;
+  if (free !== null) {
+    const feedback: PromptFeedback = {
+      // No key: nothing is ever sent for this row (prompt-action refuses the `free-text` purpose), and
+      // its printed number is not a key the footer names (ADR 0009).
+      key: "",
+      focused: false,
+      text: "",
+      purpose: "free-text",
+    };
+    model.feedback = feedback;
+  }
+  return { kind: "prompt-select", model, startLine: top };
+}
+
+/** The pointer column (0 or 1) when `text` is the first option row, `1.`, else null. */
+function optionStart(text: string): 0 | 1 | null {
+  for (const col of [0, 1] as const) {
+    const lead = text.slice(0, col);
+    if (lead.trim() !== "") continue;
+    const ptr = text[col];
+    if (ptr === undefined || (ptr !== " " && !POINTERS.has(ptr)) || text[col + 1] !== " ") continue;
+    if (/^(?:\[[ x]\] )?1\. \S/.test(text.slice(col + 2))) return col;
+  }
+  return null;
+}
+
+/**
+ * The option rows from `start`, contiguous: numbered rows 1..n with their description rows, then an
+ * optional free-text row. Exactly one row carries the pointer. Null on anything else.
+ */
+function readOptions(
+  texts: string[],
+  start: number,
+  end: number,
+  col: 0 | 1,
+): { rows: OptionRow[]; end: number } | null {
+  const rows: OptionRow[] = [];
+  let boxed: boolean | null = null;
+  let labelCol = 0;
+  let at = start;
+  for (; at < end; at++) {
+    const t = texts[at]!;
+    if (t === "") break;
+    const lead = t.slice(0, col);
+    const ptr = t[col];
+    const isPrefix = lead.trim() === "" && ptr !== undefined && (ptr === " " || POINTERS.has(ptr)) && t[col + 1] === " ";
+    const rest = isPrefix ? t.slice(col + 2) : "";
+    const numbered = isPrefix ? /^(\[[ x]\] | {4})?([1-9])\. (\S.*)$/.exec(rest) : null;
+    if (numbered !== null && (rows.length === 0 || !rows.at(-1)!.freeText)) {
+      const box = numbered[1];
+      const checkbox = box !== undefined && box.startsWith("[");
+      const n = Number(numbered[2]);
+      if (n !== rows.length + 1) return null;
+      const label = numbered[3]!;
+      const freeText = FREE_TEXT.test(label);
+      if (boxed === null) boxed = checkbox;
+      // Every choice of a checkbox list carries a box, and the free-text row's column is padded.
+      if (!freeText && checkbox !== boxed) return null;
+      if (freeText && boxed && box !== "    ") return null;
+      if (!boxed && box !== undefined) return null;
+      labelCol = col + 2 + (boxed ? 4 : 0) + 3;
+      rows.push({ label, n, pointed: ptr !== " ", checkbox, freeText, row: at });
+      continue;
+    }
+    // An unnumbered free-text row (OmO's `Type your own answer...`), at the pointer's column.
+    if (isPrefix && rows.length > 0 && !rows.at(-1)!.freeText && FREE_TEXT.test(rest)) {
+      rows.push({ label: rest, n: null, pointed: ptr !== " ", checkbox: false, freeText: true, row: at });
+      continue;
+    }
+    // A description row: exactly the label's column, under a choice (never under the free-text row).
+    const owner = rows.at(-1);
+    const desc = new RegExp(`^ {${labelCol}}(\\S.*)$`).exec(t);
+    if (desc !== null && owner !== undefined && !owner.freeText) {
+      owner.description = owner.description === undefined ? desc[1]! : `${owner.description} ${desc[1]!}`;
+      continue;
+    }
+    break;
+  }
+  if (rows.length === 0 || rows.length > 9) return null;
+  if (rows.filter((r) => r.pointed).length !== 1) return null;
+  // One pointer glyph on the pointed row; a free-text row may only be the last.
+  if (rows.slice(0, -1).some((r) => r.freeText)) return null;
+  return { rows, end: at };
+}
+
+/**
+ * A tab strip among the header rows, null when there is none, `"invalid"` when a row looks like one
+ * and does not read whole. Two forms:
+ *   `←  □ Color   ■ Size   ✓ Submit  →`      stock questionnaire, PR 397 (`▢`/`▣`); the current chip
+ *                                              is the one with a background colour
+ *   `→ Color    Submit`                      OmO; the current chip carries the `→`
+ */
+function readStrip(lines: StyledLine[], header: number[]): Strip | null | "invalid" {
+  let found: Strip | null = null;
+  for (const row of header) {
+    const text = lineText(lines[row]!).trim();
+    if (text.startsWith("←")) {
+      if (found !== null) return "invalid";
+      const chips = boxedChips(text);
+      if (chips === null) return "invalid";
+      if (!markCurrentByBackground(lines[row]!, chips)) return "invalid";
+      found = { row, chips };
+      continue;
+    }
+    const tokens = text.split(/\s{2,}/);
+    if (tokens.length >= 2 && tokens.at(-1) === "Submit" && tokens[0]!.startsWith("→ ")) {
+      if (found !== null) return "invalid";
+      const chips: Chip[] = tokens.map((tok, i) => {
+        const current = tok.startsWith("→ ");
+        return {
+          label: current ? tok.slice(2) : tok,
+          answered: false,
+          current,
+          submit: i === tokens.length - 1,
+        };
+      });
+      if (chips.filter((c) => c.current).length !== 1 || chips.some((c) => c.label.trim() === "")) return "invalid";
+      found = { row, chips };
+    }
+  }
+  return found;
+}
+
+/** The chips of a `← … →` strip, or null. */
+function boxedChips(text: string): Chip[] | null {
+  if (!text.endsWith("→")) return null;
+  const tokens = text.slice(1, -1).trim().split(/\s{2,}/);
+  const chips: Chip[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]!;
+    const box = /^([□■▢▣])(?: (\S.*))?$/.exec(tok);
+    if (box !== null) {
+      const label = box[2] ?? tokens[++i];
+      if (label === undefined || /^[□■▢▣✓]/.test(label)) return null;
+      chips.push({ label, answered: box[1] === "■" || box[1] === "▣", current: false, submit: false });
+      continue;
+    }
+    const submit = /^✓(?: (\S.*))?$/.exec(tok);
+    if (submit !== null && i === tokens.length - 1) {
+      chips.push({ label: submit[1] ?? "✓", answered: false, current: false, submit: true });
+      continue;
+    }
+    return null;
+  }
+  if (chips.length < 2 || !chips.at(-1)!.submit) return null;
+  return chips;
+}
+
+/** Mark the one chip whose text carries a background colour as current. False unless exactly one. */
+function markCurrentByBackground(line: StyledLine, chips: Chip[]): boolean {
+  const highlighted = line.segments
+    .filter((s) => s.bg !== undefined && s.text.trim() !== "")
+    .map((s) => s.text.trim());
+  if (highlighted.length !== 1) return false;
+  const hit = chips.filter((c) => highlighted[0]!.endsWith(c.label) && highlighted[0]!.length <= c.label.length + 3);
+  if (hit.length !== 1) return false;
+  hit[0]!.current = true;
+  return true;
+}
+
+/**
+ * The Submit page of a tabbed dialog, as a wizard review: the Submit chip is current, every question
+ * chip has an answer row, and the screen names Enter as submit (the footer, or `Press Enter to submit`
+ * / `Enter to submit` in the body). Anything else, an incomplete page included, stays raw.
+ */
+function readSubmitPage(frame: PiFrame, header: number[], strip: Strip, signature: string): PiQuestion | null {
+  const { texts, footer } = frame;
+  const chips = strip.chips;
+  const submitChip = chips.at(-1)!;
+  if (!submitChip.current || chips.length < 3) return null;
+  const rows = header.filter((r) => r > strip.row && texts[r] !== "").map((r) => texts[r]!.trim());
+  const namesSubmit = footer.enter === "submit" || rows.some((t) => /\bEnter to submit$/i.test(t));
+  if (!namesSubmit || footer.enter === "other") return null;
+  // A title row, one answer row per question chip, in order, then the line that names Enter.
+  const questions = chips.slice(0, -1);
+  if (rows.length !== questions.length + 2 && rows.length !== questions.length + 1) return null;
+  const answerRows = rows.slice(1, 1 + questions.length);
+  const answers: WizardAnswer[] = [];
+  for (let i = 0; i < questions.length; i++) {
+    const answer = readAnswerRow(answerRows[i]!, questions[i]!.label, i + 1);
+    if (answer === null) return null;
+    answers.push(answer);
+  }
+  const steps: WizardStepChip[] = questions.map((c) => ({ label: c.label, answered: c.answered, current: false }));
+  if (!steps.every((s) => s.answered)) return null;
+  const model: WizardModel = {
+    phase: "review",
+    steps,
+    answers,
+    incomplete: false,
+    submitKeys: ["Enter"],
+    cancelKeys: ["Escape"],
+    signature,
+  };
+  if (footer.escapeVerb!.toLowerCase() !== "cancel") model.cancelLabel = capitalise(footer.escapeVerb!);
+  return { kind: "wizard", model, startLine: frame.top };
+}
+
+/** `Color: Green` (stock) or `1. Auth      OAuth 2.0 / OIDC` (PR 397) for the chip `label`. */
+function readAnswerRow(text: string, label: string, n: number): WizardAnswer | null {
+  if (text.startsWith(`${label}: `)) {
+    const answer = text.slice(label.length + 2).trim();
+    return answer === "" ? null : { question: label, answer };
+  }
+  const numbered = new RegExp(`^${n}\\. ${escapeRegExp(label)} {2,}(\\S.*)$`).exec(text);
+  return numbered === null ? null : { question: label, answer: numbered[1]! };
+}
+
+/**
+ * `signature` with what the pointer's own move changes blanked: the pointer glyph on the pointed row.
+ * Plus one clock: OmO's title row counts down (` · 30m` → ` · 29m`, pi--omo-v5130-single-described.txt
+ * against pi--omo-v5130-single-other-focused.txt), so a countdown token ending a title row above the
+ * strip is blanked here, and only here; `signature` keeps it, so the entry guard still refuses a tap
+ * on a screen whose clock moved.
+ */
+function coreSignatureOf(
+  texts: string[],
+  top: number,
+  bottom: number,
+  pointedRow: number,
+  col: 0 | 1,
+  header: number[],
+  strip: Strip | null,
+): string {
+  const titleRows = new Set(strip === null ? [] : header.filter((r) => r < strip.row));
+  const out: string[] = [];
+  for (let r = top; r <= bottom; r++) {
+    let t = texts[r]!;
+    if (r === pointedRow) t = `${t.slice(0, col)} ${t.slice(col + 1)}`;
+    if (titleRows.has(r)) t = t.replace(/ · (?:\d+m|\d{1,2}:\d{2})$/, " · ~");
+    out.push(t);
+  }
+  return out.join("\n");
+}
+
+function capitalise(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

@@ -2145,7 +2145,7 @@ for args in "stt" "stt nonsense"; do
   set -e
   assert_eq "$rc" "2"
 done
-assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie stt {setup|test|status|off}"
+assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie stt {setup|whistle|test|status|off}"
 
 # Not one of them shelled out to anything — `stt` never runs a tool it was not told to.
 assert_eq "$(cat "$PAIR_CALLS")" ""

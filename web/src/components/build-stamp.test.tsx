@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 
@@ -8,7 +8,10 @@ import { BuildStamp } from "./build-stamp";
 
 // BUILD.id under vitest is "test" (vitest.config `define`). The footer nag is driven live by the
 // shared server-build store, so observing a differing id must flip the nag on in real time.
-afterEach(() => __resetServerBuild());
+afterEach(() => {
+  __resetServerBuild();
+  vi.unstubAllGlobals();
+});
 
 describe("BuildStamp — live staleness from the server-build store", () => {
   it("shows no update nag while the server build matches (or is unknown)", () => {
@@ -62,5 +65,35 @@ describe("BuildStamp — the mount-time config fetch", () => {
     // fetch a turn to land and then asserting it never did.
     await act(() => Promise.resolve());
     expect(reads).toBe(0);
+  });
+});
+
+describe("BuildStamp — viewport sizes on dev builds", () => {
+  it("shows innerH/visualH/screenH beside a dev build stamp", () => {
+    vi.stubGlobal("innerHeight", 956);
+    vi.stubGlobal("visualViewport", Object.assign(new EventTarget(), { height: 899.6 }));
+    vi.stubGlobal("screen", { height: 923 });
+    render(<BuildStamp version="1.19.2-dev" />);
+    expect(screen.getByText("vp 956/900/923")).toBeInTheDocument();
+  });
+
+  it("updates when the visual viewport resizes", () => {
+    const visual = Object.assign(new EventTarget(), { height: 900 });
+    vi.stubGlobal("innerHeight", 956);
+    vi.stubGlobal("visualViewport", visual);
+    vi.stubGlobal("screen", { height: 923 });
+    render(<BuildStamp version="1.19.2-dev" />);
+    visual.height = 600;
+    act(() => {
+      visual.dispatchEvent(new Event("resize"));
+    });
+    expect(screen.getByText("vp 956/600/923")).toBeInTheDocument();
+  });
+
+  it("shows nothing on a release version", () => {
+    vi.stubGlobal("innerHeight", 956);
+    vi.stubGlobal("screen", { height: 923 });
+    render(<BuildStamp version="1.19.2" />);
+    expect(screen.queryByText(/^vp /)).not.toBeInTheDocument();
   });
 });

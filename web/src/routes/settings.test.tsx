@@ -79,19 +79,36 @@ describe("SettingsRoute — the update surfaces", () => {
 
 // ── THE INDEX ───────────────────────────────────────────────────────────────────────────────────
 //
-// Settings was one column of seventeen cards. The page is four rows now, and these cases pin the
+// Settings was one column of seventeen cards. The page is five rows now, and these cases pin the
 // two things that makes true: every section is reachable, and no setting is still rendered here.
 describe("SettingsRoute — the index", () => {
-  it("offers the four sections, in the order of how standing a choice is", async () => {
+  it("offers the five sections, in the order of how standing a choice is", async () => {
     renderSettings();
     await screen.findByRole("button", { name: /Appearance/ });
     const rows = screen
       .getAllByRole("button")
       .map((b) => b.textContent ?? "")
-      .filter((text) => /Appearance|Device|Alerts|System/.test(text));
-    expect(rows).toHaveLength(4);
+      .filter((text) => /Appearance|Device|Voice|Alerts|System/.test(text));
+    expect(rows).toHaveLength(5);
     expect(rows[0]).toContain("Appearance");
-    expect(rows[3]).toContain("System");
+    expect(rows[1]).toContain("Device");
+    // Voice sits between Device and Alerts, and is always offered: a host with no speech gets a page that says so.
+    expect(rows[2]).toContain("Voice");
+    expect(rows[2]).toContain("Where your speech becomes text, and hands-free.");
+    expect(rows[3]).toContain("Alerts");
+    expect(rows[4]).toContain("System");
+  });
+
+  it("opens Voice at /settings/voice", async () => {
+    const router = renderSettings();
+    await userEvent.click(await screen.findByRole("button", { name: /Voice/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings/voice"));
+  });
+
+  it("no longer mentions voice in the Device row's blurb", async () => {
+    renderSettings();
+    const device = await screen.findByRole("button", { name: /Device/ });
+    expect(device.textContent).not.toMatch(/voice/i);
   });
 
   it("opens a section as a push, so back returns here rather than home", async () => {

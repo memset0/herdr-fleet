@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { HOST, type Host } from "../host.ts";
 import type { JsonValue } from "../json.ts";
+import { hasHiddenLabelChar } from "../pairing.ts";
 import { diskIo, type OperatorFileIo } from "../operator-file.ts";
 import { jsonRecord, jsonStringField } from "./json.ts";
 
@@ -42,7 +43,7 @@ export const STT_FILENAME = "stt.json";
 export const DEFAULT_STT_MODEL = "gpt-transcribe";
 
 /** The provider names this bridge can build. */
-export const STT_PROVIDERS = ["openai-compatible", "codex", "local-cli"] as const;
+export const STT_PROVIDERS = ["openai-compatible", "codex", "local-cli", "whistle"] as const;
 export type SttProviderName = (typeof STT_PROVIDERS)[number];
 
 /** The binary the codex provider borrows its auth from, when the operator names no other. */
@@ -131,8 +132,17 @@ export interface LocalCliSttSettings {
   args: string[];
 }
 
+/**
+ * The `whistle` provider, configured (ADR 0096 Decision 4). Naming it is the whole configuration:
+ * the engine is Collie's own vendored code, the model sits at a fixed path in the state dir, and the
+ * child is Collie's own binary with arguments Collie wrote. There is nothing for an operator to set.
+ */
+export interface WhistleSttSettings {
+  provider: "whistle";
+}
+
 /** Everything a resolved provider can be. */
-export type SttSettings = OpenAiSttSettings | CodexSttSettings | LocalCliSttSettings;
+export type SttSettings = OpenAiSttSettings | CodexSttSettings | LocalCliSttSettings | WhistleSttSettings;
 
 /** The environment keys this module reads. Named once so the CLI and the docs can cite them. */
 export const STT_ENV_KEYS = {
@@ -150,6 +160,12 @@ export const STT_ENV_KEYS = {
 export function sttSettingsPath(stateDir: string): string {
   return join(stateDir, STT_FILENAME);
 }
+
+/**
+ * The settings as `stt.json` holds them: the same fields, before anything is believed about them.
+ * An unset field is absent from the written file, because `JSON.stringify` drops `undefined`.
+ */
+export type SttSettingsDocument = RawSettings;
 
 /** A field of the settings as it arrived, before anything is believed about it. */
 interface RawSettings {
@@ -303,6 +319,7 @@ export function resolveSttSettings(
   }
   if (provider === "codex") return resolveCodex(codexBin, wireIdentity, warn);
   if (provider === "local-cli") return resolveLocalCli(command, args, warn);
+  if (provider === "whistle") return { provider: "whistle" };
   if (baseUrl === undefined) {
     warn(`speech-to-text is off: no endpoint configured (set ${STT_ENV_KEYS.url} or "baseUrl" in ${STT_FILENAME})`);
     return null;
@@ -429,6 +446,99 @@ function resolveLocalCli(
     return null;
   }
   return { provider: "local-cli", command, args: [...list] };
+}
+
+/**
+ * The provider the settings NAME, file and environment together, or undefined when nothing is
+ * configured at all — read before any resolve, so a file that names a provider but does not resolve
+ * (a local-cli with no command) still counts as the operator's.
+ *
+ * It is what Settings asks before it may write `stt.json` (ADR 0096 Decision 4): only an absent
+ * configuration or one that already names `whistle` may be replaced from a phone. A configuration
+ * with fields but no provider is the implicit `openai-compatible`, and is the operator's too.
+ */
+export function namedSttProvider(file: RawSettings, env: RawSettings): string | undefined {
+  const named = env.provider ?? file.provider;
+  if (named !== undefined) return named;
+  return anySetting(file) || anySetting(env) ? "openai-compatible" : undefined;
+}
+
+/** Whether any field of the settings is set at all. */
+function anySetting(raw: RawSettings): boolean {
+  return Object.values(raw).some((value) => value !== undefined);
+}
+
+/**
+ * Who last changed the host's speech option from a paired device, and when (Settings → Voice shows it
+ * as "Last changed by …"). Written beside the settings in `stt.json` by the two routes that change the
+ * option from the app, and dropped by every other writer, so a `collie stt setup` in a terminal clears
+ * it. `changedBy` is the device's pairing label, never a token, an address or a header value.
+ * {@link coerceSttFile} never reads these two fields, so they cannot change what the bridge runs.
+ */
+export interface SttChangeStamp {
+  /** The paired device's label, as its owner named it at pairing (48 characters at most). */
+  changedBy: string;
+  /** When, as an ISO 8601 time. */
+  changedAt: string;
+}
+
+/** The longest label pairing accepts (bridge/pairing.ts). A longer one in the file is not believed. */
+const MAX_CHANGED_BY = 48;
+
+/** The stamp in a parsed `stt.json`, or null when it is absent or either field is not believable. */
+export function sttChangeStamp(raw: JsonValue | undefined): SttChangeStamp | null {
+  const o = jsonRecord(raw);
+  if (o === null) return null;
+  const changedBy = optionalString(o.changedBy);
+  const changedAt = optionalString(o.changedAt);
+  if (changedBy === undefined || changedAt === undefined || changedBy.length > MAX_CHANGED_BY) return null;
+  // The rule pairing applies to a new label: control, format (bidi, zero-width) and separator characters.
+  if (hasHiddenLabelChar(changedBy)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(changedAt) || Number.isNaN(Date.parse(changedAt))) return null;
+  return { changedBy, changedAt };
+}
+
+/** The file operations {@link writeSttSettingsFile} needs. The CLI's `Files` and the bridge's disk both fit. */
+export interface SttSettingsFileOps {
+  mkdirp(path: string, mode?: number): void;
+  write(path: string, text: string, mode?: number): void;
+  rename(from: string, to: string): void;
+  remove(path: string): void;
+}
+
+/** Writes of `stt.json` by this process so far, for the temporary's name. */
+let sttWriteSeq = 0;
+
+/**
+ * Write `<stateDir>/stt.json`, the one way it is ever written: 0600 into a 0700 state dir, through a
+ * temporary name in the same directory and renamed into place. A write that died half way must leave
+ * the previous configuration intact, never a half-file the bridge would then read as "the operator
+ * turned this off". `collie stt setup` and the Settings switch for the Whistle host engine both come
+ * through here. Returns the path written; throws when the write failed, after removing the temporary.
+ */
+export function writeSttSettingsFile(
+  stateDir: string,
+  document: SttSettingsDocument | (SttSettingsDocument & SttChangeStamp),
+  ops: SttSettingsFileOps,
+): string {
+  const path = sttSettingsPath(stateDir);
+  // A name unique to this write, as `pairing.ts` does it: a shared `stt.json.tmp` let the bridge's
+  // Settings switch and a `collie stt setup` in a terminal delete or rename each other's temporary.
+  // The pid keeps another process off the name; the counter keeps another write in this one off it.
+  const temporary = `${path}.${process.pid}.${++sttWriteSeq}.tmp`;
+  try {
+    ops.mkdirp(stateDir, 0o700);
+    ops.write(temporary, `${JSON.stringify(document, null, 2)}\n`, 0o600);
+    ops.rename(temporary, path);
+  } catch (err) {
+    try {
+      ops.remove(temporary);
+    } catch {
+      /* nothing was there to remove */
+    }
+    throw err;
+  }
+  return path;
 }
 
 /**

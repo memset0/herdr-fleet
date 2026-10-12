@@ -21,9 +21,20 @@
 //
 // Where Herdr's id comes from: the grok integration reports `session_id` (kind `id`) matching the
 // session directory name — a UUID, v7 observed. It needs `herdr integration install grok`.
+//
+// That id can go stale (live-verified 2026-10-08, grok 1.0.46, Herdr 0.9.0): `/resume` inside a
+// running grok fires SessionStart with the resumed id and source `load`, and Herdr keeps the pane's
+// first id because it accepts a replacement from grok only for source `new` (still so on Herdr's
+// main that day). `reconcile` corrects it from `$GROK_HOME/active_sessions.json`, the list grok
+// itself keeps of the session each live process holds. A resumed session that had no prompt is
+// dropped from that list, but one that had a prompt stays beside the resumed one under the same pid
+// (live-verified 2026-10-11, grok 1.0.50), so a listed id can still be stale. That file is grok's
+// own and undocumented, so anything short of one unambiguous live match leaves Herdr's id alone.
+// The reconcile step is a workaround for herdrdev/herdr#2683 and is to be removed once the Herdr
+// version Collie requires takes a grok session start with source `load`.
 
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import type { JsonObject, JsonValue } from "../json.ts";
 import {
@@ -54,6 +65,101 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 
 export function isGrokSessionId(value: string): boolean {
   return SESSION_ID_RE.test(value);
+}
+
+/** One row of grok's `active_sessions.json`: the session a live grok process currently holds. */
+export interface GrokActiveSession {
+  sessionId: string;
+  pid: number;
+  cwd: string;
+  /** When the process opened it, in ms, or null when the row says nothing parseable. */
+  openedAt: number | null;
+}
+
+/**
+ * The rows of `active_sessions.json`, or null when the file or any row does not read cleanly. A
+ * skipped row could be the one holding the reported id, so a partial list is no list at all.
+ */
+export function parseActiveSessions(text: string): GrokActiveSession[] | null {
+  let parsed: JsonValue;
+  try {
+    // SAFETY: `JSON.parse` output IS a JsonValue by construction — a string, number, boolean, null,
+    // or an array/object of those. The array check and every field read below narrow it further.
+    parsed = JSON.parse(text) as JsonValue;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const rows: GrokActiveSession[] = [];
+  for (const row of parsed) {
+    if (row === null || typeof row !== "object" || Array.isArray(row)) return null;
+    const { session_id: sessionId, pid, cwd } = row;
+    if (typeof sessionId !== "string" || !isGrokSessionId(sessionId)) return null;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
+    if (typeof cwd !== "string" || cwd === "") return null;
+    const opened = typeof row.opened_at === "string" ? Date.parse(row.opened_at) : Number.NaN;
+    rows.push({ sessionId, pid, cwd, openedAt: Number.isNaN(opened) ? null : opened });
+  }
+  return rows;
+}
+
+/** The row opened last among these, leaving out rows without a parseable `opened_at`. */
+function latestOpened(rows: readonly GrokActiveSession[]): GrokActiveSession | undefined {
+  let latest: GrokActiveSession | undefined;
+  for (const s of rows) {
+    if (s.openedAt !== null && s.openedAt > (latest?.openedAt ?? Number.NEGATIVE_INFINITY)) latest = s;
+  }
+  return latest;
+}
+
+/**
+ * The session a grok pane really holds. `live` is the rows whose process is still running. While
+ * grok still lists Herdr's id, the latest session that same process opened stands, which is that id
+ * unless the process resumed another since. Otherwise, when every live session in the pane's cwd
+ * belongs to one process, the latest of them replaces it. Sessions of two processes in the same cwd
+ * could be either pane's, so the reported id stands then too.
+ */
+export function pickLiveSession(
+  reported: string,
+  cwd: string,
+  live: readonly GrokActiveSession[],
+): string {
+  const mine = live.find((s) => s.sessionId === reported);
+  if (mine !== undefined) {
+    if (mine.openedAt === null) return reported;
+    const latest = latestOpened(live.filter((s) => s.pid === mine.pid));
+    return latest !== undefined && (latest.openedAt ?? 0) > mine.openedAt ? latest.sessionId : reported;
+  }
+  const here = live.filter((s) => s.cwd === cwd);
+  if (here.length === 1 && here[0] !== undefined) return here[0].sessionId;
+  if (here.length === 0 || new Set(here.map((s) => s.pid)).size !== 1) return reported;
+  return latestOpened(here)?.sessionId ?? reported;
+}
+
+/**
+ * Whether a path is known to be missing. Only ENOENT and ENOTDIR say so; any other stat failure (a
+ * folder without search permission, say) leaves it unknown, which is not the same as absent.
+ */
+/** A live-session list is a few rows. One over this size is not grok's list, so it is not read. */
+const MAX_ACTIVE_SESSIONS_BYTES = 1024 * 1024;
+
+async function knownAbsent(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return false;
+  } catch (err) {
+    return err instanceof Error && "code" in err && (err.code === "ENOENT" || err.code === "ENOTDIR");
+  }
+}
+
+/** Whether a pid names a running process. EPERM means it runs as someone else, which is still alive. */
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err instanceof Error && "code" in err && err.code === "EPERM";
+  }
 }
 
 /** Inner text of the first `<user_query>…</user_query>`, trimmed; null when the tag isn't present. */
@@ -341,8 +447,47 @@ export class GrokTranscriptSource implements TranscriptSource {
   private readonly pathCache = new Map<string, { path: string; root: string }>();
   private readonly roots: string[];
 
-  constructor(roots: string | readonly string[]) {
+  constructor(
+    roots: string | readonly string[],
+    private readonly isAlive: (pid: number) => boolean = processAlive,
+  ) {
     this.roots = rootList(roots);
+  }
+
+  /**
+   * Herdr's id, or the live session grok says this pane's process moved to (header: the id can go
+   * stale). The answer is only ever a key for `resolve`, which still finds and contains the file.
+   */
+  async reconcile(ref: AgentSessionRef, cwd: string): Promise<AgentSessionRef> {
+    if (ref.kind !== "id") return ref;
+    const sessions = await this.activeSessions();
+    if (sessions === null) return ref;
+    const live = sessions.filter((s) => this.isAlive(s.pid));
+    const value = pickLiveSession(ref.value, cwd, live);
+    return value === ref.value ? ref : { kind: "id", value };
+  }
+
+  /**
+   * Every root's `active_sessions.json`, which sits in `$GROK_HOME`, one level above `sessions`, or
+   * null when any of them may exist and cannot be read whole. A root known to have no file holds no
+   * live grok.
+   */
+  private async activeSessions(): Promise<GrokActiveSession[] | null> {
+    const rows: GrokActiveSession[] = [];
+    for (const root of this.roots) {
+      const home = dirname(root);
+      const path = join(home, "active_sessions.json");
+      if (await knownAbsent(path)) continue;
+      const real = await containedRealpath(path, home);
+      if (real === null) return null;
+      const size = await stat(real).then((st) => st.size, () => null);
+      if (size === null || size > MAX_ACTIVE_SESSIONS_BYTES) return null;
+      const text = await readFile(real, "utf8").catch(() => null);
+      const parsed = text === null ? null : parseActiveSessions(text);
+      if (parsed === null) return null;
+      rows.push(...parsed);
+    }
+    return rows;
   }
 
   async resolve(ref: AgentSessionRef): Promise<string | null> {
@@ -390,10 +535,12 @@ export class GrokTranscriptSource implements TranscriptSource {
 }
 
 export function grokJournal(roots: string | readonly string[]): JournalAdapter {
+  const source = new GrokTranscriptSource(roots);
   return {
     agent: "grok",
-    source: new GrokTranscriptSource(roots),
+    source,
     parse: parseGrokTranscript,
     reducer: createGrokReducer,
+    reconcile: (ref, cwd) => source.reconcile(ref, cwd),
   };
 }

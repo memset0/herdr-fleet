@@ -8,6 +8,7 @@ import {
   type SttTranscribeResponse,
 } from "./http.ts";
 import { SttBusyError, SttError, type SttAudio, type SttProvider, type SttResult, type SttStatus } from "./provider.ts";
+import { encodeWav16 } from "./wav.ts";
 
 // `POST /api/stt`'s own rules, driven without `Bun.serve`: the caller here has already cleared the
 // write gate, exactly as server.ts's dispatch guarantees, so nothing below is about authorisation.
@@ -419,5 +420,65 @@ describe("POST /api/stt — every refusal names a code, not just a status", () =
       code: "stt.provider_failed",
       detail: { reason: "the transcription service refused the recording", kind: "refused" },
     });
+  });
+});
+
+// ADR 0096 Decision 4: the whistle provider takes 16 kHz mono 16-bit WAV and nothing else, and the
+// route checks it before the provider (and so the child) is ever reached.
+describe("POST /api/stt — a WAV-only provider", () => {
+  function wavProvider() {
+    const fake = fakeProvider({});
+    const provider: SttProvider = { ...fake.provider, id: "whistle", input: "wav-16k", maxDurationMs: 240_000 };
+    return { provider, received: fake.received };
+  }
+
+  test("the capability says what to upload and how long, and only for that provider", async () => {
+    expect(await sttCapability(wavProvider().provider)).toEqual({
+      provider: "whistle",
+      available: true,
+      input: "wav-16k",
+      maxDurationMs: 240_000,
+    });
+    const plain = await sttCapability(fakeProvider({}).provider);
+    expect(plain !== null && "input" in plain).toBe(false);
+    expect(plain !== null && "maxDurationMs" in plain).toBe(false);
+  });
+
+  test("a valid WAV reaches the provider as recording.wav", async () => {
+    const { provider, received } = wavProvider();
+    const wav = encodeWav16(new Float32Array(1600));
+    const { response } = await transcribeRequest(provider, audioRequest(wav, "audio/wav"), createSttAdmission());
+    expect(response.status).toBe(200);
+    expect(received[0]!.filename).toBe("recording.wav");
+  });
+
+  test("any other container is 415 stt.wav_required, before a slot or a byte", async () => {
+    for (const type of ["audio/webm;codecs=opus", "audio/mp4", "audio/x-wav"]) {
+      const { provider, received } = wavProvider();
+      const admission = { acquire: () => { throw new Error("no slot may be taken"); } };
+      const { response, attempt } = await transcribeRequest(provider, audioRequest(new Uint8Array([1]), type), admission);
+      expect(response.status).toBe(415);
+      expect(await bodyOf(response)).toMatchObject({ ok: false, code: "stt.wav_required" });
+      expect(attempt).toEqual({ status: 415, outcome: "invalid" });
+      expect(received).toHaveLength(0);
+    }
+  });
+
+  test("a WAV whose header is not 16 kHz mono 16-bit PCM is 415 too, and the provider never runs", async () => {
+    const stereo = encodeWav16(new Float32Array(1600));
+    new DataView(stereo.buffer).setUint16(22, 2, true);
+    const webmBytes = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4, 5, 6, 7, 8]);
+    for (const body of [stereo, webmBytes]) {
+      const { provider, received } = wavProvider();
+      const { response, attempt } = await transcribeRequest(provider, audioRequest(body, "audio/wav"), createSttAdmission());
+      expect(response.status).toBe(415);
+      expect(await bodyOf(response)).toMatchObject({ code: "stt.wav_required" });
+      expect(attempt.bytes).toBe(body.byteLength);
+      expect(received).toHaveLength(0);
+    }
+  });
+
+  test("four minutes of WAV fits under the 8 MiB cap", () => {
+    expect(44 + (240_000 / 1000) * 16_000 * 2).toBeLessThan(MAX_STT_AUDIO_BYTES);
   });
 });

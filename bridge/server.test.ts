@@ -27,9 +27,11 @@ import {
   guard,
   type PairingGate,
   historyParams,
+  journalRefOf,
   isHostAllowed,
   isLoopbackPeer,
   isReservedAuthPath,
+  reservedAuthPlaceholder,
   keysPane,
   cacheRulesRoute,
   launchersRoute,
@@ -45,11 +47,14 @@ import {
   cacheWatchable,
   replyPane,
   requestBodyCap,
+  pairedLabel,
   requestDevice,
   resetStaticGzipCache,
   resolveStaticPath,
   sendReplySteps,
   serveStatic,
+  STT_WORKER_CSP,
+  isSttWorkerScript,
   staticGzipStats,
   startupWarnings,
   healthBody,
@@ -68,7 +73,7 @@ import {
   PAIR_WINDOW_MS,
 } from "./pair-limit.ts";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, truncate, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -97,7 +102,7 @@ import {
   type MuxTabRequest,
 } from "./mux/types.ts";
 import { muxCaps, neverProxy } from "./crew/fixtures.ts";
-import { forwardHeaders } from "./crew/forward.ts";
+import { crewRouteFor, forwardHeaders } from "./crew/forward.ts";
 import { crewDeviceOf, crewGate } from "./crew/peer-gate.ts";
 import { CrewLead } from "./crew/lead.ts";
 import { NARROW_PLAN, snapshotPlan } from "./crew/merge.ts";
@@ -106,6 +111,8 @@ import { selectView } from "./sessions.ts";
 import { DEFAULT_MAX_UPLOAD_BYTES } from "./uploads.ts";
 import { MAX_STT_AUDIO_BYTES } from "./stt/http.ts";
 import { computeEtag } from "./http-cache.ts";
+import { grokJournal } from "./journal/grok.ts";
+import type { JournalAdapter } from "./journal/types.ts";
 import {
   MUX_LOGO_PATH,
   type AgentView,
@@ -1565,6 +1572,33 @@ describe("requestDevice — attribution across both gates", () => {
   });
 });
 
+describe("pairedLabel — the name Settings credits a change to", () => {
+  const gate = {
+    enforced: () => true,
+    resolve: (token: string | null) => (token === "tok-phone" ? { label: "Pixel 8" } : null),
+    local: (token: string | null) => token === "tok-local",
+  };
+
+  test("the pairing label of the token, and nothing else", () => {
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }), gate)).toBe("Pixel 8");
+    // A header name is for the gate, not for a screen.
+    expect(pairedLabel(req({ host: "h", "x-device-id": "desk" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-unknown" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-local" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }))).toBeNull();
+  });
+
+  test("a registry that cannot be read names nobody", () => {
+    const broken = {
+      enforced: () => true,
+      resolve: (): { label: string } | null => {
+        throw new Error("unreadable");
+      },
+    };
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }), broken)).toBeNull();
+  });
+});
+
 // ── Open routes (M46 specs 03 and 06, ADR 0086) ─────────────────────────────────────────────
 // Reads need the pairing token, and pairing is always on. The open-route list is short and named:
 // `/api/health` and `/api/pair`. The crew surface (`/crew/v1/*`) and the standby door have their own
@@ -2098,6 +2132,84 @@ describe("serveStatic — a text file ships gzipped", () => {
   });
 });
 
+// ADR 0096 Decision 8: the speech worker and the engine glue run under a policy of their own, and
+// that policy is the only one that lets wasm compile. The document's never does.
+describe("serveStatic — the speech worker's own policy", () => {
+  async function sttTree(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "collie-static-stt-"));
+    await mkdir(join(dir, "assets"), { recursive: true });
+    await mkdir(join(dir, "stt", "needle-3-test"), { recursive: true });
+    await writeFile(join(dir, "index.html"), "<!doctype html><p>shell</p>");
+    await writeFile(join(dir, "assets", "index-abc.js"), "export {};");
+    await writeFile(join(dir, "stt", "worker-abc123.js"), "self.onmessage = () => {};");
+    await writeFile(join(dir, "stt", "needle-3-test", "needle.js"), "var createNeedle = 1;");
+    await Bun.write(join(dir, "stt", "needle-3-test", "needle.wasm"), new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+    return dir;
+  }
+
+  test("the policy is exactly the ADR's", () => {
+    expect(STT_WORKER_CSP).toBe("default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'");
+  });
+
+  test("every .js under stt/ carries it, at the root and under a mount", async () => {
+    resetStaticGzipCache();
+    const dir = await sttTree();
+    for (const base of ["/", "/collie/"]) {
+      for (const path of ["/stt/worker-abc123.js", "/stt/needle-3-test/needle.js"]) {
+        const res = await serveStatic(path, null, dir, base);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-security-policy")).toBe(STT_WORKER_CSP);
+        expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      }
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("an app bundle and the shell do not, and the shell's policy never grants wasm", async () => {
+    resetStaticGzipCache();
+    const dir = await sttTree();
+    const asset = await serveStatic("/assets/index-abc.js", null, dir);
+    expect(asset.headers.get("content-security-policy")).toBeNull();
+    for (const base of ["/", "/collie/"]) {
+      const shell = await serveStatic("/", null, dir, base);
+      const policy = shell.headers.get("content-security-policy") ?? "";
+      expect(policy).toContain("script-src 'self'");
+      expect(policy).not.toContain("wasm-unsafe-eval");
+      expect(policy).not.toBe(STT_WORKER_CSP);
+    }
+    // The SPA fallback under stt/ is the shell, with the shell's policy: an extension-less path.
+    const fallback = await serveStatic("/stt/nothing", null, dir);
+    expect(fallback.headers.get("content-security-policy")).not.toContain("wasm-unsafe-eval");
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("the wasm is application/wasm with nosniff, revalidated, and gzipped when asked", async () => {
+    resetStaticGzipCache();
+    const dir = await sttTree();
+    const raw = await serveStatic("/stt/needle-3-test/needle.wasm", null, dir);
+    expect(raw.headers.get("content-type")).toBe("application/wasm");
+    expect(raw.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(raw.headers.get("cache-control")).toBe("no-cache");
+    expect(raw.headers.get("content-security-policy")).toBeNull();
+    // Past the gzip floor, so the compressed path is the one taken.
+    await Bun.write(join(dir, "stt", "needle-3-test", "needle.wasm"), new Uint8Array(4096));
+    const gz = await serveStatic("/stt/needle-3-test/needle.wasm", "gzip", dir);
+    expect(gz.headers.get("content-encoding")).toBe("gzip");
+    expect(Bun.gunzipSync(new Uint8Array(await gz.arrayBuffer())).byteLength).toBe(4096);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("isSttWorkerScript reads the mount-stripped relative path", () => {
+    expect(isSttWorkerScript("stt/worker-a.js")).toBe(true);
+    expect(isSttWorkerScript("stt/needle-3-x/needle.js")).toBe(true);
+    expect(isSttWorkerScript("stt/needle-3-x/needle.wasm")).toBe(false);
+    expect(isSttWorkerScript("assets/stt/worker.js")).toBe(false);
+    expect(isSttWorkerScript("sttx/worker.js")).toBe(false);
+    expect(isSttWorkerScript("index.html")).toBe(false);
+  });
+});
+
 describe("stripMount — a proxy that forwards the mount instead of stripping it", () => {
   test("takes the mount off a path that carries it, and only then", () => {
     expect(stripMount("/collie/api/health", "/collie/")).toBe("/api/health");
@@ -2148,6 +2260,38 @@ describe("isReservedAuthPath — the namespace a fronting proxy owns", () => {
     for (const path of ["/", "/settings", "/pane/w1:p1", "/authors", "/api/snapshot"]) {
       expect(isReservedAuthPath(path)).toBe(false);
     }
+  });
+});
+
+describe("reservedAuthPlaceholder — what /auth/ says when no proxy answers", () => {
+  test("stays a 404 and keeps the strict CSP", async () => {
+    const res = reservedAuthPlaceholder();
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-security-policy")).toContain("default-src");
+    const body = await res.text();
+    expect(body).not.toMatch(/<script|<style|style=/i);
+  });
+
+  test("tells an unpaired device to pair, and links Settings next to the way back", async () => {
+    const body = await reservedAuthPlaceholder().text();
+    expect(body).toContain("<code>collie pair</code>");
+    expect(body).toContain("enter the code in Settings");
+    expect(body).toContain('<a href="/settings/system">Open Settings</a>');
+    expect(body).toContain('<a href="/">Back to Collie</a>');
+    // The operator paragraph is still there, after the pairing one.
+    expect(body.indexOf("collie pair")).toBeLessThan(body.indexOf("If you are the operator"));
+  });
+
+  test("under a mount both links carry it (ADR 0052)", async () => {
+    const body = await reservedAuthPlaceholder("/collie/").text();
+    expect(body).toContain('<a href="/collie/">Back to Collie</a>');
+    expect(body).toContain('<a href="/collie/settings/system">Open Settings</a>');
+  });
+
+  test("the mount is escaped, since the page is open to anyone", async () => {
+    const body = await reservedAuthPlaceholder('/a"><b>/').text();
+    expect(body).not.toContain('"><b>');
+    expect(body).toContain('<a href="/a&#34;&#62;&#60;b&#62;/">Back to Collie</a>');
   });
 });
 
@@ -2244,6 +2388,81 @@ describe("bridgeConfigBody — the masking switch is reported, and omitted when 
       "build",
       "redact",
     ]);
+  });
+});
+
+// ADR 0096: the Whistle block rides `/api/config` right after `stt`, and is absent on a peer's own
+// answer. The routes are lead-local and gated like `/api/stt`; the handler lives inside Bun.serve, so
+// the gate levels and the crew wiring are asserted on the source and through the pure pieces.
+describe("the Whistle routes and the /api/config block", () => {
+  const base = { push: true, vapidPublicKey: "BKey", build: "abc123", mode: "solo" } as const;
+  const whistle = { state: "absent", bytes: 16919407, hostEngine: false, hostTaken: false } as const;
+  const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+  const block = (start: string): string => {
+    const at = src.indexOf(start);
+    expect(at).toBeGreaterThan(0);
+    return src.slice(at, src.indexOf("\n      }\n", at));
+  };
+
+  test("the block is carried right after stt, and absent means no key", () => {
+    const stt = { provider: "whistle", available: true, input: "wav-16k", maxDurationMs: 240000 } as const;
+    expect(Object.keys(bridgeConfigBody({ ...base, stt, whistle, redact: true }))).toEqual([
+      "push",
+      "vapidPublicKey",
+      "build",
+      "stt",
+      "whistle",
+      "redact",
+    ]);
+    expect(bridgeConfigBody({ ...base, whistle }).whistle).toEqual(whistle);
+    expect("whistle" in bridgeConfigBody({ ...base })).toBe(false);
+  });
+
+  test("the config handler leaves it out on a peer's own answer, and carries the lead's under ?host=", () => {
+    const handler = block('if (pathname === "/api/config") {');
+    expect(handler).toContain('const whistleWire = crew.mode === "peer" ? undefined : await whistleStatus(whistleDeps);');
+    expect(handler).toContain("whistle: whistleWire,");
+  });
+
+  test("reads need the pairing token, writes take the /api/stt write gate", () => {
+    const status = block('if (pathname === "/api/stt/whistle") {');
+    expect(status).toContain('const denied = guard(req, cfg, "read", pairingGate);');
+    expect(status).toContain('const denied = guard(req, cfg, "write", pairingGate);');
+    // The read answers before the write gate is reached, and nothing but GET is let through it.
+    expect(status.indexOf('if (req.method === "GET")')).toBeLessThan(status.indexOf('"write"'));
+    const host = block('if (pathname === "/api/stt/host") {');
+    expect(host).toContain('const denied = guard(req, cfg, "read", pairingGate);');
+    expect(host).toContain('const denied = guard(req, cfg, "write", pairingGate);');
+    expect(host.indexOf('if (req.method === "GET")')).toBeLessThan(host.indexOf('"write"'));
+    expect(host).toContain('if (req.method !== "PUT") return text("method not allowed", 405);');
+    expect(block("const sttModelMatch = pathname.match(STT_MODEL_ROUTE);")).toContain('guard(req, cfg, "read", pairingGate)');
+    expect(block('if (pathname === "/api/stt" && req.method === "POST")')).toContain('guard(req, cfg, "write", pairingGate)');
+  });
+
+  test("a change to the host's option is credited to the paired label, never to whois", () => {
+    expect(block('if (pathname === "/api/stt/host") {')).toContain("sttHostPut(sttHostDeps, body, pairedLabel(req, pairingGate))");
+    expect(block('if (pathname === "/api/stt/whistle") {')).toContain("whistleRemove(whistleDeps, pairedLabel(req, pairingGate))");
+  });
+
+  test("a model copy is handed the request's signal, so a client that leaves frees its place", () => {
+    expect(block("const sttModelMatch = pathname.match(STT_MODEL_ROUTE);")).toContain("modelResponse(whistleDeps, sttModelMatch[1]!, req.signal)");
+  });
+
+  test("every write and every model copy is audited; the status poll is not", () => {
+    for (const action of ["stt.whistle.download", "stt.whistle.remove", "stt.host", "stt.model.read"]) {
+      expect(src).toContain(action);
+    }
+  });
+
+  test("none of them is forwarded to a crew member, and none reads ?host=", () => {
+    for (const path of ["/api/stt/whistle", "/api/stt/host", `/api/stt/model/${"a".repeat(64)}`, "/api/stt"]) {
+      expect(crewRouteFor(path)).toBeNull();
+    }
+    for (const start of ['if (pathname === "/api/stt/whistle") {', 'if (pathname === "/api/stt/host") {', "const sttModelMatch = pathname.match(STT_MODEL_ROUTE);"]) {
+      const handler = block(start);
+      expect(handler).not.toContain("target(");
+      expect(handler).not.toMatch(/\bhost\b(?!["/ ])|crewLead|searchParams/);
+    }
   });
 });
 
@@ -2696,16 +2915,16 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All TWENTY-ONE session-scoped route handlers (tab create, workspace create, launch, this host's launcher
+    // All NINETEEN session-scoped route handlers (tab create, workspace create, launch, this host's launcher
     // rows, this host's folder list and a star on it, one journal blob, a workspace's Changes list,
     // a workspace's Files view, the Files existence check by pane or workspace, the Files image read
-    // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the worktree listing,
-    // the worktree actions, the New sheet's branch plan and create from a folder (ADR 0093), and the
+    // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the New sheet's
+    // branch plan and create from a folder (ADR 0093), and the
     // three writes on a phone's own launcher rows, served by one function (ADR 0094), and the two
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
     // read that checks a typed line before it runs (ADR 0095, amendment)) reach
     // their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(21);
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(19);
     // Exactly eight `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
@@ -4255,5 +4474,110 @@ describe("pair source key (forwarded header trust)", () => {
   test("a loopback peer with no forwarded header shares one local key", () => {
     expect(pairSourceKey("127.0.0.1", true, null)).toBe("loopback");
     expect(pairSourceKey(undefined, true, "")).toBe("loopback");
+  });
+});
+
+describe("journalRefOf — which session the history and chat routes read", () => {
+  const reported = { kind: "id" as const, value: "00000000-0000-7000-8000-00000000a001" };
+  const resumed = { kind: "id" as const, value: "00000000-0000-7000-8000-00000000b002" };
+  const pane = (overrides: Partial<AgentView>): AgentView => ({
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    workspaceLabel: "Main",
+    workspaceNumber: 1,
+    tabId: "w1:t1",
+    agent: "grok",
+    status: "idle",
+    cwd: "/home/op/proj",
+    focused: false,
+    ...overrides,
+  });
+  // journalRefOf reads only agent, discover and reconcile; the rest never runs here.
+  const adapter = (extra: Partial<JournalAdapter>): JournalAdapter => ({
+    ...grokJournal([]),
+    discover: undefined,
+    reconcile: undefined,
+    ...extra,
+  });
+
+  test("a live grok pane reads the session the adapter reconciles to", async () => {
+    const seen: string[] = [];
+    const a = adapter({
+      reconcile: async (ref, cwd) => {
+        seen.push(`${ref.value}@${cwd}`);
+        return resumed;
+      },
+    });
+    expect(await journalRefOf(a, pane({ agentSession: reported }), [])).toEqual(resumed);
+    expect(seen).toEqual([`${reported.value}@/home/op/proj`]);
+  });
+
+  test("a pane whose grok exited keeps the reported ref: nothing live to move to", async () => {
+    const a = adapter({ reconcile: async () => resumed });
+    expect(await journalRefOf(a, pane({ agent: "shell", agentSession: reported }), [])).toEqual(reported);
+  });
+
+  test("a pane with no reported ref still falls back to discovery", async () => {
+    const a = adapter({ reconcile: async () => resumed, discover: async () => resumed });
+    expect(await journalRefOf(a, pane({}), [])).toEqual(resumed);
+  });
+
+  describe("another pane in the folder", () => {
+    const calls: string[] = [];
+    const a = adapter({
+      reconcile: async (ref) => {
+        calls.push(ref.value);
+        return resumed;
+      },
+    });
+    const mine = pane({ agentSession: reported });
+
+    test("another grok pane in the same cwd blocks the correction", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", agentSession: resumed });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(reported);
+      expect(calls).toEqual([]);
+    });
+
+    test("another grok pane in a different cwd leaves the correction on", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", cwd: "/home/op/elsewhere" });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(resumed);
+      expect(calls).toEqual([reported.value]);
+    });
+
+    test("a non-grok pane in the same cwd does not block the correction", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", agent: "shell" });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(resumed);
+      expect(calls).toEqual([reported.value]);
+    });
+  });
+
+  test("an adapter without reconcile reads the reported ref as before", async () => {
+    expect(await journalRefOf(adapter({}), pane({ agentSession: reported }), [])).toEqual(reported);
+  });
+  // The cases above stub reconcile; this one keeps the real grok adapter, so dropping its reconcile
+  // binding leaves the stale id in place and fails here.
+  test("the real grok adapter moves a stale id to the one live session grok lists", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-grok-wire-")));
+    try {
+      await mkdir(join(base, "sessions"), { recursive: true });
+      const row = { session_id: resumed.value, pid: process.pid, cwd: "/home/op/proj" };
+      await writeFile(join(base, "active_sessions.json"), JSON.stringify([row]));
+      const real = grokJournal([join(base, "sessions")]);
+      expect(await journalRefOf(real, pane({ agentSession: reported }), [])).toEqual(resumed);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  // The cases above prove journalRefOf; this one proves the routes use it. Put a route back on the
+  // reported ref and every case above still passes while the resumed session goes unread again.
+  test("every journal route reads the ref journalRefOf settles on, never the reported one", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // history and chat
+    expect([...src.matchAll(/await journalRefOf\(adapter, pane, panes\)/g)]).toHaveLength(2);
+    expect(src).not.toMatch(/pane\.agentSession \?\?/);
   });
 });

@@ -92,6 +92,7 @@ import {
 import { fingerprintRoot, mountName, parseRecord, parseServeStatus, rootAvailability } from "./serve.ts";
 import type { ServeMode } from "./context.ts";
 import type { Exec, Files } from "./sys.ts";
+import { whistleModelFindings, type WhistleSeams } from "./stt-whistle.ts";
 import { BUILD_MARKER, currentVersionDir, listVersions, platformId, readBuildMarker } from "./update.ts";
 import {
   HTTPS_DISABLED_HINT,
@@ -167,6 +168,8 @@ export interface DoctorDeps {
    * every test and every piped run sees — means the plain lines below, unchanged.
    */
   readonly ui?: Ui | null;
+  /** The Whistle model check's stand-in pin, for the tests. Production leaves it. */
+  readonly whistle?: WhistleSeams;
 }
 
 // ── §8.6's window, and the shoulder before it ────────────────────────────────
@@ -241,6 +244,9 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
     ...(deps.host.platform === "win32" ? [windowsTask(deps), windowsLongPaths(deps), secretsPrivate(deps)] : []),
     beaconHooks(deps, hookEntries, declaration?.supports.agentDetection ?? true),
     await beacons(deps, hookEntries.length > 0),
+    // The Whistle model (ADR 0096): one finding when the model, or the host engine that needs it, is
+    // on this host, and none otherwise. A host that never heard of Whistle reads exactly as before.
+    ...(await whistleModelFindings(deps)),
     // Why a pane's History link is not there (issue #137) — its own module, because the chain it
     // walks (Herdr's build, its per-agent hook, the interpreter that hook needs, what the bridge
     // reports per pane, where a journal would be read from) is a section rather than a check.

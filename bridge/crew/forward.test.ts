@@ -979,9 +979,13 @@ describe("journal, uploads and state stay host-local", () => {
   // gap is right. If a route is added, this test goes red, and the table in MUX_CONTRACT.md
   // § "Conformance across a crew link" is what has to be corrected in the same change.
   test("four mux-port verbs have no forwardable crew route, and the contract says which", () => {
-    // The shapes a route for each would take, in this surface's own grammar.
+    // The shapes a route for each would take, in this surface's own grammar. The worktree create is
+    // lead-local at `POST /api/worktree` (and its plan); list and open have had no route at all since
+    // the space-scoped ones were removed in 1.20.0, so the old shapes must not forward either.
     const unreachable = [
       "sessions",
+      "worktree",
+      "worktree/plan",
       "workspace/w1/worktrees",
       "workspace/w1/worktree",
       "workspace/w1/worktree/open",

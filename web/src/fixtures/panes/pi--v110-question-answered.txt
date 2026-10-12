@@ -1,0 +1,40 @@
+ [0m[38;2;167;152;215m- [0mFixed inherited Mistral reasoning models ignoring the requested thinking level ([0m[4m[38;2;105;173;208m#9678[0m).                              
+ [0m[38;2;167;152;215m- [0mFixed inherited OpenCode Zen and OpenCode Go [0m[38;2;167;152;215mqwen3.8-flash[0m thinking being replayed as plain text on later turns      
+   ([0m[4m[38;2;105;173;208m#10047[0m).                                                                                                            
+ [0m[38;2;167;152;215m- [0mFixed inherited OpenAI Responses streams from servers that omit [0m[38;2;167;152;215moutput_index[0m, such as llama.cpp, running mixed-up    
+   tool calls; such streams now end with an error ([0m[4m[38;2;105;173;208m#9974[0m).                                                              
+ [0m[38;2;167;152;215m- [0mFixed inherited Anthropic and OpenAI Codex browser sign-in waiting indefinitely after the provider redirected with   
+   an authorization error, and Anthropic sign-in failing when its callback port is in use.                              
+ [0m[38;2;167;152;215m- [0mFixed inherited GitHub Copilot Claude Opus 5.5 offering unsupported thinking levels when upstream model metadata is  
+   incomplete.                                                                                                          
+
+[0m[38;2;95;168;204m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+[0m[48;2;33;59;73m                                                                                                                        [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCall the question tool exactly once with exactly these arguments and write no text: {"question": "Pick a color for the [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCollie probe?", "options": [{"label": "Red", "description": "Warm and loud."}, {"label": "Green", "description": "Calm [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mand natural."}, {"label": "Blue", "description": "Cool and deep."}]}[0m[48;2;33;59;73m                                                   [0m
+[0m[48;2;33;59;73m                                                                                                                        [0m
+
+[0m[48;2;37;65;49m                                                                                                                        [0m
+[0m[48;2;37;65;49m [0m[1m[38;2;222;224;225m[48;2;37;65;49mquestion [0m[38;2;157;165;169m[48;2;37;65;49mPick a color for the Collie probe?[0m[48;2;37;65;49m                                                                            [0m
+[0m[48;2;37;65;49m [0m[38;2;126;136;142m[48;2;37;65;49m  Options: 1. Red, 2. Green, 3. Blue, 4. Type something.[0m[48;2;37;65;49m                                                               [0m
+[0m[48;2;37;65;49m [0m[38;2;205;154;34m[48;2;37;65;49mCancelled[0m[48;2;37;65;49m                                                                                                              [0m
+[0m[48;2;37;65;49m                                                                                                                        [0m
+
+[0m[48;2;33;59;73m                                                                                                                        [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCall the question tool exactly once with exactly these arguments and write no text: {"question": "Which package        [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mmanager should the probe use?", "options": [{"label": "bun"}, {"label": "npm"}, {"label": "pnpm"}]}[0m[48;2;33;59;73m                    [0m
+[0m[48;2;33;59;73m                                                                                                                        [0m
+
+[0m[48;2;37;65;49m                                                                                                                        [0m
+[0m[48;2;37;65;49m [0m[1m[38;2;222;224;225m[48;2;37;65;49mquestion [0m[38;2;157;165;169m[48;2;37;65;49mWhich package manager should the probe use?[0m[48;2;37;65;49m                                                                   [0m
+[0m[48;2;37;65;49m [0m[38;2;126;136;142m[48;2;37;65;49m  Options: 1. bun, 2. npm, 3. pnpm, 4. Type something.[0m[48;2;37;65;49m                                                                 [0m
+[0m[48;2;37;65;49m [0m[38;2;104;183;141m[48;2;37;65;49m✓ [0m[38;2;167;152;215m[48;2;37;65;49m3. pnpm[0m[48;2;37;65;49m                                                                                                              [0m
+[0m[48;2;37;65;49m                                                                                                                        [0m
+
+[0m[38;2;104;128;141m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[7m [0m                                                                                                                       
+[0m[38;2;104;128;141m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;126;136;142m/tmp/pi-cap-cwd[0m
+[0m[38;2;126;136;142m↑3.0k ↓113 $0.001 0.1%/1.0M (auto)                                                google/gemini-3.5-flash-lite • minimal[0m

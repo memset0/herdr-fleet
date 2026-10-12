@@ -19,6 +19,12 @@ export function jsonStringField(value: JsonValue | undefined): string | null {
   return value;
 }
 
+/** A boolean field of a parsed JSON value, or null when it is absent or not a boolean. */
+export function jsonBooleanField(value: JsonValue | undefined): boolean | null {
+  if (typeof value !== "boolean") return null;
+  return value;
+}
+
 /**
  * A finite number field of a parsed JSON value, or null when it is absent or not one.
  *

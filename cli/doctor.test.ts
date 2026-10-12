@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
@@ -2427,5 +2429,80 @@ describe("POSIX parity (M43 spec 04)", () => {
     const ids = (text: string) => text.split("\n").map((l) => /^\s+(\S+)\s+(\S+)/.exec(l)?.slice(1, 3).join(" ")).filter(Boolean);
     expect(ids(out)).toEqual(ids(golden));
     expect(out).not.toContain("secrets-private");
+  });
+});
+
+// ── stt.whistle-model (ADR 0096) ─────────────────────────────────────────────
+// One finding, and only when Whistle plays a part on this host. The model is read from a REAL temp
+// state dir (the store hashes a real file); everything else is the usual fakes.
+
+describe("stt.whistle-model", () => {
+  const MODEL = new TextEncoder().encode("a tiny stand-in for whistle.cact");
+  const SHA = createHash("sha256").update(MODEL).digest("hex");
+  const PIN = { url: "https://models.invalid/whistle.cact", revision: "ca5287601bef25af", sha256: SHA, bytes: MODEL.byteLength };
+
+  async function run(setup: (stateDir: string) => void, files: (stateDir: string) => Record<string, string> = () => ({})) {
+    const stateDir = mkdtempSync(join(tmpdir(), "collie-doctor-whistle-"));
+    try {
+      setup(stateDir);
+      const h = harness(null, [], { files: { ...healthyFiles(), ...files(stateDir) } });
+      return await findings({ ...h, deps: { ...h.deps, ctx: { ...h.deps.ctx, stateDir }, whistle: { pin: PIN, accepted: [SHA] } } });
+    } finally {
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  }
+  const put = (stateDir: string, name: string, bytes: string | Uint8Array): void => {
+    mkdirSync(join(stateDir, "whistle"), { recursive: true });
+    writeFileSync(join(stateDir, "whistle", name), bytes);
+  };
+
+  test("no model and no host engine: no finding at all", async () => {
+    const { byCheck } = await run(() => undefined);
+    expect(byCheck.has("stt.whistle-model")).toBe(false);
+  });
+
+  test("a model that matches the pin is ok, and says its size, hash and revision", async () => {
+    const { byCheck, code } = await run((dir) => {
+      put(dir, "whistle.cact", MODEL);
+      put(dir, "whistle.json", JSON.stringify({ version: 1, model: { sha256: SHA, bytes: MODEL.byteLength, revision: "ca5287601bef25af", source: "x", fetchedAt: "2026-10-11T00:00:00.000Z" } }));
+    });
+    const f = byCheck.get("stt.whistle-model");
+    expect(f?.status).toBe("ok");
+    expect(f?.detail).toContain(`sha256 ${SHA.slice(0, 8)}`);
+    expect(f?.detail).toContain("revision ca528760");
+    expect(code).toBe(EXIT.OK);
+  });
+
+  test("a file that is not this release's model is a warning with the verb that fixes it, not an error", async () => {
+    const { byCheck, code } = await run((dir) => put(dir, "whistle.cact", "some other bytes"));
+    const f = byCheck.get("stt.whistle-model");
+    expect(f?.status).toBe("warn");
+    expect(f?.detail).toContain("does not match this release");
+    expect(f?.remedy).toContain("collie stt whistle");
+    expect(code).toBe(EXIT.OK);
+  });
+
+  test("a symlink where the model should be is a warning: it is not followed", async () => {
+    if (process.platform === "win32") return;
+    const { byCheck } = await run((dir) => {
+      mkdirSync(join(dir, "whistle"), { recursive: true });
+      symlinkSync(join(dir, "elsewhere"), join(dir, "whistle", "whistle.cact"));
+    });
+    const f = byCheck.get("stt.whistle-model");
+    expect(f?.status).toBe("warn");
+    expect(f?.detail).toContain("cannot be read");
+  });
+
+  test("a stt.json holding only a change stamp names no provider: no finding, no warning", async () => {
+    const stamp = JSON.stringify({ changedBy: "Pixel 8", changedAt: "2026-10-11T08:00:00.000Z" });
+    const { byCheck, code } = await run(() => undefined, (dir) => ({ [join(dir, "stt.json")]: stamp }));
+    expect(byCheck.has("stt.whistle-model")).toBe(false);
+    expect([...byCheck.keys()].filter((c) => c.startsWith("stt."))).toEqual([]);
+    expect(code).toBe(EXIT.OK);
+  });
+
+  test("the host engine is Whistle and the model is missing: a warning naming the verb", async () => {
+    const { byCheck } = await run(() => undefined, (dir) => ({ [join(dir, "stt.json")]: JSON.stringify({ provider: "whistle" }) }));
+    expect(byCheck.get("stt.whistle-model")).toMatchObject({ status: "warn", remedy: "run `collie stt whistle`" });
   });
 });

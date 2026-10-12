@@ -17,7 +17,10 @@ import { BandMain } from "@/components/ui/strip-host";
 //
 // Back goes to `/settings`, never home: a section is a CHILD of the index, and ADR 0067 says back
 // goes up one level. `nav.up` is what makes a tap and the system gesture agree about that.
-export function SettingsPage({ title, children }: { title: MessageKey; children: ReactNode }) {
+//
+// A page one level further down (Voice's Host speech and Whistle model) names its own `parent`, so Back
+// lands on the section it was opened from.
+export function SettingsPage({ title, parent, children }: { title: MessageKey; parent?: string; children: ReactNode }) {
   const nav = useNav();
   const scope = useScope();
   useLocale();
@@ -32,7 +35,7 @@ export function SettingsPage({ title, children }: { title: MessageKey; children:
               size="icon"
               // 44px — the tap floor every control in this row shares. size="icon" alone is 36px.
               className="size-11"
-              onClick={() => nav.up(settingsPath(scope))}
+              onClick={() => nav.up(parent ?? settingsPath(scope))}
               aria-label={t("settings.nav.back")}
             >
               <ArrowLeft className="size-5" />

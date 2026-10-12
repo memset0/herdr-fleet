@@ -15,7 +15,36 @@ import { checkForUpdate } from "@/lib/pwa";
 // poll, see lib/server-build.ts) and, if they differ (you're on a stale bundle), flags it with a
 // one-tap update — appearing/disappearing in real time as the server rebuilds. See README →
 // Troubleshooting.
-export function BuildStamp({ className }: { className?: string }) {
+/** True for a build the version string marks as not a tagged release (vite.config.ts stamps `-dev`). */
+export function isDevVersion(version: string): boolean {
+  return /-dev(?:\+|$)/.test(version);
+}
+
+/** `innerH/visualH/screenH`, whole pixels. The three numbers that tell a layout viewport taller than
+ *  the screen from a visual viewport the keyboard or a bar has shrunk. */
+export function viewportLabel(): string {
+  const visual = window.visualViewport?.height;
+  const parts = [window.innerHeight, visual === undefined ? "?" : Math.round(visual), window.screen.height];
+  return `vp ${parts.join("/")}`;
+}
+
+// DIAGNOSTIC, dev builds only, so it is not translated. An installed Android PWA once drew a layout
+// viewport taller than the screen and cut off the input row; these three numbers confirm it.
+function ViewportStamp() {
+  const [label, setLabel] = useState(viewportLabel);
+  useEffect(() => {
+    const update = () => setLabel(viewportLabel());
+    window.addEventListener("resize", update);
+    window.visualViewport?.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.visualViewport?.removeEventListener("resize", update);
+    };
+  }, []);
+  return <div className="font-mono text-[10px] text-muted-foreground/70">{label}</div>;
+}
+
+export function BuildStamp({ className, version = BUILD.version }: { className?: string; version?: string }) {
   useLocale();
   const serverBuild = useServerBuild();
   const [updating, setUpdating] = useState(false);
@@ -81,6 +110,7 @@ export function BuildStamp({ className }: { className?: string }) {
           </button>
         </>
       )}
+      {isDevVersion(version) && <ViewportStamp />}
     </div>
   );
 }

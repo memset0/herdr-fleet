@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
-// Finger-tracked reveal for the pane switcher. useSwipeUp (use-swipe.ts) only reads the
-// start/end points and fires once on release, which reads as a swipe gesture, not a native sheet
-// that follows the thumb. This hook reports every intermediate point so the caller can paint the
+// Finger-tracked reveal for the pane switcher. A hook that only reads the start/end points and
+// fires once on release reads as a swipe gesture, not a native sheet that follows the thumb. This
+// hook reports every intermediate point so the caller can paint the
 // sheet peeking up under the finger, then decides on release whether the drag crossed into "open"
 // (far enough, or fast enough) the same way ui/sheet.tsx's drag-to-dismiss decides "close".
 //

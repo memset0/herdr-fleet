@@ -32,6 +32,19 @@ describe("Segmented", () => {
     expect(onChange).toHaveBeenCalledWith("b");
   });
 
+  it("makes one segment inert on its own and keeps the others tappable", async () => {
+    const onChange = vi.fn();
+    const options = [
+      { value: "a", label: "First" },
+      { value: "b", label: "Second", disabled: true },
+    ] as const;
+    render(<Segmented options={options} value="a" onChange={onChange} label="Pick" />);
+    expect(screen.getByRole("radio", { name: "Second" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "First" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("radio", { name: "Second" }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("reserves the same border on every segment, so a switch moves nothing", () => {
     const { rerender } = render(<Segmented options={OPTIONS} value="a" onChange={() => {}} label="Pick" />);
     const before = screen.getAllByRole("radio").map((b) => b.className.split(/\s+/).filter((c) => /^(border|px|min-h|font)/.test(c)));

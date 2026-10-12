@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 
-import { normalizeSession, sessionSearch, useSession } from "./session";
+import { normalizeSession, sessionSearch, useScope } from "./session";
 
 describe("normalizeSession", () => {
   it("maps absent / blank to undefined (the primary session)", () => {
@@ -29,13 +29,13 @@ describe("sessionSearch", () => {
   });
 });
 
-// useSession reads the `s` query param off the current location.
+// useScope reads the `s` query param off the current location.
 function Probe() {
-  const session = useSession();
+  const { session } = useScope();
   return <div data-testid="session">{session ?? "(primary)"}</div>;
 }
 
-describe("useSession", () => {
+describe("useScope — the session", () => {
   it("returns undefined (primary) when there is no ?s=", () => {
     render(
       <MemoryRouter initialEntries={["/"]}>

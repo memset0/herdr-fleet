@@ -29,6 +29,7 @@ import { finishedTurnKey, useMirrorImages } from "@/hooks/use-mirror-images";
 import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
 import { isConnecting } from "@/lib/connection";
+import { canCopyText, copyText } from "@/lib/clipboard";
 import { t } from "@/lib/i18n";
 import { savedAtLabel } from "@/lib/format";
 import { settleAfterSend } from "@/lib/harness/guard";
@@ -947,13 +948,13 @@ export function AgentChat({
   // is looking at (`shown`, not the live props) so a poll landing mid-tap can't swap what gets
   // copied. Prefer the unwrapped logical text — the buffer without the phone-width hard wraps, so a
   // paste reads as real lines — and fall back to the display text when the agent reports no unwrapped
-  // form. `navigator.clipboard` is absent over plain HTTP (an insecure context, a supported deploy —
-  // see status-detail-sheet's copy), so this can reject; `canCopyOutput` keeps the row off that
-  // deploy, and the catch keeps a failure honest rather than claiming a copy that never happened.
-  const canCopyOutput = !!navigator.clipboard;
+  // form. `navigator.clipboard` is absent over plain HTTP (an insecure context, a supported deploy), so
+  // `copyText` falls back to the legacy copy command there; `canCopyOutput` keeps the row off a browser
+  // with neither, and the catch keeps a failure honest rather than claiming a copy that never happened.
+  const canCopyOutput = canCopyText();
   async function copyOutput() {
     try {
-      await navigator.clipboard.writeText(shown.logicalText || shown.text);
+      await copyText(shown.logicalText || shown.text);
       setStatus(t("chat.copyOutput.done"), "success");
     } catch {
       setStatus(t("chat.copyOutput.failed"), "error");
@@ -2580,6 +2581,7 @@ export function AgentChat({
               scope={scope}
               stale={actsDisabledByCache}
               composing={composing}
+              wrap={prefs.wrap}
               faceClassName={mirrorFace.className}
               faceStyle={mirrorFace.style}
               onClick={focusFromMirror}
@@ -2739,7 +2741,10 @@ export function AgentChat({
                   darker. --chrome is rgb(23) in dark, the same raised surface the sheets stand on,
                   and unchanged at rgb(235) in light, where --card would be pure white and land
                   1.04:1 against the inverted mirror. index.css states the whole argument. */}
-              <div data-slot="chrome-block" className="border-t border-rule bg-chrome">
+              {/* `relative` is the box the voice takeover is drawn over: it is `absolute inset-0` in this
+                  block, a sibling of the composer, so it fills exactly the composer's own box and
+                  adds no height (components/voice-takeover.tsx). */}
+              <div data-slot="chrome-block" className="relative border-t border-rule bg-chrome">
                 <Composer
                   ref={composerRef}
                   bindingPane={agent}

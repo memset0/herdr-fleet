@@ -1,0 +1,40 @@
+   an authorization error, and Anthropic sign-in failing when its callback port is in use.                              
+ [0m[38;2;167;152;215m- [0mFixed inherited GitHub Copilot Claude Opus 5.5 offering unsupported thinking levels when upstream model metadata is  
+   incomplete.                                                                                                          
+
+[0m[38;2;95;168;204m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+[0m[48;2;33;59;73m                                                                                                                        [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCall the question tool exactly once with exactly these arguments and write no text: {"question": "Pick a color for the [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCollie probe?", "options": [{"label": "Red", "description": "Warm and loud."}, {"label": "Green", "description": "Calm [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mand natural."}, {"label": "Blue", "description": "Cool and deep."}]}[0m[48;2;33;59;73m                                                   [0m
+[0m[48;2;33;59;73m                                                                                                                        [0m
+
+[0m[48;2;37;65;49m                                                                                                                        [0m
+[0m[48;2;37;65;49m [0m[1m[38;2;222;224;225m[48;2;37;65;49mquestion [0m[38;2;157;165;169m[48;2;37;65;49mPick a color for the Collie probe?[0m[48;2;37;65;49m                                                                            [0m
+[0m[48;2;37;65;49m [0m[38;2;126;136;142m[48;2;37;65;49m  Options: 1. Red, 2. Green, 3. Blue, 4. Type something.[0m[48;2;37;65;49m                                                               [0m
+[0m[48;2;37;65;49m [0m[38;2;205;154;34m[48;2;37;65;49mCancelled[0m[48;2;37;65;49m                                                                                                              [0m
+[0m[48;2;37;65;49m                                                                                                                        [0m
+
+[0m[48;2;33;59;73m                                                                                                                        [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mCall the question tool exactly once with exactly these arguments and write no text: {"question": "Which package        [0m
+[0m[48;2;33;59;73m [0m[38;2;222;224;225m[48;2;33;59;73mmanager should the probe use?", "options": [{"label": "bun"}, {"label": "npm"}, {"label": "pnpm"}]}[0m[48;2;33;59;73m                    [0m
+[0m[48;2;33;59;73m                                                                                                                        [0m
+
+[0m[48;2;52;56;58m                                                                                                                        [0m
+[0m[48;2;52;56;58m [0m[1m[38;2;222;224;225m[48;2;52;56;58mquestion [0m[38;2;157;165;169m[48;2;52;56;58mWhich package manager should the probe use?[0m[48;2;52;56;58m                                                                   [0m
+[0m[48;2;52;56;58m [0m[38;2;126;136;142m[48;2;52;56;58m  Options: 1. bun, 2. npm, 3. pnpm, 4. Type something.[0m[48;2;52;56;58m                                                                 [0m
+[0m[48;2;52;56;58m                                                                                                                        [0m
+
+[0m[38;2;167;152;215m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ [0m[38;2;222;224;225mWhich package manager should the probe use?[0m
+
+[0m[38;2;167;152;215m> 1. bun[0m
+  [0m[38;2;222;224;225m2. npm[0m
+  [0m[38;2;222;224;225m3. pnpm[0m
+  [0m[38;2;222;224;225m4. Type something.[0m
+
+ [0m[38;2;126;136;142m↑↓ navigate • Enter to select • Esc to cancel[0m
+[0m[38;2;167;152;215m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;126;136;142m/tmp/pi-cap-cwd[0m
+[0m[38;2;126;136;142m↑2.2k ↓113 $0.001 0.1%/1.0M (auto)                                                google/gemini-3.5-flash-lite • minimal[0m

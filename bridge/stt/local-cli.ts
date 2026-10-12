@@ -85,7 +85,8 @@ export const LOCAL_CLI_TEMP_PREFIX = "collie-stt-";
 
 /**
  * A temp dir older than this was left by a bridge that died mid-call (SIGKILL, power loss), because
- * no live call lasts more than {@link LOCAL_CLI_TIMEOUT_MS}. Swept once per process at provider load.
+ * no live call lasts more than {@link LOCAL_CLI_TIMEOUT_MS}, or the `whistle` provider's longest
+ * deadline (3 minutes, bridge/stt/whistle.ts). Swept once per process at provider load.
  */
 export const STALE_TEMP_DIR_MS = 60 * 60 * 1000;
 
@@ -98,19 +99,20 @@ const swept = new Set<string>();
 /** An extension Collie is willing to put in a path: short, lower-case, alphanumeric. */
 const SAFE_EXTENSION = /^[a-z0-9]{1,5}$/;
 
-/** Collie's sentence for a command that ran, exited 0, and printed nothing. */
-const EMPTY_MESSAGE = "the local transcription command printed no transcript";
+/** The words for the local-cli command, in Collie's own sentences. Never the command line itself. */
+const LOCAL_CLI_NOUN = "the local transcription command";
 
 /**
  * A command that ran cleanly and printed nothing.
  *
  * A `refused` failure on the route, like any other unusable answer. It is its own class for one
  * reader: `collie stt test` sends generated SILENCE, and silence legitimately transcribes to
- * nothing, so that verb counts this one as the pass it is on every other provider.
+ * nothing, so that verb counts this one as the pass it is on every other provider. The `whistle`
+ * provider throws it too, with its own noun.
  */
 export class LocalCliEmptyTranscriptError extends SttError {
-  constructor() {
-    super("refused", EMPTY_MESSAGE);
+  constructor(noun: string = LOCAL_CLI_NOUN) {
+    super("refused", `${noun} printed no transcript`);
     this.name = "LocalCliEmptyTranscriptError";
   }
 }
@@ -146,16 +148,8 @@ export function createLocalCliSttProvider(
   settings: LocalCliSttSettings,
   deps: LocalCliSttDeps = {},
 ): SttProvider {
-  const timeoutMs = deps.timeoutMs ?? LOCAL_CLI_TIMEOUT_MS;
-  const tmpRoot = deps.tmpRoot ?? tmpdir();
   const env = childEnv(deps.env ?? process.env);
-  const host = deps.host ?? HOST;
-  if (!swept.has(tmpRoot)) {
-    swept.add(tmpRoot);
-    void sweepStaleTempDirs(tmpRoot).catch(() => {
-      /* a sweep that fails leaves the dirs to the OS temp cleaner, as before */
-    });
-  }
+  const run = childRunner({ ...deps, env, noun: LOCAL_CLI_NOUN });
 
   return {
     id: settings.provider,
@@ -172,69 +166,119 @@ export function createLocalCliSttProvider(
         : { available: false, reason: "the local transcription command was not found on the host, or cannot be run" };
     },
 
-    async transcribe(input: SttAudio, signal?: AbortSignal): Promise<SttResult> {
-      // Refused before anything touches the disk or the process table.
-      if (inFlight >= LOCAL_CLI_MAX_IN_FLIGHT) throw new SttBusyError();
-      inFlight += 1;
-      let released = false;
-      const release = (): void => {
-        if (released) return;
-        released = true;
-        inFlight -= 1;
-      };
-
-      const deadline = createSttDeadline(signal, timeoutMs);
-      let dir: string | null = null;
-      let child: LocalCliChild | null = null;
-      // SIGKILL, not SIGTERM: the deadline is the end of the operator's wait, and an engine that
-      // traps TERM to finish its model load would outlive it. The whole group, see the header.
-      const kill = (): void => child?.killTree();
-      deadline.signal.addEventListener("abort", kill, { once: true });
-      try {
-        deadline.throwIfAborted();
-        dir = await mkdtemp(join(tmpRoot, LOCAL_CLI_TEMP_PREFIX));
-        // mkdtemp already makes 0700 on every platform Bun runs on; said again so a umask or a
-        // runtime change cannot widen it silently.
-        await chmod(dir, 0o700);
-        const path = join(dir, `recording.${extensionOf(input.filename)}`);
-        await writeFile(path, input.audio, { mode: 0o600, flag: "wx" });
-        deadline.throwIfAborted();
-
-        child = spawnCommand([settings.command, ...settings.args, path], dir, env, host);
-        const stdout = await deadline.wait(readCapped(new Response(child.stdout), deadline.signal));
-        const status = await deadline.wait(child.exited);
-        if (status !== 0) {
-          // The status, and only the status. The command line and stderr stay on the host.
-          throw new SttError("refused", `the local transcription command exited with status ${status}`);
-        }
-        const text = stdout.trim();
-        if (text === "") throw new LocalCliEmptyTranscriptError();
-        return { text };
-      } catch (err) {
-        kill();
-        deadline.throwIfAborted();
-        if (err instanceof SttError || err instanceof SttCancelledError) throw err;
-        // A spawn that failed (no such file, not executable) or a temp dir that could not be made.
-        // The cause is not attached: it is a string built from the operator's command line.
-        throw new SttError("unavailable", "the local transcription command could not be run");
-      } finally {
-        deadline.signal.removeEventListener("abort", kill);
-        // After a clean exit too: a straggler the command left in its group goes with it.
-        kill();
-        // The slot is the CHILD's, not the call's: given back when it has exited, which after a
-        // SIGKILL is at once, or after a grace period for a child stuck in the kernel.
-        if (child === null) release();
-        else void Promise.race([child.exited, Bun.sleep(KILL_GRACE_MS)]).then(release, release);
-        // On Windows the command is killed after taskkill has walked its tree, a moment later, and
-        // a running process holds its working folder: wait for it (bounded) before the folder goes.
-        if (child !== null && host.platform === "win32") await Promise.race([child.exited, Bun.sleep(KILL_GRACE_MS)]);
-        if (dir !== null) {
-          await rm(dir, { recursive: true, force: true }).catch(() => {
-            /* a temp dir that will not go is the OS temp cleaner's, not a failed transcription */
-          });
-        }
-      }
+    transcribe(input: SttAudio, signal?: AbortSignal): Promise<SttResult> {
+      return run(
+        (path) => [settings.command, ...settings.args, path],
+        `recording.${extensionOf(input.filename)}`,
+        input,
+        signal,
+      );
     },
+  };
+}
+
+/** What {@link childRunner} needs: the bounds of the call, and the noun its sentences use. */
+export interface ChildRunnerOptions {
+  /** The deadline, spawn to exit. {@link LOCAL_CLI_TIMEOUT_MS} unless a test shortens it. */
+  timeoutMs?: number;
+  /** Where the private temp dir is made. The OS temp dir unless a test names its own. */
+  tmpRoot?: string;
+  /** The child's whole environment, already built: nothing is added to it or taken from it here. */
+  env: Record<string, string>;
+  /** The platform facts the spawn branches on. The machine's own unless a test pins one. */
+  host?: Host;
+  /** How Collie's sentences name the child: "the local transcription command", "the Whistle engine". */
+  noun: string;
+}
+
+/**
+ * One transcription in a short-lived child, under every bound the header lists: the in-flight cap,
+ * the private temp dir, the deadline with the group (tree) kill, the stdout cap, stderr unread, and
+ * Collie's own sentences on failure. The `local-cli` provider and the `whistle` provider both run
+ * through it, so the two can never be bounded differently.
+ *
+ * `argv` is given the recording's path and returns the full argv; `recording` is the file's name
+ * inside the temp dir, which the caller has already narrowed. The returned function is one call;
+ * its `timeoutMs`, when given, replaces the runner's deadline for that call (the `whistle` provider
+ * scales it to the clip). Construction starts the stale temp dir sweep, once per process and temp
+ * root, in the background.
+ */
+export function childRunner(
+  opts: ChildRunnerOptions,
+): (argv: (path: string) => string[], recording: string, input: SttAudio, signal?: AbortSignal, timeoutMs?: number) => Promise<SttResult> {
+  const defaultTimeoutMs = opts.timeoutMs ?? LOCAL_CLI_TIMEOUT_MS;
+  const tmpRoot = opts.tmpRoot ?? tmpdir();
+  const host = opts.host ?? HOST;
+  const { env, noun } = opts;
+  if (!swept.has(tmpRoot)) {
+    swept.add(tmpRoot);
+    void sweepStaleTempDirs(tmpRoot).catch(() => {
+      /* a sweep that fails leaves the dirs to the OS temp cleaner, as before */
+    });
+  }
+
+  return async (argv, recording, input, signal, timeoutMs = defaultTimeoutMs) => {
+    // Refused before anything touches the disk or the process table.
+    if (inFlight >= LOCAL_CLI_MAX_IN_FLIGHT) throw new SttBusyError();
+    inFlight += 1;
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      inFlight -= 1;
+    };
+
+    const deadline = createSttDeadline(signal, timeoutMs);
+    let dir: string | null = null;
+    let child: LocalCliChild | null = null;
+    // SIGKILL, not SIGTERM: the deadline is the end of the operator's wait, and an engine that
+    // traps TERM to finish its model load would outlive it. The whole group, see the header.
+    const kill = (): void => child?.killTree();
+    deadline.signal.addEventListener("abort", kill, { once: true });
+    try {
+      deadline.throwIfAborted();
+      dir = await mkdtemp(join(tmpRoot, LOCAL_CLI_TEMP_PREFIX));
+      // mkdtemp already makes 0700 on every platform Bun runs on; said again so a umask or a
+      // runtime change cannot widen it silently.
+      await chmod(dir, 0o700);
+      const path = join(dir, recording);
+      await writeFile(path, input.audio, { mode: 0o600, flag: "wx" });
+      deadline.throwIfAborted();
+
+      child = spawnCommand(argv(path), dir, env, host);
+      const stdout = await deadline.wait(readCapped(new Response(child.stdout), deadline.signal));
+      const status = await deadline.wait(child.exited);
+      if (status !== 0) {
+        // The status, and only the status. The command line and stderr stay on the host.
+        throw new SttError("refused", `${noun} exited with status ${status}`);
+      }
+      const text = stdout.trim();
+      if (text === "") throw new LocalCliEmptyTranscriptError(noun);
+      return { text };
+    } catch (err) {
+      kill();
+      deadline.throwIfAborted();
+      if (err instanceof SttError || err instanceof SttCancelledError) throw err;
+      // A spawn that failed (no such file, not executable) or a temp dir that could not be made.
+      // The cause is not attached: it is a string built from the command line.
+      throw new SttError("unavailable", `${noun} could not be run`);
+    } finally {
+      deadline.signal.removeEventListener("abort", kill);
+      // After a clean exit too: a straggler the command left in its group goes with it.
+      kill();
+      // The slot is the CHILD's, not the call's: given back when it has exited, which after a
+      // SIGKILL is at once, or after a grace period for a child stuck in the kernel.
+      if (child === null) release();
+      else void Promise.race([child.exited, Bun.sleep(KILL_GRACE_MS)]).then(release, release);
+      // On Windows the command is killed after taskkill has walked its tree, a moment later, and
+      // a running process holds its working folder: wait for it (bounded) before the folder goes.
+      if (child !== null && host.platform === "win32") await Promise.race([child.exited, Bun.sleep(KILL_GRACE_MS)]);
+      if (dir !== null) {
+        await rm(dir, { recursive: true, force: true }).catch(() => {
+          /* a temp dir that will not go is the OS temp cleaner's, not a failed transcription */
+        });
+      }
+    }
   };
 }
 

@@ -195,6 +195,7 @@ export const zh: FleetDictionary = {
   "fleet.command.mic.direct": "已开启直接输入终端模式，请先关闭。",
   "fleet.command.mic.sending": "还有一条消息正在发送。",
   "fleet.command.mic.transcribing": "上一段录音还在转写中。",
+  "fleet.command.mic.failed": "上一段录音无法转写；请先发送到主机或丢弃。",
   "fleet.command.mic.alreadyRecording": "麦克风已在录音。",
   "fleet.command.mic.notRecording": "麦克风当前没有在录音。",
   "fleet.command.unavailable": "{name} 在此处不可用。",

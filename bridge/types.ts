@@ -8,6 +8,7 @@ import type { GitHead } from "./git-head.ts";
 import type { ChatBody } from "./journal/live.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
 import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
+import type { SttWireIdentity } from "./stt/config.ts";
 import type { UpdateRun } from "./update-run.ts";
 
 // Re-exported so the wire surface has ONE import site: a consumer of PaneHistoryResponse gets the
@@ -1087,47 +1088,8 @@ export type CreateResponse =
   | { ok: true; pane: CreatedPane; replayed?: true; noPrompts?: boolean }
   | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
 
-/** One Git worktree of the repo a space sits in (ADR 0032). */
-export interface WorktreeView {
-  /** Absolute checkout path — the identity, and what `open` is asked with. */
-  path: string;
-  /** The branch checked out there; `null` for a detached head. */
-  branch: string | null;
-  /**
-   * The space showing it, or `null` when it exists on disk and nothing does.
-   *
-   * `null` is what hides the Remove row: removal is addressed by space, so a checkout nothing shows
-   * cannot be removed from the phone at all.
-   */
-  openWorkspaceId: string | null;
-  /** `false` for the repo's own checkout, which is listed for context and is never removable. */
-  linked: boolean;
-  /** The multiplexer believes the checkout is gone and its administrative files could be pruned. */
-  prunable: boolean;
-}
-
 /**
- * GET /api/workspace/:id/worktrees — the worktrees of the repo that space sits in.
- *
- * `defaultBranch` is the LOCAL branch a create with `base: { kind: "default" }` starts from
- * (`resolveDefaultBranch`, bridge/worktree-base.ts), or `null` when the repo has none to name.
- */
-export type WorktreeListResponse =
-  | { ok: true; worktrees: WorktreeView[]; defaultBranch: string | null }
-  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
-
-/**
- * POST /api/workspace/:id/worktree[/open] — the space now showing the checkout.
- *
- * `alreadyOpen` says the space was already there, which is an ANSWER and not a failure: the phone
- * navigates to `pane` either way.
- */
-export type WorktreeOpenResponse =
-  | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
-  | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
-
-/**
- * POST /api/workspace/:id/worktree — the new worktree's space, plus what happened to the launcher
+ * POST /api/worktree — the new worktree's space, plus what happened to the launcher
  * (ADR 0089).
  *
  * `launcherStarted` is false when no launcher was asked for AND when one was asked for and could not
@@ -1689,6 +1651,13 @@ export interface BridgeConfig {
    */
   stt?: SttCapability;
   /**
+   * The Whistle model on this host (ADR 0096), so Settings can offer the setup tap. Present on every
+   * lead and solo collie that knows the feature; absent on an older bridge, and on a crew member's
+   * own answer, because speech is lead-only (ADR 0029). A `?host=<member>` read carries the lead's,
+   * like `stt`.
+   */
+  whistle?: WhistleStatus;
+  /**
    * What this collie accepts as an attachment. **Absent is a bridge older than this field**, which
    * a client reads as the contract that shipped before it: 10 MB, images only. Present, it is the
    * whole answer — the phone builds its file picker's `accept` list from it and refuses an oversize
@@ -1734,6 +1703,124 @@ export interface SttCapability {
   available: boolean;
   /** Operator-facing prose when it could not. Absent when it could. */
   reason?: string;
+  /**
+   * What the phone must upload. Present only for the `whistle` provider (ADR 0096 Decision 4):
+   * `wav-16k` is 16 kHz mono 16-bit little-endian PCM WAV, and nothing else is accepted. Absent means
+   * the recording as the browser made it.
+   */
+  input?: "wav-16k";
+  /**
+   * The longest recording this provider takes, in milliseconds. Present only when it differs from
+   * the phone's 5-minute default: the `whistle` provider takes 4 minutes, because a WAV is about four
+   * times the size of a compressed recording and the 8 MiB upload cap stays.
+   */
+  maxDurationMs?: number;
+}
+
+/**
+ * Why Settings may not switch the host to one choice (ADR 0097), as a code the phone translates:
+ *
+ *  - `env`               the deployment's environment names the speech settings; it wins, and no phone changes it
+ *  - `terminal`          a provider set up in a terminal with a key, an endpoint or a command
+ *  - `unreadable`        `stt.json` is there and cannot be read; it is the operator's to fix
+ *  - `not-ready`         Whistle: the model is not on the host yet
+ *  - `codex-missing`     Codex: no `codex` binary was found on the host
+ *  - `codex-signed-out`  Codex: `codex login status` says it is not signed in
+ *  - `codex-other-login` Codex: signed in, but not with ChatGPT (an API key, say)
+ *  - `codex-unknown`     Codex: the sign-in could not be checked (a timeout, an answer not understood)
+ */
+export type SttHostSwitchReason =
+  | "env"
+  | "terminal"
+  | "unreadable"
+  | "not-ready"
+  | "codex-missing"
+  | "codex-signed-out"
+  | "codex-other-login"
+  | "codex-unknown";
+
+/** Whether one choice may be made from Settings, and if not, why. */
+export interface SttHostSwitch {
+  ok: boolean;
+  /** Absent when `ok`. */
+  reason?: SttHostSwitchReason;
+}
+
+/**
+ * What the host's speech settings name, by name only (Settings → Voice titles its card with it).
+ * Every field is optional and is dropped when it holds a hidden character. Never a path, an argument
+ * other than the one model file's name, a key, an environment value, or a URL's path or query.
+ * Mirrors `SttHostSetup` in web/src/lib/types.ts.
+ */
+export interface SttHostSetup {
+  /** `local-cli`: the command's basename (`whistle-stt`, `whisper-cli`). */
+  command?: string;
+  /**
+   * `local-cli`: the basename of the first argument that names a model file (`ggml-base.bin`).
+   * `openai-compatible`: the configured model (`whisper-large-v3`). `whistle`: the pinned model's
+   * version, the first seven characters of its revision.
+   */
+  model?: string;
+  /** `openai-compatible`: the service's host, with its port when it has one (`api.groq.com`, `127.0.0.1:8080`). */
+  endpoint?: string;
+}
+
+/**
+ * The host's speech provider, as `GET /api/stt/host` and `PUT /api/stt/host` report it (ADR 0097).
+ * Mirrors `SttHostStatus` in web/src/lib/types.ts.
+ */
+export interface SttHostStatus {
+  /** `whistle`, `codex`, `openai-compatible`, `local-cli`, or `none`. A name this build does not know is passed through. */
+  provider: string;
+  /** Whether it could serve a request right now. False for `none`. */
+  available: boolean;
+  /** Operator-facing prose when it could not: the provider's own words, or why the settings do not resolve. */
+  reason?: string;
+  /** For `codex` only: the identity recorded at setup. `codex-cli` is the fallback that wears the Codex CLI's headers. */
+  identity?: SttWireIdentity;
+  /** Where the provider is named: `stt.json` in the state dir, the bridge's environment, or nowhere. */
+  configuredBy: "file" | "env" | "none";
+  /** The three choices Settings offers, each with whether it may be made now. */
+  switchable: { whistle: SttHostSwitch; codex: SttHostSwitch; off: SttHostSwitch };
+  /** The `codex` binary whose sign-in would pay, for the consent's words. Present when one was found. */
+  codexBin?: string;
+  /**
+   * The paired device that last changed the option from Settings, by its pairing label. Absent when
+   * the option was last set in a terminal, by the environment, or by a device the bridge could not
+   * name. Never a token, an address or a header value.
+   */
+  changedBy?: string;
+  /** When that device changed it, an ISO 8601 time. Present exactly when `changedBy` is. */
+  changedAt?: string;
+  /** What the settings name: the command, the model, the service's host. Absent when they name nothing, or do not resolve. */
+  setup?: SttHostSetup;
+}
+
+/** Where the host's copy of the Whistle model stands (ADR 0096 Decision 2). */
+export type WhistleState = "absent" | "downloading" | "ready" | "failed";
+
+/**
+ * The Whistle model on the host and the host engine's switch, as `GET /api/stt/whistle` and
+ * `/api/config` report them. Mirrors `WhistleStatus` in web/src/lib/types.ts.
+ */
+export interface WhistleStatus {
+  state: WhistleState;
+  /** Exact size of the pinned model, for the button and the bar. Always present. */
+  bytes: number;
+  /** Present while downloading: the bytes received so far. */
+  received?: number;
+  /** Present only when state is "ready": the held file's sha256, lowercase hex, a hash this build accepts. */
+  sha256?: string;
+  /** Present only when state is "ready" and the manifest names it: the Hugging Face revision the file came from. */
+  revision?: string;
+  /** Present only when state is "ready" and the manifest names it: when the host fetched the file, an ISO 8601 time. */
+  fetchedAt?: string;
+  /** Present when state is "failed": operator-facing prose, no paths. */
+  reason?: string;
+  /** True when the host STT provider is `whistle`. */
+  hostEngine: boolean;
+  /** True when another provider is configured, so Settings cannot turn the host engine on. */
+  hostTaken: boolean;
 }
 
 /**

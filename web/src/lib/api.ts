@@ -55,6 +55,8 @@ import type {
   PaneReadResponse,
   PairFailure,
   SnapshotResponse,
+  SttHostChoice,
+  SttHostStatus,
   UpdateCheckResponse,
   UpdateInfo,
   UpdateRun,
@@ -63,6 +65,7 @@ import type {
   WorktreeBaseChoice,
   WorktreeCreateResponse,
   WorktreeFolderChoice,
+  WhistleStatus,
   WorktreePlanResponse,
 } from "./types";
 import type { SubscribeBody } from "./push";
@@ -211,16 +214,31 @@ const STT_PROVIDER_BUDGET_MS = 60_000;
 // Request set-up, the bridge's own parse, and the response coming back down. Small and flat: none
 // of it scales with the audio.
 const STT_OVERHEAD_MS = 20_000;
+// A WAV goes to the host's `whistle` provider, whose deadline scales with the clip
+// (bridge/stt/whistle.ts `whistleTimeoutFor`): half the clip's length, at least the 60 s above and
+// at most three minutes. The clip's length is read off its size: 16 kHz, 2 bytes a sample, after the
+// 44-byte header the phone writes (lib/stt-pcm.ts).
+const STT_WAV_BYTES_PER_SECOND = 16_000 * 2;
+const STT_WAV_HEADER_BYTES = 44;
+const STT_WHISTLE_BUDGET_CAP_MS = 180_000;
+
+/** The bridge's provider deadline for a clip: the flat 60 s, or the `whistle` one for a WAV. */
+function sttProviderBudgetFor(bytes: number, type: string): number {
+  if (type.split(";", 1)[0]!.trim().toLowerCase() !== "audio/wav") return STT_PROVIDER_BUDGET_MS;
+  const clipMs = (Math.max(0, bytes - STT_WAV_HEADER_BYTES) / STT_WAV_BYTES_PER_SECOND) * 1000;
+  return Math.min(STT_WHISTLE_BUDGET_CAP_MS, Math.max(STT_PROVIDER_BUDGET_MS, Math.ceil(clipMs / 2)));
+}
 
 /**
- * The whole-request deadline for one clip of `bytes`, in milliseconds.
+ * The whole-request deadline for one clip of `bytes`, in milliseconds. `type` is the clip's content
+ * type: a WAV waits for the host engine's longer deadline, every other type for the flat one.
  *
  * Exported for the unit test, and for anyone who wants to know what the ceiling actually is: at the
- * 8 MiB maximum (MAX_STT_AUDIO_BYTES) it is a little under six minutes.
+ * 8 MiB maximum (MAX_STT_AUDIO_BYTES) it is a little under six minutes, or about seven for a WAV.
  */
-export function sttTimeoutFor(bytes: number): number {
+export function sttTimeoutFor(bytes: number, type: string = ""): number {
   const upload = Math.ceil((Math.max(0, bytes) * 8 * 1000) / STT_UPLINK_BITS_PER_SECOND);
-  return upload + STT_PROVIDER_BUDGET_MS + STT_OVERHEAD_MS;
+  return upload + sttProviderBudgetFor(bytes, type) + STT_OVERHEAD_MS;
 }
 
 /**
@@ -1633,8 +1651,8 @@ export function checkForUpdates(): Promise<UpdateInfo> {
  * preflight behind it is cached on the bridge, so polling it costs one `collie update --check` a
  * minute at most.
  */
-export function fetchUpdateState(signal?: AbortSignal): Promise<UpdateCheckResponse> {
-  return req<UpdateCheckResponse>("/api/update/check", signal ? { signal } : undefined);
+export function fetchUpdateState(signal?: AbortSignal, timeoutMs?: number): Promise<UpdateCheckResponse> {
+  return req<UpdateCheckResponse>("/api/update/check", { signal, timeoutMs });
 }
 
 /**
@@ -1903,7 +1921,7 @@ export function transcribeAudio(audio: Blob, signal?: AbortSignal): Promise<SttR
           [XHR_HEADER]: XHR_HEADER_VALUE,
           ...authHeader(),
         },
-        signal: withTimeout(signal, sttTimeoutFor(audio.size)),
+        signal: withTimeout(signal, sttTimeoutFor(audio.size, audio.type)),
       });
       const detail = await errorDetail(res);
       notePairing("POST", res.status, res.ok ? undefined : detail);
@@ -1925,4 +1943,76 @@ export function transcribeAudio(audio: Blob, signal?: AbortSignal): Promise<SttR
       };
     })().finally(endLongUpload),
   );
+}
+
+// ── WHISTLE: THE MODEL ON THE HOST, AND THE PHONE'S COPY OF IT (ADR 0096) ───────────────────────
+
+/** The whole-request deadline for copying the model to the phone: 17 MB, 30 s over a tailnet, and a
+ *  slow cellular link still has to finish. The body is streamed, so this runs until the last byte. */
+const STT_MODEL_TIMEOUT_MS = 5 * 60_000;
+
+/** Where the host's copy of the model stands. A read; the poll reads it once a second while it downloads. */
+export function fetchWhistleStatus(signal?: AbortSignal): Promise<WhistleStatus> {
+  return req<WhistleStatus>("/api/stt/whistle", { signal, timeoutMs: POLL_TIMEOUT_MS });
+}
+
+/** Ask the host to download the model (write-gated). Answers `202` while it starts or joins one, `200`
+ *  when the model is already there; both carry the status. The bytes arrive on the host's own time. */
+export function startWhistleSetup(): Promise<WhistleStatus> {
+  return req<WhistleStatus>("/api/stt/whistle", { method: "POST" });
+}
+
+/** Remove the model from the host, and the `whistle` provider with it when it was the host's (write-gated). */
+export function removeWhistleModel(): Promise<WhistleStatus> {
+  return req<WhistleStatus>("/api/stt/whistle", { method: "DELETE" });
+}
+
+// ── THE HOST'S SPEECH PROVIDER (ADR 0097) ─────────────────────────────────────────────────────
+
+/**
+ * A Codex switch runs the honest-first identity probe on the host, which may take as long as one
+ * transcription (two minutes at most, bridge/stt/codex.ts) plus the sign-in check. The others are quick.
+ */
+const STT_HOST_SWITCH_TIMEOUT_MS = 150_000;
+
+/** Which provider the host runs, who set it, and which of the three choices Settings may make. A read. */
+export function fetchSttHost(signal?: AbortSignal): Promise<SttHostStatus> {
+  return req<SttHostStatus>("/api/stt/host", { signal });
+}
+
+/**
+ * Switch the host's speech provider (write-gated): Whistle, Codex or Off, and nothing else. Codex needs
+ * `consent`, the id of the consent text this app showed and the person accepted (lib/stt-consent.ts).
+ * A refusal carries a `stt.*` code, which {@link describeThrownError} says in the operator's language.
+ */
+export function setSttHost(provider: SttHostChoice, consent?: string): Promise<SttHostStatus> {
+  return req<SttHostStatus>("/api/stt/host", {
+    method: "PUT",
+    body: JSON.stringify(consent === undefined ? { provider } : { provider, consent }),
+    timeoutMs: provider === "codex" ? STT_HOST_SWITCH_TIMEOUT_MS : undefined,
+  });
+}
+
+/**
+ * The model's bytes, as a STREAM, so the caller can count them and hash them as they come.
+ *
+ * A plain read: it needs the pairing token and nothing more (ADR 0096 Decision 9). It is not a JSON
+ * call and the body is far too big for the poll leash, so it takes its own deadline and hands the
+ * response back untouched on success. A refusal throws like every other call here. The path names the
+ * file by its hash, and the bridge answers only when that hash is the one it holds.
+ */
+export async function fetchSttModel(sha256: string, signal?: AbortSignal): Promise<Response> {
+  const path = `/api/stt/model/${encodeURIComponent(sha256)}`;
+  const res = await apiFetch(path, {
+    signal: withTimeout(signal, STT_MODEL_TIMEOUT_MS),
+    headers: { [XHR_HEADER]: XHR_HEADER_VALUE, ...authHeader() },
+  });
+  captureBuild(res);
+  if (!res.ok) {
+    const detail = await errorDetail(res);
+    notePairing("GET", res.status, detail);
+    notePairingAnswer(res.status, detail);
+    throw new ApiError(`${path} → ${res.status} ${detail}`, res.status, parseApiErrorFields(detail));
+  }
+  return res;
 }

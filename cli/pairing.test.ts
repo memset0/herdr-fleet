@@ -255,6 +255,27 @@ describe("collie devices list", () => {
     expect(d.io.stdout[1]).not.toContain("1970");
   });
 
+  test("a label stored before the rule existed is printed with its hidden characters spelled out", () => {
+    const d = deps(
+      registryFile(device({ label: "evil\u001b[2Jname" }), device({ label: "rtl\u202eabc\u200b" }), device({ label: "plain" })),
+    );
+    expect(cmdDevicesList(d)).toBe(EXIT.OK);
+    const out = d.io.stdout.join("\n");
+    expect(out).toContain("evil\\u{1B}[2Jname");
+    expect(out).toContain("rtl\\u{202E}abc\\u{200B}");
+    expect(out).not.toContain("\u001b");
+    expect(out).not.toContain("\u202e");
+    expect(out).not.toContain("\u200b");
+    expect(out).toContain("plain");
+  });
+
+  test("a revoke that names no device prints the stored labels escaped too", () => {
+    const d = deps(registryFile(device({ label: "evil\u001b[2Jname" })));
+    expect(cmdDevicesRevoke(d, ["nobody"])).toBe(EXIT.FAIL);
+    expect(d.io.stderr.join("\n")).toContain("evil\\u{1B}[2Jname");
+    expect(d.io.stderr.join("\n")).not.toContain("\u001b");
+  });
+
   test("the expiry column: no expiry, a date ahead, or EXPIRED", () => {
     const d = deps(
       registryFile(

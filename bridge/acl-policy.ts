@@ -133,13 +133,17 @@ const OWN_SUFFIX = /^(?:\.\d+|\.tmp|\.\d+\.tmp|\.\d+\.\d+\.tmp|\.collie-tmp|\.pu
 /**
  * Collie's own FOLDERS in the state and the config folder, and the one kind of file each holds:
  * beacons as `.json`, phone uploads as `<pane>-<time>-<8 hex>.<ext>` (`bridge/server.ts`), fonts as
- * bare `.woff2` names (`operator-fonts.ts`), and saved access lists.
+ * bare `.woff2` names (`operator-fonts.ts`), saved access lists, and the Whistle model's folder
+ * (`bridge/stt/whistle-model.ts`: the model, its manifest, the download's lock, and a download's part
+ * file and the manifest's temporary, each named by pid and sequence). The model sits in `whistle/` and not in `stt/whistle/` for this reason: the rule
+ * is one level deep, and a `stt/` that holds a subfolder would fail it.
  */
 const KNOWN_FOLDERS: ReadonlyMap<string, RegExp> = new Map([
   ["beacons", /^[^\\/]+\.json(?:\.tmp)?$/i],
   ["uploads", /^[A-Za-z0-9_-]+-[0-9a-z]+-[0-9a-f]{8}\.[A-Za-z0-9]+$/],
   ["fonts", /^[^\\/]+\.woff2$/i],
   ["acl-backups", /^acl-backup-.+\.sddl$/i],
+  ["whistle", /^whistle\.(?:cact|json|lock)$|^whistle\.cact\.\d+\.\d+\.part$|^whistle\.json\.\d+\.\d+\.tmp$/],
 ]);
 
 /**

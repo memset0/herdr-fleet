@@ -41,8 +41,8 @@ interface CollieHomeProps {
 // picture. This mark rests by not animating at all, so nothing is ever swapped and nothing can
 // resize as the connection settles.
 // The mark is now the app's ONLY animal: the boot splash and the idle cover bloom this same mark, so
-// "Collie is fetching" looks the same wherever it appears. <DogGallop/> is untouched but no longer
-// mounted anywhere in the app (see components/dog-gallop.tsx).
+// "Collie is fetching" looks the same wherever it appears. The old gallop sprite and its component
+// were removed in 1.20.0.
 //
 // Tapping it returns to the dashboard, and the MARK IS THE WHOLE BUTTON. The brand word used to sit
 // inside it on the dashboard; it moved out when the header's identity became two stacked lines —

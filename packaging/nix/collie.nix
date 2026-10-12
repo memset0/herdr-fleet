@@ -26,8 +26,8 @@
 }:
 
 let
-  # Nix system → the platform key `sources.json` uses. Three rows, because the release workflow
-  # ships three payloads; macOS Intel is not built, so it is not listed here either.
+  # Nix system → the platform key `sources.json` uses. Three rows: the release also ships a
+  # macOS Intel payload, but the nixpkgs pin has no x86_64-darwin, so it is not listed here.
   platformKeys = {
     "x86_64-linux" = "linux-x64";
     "aarch64-linux" = "linux-arm64";

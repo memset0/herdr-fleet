@@ -12,7 +12,14 @@ import { snoozeUpdate } from "@/lib/api";
 import { timeAgoShort } from "@/lib/format";
 import { useOptionalRootData } from "@/lib/route-data";
 import { openUpdateMode, type UpdateAsk } from "@/lib/update-ask";
-import { noteSnapshotCrew, noteSnapshotRun, readUpdateState, useUpdateRun } from "@/lib/update-run-store";
+import {
+  holdReadRetry,
+  noteSnapshotCrew,
+  noteSnapshotRun,
+  readUpdateState,
+  retryUpdateRead,
+  useUpdateRun,
+} from "@/lib/update-run-store";
 import { noteUpdateRun } from "@/lib/self-update";
 import {
   crewAction,
@@ -122,7 +129,7 @@ export function UpdateCard() {
   // carry (it shells out to git and to `doctor`; paying that on every snapshot poll for a card nobody
   // has opened is the wrong trade). The store also reconciles the standby door's copy of the run,
   // which is the one reader that still answers while the front door restarts.
-  const { check, checked, run } = useUpdateRun();
+  const { check, checked, readFailed, run } = useUpdateRun();
   // THIS DEVICE'S CLAIM ON AN UPDATE, which update mode stamps when "Start update" is accepted. The
   // card goes inert on it for the beat before the first run record, when `running` is still false and
   // a second tap would ask the bridge twice (the bridge refuses with `update.in_progress` anyway).
@@ -223,6 +230,31 @@ export function UpdateCard() {
     return () => ac.abort();
   }, [settled]);
 
+  // EXCEPT WHEN THE HELD ANSWER IS UNUSABLE AT OPEN. The store reads once per document, so a read
+  // that failed or carried no preflight (a bridge mid-restart right after an update) would otherwise
+  // keep this button disabled until the app is reloaded; opening the card is the moment to ask again.
+  const unusableAtOpen = useRef(checked && preflight === null);
+  useEffect(() => {
+    if (!unusableAtOpen.current) return;
+    const ac = new AbortController();
+    void readUpdateState(ac.signal);
+    return () => ac.abort();
+  }, []);
+
+  // A READ THAT FAILED IS ASKED AGAIN WHILE THIS CARD IS OPEN (issue 400). The store owns the
+  // schedule and the no-overlap rule; the card only says it is here, and the store stops when it
+  // leaves.
+  useEffect(() => holdReadRetry(), []);
+  const [retrying, setRetrying] = useState(false);
+  async function retryRead() {
+    setRetrying(true);
+    try {
+      await retryUpdateRead(true);
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   // THE SNAPSHOT'S OWN COPY, HANDED TO THE STORE. `routes/root.tsx` publishes it too, and that is the
   // one that matters in the app — this card is a route away and may not be mounted at all. It is
   // published here as well so a card mounted WITHOUT that root (the playground, a unit test) still
@@ -271,6 +303,11 @@ export function UpdateCard() {
   // machine that also happens to be packaged. Checking packageManaged first would bury that fault
   // under a sentence about a boundary that is working exactly as designed, on every visit, until the
   // real problem is found some other way.
+  // THE READ FAILED, WHICH IS NOT THE PREFLIGHT FAILING (issue 400). With no answer held, a timeout
+  // or a dropped connection used to print "the preflight couldn't be run on this machine", a claim
+  // about this machine from a card that never heard from it. The button stays disabled all the same,
+  // because nothing has cleared the update; the line names the real reason and carries the retry.
+  const unreachable = readFailed && preflight === null && !packageManaged;
   const blockedReason =
     redCheck !== undefined
       ? redCheck.reason
@@ -441,7 +478,17 @@ export function UpdateCard() {
                 during the restart gap the preflight read fails BECAUSE the bridge is down, so
                 printing "the preflight couldn't be run" there draws the outage this card exists
                 not to draw. */}
-            {blocked && !moving && <p className="text-xs text-status-blocked">{blockedReason}</p>}
+            {blocked && !moving && unreachable && (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-status-blocked">{t("settings.updateCard.bridgeUnreachable")}</p>
+                <Button variant="ghost" size="sm" disabled={retrying} onClick={() => void retryRead()}>
+                  {t("settings.updateCard.retry")}
+                </Button>
+              </div>
+            )}
+            {blocked && !moving && !unreachable && (
+              <p className="text-xs text-status-blocked">{blockedReason}</p>
+            )}
             {dismissed && <p className="text-xs text-muted-foreground">{t("settings.updateCard.dismissed")}</p>}
             {majorAvailable !== null && (
               <p className="text-xs text-muted-foreground">

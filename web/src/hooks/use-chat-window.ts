@@ -77,8 +77,9 @@ import { REWRITE_AFTER_MS } from "@/lib/store";
 // pane text the loaders already keep (lib/last-seen.ts).
 
 /** How many older turns one "load older" tap asks for. The live first page takes the bridge's own
- *  default (40), which is what ADR 0073 sized a first paint at. */
-const OLDER_PAGE = 40;
+ *  default (40), which is what ADR 0073 sized a first paint at; a tap is a request to read back, so it
+ *  asks for more, still under the bridge's ceiling of 200 (#364). */
+const OLDER_PAGE = 100;
 
 export interface ChatFeed {
   /** What this pane's session is, as the last answer left it. */

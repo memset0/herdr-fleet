@@ -1,4 +1,4 @@
-import { Activity, ArrowLeft, Bell, ChevronRight, FlaskConical, Palette, Server, SlidersHorizontal } from "lucide-react";
+import { Activity, ArrowLeft, Bell, ChevronRight, FlaskConical, Mic, Palette, Server, SlidersHorizontal } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { RouteHeader } from "@/components/app-header";
@@ -18,7 +18,7 @@ import { BandMain } from "@/components/ui/strip-host";
 
 // ── THE SETTINGS INDEX ──────────────────────────────────────────────────────────────────────────
 //
-// Four rows, each opening a section (routes/settings-sections.tsx, which explains the split), then
+// Five rows, each opening a section (routes/settings-sections.tsx, which explains the split), then
 // Machines (a page, not a section) and, while Experiments holds anything, Experiments.
 //
 // This page used to BE the settings: seventeen cards in one column, over a thousand pixels of
@@ -49,7 +49,9 @@ interface Row {
 }
 
 // The order is the order of how standing a choice is. Appearance is changed most and changed first;
-// System is the page you open when something is wrong, which is rarely and deliberately.
+// System is the page you open when something is wrong, which is rarely and deliberately. Voice sits
+// between Device and Alerts and, unlike Experiments, is never hidden: a host that offers no speech
+// gets a page that says so, because a row that comes and goes teaches nobody where dictation lives.
 //
 // Experiments trails all four, and it is the only row that can be absent: it renders while
 // `lib/experiments.ts` holds something, because a row that opens an empty page is noise. It is last
@@ -74,6 +76,13 @@ const ROWS: Row[] = [
     icon: SlidersHorizontal,
     title: "settings.section.device.title",
     blurb: "settings.section.device.blurb",
+  },
+  {
+    id: "voice",
+    to: (scope) => settingsSectionPath("voice", scope),
+    icon: Mic,
+    title: "settings.section.voice.title",
+    blurb: "settings.section.voice.blurb",
   },
   {
     id: "alerts",

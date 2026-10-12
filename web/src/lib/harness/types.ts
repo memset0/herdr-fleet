@@ -22,6 +22,15 @@ export interface HarnessAdapter {
    * OPTIONAL: only for a harness that turns bracketed paste on, or the markers are typed as junk.
    */
   bracketedPaste?(text: string): boolean;
+  /**
+   * The minimum time in ms between the type call and the guarded Enter. The echo on screen proves
+   * the bytes are in the box, not that the TUI will act on a submit key yet; a harness that swallows
+   * an Enter sent right behind its own text declares a floor here, and the guarded send holds the
+   * submit until that long after the LAST type call (lib/reply-action.ts). A verify loop that
+   * already took longer pays nothing extra.
+   * OPTIONAL: adapters that need no settle omit it and send as before.
+   */
+  submitSettleMs?(): number;
   /** The exact Herdr snapshot `agent` string this adapter claims (its registry key). */
   agent: string;
   /** The adapter's OWN full block pipeline over the pane's styled lines — for Claude that is the
@@ -86,6 +95,19 @@ export interface HarnessAdapter {
    */
   modalOnScreen?(lines: StyledLine[]): boolean;
   /**
+   * Positive evidence that a full overlay box holds the keyboard — the /models-style overlay
+   * paints its own bordered box over the middle of the screen while the composer tail stays
+   * intact, so `composerReady` still answers true although typing would land in the overlay's
+   * filter, never the input box. Asked by the reply path (`lib/reply-action.ts`) before typing
+   * and when classifying a stalled send.
+   *
+   * OPTIONAL. Absent skips both checks for that adapter, which is the pre-existing behaviour. A
+   * throw propagates to the caller — the unread-dialog card treats it as `false`, the reply path
+   * lets the send reject, exactly like a throwing `composerReady`. Read from the harness's own
+   * captures; the suites pin the corpus.
+   */
+  overlayHoldsKeyboard?(lines: StyledLine[]): boolean;
+  /**
    * Literal on-screen text from the composer's prompt/draft tail — the region a DESTRUCTIVE write
    * aimed at that composer may be bound to. Null = no composer at the tail (the same screens
    * `composerReady` answers false about).
@@ -124,8 +146,13 @@ export interface HarnessAdapter {
    * it can widen what counts as evidence, never narrow it. The contract is strict-or-false: return
    * true only when the token on screen is CONSISTENT with this exact send, because a `true` here fires
    * the submit key. An adapter that can't tell omits it and keeps today's stall.
+   *
+   * `before` is the draft the guard's last read saw before it typed the final part (`null` for an
+   * empty box), and is left out when no read happened: a forced send, a read that threw, or a caller
+   * other than the guard. It is for a token that does not identify its content, where a stale one
+   * and a fresh one look the same.
    */
-  draftCarriesSend?(sent: string, draft: string): boolean;
+  draftCarriesSend?(sent: string, draft: string, before?: string | null): boolean;
   /**
    * Whether the draft on the input line is the harness's OWN opaque token rather than the user's text
    * — the same placeholder as above, sitting stranded. The stranded-draft preview keeps showing it

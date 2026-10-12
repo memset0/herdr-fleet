@@ -16,6 +16,7 @@ import type { StandbyDevices } from "../bridge/crew/standby-devices.ts";
 import { checkpointStale, type CrewRuntimeMarker } from "../bridge/crew/staleness.ts";
 import type { TrustedMember, TrustStoreData, Warrant } from "../bridge/crew/trust-store.ts";
 import { currentWarrant, verifyWarrantSignature, warrantExpired, warrantExpiresAt } from "../bridge/crew/warrant.ts";
+import { escapeLabelForTerminal } from "../bridge/pairing.ts";
 import { herdrActionCommand, type Environment } from "./context.ts";
 import type { Tone, TonedLine } from "./render.ts";
 
@@ -550,7 +551,7 @@ export function standbyDoorLines(
 export function pairingCollisionLines(marker: CrewRuntimeMarker | null, now: number): TonedLine[] {
   const collision = marker?.pairingCollision ?? null;
   if (collision === null) return [];
-  const labels = collision.labels.map((l) => `"${l}"`).join(", ");
+  const labels = collision.labels.map((l) => `"${escapeLabelForTerminal(l)}"`).join(", ");
   return [
     line(`⚠ pairing LABEL CLASH (seen ${humanAge(now - collision.at)} ago) — the deputy already has ${labels}`, "warn"),
     line("  The sync itself is landing, so that deputy's door is checking the right credentials. What", "dim"),

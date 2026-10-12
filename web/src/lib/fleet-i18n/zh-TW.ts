@@ -195,6 +195,7 @@ export const zhTW: FleetDictionary = {
   "fleet.command.mic.direct": "已開啟直接輸入終端機模式，請先關閉。",
   "fleet.command.mic.sending": "還有一則訊息正在傳送。",
   "fleet.command.mic.transcribing": "上一段錄音還在轉錄中。",
+  "fleet.command.mic.failed": "上一段錄音無法轉錄；請先傳送到主機或捨棄。",
   "fleet.command.mic.alreadyRecording": "麥克風已在錄音。",
   "fleet.command.mic.notRecording": "麥克風目前沒有在錄音。",
   "fleet.command.unavailable": "{name} 在此處無法使用。",

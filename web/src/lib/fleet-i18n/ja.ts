@@ -195,6 +195,7 @@ export const ja: FleetDictionary = {
   "fleet.command.mic.direct": "ターミナル直接入力が有効です。先に解除してください。",
   "fleet.command.mic.sending": "メッセージをまだ送信中です。",
   "fleet.command.mic.transcribing": "直前のクリップをまだ文字起こし中です。",
+  "fleet.command.mic.failed": "前回のクリップを文字起こしできませんでした。先にホストへ送るか破棄してください。",
   "fleet.command.mic.alreadyRecording": "マイクはすでに録音中です。",
   "fleet.command.mic.notRecording": "マイクは録音していません。",
   "fleet.command.unavailable": "{name} はここでは使えません。",

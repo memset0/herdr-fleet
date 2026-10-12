@@ -15,9 +15,9 @@ import { useLocale } from "@/hooks/use-locale";
 //
 // It leads with the Collie mark for a plain reason: this is the one screen in the app with no header,
 // no herd chrome and no nav, so without it a full-viewport panel is unattributable — it could be any
-// app that happened to be open. The mark is <CollieMark/> still, and never <DogGallop/>:
-// that sprite's rest frame is a full-stretch mid-stride pose that reads as "frozen mid-run", and this
-// screen is the app's most literal rest state. The paused state carries no `loading` — the pause is
+// app that happened to be open. The mark is <CollieMark/> still, and never the old gallop sprite
+// (removed in 1.20.0): its rest frame was a full-stretch mid-stride pose that read as "frozen
+// mid-run", and this screen is the app's most literal rest state. The paused state carries no `loading` — the pause is
 // not work in flight; the catch-up refetch is, and it blooms the same mark (see below).
 //
 // No lock iconography and no "for safety" — the pause guards nothing (.adr/0007). Saying otherwise

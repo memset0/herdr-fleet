@@ -79,4 +79,13 @@ describe("when it refuses", () => {
       refusal: "not-recording",
     });
   });
+
+  test("a clip the phone could not transcribe refuses every command until it is sent or discarded", () => {
+    // Collie 1.20's failed phase holds the clip for "Send to host" or the bin; starting another would
+    // abandon it, and there is nothing recording to stop.
+    const phase: MicPhase = "failed";
+    for (const command of ["start", "stop", "toggle"] as const) {
+      expect(decideMicCommand(command, conditions({ phase }))).toEqual({ kind: "refuse", refusal: "failed" });
+    }
+  });
 });

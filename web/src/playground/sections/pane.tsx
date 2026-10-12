@@ -25,6 +25,7 @@ import {
 import { PaneRouter, PaneStackRouter } from "../harness";
 import { Card, CardControls, Group, Section, Segmented, Stage, type SectionDef } from "../layout";
 import { PhoneFrameCard } from "./shared";
+import { VoiceTakeoverGroup } from "./voice-takeover";
 
 export const DEF: SectionDef = {
   id: "pane",
@@ -146,6 +147,8 @@ export function PaneSection() {
           <NoEchoNoticeHarness />
         </Card>
       </Group>
+
+      <VoiceTakeoverGroup />
 
       <Group title="Worst case">
         <Card

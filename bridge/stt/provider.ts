@@ -52,6 +52,14 @@ export interface SttProvider {
    * It is a label, not a capability: nothing branches on it, and it never carries an endpoint.
    */
   readonly id: string;
+  /**
+   * What the phone must upload, when the provider takes one format only. `wav-16k` is 16 kHz mono
+   * 16-bit PCM WAV (the `whistle` provider, ADR 0096); the route then refuses anything else with
+   * `415 stt.wav_required` before the provider sees it. Absent means the browser's own recording.
+   */
+  readonly input?: "wav-16k";
+  /** The longest recording the provider takes, when it is not the phone's 5-minute default. */
+  readonly maxDurationMs?: number;
   /** Can this provider serve a request — asked for the capability flag, never with audio in hand. */
   status(): Promise<SttStatus>;
   /**

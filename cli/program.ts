@@ -26,7 +26,7 @@ import {
 import { lifecycleDeps, updateDeps } from "./deps.ts";
 import { cmdDoctor, doctorDeps } from "./doctor.ts";
 import { cmdDocs, cmdSkill } from "./docs.ts";
-import { EXIT, type Io, realIo } from "./io.ts";
+import { asksForHelp, EXIT, type Io, realIo } from "./io.ts";
 import {
   cmdExecBridge,
   cmdLogs,
@@ -91,6 +91,7 @@ import {
   STT_SUBCOMMANDS,
   type SttDeps,
 } from "./stt.ts";
+import { cmdSttWhistle } from "./stt-whistle.ts";
 import { realExec, realFiles } from "./sys.ts";
 import { cmdSupervise, realSuperviseDeps } from "./task-scheduler.ts";
 import { cmdApplyUpdate, cmdUpdate } from "./update.ts";
@@ -245,7 +246,7 @@ function hooksDeps(io: Io): HooksDeps {
  */
 function sttDeps(io: Io): SttDeps {
   const ctx = loadContext(io.err);
-  return {
+  const deps: SttDeps = {
     ctx,
     io,
     files: realFiles,
@@ -253,6 +254,9 @@ function sttDeps(io: Io): SttDeps {
     interactive: process.stdin.isTTY === true,
     prompt: (question) => (process.stdin.isTTY === true ? prompt(question) : null),
   };
+  // A progress line only on a terminal: a log would get a carriage return per tick.
+  if (process.stdout.isTTY === true) deps.progress = (text) => void process.stdout.write(text);
+  return deps;
 }
 
 /**
@@ -446,6 +450,18 @@ export const COMMANDS: readonly Command[] = [
     run: (_args, s) => {
       const deps = lifecycleDeps(s.io);
       return cmdMuxProbe({ ctx: deps.ctx, io: s.io, exec: deps.exec, files: deps.files });
+    },
+  },
+  // The Whistle host engine's child (ADR 0096): the bridge spells it once per dictation, with a WAV
+  // path it wrote. Dispatched from cli/main.ts's bootstrap; declared here so the table stays the one
+  // declaration and the usage line keeps it hidden.
+  {
+    name: "_whistle-transcribe",
+    summary: "internal: transcribe one WAV with the Whistle engine, for the bridge",
+    internal: true,
+    run: async (args, s) => {
+      const { cmdWhistleTranscribe } = await import("./whistle-transcribe.ts");
+      return cmdWhistleTranscribe(args, { io: s.io, env: process.env });
     },
   },
   lifecycleCommand(
@@ -654,6 +670,11 @@ export const COMMANDS: readonly Command[] = [
         run: (args, s) => cmdSttSetup(sttDeps(s.io), args),
       },
       {
+        name: "whistle",
+        summary: "fetch the Whistle speech model (--host: use it on this host, --from, --remove)",
+        run: (args, s) => cmdSttWhistle(sttDeps(s.io), args),
+      },
+      {
         name: "test",
         summary: "one real round trip through what is configured",
         run: (_args, s) => cmdSttTest(sttDeps(s.io)),
@@ -812,8 +833,8 @@ export function helpText(commands: readonly Command[] = COMMANDS): string[] {
  * types the flag spelling as often as the verb, and the two must not answer differently.
  *
  * Only the FIRST argument is rewritten. `collie logs --version` is an argument to `logs`, exactly as
- * every other flag reaching a verb is (`buildProgram` turns commander's own `-h` off for the same
- * reason), and this must not start guessing at it.
+ * every other flag reaching a verb is (`buildProgram` turns commander's own help off, and only
+ * `-h`/`--help` are caught, by `helpGuard`), and this must not start guessing at it.
  */
 export function normalizeArgv(argv: readonly string[]): readonly string[] {
   const first = argv[0];
@@ -830,6 +851,44 @@ function emit(sink: (line: string) => void, chunk: string): void {
 }
 
 /**
+ * `collie <verb> --help` prints that verb's usage and runs nothing.
+ *
+ * Commander's help is off (every flag grammar lives in the verb), so `--help` and `-h` used to reach
+ * the verb body as ordinary arguments, and `collie update --help` began a real update (#392). The
+ * check sits here, in front of every verb and sub-verb body, so no verb can forget it and none has
+ * to know about it. `helpAsked` is decided in {@link run} from the RAW argv, because commander drops
+ * the literal `--` before an action sees its arguments, and only an argument before that `--` is a
+ * help request (see `asksForHelp`).
+ *
+ * No verb in the table forwards its arguments to another program, so none is exempt: `logs` reads
+ * its one optional argument as a line count, and the `tailscale` calls under `serve` carry fixed
+ * arguments of ours. A verb that ever passes the operator's arguments on to a child program must
+ * bypass this guard, because there `--help` belongs to that program.
+ */
+async function helpGuard(
+  session: Session,
+  helpAsked: boolean,
+  name: string,
+  summary: string,
+  internal: boolean,
+  args: readonly string[],
+  body: Command["run"],
+): Promise<number> {
+  if (!helpAsked) return body(args, session);
+  // A `_` verb is only ever spelled by another Collie (`_apply-update` by `update`), never by
+  // a person. A `--help` there means a caller built a wrong argv, so it fails loudly: an update whose
+  // second half answered usage with exit 0 would report success with nothing swapped.
+  if (internal) {
+    session.io.err(`error: \`collie ${name}\` is internal and has no usage; nothing was run`);
+    return EXIT.USAGE;
+  }
+  session.io.out(`usage: collie ${name} [options]`);
+  session.io.out("");
+  session.io.out(`  ${summary}`);
+  return EXIT.OK;
+}
+
+/**
  * Build the commander program for one invocation. The exit code is not commander's to decide, so
  * every action stashes its verb's return value here and {@link run} reads it back out.
  */
@@ -837,6 +896,7 @@ function buildProgram(
   session: Session,
   commands: readonly Command[],
   setCode: (code: number) => void,
+  helpAsked: boolean,
 ): Program {
   const program = new Program();
   program
@@ -871,18 +931,21 @@ function buildProgram(
       .command(c.name, { hidden: c.internal === true })
       .description(c.summary)
       // Every verb still receives its argv verbatim: the flag grammars live in the verbs (and are
-      // pinned there, against fake deps), so commander forwards rather than re-parses. `-h` is off
-      // for the same reason — today `collie logs --help` is a `logs` argument, not a help request.
+      // pinned there, against fake deps), so commander forwards rather than re-parses. Commander's
+      // own help is off for the same reason, so `-h` and `--help` are caught by {@link helpGuard}
+      // below, before any verb body runs, and not by commander.
       .allowUnknownOption(true)
       .allowExcessArguments(true)
       .helpOption(false)
       .argument("[args...]");
     if (c.subcommands === undefined) {
-      leaf.action(async (args: string[]) => setCode(await c.run(args, session)));
+      leaf.action(async (args: string[]) => setCode(await helpGuard(session, helpAsked, c.name, c.summary, c.name.startsWith("_"), args, c.run)));
       continue;
     }
     // A parent with children: commander matches a child by name, and anything else — including
-    // nothing at all — reaches the parent's own action.
+    // nothing at all — reaches the parent's own action. That action is NOT behind the guard: it is
+    // already a usage printer (bare, misspelt or `--help`, it prints its subcommand block and exits
+    // 2, and `scripts/collie-cli.test.sh` pins that), so it changes nothing and has nothing to stop.
     leaf.action(async (args: string[]) => setCode(await c.run(args, session)));
     for (const sub of c.subcommands) {
       leaf
@@ -892,7 +955,9 @@ function buildProgram(
         .allowExcessArguments(true)
         .helpOption(false)
         .argument("[args...]")
-        .action(async (args: string[]) => setCode(await sub.run(args, session)));
+        .action(async (args: string[]) =>
+          setCode(await helpGuard(session, helpAsked, `${c.name} ${sub.name}`, sub.summary, c.name.startsWith("_"), args, sub.run)),
+        );
     }
   }
   return program;
@@ -916,11 +981,20 @@ export async function run(
     },
   };
   let code: number = EXIT.OK;
-  const program = buildProgram(session, commands, (c) => {
-    code = c;
-  });
+  const argvIn = normalizeArgv(rest);
+  // A leading `--` is commander's own "operands follow", so `collie -- update --help` is still a
+  // request for the usage of `update`; the scan starts after it.
+  const helpAsked = asksForHelp(argvIn[0] === "--" ? argvIn.slice(1) : argvIn);
+  const program = buildProgram(
+    session,
+    commands,
+    (c) => {
+      code = c;
+    },
+    helpAsked,
+  );
   try {
-    await program.parseAsync(normalizeArgv(rest), { from: "user" });
+    await program.parseAsync(argvIn, { from: "user" });
     return code;
   } catch (err) {
     if (err instanceof CommanderError) {

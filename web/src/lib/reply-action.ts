@@ -202,6 +202,8 @@ export interface GuardedReplyArgs {
   requestedLines?: number;
   /** Test seam for the poll pacing. */
   sleep?: Sleep;
+  /** Test seam for the submit-settle clock. Defaults to wall time; tests pin it. */
+  now?: () => number;
   /**
    * Override the PRE-FLIGHT'S REFUSAL and type anyway — the user's deliberate second tap after a
    * `blocked` outcome (a mis-detected screen, an adapter that can't see a box it really has). The
@@ -301,7 +303,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   // owns the keyboard (Claude's `/model` picker — no input box at the tail at all) receives the
   // user's text before anything notices. One read up front is the difference between "nothing
   // happened" and "your reply is now sitting in a picker".
-  const { refuse, runPreType } = await preflight(adapter, args);
+  const { refuse, runPreType, box } = await preflight(adapter, args);
   if (refuse !== null) return refuse;
 
   // The ONE call site of the caller's destructive pre-type work — and it is not guarded by a
@@ -324,10 +326,14 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
     try {
       const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
       const lines = splitLines(parseAnsi(fresh.text));
-      if (!adapter.composerReady?.(lines)) return { status: "blocked", error: noBoxMessage() };
+      // Same box check as the sweep's re-confirm above: a chunked send's reads can land on a
+      // different screen than the probe, and the tail alone cannot tell an overlay from a composer.
+      if (!adapter.composerReady?.(lines) || adapter.overlayHoldsKeyboard?.(lines) === true)
+        return { status: "blocked", error: noBoxMessage() };
       const split = newlineRefusal(adapter, args.text, lines);
       if (split !== null) return split;
       previousDraft = adapter.extractInputDraft(lines);
+      box.draft = previousDraft;
     } catch (e) {
       return { status: "error", error: message(e) };
     }
@@ -356,6 +362,7 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
         if (draft !== previousDraft && adapter.composerReady?.(lines) && draftCarriesSend(delivered, draft) && carriesReplyTail(delivered, draft)) {
           verified = true;
           previousDraft = draft;
+          box.draft = draft;
           break;
         }
       } catch {
@@ -372,6 +379,11 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
     return { status: "error", error: message(e) };
   }
   if (!typed.ok) return { status: "error", error: describeApiError(typed) };
+  // The submit settle is measured from the last type call returning: the verify loop below can
+  // match on its first read, and a harness may swallow an Enter sent that fast
+  // (`submitSettleMs`, e.g. Muse 1.4.4, #395).
+  const typedAt = (args.now ?? Date.now)();
+  const settleMs = adapter.submitSettleMs?.() ?? 0;
 
   const sleep = args.sleep ?? defaultSleep;
   // The last screen a verification read actually saw, kept only so the stall below can be named. The
@@ -379,16 +391,23 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
   // harness with no `composerReady`, and a `force` the operator armed against a mis-detected screen,
   // both arrive here having typed the secret into a prompt that will never echo it.
   let lastSeen: string | null = null;
+  // The last successfully parsed screen beside it, so a stalled send can name a dialog, menu or
+  // overlay box that opened mid-send instead of guessing. Only ever read through the adapter's
+  // own positive-evidence predicates — no new shapes.
+  let lastLines: StyledLine[] | null = null;
   for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
     // Read BEFORE the first sleep: pane.read is an on-demand live read, not a cached poll, so the
     // text is often already on screen by the time the type call returns. That saves a whole
-    // POLL_DELAY_MS off the common path — the old blind flow always paid a fixed 350ms here.
+    // POLL_DELAY_MS off the common path — the old blind flow always paid a fixed 350ms here. An
+    // adapter whose harness needs a beat before Enter declares it (`submitSettleMs`), and the
+    // submit below pays only the remainder of that floor.
     if (attempt > 0) await sleep(POLL_DELAY_MS);
     let draft: string | null = null;
     let verifiedPrompt: string | undefined;
     try {
       const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
       const lines = splitLines(parseAnsi(fresh.text));
+      lastLines = lines;
       // Only a screen the adapter does NOT recognise as its composer can be a raw password prompt.
       // Without that gate a match on the tail is dangerous rather than merely wrong: the notice this
       // feeds tells the operator to press Enter in Type, so a stall that was really a dialog eating
@@ -411,16 +430,18 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
     // box — three stalls in the 2026-09-27 audit trail. A complete echo is the final state, so once
     // the tail is on screen the bound region is stable; token-collapsed sends still route to the
     // adapter's second look below, which is its purpose.
-    if (draftCarriesSend(args.text, draft) && carriesReplyTail(args.text, draft) && (chunks.length === 1 || draft !== previousDraft)) return submitOnly(args, verifiedPrompt);
+    if (draftCarriesSend(args.text, draft) && carriesReplyTail(args.text, draft) && (chunks.length === 1 || draft !== previousDraft)) return submitOnly(args, verifiedPrompt, typedAt, settleMs);
     // The adapter gets a second look, and only a second look: a harness can SWALLOW what we typed and
     // paint a token of its own instead (Claude collapses anything past its paste threshold into
     // `[Pasted text #N +M lines]`), so the box never holds our words and the match above structurally
     // cannot succeed — the send stalls forever while every retry re-collapses. The adapter is the only
     // thing that knows its harness's token and whether this one is consistent with THIS send
     // (.adr/0010). It can only widen the evidence, never narrow it, so a harness without the
-    // capability is untouched.
-    if (draft !== null && adapter.draftCarriesSend?.(args.text, draft)) {
-      return submitOnly(args, verifiedPrompt);
+    // capability is untouched. `box.draft` is what the last read BEFORE the final part saw, so an
+    // adapter whose token says nothing about its content can tell a token that was already there
+    // from the one this send made.
+    if (draft !== null && adapter.draftCarriesSend?.(args.text, draft, box.draft)) {
+      return submitOnly(args, verifiedPrompt, typedAt, settleMs);
     }
   }
 
@@ -439,6 +460,18 @@ export async function sendGuardedReply(args: GuardedReplyArgs): Promise<ReplyOut
       error: t("reply.stalled.noEcho"),
       noEcho: lastSeen,
     };
+  }
+  // The verify polls watched the text vanish into a dialog, menu or overlay box that opened
+  // mid-send: name it instead of guessing — unless the send was forced, where the operator typed
+  // knowingly into a refused screen and the "that key likely landed" warning below is the news that
+  // matters. Same positive-evidence predicates as the pre-flight above, no new shapes.
+  if (
+    !args.force &&
+    lastLines !== null &&
+    (adapter.modalOnScreen?.(lastLines) === true ||
+      adapter.overlayHoldsKeyboard?.(lastLines) === true)
+  ) {
+    return { status: "stalled", error: t("reply.stalled.modal") };
   }
   return {
     status: "stalled",
@@ -516,10 +549,12 @@ function newlineRefusal(adapter: HarnessAdapter, text: string, lines: StyledLine
 interface Preflight {
   refuse: ReplyOutcome | null;
   runPreType: (() => Promise<ReplyOutcome | null>) | null;
+  /** The input box as the latest read before typing saw it; `draft` stays unset when nothing read it. */
+  box: { draft?: string | null };
 }
 
 /** A preflight that read nothing: no pre-type sweep may run, and `refuse` says whether to send. */
-const blind = (refuse: ReplyOutcome | null): Preflight => ({ refuse, runPreType: null });
+const blind = (refuse: ReplyOutcome | null): Preflight => ({ refuse, runPreType: null, box: {} });
 
 /**
  * One live read, and everything the rest of the send is allowed to do with it.
@@ -545,7 +580,11 @@ async function preflight(adapter: HarnessAdapter, args: GuardedReplyArgs): Promi
     return blind(null); // transient read failure
   }
   const seen = splitLines(parseAnsi(probe.text));
-  if (!composerReady(seen)) {
+  // A full overlay box (the /models-style overlay, the slash palette) holds the keyboard while
+  // the composer tail stays intact, so `composerReady` still answers true although typing would
+  // land in the overlay's filter, never the input box. Refused on the same terms as a missing
+  // composer: the one screen with positive evidence says "no input box", whatever the tail claims.
+  if (!composerReady(seen) || adapter.overlayHoldsKeyboard?.(seen) === true) {
     // `force` is the user's deliberate "type anyway", so it overrides the refusal — but this is the
     // one screen we have POSITIVE evidence about, and what it says is "no composer". Keys stay home.
     if (args.force) return blind(null);
@@ -566,9 +605,11 @@ async function preflight(adapter: HarnessAdapter, args: GuardedReplyArgs): Promi
   // answered about, so the caller cannot bind its keys to anything but the screen that authorised
   // them — and cannot forget to, since it arrives as the argument.
   const promptRegion = adapter.composerPrompt?.(seen) ?? null;
+  const box: Preflight["box"] = { draft: adapter.extractInputDraft(seen) };
 
   return {
     refuse: null,
+    box,
     runPreType: async () => {
       if (!args.onComposerSeen) return null;
       let prep;
@@ -587,8 +628,16 @@ async function preflight(adapter: HarnessAdapter, args: GuardedReplyArgs): Promi
       try {
         const fresh = await fetchPane(args.paneId, args.requestedLines, args.scope);
         const lines = splitLines(parseAnsi(fresh.text));
-        if (composerReady(lines)) return newlineRefusal(adapter, args.text, lines);
+        // The sweep's keys are on the wire: an overlay box that opened since the probe would eat
+        // the message next, so the re-confirm consults the box predicate too — same screen, no
+        // new read, and a miss still only ever refuses.
+        if (composerReady(lines) && adapter.overlayHoldsKeyboard?.(lines) !== true) {
+          box.draft = adapter.extractInputDraft(lines);
+          return newlineRefusal(adapter, args.text, lines);
+        }
       } catch {
+        // Keys went out and the box was not read again, so what it holds now is unknown.
+        delete box.draft;
         return null;
       }
       return {
@@ -621,8 +670,20 @@ async function oneShot(args: GuardedReplyArgs): Promise<ReplyOutcome> {
  */
 async function submitOnly(
   args: GuardedReplyArgs,
-  expectedPrompt?: string,
+  expectedPrompt: string | undefined,
+  typedAt: number,
+  settleMs: number,
 ): Promise<ReplyOutcome> {
+  // The echo proved the bytes are ON SCREEN, not that the TUI will act on Enter: hold the
+  // submit until the adapter's settle floor has passed since the type call. Clamped both ways — a
+  // slow verify pays nothing extra, and a backward clock step pays one full floor, never more.
+  // `force` does not reach here: it only overrides the pre-flight refusal, so a forced send that
+  // verifies pays the same floor.
+  if (settleMs > 0) {
+    const elapsed = (args.now ?? Date.now)() - typedAt;
+    const wait = Math.min(settleMs, Math.max(0, settleMs - elapsed));
+    if (wait > 0) await (args.sleep ?? defaultSleep)(wait);
+  }
   try {
     const res = await sendReply(args.paneId, "", true, args.scope, expectedPrompt);
     if (res.ok) return { status: "sent" };

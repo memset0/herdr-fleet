@@ -600,7 +600,9 @@ describe("the Task Scheduler tier (Windows)", () => {
   const CONHOST = "C:\\WINDOWS\\system32\\conhost.exe";
   const OUR_TASK_ARGS = `--headless ${WIN_BINARY} _supervise HERDR_SOCKET_PATH=\\\\.\\pipe\\herdr COLLIE_PORT=8787`;
   const OLD_TASK_ARGS = `--headless "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -File "${ROOT}\\contrib\\windows\\collie-ctl.ps1" -TaskConfigDir "C:\\cfg" _exec-bridge`;
-  const taskAnswer = (args: string, state = "Running"): string => `${state}\r\n${CONHOST}\r\n${args}\r\n`;
+  // The fourth line is the task's Task Scheduler priority: 4 is what `taskXml` writes (#386).
+  const taskAnswer = (args: string, state = "Running", priority = "4"): string =>
+    `${state}\r\n${CONHOST}\r\n${args}\r\n${priority}\r\n`;
   const WHOAMI: Scripted["answers"] = [
     ["whoami /groups", { stdout: "Mandatory Label\\Medium Mandatory Level Label S-1-16-8192\n" }],
     ["whoami", { stdout: "desk\\pat\r\n" }],
@@ -1193,6 +1195,57 @@ describe("the Task Scheduler tier (Windows)", () => {
       expect(h.io.stdout.join("\n")).toContain("from the next logon");
     });
 
+    describe("the task's priority (#386)", () => {
+      const at = (priority: string | null): Harness =>
+        windows({
+          files: { [RECORD]: V2(7100, 7200) },
+          ps: { 7100: OUR_LAUNCHER, 7200: OUR_BRIDGE },
+          answers: [[QUERY, { stdout: priority === null ? "" : taskAnswer(OUR_TASK_ARGS, "Running", priority) }]],
+        });
+
+      test("a task from before 1.20.0 (priority 7) is registered again with 4, and the running launcher is left alone", async () => {
+        const h = at("7");
+        expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+        expect(schtasks(h)).toEqual([`schtasks /Create /TN herdr.collie /XML ${TASK_FILE} /F`]);
+        expect(h.files.read(TASK_FILE)).toContain("<Priority>4</Priority>");
+        // Only the bridge is killed: ending the launcher would end the phone's update with it.
+        expect(h.exec.killed).toEqual([7200]);
+        expect(h.io.stdout.join("\n")).toContain("the task now runs Collie at normal priority");
+        expect(h.io.stdout.join("\n")).toContain("`collie stop` and `collie start`");
+      });
+
+      test("a task whose priority the query did not print is registered again too", async () => {
+        const h = at("");
+        expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+        expect(schtasks(h)).toEqual([`schtasks /Create /TN herdr.collie /XML ${TASK_FILE} /F`]);
+      });
+
+      test("a task already at 4 is not touched, and says nothing", async () => {
+        const h = at("4");
+        expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+        expect(schtasks(h)).toEqual([]);
+        expect(h.io.stdout.join("\n")).not.toContain("normal priority");
+      });
+
+      test("a task that runs another install is refused as before, and the restart goes on", async () => {
+        const h = windows({
+          files: { [RECORD]: V2(7100, 7200) },
+          ps: { 7100: OUR_LAUNCHER, 7200: OUR_BRIDGE },
+          answers: [[QUERY, { stdout: taskAnswer(`--headless D:\\other\\bin\\collie.exe _supervise`, "Running", "7") }]],
+        });
+        expect(await cmdRestart(h.deps)).toBe(EXIT.OK);
+        expect(schtasks(h)).toEqual([]);
+        expect(h.io.stderr.join("\n")).toContain("one Collie per Windows machine");
+        expect(h.exec.killed).toEqual([7200]);
+      });
+
+      test("start writes the priority into the task it registers", async () => {
+        const h = windows();
+        expect(await cmdStart(h.deps)).toBe(EXIT.OK);
+        expect(h.files.read(TASK_FILE)).toContain("<Priority>4</Priority>");
+      });
+    });
+
     test("recognises a `collie.exe` install's bridge and a source checkout's bun bridge", async () => {
       for (const bridge of [OUR_BRIDGE, OLD_BRIDGE, `bun.exe run "${ROOT.toUpperCase()}\\BRIDGE\\index.ts"`]) {
         const h = running({ ps: { 7200: bridge } });
@@ -1574,7 +1627,9 @@ describe("the status banner", () => {
       files: { [`${STATE}/crew-trust.json`]: serializeTrustStore(peerStore()) },
     });
     const lines = (await statusBanner(h.deps)).join("\n");
-    expect(lines).toContain("local     http://192.168.77.2:8787");
+    // The peer's main port is mutual TLS only, so `http://` there would never answer.
+    expect(lines).toContain("local     https://192.168.77.2:8787 (crew link, mutual TLS only)");
+    expect(lines).not.toContain("local     http://");
     expect(lines).toContain("crew      peer — no front door here");
     expect(lines).not.toContain("tailnet");
   });

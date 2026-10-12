@@ -1,0 +1,54 @@
+
+ [0m[1m[38;2;138;190;183mpi[0m[38;2;102;102;102m v0.87.1[0m                                                                                                             
+ [0m[38;2;102;102;102mescape[0m[38;2;128;128;128m interrupt · [0m[38;2;102;102;102mctrl+c/ctrl+d[0m[38;2;128;128;128m clear/exit · [0m[38;2;102;102;102m/[0m[38;2;128;128;128m commands · [0m[38;2;102;102;102m![0m[38;2;128;128;128m bash · [0m[38;2;102;102;102mctrl+o[0m[38;2;128;128;128m more[0m                                        
+ [0m[38;2;102;102;102mPress ctrl+o to show full startup help and loaded resources.[0m                                                           
+                                                                                                                        
+ [0m[38;2;102;102;102mPi can explain its own features and look up its docs. Ask it how to use or extend Pi.[0m                                  
+
+[0m[38;2;240;198;116m[Extensions][0m                                                                                                            
+[0m[38;2;102;102;102m  questionnaire.ts[0m                                                                                                      
+
+
+[0m[38;2;255;255;0m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ [0m[1m[38;2;255;255;0mUpdate Available[0m                                                                                                       
+ [0m[38;2;128;128;128mNew version 1.1.0 is available. Run [0m[38;2;138;190;183mpi update[0m                                                                          
+ [0m[38;2;128;128;128mChangelog: [0m[38;2;138;190;183mhttps://pi.dev/changelog[0m                                                                                    
+[0m[38;2;255;255;0m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+[0m[48;2;52;53;65m                                                                                                                        [0m
+[0m[48;2;52;53;65m [0m[38;2;212;212;212m[48;2;52;53;65mCall the questionnaire tool exactly once with exactly these arguments and write no text: {"questions": [{"id": "size", [0m
+[0m[48;2;52;53;65m [0m[38;2;212;212;212m[48;2;52;53;65m"label": "Size", "prompt": "Which size should the probe use?", "options": [{"value": "s", "label": "Small"}, {"value": [0m
+[0m[48;2;52;53;65m [0m[38;2;212;212;212m[48;2;52;53;65m"m", "label": "Medium", "description": "The usual choice."}, {"value": "l", "label": "Large"}]}]}[0m[48;2;52;53;65m                      [0m
+[0m[48;2;52;53;65m                                                                                                                        [0m
+
+[0m[48;2;40;50;40m                                                                                                                        [0m
+[0m[48;2;40;50;40m [0m[1m[38;2;212;212;212m[48;2;40;50;40mquestionnaire [0m[38;2;128;128;128m[48;2;40;50;40m1 question[0m[38;2;102;102;102m[48;2;40;50;40m (Size)[0m[48;2;40;50;40m                                                                                        [0m
+[0m[48;2;40;50;40m [0m[38;2;255;255;0m[48;2;40;50;40mCancelled[0m[48;2;40;50;40m                                                                                                              [0m
+[0m[48;2;40;50;40m                                                                                                                        [0m
+
+[0m[48;2;52;53;65m                                                                                                                        [0m
+[0m[48;2;52;53;65m [0m[38;2;212;212;212m[48;2;52;53;65mCall the questionnaire tool exactly once with exactly these arguments and write no text: {"questions": [{"id":         [0m
+[0m[48;2;52;53;65m [0m[38;2;212;212;212m[48;2;52;53;65m"color", "label": "Color", "prompt": "Pick a color for the Collie probe?", "options": [{"value": "r", "label": "Red"}, [0m
+[0m[48;2;52;53;65m [0m[38;2;212;212;212m[48;2;52;53;65m{"value": "g", "label": "Green"}, {"value": "b", "label": "Blue"}]}, {"id": "size", "label": "Size", "prompt": "Which  [0m
+[0m[48;2;52;53;65m [0m[38;2;212;212;212m[48;2;52;53;65msize should the probe use?", "options": [{"value": "s", "label": "Small"}, {"value": "l", "label": "Large",            [0m
+[0m[48;2;52;53;65m [0m[38;2;212;212;212m[48;2;52;53;65m"description": "Twice the small one."}]}]}[0m[48;2;52;53;65m                                                                             [0m
+[0m[48;2;52;53;65m                                                                                                                        [0m
+
+[0m[48;2;40;40;50m                                                                                                                        [0m
+[0m[48;2;40;40;50m [0m[1m[38;2;212;212;212m[48;2;40;40;50mquestionnaire [0m[38;2;128;128;128m[48;2;40;40;50m2 questions[0m[38;2;102;102;102m[48;2;40;40;50m (Color, Size)[0m[48;2;40;40;50m                                                                                [0m
+[0m[48;2;40;40;50m                                                                                                                        [0m
+
+[0m[38;2;138;190;183m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ ← [0m[38;2;181;189;104m ■ Color [0m [0m[38;2;212;212;212m[48;2;58;58;74m □ Size [0m [0m[38;2;102;102;102m ✓ Submit [0m →
+
+ [0m[38;2;212;212;212mWhich size should the probe use?[0m
+
+  [0m[38;2;212;212;212m1. Small[0m
+[0m[38;2;138;190;183m> 2. Large[0m
+     [0m[38;2;128;128;128mTwice the small one.[0m
+  [0m[38;2;212;212;212m3. Type something.[0m
+
+ [0m[38;2;102;102;102mTab/←→ navigate • ↑↓ select • Enter confirm • Esc cancel[0m
+[0m[38;2;138;190;183m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;102;102;102m/tmp/pi-cap-cwd[0m
+[0m[38;2;102;102;102m↑2.5k ↓222 $0.001 0.1%/1.0M (auto)                                                google/gemini-3.5-flash-lite • minimal[0m

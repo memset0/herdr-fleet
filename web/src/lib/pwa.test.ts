@@ -223,6 +223,25 @@ describe("a tap while a worker is on its way in (2026-09-12)", () => {
   });
 });
 
+describe("the stuck-update recovery and the speech cache", () => {
+  it("deletes every cache but the speech cache, which holds a model the person chose to copy", async () => {
+    const deleted: string[] = [];
+    vi.stubGlobal("caches", {
+      keys: async () => ["workbox-precache-v2-https://x/", "collie-fonts", "collie-stt", "collie-stt:/collie/"],
+      delete: async (name: string) => {
+        deleted.push(name);
+        return true;
+      },
+    });
+    const h = await load({ controlled: true });
+    await h.mod.checkForUpdate();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.reload).toHaveBeenCalledTimes(1);
+    expect(deleted).toEqual(["workbox-precache-v2-https://x/", "collie-fonts"]);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("the tap after the stuck guard's own reload", () => {
   // 2026-09-09, release lane, 1.6.0 → 1.7.0, iPhone PWA: every tap showed "updating…", reloaded, and
   // came back on the same stale bundle, for about three minutes. The stuck guard's reload is served by

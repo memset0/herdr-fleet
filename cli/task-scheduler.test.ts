@@ -511,7 +511,7 @@ describe("_supervise, the loop", () => {
   });
 
   describe("livenessUrl", () => {
-    const base = { host: "", port: 8787, standbyPort: null, pinsALead: false };
+    const base = { host: "", port: 8787, standbyPort: null, pinsALead: false, selfCertPem: null };
 
     test("asks the front door on loopback by default, and on the address the bridge bound", () => {
       expect(livenessUrl(base)).toBe("http://127.0.0.1:8787/api/health");
@@ -891,13 +891,18 @@ describe("the registered task, read back", () => {
 
   test("a task under conhost names the program after --headless, and its words", () => {
     const q = parseTaskQuery(`Running\r\n${CONHOST}\r\n--headless "C:\\with space\\bin\\collie.exe" _supervise "A=b c"\r\n`, WIN);
-    expect(q).toEqual({ state: "Running", program: "C:\\with space\\bin\\collie.exe", args: ["_supervise", "A=b c"] });
-    expect(parseTaskQuery(`Ready\n${BINARY}\n_supervise\n`, WIN)).toEqual({ state: "Ready", program: BINARY, args: ["_supervise"] });
+    expect(q).toEqual({ state: "Running", program: "C:\\with space\\bin\\collie.exe", args: ["_supervise", "A=b c"], priority: null });
+    expect(parseTaskQuery(`Ready\n${BINARY}\n_supervise\n`, WIN)).toEqual({ state: "Ready", program: BINARY, args: ["_supervise"], priority: null });
+    // The fourth line is the task's Task Scheduler priority (#386); anything but a number reads as unknown.
+    expect(parseTaskQuery(`Ready\r\n${BINARY}\r\n_supervise\r\n7\r\n`, WIN)?.priority).toBe(7);
+    expect(parseTaskQuery(`Ready\n${BINARY}\n_supervise\n4\n`, WIN)?.priority).toBe(4);
+    expect(parseTaskQuery(`Ready\n${BINARY}\n_supervise\n\n`, WIN)?.priority).toBeNull();
+    expect(taskQueryScript("herdr.collie")).toEndWith("[string]$t.Settings.Priority");
     expect(parseTaskQuery("", WIN)).toBeNull();
   });
 
   test("whose task: this install's launcher, this checkout's old script, or someone else's", () => {
-    const query = (program: string, ...args: string[]) => ({ state: "Ready", program, args });
+    const query = (program: string, ...args: string[]) => ({ state: "Ready", program, args, priority: 4 });
     expect(taskOwner(query(BINARY, "_supervise", "A=1"), ROOT, WIN)).toBe("collie");
     expect(taskOwner(query(BINARY.toUpperCase(), "_supervise"), ROOT, WIN)).toBe("collie");
     expect(taskOwner(query("C:\\ps\\powershell.exe", "-File", `${ROOT}\\contrib\\windows\\collie-ctl.ps1`, "_exec-bridge"), ROOT, WIN)).toBe("legacy");

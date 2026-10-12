@@ -194,18 +194,30 @@ describe("the service worker's runtime caching", () => {
     .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
     .join("\n");
 
-  it("registers exactly two routes: the navigation fallback and the /fonts/ cache", () => {
-    expect(SW_CODE.match(/registerRoute\(/g)?.length).toBe(2);
+  it("registers exactly three routes: the navigation fallback, the /fonts/ cache and the /stt/ cache", () => {
+    expect(SW_CODE.match(/registerRoute\(/g)?.length).toBe(3);
     // DOWNSTREAM PORT (FORK.toml authenticated-navigation-cache): Fleet's navigation route is
     // network-first and falls back to the precached shell only when the request fails.
     expect(SW_CODE).toContain("new NavigationRoute(\n    networkFirstNavigation(");
     expect(SW_CODE).toContain('url.pathname.startsWith(under("/fonts/"))');
+    expect(SW_CODE).toContain('url.pathname.startsWith(under("/stt/"))');
   });
 
-  it("opens one runtime cache, the font cache, and never names an /api path", () => {
+  it("opens two runtime caches, the font cache and the speech cache, and never names an /api path", () => {
     const opened = [...SW_CODE.matchAll(/caches\.open\(([^)]*)\)/g)].map((m) => m[1]);
-    expect(new Set(opened)).toEqual(new Set(["FONT_CACHE"]));
+    expect(new Set(opened)).toEqual(new Set(["FONT_CACHE", "STT_CACHE"]));
     expect(SW_CODE).not.toMatch(/["'`]\/api\//);
     expect(SW_CODE).not.toMatch(/files\/image/);
+  });
+
+  it("creates the speech cache for nobody: it looks before it opens, in the route and in the sweep", () => {
+    // `caches.open` makes a cache that does not exist, so each use is guarded by `caches.has`.
+    const guards = SW_CODE.match(/caches\.has\(STT_CACHE\)/g)?.length ?? 0;
+    expect(guards).toBe(2);
+  });
+
+  it("stores only what sttStorable admits, and sweeps with sttSweepKeeps", () => {
+    expect(SW_CODE).toContain("sttStorable(response,");
+    expect(SW_CODE).toContain("sttSweepKeeps(");
   });
 });

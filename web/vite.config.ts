@@ -199,6 +199,9 @@ const channelIconsPlugin: Plugin = {
 
 const channelManifest = manifestFor(channel);
 
+// The speech worker's entry, the one worker built under `stt/` (the `worker` block below).
+const STT_WORKER_ENTRY = resolve(import.meta.dirname, "src/stt/worker.ts");
+
 // ADR 0052: ONE BUILD SERVES ANY MOUNT. The shell (index.html) is built ROOT-ABSOLUTE, every
 // reference `/…`, and the bridge resolves it to the mount it was started with when it serves the
 // file (bridge/server.ts, `mountIndexHtml`); at the root it is served as it lies on disk. Inside the
@@ -332,7 +335,10 @@ export default defineConfig({
         // may carry the playground's — see vite-icons.ts's precacheIgnoresFor. Without this, a
         // release SW precached the dev AND playground icon sets too, every byte of it competing
         // with the app's own polls on a slow link (2026-09-12 proxy log on a phone).
-        globIgnores: precacheIgnoresFor(channel),
+        // The vendored speech engine (public/stt/, ADR 0096) stays out of the precache for the
+        // reason the Nerd Font faces do: its glue is a .js file the glob would otherwise take, and
+        // nobody who never taps Whistle should pay for it on install. It loads on first use.
+        globIgnores: [...precacheIgnoresFor(channel), "stt/**"],
       },
       // Over plain HTTP (insecure context) the SW can't register; in dev we don't want it anyway.
       devOptions: { enabled: false },
@@ -342,6 +348,22 @@ export default defineConfig({
   ],
   resolve: {
     alias: { "@": resolve(import.meta.dirname, "src") },
+  },
+  // THE SPEECH WORKER IS A CLASSIC SCRIPT UNDER `stt/` (ADR 0096 Decision 8). Classic, an IIFE,
+  // because it loads the vendored glue with `importScripts`. Under `stt/`, because the bridge gives
+  // every `.js` there the one policy that allows wasm, and a worker loaded from a URL runs under its
+  // own response's policy. Only that one entry goes there: any other worker keeps Vite's default
+  // name under `assets/`, so it never gets the wasm grant by accident. lib/stt-engine.ts makes it
+  // with `new Worker(new URL(...), { type: "classic" })`, which Vite rewrites to this file's real,
+  // relative, same-origin URL, never a `blob:` (a blob worker inherits the document's policy).
+  worker: {
+    format: "iife",
+    rolldownOptions: {
+      output: {
+        entryFileNames: (chunk) =>
+          chunk.facadeModuleId === STT_WORKER_ENTRY ? "stt/[name]-[hash].js" : "assets/[name]-[hash].js",
+      },
+    },
   },
   build: {
     outDir: "dist",

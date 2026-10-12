@@ -8,13 +8,7 @@
 
 import { useSearchParams } from "react-router";
 
-import {
-  SESSION_PARAM,
-  internScope,
-  normalizeSession,
-  scopeFromSearchParams,
-  type Scope,
-} from "./scope";
+import { internScope, scopeFromSearchParams, type Scope } from "./scope";
 
 export {
   HOST_PARAM,
@@ -32,12 +26,6 @@ export {
   sessionSearch,
 } from "./scope";
 export type { Scope } from "./scope";
-
-/** The current session name from the URL (`?s=`), or `undefined` when on the primary session. */
-export function useSession(): string | undefined {
-  const [params] = useSearchParams();
-  return normalizeSession(params.get(SESSION_PARAM));
-}
 
 /**
  * The current addressing scope from the URL (`?h=` + `?s=`). Interned, so the returned object keeps a

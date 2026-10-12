@@ -89,6 +89,7 @@ const deadNet: Net = {
   getJson: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
   download: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
   probe: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
+  tlsCertificate: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
 };
 
 const NOT_SPAWNED: RemoteResult = { code: 255, stdout: "", stderr: "ssh: connect: timed out", spawned: false };

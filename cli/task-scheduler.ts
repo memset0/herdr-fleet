@@ -212,25 +212,31 @@ export interface TaskQuery {
   /** The program that runs: the binary under `conhost --headless`, or the action's own command. */
   readonly program: string;
   readonly args: readonly string[];
+  /**
+   * The task's Task Scheduler priority (0 to 10, 4 is normal), or `null` when the query
+   * did not print one (a PowerShell that left the line out, or a text that is not a number).
+   */
+  readonly priority: number | null;
 }
 
 /** Who the registered task belongs to. */
 export type TaskOwner = "collie" | "legacy" | "foreign";
 
-/** The PowerShell that reads one task: three lines, state, command, arguments, in UTF-8 (see {@link POWERSHELL_UTF8}). */
+/** The PowerShell that reads one task: four lines, state, command, arguments, priority, in UTF-8 (see {@link POWERSHELL_UTF8}). */
 export function taskQueryScript(name: string): string {
-  return `${POWERSHELL_UTF8}$t = Get-ScheduledTask -TaskName '${name.replaceAll("'", "''")}' -ErrorAction Stop; $a = @($t.Actions)[0]; [string]$t.State; [string]$a.Execute; [string]$a.Arguments`;
+  return `${POWERSHELL_UTF8}$t = Get-ScheduledTask -TaskName '${name.replaceAll("'", "''")}' -ErrorAction Stop; $a = @($t.Actions)[0]; [string]$t.State; [string]$a.Execute; [string]$a.Arguments; [string]$t.Settings.Priority`;
 }
 
-/** The three lines {@link taskQueryScript} prints, read back. `null` when there is no state line. */
+/** The four lines {@link taskQueryScript} prints, read back. `null` when there is no state line. */
 export function parseTaskQuery(stdout: string, host: Host): TaskQuery | null {
-  const [state = "", command = "", argline = ""] = stdout.split(/\r?\n/);
+  const [state = "", command = "", argline = "", priorityLine = ""] = stdout.split(/\r?\n/);
   if (state.trim() === "") return null;
+  const priority = /^\d+$/.test(priorityLine.trim()) ? Number(priorityLine.trim()) : null;
   const words = parseWindowsArgs(argline);
   const underConhost = host.path.basename(command.trim()).toLowerCase() === "conhost.exe" && words[0] === "--headless";
   return underConhost
-    ? { state: state.trim(), program: words[1] ?? "", args: words.slice(2) }
-    : { state: state.trim(), program: command.trim(), args: words };
+    ? { state: state.trim(), program: words[1] ?? "", args: words.slice(2), priority }
+    : { state: state.trim(), program: command.trim(), args: words, priority };
 }
 
 /**

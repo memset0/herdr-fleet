@@ -65,6 +65,16 @@ export function formatBytes(bytes: number): string {
   return inUnit(n, unitIndex(n));
 }
 
+/**
+ * A download's size in decimal megabytes, one decimal: `16919407` reads "16.9 MB". Decimal on purpose,
+ * unlike {@link formatBytes}: it is the number the host's CLI, the docs and the setup button print for
+ * the Whistle model (ADR 0096), and a figure that read "16 MB" on one screen and "16.9 MB" on the next
+ * would look like two different files. The unit symbol is the same in every locale.
+ */
+export function formatDownloadSize(bytes: number): string {
+  return `${numberFormat({ minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(clean(bytes) / 1_000_000)} MB`;
+}
+
 /** A rate in bytes per second: `1.5e6` reads "1.4 MB/s". */
 export function formatBytesPerSecond(bps: number): string {
   return `${formatBytes(bps)}/s`;

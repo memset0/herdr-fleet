@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { connect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 import { HOST, type Host } from "../bridge/host.ts";
 import { createPrivateDir } from "../bridge/owner-only.ts";
 
@@ -313,6 +314,10 @@ export type NetJson = { ok: true; value: unknown } | { ok: false; failure: NetFa
 export type NetProbe =
   | { ok: true; status: number; header: string | null; body: unknown }
   | { ok: false; failure: NetFailure };
+/** The certificate a TLS listener presented, as its SHA-256 fingerprint (`X509Certificate.fingerprint256`). */
+export type NetCertificate =
+  | { ok: true; fingerprint256: string }
+  | { ok: false; failure: NetFailure };
 /** A finished download, with the digest computed AS IT WAS WRITTEN — the bytes are never re-read. */
 export type NetDownload =
   | { ok: true; sha256: string; size: number }
@@ -347,10 +352,21 @@ export interface Net {
    * is cold, and cold is a healthy peer, not a failure (M15/04, M15/06).
    */
   probe(url: string, header: string): Promise<NetProbe>;
+  /**
+   * The certificate the listener at `host:port` presents, read without authenticating to it.
+   *
+   * The update health gate's question for a crew peer whose only listener is mutual TLS: no plain
+   * HTTP request can reach it, and this process holds no client certificate that listener would
+   * accept. The handshake alone answers "is a TLS server holding this port, and whose certificate
+   * is it". Never throws; every failure (refused, timed out, not TLS) resolves as `ok: false`.
+   */
+  tlsCertificate(host: string, port: number): Promise<NetCertificate>;
 }
 
 /** Same budget as the bridge's tag check — a hung request must never wedge a verb. */
 const NET_TIMEOUT_MS = 20_000;
+/** One TLS handshake on this machine. The health gate polls, so a hung port must not eat the whole poll budget. */
+const TLS_HANDSHAKE_TIMEOUT_MS = 5_000;
 
 /**
  * A failure with no HTTP status behind it — DNS, TLS, or the timeout. `fetch` rejects with a value,
@@ -393,6 +409,41 @@ export function realNet(credential: GithubCredential | null = null): Net {
       } catch (err) {
         return { ok: false, failure: netFailure(err instanceof Error ? err.message : String(err)) };
       }
+    },
+    tlsCertificate(host, port) {
+      // No client certificate is sent, on purpose: a crew peer's listener demands one and would drop
+      // the connection after the handshake, but the server certificate is already on the wire by
+      // then, and the handshake is all this reads. `rejectUnauthorized: false` is safe for the same
+      // reason: nothing here trusts the peer or sends it anything. The caller compares the
+      // fingerprint with this machine's own certificate, and that match proves only that OUR
+      // restarted bridge holds the port, which is the whole question.
+      return new Promise<NetCertificate>((resolve) => {
+        let settled = false;
+        const sock = tlsConnect({
+          host,
+          port,
+          rejectUnauthorized: false,
+        });
+        const finish = (answer: NetCertificate): void => {
+          if (settled) return;
+          settled = true;
+          sock.destroy();
+          resolve(answer);
+        };
+        sock.setTimeout(TLS_HANDSHAKE_TIMEOUT_MS, () =>
+          finish({ ok: false, failure: netFailure(`${host}:${port} did not finish a TLS handshake in ${TLS_HANDSHAKE_TIMEOUT_MS / 1000}s`) }),
+        );
+        sock.once("secureConnect", () => {
+          const fingerprint256 = sock.getPeerCertificate().fingerprint256;
+          if (!fingerprint256) {
+            finish({ ok: false, failure: netFailure(`${host}:${port} presented no certificate`) });
+            return;
+          }
+          finish({ ok: true, fingerprint256 });
+        });
+        sock.once("error", (err) => finish({ ok: false, failure: netFailure(err.message) }));
+        sock.once("close", () => finish({ ok: false, failure: netFailure(`${host}:${port} closed the connection before a certificate arrived`) }));
+      });
     },
     async download(url, dest, opts) {
       try {

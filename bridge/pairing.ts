@@ -322,12 +322,37 @@ export function parseRegistryText(raw: string): PairedRegistry | null {
 }
 
 /**
+ * Control (`Cc`), format (`Cf`: bidi overrides and isolates, zero-width characters, the soft hyphen)
+ * and the two line separators (`Zl`, `Zp`). None has a place in a name that a terminal, the audit log
+ * and the UI print: they reorder or hide text, or end a line.
+ */
+const HIDDEN_LABEL_CHAR = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
+
+/** Whether `text` holds a character a label must not hold (see {@link HIDDEN_LABEL_CHAR}). */
+export function hasHiddenLabelChar(text: string): boolean {
+  return HIDDEN_LABEL_CHAR.test(text);
+}
+
+/**
+ * `label` as safe terminal text: every control, format or separator character becomes `\u{XXXX}`.
+ * Labels stored before {@link normalizeLabel} refused these characters are not migrated, so the CLI
+ * prints through this.
+ */
+export function escapeLabelForTerminal(label: string): string {
+  return label.replace(new RegExp(HIDDEN_LABEL_CHAR.source, "gu"), (c) => `\\u{${(c.codePointAt(0) ?? 0).toString(16).toUpperCase()}}`);
+}
+
+/**
  * Validate and bound a client-supplied label. Returns null when it is unusable — the same answer for
  * "empty" and "1 KB of newlines", because the label is echoed into the audit log and the UI.
  */
 export function normalizeLabel(raw: JsonValue | undefined): string | null {
   if (typeof raw !== "string") return null;
-  const label = raw.replace(/[\r\n\t]+/g, " ").trim();
+  const flat = raw.replace(/[\r\n\t]+/g, " ");
+  // Tab, CR and LF are flattened above; any other control, format or separator character is refused.
+  // Checked before `trim`, which would quietly drop a BOM at the edge.
+  if (hasHiddenLabelChar(flat)) return null;
+  const label = flat.trim();
   if (label === "" || label.length > 48) return null;
   return label;
 }

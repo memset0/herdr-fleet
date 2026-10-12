@@ -195,6 +195,7 @@ export const es: FleetDictionary = {
   "fleet.command.mic.direct": "La escritura directa en el terminal está activada; desactívala primero.",
   "fleet.command.mic.sending": "Todavía se está enviando un mensaje.",
   "fleet.command.mic.transcribing": "El último clip todavía se está transcribiendo.",
+  "fleet.command.mic.failed": "No se pudo transcribir el último clip; envíalo al host o descártalo primero.",
   "fleet.command.mic.alreadyRecording": "El micrófono ya está grabando.",
   "fleet.command.mic.notRecording": "El micrófono no está grabando.",
   "fleet.command.unavailable": "{name} no está disponible aquí.",

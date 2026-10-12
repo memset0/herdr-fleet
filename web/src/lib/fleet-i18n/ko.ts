@@ -195,6 +195,7 @@ export const ko: FleetDictionary = {
   "fleet.command.mic.direct": "터미널 직접 입력이 켜져 있습니다. 먼저 꺼 주세요.",
   "fleet.command.mic.sending": "메시지를 아직 보내는 중입니다.",
   "fleet.command.mic.transcribing": "마지막 클립을 아직 변환하는 중입니다.",
+  "fleet.command.mic.failed": "마지막 클립을 받아쓰지 못했습니다. 먼저 호스트로 보내거나 버리세요.",
   "fleet.command.mic.alreadyRecording": "마이크가 이미 녹음 중입니다.",
   "fleet.command.mic.notRecording": "마이크가 녹음 중이 아닙니다.",
   "fleet.command.unavailable": "{name} 은(는) 여기서 사용할 수 없습니다.",

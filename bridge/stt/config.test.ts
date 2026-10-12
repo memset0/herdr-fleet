@@ -12,6 +12,7 @@ import {
   commandLookup,
   createSttSettingsReader,
   resolveSttSettings,
+  sttChangeStamp,
   sttEnvSettings,
   sttSettingsPath,
 } from "./config.ts";
@@ -569,5 +570,29 @@ describe("stt settings — how a local-cli command is looked up, per host", () =
     expect(commandLookup("C:\\tools\\whisper.exe", win)).toBe("absolute");
     expect(commandLookup("whisper.exe", win)).toBe("bare");
     expect(commandLookup("tools\\whisper.exe", win)).toBe("relative");
+  });
+});
+
+describe("stt settings — the change stamp is read with the pairing label rule", () => {
+  const AT = "2026-10-11T08:00:00.000Z";
+  test("a plain label is believed", () => {
+    expect(sttChangeStamp({ changedBy: "Pixel 8", changedAt: AT })).toEqual({ changedBy: "Pixel 8", changedAt: AT });
+  });
+
+  test("each class of hidden character makes the stamp unbelievable", () => {
+    for (const changedBy of [
+      "Pixel\u001b[2J", // ESC, Cc
+      "Pixel\u0000", // NUL, Cc
+      "Pixel\u007f", // DEL, Cc
+      "Pixel\u0085", // NEL, Cc
+      "Pixel\u202ereversed", // bidi override, Cf
+      "Pixel\u2067x\u2069", // bidi isolate, Cf
+      "Pi\u200bxel", // zero-width space, Cf
+      "Pi\u2060xel", // word joiner, Cf
+      "Pixel\u2028x", // line separator
+      "Pixel\u2029x", // paragraph separator
+    ]) {
+      expect([changedBy, sttChangeStamp({ changedBy, changedAt: AT })]).toEqual([changedBy, null]);
+    }
   });
 });

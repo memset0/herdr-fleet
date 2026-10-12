@@ -144,9 +144,7 @@ export const ERROR_CODES = {
   /** Twelve favourites already. A star never drops one the operator chose, so nothing was stored. */
   "folders.favourites_full": "favourites are full ({max}); remove one first",
 
-  // ── Worktrees: /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032) ─────────────
-  /** The list could not be read — the space is not in a Git work tree, or the mux refused. */
-  "worktree.list_failed": "{reason}",
+  // ── Worktrees: /api/worktree and its plan (ADR 0032, ADR 0093) ─────────────────────
   /** Creation refused. `{reason}` is the multiplexer's own words, Git's sentence included. */
   "worktree.create_failed": "{reason}",
   /**
@@ -155,7 +153,6 @@ export const ERROR_CODES = {
    * (a second create answers `create_failed`, the path being taken). Probed on herdr 0.8.2.
    */
   "worktree.created_not_opened": "the worktree was created but could not be opened: {reason}",
-  "worktree.open_failed": "{reason}",
   /** Another worktree operation is still running — herdr serialises them. Try again in a moment. */
   "worktree.busy": "{reason}",
   /** The branch name matched more than one thing, so the multiplexer would not guess. */
@@ -217,6 +214,38 @@ export const ERROR_CODES = {
   "stt.empty": "the recording is empty",
   /** The provider itself failed. `detail.kind` is the SttError kind; the sentence is its own words. */
   "stt.provider_failed": "{reason}",
+  /** The whistle provider takes 16 kHz mono 16-bit PCM WAV only, and the upload was not that (415). */
+  "stt.wav_required": "the speech engine on this collie takes a 16 kHz mono 16-bit WAV recording only",
+
+  // ── The Whistle model and the host engine: /api/stt/whistle, /api/stt/model/:sha256 (ADR 0096) ──
+  /** The hash in the path is not the hash of the model this collie holds, or it holds none (404). */
+  "stt.model_unknown": "this collie holds no speech model with that hash",
+  /** Two copies of the model are already leaving this collie (503, `retry-after`). Try again in a moment. */
+  "stt.model_busy": "two copies of the speech model are already being sent — try again in a moment",
+  /** The host engine needs the model first (409). Nothing changed. */
+  "stt.whistle_not_ready": "the Whistle model is not on this collie yet",
+  /** The download could not even start (the folder could not be made, a symlink was in the way). */
+  "stt.whistle_download_failed": "the Whistle model could not be downloaded: {reason}",
+
+  // ── The host's speech provider: PUT /api/stt/host (bridge/stt/host-http.ts, ADR 0097) ──────────
+  /** Codex was asked for without the id of the consent text the app showed, or with another id (400). Nothing ran. */
+  "stt.consent_required": "turning on Codex needs the consent shown in Settings, accepted with I accept",
+  /** Another change of the provider is still running, a Codex probe say (409). Nothing changed. */
+  "stt.host_busy": "the speech provider is already being changed; try again in a moment",
+  /** The provider was set up in a terminal, by the environment, or `stt.json` cannot be read (409). Nothing changed. */
+  "stt.host_provider_locked": "this speech provider was set up on the host; change it there with `collie stt`",
+  /** `stt.json` or the environment changed while the switch was checking (409). Nothing was written. */
+  "stt.host_changed": "the speech settings on this collie changed while this was checked; nothing was written",
+  /** No `codex` binary on the host (409). */
+  "stt.codex_missing": "no `codex` binary was found on this collie",
+  /** `codex login status` says it is not signed in (409). */
+  "stt.codex_signed_out": "Codex is not signed in on this collie; run `codex login` there",
+  /** Signed in, but not with ChatGPT, which this endpoint needs (409). */
+  "stt.codex_other_login": "Codex on this collie is not signed in with ChatGPT; run `codex login` there and pick ChatGPT",
+  /** The sign-in could not be checked: a timeout, or an answer Collie does not understand (409). */
+  "stt.codex_unknown": "Collie could not check the Codex sign-in on this collie",
+  /** The honest-first identity probe failed (502). `detail.reason` is Collie's own sentence. Nothing was written. */
+  "stt.codex_probe_failed": "the Codex endpoint did not accept the probe: {reason}",
 
   // ── Device pairing: POST /api/pair, POST /api/devices/revoke ───────────────────────
   //

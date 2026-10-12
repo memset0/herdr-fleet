@@ -16,6 +16,147 @@ scripts/capture-fixture.sh <paneId> <name> [lines]   # paneIds: /api/snapshot
 (`less -R <file>`) for private content before `git add` — prefer generating states in a sandbox
 pane over capturing real work sessions.
 
+## OmO 5.1.30 corpus (captured 2026-10-12, Herdr 0.9.3)
+
+`pi--omo-v5130-*.txt` comes from a disposable 113-column Herdr pane running OmO
+5.1.30 (Senpi 2026.10.11), which Herdr identifies as `pi`. Captured with
+`herdr pane read --source visible --format ansi --raw`, cut to the first rule of
+the question/editor frame. SGR bytes and row padding are preserved; transport
+CRLF is normalized to LF. No secrets were present. The discarded transcript
+contained sandbox prompts and local task-board text, not parser evidence.
+This cohort is OmO's built-in question UI, not stock pi's optional question extensions.
+
+| Fixture suffix | State |
+| --- | --- |
+| `single-described` | One unanswered single-select, descriptions and Red pointed; lifts, a tap sends the digit |
+| `single-described-moved` | Same question after Down, Green pointed |
+| `single-other-focused` | Unnumbered Other row pointed; raw, Escape card |
+| `answer-editor` | Other editor open, `> ` input and changed footer; raw-only |
+| `multi` | Multi-select's toggle footer; raw-only |
+| `idle` | Empty rule/`❯`/rule composer with three styled status rows |
+| `draft` | Literal `collie composer draft probe` typed without submission |
+
+`pi--v0851-idle.txt` and `pi--v0851-draft.txt` are stock pi 0.85.1, same date, a disposable
+225-column pane in `/tmp/stock-pi-cwd` with no login: the empty editor and the literal draft
+`collie stock pi draft probe`. They pin that stock pi's editor still reads as a composer.
+
+Keystroke probes, and what each pi screen reads as: [`pi/ASK_NOTES.md`](../../lib/harness/pi/ASK_NOTES.md).
+
+## pi 1.1.0 corpus, PR 397 (captured 2026-10-10 by @raffaelenatale, pi 1.1.0 with a pi question extension, Linux sandbox panes)
+
+Byte-faithful `format:ansi` captures of **pi 1.1.0** with a pi question extension loaded (the
+contributor's own, not published; it looks like a modified copy of pi's stock `questionnaire` example),
+captured through an isolated second Collie bridge instance running on port 8788
+(`COLLIE_PORT=8788 COLLIE_STATE_DIR=<mktemp> HERDR_PLUGIN_CONFIG_DIR=<mktemp> COLLIE_INSTANCE=test COLLIE_SKIP_SERVE=1 bun run bridge/index.ts`).
+Pane buffers were captured through the bridge's `GET /api/pane/:id?lines=300` API (bearer authenticated with the
+bridge's `local-secret`) via `curl` and `bun` for JSON extraction, identical to `scripts/capture-fixture.sh`.
+Keypresses and prompts were driven strictly in dedicated sandbox panes.
+
+Privacy: the raw 300-row captures carried the shell prompt (user@host), launch commands with home paths,
+the operator's skill/extension inventory, extension warnings with home paths and the package-update box.
+Each file is therefore **cut to the tail**: it starts at the final frame (the composer's top rule, the
+dialog's top rule, the `/model` selector's top rule, or the last user message for `working`), whole rows
+only, and those kept rows parse to the same styled segments as in the full capture. In the kept rows, three
+strings were replaced with neutral text, ANSI styling unchanged: the private provider profile name
+(powerbar footer and `/model` list) became `proxy-1` and the proxy's abbreviation in the model description
+became `API`, both at the same width; the default footer's working directory became `~/projects/pi-demo`,
+on a left-aligned row with no padding after it. No user, host, home path, handle, private package name, key
+or token remains; a grep for those strings finds nothing.
+
+The Pi composer is framed by horizontal rule rows (`────`, U+2500) above and below the draft row(s),
+with a status/footer at the tail: either the operator's custom powerbar 1-row footer or the built-in 2-row
+footer (`~/... (main)` and `0.0%/0 (auto)`). The pi question dialogs replace
+the composer at the buffer tail with an accent-rule frame, question title, option rows, and a key-hint footer
+(`↑↓ navigate • Enter to select • Tab to add note • type a number or an answer • Esc to cancel`). Multi-select
+dialogs feature checkboxes (`[ ]` / `[x]`), and questionnaire dialogs feature a tab bar (`▢` open, `▣` answered,
+`✓ Review`, or compact `▢ 1 ▢ 2 ...` when width is constrained). Free-answer editing opens an inline Editor
+with footer `Enter to submit • Esc to go back`.
+
+| Fixture | State / what's in it | Herdr status |
+| --- | --- | --- |
+| `pi--v110-idle.txt` | Idle composer with powerbar operator footer and horizontal rule borders | `idle` |
+| `pi--v110-idle-default-footer.txt` | Idle composer launched with `pi --no-extensions -e <question-extension>`, showing Pi's default 2-row footer | `idle` |
+| `pi--v110-draft.txt` | Single-line draft (`Add unit tests for the parser`) inside the composer frame | `idle` |
+| `pi--v110-draft-multiline.txt` | Two-line draft separated by a newline inside the composer frame | `idle` |
+| `pi--v110-slash-palette.txt` | Slash command palette popup open above the composer after typing `/` | `idle` |
+| `pi--v110-working.txt` | Model turn active, showing `⠸ Working` spinner above composer rule | `working` |
+| `pi--v110-narrow-idle.txt` | Idle composer in a narrow (~50 columns) terminal viewport | `idle` |
+| `pi--v110-core-selector.txt` | Pi core modal selector (`/model`) with key hints `Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel` | `blocked` |
+| `pi--v110-single.txt` | Standalone single-select question dialog, 4 options plus `5. Type something.`, pointer on option 1 | `blocked` |
+| `pi--v110-single-desc.txt` | Single-select question dialog with multi-line option descriptions, pointer on option 1 | `blocked` |
+| `pi--v110-single-moved.txt` | Single-select question dialog with pointer moved to option 2 (`> 2. SQLite`) | `blocked` |
+| `pi--v110-single-editor-open.txt` | Single-select dialog with free-answer editor open, footer `Enter to submit • Esc to go back` | `blocked` |
+| `pi--v110-single-narrow.txt` | Single-select question dialog rendered in a ~50-column terminal | `blocked` |
+| `pi--v110-multi.txt` | Standalone multi-select dialog (`multiple: true`), checkboxes `> [ ] 1. ESLint`, footer `Space to tick • Enter to confirm` | `blocked` |
+| `pi--v110-multi-ticked.txt` | Multi-select dialog with option 1 ticked (`> [x] 1. ESLint`) | `blocked` |
+| `pi--v110-multi-moved.txt` | Multi-select dialog with option 1 ticked and pointer moved to option 2 (`> [ ] 2. Prettier`) | `blocked` |
+| `pi--v110-multi-pointer-other.txt` | Multi-select dialog with pointer on `> 5. Type something.` | `blocked` |
+| `pi--v110-multi-editor-open.txt` | Multi-select dialog with free-answer editor open on `5. Type something. ✎` | `blocked` |
+| `pi--v110-tabs-single.txt` | Questionnaire on single-choice tab `Auth`, tab bar `← ▢ Auth ▢ Features ▢ Deploy ✓ Review →`, pointer on option 1 | `blocked` |
+| `pi--v110-tabs-single-recorded.txt` | Questionnaire on tab `Auth` after recording answer, showing `1. OAuth 2.0 / OIDC ✓` and tab bar `▣ Auth` | `blocked` |
+| `pi--v110-tabs-multi.txt` | Questionnaire on multi-choice tab `Features`, checkboxes `> [ ] 1. Audit logs`, tab bar `▣ Auth ▢ Features ▢ Deploy` | `blocked` |
+| `pi--v110-tabs-compact.txt` | Questionnaire with compact numeric tab bar (`← ▢ 1 ▢ 2 ... ✓ →`) due to constrained width | `blocked` |
+| `pi--v110-tabs-editor-open.txt` | Questionnaire tab page with free-answer editor open, footer `Enter to submit • Esc to go back` | `blocked` |
+| `pi--v110-review-incomplete.txt` | Questionnaire on `Review` tab with incomplete answers, showing `Unanswered: Features, Deploy` and footer `Enter goes to the first unanswered` | `blocked` |
+| `pi--v110-review-complete.txt` | Questionnaire on `Review` tab with all tabs answered, showing `✓ All answered — Enter to submit` and footer `Enter submit` | `blocked` |
+
+## Stock pi 0.87.1 and 1.1.0 question corpus (captured 2026-10-12, Herdr 0.9.3, throwaway Herdr session)
+
+Stock pi with pi's own example extensions, `examples/extensions/question.ts` or `questionnaire.ts`
+(`pi -e <path>`), in a disposable `/tmp` project, run in the harness canary's own Herdr session. pi
+0.87.1 is the installed `pi`; 1.1.0 ran from its npm package. The model (`google/gemini-3.5-flash-lite`
+on OpenRouter, thinking off) was asked to call the tool with fixed arguments, so every dialog is the
+tool's own, opened by a real model turn. Read through the bridge's `readPane`, the way the phone reads
+it, at 120 columns, and at 50 for the `narrow` files. The 1.1.0 files are cut to their last 40 rows,
+whole rows only, after a check that the kept rows parse the same as in the full read; the cut drops
+pi's changelog. CRLF line ends as read. No key, user, host or home path is in any file; the only
+path is `/tmp/pi-cap-cwd`.
+
+`<v>` is `v0871` or `v110`. The idle and draft files of 1.1.0 are `pi--v110-stock-*`, so they do not
+collide with the PR 397 corpus above.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--v0871-idle.txt`, `pi--v110-stock-idle.txt` | Empty editor, two status rows | composer |
+| `pi--v0871-draft.txt`, `pi--v110-stock-draft.txt` | `collie stock pi draft probe` typed, not sent | composer, draft read back |
+| `pi--v0871-narrow-idle.txt`, `pi--v110-stock-narrow-idle.txt` | Empty editor at 50 columns | composer |
+| `pi--<v>-question-single.txt` | `question`: three options with descriptions, `4. Type something.`, `>` on 1 | walk |
+| `pi--<v>-question-single-moved.txt` | Same after Down, `>` on 2 | walk, pair |
+| `pi--<v>-question-plain.txt`, `-plain-moved.txt` | Three options with no descriptions, `>` on 1, then on 3 | walk, pair |
+| `pi--<v>-question-narrow.txt`, `-narrow-moved.txt` | The described question at 50 columns, `>` on 1, then on 2 | walk, pair |
+| `pi--<v>-question-other-focused.txt` | `>` on `4. Type something.` | raw, Escape card |
+| `pi--<v>-question-answer-editor.txt` | Enter on that row: `Your answer:`, an indented editor, `Enter to submit • Esc to go back` | raw, Escape card |
+| `pi--<v>-question-answer-editor-typed.txt` | Same, with `teal` typed | raw, Escape card |
+| `pi--<v>-question-answered.txt` | After Enter on an option: the tool result and the empty editor | composer |
+| `pi--<v>-questionnaire-single.txt`, `-single-moved.txt` | `questionnaire`, one question, no tab strip, `>` on 1, then on 2 | walk, pair |
+| `pi--<v>-questionnaire-tabs.txt`, `-tabs-moved.txt` | Two questions: the `Color` tab, `>` on 1, then on 2 | walk, captioned, pair |
+| `pi--<v>-questionnaire-tabs-second.txt`, `-tabs-second-moved.txt` | The `Size` tab after Tab, `>` on 1, then on 2 | walk, captioned, pair |
+| `pi--<v>-questionnaire-tabs-answered.txt` | Back on `Color` with both questions answered (`■ Color   ■ Size`) | walk, captioned |
+| `pi--<v>-questionnaire-submit-incomplete.txt` | The `Submit` tab with `Unanswered: Size` | raw, Escape card |
+| `pi--<v>-questionnaire-submit-ready.txt` | The `Submit` tab with both answers and `Press Enter to submit` | wizard review |
+| `pi--<v>-questionnaire-answer-editor.txt` | The free-text editor of a tab page | raw, Escape card |
+
+What each footer means, and the source lines behind it: [`pi/ASK_NOTES.md`](../../lib/harness/pi/ASK_NOTES.md).
+
+## pi quoted-dialog negatives (built 2026-10-12 from the captures above)
+
+Agent prose can quote a whole question dialog. These four files are BUILT, not captured: a real
+dialog's own rows, bytes as captured (`pi--v0871-question-single.txt`, or
+`pi--omo-v5130-single-described.txt` for the OmO one), placed where pi draws agent prose or a tool
+result, with a real editor and status rows below (`pi--v0871-idle.txt`, `pi--omo-v5130-idle.txt`)
+or with no editor at all. The builder kept every row whole. Every file must stay raw.
+
+| Fixture | What is quoted, and what is below it | Reads as |
+| --- | --- | --- |
+| `pi--prose-quoted-dialog-above-editor.txt` | The stock dialog with its two rules and its footer, in a reply; the idle editor below | raw, composer ready, no card |
+| `pi--prose-quoted-omo-dialog-above-editor.txt` | OmO's dialog (`→` pointer, `1-9 select` footer), in a reply; OmO's idle editor below | raw, composer ready, no card |
+| `pi--prose-quoted-dialog-in-tool-result.txt` | The stock dialog's text inside a tool result (one column in, result background); the idle editor below | raw, composer ready, no card |
+| `pi--prose-quoted-dialog-then-shell.txt` | The stock dialog as the last rows after pi exited, then a plain `$ ` shell prompt | raw, no card |
+
+The same block with nothing under its bottom rule is built inside `pi/ask.test.ts`, not kept as a
+file: agy's generic menu claims that screen, and the agy suite fails on any foreign fixture it lifts.
+The pi reader refuses it, because pi always paints a status row under a dialog.
+
 ## Codex corpus (captured 2026-08-22, Codex v0.149.0, sandbox panes)
 
 Byte-faithful `format:ansi` captures with one sanitization pass, every substitution
@@ -1372,6 +1513,33 @@ carry only omp's welcome panel, its `Update Available` notice and the palette.
 |---|---|---|
 | `omp--v18-8-slash-palette.txt` | `/resume` typed on a 168-column pi-shaped composer: eight palette entries and no scrollbar. `composerReady` true, `extractInputDraft` reads `/resume` off the filter row, and there is no statusline to lift | `idle` |
 | `omp--v18-8-slash-palette-w48.txt` | The same screen on a 48-column pane: every entry wraps, continuations land on the description column, and the scrollbar column is on screen | `idle` |
+
+## OMP 18.8 `ask` with option descriptions (captured 2026-10-07 and 2026-10-10, oh-my-pi `omp` v18.8.0 and v18.8.7, herdr 0.9.3, throwaway Herdr panes, #372)
+
+Two captures of one `ask` call: a single-select question whose three options each carry a
+`description`, Staging marked recommended. They exist for
+[issue #372](https://github.com/AltanS/collie/issues/372): the grammar declined every description row,
+so the phone showed the unread-dialog card, with only Esc, over a plain single-select. omp prints a
+description on rows of its own under its option, six columns in, and wraps a long one at that indent
+(the 18.4.10 source already did; these are the first captures). omp draws every option's
+description wherever the pointer is, so the second capture's dialog matches the first byte for byte,
+styles included, except the two rows the pointer left and reached; the stats and working rows above
+it are each session's own.
+
+The first is the capture attached to the issue: `herdr pane read <pane-id> --source recent --lines 200
+--format ansi` while the phone showed the card, trimmed to the last turn (the rows above it were
+unrelated test chatter). For the second, the same prompt went verbatim to omp 18.8.7 in a fresh
+throwaway workspace, the same dialog came up, one `Down` moved the pointer, and
+`scripts/capture-fixture.sh <pane> omp--v18-8-ask-single-described-moved 37` read it. Each buffer
+holds that last turn at 217 columns: the prompt, omp's render of the tool call, the turn's stats row,
+the working row with the session title, then the dialog at the tail. CRLF throughout, as the bridge
+serves it. **No sanitization was needed**: neither capture carries a username, hostname or path. The
+first one's session title is in Russian, left from an earlier test of that session.
+
+| Fixture | State / what's in it | Herdr status |
+|---|---|---|
+| `omp--v18-8-ask-single-described.txt` | `Which deploy target should the release use?`: `❯ ○ Staging (Recommended)` with a two-row description, `○ Production` and `○ Skip` with one row each, `○ Other (type your own)`, no padding rows, footer `⏎ select · n note · ↑/↓ move · ⎋ cancel`. Lifts as a `prompt-select` (`omp/ask.ts`), each description on its option | not recorded |
+| `omp--v18-8-ask-single-described-moved.txt` | The same dialog after one `Down`: the pointer on Production. Staging walks `Up` | not recorded |
 
 ## Lessons already encoded here (don't re-learn them)
 

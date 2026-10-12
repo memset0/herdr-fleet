@@ -1475,7 +1475,7 @@ export interface MuxConfig {
    * bridge/mux/capabilities.ts.
    *
    * **Absent on any bridge older than the field, and absent reads as `push`** — the same fail-open
-   * direction the capabilities take (lib/mux-capability.ts). Read it through `useTopologyLatency()`
+   * direction the capabilities take (lib/mux-capability.ts). Read it through `muxTopologyLatency()`
    * rather than here, so that rule lives in exactly one place.
    */
   topologyLatency?: MuxTopologyLatency;
@@ -1752,6 +1752,11 @@ export interface BridgeConfig {
    */
   stt?: SttCapability;
   /**
+   * The Whistle model on the host (ADR 0096). Mirrors `WhistleStatus` in bridge/types.ts. **Absent
+   * is an older bridge, or a crew member's own answer**, and Settings then offers no setup tap.
+   */
+  whistle?: WhistleStatus;
+  /**
    * What this collie accepts as an attachment. Mirrors `UploadCapability` in bridge/types.ts.
    *
    * **Absent is a bridge older than the field**, and the phone reads that as the contract that
@@ -1791,6 +1796,107 @@ export interface SttCapability {
   available: boolean;
   /** Operator-facing prose when it could not. Absent when it could. */
   reason?: string;
+  /**
+   * What the phone must upload. Present only for the `whistle` provider (ADR 0096 Decision 4):
+   * `wav-16k` is 16 kHz mono 16-bit little-endian PCM WAV, and nothing else is accepted. Absent means
+   * the recording as the browser made it.
+   */
+  input?: "wav-16k";
+  /**
+   * The longest recording this provider takes, in milliseconds. Present only when it differs from
+   * the phone's 5-minute default: the `whistle` provider takes 4 minutes, because a WAV is about four
+   * times the size of a compressed recording and the 8 MiB upload cap stays.
+   */
+  maxDurationMs?: number;
+}
+
+/** Where the host's copy of the Whistle model stands (ADR 0096 Decision 2). */
+export type WhistleState = "absent" | "downloading" | "ready" | "failed";
+
+/**
+ * The Whistle model on the host and the host engine's switch, as `GET /api/stt/whistle` and
+ * `/api/config` report them. Mirrors `WhistleStatus` in bridge/types.ts.
+ */
+export interface WhistleStatus {
+  state: WhistleState;
+  /** Exact size of the pinned model, for the button and the bar. Always present. */
+  bytes: number;
+  /** Present while downloading: the bytes received so far. */
+  received?: number;
+  /** Present only when state is "ready": the held file's sha256, lowercase hex, a hash this build accepts. */
+  sha256?: string;
+  /** Present only when state is "ready" and the manifest names it: the Hugging Face revision the file came from. */
+  revision?: string;
+  /** Present only when state is "ready" and the manifest names it: when the host fetched the file, an ISO 8601 time. */
+  fetchedAt?: string;
+  /** Present when state is "failed": operator-facing prose, no paths. */
+  reason?: string;
+  /** True when the host STT provider is `whistle`. */
+  hostEngine: boolean;
+  /** True when another provider is configured, so Settings cannot turn the host engine on. */
+  hostTaken: boolean;
+}
+
+/**
+ * Why Settings may not switch the host to one choice (ADR 0097). Mirrors `SttHostSwitchReason` in
+ * bridge/types.ts, where each word is explained.
+ */
+export type SttHostSwitchReason =
+  | "env"
+  | "terminal"
+  | "unreadable"
+  | "not-ready"
+  | "codex-missing"
+  | "codex-signed-out"
+  | "codex-other-login"
+  | "codex-unknown";
+
+/** Whether one choice may be made from Settings, and if not, why. */
+export interface SttHostSwitch {
+  ok: boolean;
+  /** Absent when `ok`. */
+  reason?: SttHostSwitchReason;
+}
+
+/** The three choices Settings offers for the host's speech provider. */
+export type SttHostChoice = "whistle" | "codex" | "off";
+
+/**
+ * What the host's speech settings name, by name only. Never a path, an argument other than one model
+ * file's name, a key, or a URL's path. Mirrors `SttHostSetup` in bridge/types.ts.
+ */
+export interface SttHostSetup {
+  /** `local-cli`: the command's basename (`whistle-stt`, `whisper-cli`). */
+  command?: string;
+  /** `local-cli`: a model file's name. `openai-compatible`: the model. `whistle`: the pinned version, seven characters. */
+  model?: string;
+  /** `openai-compatible`: the service's host, with its port when it has one (`api.groq.com`). */
+  endpoint?: string;
+}
+
+/**
+ * The host's speech provider, as `GET /api/stt/host` and `PUT /api/stt/host` report it (ADR 0097).
+ * Mirrors `SttHostStatus` in bridge/types.ts.
+ */
+export interface SttHostStatus {
+  /** `whistle`, `codex`, `openai-compatible`, `local-cli`, or `none`. A name this app does not know is shown as is. */
+  provider: string;
+  available: boolean;
+  /** The host's own words when it cannot serve a request. English: it comes from the host. */
+  reason?: string;
+  /** For `codex` only: `honest`, or `codex-cli`, the fallback that wears the Codex CLI's headers. */
+  identity?: "honest" | "codex-cli";
+  /** Where the provider is named: the host's `stt.json`, the host's environment, or nowhere. */
+  configuredBy: "file" | "env" | "none";
+  switchable: Record<SttHostChoice, SttHostSwitch>;
+  /** The `codex` binary whose sign-in would pay, named in the consent. Present when the host found one. */
+  codexBin?: string;
+  /** The paired device that last changed the option from Settings, by its pairing label. Absent on an older host, or when it was last set elsewhere. */
+  changedBy?: string;
+  /** When that device changed it, an ISO 8601 time. Present exactly when `changedBy` is. */
+  changedAt?: string;
+  /** What the settings name: the command, the model, the service's host. Absent on an older host, or when they name nothing. */
+  setup?: SttHostSetup;
 }
 
 /**
@@ -1866,31 +1972,6 @@ export function statusLabelPast(status: AgentStatus): string {
   return t(`status.past.${status}`);
 }
 
-/** One Git worktree of the repo a space sits in. Mirrors `WorktreeView` in bridge/types.ts. */
-export interface WorktreeView {
-  path: string;
-  branch: string | null;
-  /** The space showing it, or `null` when nothing does — which is what hides its Remove row. */
-  openWorkspaceId: string | null;
-  /** `false` for the repo's own checkout: listed for context, never removable. */
-  linked: boolean;
-  prunable: boolean;
-}
-
-/**
- * GET /api/workspace/:id/worktrees. `defaultBranch` is the local branch a create with
- * `base: { kind: "default" }` starts from; `null` when the repo has none to name, absent from a
- * bridge that predates "Start from".
- */
-export type WorktreeListResponse =
-  | { ok: true; worktrees: WorktreeView[]; defaultBranch?: string | null }
-  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
-
-/** POST /api/workspace/:id/worktree[/open] — `alreadyOpen` is an answer, never a failure. */
-export type WorktreeOpenResponse =
-  | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
-  | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
-
 /**
  * Where a new worktree's branch starts (ADR 0089, amended): the repo's default branch, which the
  * bridge resolves, or a named ref (the page sends the pane's own branch). Mirrors
@@ -1922,7 +2003,7 @@ export type WorktreePlanResponse =
 export type WorktreeFolderChoice = { kind: "default" } | { kind: "parent"; parent: string };
 
 /**
- * POST /api/workspace/:id/worktree — the new space, and whether the launcher was typed into it
+ * POST /api/worktree — the new space, and whether the launcher was typed into it
  * (ADR 0089). Mirrors `WorktreeCreateResponse` in bridge/types.ts. A launcher that failed after the
  * create is still `ok: true`: the worktree exists, `pane` is where it is.
  */

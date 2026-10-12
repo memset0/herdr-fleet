@@ -80,11 +80,9 @@ export const API_ERROR_CODES = [
   "folders.unknown",
   "folders.favourites_full",
 
-  // Worktrees — /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032)
-  "worktree.list_failed",
+  // Worktrees — /api/worktree and its plan (ADR 0032, ADR 0093)
   "worktree.create_failed",
   "worktree.created_not_opened",
-  "worktree.open_failed",
   "worktree.busy",
   "worktree.ambiguous_branch",
   "worktree.branch_required",
@@ -113,6 +111,24 @@ export const API_ERROR_CODES = [
   "stt.unreadable",
   "stt.empty",
   "stt.provider_failed",
+  "stt.wav_required",
+
+  // The Whistle model and the host engine — /api/stt/whistle, /api/stt/model/:sha256 (ADR 0096)
+  "stt.model_busy",
+  "stt.model_unknown",
+  "stt.whistle_not_ready",
+  "stt.whistle_download_failed",
+
+  // The host's speech provider: PUT /api/stt/host (ADR 0097)
+  "stt.consent_required",
+  "stt.host_busy",
+  "stt.host_provider_locked",
+  "stt.host_changed",
+  "stt.codex_missing",
+  "stt.codex_signed_out",
+  "stt.codex_other_login",
+  "stt.codex_unknown",
+  "stt.codex_probe_failed",
 
   // The prompt-cache watch list — /api/notifications/cache-watch (ADR 0042)
   "cache.pane_unknown",

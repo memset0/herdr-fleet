@@ -19,6 +19,14 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopted Collie 1.20.1.** Settings → Voice with host Whistle and on-phone speech, the recorder bar over the composer, pi and OmO question buttons, Grok resume following, copy icons and update-card retries arrive from upstream beside the fork's rails, record control beside Send and terminal surface.
+
+### Fixed
+
+- **Microphone keyboard commands follow the phone engine and its failed clip.** An on-phone engine counts as available, and every command refuses while a clip the phone could not transcribe waits for Send to host or the bin.
+
 ## [3.15.6] - 2026-10-12
 
 Lead-only release: rebuild and restart Fleet on the lead; members need no redeployment.

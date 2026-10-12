@@ -11,7 +11,7 @@
 // nothing: it is a statement about the world, not an attempt at the action.
 
 /** The recorder's phase, as Collie's own hook reports it. */
-export type MicPhase = "idle" | "requesting" | "recording" | "transcribing";
+export type MicPhase = "idle" | "requesting" | "recording" | "transcribing" | "failed";
 
 /** Everything the decision depends on, read at the moment the command runs. */
 export interface MicConditions {
@@ -35,6 +35,7 @@ export type MicRefusal =
   | "direct"
   | "sending"
   | "transcribing"
+  | "failed"
   | "already-recording"
   | "not-recording";
 
@@ -65,6 +66,9 @@ export function decideMicCommand(command: MicCommand, conditions: MicConditions)
   if (conditions.directTyping) return refuse("direct");
   if (conditions.sending) return refuse("sending");
   if (conditions.phase === "transcribing") return refuse("transcribing");
+  // Collie 1.20: the phone engine could not transcribe the last clip, which the recorder still holds
+  // for "Send to host" or the bin. It is owed exactly as a clip in flight is, so every command waits.
+  if (conditions.phase === "failed") return refuse("failed");
 
   const recording = conditions.phase === "recording";
   if (command === "toggle") return recording ? { kind: "stop" } : { kind: "start" };

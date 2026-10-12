@@ -6,6 +6,7 @@ import {
   CODE_TTL_MS,
   coerceRegistry,
   DEVICES_FILENAME,
+  escapeLabelForTerminal,
   generateCode,
   isExpired,
   newPending,
@@ -256,10 +257,10 @@ export function cmdDevicesList(deps: PairingDeps): number {
     return EXIT.OK;
   }
   const now = (deps.now ?? Date.now)();
-  const width = Math.max(...devices.map((d) => d.label.length));
+  const width = Math.max(...devices.map((d) => escapeLabelForTerminal(d.label).length));
   for (const d of devices) {
     deps.io.out(
-      `${d.label.padEnd(width)}  created ${stamp(d.createdAt)}  last seen ${stamp(d.lastSeenAt)}  ${expiryText(d, now)}`,
+      `${escapeLabelForTerminal(d.label).padEnd(width)}  created ${stamp(d.createdAt)}  last seen ${stamp(d.lastSeenAt)}  ${expiryText(d, now)}`,
     );
   }
   if (devices.some((d) => isExpired(d, now))) {
@@ -292,15 +293,15 @@ function matchLabel(registry: PairedRegistry, typed: string): LabelMatch {
 /** Say why a label named nothing (or too much) on stderr, in revoke's words. */
 function reportLabelMiss(deps: PairingDeps, registry: PairedRegistry, typed: string, match: LabelMatch): void {
   if (match.kind === "many") {
-    deps.io.err(`error: \`${typed}\` matches more than one paired device: ${match.labels.join(", ")}`);
+    deps.io.err(`error: \`${escapeLabelForTerminal(typed)}\` matches more than one paired device: ${match.labels.map(escapeLabelForTerminal).join(", ")}`);
     deps.io.err("  type the label exactly as `collie devices list` prints it.");
     return;
   }
-  deps.io.err(`error: no paired device labelled \`${typed}\``);
+  deps.io.err(`error: no paired device labelled \`${escapeLabelForTerminal(typed)}\``);
   deps.io.err(
     registry.devices.length === 0
       ? "  nothing is paired on this machine, see `collie devices list`."
-      : `  paired: ${registry.devices.map((d) => d.label).join(", ")}`,
+      : `  paired: ${registry.devices.map((d) => escapeLabelForTerminal(d.label)).join(", ")}`,
   );
 }
 
@@ -346,7 +347,7 @@ export function cmdDevicesSetExpiry(deps: PairingDeps, args: readonly string[]):
   }
   if (!writeRegistryOrReport(deps, next)) return EXIT.FAIL;
   deps.io.out(
-    `✓ "${match.label}" expires ${new Date(expiresAt).toISOString()} (${lifetimeText(lifetime.ms)} from now). No restart needed.`,
+    `✓ "${escapeLabelForTerminal(match.label)}" expires ${new Date(expiresAt).toISOString()} (${lifetimeText(lifetime.ms)} from now). No restart needed.`,
   );
   return EXIT.OK;
 }
@@ -366,7 +367,7 @@ export function cmdDevicesClearExpiry(deps: PairingDeps, args: readonly string[]
   }
   const had = registry.devices.find((d) => d.label === match.label)?.expiresAt;
   if (had === undefined) {
-    deps.io.out(`"${match.label}" has no expiry, so there is nothing to clear.`);
+    deps.io.out(`"${escapeLabelForTerminal(match.label)}" has no expiry, so there is nothing to clear.`);
     return EXIT.OK;
   }
   const next = setDeviceExpiry(registry, match.label, null);
@@ -375,7 +376,7 @@ export function cmdDevicesClearExpiry(deps: PairingDeps, args: readonly string[]
     return EXIT.FAIL;
   }
   if (!writeRegistryOrReport(deps, next)) return EXIT.FAIL;
-  deps.io.out(`✓ "${match.label}" no longer expires. Its token works until you revoke it.`);
+  deps.io.out(`✓ "${escapeLabelForTerminal(match.label)}" no longer expires. Its token works until you revoke it.`);
   return EXIT.OK;
 }
 
@@ -389,11 +390,11 @@ export function cmdDevicesRevoke(deps: PairingDeps, args: readonly string[]): nu
   const registry = readRegistry(deps);
   const next = removeDevice(registry, label);
   if (next === null) {
-    deps.io.err(`error: no paired device labelled \`${label}\``);
+    deps.io.err(`error: no paired device labelled \`${escapeLabelForTerminal(label)}\``);
     deps.io.err(
       registry.devices.length === 0
         ? "  nothing is paired on this machine — `collie devices list`."
-        : `  paired: ${registry.devices.map((d) => d.label).join(", ")}`,
+        : `  paired: ${registry.devices.map((d) => escapeLabelForTerminal(d.label)).join(", ")}`,
     );
     return EXIT.FAIL;
   }
@@ -407,7 +408,7 @@ export function cmdDevicesRevoke(deps: PairingDeps, args: readonly string[]): nu
     return EXIT.FAIL;
   }
 
-  deps.io.out(`✓ revoked "${label}" — it loses all access on its next request (no restart needed).`);
+  deps.io.out(`✓ revoked "${escapeLabelForTerminal(label)}" — it loses all access on its next request (no restart needed).`);
   const forgotten = forgetLauncherRows(deps, label);
   if (forgotten > 0) {
     deps.io.out(
@@ -432,7 +433,7 @@ function forgetLauncherRows(deps: PairingDeps, label: string): number {
   if (text === null) return 0;
   const { rows } = parseAddedText(text);
   if (rows === null) {
-    deps.io.err(`  note: ${path} cannot be read, so the launcher rows "${label}" added stay until it can.`);
+    deps.io.err(`  note: ${path} cannot be read, so the launcher rows "${escapeLabelForTerminal(label)}" added stay until it can.`);
     return 0;
   }
   const gone = rows.filter((r) => r.device === label && r.via === "local");

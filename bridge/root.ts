@@ -80,3 +80,20 @@ export function pluginRoot(): string {
   }
   return cached;
 }
+
+/**
+ * The argv prefix that runs THIS Collie's own CLI, for a child that must be the same code as the
+ * bridge that spawns it (the Whistle provider's `_whistle-transcribe`, ADR 0096 Decision 4).
+ *
+ * Compiled, it is the running binary itself, which has one entrypoint, the CLI. From source
+ * (`bun bridge/index.ts`), `process.execPath` is Bun, so it is Bun plus the CLI's entry file in the
+ * checkout this module was loaded from. Not `bin/collie`: in a source checkout that file may be an
+ * older build than the code running, and the child checks the pins of the code that runs it.
+ */
+export function collieSelfCommand(
+  source: string | null = sourcePath(),
+  execPath: string = process.execPath,
+): string[] {
+  if (source === null || isEmbedded(source)) return [execPath];
+  return [execPath, join(dirname(dirname(source)), "cli", "main.ts")];
+}

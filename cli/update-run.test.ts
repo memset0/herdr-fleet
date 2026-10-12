@@ -1,18 +1,29 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { X509Certificate } from "node:crypto";
 
 import { STANDBY_VERSION_HEADER } from "../bridge/crew/standby.ts";
-import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
+import { leadStore, material, member, peerStore } from "../bridge/crew/fixtures.ts";
+import { fingerprintOfCert } from "../bridge/crew/identity.ts";
+import { markerFor, type CrewRuntimeMarker } from "../bridge/crew/staleness.ts";
 import { serializeTrustStore } from "../bridge/crew/trust-store.ts";
 import { UPDATE_RUN_SCHEMA, type UpdateRun } from "../bridge/update-run.ts";
 import { fakeFiles } from "./fakes.ts";
 import {
+  aliveVerdict,
   awaitRunRecord,
+  type BootEvidence,
+  driveApply,
   healthProbe,
+  healthVerdict,
   probeConfigOf,
   probeTarget,
+  updateHealthProbe,
+  updateHealthTarget,
+  type ApplyEffects,
+  type ApplyPlan,
   type ProbeConfig,
 } from "./update-run.ts";
-import type { Net, NetProbe } from "./sys.ts";
+import { realNet, type Net, type NetCertificate, type NetProbe } from "./sys.ts";
 
 // The two rules of `cli/update-run.ts` that are pure and that a live machine got wrong: WHERE the
 // health gate knocks, and how a caller waits on a run it is not driving. Nothing here opens a
@@ -25,8 +36,15 @@ const config = (over: Partial<ProbeConfig> = {}): ProbeConfig => ({
   port: 8787,
   standbyPort: null,
   pinsALead: false,
+  selfCertPem: null,
   ...over,
 });
+
+// A peer's own certificate: real minted material, so the fingerprint comes from a parse.
+const OWN_PEM = material("laptop").certPem;
+const OWN_FINGERPRINT = fingerprintOfCert(OWN_PEM) ?? "";
+const peerConfig = (over: Partial<ProbeConfig> = {}): ProbeConfig =>
+  config({ pinsALead: true, selfCertPem: OWN_PEM, ...over });
 
 describe("probe target", () => {
   test("a loopback solo install is asked at its own front door, as it always was", () => {
@@ -77,7 +95,13 @@ describe("probe target", () => {
       STATE,
       8787,
     );
-    expect(cfg).toEqual({ host: "100.64.0.8", port: 8787, standbyPort: 8799, pinsALead: true });
+    expect(cfg).toEqual({
+      host: "100.64.0.8",
+      port: 8787,
+      standbyPort: 8799,
+      pinsALead: true,
+      selfCertPem: peerStore().self.certPem,
+    });
     expect(probeTarget(cfg).kind).toBe("standby");
   });
 
@@ -89,7 +113,139 @@ describe("probe target", () => {
   });
 
   test("no trust store at all is a solo install, not a parse failure", () => {
-    expect(probeConfigOf({}, fakeFiles({}), STATE, 8787).pinsALead).toBe(false);
+    const cfg = probeConfigOf({}, fakeFiles({}), STATE, 8787);
+    expect(cfg.pinsALead).toBe(false);
+    expect(cfg.selfCertPem).toBeNull();
+  });
+});
+
+// ── Where the UPDATE gate knocks ─────────────────────────────────────────────
+// `probeTarget` stays as it was (the Windows launcher reads it). The update gate adds the third
+// door: a TLS-only peer is asked for its own certificate.
+
+describe("update health target", () => {
+  test("a peer with no standby door is asked for its certificate, on the address it bound", () => {
+    expect(updateHealthTarget(peerConfig())).toEqual({
+      kind: "peer-listener",
+      host: "127.0.0.1",
+      port: 8787,
+      fingerprint: OWN_FINGERPRINT,
+    });
+    expect(updateHealthTarget(peerConfig({ host: "100.64.0.8" }))).toMatchObject({ host: "100.64.0.8" });
+    expect(updateHealthTarget(peerConfig({ host: "0.0.0.0" }))).toMatchObject({ host: "127.0.0.1" });
+  });
+
+  test("an IPv6 bind is dialled without the URL brackets", () => {
+    expect(updateHealthTarget(peerConfig({ host: "[fd7a::1]" }))).toMatchObject({ host: "fd7a::1" });
+    expect(updateHealthTarget(peerConfig({ host: "fd7a::1" }))).toMatchObject({ host: "fd7a::1" });
+  });
+
+  test("a peer WITH a standby door is still asked there", () => {
+    expect(updateHealthTarget(peerConfig({ standbyPort: 8799 }))).toEqual(
+      probeTarget(peerConfig({ standbyPort: 8799 })),
+    );
+    expect(updateHealthTarget(peerConfig({ standbyPort: 8799 })).kind).toBe("standby");
+  });
+
+  test("a lead and a solo install keep their front door, wide binds included", () => {
+    expect(updateHealthTarget(config())).toEqual(probeTarget(config()));
+    expect(updateHealthTarget(config({ host: "100.64.0.8" }))).toEqual(probeTarget(config({ host: "100.64.0.8" })));
+    expect(updateHealthTarget(config({ standbyPort: 8799 })).kind).toBe("front-door");
+  });
+
+  test("a peer whose own certificate is missing or will not parse falls back to the front door", () => {
+    expect(updateHealthTarget(config({ pinsALead: true })).kind).toBe("front-door");
+    expect(updateHealthTarget(peerConfig({ selfCertPem: "not a certificate" })).kind).toBe("front-door");
+  });
+});
+
+// ── What the gate reads from a peer's certificate ────────────────────────────
+
+function netShowingCertificate(answer: NetCertificate, asked: string[] = []): Net {
+  return {
+    ...netAnswering({ ok: false, failure: { status: null, message: "no plain HTTP in this case" } }),
+    tlsCertificate: (host, port) => {
+      asked.push(`${host}:${port}`);
+      return Promise.resolve(answer);
+    },
+  };
+}
+
+// A runtime marker as the bridge leaves it at boot. `markerFor` is the bridge's own constructor.
+const markerAt = (bootedAt: number, pid = 4242): CrewRuntimeMarker => markerFor(peerStore(), bootedAt, pid);
+
+/** Boot evidence with every part scripted. By default: a live bridge that booted at t=1000, restart at t=900. */
+const evidence = (over: Partial<BootEvidence> = {}): BootEvidence => ({
+  marker: () => markerAt(1_000),
+  since: () => 900,
+  alive: () => true,
+  ...over,
+});
+
+describe("update health target: the peer listener's answer", () => {
+  const target = updateHealthTarget(peerConfig({ host: "100.64.0.8" }));
+  // `X509Certificate.fingerprint256` is what node hands back: uppercase, colon separated.
+  const nodeSpelling = new X509Certificate(OWN_PEM).fingerprint256;
+  const ownCert = netShowingCertificate({ ok: true, fingerprint256: nodeSpelling });
+  const answer = (net: Net, boot: BootEvidence = evidence()) => updateHealthProbe(net, target, boot)();
+
+  test("this machine's own certificate, a marker from after the restart and a live pid answer ok, with no version", async () => {
+    const asked: string[] = [];
+    const got = await answer(netShowingCertificate({ ok: true, fingerprint256: nodeSpelling }, asked));
+    expect(got).toEqual({ ok: true, version: null, deposed: false });
+    expect(asked).toEqual(["100.64.0.8:8787"]);
+  });
+
+  test("a marker written exactly at the restart moment counts as after it", async () => {
+    expect((await answer(ownCert, evidence({ since: () => 1_000 }))).ok).toBe(true);
+  });
+
+  test("another certificate on the port is not this machine's bridge", async () => {
+    const other = new X509Certificate(material("desk").certPem).fingerprint256;
+    expect(await answer(netShowingCertificate({ ok: true, fingerprint256: other }))).toEqual({
+      ok: false,
+      reason: "100.64.0.8:8787 answers with a certificate that is not this machine's",
+    });
+  });
+
+  test("a refused port fails with the connection's own message", async () => {
+    const net = netShowingCertificate({ ok: false, failure: { status: null, message: "connect ECONNREFUSED" } });
+    expect(await answer(net)).toEqual({ ok: false, reason: "connect ECONNREFUSED" });
+  });
+
+  test("the right certificate with a marker older than the restart is the old process still draining", async () => {
+    const got = await answer(ownCert, evidence({ marker: () => markerAt(800) }));
+    expect(got.ok).toBe(false);
+    expect(!got.ok && got.reason).toContain("has not booted since the restart");
+  });
+
+  test("no marker at all fails, and says so", async () => {
+    const got = await answer(ownCert, evidence({ marker: () => null }));
+    expect(got).toEqual({ ok: false, reason: "the bridge has not booted since the restart: it left no runtime marker" });
+  });
+
+  test("a marker whose pid is gone fails, and names the pid", async () => {
+    const got = await answer(ownCert, evidence({ alive: () => false }));
+    expect(got.ok).toBe(false);
+    expect(!got.ok && got.reason).toContain("is gone (pid 4242)");
+  });
+
+  test("a process table that cannot be read proves nothing against a fresh marker and the right certificate", async () => {
+    expect((await answer(ownCert, evidence({ alive: () => null }))).ok).toBe(true);
+  });
+
+  test("the verdicts: a versionless answer passes the build check, a failure still fails", () => {
+    const noVersion = { ok: true, version: null, deposed: false } as const;
+    expect(healthVerdict(noVersion, "1.4.0", "ab12cd3")).toEqual({ ok: true });
+    expect(aliveVerdict(noVersion)).toEqual({ ok: true });
+    expect(healthVerdict({ ok: true, version: "1.3.0", deposed: false }, "1.4.0", "ab12cd3").ok).toBe(false);
+    expect(healthVerdict({ ok: false, reason: "nope" }, "1.4.0", "ab12cd3")).toEqual({ ok: false, reason: "nope" });
+  });
+
+  test("the other doors keep their own probe", async () => {
+    const standby = probeTarget(config({ pinsALead: true, standbyPort: 8799 }));
+    const net = netAnswering({ ok: true, status: 200, header: "1.4.0", body: { state: "armed" } });
+    expect(await updateHealthProbe(net, standby, evidence())()).toEqual({ ok: true, version: "1.4.0", deposed: false });
   });
 });
 
@@ -97,6 +253,7 @@ describe("probe target", () => {
 
 function netAnswering(answer: NetProbe): Net {
   return {
+    tlsCertificate: () => Promise.resolve({ ok: false, failure: { status: null, message: "no TLS in this case" } }),
     getJson: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
     download: () => Promise.resolve({ ok: false, failure: { status: null, message: "no network in tests" } }),
     probe: () => Promise.resolve(answer),
@@ -184,5 +341,138 @@ describe("awaitRunRecord", () => {
   test("no record at all is a timeout that says so", async () => {
     const outcome = await awaitRunRecord(() => null, wait);
     expect(outcome.kind === "timeout" && outcome.reason).toContain("no update record was ever written");
+  });
+});
+
+// ── driveApply against a peer's certificate check ────────────────────────────
+
+const applyPlan = (): ApplyPlan => ({
+  to: "v1.4.0",
+  from: "v1.3.0",
+  version: "1.4.0",
+  commit: "ab12cd3",
+  recovery: "collie update --rollback",
+});
+
+/**
+ * Effects for a peer whose bridge is a script. `restart` stamps the moment and counts; the bridge
+ * "boots" (its marker takes that moment) only when `boots(restartNumber)` says so.
+ */
+function peerRun(opts: { certAfter: (restarts: number) => boolean; boots: (restart: number) => boolean }) {
+  let t = 0;
+  let restarts = 0;
+  let since = Number.POSITIVE_INFINITY;
+  let bootedAt: number | null = null;
+  const own = new X509Certificate(OWN_PEM).fingerprint256;
+  const net: Net = {
+    ...netAnswering({ ok: false, failure: { status: null, message: "no plain HTTP in this case" } }),
+    tlsCertificate: () =>
+      Promise.resolve(
+        opts.certAfter(restarts)
+          ? { ok: true, fingerprint256: own }
+          : { ok: false, failure: { status: null, message: "connect ECONNREFUSED" } },
+      ),
+  };
+  const boot = evidence({ marker: () => (bootedAt === null ? null : markerAt(bootedAt)), since: () => since });
+  // `awaitHealth` polls until `now()` passes the deadline, so the clock advances on every read.
+  const effects: ApplyEffects = {
+    flip: () => true,
+    restart: () => {
+      restarts += 1;
+      since = t++;
+      if (opts.boots(restarts)) bootedAt = t++;
+      return Promise.resolve(true);
+    },
+    health: updateHealthProbe(net, updateHealthTarget(peerConfig()), boot),
+    prune: () => {},
+    logTail: () => "",
+    now: () => t++,
+    sleep: () => Promise.resolve(),
+    write: () => {},
+    timeoutMs: 30_000,
+    pollMs: 1_000,
+  };
+  return { effects, restartCount: () => restarts };
+}
+
+describe("driveApply: a peer with no plain-HTTP door", () => {
+  test("its own certificate on the port, from a bridge that booted after the restart, passes the update", async () => {
+    const { effects } = peerRun({ certAfter: () => true, boots: () => true });
+    expect((await driveApply(effects, applyPlan(), run("staging"))).state).toBe("done");
+  });
+
+  test("the old process still answering with the right certificate does not pass, and the run ends stuck", async () => {
+    // The restart command returned, the old bridge is still draining, nothing new has booted.
+    const { effects } = peerRun({ certAfter: () => true, boots: () => false });
+    const out = await driveApply(effects, applyPlan(), run("staging"));
+    expect(out.state).toBe("stuck");
+    expect(out.reason).toContain("has not booted since the restart");
+  });
+
+  test("a refused port still rolls back, and a rollback that cannot be verified ends stuck", async () => {
+    const { effects } = peerRun({ certAfter: () => false, boots: () => true });
+    const out = await driveApply(effects, applyPlan(), run("staging"));
+    expect(out.state).toBe("stuck");
+    expect(out.reason).toContain("ECONNREFUSED");
+  });
+
+  test("a bridge that crashes on the new build rolls back once the old one has booted again", async () => {
+    // The new build never binds the port; after the rollback restart the old one boots and does.
+    const { effects, restartCount } = peerRun({ certAfter: (n) => n >= 2, boots: (n) => n >= 2 });
+    const out = await driveApply(effects, applyPlan(), run("staging"));
+    expect(out.state).toBe("rolled-back");
+    expect(restartCount()).toBe(2);
+  });
+
+  test("the rollback needs a marker newer than the SECOND restart, not the first", async () => {
+    // The first restart booted a bridge (it then failed some other way); the second booted none.
+    // The first marker is newer than the first restart and older than the second.
+    const { effects, restartCount } = peerRun({ certAfter: (n) => n >= 2, boots: (n) => n === 1 });
+    const out = await driveApply(effects, applyPlan(), run("staging"));
+    expect(out.state).toBe("stuck");
+    expect(out.reason).toContain("has not booted since the restart");
+    expect(restartCount()).toBe(2);
+  });
+});
+
+// ── The real socket ──────────────────────────────────────────────────────────
+
+describe("realNet().tlsCertificate", () => {
+  // A listener shaped like a peer's: it demands a client certificate from a CA that is not ours, so
+  // this process, which sends none, would be refused at the application layer. The handshake still
+  // shows the server certificate first, and that is all the gate reads.
+  const server = material("laptop");
+  const otherCa = material("desk");
+  const listener = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { cert: server.certPem, key: server.keyPem, ca: [otherCa.certPem], requestCert: true, rejectUnauthorized: true },
+    fetch: () => new Response("never reached"),
+  });
+  afterAll(() => {
+    void listener.stop(true);
+  });
+
+  test("reads the server certificate of an mTLS-only listener without a client certificate", async () => {
+    const got = await realNet().tlsCertificate("127.0.0.1", listener.port ?? 0);
+    expect(got).toEqual({ ok: true, fingerprint256: new X509Certificate(server.certPem).fingerprint256 });
+  });
+
+  test("a plain-HTTP listener is not a TLS server, and fails", async () => {
+    const plain = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("hello") });
+    try {
+      const got = await realNet().tlsCertificate("127.0.0.1", plain.port ?? 0);
+      expect(got.ok).toBe(false);
+    } finally {
+      await plain.stop(true);
+    }
+  });
+
+  test("a port nothing listens on fails instead of hanging", async () => {
+    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("x") });
+    const closed = probe.port ?? 0;
+    await probe.stop(true);
+    const got = await realNet().tlsCertificate("127.0.0.1", closed);
+    expect(got.ok).toBe(false);
   });
 });

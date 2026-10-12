@@ -194,6 +194,7 @@ export const en = {
   "fleet.command.mic.direct": "Type-into-terminal is armed; turn it off first.",
   "fleet.command.mic.sending": "A message is still being sent.",
   "fleet.command.mic.transcribing": "The last clip is still being transcribed.",
+  "fleet.command.mic.failed": "The last clip could not be transcribed; send it to the host or discard it first.",
   "fleet.command.mic.alreadyRecording": "The microphone is already recording.",
   "fleet.command.mic.notRecording": "The microphone is not recording.",
   "fleet.command.unavailable": "{name} is not available here.",

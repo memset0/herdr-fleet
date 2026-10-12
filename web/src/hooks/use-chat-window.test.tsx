@@ -141,7 +141,7 @@ describe("useChatWindow", () => {
 
     result.current.loadOlder();
     await waitFor(() => expect(result.current.window.entries).toHaveLength(2));
-    expect(seen[1]).toBe(`?limit=40&before=${BASE}%3Aa`);
+    expect(seen[1]).toBe(`?limit=100&before=${BASE}%3Aa`);
     expect(result.current.window.entries[0]!.uuid).toBe("z");
     expect(result.current.window.hasOlder).toBe(false);
   });

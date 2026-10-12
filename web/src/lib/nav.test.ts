@@ -29,6 +29,7 @@ import {
   treeUpLanding,
   updatesPath,
   upTarget,
+  voicePagePath,
 } from "./nav";
 
 describe("the commit view's paths", () => {
@@ -206,6 +207,13 @@ describe("updatesPath", () => {
   });
 });
 
+describe("voicePagePath", () => {
+  it("names the two pages below the Voice hub, keeping the scope", () => {
+    expect(voicePagePath("host")).toBe("/settings/voice/host");
+    expect(voicePagePath("model", { host: "badger", session: "demo" })).toBe("/settings/voice/model?h=badger&s=demo");
+  });
+});
+
 describe("pairLandingPath", () => {
   // The QR `collie pair` prints names `/settings?pair=<code>`. The form is on System now, so the
   // index forwards a code there with the whole query, scope included.
@@ -263,6 +271,10 @@ describe("ancestorsOf / isAncestor: the level tree", () => {
     ["/pane/w1%3Ap2/changes", "/pane/w1%3Ap1/changes/commit", false],
     ["/space/w1/changes", "/space/w1/changes/commit", true],
     ["/space/w1/changes/commit", "/space/w1/changes", false],
+    ["/settings/voice", "/settings/voice/host", true],
+    ["/settings", "/settings/voice/model", true],
+    ["/settings/voice/host", "/settings/voice", false],
+    ["/settings/voice/host", "/settings/voice/model", false],
     ["/", "/settings", true],
     ["/pane/w1%3Ap1", "/settings", false],
     ["/settings", "/settings/updates", true],
@@ -385,6 +397,10 @@ describe("parentChain: what a cold deep link gets behind it", () => {
     // section behind it — two taps back to home, matching the two pushes that would have got here.
     ["/settings/updates", "", ["/", "/settings", "/settings/system"]],
     ["/settings/device", "", ["/", "/settings"]],
+    ["/settings/voice", "", ["/", "/settings"]],
+    // The two pages below the Voice hub: the hub and the index behind them.
+    ["/settings/voice/host", "", ["/", "/settings", "/settings/voice"]],
+    ["/settings/voice/model", "?h=badger", ["/?h=badger", "/settings?h=badger", "/settings/voice?h=badger"]],
     ["/crew", "", ["/", "/settings", "/settings/system"]],
     // Machines sits under Settings, and one machine under Machines: a cold deep link gets both behind it.
     ["/machines", "", ["/", "/settings"]],

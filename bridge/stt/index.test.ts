@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { OperatorFileIo } from "../operator-file.ts";
 import type { SttSettings } from "./config.ts";
@@ -135,7 +138,7 @@ describe("the stt gate — one provider per distinct settings value", () => {
 
 describe("the stt gate — which provider the settings name", () => {
   test("codex settings build the codex provider", () => {
-    const provider = createSttProvider({ provider: "codex", codexBin: "codex", wireIdentity: "honest" });
+    const provider = createSttProvider({ provider: "codex", codexBin: "codex", wireIdentity: "honest" }, CONTEXT);
     expect(provider.id).toBe("codex");
     // Built, and nothing spawned: `close` on a cold broker must be a no-op, not a throw.
     provider.close?.();
@@ -146,8 +149,21 @@ describe("the stt gate — which provider the settings name", () => {
       provider: "openai-compatible",
       baseUrl: "http://127.0.0.1:9000/v1",
       model: "whisper-1",
-    });
+    }, CONTEXT);
     expect(provider.id).toBe("openai-compatible");
     expect(provider.close).toBeUndefined();
   });
+
+  test("whistle settings build Collie's own provider, which says it takes 16 kHz WAV for 4 minutes", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "collie-stt-gate-whistle-"));
+    const provider = createSttProvider({ provider: "whistle" }, { stateDir });
+    expect(provider.id).toBe("whistle");
+    expect(provider.input).toBe("wav-16k");
+    expect(provider.maxDurationMs).toBe(240_000);
+    // No model in this state dir: configured, and honestly unavailable.
+    expect(await provider.status()).toEqual({ available: false, reason: "the Whistle model is not on the host" });
+    rmSync(stateDir, { recursive: true, force: true });
+  });
 });
+
+const CONTEXT = { stateDir: "/nonexistent/collie-state" };

@@ -239,11 +239,6 @@ export function muxTopologyLatency(cfg: MuxConfig | null): MuxTopologyLatency {
   return cfg?.topologyLatency ?? { kind: "push" };
 }
 
-/** {@link muxTopologyLatency}, as the hook a component subscribes through. */
-export function useTopologyLatency(): MuxTopologyLatency {
-  return muxTopologyLatency(useMuxConfig());
-}
-
 /** The neutral key spellings this multiplexer refuses. Empty until the bridge has answered. */
 export function useMuxUnsupportedKeys(): readonly string[] {
   return useMuxConfig()?.unsupportedKeys ?? NO_KEYS;

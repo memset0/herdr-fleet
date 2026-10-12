@@ -17,6 +17,7 @@ import {
   taskAction,
   taskPercentPath,
   taskFilePath,
+  TASK_PRIORITY,
   taskXml,
   taskWorkingDirectory,
   unitDirectives,
@@ -312,6 +313,7 @@ describe("the Task Scheduler task (Windows)", () => {
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>true</StartWhenAvailable>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>4</Priority>
     <RestartOnFailure>
       <Interval>PT1M</Interval>
       <Count>999</Count>
@@ -362,6 +364,18 @@ describe("the Task Scheduler task (Windows)", () => {
     expect(xml).toContain("<StartWhenAvailable>true</StartWhenAvailable>");
     // The outer net for a task that fails to start; the launcher's loop owns the bridge.
     expect(xml).toContain("<RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>999</Count>");
+  });
+
+  test("runs at normal priority 4, inside Settings: Task Scheduler's default 7 gets paged out first (#386)", () => {
+    const xml = taskXml(WIN_SPEC, { user: "desk\\pat", runLevel: "LeastPrivilege", conhost: CONHOST });
+    const settings = /<Settings>([\s\S]*?)<\/Settings>/.exec(xml)?.[1] ?? "";
+    expect(settings).toContain("<Priority>4</Priority>");
+    expect(xml.match(/<Priority>/g)).toHaveLength(1);
+    // Where the Task Scheduler 1.2 reference lists it: after ExecutionTimeLimit, before the elements
+    // that follow it there. Never inside a nested element such as RestartOnFailure.
+    expect(settings.indexOf("<Priority>")).toBeGreaterThan(settings.indexOf("</ExecutionTimeLimit>"));
+    expect(settings.indexOf("</Priority>")).toBeLessThan(settings.indexOf("<RestartOnFailure>"));
+    expect(TASK_PRIORITY).toBe(4);
   });
 
   // `&`, `'`, `<`, a blank and a character outside the Basic Multilingual Plane, in the user, the

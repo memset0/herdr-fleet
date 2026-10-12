@@ -6,6 +6,7 @@
 import type { TokenType } from "sugar-high/core";
 
 import type { DiffRow } from "@/lib/unified-diff";
+import { reloadOnChunkError } from "@/lib/chunk-reload";
 
 export type SyntaxLang =
   | "typescript"
@@ -140,7 +141,7 @@ const ready = new Map<SyntaxLang, (rows: readonly DiffRow[]) => RowTokens>();
 
 /** Load the engine and the language (each once), then colour the rows. */
 export async function highlightDiff(rows: readonly DiffRow[], lang: SyntaxLang): Promise<RowTokens> {
-  const engine: Engine = await import("@/lib/diff-highlight-engine");
+  const engine: Engine = await reloadOnChunkError(() => import("@/lib/diff-highlight-engine"));
   const tokenize = await engine.loadTokenizer(lang);
   ready.set(lang, (r) => engine.highlightRows(r, tokenize));
   return engine.highlightRows(rows, tokenize);
@@ -160,7 +161,7 @@ const readyLines = new Map<SyntaxLang, (lines: readonly string[]) => RowTokens>(
 
 /** Load the engine and the language (each once), then colour a whole file's lines. */
 export async function highlightFile(lines: readonly string[], lang: SyntaxLang): Promise<RowTokens> {
-  const engine: Engine = await import("@/lib/diff-highlight-engine");
+  const engine: Engine = await reloadOnChunkError(() => import("@/lib/diff-highlight-engine"));
   const tokenize = await engine.loadTokenizer(lang);
   readyLines.set(lang, (l) => engine.highlightLines(l, tokenize));
   return engine.highlightLines(lines, tokenize);

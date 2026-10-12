@@ -226,11 +226,22 @@ export function readNewAt(search: string): NewAt {
  * `lib/experiments.ts` holds something. Its path needs nothing here — the two ladders below already
  * read every `/settings/<x>` as a child of the index.
  */
-export type SettingsSection = "appearance" | "device" | "alerts" | "system" | "experiments";
+export type SettingsSection = "appearance" | "device" | "voice" | "alerts" | "system" | "experiments";
 
 /** One Settings section — a CHILD of the index, carrying the scope like every other path helper. */
 export function settingsSectionPath(section: SettingsSection, scope?: Scope): string {
   return `/settings/${section}${scopeSearch(scope)}`;
+}
+
+/** The two pages below Settings → Voice: what the host uses for every device, and the Whistle model. */
+export type VoicePage = "host" | "model";
+
+/**
+ * A page below Settings → Voice, a CHILD of that section (Back lands on Voice, not on the index).
+ * Carries the scope like the others.
+ */
+export function voicePagePath(page: VoicePage, scope?: Scope): string {
+  return `/settings/voice/${page}${scopeSearch(scope)}`;
 }
 
 /**
@@ -365,7 +376,7 @@ const ANY_PANE = "/pane/*";
  *   L0 `/`
  *   L1 `/space/:id`, `/settings`, `/crew`, `/new` (from the dashboard, a space or a pane)
  *   L2 `/pane/:id`, `/new/add` (below the New page), `/space/:id/changes`, `/settings/:section`, `/settings/updates`, `/machines`
- *   L3 `/pane/:id/history`, `/pane/:id/changes` (a file view is the same path with `?repo=&path=`),
+ *   L3 `/settings/voice/host`, `/settings/voice/model`, `/pane/:id/history`, `/pane/:id/changes` (a file view is the same path with `?repo=&path=`),
  *      `/space/:id/changes/commit`, `/space/:id/changes/files` (a folder or a file of the tree, with
  *      `?dir=` or `?path=`)
  *   L4 `/pane/:id/changes/commit` (the commit's file view adds `&path=`), `/pane/:id/changes/files`
@@ -412,6 +423,10 @@ export function ancestorsOf(pathname: string): string[] {
     return ["/settings/system", "/settings", "/"];
   }
   if (head === "settings" && seg.length === 2) return ["/settings", "/"];
+  // Host speech and the Whistle model sit one level below Voice.
+  if (head === "settings" && seg.length === 3 && id === "voice" && (leaf === "host" || leaf === "model")) {
+    return ["/settings/voice", "/settings", "/"];
+  }
   if (head === "crew" && seg.length === 1) return ["/settings/system", "/settings", "/"];
   // Machines is opened from the Settings index and from the crew card in System, so both are
   // legitimate parents; its structural parent is Settings.
@@ -640,6 +655,9 @@ export function parentChain(pathname: string, search: string): string[] {
     return [home, `/settings${q}`, `/settings/system${q}`];
   }
   if (head === "settings" && seg.length === 2) return [home, `/settings${q}`];
+  if (head === "settings" && seg.length === 3 && id === "voice" && (leaf === "host" || leaf === "model")) {
+    return [home, `/settings${q}`, `/settings/voice${q}`];
+  }
   if (head === "crew" && seg.length === 1) return [home, `/settings${q}`, `/settings/system${q}`];
   if (head === "machines" && seg.length === 1) return [home, `/settings${q}`];
   if (head === "machines" && seg.length === 2) return [home, `/settings${q}`, `/machines${q}`];

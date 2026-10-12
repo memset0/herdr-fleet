@@ -28,6 +28,7 @@ import {
   newPending,
   normalizeCode,
   normalizeLabel,
+  escapeLabelForTerminal,
   PairingStore,
   parseLifetime,
   PENDING_FILENAME,
@@ -321,6 +322,32 @@ describe("untrusted-input coercion", () => {
     expect(normalizeLabel("x".repeat(49))).toBeNull();
     expect(normalizeLabel(42)).toBeNull();
     expect(normalizeLabel(undefined)).toBeNull();
+  });
+
+  test("normalizeLabel refuses control, format and separator characters, not just newlines", () => {
+    const hidden = {
+      "ESC (Cc)": "Pixel\u001b[2J",
+      "NUL (Cc)": "Pixel\u0000",
+      "DEL (Cc)": "Pixel\u007f",
+      "NEL (Cc)": "Pixel\u0085",
+      "bidi override (Cf)": "Pixel\u202ereversed",
+      "bidi isolate (Cf)": "Pixel\u2066x\u2069",
+      "zero-width space (Cf)": "Pi\u200bxel",
+      "zero-width joiner (Cf)": "Pi\u200dxel",
+      "BOM (Cf)": "\ufeffPixel",
+      "line separator": "Pixel\u2028x",
+      "paragraph separator": "Pixel\u2029x",
+    } satisfies Record<string, string>;
+    for (const [name, label] of Object.entries(hidden)) {
+      expect([name, normalizeLabel(label)]).toEqual([name, null]);
+    }
+    expect(normalizeLabel("Pixel 9 (Büro) 電話")).toBe("Pixel 9 (Büro) 電話");
+  });
+
+  test("escapeLabelForTerminal prints every hidden character as visible text", () => {
+    expect(escapeLabelForTerminal("Pixel 9")).toBe("Pixel 9");
+    expect(escapeLabelForTerminal("a\u001b[31mb")).toBe("a\\u{1B}[31mb");
+    expect(escapeLabelForTerminal("x\u202ey\u200bz\u2028")).toBe("x\\u{202E}y\\u{200B}z\\u{2028}");
   });
 });
 
