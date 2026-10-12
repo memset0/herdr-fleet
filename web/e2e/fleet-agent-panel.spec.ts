@@ -11,6 +11,8 @@ test.skip(process.env.VITE_HERDR_FLEET !== "1", "needs a Fleet build");
 
 const ordinaryRows = (viewer: Page) => viewer.locator('[data-slot="native-agent-card"] button').filter({ hasText: "Example Agent" });
 
+const names = (scope: ReturnType<Page["locator"]>) => scope.locator('[data-slot="native-agent-card"] [data-glide="name"]').allTextContents();
+
 async function world(pages: Page[]) {
   const snapshot = structuredClone(fixtureSnapshot);
   snapshot.agents = snapshot.agents.map((agent, index) => ({ ...agent, paneLabel: `Example Agent ${index + 1}`, status: "working",
@@ -18,10 +20,10 @@ async function world(pages: Page[]) {
   const view: ViewSnapshot = { generation: "example", revision: 0, selection: null, rows: 3, columns: 4,
     slots: Array.from({ length: 12 }, (_, index) => index === 0 ? terminalReference(snapshot.agents[0]!) : null) };
   let selections = 0;
-  let reads = 0;
+  let reads = 0, snapshotReads = 0;
   for (const page of pages) {
     await installApiStub(page);
-    await page.route("**/api/snapshot*", (route) => route.fulfill({ json: snapshot }));
+    await page.route("**/api/snapshot*", (route) => { snapshotReads += 1; return route.fulfill({ json: snapshot }); });
     await page.route("**/fleet/api/view-state", async (route) => {
       if (route.request().method() === "GET") reads += 1;
       if (route.request().method() === "POST") {
@@ -35,7 +37,7 @@ async function world(pages: Page[]) {
       await route.fulfill({ json: view });
     });
   }
-  return { snapshot, selections: () => selections, reads: () => reads };
+  return { snapshot, selections: () => selections, reads: () => reads, snapshotReads: () => snapshotReads };
 }
 
 test("portrait and landscape reserve the queue, resize at its bottom, and exit to ordinary Fleet", async ({ page }, info) => {
@@ -125,18 +127,19 @@ test("drag replacement, shared selection without echoes, and reduced-motion comp
   await other.close();
 });
 
-test("real touch card hold drags without selecting, and a short tap selects", async ({ page, context }) => {
+test("real touch handle immediately drags without selecting, and a card tap selects", async ({ page, context }) => {
   const state = await world([page]);
   await page.goto("/panel");
   await page.getByRole("button", { name: "Join pane selection sync" }).click();
   await expect(page.getByRole("button", { name: "Leave pane selection sync" })).toBeVisible();
   const card = page.locator('[data-slot="panel-agent-queue"] [data-slot="native-agent-card"]').nth(1).locator("button").first();
   await card.scrollIntoViewIfNeeded();
-  const from = await card.boundingBox();
+  const handle = page.getByRole("button", { name: "Place Example Agent 2 in a slot" });
+  const from = await handle.boundingBox();
   const target = page.getByRole("button", { name: "Slot 1", exact: true });
   const to = await target.boundingBox();
   const touch = await context.newCDPSession(page);
-  const start = { x: from!.x + 30, y: from!.y + from!.height / 2 };
+  const start = { x: from!.x + from!.width / 2, y: from!.y + from!.height / 2 };
   const end = { x: to!.x + to!.width / 2, y: to!.y + to!.height / 2 };
   await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
   await expect(page.locator('[data-slot="panel-drag-preview"]')).toBeVisible();
@@ -180,7 +183,7 @@ test("two ordinary joined viewers publish and follow in both directions", async 
   await other.close();
 });
 
-test("real touch scrolling before the hold keeps favorites and selection unchanged", async ({ page, context }) => {
+test("real touch card scrolling keeps favorites and selection unchanged", async ({ page, context }) => {
   const state = await world([page]);
   const first = state.snapshot.agents[0]!;
   state.snapshot.agents = Array.from({ length: 20 }, (_, index) => ({ ...first,
@@ -204,4 +207,27 @@ test("real touch scrolling before the hold keeps favorites and selection unchang
   expect(state.selections()).toBe(0);
   await expect(page).toHaveURL(/\/panel$/);
   await touch.detach();
+});
+
+
+test("merged member snapshots render each Agent once in sidebar time order", async ({ page, context }) => {
+  const other = await context.newPage();
+  const state = await world([page, other]);
+  const base = state.snapshot.agents[0]!;
+  state.snapshot.servers = ["member-lead", "member-a", "member-b"].map((id, index) => ({ id,
+    name: `Example member ${index}`, isLead: index === 0, reachable: true, protocol: "ok", lastSeenAt: 1 }));
+  state.snapshot.agents = state.snapshot.servers.map((server, index) => ({ ...base,
+    host: server.id, bindingId: `herdr:term_${index}`, paneLabel: `Example Agent ${index + 1}`,
+    lastActiveAt: [100, 300, 200][index]!, lastSeenAt: 1 }));
+  await page.goto("/panel");
+  const queue = page.locator('[data-slot="panel-agent-queue"]');
+  await expect.poll(state.snapshotReads).toBeGreaterThanOrEqual(4);
+  await expect(queue.locator('[data-slot="native-agent-card"]')).toHaveCount(3);
+  expect((await names(queue)).map((name) => name.trim())).toEqual(["Example Agent 2", "Example Agent 3", "Example Agent 1"]);
+  await other.setViewportSize({ width: 1600, height: 900 });
+  await other.goto("/");
+  await expect(other.locator('[data-slot="native-agent-card"]')).toHaveCount(3);
+  expect(await names(queue)).toEqual(await names(other.locator('body')));
+  await expect(queue.getByRole("heading", { name: "Working (3)", exact: true })).toBeVisible();
+  await other.close();
 });

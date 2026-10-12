@@ -19,7 +19,7 @@ export const zh: FleetDictionary = {
   "fleet.panel.unavailable": "不可用",
   "fleet.panel.conflict": "此槽位已在其他页面修改，请重试。",
   "fleet.panel.chooseSlot": "点击槽位放入此 Agent。",
-  "fleet.panel.hint": "长按 Agent 卡片拖动，或选中手柄后点击槽位。",
+  "fleet.panel.hint": "拖动六点手柄，或点选手柄后点击槽位。",
   "fleet.panel.cancel": "取消",
   "fleet.panel.allAgents": "所有 Agents · {count}",
   "fleet.panel.assign": "将 {name} 放入槽位",

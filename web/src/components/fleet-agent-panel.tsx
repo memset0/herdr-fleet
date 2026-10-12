@@ -19,7 +19,7 @@ import { useNav } from "@/hooks/use-nav";
 import { cn } from "@/lib/utils";
 import "./fleet-agent-panel.css";
 
-interface Drag { pointer: number; x: number; y: number; ref: TerminalRef; active: boolean; touch: boolean; source: HTMLElement; name: string }
+interface Drag { pointer: number; x: number; y: number; ref: TerminalRef; moved: boolean; name: string }
 
 export function FleetAgentPanel({ data }: { data: HomeData }) {
   useFleetLocale();
@@ -32,13 +32,12 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
   const root = useRef<HTMLDivElement>(null);
   const queue = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
-  const hold = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const frame = useRef<number | undefined>(undefined);
-  const cleanup = () => { clearTimeout(hold.current); if (frame.current !== undefined) cancelAnimationFrame(frame.current); drag.current = null; };
+  const cleanup = () => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); drag.current = null; };
   useEffect(() => {
-    const block = (event: TouchEvent) => { if (drag.current?.active) event.preventDefault(); };
+    const block = (event: TouchEvent) => { if (drag.current) event.preventDefault(); };
     document.addEventListener("touchmove", block, { passive: false, capture: true });
-    return () => { clearTimeout(hold.current); if (frame.current !== undefined) cancelAnimationFrame(frame.current); document.removeEventListener("touchmove", block, true); };
+    return () => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); document.removeEventListener("touchmove", block, true); };
   }, []);
   if (!view) return null;
   const { client, state, inventory } = view;
@@ -68,7 +67,7 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
   const scrollDrag = () => {
     const active = drag.current;
     const scroller = queue.current;
-    if (!active?.active || !scroller) return;
+    if (!active || !scroller) return;
     const bounds = scroller.getBoundingClientRect();
     if (active.y > bounds.top && active.y < bounds.bottom) {
       if (active.y < bounds.top + 36) scroller.scrollTop -= 12;
@@ -89,36 +88,32 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
     frame.current = requestAnimationFrame(scrollDrag);
   };
   const begin = (event: ReactPointerEvent<HTMLElement>, agent: AgentView) => {
+    suppressClick.current = false;
+    if (!(event.target instanceof Element) || !event.target.closest("[data-panel-handle]")) return;
     if (event.button !== 0 || !live(agent) || !state.available || state.busy) return;
     const ref = terminalReference(agent);
     if (!ref) return;
-    cleanup(); suppressClick.current = false;
-    drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, ref, active: false, touch: event.pointerType !== "mouse", source: event.currentTarget, name: paneName(agent) };
-    const arm = () => { if (drag.current) {
-      drag.current.active = true; suppressClick.current = true;
-      drag.current.source.setPointerCapture?.(drag.current.pointer);
-      setChosen(null); scrollDrag();
-    } };
-    if (drag.current.touch) hold.current = setTimeout(arm, 350);
+    cleanup();
+    drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, ref, moved: false, name: paneName(agent) };
+    suppressClick.current = true;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setChosen(null); scrollDrag();
   };
   const move = (event: ReactPointerEvent<HTMLElement>) => {
     const active = drag.current;
     if (!active || event.pointerId !== active.pointer) return;
-    if (!active.active && Math.hypot(event.clientX - active.x, event.clientY - active.y) > 16) {
-      if (active.touch) { suppressClick.current = true; cleanup(); return; }
-      active.active = true; suppressClick.current = true; active.source.setPointerCapture?.(active.pointer); setChosen(null); scrollDrag();
-    }
+    active.moved ||= Math.hypot(event.clientX - active.x, event.clientY - active.y) > 2;
     active.x = event.clientX; active.y = event.clientY;
-    if (active.active) { event.preventDefault(); setHovered(targetAt(active.x, active.y)); }
+    event.preventDefault(); setHovered(targetAt(active.x, active.y));
   };
   const finish = (event: ReactPointerEvent<HTMLElement>, cancel = false) => {
     const active = drag.current;
     if (!active || active.pointer !== event.pointerId) return;
-    const target = active.active && !cancel ? targetAt(event.clientX, event.clientY) : null;
+    const target = !cancel ? targetAt(event.clientX, event.clientY) : null;
     cleanup(); setHovered(null); setCarried(null);
-    suppressClick.current = active.active || cancel;
+    suppressClick.current = true;
     if (cancel || target !== null) setChosen(null);
-    // Handle taps choose through onClick; pointer completion must not toggle twice.
+    if (!cancel && target === null && !active.moved) setChosen(active.ref);
     if (target !== null) void assign(target, active.ref);
   };
 

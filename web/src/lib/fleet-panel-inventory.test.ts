@@ -45,3 +45,22 @@ it("a disconnected lead keeps its Agent visible without authorizing it", () => {
   expect(inventory.agents).toEqual([agent]);
   expect(inventory.fresh.size).toBe(0);
 });
+
+it("member widening filters merged responses and preserves unique scoped placements", () => {
+  const lead = { ...agent, host: "member-lead", bindingId: "herdr:term_lead", lastActiveAt: 100 };
+  const first = { ...agent, lastActiveAt: 300 };
+  const second = { ...agent, host: "member-b", bindingId: "herdr:term_b", lastActiveAt: 200 };
+  const primary = [lead, { ...first, session: undefined }, { ...second, session: undefined }];
+  const firstMerged = [ { ...lead, session: undefined }, first, { ...second, session: undefined } ];
+  const secondMerged = [ { ...lead, session: undefined }, { ...first, session: undefined }, second ];
+  const inventory = inventoryFromSnapshots([snapshot(primary), snapshot(firstMerged), snapshot(secondMerged)], [], ["member-a", "member-b"]);
+  expect(inventory.agents).toEqual([lead, first, second]);
+});
+
+it("exact repeats collapse while different sessions and conflicting placements remain distinct", () => {
+  const otherSession = { ...agent, session: "other", bindingSession: "other" };
+  const conflicting = { ...agent, paneId: "w1:p2" };
+  const inventory = inventoryFromSnapshots([snapshot([agent, agent, { ...agent, session: undefined }, otherSession, conflicting])]);
+  expect(inventory.agents).toEqual([agent, otherSession, conflicting]);
+  expect(resolvePanelTerminal(terminalReference(agent)!, inventory).status).toBe("ambiguous");
+});

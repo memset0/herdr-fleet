@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Keep panel Agents unique and reserve dragging for handles.** Filter merged member responses, preserve native grouped time order, and start touch dragging immediately from the six-dot handle.
+
 ## [3.16.0] - 2026-10-12
 
 Minor release adopting Collie 1.20.1: redeploy the lead first, then every member. No configuration key, enrolment step or state file changes. Whistle and the phone speech engine stay off until an operator chooses them in Settings → Voice.

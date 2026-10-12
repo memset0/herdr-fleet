@@ -62,7 +62,7 @@ it("bottom row and column controls send bounded shape changes and exit returns t
   await vi.waitFor(() => expect(router.state.location.pathname).toBe("/"));
 });
 
-it("touch cancellation and pre-hold movement never assign or select a Pane", () => {
+it("card scrolling and handle cancellation never assign or select a Pane", () => {
   vi.useFakeTimers();
   class TestPointerEvent extends MouseEvent {
     readonly pointerId: number;
@@ -73,14 +73,15 @@ it("touch cancellation and pre-hold movement never assign or select a Pane", () 
   }
   const { container, router } = mount();
   const handle = within(container).getByRole("button", { name: "Place Agent B in a slot" });
-  const event = (type: string, x: number) => fireEvent(handle, new TestPointerEvent(type, { bubbles: true, button: 0, pointerId: 1, pointerType: "touch", clientX: x, clientY: 100 }));
+  const body = handle.closest('[data-slot="native-agent-card"]')!.querySelector("button")!;
+  const event = (type: string, x: number) => fireEvent(body, new TestPointerEvent(type, { bubbles: true, button: 0, pointerId: 1, pointerType: "touch", clientX: x, clientY: 100 }));
   event("pointerdown", 10); event("pointermove", 40); vi.advanceTimersByTime(400); event("pointerup", 40);
   event("pointerdown", 10); event("pointercancel", 10); vi.advanceTimersByTime(400);
   expect(mutate).not.toHaveBeenCalled();
   expect(router.state.location.pathname).toBe("/panel");
 });
 
-it("a touch hold can replace a slot and an armed cancellation cannot", () => {
+it("an immediate handle drag can replace a slot and cancellation cannot", () => {
   vi.useFakeTimers();
   class TestPointerEvent extends MouseEvent {
     readonly pointerId = 1;
@@ -93,9 +94,9 @@ it("a touch hold can replace a slot and an armed cancellation cannot", () => {
   Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => target });
   const event = (type: string) => fireEvent(handle, new TestPointerEvent(type, { bubbles: true, button: 0, clientX: 10, clientY: 100 }));
   try {
-    event("pointerdown"); act(() => vi.advanceTimersByTime(350)); event("pointercancel");
+    event("pointerdown");  event("pointercancel");
     expect(mutate).not.toHaveBeenCalled();
-    event("pointerdown"); act(() => vi.advanceTimersByTime(350)); event("pointerup");
+    event("pointerdown");  event("pointerup");
     expect(mutate).toHaveBeenCalledWith({ type: "slot", index: 0, expected: terminalReference(a), terminal: terminalReference(b), rows: 3, columns: 4 });
     expect(router.state.location.pathname).toBe("/panel");
   } finally { Object.defineProperty(document, "elementFromPoint", { configurable: true, value: original }); }
