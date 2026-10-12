@@ -137,3 +137,58 @@ describe("the fetched font's origin in Collie's document policy", () => {
     expect((await answer("application/json")).headers.get("content-security-policy")).toBe(COLLIE_CSP);
   });
 });
+
+describe("Collie 1.20's phone speech engine through the proxy", () => {
+  // Collie serves every `stt/*.js` with its own worker policy (bridge/server.ts STT_WORKER_CSP): the one
+  // place wasm may compile, so the document's policy never gains 'wasm-unsafe-eval'. Copied here as
+  // text so a change upstream is read at the next adoption rather than imported unread.
+  const STT_WORKER_CSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'";
+
+  test("passes the speech worker's own policy and the engine's types untouched", async () => {
+    const answer = (path: string, type: string, policy?: string) =>
+      proxyCollie(new Request(`https://fleet.example.com${path}`), config, async () => {
+        const headers = new Headers({ "content-type": type });
+        if (policy !== undefined) headers.set("content-security-policy", policy);
+        return new Response("x", { headers });
+      });
+    const worker = await answer("/stt/worker-abc123.js", "text/javascript; charset=utf-8", STT_WORKER_CSP);
+    expect(worker.headers.get("content-security-policy")).toBe(STT_WORKER_CSP);
+    const wasm = await answer("/stt/needle-3-93e88ede/needle.wasm", "application/wasm");
+    expect(wasm.headers.get("content-type")).toBe("application/wasm");
+  });
+
+  test("keeps every directive of the page policy but the two it widens", () => {
+    const page =
+      "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; " +
+      "style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'; " +
+      "manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; form-action 'self'";
+    const kept = (policy: string) =>
+      policy.split("; ").filter((d) => !d.startsWith("style-src ") && !d.startsWith("font-src "));
+    expect(kept(widenFontPolicy(page, ["https://fonts.example.com"]))).toEqual(kept(page));
+  });
+
+  test("streams the model to the phone byte for byte, with its type, tag and sandbox", async () => {
+    const model = new Uint8Array(4 * 1024 * 1024);
+    for (let i = 0; i < model.length; i += 1) model[i] = (i * 31) & 0xff;
+    const sandbox = "default-src 'none'; sandbox";
+    const response = await proxyCollie(new Request("https://fleet.example.com/api/stt/model/" + "b".repeat(64)), config, async () =>
+      new Response(new Blob([model]).stream(), {
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(model.length),
+          etag: '"b"',
+          "content-security-policy": sandbox,
+        },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("etag")).toBe('"b"');
+    expect(response.headers.get("content-security-policy")).toBe(sandbox);
+    // The phone measures progress against the model's size from the host's status, never from this
+    // header, so the proxy dropping it (it rewrites the body's framing) costs the bar nothing.
+    const body = new Uint8Array(await response.arrayBuffer());
+    expect(body.length).toBe(model.length);
+    expect(Bun.hash(body)).toBe(Bun.hash(model));
+  });
+});

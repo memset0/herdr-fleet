@@ -1,10 +1,10 @@
 # Upstream and fork boundary
 
 Herdr Fleet v3 began as a downstream reapplication of
-[Collie](https://github.com/AltanS/collie) v1.2.0, and currently corresponds to v1.19.0:
+[Collie](https://github.com/AltanS/collie) v1.2.0, and currently corresponds to v1.20.1:
 
-- tag object: `35d8c000da23326227f7843c948eae9783d72cce`
-- commit: `632a2bf784045b1e2576da112d89ed21fecc9eeb`
+- tag object: `f8ce7bd44ac9bc510f2b96c3f835096503335936`
+- commit: `3c08e4f25d51a2dd62e3cb44d3f71850afd69557`
 
 Collie remains MIT-licensed and attributed through its existing license, history, documentation,
 and source. Unchanged Collie behavior is upstream behavior, not a Herdr Fleet capability. Collie's own
@@ -29,6 +29,7 @@ word-for-word below one seam marker that says where the truncation happened.
 | `3.10.0` | `1.17.2` |
 | `3.13.0` | `1.18.0` |
 | `3.15.0` | `1.19.0` |
+| `3.16.0` | `1.20.1` |
 
 **This is provenance, not a version component.** Herdr Fleet's version line is its own and begins at
 `3.0.0`; Collie's is Collie's. Adopting a newer Collie release adds a row here and does not move this

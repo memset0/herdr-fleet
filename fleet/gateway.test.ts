@@ -486,5 +486,43 @@ describe("the Gateway as Collie's paired device", () => {
     expect(new Set(seen.map((entry) => entry.host))).toEqual(new Set(["example-peer"]));
     expect(new Set(seen.map((entry) => entry.authorization))).toEqual(new Set(["Bearer gateway-token"]));
   });
+
+  test("forwards Collie 1.20's speech routes with its own token, and serves the phone engine only to a session", async () => {
+    const seen: { method: string; path: string; authorization: string | null }[] = [];
+    const sha = "a".repeat(64);
+    const { handler } = await setup(
+      async (input, init) => {
+        const url = new URL(String(input));
+        seen.push({ method: init?.method ?? "GET", path: url.pathname, authorization: new Headers(init?.headers).get("authorization") });
+        const type = url.pathname.endsWith(".wasm") ? "application/wasm" : url.pathname.startsWith("/api/stt/model/") ? "application/octet-stream" : "application/json";
+        return new Response(url.pathname.startsWith("/api/") && type === "application/json" ? "{}" : "bytes", { headers: { "content-type": type } });
+      },
+      { collieToken: "gateway-token" },
+    );
+    // The vendored engine is not a public asset: without a session it is the login redirect, which
+    // the page's hash check and the worker's cache rule both refuse to keep.
+    const anonymous = await handler(request("/stt/needle-3-93e88ede/needle.wasm"), { peerAddress: "127.0.0.1" });
+    expect(anonymous.status).toBe(303);
+    expect(seen).toEqual([]);
+    const cookie = await login(handler);
+    const reads = ["/api/stt/host", "/api/stt/whistle", `/api/stt/model/${sha}`, "/stt/needle-3-93e88ede/needle.wasm", "/stt/needle-3-93e88ede/needle.js"];
+    for (const path of reads) {
+      const response = await handler(request(path, { headers: { cookie } }), { peerAddress: "127.0.0.1" });
+      expect(response.status).toBe(200);
+    }
+    const writes: [string, string][] = [["PUT", "/api/stt/host"], ["POST", "/api/stt/whistle"], ["DELETE", "/api/stt/whistle"]];
+    for (const [method, path] of writes) {
+      const response = await handler(
+        request(path, { method, headers: { cookie, origin: config.public.origin, "content-type": "application/json", authorization: "Bearer browser" }, body: "{}" }),
+        { peerAddress: "127.0.0.1" },
+      );
+      expect(response.status).toBe(200);
+    }
+    expect(seen.map((entry) => `${entry.method} ${entry.path}`)).toEqual([
+      ...reads.map((path) => `GET ${path}`),
+      ...writes.map(([method, path]) => `${method} ${path}`),
+    ]);
+    expect(new Set(seen.map((entry) => entry.authorization))).toEqual(new Set(["Bearer gateway-token"]));
+  });
 });
 
