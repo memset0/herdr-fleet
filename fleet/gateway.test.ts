@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { FleetLeadConfig } from "./config.ts";
 import { PAIRING_REFUSAL, createGatewayHandler, trustedClientSource, type GatewayOptions } from "./gateway.ts";
 import { createTagStore } from "./pane-tags/store.ts";
+import { createViewStateStore } from "./view-state/store.ts";
 import type { FleetFetcher } from "./proxy.ts";
 import { LoginRateLimiter } from "./rate-limit.ts";
 import { SessionStore } from "./session-store.ts";
@@ -85,6 +86,21 @@ async function login(handler: Awaited<ReturnType<typeof setup>>["handler"]): Pro
 }
 
 describe("authenticated solo Gateway", () => {
+  test("view state stays behind session and exact-origin gates and is never cached", async () => {
+    let contacted = 0;
+    const fetcher: FleetFetcher = async () => { contacted += 1; return Response.json({}); };
+    const viewState = createViewStateStore("example.json", { read: async () => null, write: async () => undefined });
+    const { handler } = await setup(fetcher, { viewState });
+    const context = { peerAddress: "127.0.0.1" };
+    expect((await handler(request("/fleet/api/view-state"), context)).status).toBe(401);
+    const cookie = await login(handler);
+    const read = await handler(request("/fleet/api/view-state", { headers: { cookie } }), context);
+    expect(read.status).toBe(200);
+    expect(read.headers.get("cache-control")).toBe("no-store");
+    const refused = await handler(request("/fleet/api/view-state", { method: "POST", headers: { cookie, origin: "https://other.example.test" }, body: "{}" }), context);
+    expect(refused.status).toBe(403);
+    expect(contacted).toBe(0);
+  });
   test("rejects every unauthenticated API and Pack path before upstream", async () => {
     let calls = 0;
     const { handler } = await setup((async () => {

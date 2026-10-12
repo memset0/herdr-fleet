@@ -30,7 +30,8 @@ export function readBindingInventory(value: JsonValue | undefined): LocatedTermi
     const host = asJsonString(p?.host) ?? "", session = asJsonString(p?.session) ?? "";
     const owner = servers.find((server) => server?.id === host);
     const localSession = sessions.find((entry) => entry?.name === bindingSession && (asJsonString(entry?.host) ?? "") === host);
-    const fresh = (host ? owner?.reachable === true : doc.bridge === "connected") && localSession?.reachable !== false;
+    const hostFresh = host ? owner?.reachable === true && (owner.isLead !== true || doc.bridge === "connected") : doc.bridge === "connected";
+    const fresh = hostFresh && localSession?.reachable !== false;
     const pane = { paneId, bindingId, bindingSession, workspace, host, session, fresh, primary: localSession?.isPrimary === true };
     if (terminalReference(pane)) result.push(pane);
   }

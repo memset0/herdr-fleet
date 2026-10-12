@@ -86,6 +86,8 @@ export const router = createBrowserRouter([
     HydrateFallback: BootSplash,
     children: [
       { index: true, element: <HomeRoute /> },
+      // FleetPanelRoute: the fork-owned shell supplies the fullscreen panel and root polling.
+      { path: "panel", element: null },
       { path: "space/:spaceId", element: <SpaceRoute /> },
       // The New page (M48), a page since 1.19.0 and a bottom sheet before. No loader: it reads the root
       // snapshot (for a pane's folder and branch) and asks the chosen machine's bridge for its own lists.

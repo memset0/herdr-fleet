@@ -378,6 +378,8 @@ export function ancestorsOf(pathname: string): string[] {
   const seg = pathname.split("/").filter((s) => s !== "");
   const [head, id, leaf] = seg;
   if (seg.length === 0) return [];
+  // FleetPanelRoute is one level below the ordinary root.
+  if (head === "panel" && seg.length === 1) return ["/"];
   if (head === "space" && seg.length === 2) return ["/"];
   if (head === "space" && seg.length === 3 && leaf === "changes") return [`/space/${id}`, "/"];
   if (head === "space" && seg.length === 4 && leaf === "changes" && seg[3] === "commit") {
@@ -619,6 +621,7 @@ export function parentChain(pathname: string, search: string): string[] {
     const pane = `/pane/${id}${q}`;
     return file ? [home, pane, `/pane/${id}/changes${q}`] : [home, pane];
   }
+  if (head === "panel" && seg.length === 1) return [home];
   if (head === "settings" && seg.length === 1) return [home];
   // The New page: behind it the screen it names (the pane whose worktree it is, else the view's machine).
   if (head === "new" && seg.length === 1) {

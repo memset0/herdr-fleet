@@ -4,6 +4,27 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const ja: FleetDictionary = {
+  "fleet.panel.layout": "Grid layout",
+  "fleet.panel.rows": "Rows",
+  "fleet.panel.columns": "Columns",
+  "fleet.panel.occupied": "Clear occupied slots outside the smaller grid first.",
+  "fleet.sync.label": "Pane sync",
+  "fleet.sync.join": "Join pane selection sync",
+  "fleet.sync.leave": "Leave pane selection sync",
+  "fleet.panel.title": "Agent panel",
+  "fleet.panel.slots": "Favorite slots",
+  "fleet.panel.slot": "Slot {index}",
+  "fleet.panel.clearSlot": "Clear slot {index}",
+  "fleet.panel.emptySlot": "Empty slot",
+  "fleet.panel.unavailable": "Unavailable",
+  "fleet.panel.conflict": "This slot changed elsewhere. Try again.",
+  "fleet.panel.chooseSlot": "Tap a slot to place this Agent.",
+  "fleet.panel.hint": "Hold the handle to drag, or select it then tap a slot.",
+  "fleet.panel.cancel": "Cancel",
+  "fleet.panel.allAgents": "All Agents · {count}",
+  "fleet.panel.assign": "Place {name} in a slot",
+  "fleet.panel.exit": "Exit panel",
+
   "fleet.chat.density.default": "標準",
   "fleet.chat.density.hint": "Chat の内容のみ。各設定は個別にリセットできます。",
   "fleet.chat.density.lineHeight.label": "行の高さ",

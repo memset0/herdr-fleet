@@ -26,9 +26,11 @@ beforeAll(() => {
   if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {};
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
   new FakeIDBFactory().install();
+  // OfflineFixtureModules: build the fresh page before timing its actual offline interactions.
+  await Promise.all([import("@/lib/loaders"), import("./detail"), import("@/test/header-host"), import("@/lib/connection-health")]);
 });
 
 afterEach(async () => {

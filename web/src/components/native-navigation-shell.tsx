@@ -85,6 +85,7 @@ import { isReadOnly, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isFleetBuild } from "@/lib/fleet-build";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
+import { FleetViewExperience } from "@/components/fleet-view-experience";
 
 interface NativeNavigationShellProps {
   data: HomeData;
@@ -119,7 +120,7 @@ export function NativeNavigationShell(props: NativeNavigationShellProps) {
   // no rails, no navigation context, so the header's leading trigger and the Pane page's switcher
   // port answer nothing and the Pane keeps its mark (lib/fleet-build.ts).
   if (!isFleetBuild()) return props.children;
-  return <FleetChatTypographyProvider><FleetNavigationShell {...props} /></FleetChatTypographyProvider>;
+  return <FleetChatTypographyProvider><FleetViewExperience data={props.data}><FleetNavigationShell {...props} /></FleetViewExperience></FleetChatTypographyProvider>;
 }
 
 function FleetNavigationShell({

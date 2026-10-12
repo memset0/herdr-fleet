@@ -1628,6 +1628,9 @@ assert_contains "$STDERR" "nothing to roll back to"
 # reach the rebuild.
 PLAIN="${UPDATE_HOME}/plain"
 mkdir -p "$PLAIN"
+# The loose-tree fixture needs a non-root owner even when the suite runs as root.
+# Only this disposable directory is changed; 65534 is a synthetic owner for the probe.
+if [ "$(id -u)" -eq 0 ]; then chown 65534 "$PLAIN"; fi
 printf 'id = "herdr.collie"\nversion = "9.9.9"\n' > "${PLAIN}/herdr-plugin.toml"
 if upd "$PLAIN" "$BIN" update; then fail "update on a non-git tree reported success"; fi
 assert_contains "$STDERR" "herdr plugin install AltanS/collie --yes"

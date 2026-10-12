@@ -13,6 +13,7 @@ import { ManualPaneFitControllerManager } from "./manual-pane-fit/controller.ts"
 import { createLocalPaneFit } from "./manual-pane-fit/local.ts";
 import { leadResolver, localSnapshotSource, localSocketPath } from "./terminal/resolve.ts";
 import { createTerminalService } from "./terminal/service.ts";
+import { createViewStateStore } from "./view-state/store.ts";
 
 /**
  * Lifecycle only, and it is the shape of this call that keeps it so: a fixed event name and a record
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
     // choice, and a wiped state directory must not quietly return them to stock defaults.
     todoist: createTodoistService({ store: createTodoistStore(join(dirname(configPath), "todoist.json")), origin: config.public.origin }),
     tags: createTagStore(join(dirname(configPath), "pane-tags.json")),
+    viewState: createViewStateStore(join(dirname(configPath), "panel-slots.json")),
     settings: createSettingsStore(settingsPathFor(dirname(configPath))),
     terminal: terminal ?? undefined,
     paneFit: { local: paneFit, members: () => members, log },

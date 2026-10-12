@@ -4,6 +4,37 @@ Herdr Fleet adds an authenticated Herdr plugin boundary to the exact Collie base
 [`FORK.toml`](../FORK.toml). Collie's PWA, bridge API, multiplexer adapters, Pack implementation, and
 standalone deployment alternatives remain upstream behavior.
 
+## Shared selection and touch Agent panel
+
+Open `/panel` for the fullscreen Agent control panel, or use **Agent panel** in the hierarchy footer.
+Portrait places the all-member, all-session Agent queue below the square grid; landscape places it
+to the right. The two regions scroll independently, so larger grids never consume the queue's space.
+At the queue's bottom, **Rows** and **Columns** adjust the shared grid from one to six each, followed
+by **Exit panel**, which returns to `/`. Loading an ordinary URL also leaves the panel.
+
+Hold an Agent's trailing handle on a touch screen, or drag it with a pointer, onto any square to
+replace that slot. Tapping or keyboard-activating the handle and then a square provides the same
+assignment. Moving a favorite clears its former slot; replacing it never removes an Agent from the
+queue. The clear button empties one square. A smaller grid refuses to discard occupied slots: clear
+those slots first. Native browser-local stars continue to use their existing store.
+
+**Pane sync** explicitly joins this page to the central selection stream. The last choice accepted
+by the lead wins; joining reads that choice and following does not echo it. A joined panel remains
+open as a controller and highlights the central choice, while joined ordinary pages open its Pane.
+Leaving keeps the current view independent. Selection changes only the browser view, never terminal
+focus, input or geometry. Visible joined pages follow on a 1.5-second poll and refresh on wake; no
+offline choice is queued for later replay.
+
+Slots follow scoped terminal references across layout moves. Unavailable terminals retain their
+position and last observed name, with an unavailable status rather than a guessed replacement.
+Fresh status changes flash the corresponding square; completion shows a green check. Reduced-motion
+mode keeps the feedback without animation. Initial load and stale recovery do not report a new event.
+
+The authenticated, no-store `/fleet/api/view-state` Gateway surface owns this state. Only the shared
+grid is persisted, atomically and owner-only, in `panel-slots.json` beside the Fleet configuration.
+Selection is ephemeral and resets with the Gateway. Invalid documents fail closed without clearing
+assignments. No peer protocol or configuration changes are needed; this is a lead-only product change.
+
 Schema 1 remains the deliberately solo-compatible Fleet lead profile: one Collie process, one
 password/session Gateway, and one public HTTPS origin. Schema 2 adds only the role-aware foundation
 for selecting Collie's native Pack authority. It does not implement SSH reachability, enroll a

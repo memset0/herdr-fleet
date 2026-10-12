@@ -13,7 +13,8 @@ beforeEach(() => {
   new FakeIDBFactory().install();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await (await import("@/lib/store")).__storeIdle();
   vi.restoreAllMocks();
   uninstallFakeIndexedDB();
 });

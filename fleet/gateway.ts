@@ -31,6 +31,9 @@ import type { TagStore } from "./pane-tags/store.ts";
 import type { SettingsStore } from "./settings/store.ts";
 import { TERMINAL_PATH, admit, type TerminalTarget } from "./terminal/admit.ts";
 import { isPaneFitPath, paneFitResponse, type PaneFitRouteDeps } from "./manual-pane-fit/route.ts";
+import { VIEW_STATE_PATH } from "./view-state/document.ts";
+import { viewStateResponse } from "./view-state/route.ts";
+import type { ViewStateStore } from "./view-state/store.ts";
 
 const HTML_CSP =
   "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self' data:; " +
@@ -76,7 +79,7 @@ function isApiPath(pathname: string): boolean {
   if (pathname === "/api" || pathname.startsWith("/api/")) return true;
   if (pathname.startsWith(TODOIST_API + "/")) return true;
   if (isPaneFitPath(pathname)) return true;
-  return pathname === TAGS_PATH || pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
+  return pathname === VIEW_STATE_PATH || pathname === TAGS_PATH || pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
 }
 
 /**
@@ -121,6 +124,7 @@ export interface GatewayOptions {
    */
   readonly settings?: SettingsStore;
   readonly tags?: TagStore;
+  readonly viewState?: ViewStateStore;
   readonly todoist?: TodoistService;
   /** Manual Pane fit. Absent leaves both of its routes 404, as every capability this Gateway lacks. */
   readonly paneFit?: PaneFitRouteDeps;
@@ -345,6 +349,12 @@ export function createGatewayHandler(options: GatewayOptions) {
     }
 
     if (isPairingWrite(request.method, url.pathname)) return text(`${PAIRING_REFUSAL}\n`, 403);
+
+    if (url.pathname === VIEW_STATE_PATH) {
+      if (!options.viewState) return json({ error: "not found" }, 404);
+      return withBaseHeaders(await viewStateResponse(request, options.viewState,
+        () => fetchBindingInventory(request, config, options.fetcher, collieToken)));
+    }
 
     if (url.pathname.startsWith(TODOIST_API + "/")) {
       if (!options.todoist) return json({ error: "not found" }, 404);

@@ -19,6 +19,15 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Share Pane selection and control Agents from a touch panel.** Add opt-in central selection and a fullscreen `/panel` with shared square slots, drag replacement, adaptive orientation, grid controls and status-transition feedback.
+
+### Fixed
+
+- **Keep CLI fixtures independent of host tools and ownership.** Use a synthetic shim name and non-root loose-install fixture without changing production behavior or assertions.
+- **Prepare and drain page fixtures within their setup lifecycle.** Preload fresh offline-page modules and await version-cache writes before database teardown.
+
 ## [3.15.5] - 2026-10-10
 
 ### Changed

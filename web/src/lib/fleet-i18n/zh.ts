@@ -4,6 +4,27 @@ import type { FleetDictionary } from "./en";
 // error, and so is a key English does not have. Keep the `{slot}` names byte-exact.
 
 export const zh: FleetDictionary = {
+  "fleet.panel.layout": "网格布局",
+  "fleet.panel.rows": "行数",
+  "fleet.panel.columns": "列数",
+  "fleet.panel.occupied": "请先清空缩小后会超出网格的收藏槽位。",
+  "fleet.sync.label": "Pane 同步",
+  "fleet.sync.join": "加入 Pane 选择同步",
+  "fleet.sync.leave": "退出 Pane 选择同步",
+  "fleet.panel.title": "Agent 面板",
+  "fleet.panel.slots": "收藏槽位",
+  "fleet.panel.slot": "槽位 {index}",
+  "fleet.panel.clearSlot": "清空槽位 {index}",
+  "fleet.panel.emptySlot": "空槽位",
+  "fleet.panel.unavailable": "不可用",
+  "fleet.panel.conflict": "此槽位已在其他页面修改，请重试。",
+  "fleet.panel.chooseSlot": "点击槽位放入此 Agent。",
+  "fleet.panel.hint": "长按手柄拖动，或选中手柄后点击槽位。",
+  "fleet.panel.cancel": "取消",
+  "fleet.panel.allAgents": "所有 Agents · {count}",
+  "fleet.panel.assign": "将 {name} 放入槽位",
+  "fleet.panel.exit": "退出面板",
+
   "fleet.chat.density.default": "默认",
   "fleet.chat.density.hint": "仅影响 Chat 内容；每项可单独重置。",
   "fleet.chat.density.lineHeight.label": "行高",

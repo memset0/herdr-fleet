@@ -1,5 +1,6 @@
 import { PaneTagButton, PaneTagLine } from "@/components/fleet-pane-tags";
 import { Star } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { operatorChosenName } from "../../../fleet/ui/pane-naming.ts";
 import { AgentIcon } from "@/components/agent-icon";
@@ -35,6 +36,9 @@ interface NativeAgentCardProps {
   current?: boolean;
   /** The row's identity, so the rail can put focus back on this row's star after a pin moved it. */
   rowKey?: string;
+  /** Panel mode can replace the pin/tag actions with one touch drag handle. */
+  actions?: ReactNode;
+  unavailable?: boolean;
 }
 
 /** The highest row a single keypress can address. Past it the badge would promise a shortcut. */
@@ -71,6 +75,8 @@ export function NativeAgentCard({
   density = "row",
   current = false,
   rowKey,
+  actions,
+  unavailable = false,
 }: NativeAgentCardProps) {
   useFleetLocale();
   const flat = density === "row";
@@ -80,7 +86,7 @@ export function NativeAgentCard({
   const Shell = flat ? "div" : Card;
   const project = agent.workspaceLabel || agent.workspaceId;
   const name = operatorChosenName(agent.paneLabel) ?? agent.tabLabel ?? agent.agent;
-  const doing = secondaryLine(agent, name);
+  const doing = unavailable ? ft("fleet.panel.unavailable") : secondaryLine(agent, name);
   const stamp = age === "seen" ? agent.lastSeenAt : age === "active" ? agent.lastActiveAt : undefined;
   const badge =
     index !== undefined && index < NATIVE_AGENT_SHORTCUT_LIMIT ? String(index + 1) : null;
@@ -104,10 +110,10 @@ export function NativeAgentCard({
           aria-current={current ? "page" : undefined}
           className="w-full text-left transition-transform active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
         >
-          <div data-slot="native-agent-body" className="flex min-h-14 min-w-0 flex-row items-center gap-3 px-3 py-2 pr-10">
+          <div data-slot="native-agent-body" className={cn("flex min-h-14 min-w-0 flex-row items-center gap-3 px-3 py-2", actions === undefined ? "pr-10" : "pr-14")}>
             <span data-slot="native-agent-avatar" className="relative size-8 shrink-0">
               <AgentIcon agent={agent.agent} className="size-8" glide="tile" />
-              <StatusDot status={agent.status} surface={current ? "bg-accent" : flat ? "bg-chrome" : "bg-card"}
+              <StatusDot status={agent.status} stale={unavailable} surface={current ? "bg-accent" : flat ? "bg-chrome" : "bg-card"}
                 className="absolute -bottom-0.5 -right-0.5 size-2.5" glide="dot" />
               {badge !== null && <span data-slot="native-agent-ordinal" aria-hidden
                 className="absolute -bottom-1.5 -left-1 text-[9px] font-medium leading-none tabular-nums text-muted-foreground">{badge}</span>}
@@ -134,7 +140,7 @@ export function NativeAgentCard({
             </span>
           </div>
           {/* The dot is colour only; its word is for a screen reader, after the row's own text. */}
-          <span className="sr-only">{statusLabel(agent.status)}</span>
+          <span className="sr-only">{unavailable ? ft("fleet.panel.unavailable") : statusLabel(agent.status)}</span>
           {unseen && <span className="sr-only">{t("home.row.unseen")}</span>}
         </button>
 
@@ -143,6 +149,7 @@ export function NativeAgentCard({
 
       {/* Sibling actions never invoke the row's open button. */}
       <div data-slot="native-agent-actions" className="absolute right-1 top-1 flex flex-col">
+        {actions ?? <>
         <Button
           data-slot="agent-pin"
           variant="ghost"
@@ -159,6 +166,7 @@ export function NativeAgentCard({
           <Star className={cn("size-3.5", pinned && "fill-current")} aria-hidden />
         </Button>
         <PaneTagButton agent={agent} />
+        </>}
       </div>
     </div>
   );

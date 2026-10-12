@@ -3,6 +3,27 @@
 // web/src/lib/i18n/messages/ carry none of these (FORK.toml fleet-runtime).
 
 export const en = {
+  "fleet.panel.layout": "Grid layout",
+  "fleet.panel.rows": "Rows",
+  "fleet.panel.columns": "Columns",
+  "fleet.panel.occupied": "Clear occupied slots outside the smaller grid first.",
+  "fleet.sync.label": "Pane sync",
+  "fleet.sync.join": "Join pane selection sync",
+  "fleet.sync.leave": "Leave pane selection sync",
+  "fleet.panel.title": "Agent panel",
+  "fleet.panel.slots": "Favorite slots",
+  "fleet.panel.slot": "Slot {index}",
+  "fleet.panel.clearSlot": "Clear slot {index}",
+  "fleet.panel.emptySlot": "Empty slot",
+  "fleet.panel.unavailable": "Unavailable",
+  "fleet.panel.conflict": "This slot changed elsewhere. Try again.",
+  "fleet.panel.chooseSlot": "Tap a slot to place this Agent.",
+  "fleet.panel.hint": "Hold the handle to drag, or select it then tap a slot.",
+  "fleet.panel.cancel": "Cancel",
+  "fleet.panel.allAgents": "All Agents · {count}",
+  "fleet.panel.assign": "Place {name} in a slot",
+  "fleet.panel.exit": "Exit panel",
+
   "fleet.chat.density.default": "Native",
   "fleet.chat.density.hint": "Chat content only; each setting resets separately.",
   "fleet.chat.density.lineHeight.label": "Line height",

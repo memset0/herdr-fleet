@@ -142,13 +142,13 @@ describe("findTool on win32, from a host that is not Windows", () => {
   // case-sensitive filesystem. Windows itself matches `.CMD` against `herdr.cmd`; the mechanism
   // under test is the suffix loop, not the case rule of the filesystem it runs on.
   const dir = mkdtempSync(join(tmpdir(), "collie-tools-"));
-  const shim = join(dir, "herdr.cmd");
+  const shim = join(dir, "fixture-tool.cmd");
   writeFileSync(shim, "@echo off\n");
   chmodSync(shim, 0o755);
   const env = { PATH: dir, PATHEXT: ".cmd" };
 
   test("a `.cmd` shim on PATH resolves", () => {
-    expect(findTool("herdr", env, HOME, hostFor("win32"))).toBe(shim);
+    expect(findTool("fixture-tool", env, HOME, hostFor("win32"))).toBe(shim);
   });
 
   // Bun's compiler writes `collie.exe`; a caller holding the bare absolute path means that file. The
@@ -163,7 +163,7 @@ describe("findTool on win32, from a host that is not Windows", () => {
   });
 
   test("the same shim is not matched on linux — there the bare name is the only candidate", () => {
-    expect(findTool("herdr", env, HOME, hostFor("linux"))).toBeNull();
+    expect(findTool("fixture-tool", env, HOME, hostFor("linux"))).toBeNull();
   });
 });
 

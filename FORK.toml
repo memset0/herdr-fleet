@@ -61,6 +61,19 @@ paths = [
   "fleet/**",
   "scripts/herdr-fleet.sh",
   "web/src/components/native-agent-card.tsx",
+  "web/src/components/fleet-agent-panel.tsx",
+  "web/src/components/fleet-agent-panel.css",
+  "web/src/components/fleet-agent-panel.test.tsx",
+  "web/src/components/fleet-panel-tile.tsx",
+  "web/src/components/fleet-panel-tile.test.tsx",
+  "web/src/components/fleet-view-experience.tsx",
+  "web/src/components/fleet-view-experience.test.tsx",
+  "web/src/lib/fleet-view-state.ts",
+  "web/src/lib/fleet-view-state.test.ts",
+  "web/src/lib/fleet-panel-inventory.ts",
+  "web/src/lib/fleet-panel-inventory.test.ts",
+  "web/src/lib/fleet-panel-navigation.test.ts",
+  "web/e2e/fleet-agent-panel.spec.ts",
   "web/src/components/fleet-chat-typography.tsx",
   "web/src/lib/fleet-chat-density.ts",
   "web/src/components/ui/numeric-setting-row.tsx",
@@ -73,6 +86,7 @@ paths = [
   "web/src/lib/fleet-mark-seen.test.ts",
   "web/src/lib/fleet-mark-seen.ts",
   "web/src/components/fleet-navigation-footer.tsx",
+  "web/src/components/fleet-navigation-footer.test.tsx",
   "web/src/components/fleet-context-menu.tsx",
   "web/src/components/fleet-host-actions.test.tsx",
   "web/src/components/fleet-row-actions.test.tsx",
@@ -371,10 +385,11 @@ verify = [
   "fleet/ui/terminal/pool.test.ts",
   "fleet/ui/terminal/clipboard.test.ts",
   "web/src/components/fleet-pane-route.test.tsx",
+  "web/e2e/fleet-agent-panel.spec.ts",
   "web/src/components/fleet-pane-surface-toggle.test.tsx",
   "web/src/components/fleet-terminal.test.tsx"
 ]
-reason = "The router names fork-owned surface and loader drop-ins while preserving its native route id. With the switch at its default the existing Pane loader runs; the terminal branch returns no mirror text, so polling does not read hidden output. Both surfaces now render the native DetailRoute frame through its separate body port, rather than replacing the whole frame and losing its header controls. Surface selection, terminal lifetime, geometry and clipboard behavior stay fork-owned, and the root connection banner continues to read the same no-mirror data shape. Collie 1.18 withholds a Pane's structural rows unless its last read succeeded (lib/liveness.ts), and only the mirror's read marks that; the fork-owned terminal surface marks its Pane live while its stream is open and not live when it closes, through upstream's own `markLive`/`markDead`, so the route and the loader need no change for it."
+reason = "The router also exposes the FleetPanelRoute panel entry; its fullscreen rendering and interactions live entirely in the owned shell, and the route has no duplicate loader. The router names fork-owned surface and loader drop-ins while preserving its native route id. With the switch at its default the existing Pane loader runs; the terminal branch returns no mirror text, so polling does not read hidden output. Both surfaces now render the native DetailRoute frame through its separate body port, rather than replacing the whole frame and losing its header controls. Surface selection, terminal lifetime, geometry and clipboard behavior stay fork-owned, and the root connection banner continues to read the same no-mirror data shape. Collie 1.18 withholds a Pane's structural rows unless its last read succeeded (lib/liveness.ts), and only the mirror's read marks that; the fork-owned terminal surface marks its Pane live while its stream is open and not live when it closes, through upstream's own `markLive`/`markDead`, so the route and the loader need no change for it."
 
 [[invasive]]
 id = "native-pane-content-port"
@@ -662,3 +677,43 @@ reviewed = "v1.19.0"
 paths = ["web/src/components/chat-cards.tsx#data-chat-inset"]
 verify = ["web/src/components/fleet-chat-typography.test.tsx", "web/src/components/chat-cards.test.tsx"]
 reason = "Native cards own their content padding, so an inert attribute marks only these areas; the owned shell supplies density styles when a reader chooses them. Existing layout, interactive minimum heights and stream paint-containment wrappers stay native."
+
+[[invasive]]
+id = "panel-navigation-ancestry-port"
+intent = "Place the optional fullscreen panel below the ordinary dashboard in native navigation history."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.19.0"
+paths = ["web/src/lib/nav.ts#FleetPanelRoute"]
+verify = ["web/src/lib/fleet-panel-navigation.test.ts", "web/e2e/fleet-agent-panel.spec.ts"]
+reason = "Native navigation owns the parent tree and cold-entry ancestry. Two branches name the panel's ordinary root parent; all panel behavior and UI stay in fork-owned modules. Ordinary routes and their history retain native semantics."
+
+[[invasive]]
+id = "portable-tool-lookup-fixture"
+intent = "Keep executable lookup validation independent of tools installed on the test host."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.19.0"
+paths = ["cli/tools.test.ts#fixture-tool.cmd"]
+verify = ["cli/tools.test.ts"]
+reason = "The Windows-shim fixture uses a synthetic executable name. The unchanged Linux negative assertion cannot accidentally discover a real installed executable in the fallback directories; production lookup behavior remains upstream's text."
+
+[[invasive]]
+id = "portable-loose-install-fixture"
+intent = "Exercise the intended loose-install ownership predicates when the test runner is root."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.19.0"
+paths = ["scripts/collie-cli.test.sh#chown 65534"]
+verify = ["scripts/collie-cli.test.sh"]
+reason = "The disposable loose-install fixture must be non-root-owned to meet the existing classification scenario. A root runner assigns a synthetic non-root owner to that one scratch directory. All assertions and production install classification remain unchanged."
+
+[[invasive]]
+id = "offline-page-fixture-setup"
+intent = "Build a fresh offline-page fixture before timing its interaction assertions."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.19.0"
+paths = ["web/src/routes/detail-offline.test.tsx#OfflineFixtureModules"]
+verify = ["web/src/routes/detail-offline.test.tsx"]
+reason = "After resetting modules and installing the empty fake database, setup preloads the same modules mountApp imports. The five-second test deadline measures offline navigation rather than first-time module transformation. All cold-page semantics, assertions and production behavior remain unchanged."

@@ -36,3 +36,9 @@ test("every member is widened through the existing API host parameter", async ()
   expect(calls[1]?.searchParams.get("host")).toBe("member-a");
   expect(inventory.map((pane) => pane.bindingId)).toEqual(["herdr:term_one", "herdr:term_other"]);
 });
+
+test("the lead listener being reachable does not make its disconnected multiplexer fresh", () => {
+  const doc = snapshot();
+  doc.bridge = "disconnected";
+  expect(readBindingInventory(doc)[0]?.fresh).toBe(false);
+});
