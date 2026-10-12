@@ -7,7 +7,7 @@ Provide a touch-friendly fullscreen control panel combining stable square favori
 ## Requirements
 
 ### Requirement: The panel is a separate fullscreen route
-The `/panel` route SHALL use the available viewport without normal header or sidebars. It SHALL contain square fixed-position slots and a scrollable queue of all Agents across all members and sessions. Portrait SHALL place the queue below the grid; landscape SHALL place it to the right. The queue SHALL retain a usable portion of the viewport regardless of grid dimensions. Row/column controls and an exit button returning to the normal root route SHALL live at the queue's end. Resize SHALL preserve occupied assignments or refuse with a visible explanation. Ordinary application URLs SHALL always render their ordinary interface, including after reload. The left navigation footer SHALL offer a small panel entry on the build-version row below the unchanged Collie/TTYD switch.
+The `/panel` route SHALL use the available viewport without normal header or sidebars. It SHALL contain square fixed-position slots and a scrollable queue of all Agents across all members and sessions. Portrait SHALL place the queue below the grid; landscape SHALL place it to the right. Portrait grid height SHALL follow its square content up to the space needed to retain a usable queue, and all remaining space SHALL belong to the queue. The queue SHALL retain a usable portion of the viewport regardless of grid dimensions. Row/column controls and an exit button returning to the normal root route SHALL live at the queue's end. Resize SHALL preserve occupied assignments or refuse with a visible explanation. Ordinary application URLs SHALL always render their ordinary interface, including after reload. The left navigation footer SHALL offer a small panel entry on the build-version row below the unchanged Collie/TTYD switch.
 
 #### Scenario: Operator enters and exits the panel
 - **WHEN** the operator opens `/panel`, scrolls to the queue's end and exits, or directly loads `/`
@@ -18,7 +18,7 @@ The `/panel` route SHALL use the available viewport without normal header or sid
 - **THEN** Fleet opens `/panel` and the surface switch retains its separate row
 
 ### Requirement: Dragging assigns and replaces positional favorites
-An operator SHALL be able to drag an Agent from the queue to any square slot, using a touch hold gesture or a pointer. Dropping SHALL replace that slot's previous favorite without deleting either Agent from the queue. Slots SHALL retain positions independently of status changes. A keyboard-accessible select-then-slot alternative SHALL provide the same assignment. Scrolling or cancelling a gesture SHALL NOT assign a slot or open a pane.
+An operator SHALL be able to drag an Agent from the queue to any square slot, using a touch hold gesture or a pointer from either its card or its assignment handle. An armed drag SHALL show a visible carried card and target feedback. Dropping SHALL replace that slot's previous favorite without deleting either Agent from the queue. Slots SHALL retain positions independently of status changes. A keyboard-accessible select-then-slot alternative SHALL provide the same assignment. Scrolling or cancelling a gesture SHALL NOT assign a slot or open a pane.
 
 #### Scenario: Occupied slot receives another Agent
 - **WHEN** an Agent is dropped onto an occupied slot
@@ -48,3 +48,10 @@ Fresh status transitions SHALL produce bounded, clearly visible feedback on the 
 #### Scenario: A working Agent finishes
 - **WHEN** a live slotted Agent transitions from working to done
 - **THEN** its square shows a green completion check and finite animation, or a static check with reduced motion, without moving the grid
+
+### Requirement: Agent queue matches native attention order
+The panel queue SHALL use the native Agent rail grouping, pinned-first order, section counts, per-section time order and displayed ages. Adding drag actions SHALL preserve ordinary card taps.
+
+#### Scenario: Same Agents appear in the rail and panel
+- **WHEN** both surfaces have the same inventory and native pins
+- **THEN** their headings, Agent order and displayed time semantics agree

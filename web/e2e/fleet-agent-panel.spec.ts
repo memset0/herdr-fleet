@@ -9,6 +9,8 @@ import { terminalReference } from "../../fleet/bindings/identity.ts";
 test.use({ serviceWorkers: "block" });
 test.skip(process.env.VITE_HERDR_FLEET !== "1", "needs a Fleet build");
 
+const ordinaryRows = (viewer: Page) => viewer.locator('[data-slot="native-agent-card"] button').filter({ hasText: "Example Agent" });
+
 async function world(pages: Page[]) {
   const snapshot = structuredClone(fixtureSnapshot);
   snapshot.agents = snapshot.agents.map((agent, index) => ({ ...agent, paneLabel: `Example Agent ${index + 1}`, status: "working",
@@ -50,6 +52,10 @@ test("portrait and landscape reserve the queue, resize at its bottom, and exit t
   const portraitGrid = await grid.boundingBox(), portraitQueue = await queue.boundingBox();
   expect(portraitQueue!.y).toBeGreaterThanOrEqual(portraitGrid!.y + portraitGrid!.height - 1);
   expect(portraitQueue!.height).toBeGreaterThan(250);
+  // The small grid consumes only its actual square content, not half the viewport.
+  const contentHeight = await page.locator(".fleet-panel-grid").evaluate((element) => element.getBoundingClientRect().height);
+  expect(portraitGrid!.height).toBeCloseTo(contentHeight + 16, 0);
+  expect(portraitQueue!.height).toBeGreaterThan(450);
   await page.screenshot({ path: info.outputPath("portrait.png") });
   await queue.getByRole("combobox", { name: "Rows", exact: true }).selectOption("6");
   await expect(page.locator("[data-panel-slot]")).toHaveCount(24);
@@ -117,4 +123,85 @@ test("drag replacement, shared selection without echoes, and reduced-motion comp
   expect(await feedback.evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
   await expect.poll(state.selections).toBe(1);
   await other.close();
+});
+
+test("real touch card hold drags without selecting, and a short tap selects", async ({ page, context }) => {
+  const state = await world([page]);
+  await page.goto("/panel");
+  await page.getByRole("button", { name: "Join pane selection sync" }).click();
+  await expect(page.getByRole("button", { name: "Leave pane selection sync" })).toBeVisible();
+  const card = page.locator('[data-slot="panel-agent-queue"] [data-slot="native-agent-card"]').nth(1).locator("button").first();
+  await card.scrollIntoViewIfNeeded();
+  const from = await card.boundingBox();
+  const target = page.getByRole("button", { name: "Slot 1", exact: true });
+  const to = await target.boundingBox();
+  const touch = await context.newCDPSession(page);
+  const start = { x: from!.x + 30, y: from!.y + from!.height / 2 };
+  const end = { x: to!.x + to!.width / 2, y: to!.y + to!.height / 2 };
+  await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
+  await expect(page.locator('[data-slot="panel-drag-preview"]')).toBeVisible();
+  for (let step = 1; step <= 10; step++) {
+    await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{
+      x: start.x + (end.x - start.x) * step / 10, y: start.y + (end.y - start.y) * step / 10,
+    }] });
+  }
+  await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await expect(target).toContainText("Example Agent 2");
+  await expect(page.locator('[data-slot="panel-drag-preview"]')).toHaveCount(0);
+  expect(state.selections()).toBe(0);
+  await card.tap();
+  await expect.poll(state.selections).toBe(1);
+  await expect(page).toHaveURL(/\/panel$/);
+  await page.getByRole("button", { name: "Place Example Agent 1 in a slot" }).tap();
+  const alternative = page.getByRole("button", { name: "Slot 2", exact: true });
+  await alternative.tap();
+  await expect(alternative).toContainText("Example Agent 1");
+  expect(state.selections()).toBe(1);
+  await touch.detach();
+});
+
+test("two ordinary joined viewers publish and follow in both directions", async ({ page, context }) => {
+  const other = await context.newPage();
+  const state = await world([page, other]);
+  for (const viewer of [page, other]) {
+    await viewer.setViewportSize({ width: 1600, height: 900 });
+    await viewer.goto("/");
+    await viewer.getByRole("button", { name: "Join pane selection sync" }).click();
+    await expect(viewer.getByRole("button", { name: "Leave pane selection sync" })).toBeVisible();
+  }
+  await ordinaryRows(page).nth(0).click();
+  await expect(other).toHaveURL(/\/pane\/w1%3Ap1/);
+  await expect.poll(state.selections).toBe(1);
+  await ordinaryRows(other).nth(1).click();
+  await expect(page).toHaveURL(/\/pane\/w2%3Ap1/);
+  const reads = state.reads();
+  await expect.poll(state.reads).toBeGreaterThan(reads + 2);
+  expect(state.selections()).toBe(2);
+  await other.close();
+});
+
+test("real touch scrolling before the hold keeps favorites and selection unchanged", async ({ page, context }) => {
+  const state = await world([page]);
+  const first = state.snapshot.agents[0]!;
+  state.snapshot.agents = Array.from({ length: 20 }, (_, index) => ({ ...first,
+    paneId: `w1:p${index + 1}`, bindingId: `herdr:term_${index}`, paneLabel: `Example Agent ${index + 1}` }));
+  await page.goto("/panel");
+  const queue = page.locator('[data-slot="panel-agent-queue"]');
+  await expect(queue.locator('[data-slot="native-agent-card"]')).toHaveCount(20);
+  const card = queue.locator('[data-slot="native-agent-card"] button').first();
+  await card.scrollIntoViewIfNeeded();
+  const from = await card.boundingBox();
+  const touch = await context.newCDPSession(page);
+  const before = await queue.evaluate((element) => element.scrollTop);
+  const point = { x: from!.x + 30, y: from!.y + from!.height / 2 };
+  await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+  await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ ...point, y: point.y - 40 }] });
+  await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ ...point, y: point.y - 100 }] });
+  await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await expect.poll(() => queue.evaluate((element) => element.scrollTop)).toBeGreaterThan(before);
+  await expect(page.locator('[data-slot="panel-drag-preview"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Slot 1", exact: true })).toContainText("Example Agent 1");
+  expect(state.selections()).toBe(0);
+  await expect(page).toHaveURL(/\/panel$/);
+  await touch.detach();
 });

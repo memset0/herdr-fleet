@@ -1,6 +1,7 @@
 import { act, fireEvent, render, within } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { NativeAgentRail } from "./native-agent-rail";
 import { FleetAgentPanel } from "./fleet-agent-panel";
 import type { HomeData } from "@/lib/loaders";
 import type { AgentView } from "@/lib/types";
@@ -17,7 +18,7 @@ const data: HomeData = { agents: [a, b], shellPanes: [], bridge: "connected", de
   ts: 1, scope: {}, viewAll: false, snoozedUntil: null, update: undefined, error: false, authError: false };
 const mutate = vi.fn<(command: ViewCommand) => Promise<boolean>>(async () => true);
 let state: ViewClientState;
-const inventory: PanelInventory = { agents: [a, b], panes: [a, b], fresh: new Set([terminalKey(terminalReference(a)!), terminalKey(terminalReference(b)!)]) };
+let inventory: PanelInventory = { agents: [a, b], panes: [a, b], fresh: new Set([terminalKey(terminalReference(a)!), terminalKey(terminalReference(b)!)]) };
 vi.mock("@/components/fleet-view-experience", () => ({ useFleetView: () => ({ client: { mutate }, state, inventory }), FleetSyncControl: () => null }));
 function mount() {
   const router = createMemoryRouter([{ path: "/panel", element: <FleetAgentPanel data={data} /> }, { path: "/", element: <div>Ordinary Fleet</div> }], { initialEntries: ["/panel"] });
@@ -25,6 +26,7 @@ function mount() {
 }
 beforeEach(() => {
   mutate.mockClear();
+  inventory = { agents: [a, b], panes: [a, b], fresh: new Set([terminalKey(terminalReference(a)!), terminalKey(terminalReference(b)!)]) };
   state = { joined: true, joining: false, available: true, busy: false, error: null, snapshot: {
     generation: "example", revision: 0, selection: null, rows: 3, columns: 4,
     slots: Array.from({ length: 12 }, (_, index) => index === 0 ? terminalReference(a) : null),
@@ -34,8 +36,12 @@ afterEach(() => vi.useRealTimers());
 
 it("keyboard assignment replaces one square and keeps both native queue rows", async () => {
   const { container } = mount();
-  fireEvent.click(within(container).getByRole("button", { name: "Place Agent B in a slot" }));
-  fireEvent.click(within(container).getByRole("button", { name: "Slot 1" }));
+  await act(async () => {
+    fireEvent.click(within(container).getByRole("button", { name: "Place Agent B in a slot" }));
+  });
+  await act(async () => {
+    fireEvent.click(within(container).getByRole("button", { name: "Slot 1" }));
+  });
   expect(mutate).toHaveBeenCalledWith({ type: "slot", index: 0, expected: terminalReference(a), terminal: terminalReference(b), rows: 3, columns: 4 });
   expect(container.querySelectorAll('[data-slot="panel-agent-queue"] [data-slot="native-agent-card"]')).toHaveLength(2);
 });
@@ -93,4 +99,16 @@ it("a touch hold can replace a slot and an armed cancellation cannot", () => {
     expect(mutate).toHaveBeenCalledWith({ type: "slot", index: 0, expected: terminalReference(a), terminal: terminalReference(b), rows: 3, columns: 4 });
     expect(router.state.location.pathname).toBe("/panel");
   } finally { Object.defineProperty(document, "elementFromPoint", { configurable: true, value: original }); }
+});
+
+it("panel uses the rail's grouped rows and timestamp order", () => {
+  const older = { ...a, lastActiveAt: 1000 };
+  const newer = { ...b, lastActiveAt: 2000 };
+  inventory = { ...inventory, agents: [older, newer], panes: [older, newer] };
+  const panel = mount();
+  const rail = render(<NativeAgentRail agents={[older, newer]} bridge="connected" onOpen={() => {}} />);
+  const order = (container: HTMLElement) => [...container.querySelectorAll<HTMLElement>('[data-slot="native-agent-card"]')].map((row) => row.dataset.rowKey);
+  expect(order(panel.container)).toEqual(order(rail.container));
+  expect(order(panel.container)).toEqual(["\u0000\u0000p2", "\u0000\u0000p1"]);
+  expect(within(panel.container).getByText("Working")).toBeInTheDocument();
 });

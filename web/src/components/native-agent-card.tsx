@@ -1,6 +1,6 @@
 import { PaneTagButton, PaneTagLine } from "@/components/fleet-pane-tags";
 import { Star } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactNode, HTMLAttributes } from "react";
 
 import { operatorChosenName } from "../../../fleet/ui/pane-naming.ts";
 import { AgentIcon } from "@/components/agent-icon";
@@ -14,7 +14,7 @@ import { statusLabel, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 
-interface NativeAgentCardProps {
+export interface NativeAgentCardProps {
   agent: AgentView;
   onOpen: () => void;
   /** Whether this device pinned the pane — Collie's own pin, which the star toggles. */
@@ -39,6 +39,7 @@ interface NativeAgentCardProps {
   /** Panel mode can replace the pin/tag actions with one touch drag handle. */
   actions?: ReactNode;
   unavailable?: boolean;
+  interaction?: HTMLAttributes<HTMLDivElement>;
 }
 
 /** The highest row a single keypress can address. Past it the badge would promise a shortcut. */
@@ -77,6 +78,7 @@ export function NativeAgentCard({
   rowKey,
   actions,
   unavailable = false,
+  interaction,
 }: NativeAgentCardProps) {
   useFleetLocale();
   const flat = density === "row";
@@ -92,7 +94,7 @@ export function NativeAgentCard({
     index !== undefined && index < NATIVE_AGENT_SHORTCUT_LIMIT ? String(index + 1) : null;
 
   return (
-    <div data-slot="native-agent-card" data-row-key={rowKey} className="relative min-w-0">
+    <div {...interaction} data-slot="native-agent-card" data-row-key={rowKey} className="relative min-w-0">
       <Shell
         data-agent-surface=""
         className={cn(

@@ -28,6 +28,14 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 - **Microphone keyboard commands follow the phone engine and its failed clip.** An on-phone engine counts as available, and every command refuses while a clip the phone could not transcribe waits for Send to host or the bin.
 
+## [3.15.7] - 2026-10-12
+
+Lead-only frontend release: rebuild Fleet on the lead; members need no redeployment or restart.
+
+### Fixed
+
+- **Align touch panel lists, gestures, layout and selection sharing.** Reuse grouped Agent rows, carry long-press drags, fit the grid to content and publish ordinary Pane choices safely. ([0880b235f](https://github.com/memset0/herdr-fleet/commit/0880b235f))
+
 ## [3.15.6] - 2026-10-12
 
 Lead-only release: rebuild and restart Fleet on the lead; members need no redeployment.

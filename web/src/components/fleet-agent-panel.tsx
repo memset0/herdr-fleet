@@ -4,13 +4,14 @@ import { PANEL_SLOT_COUNT } from "../../../fleet/view-state/document.ts";
 import { resolveTerminalReference, terminalKey, terminalReference, type TerminalRef } from "../../../fleet/bindings/identity.ts";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { NativeAgentCard } from "@/components/native-agent-card";
+import type { NativeAgentCardProps } from "@/components/native-agent-card";
+import { NativeAgentRail } from "@/components/native-agent-rail";
 import { FleetPanelTile } from "@/components/fleet-panel-tile";
 import { useFleetView, FleetSyncControl } from "@/components/fleet-view-experience";
 import { resolvePanelTerminal } from "@/lib/fleet-panel-inventory";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 import { paneName } from "@/lib/pane-name";
-import { hostName, paneRowKey } from "@/lib/hosts";
+import { hostName } from "@/lib/hosts";
 import { panePath } from "@/lib/nav";
 import type { HomeData } from "@/lib/loaders";
 import type { AgentView } from "@/lib/types";
@@ -18,7 +19,7 @@ import { useNav } from "@/hooks/use-nav";
 import { cn } from "@/lib/utils";
 import "./fleet-agent-panel.css";
 
-interface Drag { pointer: number; x: number; y: number; ref: TerminalRef; active: boolean; touch: boolean }
+interface Drag { pointer: number; x: number; y: number; ref: TerminalRef; active: boolean; touch: boolean; source: HTMLElement; name: string }
 
 export function FleetAgentPanel({ data }: { data: HomeData }) {
   useFleetLocale();
@@ -26,19 +27,25 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
   const nav = useNav();
   const [chosen, setChosen] = useState<TerminalRef | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  const [carried, setCarried] = useState<{ x: number; y: number; name: string } | null>(null);
+  const suppressClick = useRef(false);
   const root = useRef<HTMLDivElement>(null);
   const queue = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const hold = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const frame = useRef<number | undefined>(undefined);
   const cleanup = () => { clearTimeout(hold.current); if (frame.current !== undefined) cancelAnimationFrame(frame.current); drag.current = null; };
-  useEffect(() => () => { clearTimeout(hold.current); if (frame.current !== undefined) cancelAnimationFrame(frame.current); }, []);
+  useEffect(() => {
+    const block = (event: TouchEvent) => { if (drag.current?.active) event.preventDefault(); };
+    document.addEventListener("touchmove", block, { passive: false, capture: true });
+    return () => { clearTimeout(hold.current); if (frame.current !== undefined) cancelAnimationFrame(frame.current); document.removeEventListener("touchmove", block, true); };
+  }, []);
   if (!view) return null;
   const { client, state, inventory } = view;
   const slots = state.snapshot?.slots ?? Array.from({ length: PANEL_SLOT_COUNT }, () => null);
   const rows = state.snapshot?.rows ?? 3, columns = state.snapshot?.columns ?? 4;
   // SAFETY: React CSSProperties permits custom properties at runtime; this numeric grid variable is owned here.
-  const gridStyle = { "--panel-columns": columns } as CSSProperties;
+  const gridStyle = { "--panel-columns": columns, "--panel-rows": rows } as CSSProperties;
   const live = (agent: AgentView) => {
     const ref = terminalReference(agent);
     return ref !== null && resolvePanelTerminal(ref, inventory).status === "resolved";
@@ -77,38 +84,61 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
         if (active.x > area.right - 28) grid.scrollLeft += 10;
       }
     }
+    setCarried({ x: active.x, y: active.y, name: active.name });
     setHovered(targetAt(active.x, active.y));
     frame.current = requestAnimationFrame(scrollDrag);
   };
-  const begin = (event: ReactPointerEvent<HTMLButtonElement>, agent: AgentView) => {
+  const begin = (event: ReactPointerEvent<HTMLElement>, agent: AgentView) => {
     if (event.button !== 0 || !live(agent) || !state.available || state.busy) return;
     const ref = terminalReference(agent);
     if (!ref) return;
-    cleanup();
-    drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, ref, active: false, touch: event.pointerType !== "mouse" };
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    const arm = () => { if (drag.current) { drag.current.active = true; setChosen(ref); scrollDrag(); } };
+    cleanup(); suppressClick.current = false;
+    drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, ref, active: false, touch: event.pointerType !== "mouse", source: event.currentTarget, name: paneName(agent) };
+    const arm = () => { if (drag.current) {
+      drag.current.active = true; suppressClick.current = true;
+      drag.current.source.setPointerCapture?.(drag.current.pointer);
+      setChosen(null); scrollDrag();
+    } };
     if (drag.current.touch) hold.current = setTimeout(arm, 350);
   };
-  const move = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const move = (event: ReactPointerEvent<HTMLElement>) => {
     const active = drag.current;
     if (!active || event.pointerId !== active.pointer) return;
-    if (!active.active && Math.hypot(event.clientX - active.x, event.clientY - active.y) > 8) {
-      if (active.touch) { cleanup(); return; }
-      active.active = true; setChosen(active.ref); scrollDrag();
+    if (!active.active && Math.hypot(event.clientX - active.x, event.clientY - active.y) > 16) {
+      if (active.touch) { suppressClick.current = true; cleanup(); return; }
+      active.active = true; suppressClick.current = true; active.source.setPointerCapture?.(active.pointer); setChosen(null); scrollDrag();
     }
     active.x = event.clientX; active.y = event.clientY;
     if (active.active) { event.preventDefault(); setHovered(targetAt(active.x, active.y)); }
   };
-  const finish = (event: ReactPointerEvent<HTMLButtonElement>, cancel = false) => {
+  const finish = (event: ReactPointerEvent<HTMLElement>, cancel = false) => {
     const active = drag.current;
     if (!active || active.pointer !== event.pointerId) return;
     const target = active.active && !cancel ? targetAt(event.clientX, event.clientY) : null;
-    cleanup(); setHovered(null);
+    cleanup(); setHovered(null); setCarried(null);
+    suppressClick.current = active.active || cancel;
     if (cancel || target !== null) setChosen(null);
-    // A tap on the handle arms select-then-slot without opening the Pane.
-    else if (!active.active) setChosen(active.ref);
+    // Handle taps choose through onClick; pointer completion must not toggle twice.
     if (target !== null) void assign(target, active.ref);
+  };
+
+  const rowPresentation = (agent: AgentView): Pick<NativeAgentCardProps, "actions" | "unavailable" | "interaction" | "current"> => {
+    const ref = terminalReference(agent), available = live(agent);
+    const picked = ref && chosen && terminalKey(ref) === terminalKey(chosen);
+    const selected = ref && state.joined && state.snapshot?.selection && terminalKey(ref) === terminalKey(state.snapshot.selection);
+    return { unavailable: !available, current: !!selected,
+      interaction: {
+        onPointerDown: (event) => begin(event, agent), onPointerMove: move,
+        onPointerUp: (event) => finish(event), onPointerCancel: (event) => finish(event, true),
+        onLostPointerCapture: (event) => finish(event, true),
+        onContextMenu: (event) => event.preventDefault(),
+        onClickCapture: (event) => { if (suppressClick.current && event.detail !== 0) { event.preventDefault(); event.stopPropagation(); suppressClick.current = false; } },
+      },
+      actions: <Button variant="ghost" size="icon" data-panel-handle="" aria-pressed={!!picked} aria-label={ft("fleet.panel.assign", { name: paneName(agent) })}
+        disabled={!available || !state.available || state.busy} className={cn("touch-none size-11", picked && "bg-primary/10 text-primary ring-1 ring-inset ring-primary/40")}
+        onClick={() => setChosen(picked ? null : ref)}><GripVertical className="size-5" /></Button>,
+    };
+
   };
 
   return <div ref={root} data-slot="fleet-agent-panel" className="flex h-(--app-h) w-full flex-col overflow-hidden bg-background pt-[env(safe-area-inset-top)]">
@@ -116,7 +146,7 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
       <h1 className="text-sm font-medium">{ft("fleet.panel.title")}</h1>
       <FleetSyncControl />
     </div>
-    <div className="fleet-panel-body">
+    <div className="fleet-panel-body" style={gridStyle}>
     <div className="fleet-panel-grid-region">
       <div role="group" aria-label={ft("fleet.panel.slots")} className="fleet-panel-grid" style={gridStyle}>
         {slots.map((ref, index) => {
@@ -145,24 +175,8 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
         {chosen && <Button variant="ghost" size="sm" onClick={() => setChosen(null)}>{ft("fleet.panel.cancel")}</Button>}
       </div>
       <h2 className="py-3 text-xs font-medium">{ft("fleet.panel.allAgents", { count: inventory.agents.length })}</h2>
-      <div className="flex flex-col divide-y divide-rule">
-        {inventory.agents.map((agent) => {
-          const ref = terminalReference(agent), available = live(agent);
-          const picked = ref && chosen && terminalKey(ref) === terminalKey(chosen);
-          const selected = ref && state.joined && state.snapshot?.selection && terminalKey(ref) === terminalKey(state.snapshot.selection);
-          return <div key={paneRowKey(agent)} className={cn("relative py-1", !available && "opacity-50")}>
-            <NativeAgentCard agent={agent} unavailable={!available} onOpen={() => open(agent)} pinned={false} onPinToggle={() => {}} current={!!selected}
-              actions={<Button variant="ghost" size="icon" aria-pressed={!!picked} aria-label={ft("fleet.panel.assign", { name: paneName(agent) })}
-              disabled={!available || !state.available || state.busy} className={cn("touch-none size-11", picked && "bg-primary/10 text-primary ring-1 ring-inset ring-primary/40")}
-              onPointerDown={(event) => begin(event, agent)} onPointerMove={move}
-              onPointerUp={(event) => finish(event)} onPointerCancel={(event) => finish(event, true)}
-              onLostPointerCapture={(event) => finish(event, true)}
-              onContextMenu={(event) => event.preventDefault()}
-              onClick={(event) => { if (event.detail === 0) setChosen(picked ? null : ref); }}><GripVertical className="size-5" /></Button>} />
-            {!available && <span className="sr-only">{ft("fleet.panel.unavailable")}</span>}
-          </div>;
-        })}
-      </div>
+      <NativeAgentRail agents={[...inventory.agents]} bridge={data.bridge} tabs={data.allTabs ?? data.tabs} servers={data.servers}
+        onOpen={open} rowPresentation={rowPresentation} />
       <div className="flex flex-col gap-3 border-t border-rule py-6">
         <h2 className="text-xs font-medium">{ft("fleet.panel.layout")}</h2>
         <div className="flex gap-3">{(["rows", "columns"] as const).map((dimension) => <label key={dimension} className="flex min-w-0 flex-1 flex-col gap-1 text-xs">
@@ -177,5 +191,8 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
       </div>
     </div>
     </div>
+    {carried && <div data-slot="panel-drag-preview" className="fleet-panel-drag-preview" style={{ left: carried.x, top: carried.y }}>
+      <GripVertical className="size-4 shrink-0" /><span className="truncate">{carried.name}</span>
+    </div>}
   </div>;
 }
