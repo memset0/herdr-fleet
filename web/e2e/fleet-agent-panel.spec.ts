@@ -1,3 +1,5 @@
+import type { AddressInfo } from "node:net";
+import { createServer, type ServerResponse } from "node:http";
 import { expect, test, type Page } from "@playwright/test";
 import { fixtureSnapshot } from "@/test/handlers";
 import { installApiStub } from "./fixtures/api";
@@ -9,6 +11,9 @@ import { terminalReference } from "../../fleet/bindings/identity.ts";
 
 test.use({ serviceWorkers: "block" });
 test.skip(process.env.VITE_HERDR_FLEET !== "1", "needs a Fleet build");
+
+const cleanup: (() => Promise<void>)[] = [];
+test.afterEach(async () => { for (const stop of cleanup.splice(0)) await stop(); });
 
 const ordinaryRows = (viewer: Page) => viewer.locator('[data-slot="native-agent-card"] button').filter({ hasText: "Example Agent" });
 
@@ -23,8 +28,22 @@ async function world(pages: Page[]) {
   const presence = createViewPresence();
   let selections = 0;
   let reads = 0, snapshotReads = 0;
+  const receivers = new Set<ServerResponse>();
+  const server = createServer((_request, response) => {
+    reads += 1;
+    response.writeHead(200, { "content-type": "text/event-stream", "access-control-allow-origin": "*" });
+    response.write(`data: ${JSON.stringify(view)}\n\n`);
+    receivers.add(response);
+    response.on("close", () => receivers.delete(response));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  // SAFETY: numeric TCP loopback binding returns AddressInfo, never a pipe path.
+  const address = server.address() as AddressInfo | null;
+  if (!address) throw new Error("No fixture address");
+  cleanup.push(() => new Promise<void>((resolve) => { for (const receiver of receivers) receiver.end(); server.close(() => resolve()); }));
   for (const page of pages) {
     await installApiStub(page);
+    await page.route("**/fleet/api/view-stream", (route) => route.fulfill({ status: 307, headers: { location: `http://127.0.0.1:${address.port}/stream` } }));
     await page.route("**/fleet/api/view-presence", async (route) => {
       const pulse = JSON.parse(route.request().postData() ?? "{}");
       const active = presence.pulse("example", pulse.id, pulse.sequence, pulse.active);
@@ -41,10 +60,11 @@ async function world(pages: Page[]) {
         if (command.type === "layout") Object.assign(view, { rows: command.rows, columns: command.columns,
           slots: Array.from({ length: command.rows * command.columns }, (_, index) => view.slots[index] ?? null) });
       }
+      for (const receiver of receivers) receiver.write(`data: ${JSON.stringify(view)}\n\n`);
       await route.fulfill({ json: view });
     });
   }
-  return { snapshot, selections: () => selections, reads: () => reads, snapshotReads: () => snapshotReads };
+  return { snapshot, selections: () => selections, disconnect: () => { for (const receiver of receivers) receiver.end(); }, receivers: () => receivers.size, reads: () => reads, snapshotReads: () => snapshotReads };
 }
 
 test("portrait and landscape reserve the queue, resize at its bottom, and exit to ordinary Fleet", async ({ page }, info) => {
@@ -95,8 +115,6 @@ test("a normal joined viewer follows the panel's central Pane choice exactly onc
   }
   await page.locator('[data-slot="panel-agent-queue"] [data-slot="native-agent-card"]').nth(1).locator("button").first().click();
   await expect(other).toHaveURL(/\/pane\/w2%3Ap1\?s=default$/);
-  const reads = state.reads();
-  await expect.poll(state.reads).toBeGreaterThanOrEqual(reads + 2);
   expect(state.selections()).toBe(1);
   await expect(page).toHaveURL(/\/panel$/);
   await other.close();
@@ -184,8 +202,6 @@ test("two ordinary joined viewers publish and follow in both directions", async 
   await expect.poll(state.selections).toBe(1);
   await ordinaryRows(other).nth(1).click();
   await expect(page).toHaveURL(/\/pane\/w2%3Ap1/);
-  const reads = state.reads();
-  await expect.poll(state.reads).toBeGreaterThan(reads + 2);
   expect(state.selections()).toBe(2);
   await other.close();
 });
@@ -253,14 +269,41 @@ test("independent controller counts other joined tabs and broadcasts without nav
     await viewer.goto("/");
     await viewer.getByRole("button", { name: "Join pane selection sync" }).click();
   }
-  await expect(count).toHaveText("Active sync tabs: 2");
+  await expect(count).toHaveText("Active sync tabs: 2", { timeout: 8000 });
   await page.getByRole("button", { name: "Slot 1", exact: true }).click();
   for (const viewer of [first, second]) await expect(viewer).toHaveURL(/\/pane\/w1%3Ap1/);
   await expect(page).toHaveURL(/\/panel$/);
   expect(state.selections()).toBe(1);
   await first.getByRole("button", { name: "Leave pane selection sync" }).click();
-  await expect(count).toHaveText("Active sync tabs: 1");
+  await expect(count).toHaveText("Active sync tabs: 1", { timeout: 8000 });
   await second.close();
-  await expect(count).toHaveText("Active sync tabs: 0", { timeout: 20_000 });
+  await expect(count).toHaveText("Active sync tabs: 0", { timeout: 25_000 });
   await first.close();
+});
+
+
+test("push follows promptly while panel inventory is slow and reconnects without echo", async ({ page, context }) => {
+  const other = await context.newPage();
+  const state = await world([page, other]);
+  await page.goto("/panel");
+  await other.setViewportSize({ width: 1600, height: 900 });
+  await other.goto("/pane/w1%3Ap1?s=default");
+  await other.getByRole("button", { name: "Join pane selection sync" }).click();
+  await expect.poll(state.receivers).toBe(2);
+  await expect(page.getByRole("button", { name: "Slot 1", exact: true })).toBeEnabled();
+  let started = false;
+  await page.route("**/api/snapshot*", async (route) => { started = true; await new Promise((resolve) => setTimeout(resolve, 4000)); await route.fulfill({ json: state.snapshot }); });
+  await expect.poll(() => started).toBe(true);
+  const before = Date.now();
+  await page.locator('[data-slot="panel-agent-queue"] [data-slot="native-agent-card"]').nth(1).locator("button").first().click();
+  await expect(other).toHaveURL(/\/pane\/w2%3Ap1/, { timeout: 1200 });
+  expect(Date.now() - before).toBeLessThan(1200);
+  state.disconnect();
+  await expect.poll(state.receivers).toBe(0);
+  await expect.poll(state.receivers).toBe(2);
+  await expect(page.getByRole("button", { name: "Slot 1", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Slot 1", exact: true }).click();
+  await expect(other).toHaveURL(/\/pane\/w1%3Ap1/, { timeout: 1200 });
+  expect(state.selections()).toBe(2);
+  await other.close();
 });

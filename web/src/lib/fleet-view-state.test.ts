@@ -93,3 +93,44 @@ it("presence counts do not require joining or publish a selection and use distin
   expect(pulses.map((pulse) => pulse.sequence)).toEqual([1, 2, 1]);
   expect(fetcher.mock.calls.every(([url]) => String(url).endsWith("/view-presence"))).toBe(true);
 });
+
+it("pushed snapshots beat delayed HTTP replies and layout sequences do not roll back", async () => {
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let finish: (response: Response) => void = () => {};
+  const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+    if (String(url).endsWith("view-stream")) return new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value; } }), { headers: { "content-type": "text/event-stream" } });
+    if (init?.method === "POST") return new Promise<Response>((resolve) => { finish = resolve; });
+    return Response.json({ ...snapshot(a, 1), sequence: 1 });
+  });
+  const client = createViewClient(fetcher);
+  await client.refresh();
+  const stop = client.connect();
+  const push = (selection: TerminalRef, revision: number, sequence: number) => controller?.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ ...snapshot(selection, revision), sequence })}\n\n`));
+  await vi.waitFor(() => expect(controller).toBeDefined());
+  push(a, 1, 1); await vi.waitFor(() => expect(client.getSnapshot().available).toBe(true));
+  const write = client.mutate({ type: "select", terminal: a });
+  await vi.waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+  push(b, 3, 4); await vi.waitFor(() => expect(client.getSnapshot().snapshot?.selection).toEqual(b));
+  finish(Response.json({ ...snapshot(a, 2), sequence: 2 })); await write;
+  expect(client.getSnapshot().snapshot?.selection).toEqual(b);
+  push(a, 3, 3); await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(client.getSnapshot().snapshot?.selection).toEqual(b);
+  stop(); controller?.close();
+});
+
+it("a failed command reconnects so a healthy stream does not remain permanently unavailable", async () => {
+  const fetcher = vi.fn<typeof fetch>(async (url, init) => {
+    if (String(url).endsWith("view-stream")) return new Response(new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(snapshot())}\n\n`));
+      init?.signal?.addEventListener("abort", () => { try { controller.close(); } catch { /* Already closed. */ } }, { once: true });
+    } }), { headers: { "content-type": "text/event-stream" } });
+    return new Response("{}", { status: 503 });
+  });
+  const client = createViewClient(fetcher), stop = client.connect();
+  try {
+    await vi.waitFor(() => expect(client.getSnapshot().available).toBe(true));
+    expect(await client.mutate({ type: "select", terminal: a })).toBe(false);
+    await vi.waitFor(() => expect(client.getSnapshot().available).toBe(true), { timeout: 2500 });
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("view-stream"))).toHaveLength(2);
+  } finally { stop(); }
+});

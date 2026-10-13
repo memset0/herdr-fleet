@@ -82,3 +82,16 @@ test("the route rejects malformed, oversized and unavailable references", async 
   expect(parseViewCommand({ type: "slot", index: -1, terminal: { ...a }, expected: null, rows: 3, columns: 4 })).toBeNull();
   expect(parseViewCommand({ type: "layout", rows: 9, columns: 1, expectedRows: 3, expectedColumns: 4 })).toBeNull();
 });
+
+test("only successful mutations notify and a broken subscriber cannot fail a committed write", async () => {
+  const store = createViewStateStore("example.json", memory());
+  const sequences: number[] = [];
+  const stop = store.subscribe((snapshot) => sequences.push(snapshot.sequence!));
+  store.subscribe(() => { throw new Error("Disconnected receiver"); });
+  await store.mutate({ type: "select", terminal: a }, valid);
+  await store.mutate(slot(0, a), valid);
+  await store.mutate(slot(0, b), valid);
+  expect(sequences).toEqual([1, 2]);
+  stop(); await store.mutate({ type: "select", terminal: b }, valid);
+  expect(sequences).toEqual([1, 2]);
+});

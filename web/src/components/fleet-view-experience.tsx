@@ -43,6 +43,23 @@ export function FleetViewExperience({ data, children }: { data: HomeData; childr
 
   useEffect(() => {
     if (!panel && !state.joined) return;
+    let disconnect: (() => void) | undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const withdraw = () => { disconnect?.(); disconnect = undefined; clearInterval(heartbeat); void client.presence(false, true); };
+    const resume = () => {
+      if (document.hidden) { withdraw(); return; }
+      disconnect?.(); disconnect = client.connect();
+      const pulse = () => void client.presence(client.getSnapshot().joined && !panel);
+      pulse(); clearInterval(heartbeat); heartbeat = setInterval(pulse, 5000);
+    };
+    document.addEventListener("visibilitychange", resume);
+    document.addEventListener("pagehide", withdraw);
+    resume();
+    return () => { document.removeEventListener("visibilitychange", resume); document.removeEventListener("pagehide", withdraw); withdraw(); };
+  }, [client, panel, state.joined]);
+
+  useEffect(() => {
+    if (!panel && !state.joined) return;
     let stopped = false;
     let active: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -58,7 +75,7 @@ export function FleetViewExperience({ data, children }: { data: HomeData; childr
           if (!stopped && !controller.signal.aborted) setInventory({ ...previous.current, fresh: new Set() });
         }
       };
-      await Promise.all([client.refresh(), load(), client.presence(client.getSnapshot().joined && !panel)]);
+      await load();
       if (active === controller) active = null;
       if (!stopped) timer = setTimeout(() => void poll(), 1500);
       // Visibility may return while the aborted request is still unwinding.
@@ -66,14 +83,12 @@ export function FleetViewExperience({ data, children }: { data: HomeData; childr
     };
     const visibility = () => {
       clearTimeout(timer);
-      if (document.hidden) { active?.abort(); void client.presence(false, true); }
+      if (document.hidden) active?.abort();
       else void poll();
     };
-    const withdraw = () => { void client.presence(false, true); };
-    document.addEventListener("pagehide", withdraw);
     document.addEventListener("visibilitychange", visibility);
     void poll();
-    return () => { stopped = true; clearTimeout(timer); active?.abort(); document.removeEventListener("visibilitychange", visibility); document.removeEventListener("pagehide", withdraw); withdraw(); };
+    return () => { stopped = true; clearTimeout(timer); active?.abort(); document.removeEventListener("visibilitychange", visibility); };
   }, [client, panel, state.joined]);
 
   useEffect(() => {

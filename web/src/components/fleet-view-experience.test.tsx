@@ -11,6 +11,23 @@ import { scopeFromUrl } from "@/lib/scope";
 
 beforeEach(() => server.use(http.post("*/fleet/api/view-presence", () => HttpResponse.json({ active: 0 }))));
 
+function installPush(snapshot: () => import("../../../fleet/view-state/document.ts").ViewSnapshot | null) {
+  const controllers = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  const encode = () => new TextEncoder().encode(`data: ${JSON.stringify(snapshot())}\n\n`);
+  const publish = () => { for (const controller of controllers) { try { if (snapshot() === null) controller.close(); else controller.enqueue(encode()); } catch { /* Closed reader. */ } } };
+  server.use(http.get("*/fleet/api/view-stream", ({ request }) => {
+    if (snapshot() === null) return HttpResponse.json({}, { status: 503 });
+    let owner: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { owner = controller; controllers.add(controller); controller.enqueue(encode());
+        request.signal.addEventListener("abort", () => { controllers.delete(controller); try { controller.close(); } catch { /* Cancelled. */ } }, { once: true }); },
+      cancel() { controllers.delete(owner); },
+    });
+    return new HttpResponse(body, { headers: { "content-type": "text/event-stream" } });
+  }));
+  return { publish };
+}
+
 const a: AgentView = { paneId: "p1", workspaceId: "w1", workspaceLabel: "Example", workspaceNumber: 1, tabId: "t1",
   agent: "codex", status: "working", cwd: "/example", focused: false, bindingId: "herdr:term_a", bindingSession: "default", session: "default" };
 const b = { ...a, paneId: "p2", bindingId: "herdr:term_b" };
@@ -19,6 +36,7 @@ vi.mock("@/lib/fleet-panel-inventory", async (original) => ({ ...await original<
 
 it("reconnect follows an unchanged central revision after offline local navigation without echo", async () => {
   let online = true, writes = 0;
+  const push = installPush(() => online ? { generation: "example", revision: 1, selection: terminalReference(a), rows: 3, columns: 4, slots: Array(12).fill(null) } : null);
   server.use(http.get("*/fleet/api/view-state", () => online ? HttpResponse.json({ generation: "example", revision: 1,
     selection: terminalReference(a), rows: 3, columns: 4, slots: Array(12).fill(null) }) : HttpResponse.json({ error: "unavailable" }, { status: 503 })),
   http.post("*/fleet/api/view-state", () => { writes += 1; return HttpResponse.json({}); }));
@@ -33,7 +51,7 @@ it("reconnect follows an unchanged central revision after offline local navigati
   const { container } = render(<RouterProvider router={router} />);
   fireEvent.click(within(container).getByRole("button", { name: "Join pane selection sync" }));
   await waitFor(() => expect(within(container).getByRole("button", { name: "Leave pane selection sync" })).toBeInTheDocument());
-  online = false;
+  online = false; push.publish();
   await waitFor(() => expect(within(container).getByText("Unavailable")).toBeInTheDocument(), { timeout: 3500 });
   await router.navigate("/pane/p2?s=default");
   online = true;
@@ -44,6 +62,7 @@ it("reconnect follows an unchanged central revision after offline local navigati
 it("root shell publishes ordinary child Pane navigation before following the previous choice", async () => {
   let selection = terminalReference(a), revision = 1;
   const writes: unknown[] = [];
+  installPush(() => ({ generation: "example", revision, selection, rows: 3, columns: 4, slots: Array(12).fill(null) }));
   server.use(http.get("*/fleet/api/view-state", () => HttpResponse.json({ generation: "example", revision,
     selection, rows: 3, columns: 4, slots: Array(12).fill(null) })),
   http.post("*/fleet/api/view-state", async ({ request }) => {
@@ -71,6 +90,7 @@ it("root shell publishes ordinary child Pane navigation before following the pre
 
 it("a viewer returning from the background follows the latest choice without echo", async () => {
   let hidden = false, reads = 0, writes = 0, selection = terminalReference(a), revision = 1;
+  installPush(() => { reads += 1; return { generation: "example", revision, selection, rows: 3, columns: 4, slots: Array(12).fill(null) }; });
   const visibility = vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
   server.use(http.get("*/fleet/api/view-state", () => { reads += 1; return HttpResponse.json({ generation: "example", revision,
     selection, rows: 3, columns: 4, slots: Array(12).fill(null) }); }),

@@ -100,6 +100,20 @@ test("presence uses the same session/origin gates without upstream access", asyn
   expect(upstream).toBe(0);
 });
 
+test("shared-view stream authenticates, avoids upstream, and closes immediately on logout", async () => {
+  const store = createViewStateStore("example.json", { read: async () => null, write: async () => {} });
+  const { handler } = await setup(async () => { throw new Error("Unexpected upstream call"); }, { viewState: store });
+  const context = { peerAddress: "127.0.0.1" };
+  expect((await handler(request("/fleet/api/view-stream"), context)).status).toBe(401);
+  const cookie = await login(handler);
+  const response = await handler(request("/fleet/api/view-stream", { headers: { cookie } }), context);
+  const reader = response.body!.getReader();
+  expect((await reader.read()).done).toBe(false);
+  const ended = reader.read();
+  await handler(request("/auth/logout", { method: "POST", headers: { cookie, origin: config.public.origin } }), context);
+  expect((await ended).done).toBe(true);
+});
+
 describe("authenticated solo Gateway", () => {
   test("view state stays behind session and exact-origin gates and is never cached", async () => {
     let contacted = 0;

@@ -2,6 +2,7 @@ import { asJsonNumber, asJsonObject, asJsonString, type JsonValue } from "../../
 import { parseTerminalReference, sameTerminal, type TerminalRef } from "../bindings/identity.ts";
 
 export const VIEW_PRESENCE_PATH = "/fleet/api/view-presence";
+export const VIEW_STREAM_PATH = "/fleet/api/view-stream";
 export const VIEW_STATE_PATH = "/fleet/api/view-state";
 export const PANEL_SLOT_COUNT = 12;
 export const DEFAULT_PANEL_ROWS = 3;
@@ -11,6 +12,7 @@ export function gridDimension(value: JsonValue | undefined): number | null {
   return number !== undefined && Number.isInteger(number) && number >= 1 && number <= 6 ? number : null;
 }
 export interface ViewSnapshot {
+  readonly sequence?: number;
   readonly generation: string;
   readonly revision: number;
   readonly selection: TerminalRef | null;
@@ -48,7 +50,11 @@ export function parseViewSnapshot(value: JsonValue | undefined): ViewSnapshot | 
   const selection = object?.selection === null ? null : parseTerminalReference(object?.selection);
   if (!generation || !slots || revision === undefined || revision < 0 || !Number.isSafeInteger(revision) ||
     (object?.selection !== null && !selection)) return null;
-  return { generation, revision, selection, slots, rows, columns };
+  const sequence = asJsonNumber(object?.sequence);
+  if (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 0)) return null;
+  if (object?.sequence !== undefined && sequence === undefined) return null;
+  if (sequence === undefined) return { generation, revision, selection, slots, rows, columns };
+  return { generation, revision, selection, slots, rows, columns, sequence };
 }
 
 export function parseViewCommand(value: JsonValue | undefined): ViewCommand | null {

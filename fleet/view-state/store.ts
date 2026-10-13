@@ -22,7 +22,8 @@ const disk: ViewStateIo = {
 
 export function createViewStateStore(path: string, io: ViewStateIo = disk) {
   const generation = randomUUID();
-  let revision = 0;
+  let revision = 0, sequence = 0;
+  const listeners = new Set<(snapshot: ViewSnapshot) => void>();
   let selection: TerminalRef | null = null;
   let pending = Promise.resolve();
   const readLayout = async () => {
@@ -35,8 +36,17 @@ export function createViewStateStore(path: string, io: ViewStateIo = disk) {
     if (!slots || !rows || !columns) throw new Error("Panel document invalid");
     return { rows, columns, slots };
   };
-  const snapshot = (layout: { rows: number; columns: number; slots: readonly (TerminalRef | null)[] }): ViewSnapshot => ({ generation, revision, selection, ...layout });
+  const snapshot = (layout: { rows: number; columns: number; slots: readonly (TerminalRef | null)[] }): ViewSnapshot => ({ generation, revision, sequence, selection, ...layout });
+  const publish = (layout: { rows: number; columns: number; slots: readonly (TerminalRef | null)[] }) => {
+    sequence += 1;
+    const value = snapshot(layout);
+    for (const listener of listeners) {
+      try { listener(value); } catch { listeners.delete(listener); }
+    }
+    return value;
+  };
   return {
+    subscribe(listener: (snapshot: ViewSnapshot) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async read() { await pending; return snapshot(await readLayout()); },
     mutate(command: ViewCommand, validate: (terminal: TerminalRef) => Promise<boolean>) {
       const apply = async () => {
@@ -52,7 +62,7 @@ export function createViewStateStore(path: string, io: ViewStateIo = disk) {
           if (slots.slice(count).some((ref) => ref !== null)) return { ok: false as const, error: "occupied" as const, snapshot: snapshot(layout) };
           const changed = { rows: command.rows, columns: command.columns, slots: Array.from({ length: count }, (_, index) => slots[index] ?? null) };
           await io.write(path, JSON.stringify({ version: 1, ...changed }) + "\n");
-          return { ok: true as const, snapshot: snapshot(changed) };
+          return { ok: true as const, snapshot: publish(changed) };
         } else {
           if (layout.rows !== command.rows || layout.columns !== command.columns || !equalReference(slots[command.index] ?? null, command.expected)) {
             return { ok: false as const, error: "conflict" as const, snapshot: snapshot(layout) };
@@ -62,9 +72,9 @@ export function createViewStateStore(path: string, io: ViewStateIo = disk) {
             command.terminal && equalReference(entry, command.terminal) ? null : entry);
           const next = { ...layout, slots: changed };
           await io.write(path, JSON.stringify({ version: 1, ...next }) + "\n");
-          return { ok: true as const, snapshot: snapshot(next) };
+          return { ok: true as const, snapshot: publish(next) };
         }
-        return { ok: true as const, snapshot: snapshot(layout) };
+        return { ok: true as const, snapshot: publish(layout) };
       };
       const result = pending.then(apply);
       pending = result.then(() => undefined, () => undefined);

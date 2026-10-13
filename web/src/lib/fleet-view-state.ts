@@ -1,4 +1,4 @@
-import { parseViewSnapshot, VIEW_STATE_PATH, type ViewCommand, type ViewSnapshot } from "../../../fleet/view-state/document.ts";
+import { parseViewSnapshot, VIEW_STREAM_PATH, VIEW_STATE_PATH, type ViewCommand, type ViewSnapshot } from "../../../fleet/view-state/document.ts";
 import type { TerminalRef } from "../../../fleet/bindings/identity.ts";
 import { VIEW_PRESENCE_PATH } from "../../../fleet/view-state/document.ts";
 import { asJsonNumber, asJsonObject, parseJson } from "@/lib/json";
@@ -24,10 +24,17 @@ export function createViewClient(fetcher: typeof fetch = fetch) {
   let lastRoute = "";
   let followedRoute: string | null = null;
   let writes = Promise.resolve();
+  let reconnect: (() => void) | undefined;
   const listeners = new Set<() => void>();
   const update = (patch: Partial<ViewClientState>) => {
     state = { ...state, ...patch };
     for (const listener of listeners) listener();
+  };
+  const accept = (snapshot: ViewSnapshot) => {
+    const previous = state.snapshot;
+    if (previous?.generation === snapshot.generation && (snapshot.revision < previous.revision ||
+      (snapshot.sequence !== undefined && previous.sequence !== undefined && snapshot.sequence < previous.sequence))) return;
+    update({ snapshot, available: true, error: state.error === "unavailable" ? null : state.error });
   };
   const refresh = async () => {
     if (state.busy) return;
@@ -37,7 +44,7 @@ export function createViewClient(fetcher: typeof fetch = fetch) {
       const snapshot = response.ok ? parseViewSnapshot(parseJson(await response.text())) : null;
       if (own !== generation) return;
       if (!snapshot) throw new Error("View state unavailable");
-      update({ snapshot, available: true, error: state.error === "unavailable" ? null : state.error });
+      accept(snapshot);
     } catch {
       if (own === generation) update({ available: false, error: "unavailable" });
     }
@@ -46,6 +53,7 @@ export function createViewClient(fetcher: typeof fetch = fetch) {
     if (!state.available) return Promise.resolve(false);
     ++generation;
     update({ busy: true, error: null });
+    const startedGeneration = state.snapshot?.generation;
     const result = writes.then(async () => {
       if (!state.available) return false;
       try {
@@ -55,11 +63,12 @@ export function createViewClient(fetcher: typeof fetch = fetch) {
         });
         const snapshot = parseViewSnapshot(parseJson(await response.text()));
         if (snapshot && (response.ok || response.status === 409 || response.status === 422)) {
-          update({ snapshot, available: true, error: response.ok ? null : response.status === 409 ? "conflict" : "occupied" });
+          if (!(startedGeneration === snapshot.generation && state.snapshot?.generation !== startedGeneration)) accept(snapshot);
+          update({ error: response.ok ? null : response.status === 409 ? "conflict" : "occupied" });
           return response.ok;
         }
         throw new Error("View state unavailable");
-      } catch { update({ available: false, error: "unavailable" }); return false; }
+      } catch { reconnect?.(); update({ available: false, error: "unavailable" }); return false; }
     });
     writes = result.then(() => undefined);
     const tail = writes;
@@ -70,6 +79,47 @@ export function createViewClient(fetcher: typeof fetch = fetch) {
     getSnapshot: () => state,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     refresh, mutate,
+    connect() {
+      let stopped = false;
+      let active: AbortController | undefined;
+      let retry: ReturnType<typeof setTimeout> | undefined;
+      const repair = () => active?.abort();
+      reconnect = repair;
+      const run = async () => {
+        const controller = new AbortController(); active = controller;
+        let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+        let watchdog = setTimeout(() => controller.abort(), 10_000);
+        try {
+          const response = await fetcher(mounted(VIEW_STREAM_PATH), { cache: "no-store", headers: { accept: "text/event-stream" }, signal: controller.signal });
+          if (!response.ok || !response.headers.get("content-type")?.startsWith("text/event-stream") || !response.body) throw new Error("Stream unavailable");
+          clearTimeout(watchdog); watchdog = setTimeout(() => controller.abort(), 30_000);
+          reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          for (;;) {
+            const next = await reader.read();
+            if (stopped || controller.signal.aborted || next.done) break;
+            clearTimeout(watchdog); watchdog = setTimeout(() => controller.abort(), 30_000);
+            buffer += decoder.decode(next.value, { stream: true });
+            if (buffer.length > 128 * 1024) throw new Error("Stream frame too large");
+            let end: number;
+            while ((end = buffer.indexOf("\n\n")) !== -1) {
+              const frame = buffer.slice(0, end); buffer = buffer.slice(end + 2);
+              const data = frame.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+              if (!data) continue;
+              const snapshot = parseViewSnapshot(parseJson(data));
+              if (!snapshot) throw new Error("Invalid stream snapshot");
+              ++generation; accept(snapshot);
+            }
+          }
+        } catch { /* Reconnect below while the page still participates. */ }
+        finally { clearTimeout(watchdog); await reader?.cancel().catch(() => {}); reader?.releaseLock(); }
+        if (!stopped) { update({ available: false, error: "unavailable" }); retry = setTimeout(() => void run(), 1000); }
+      };
+      update({ available: false });
+      void run();
+      return () => { stopped = true; clearTimeout(retry); active?.abort(); if (reconnect === repair) reconnect = undefined; };
+    },
     async presence(active: boolean, keepalive = false) {
       const sequence = ++pulseSequence;
       try {
