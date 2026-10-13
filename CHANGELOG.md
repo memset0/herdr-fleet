@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.16.3] - 2026-10-13
+
+Lead-only release: rebuild and restart Fleet on the lead; members need no redeployment.
+
 ### Fixed
 
-- **Push Pane selection without waiting for inventory polling.** Stream accepted snapshots over authenticated SSE, guard ordering and reconnect, and renew presence independently.
+- **Push Pane selection without waiting for inventory polling.** Stream accepted snapshots over authenticated SSE, guard ordering and reconnect, and renew presence independently. ([e6cef837f](https://github.com/memset0/herdr-fleet/commit/e6cef837f))
 
 ## [3.16.2] - 2026-10-13
 
