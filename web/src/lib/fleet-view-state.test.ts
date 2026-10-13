@@ -80,3 +80,16 @@ it("an explicit repeat navigation to the same Pane can select an empty stream", 
   await vi.waitFor(() => expect(client.getSnapshot().busy).toBe(false));
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
 });
+
+it("presence counts do not require joining or publish a selection and use distinct page identities", async () => {
+  const pulses: { id: string; sequence: number; active: boolean }[] = [];
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => { pulses.push(JSON.parse(String(init?.body))); return Response.json({ active: 2 }); });
+  const panel = createViewClient(fetcher), viewer = createViewClient(fetcher);
+  await panel.presence(false); await panel.presence(false, true); await viewer.presence(true);
+  expect(panel.getSnapshot().joined).toBe(false);
+  expect(panel.getSnapshot().activeViewers).toBe(2);
+  expect(pulses[0]!.id).toBe(pulses[1]!.id);
+  expect(pulses[0]!.id).not.toBe(pulses[2]!.id);
+  expect(pulses.map((pulse) => pulse.sequence)).toEqual([1, 2, 1]);
+  expect(fetcher.mock.calls.every(([url]) => String(url).endsWith("/view-presence"))).toBe(true);
+});

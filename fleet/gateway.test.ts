@@ -85,6 +85,21 @@ async function login(handler: Awaited<ReturnType<typeof setup>>["handler"]): Pro
   return cookie;
 }
 
+test("presence uses the same session/origin gates without upstream access", async () => {
+  let upstream = 0;
+  const fetcher = async () => { upstream += 1; return new Response("{}"); };
+  const { handler } = await setup(fetcher);
+  const context = { peerAddress: "127.0.0.1" };
+  const body = JSON.stringify({ id: "00000000-0000-0000-0000-000000000001", sequence: 1, active: true });
+  expect((await handler(request("/fleet/api/view-presence", { method: "POST", body }), context)).status).toBe(401);
+  const cookie = await login(handler);
+  expect((await handler(request("/fleet/api/view-presence", { method: "POST", headers: { cookie, origin: "https://other.example.test" }, body }), context)).status).toBe(403);
+  const response = await handler(request("/fleet/api/view-presence", { method: "POST", headers: { cookie, origin: config.public.origin }, body }), context);
+  expect(await response.json()).toEqual({ active: 0 });
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(upstream).toBe(0);
+});
+
 describe("authenticated solo Gateway", () => {
   test("view state stays behind session and exact-origin gates and is never cached", async () => {
     let contacted = 0;

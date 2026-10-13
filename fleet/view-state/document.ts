@@ -1,6 +1,7 @@
 import { asJsonNumber, asJsonObject, asJsonString, type JsonValue } from "../../web/src/lib/json.ts";
 import { parseTerminalReference, sameTerminal, type TerminalRef } from "../bindings/identity.ts";
 
+export const VIEW_PRESENCE_PATH = "/fleet/api/view-presence";
 export const VIEW_STATE_PATH = "/fleet/api/view-state";
 export const PANEL_SLOT_COUNT = 12;
 export const DEFAULT_PANEL_ROWS = 3;

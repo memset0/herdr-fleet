@@ -11,6 +11,7 @@ export const zh: FleetDictionary = {
   "fleet.sync.label": "Pane 同步",
   "fleet.sync.join": "加入 Pane 选择同步",
   "fleet.sync.leave": "退出 Pane 选择同步",
+  "fleet.panel.receivers": "活跃同步标签页：{count}",
   "fleet.panel.title": "Agent 面板",
   "fleet.panel.slots": "收藏槽位",
   "fleet.panel.slot": "槽位 {index}",

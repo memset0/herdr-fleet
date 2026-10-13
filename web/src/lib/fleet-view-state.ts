@@ -1,9 +1,11 @@
 import { parseViewSnapshot, VIEW_STATE_PATH, type ViewCommand, type ViewSnapshot } from "../../../fleet/view-state/document.ts";
 import type { TerminalRef } from "../../../fleet/bindings/identity.ts";
-import { parseJson } from "@/lib/json";
+import { VIEW_PRESENCE_PATH } from "../../../fleet/view-state/document.ts";
+import { asJsonNumber, asJsonObject, parseJson } from "@/lib/json";
 import { mounted } from "@/lib/base-path";
 
 export interface ViewClientState {
+  readonly activeViewers?: number | null;
   readonly snapshot: ViewSnapshot | null;
   readonly joined: boolean;
   readonly joining: boolean;
@@ -14,7 +16,9 @@ export interface ViewClientState {
 
 /** A shell-local client: no stale refresh can roll back a write or publish a followed route. */
 export function createViewClient(fetcher: typeof fetch = fetch) {
-  let state: ViewClientState = { snapshot: null, joined: false, joining: false, available: false, busy: false, error: null };
+  const tabId = crypto.randomUUID();
+  let pulseSequence = 0;
+  let state: ViewClientState = { activeViewers: null, snapshot: null, joined: false, joining: false, available: false, busy: false, error: null };
   let generation = 0;
   let participation = 0;
   let lastRoute = "";
@@ -66,6 +70,15 @@ export function createViewClient(fetcher: typeof fetch = fetch) {
     getSnapshot: () => state,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     refresh, mutate,
+    async presence(active: boolean, keepalive = false) {
+      const sequence = ++pulseSequence;
+      try {
+        const response = await fetcher(mounted(VIEW_PRESENCE_PATH), { method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: tabId, sequence, active }), keepalive, signal: AbortSignal.timeout(10_000) });
+        const count = response.ok ? asJsonNumber(asJsonObject(parseJson(await response.text()))?.active) : undefined;
+        if (sequence === pulseSequence) update({ activeViewers: count !== undefined && Number.isSafeInteger(count) && count >= 0 ? count : null });
+      } catch { if (sequence === pulseSequence) update({ activeViewers: null }); }
+    },
     async join() { const own = ++participation; update({ joining: true }); await writes; if (own !== participation) return; await refresh(); if (own === participation) update({ joined: state.available, joining: false }); },
     leave() { participation += 1; followedRoute = null; update({ joined: false, joining: false }); },
     markFollow(route: string) { followedRoute = route; },

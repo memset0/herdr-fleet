@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { GripVertical, X } from "lucide-react";
+import { GripVertical, Users, X } from "lucide-react";
 import { PANEL_SLOT_COUNT } from "../../../fleet/view-state/document.ts";
 import { resolveTerminalReference, terminalKey, terminalReference, type TerminalRef } from "../../../fleet/bindings/identity.ts";
 import { Button } from "@/components/ui/button";
@@ -7,12 +7,11 @@ import { Select } from "@/components/ui/select";
 import type { NativeAgentCardProps } from "@/components/native-agent-card";
 import { NativeAgentRail } from "@/components/native-agent-rail";
 import { FleetPanelTile } from "@/components/fleet-panel-tile";
-import { useFleetView, FleetSyncControl } from "@/components/fleet-view-experience";
+import { useFleetView } from "@/components/fleet-view-experience";
 import { resolvePanelTerminal } from "@/lib/fleet-panel-inventory";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 import { paneName } from "@/lib/pane-name";
 import { hostName } from "@/lib/hosts";
-import { panePath } from "@/lib/nav";
 import type { HomeData } from "@/lib/loaders";
 import type { AgentView } from "@/lib/types";
 import { useNav } from "@/hooks/use-nav";
@@ -56,8 +55,7 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
   const open = (agent: AgentView) => {
     if (!live(agent)) return;
     const terminal = terminalReference(agent);
-    if (state.joined && terminal) { void client.mutate({ type: "select", terminal }); return; }
-    nav.open(panePath(agent.paneId, { host: agent.host || undefined, session: agent.bindingSession ?? agent.session }));
+    if (terminal) void client.mutate({ type: "select", terminal });
   };
   const targetAt = (x: number, y: number) => {
     const hit = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-panel-slot]");
@@ -120,7 +118,7 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
   const rowPresentation = (agent: AgentView): Pick<NativeAgentCardProps, "actions" | "unavailable" | "interaction" | "current"> => {
     const ref = terminalReference(agent), available = live(agent);
     const picked = ref && chosen && terminalKey(ref) === terminalKey(chosen);
-    const selected = ref && state.joined && state.snapshot?.selection && terminalKey(ref) === terminalKey(state.snapshot.selection);
+    const selected = ref && state.snapshot?.selection && terminalKey(ref) === terminalKey(state.snapshot.selection);
     return { unavailable: !available, current: !!selected,
       interaction: {
         onPointerDown: (event) => begin(event, agent), onPointerMove: move,
@@ -139,7 +137,9 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
   return <div ref={root} data-slot="fleet-agent-panel" className="flex h-(--app-h) w-full flex-col overflow-hidden bg-background pt-[env(safe-area-inset-top)]">
     <div className="flex min-h-11 shrink-0 items-center justify-between gap-2 px-3">
       <h1 className="text-sm font-medium">{ft("fleet.panel.title")}</h1>
-      <FleetSyncControl />
+      <span role="status" data-slot="panel-sync-receivers" className="flex min-h-11 items-center gap-2 text-xs text-muted-foreground">
+        <Users className="size-4" />{state.activeViewers == null ? ft("fleet.panel.unavailable") : ft("fleet.panel.receivers", { count: state.activeViewers })}
+      </span>
     </div>
     <div className="fleet-panel-body" style={gridStyle}>
     <div className="fleet-panel-grid-region">
@@ -149,7 +149,7 @@ export function FleetAgentPanel({ data }: { data: HomeData }) {
           const agent = resolved?.status === "resolved" ? resolved.pane : null;
           const observed = ref ? resolveTerminalReference(ref, inventory.panes, true) : null;
           const shown = observed?.status === "resolved" ? observed.pane : null;
-          const current = ref && state.joined && state.snapshot?.selection && terminalKey(ref) === terminalKey(state.snapshot.selection);
+          const current = ref && state.snapshot?.selection && terminalKey(ref) === terminalKey(state.snapshot.selection);
           return <div key={index} data-panel-slot={index} className={cn("fleet-panel-slot relative aspect-square min-w-0 overflow-hidden rounded-md border border-border bg-card", hovered === index && "border-primary ring-2 ring-primary", current && "border-primary ring-2 ring-inset ring-primary/50")}>
             <button type="button" aria-label={ft("fleet.panel.slot", { index: index + 1 })}
               disabled={!state.available || state.busy || (!chosen && !agent)}

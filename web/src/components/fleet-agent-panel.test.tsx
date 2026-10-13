@@ -113,3 +113,14 @@ it("panel uses the rail's grouped rows and timestamp order", () => {
   expect(order(panel.container)).toEqual(["\u0000\u0000p2", "\u0000\u0000p1"]);
   expect(within(panel.container).getByText("Working")).toBeInTheDocument();
 });
+
+it("an independent panel publishes Agent and slot choices without navigating or joining", () => {
+  state = { ...state, joined: false, activeViewers: 2 };
+  const { container, router } = mount();
+  fireEvent.click(container.querySelector('[data-slot="native-agent-card"] button')!);
+  fireEvent.click(within(container).getByRole("button", { name: "Slot 1" }));
+  expect(mutate).toHaveBeenCalledTimes(2);
+  expect(mutate).toHaveBeenLastCalledWith({ type: "select", terminal: terminalReference(a) });
+  expect(router.state.location.pathname).toBe("/panel");
+  expect(within(container).getByText("Active sync tabs: 2")).toBeInTheDocument();
+});

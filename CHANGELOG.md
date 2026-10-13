@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Control joined viewers without enrolling the phone panel.** Publish panel choices directly and display other active sync tabs through expiring authenticated presence leases.
+
 ## [3.16.1] - 2026-10-12
 
 Lead-only frontend release: rebuild Fleet on the lead; members need no redeployment.

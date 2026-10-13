@@ -32,6 +32,7 @@ import type { SettingsStore } from "./settings/store.ts";
 import { TERMINAL_PATH, admit, type TerminalTarget } from "./terminal/admit.ts";
 import { isPaneFitPath, paneFitResponse, type PaneFitRouteDeps } from "./manual-pane-fit/route.ts";
 import { VIEW_STATE_PATH } from "./view-state/document.ts";
+import { createViewPresence, VIEW_PRESENCE_PATH, viewPresenceResponse } from "./view-state/presence.ts";
 import { viewStateResponse } from "./view-state/route.ts";
 import type { ViewStateStore } from "./view-state/store.ts";
 
@@ -76,6 +77,7 @@ export const FLEET_SETTINGS_PATH = "/fleet/api/settings";
  * without ever telling the caller why, which is the one thing an unauthenticated terminal must not do.
  */
 function isApiPath(pathname: string): boolean {
+  if (pathname === VIEW_PRESENCE_PATH) return true;
   if (pathname === "/api" || pathname.startsWith("/api/")) return true;
   if (pathname.startsWith(TODOIST_API + "/")) return true;
   if (isPaneFitPath(pathname)) return true;
@@ -239,6 +241,7 @@ export function createGatewayHandler(options: GatewayOptions) {
   const fetcher = options.fetcher ?? fetch;
   const collieToken = options.collieToken;
   const now = options.now ?? Date.now;
+  const presence = createViewPresence(now);
   const loginCsrfToken = options.loginCsrfToken ?? randomBytes(32).toString("base64url");
   if (!/^[A-Za-z0-9_-]{43}$/.test(loginCsrfToken)) throw new Error("login CSRF token source returned an invalid token");
   const renderLogin = (returnPath: string, message = "") => loginPage(returnPath, loginCsrfToken, message);
@@ -320,6 +323,7 @@ export function createGatewayHandler(options: GatewayOptions) {
       try {
         if (session !== null) {
           await sessions.revoke(session.sessionId, now());
+          presence.removeSession(session.sessionId);
           options.onSessionRevoked?.(session.sessionId);
         }
       } catch {
@@ -349,6 +353,8 @@ export function createGatewayHandler(options: GatewayOptions) {
     }
 
     if (isPairingWrite(request.method, url.pathname)) return text(`${PAIRING_REFUSAL}\n`, 403);
+
+    if (url.pathname === VIEW_PRESENCE_PATH) return withBaseHeaders(await viewPresenceResponse(request, session.sessionId, presence), "no-store");
 
     if (url.pathname === VIEW_STATE_PATH) {
       if (!options.viewState) return json({ error: "not found" }, 404);

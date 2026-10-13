@@ -4,6 +4,7 @@ import { installApiStub } from "./fixtures/api";
 import { parseJson } from "@/lib/json";
 import { parseViewCommand, type ViewSnapshot } from "../../fleet/view-state/document.ts";
 import { equalReference } from "../../fleet/view-state/document.ts";
+import { createViewPresence } from "../../fleet/view-state/presence.ts";
 import { terminalReference } from "../../fleet/bindings/identity.ts";
 
 test.use({ serviceWorkers: "block" });
@@ -19,10 +20,16 @@ async function world(pages: Page[]) {
     bindingId: `herdr:term_${index}`, bindingSession: "default", session: "default", cwd: "/example" }));
   const view: ViewSnapshot = { generation: "example", revision: 0, selection: null, rows: 3, columns: 4,
     slots: Array.from({ length: 12 }, (_, index) => index === 0 ? terminalReference(snapshot.agents[0]!) : null) };
+  const presence = createViewPresence();
   let selections = 0;
   let reads = 0, snapshotReads = 0;
   for (const page of pages) {
     await installApiStub(page);
+    await page.route("**/fleet/api/view-presence", async (route) => {
+      const pulse = JSON.parse(route.request().postData() ?? "{}");
+      const active = presence.pulse("example", pulse.id, pulse.sequence, pulse.active);
+      await route.fulfill({ json: { active } });
+    });
     await page.route("**/api/snapshot*", (route) => { snapshotReads += 1; return route.fulfill({ json: snapshot }); });
     await page.route("**/fleet/api/view-state", async (route) => {
       if (route.request().method() === "GET") reads += 1;
@@ -82,6 +89,7 @@ test("a normal joined viewer follows the panel's central Pane choice exactly onc
   await other.setViewportSize({ width: 1600, height: 900 });
   await other.goto("/");
   for (const viewer of [page, other]) {
+    if (new URL(viewer.url()).pathname === "/panel") continue;
     await viewer.getByRole("button", { name: "Join pane selection sync" }).click();
     await expect(viewer.getByRole("button", { name: "Leave pane selection sync" })).toBeVisible();
   }
@@ -101,6 +109,7 @@ test("drag replacement, shared selection without echoes, and reduced-motion comp
   await page.goto("/panel");
   await other.goto("/panel");
   for (const viewer of [page, other]) {
+    if (new URL(viewer.url()).pathname === "/panel") continue;
     await viewer.getByRole("button", { name: "Join pane selection sync" }).click();
     await expect(viewer.getByRole("button", { name: "Leave pane selection sync" })).toBeVisible();
   }
@@ -130,8 +139,6 @@ test("drag replacement, shared selection without echoes, and reduced-motion comp
 test("real touch handle immediately drags without selecting, and a card tap selects", async ({ page, context }) => {
   const state = await world([page]);
   await page.goto("/panel");
-  await page.getByRole("button", { name: "Join pane selection sync" }).click();
-  await expect(page.getByRole("button", { name: "Leave pane selection sync" })).toBeVisible();
   const card = page.locator('[data-slot="panel-agent-queue"] [data-slot="native-agent-card"]').nth(1).locator("button").first();
   await card.scrollIntoViewIfNeeded();
   const handle = page.getByRole("button", { name: "Place Example Agent 2 in a slot" });
@@ -230,4 +237,30 @@ test("merged member snapshots render each Agent once in sidebar time order", asy
   expect(await names(queue)).toEqual(await names(other.locator('body')));
   await expect(queue.getByRole("heading", { name: "Working (3)", exact: true })).toBeVisible();
   await other.close();
+});
+
+
+test("independent controller counts other joined tabs and broadcasts without navigating", async ({ page, context }) => {
+  test.setTimeout(45_000);
+  const first = await context.newPage(), second = await context.newPage();
+  const state = await world([page, first, second]);
+  await page.goto("/panel");
+  const count = page.locator('[data-slot="panel-sync-receivers"]');
+  await expect(count).toHaveText("Active sync tabs: 0");
+  await expect(page.getByRole("button", { name: "Join pane selection sync" })).toHaveCount(0);
+  for (const viewer of [first, second]) {
+    await viewer.setViewportSize({ width: 1600, height: 900 });
+    await viewer.goto("/");
+    await viewer.getByRole("button", { name: "Join pane selection sync" }).click();
+  }
+  await expect(count).toHaveText("Active sync tabs: 2");
+  await page.getByRole("button", { name: "Slot 1", exact: true }).click();
+  for (const viewer of [first, second]) await expect(viewer).toHaveURL(/\/pane\/w1%3Ap1/);
+  await expect(page).toHaveURL(/\/panel$/);
+  expect(state.selections()).toBe(1);
+  await first.getByRole("button", { name: "Leave pane selection sync" }).click();
+  await expect(count).toHaveText("Active sync tabs: 1");
+  await second.close();
+  await expect(count).toHaveText("Active sync tabs: 0", { timeout: 20_000 });
+  await first.close();
 });

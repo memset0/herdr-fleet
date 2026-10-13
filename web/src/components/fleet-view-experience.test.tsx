@@ -1,13 +1,15 @@
 import { render, fireEvent, within, waitFor } from "@testing-library/react";
 import { createMemoryRouter, Outlet, RouterProvider, useLocation } from "react-router";
 import { HttpResponse, http } from "msw";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { server } from "@/test/setup";
 import { FleetViewExperience, FleetSyncControl } from "./fleet-view-experience";
 import { terminalKey, terminalReference } from "../../../fleet/bindings/identity.ts";
 import type { HomeData } from "@/lib/loaders";
 import type { AgentView } from "@/lib/types";
 import { scopeFromUrl } from "@/lib/scope";
+
+beforeEach(() => server.use(http.post("*/fleet/api/view-presence", () => HttpResponse.json({ active: 0 }))));
 
 const a: AgentView = { paneId: "p1", workspaceId: "w1", workspaceLabel: "Example", workspaceNumber: 1, tabId: "t1",
   agent: "codex", status: "working", cwd: "/example", focused: false, bindingId: "herdr:term_a", bindingSession: "default", session: "default" };

@@ -58,7 +58,7 @@ export function FleetViewExperience({ data, children }: { data: HomeData; childr
           if (!stopped && !controller.signal.aborted) setInventory({ ...previous.current, fresh: new Set() });
         }
       };
-      await Promise.all([client.refresh(), load()]);
+      await Promise.all([client.refresh(), load(), client.presence(client.getSnapshot().joined && !panel)]);
       if (active === controller) active = null;
       if (!stopped) timer = setTimeout(() => void poll(), 1500);
       // Visibility may return while the aborted request is still unwinding.
@@ -66,12 +66,14 @@ export function FleetViewExperience({ data, children }: { data: HomeData; childr
     };
     const visibility = () => {
       clearTimeout(timer);
-      if (document.hidden) active?.abort();
+      if (document.hidden) { active?.abort(); void client.presence(false, true); }
       else void poll();
     };
+    const withdraw = () => { void client.presence(false, true); };
+    document.addEventListener("pagehide", withdraw);
     document.addEventListener("visibilitychange", visibility);
     void poll();
-    return () => { stopped = true; clearTimeout(timer); active?.abort(); document.removeEventListener("visibilitychange", visibility); };
+    return () => { stopped = true; clearTimeout(timer); active?.abort(); document.removeEventListener("visibilitychange", visibility); document.removeEventListener("pagehide", withdraw); withdraw(); };
   }, [client, panel, state.joined]);
 
   useEffect(() => {

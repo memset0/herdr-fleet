@@ -11,6 +11,7 @@ export const ko: FleetDictionary = {
   "fleet.sync.label": "Pane sync",
   "fleet.sync.join": "Join pane selection sync",
   "fleet.sync.leave": "Leave pane selection sync",
+  "fleet.panel.receivers": "Active sync tabs: {count}",
   "fleet.panel.title": "Agent panel",
   "fleet.panel.slots": "Favorite slots",
   "fleet.panel.slot": "Slot {index}",
