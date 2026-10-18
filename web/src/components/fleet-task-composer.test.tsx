@@ -3,13 +3,12 @@
 // second sender, and never over an operator's draft or into a bare shell.
 import type { ComponentProps } from "react";
 import { act, fireEvent, render, within } from "@testing-library/react";
-import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
 import { deliverTodoistTask } from "@/lib/fleet-task-delivery";
 import { clearStatus } from "@/lib/status";
 import { server } from "@/test/setup";
-import { recordReply } from "@/test/handlers";
+import { sendAnswer, sendHandler } from "@/test/handlers";
 import { terminalReference } from "../../../fleet/bindings/identity.ts";
 import { Composer } from "./composer";
 
@@ -20,15 +19,12 @@ vi.mock("@/lib/liveness", async (importOriginal) => ({
   useLive: () => true,
 }));
 
-// A guarded send is two reply calls (type, then submit-only); recordReply keeps the fake pane's
-// input line honest so the verification poll passes.
-function replyHandler(onTyped: (text: string) => void, onSubmit?: () => void) {
-  return http.post<never, { text: string; submit?: boolean }>(/\/api\/pane\/[^/]+\/reply$/, async ({ request }) => {
-    const body = await request.json();
-    recordReply(body);
-    if (body.submit) onSubmit?.();
-    else onTyped(body.text);
-    return HttpResponse.json({ ok: true });
+// One checked request per text (Collie's Send Protocol): the bridge reads the box, types and submits,
+// and answers with a receipt. The fake answers `sent` and records the body it was given.
+function protocolHandler(onSent: (text: string, mode: string) => void) {
+  return sendHandler((request) => {
+    onSent(request.text, request.mode);
+    return sendAnswer(request.id, "sent");
   });
 }
 
@@ -44,7 +40,7 @@ function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}
     isShell: false,
     gone: false,
     readOnly: false,
-    dialogPresent: false,
+    surface: { revision: 1, turn: "idle", modal: "none", composer: "empty" },
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
@@ -62,15 +58,15 @@ describe("Fleet task delivery through the native composer", () => {
   const bindingPane = { paneId: "w1:p1", bindingId: "herdr:term_example", bindingSession: "default" };
   const terminal = terminalReference(bindingPane)!;
 
-  it("uses the native type, verify, submit path and clears its inserted draft", async () => {
-    const typed = vi.fn(), submitted = vi.fn();
-    server.use(replyHandler(typed, submitted));
+  it("uses the native checked send path and clears its inserted draft", async () => {
+    const sent_ = vi.fn();
+    server.use(...protocolHandler(sent_));
     const props = renderComposer({ bindingPane });
     let sent = false;
     await act(async () => { sent = await deliverTodoistTask(terminal, bindingPane.paneId, "Implement the Todoist description."); });
     expect(sent).toBe(true);
-    expect(typed).toHaveBeenCalledExactlyOnceWith("Implement the Todoist description.");
-    expect(submitted).toHaveBeenCalledTimes(1);
+    expect(sent_).toHaveBeenCalledTimes(1);
+    expect(sent_.mock.calls[0]![0]).toBe("Implement the Todoist description.");
     expect(within(props.container).getByPlaceholderText(/type a reply/i)).toHaveValue("");
     expect(props.onSent).toHaveBeenCalledTimes(1);
   });

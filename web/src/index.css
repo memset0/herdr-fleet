@@ -1083,6 +1083,46 @@
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
+/* DOWNSTREAM PORT, the same hole for the faces Collie 1.22 added for its themes. Upstream's three
+   blocks above stay upstream's text; these later, equally specific, unlayered blocks win on order and
+   put the fleet's CJK fallback after each face's stand-in and before the system faces, exactly where
+   the stacks above put it. The display faces a theme names (`--font-display: var(--face-<id>)`) get
+   the same hole, so a theme's titles keep the chosen CJK face too. */
+:root {
+  --face-system:
+    ui-sans-serif, var(--font-ui-cjk), system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --face-grotesk:
+    "Space Grotesk", "Space Grotesk Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --face-aldrich:
+    "Aldrich", "Aldrich Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --face-plex:
+    "IBM Plex Sans", "IBM Plex Sans Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --face-geist:
+    "Geist", "Geist Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --face-atkinson:
+    "Atkinson Hyperlegible Next", "Atkinson Hyperlegible Next Fallback", var(--font-ui-cjk),
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+:root.font-plex {
+  --font-sans:
+    "IBM Plex Sans", "IBM Plex Sans Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+:root.font-geist {
+  --font-sans:
+    "Geist", "Geist Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+:root.font-atkinson {
+  --font-sans:
+    "Atkinson Hyperlegible Next", "Atkinson Hyperlegible Next Fallback", var(--font-ui-cjk),
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
 /* An operator's own face (theme.toml, ADR 0033). The FAMILY NAME is the one thing this file cannot
    know, so `lib/operator-fonts.ts` injects a <style> element that sets `--font-operator-family` and
    declares the matching `@font-face` — one validated name and one validated URL, nothing else. The

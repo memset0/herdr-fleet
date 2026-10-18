@@ -647,12 +647,13 @@ function FleetNavigationShell({
           data-slot="native-route-column"
           aria-hidden={hierarchyOpen}
           inert={hierarchyOpen ? true : undefined}
-          // THE HEADER STANDS ON THE CHROME GROUND, set from here rather than in Collie's header. The
-          // header it holds as its first child keeps upstream's `bg-background` fill and the mark keeps
-          // upstream's `var(--background)` knockout; scoping that one variable to the chrome value on
-          // the header moves both together, so they cannot disagree and no halo can form. The route
-          // and the mirror below keep the page colour.
-          className="flex min-w-0 flex-1 flex-col [&>header]:[--background:var(--chrome)]"
+          // THE HEADER STANDS ON THE CHROME GROUND, set from here rather than in Collie's header. Since
+          // Collie 1.22 the header fills with the theme's band (`bg-band-ground`) and the mark knocks out
+          // `var(--band-ground)`; scoping the band, and the page colour the header's own children still
+          // read, to the chrome value on the header moves fill and knockout together, so they cannot
+          // disagree and no halo can form. Every theme sets `--chrome`, so the header and the rails
+          // agree under each of them. The route and the mirror below keep the page colour.
+          className="flex min-w-0 flex-1 flex-col [&>header]:[--background:var(--chrome)] [&>header]:[--band-ground:var(--chrome)]"
         >
           {children}
         </div>

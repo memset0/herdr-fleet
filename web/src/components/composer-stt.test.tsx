@@ -348,7 +348,7 @@ describe("Composer — what Send refuses now that it is always drawn", () => {
     server.use(
       configHandler(CONFIG_WITH_STT),
       sttHandler("spoken"),
-      replyHandler(() => (posts += 1)),
+      ...replyHandler(() => (posts += 1)),
     );
     renderComposer();
     const box = await screen.findByPlaceholderText(/type a reply/i);
@@ -683,7 +683,7 @@ describe("Composer — the microphone from the keyboard", () => {
 
   it("toggles the real recorder the composer owns", async () => {
     const user = userEvent.setup();
-    server.use(configHandler(CONFIG_WITH_STT), sttHandler("from the keyboard"), replyHandler(() => {}));
+    server.use(configHandler(CONFIG_WITH_STT), sttHandler("from the keyboard"), ...replyHandler(() => {}));
     renderWithCommands("toggle-mic-recording");
     await screen.findByRole("button", { name: /record a voice message/i });
 

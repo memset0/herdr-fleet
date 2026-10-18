@@ -204,7 +204,7 @@ export function NativeAgentRail({
               onClick={markAll}
               className="h-8 shrink-0 gap-1.5 px-2.5 text-xs"
             >
-              <UnseenMark size="sm" />
+              <UnseenMark className="size-2" />
               {ft("fleet.navigation.markAllSeen")}
               <span className="font-mono tabular-nums text-muted-foreground">{unseen.length}</span>
             </Button>

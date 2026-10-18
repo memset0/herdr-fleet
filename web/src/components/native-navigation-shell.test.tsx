@@ -1150,7 +1150,8 @@ describe("the shell inside Collie's root layout", () => {
     await waitFor(() => expect(container.querySelector("header")).not.toBeNull());
     const column = container.querySelector("[data-slot='native-route-column']");
     expect(column?.className).toContain("[&>header]:[--background:var(--chrome)]");
-    expect(container.querySelector("header")?.className).toMatch(/(?:^|\s)bg-background(?:\s|$)/);
+    expect(column?.className).toContain("[&>header]:[--band-ground:var(--chrome)]");
+    expect(container.querySelector("header")?.className).toMatch(/(?:^|\s)bg-band-ground(?:\s|$)/);
   });
 
   it("renders Collie's own layout, with no shell, in a bundle that is not a Fleet build", async () => {

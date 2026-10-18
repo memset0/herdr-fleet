@@ -42,9 +42,9 @@ describe("the header — a route that declines the mark keeps its lost badge", (
     const { container } = renderHeader(<Header bridge="connected" error mark={false} onHome={() => {}} />);
     expect(fleetBadge(container)).toBeNull();
     act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
-    expect(screen.queryByRole("button", { name: "Collie home — not connected" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Collie home, not connected" })).toBeNull();
     expect(fleetBadge(container)?.getAttribute("data-icon")).toBe("cloud-off");
-    expect(screen.getByRole("img", { name: "Collie home — not connected" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Collie home, not connected" })).toBeInTheDocument();
   });
 });
 

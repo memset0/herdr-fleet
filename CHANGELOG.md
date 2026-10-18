@@ -22,6 +22,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Changed
 
 - **Adopt Collie v1.22.6 as real ancestry.** Collie's checked send pipeline, held sends, send notices and Recent sends, per-harness input profiles (Codex sends with Tab), themes, hook edges and experimental durable agents arrive as upstream behaviour; a lead on this release refuses checked text to a member still on 3.16, so update the lead first, then every member.
+- **Read Codex and Claude Code panes with Collie's own readers.** The fork's temporary Codex headless status-row exemption is retired with this adoption; upstream's Codex profile reads the status row.
+- **Deliver terminal-bound tasks through Collie's checked send.** Delivery waits for a free box or a running turn, never over a draft, a dialog, an unreadable screen or a pending offer.
+
+### Fixed
+
+- **Keep the Fleet header on the chrome ground under every theme.** The shell scopes Collie's new header band to the chrome colour, so header, mark and rails agree.
+- **Keep the CJK UI fallback under the theme faces.** Plex, Geist, Atkinson and every display face a theme names get the fleet's CJK fallback.
 
 ## [3.16.3] - 2026-10-13
 
