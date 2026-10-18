@@ -79,6 +79,15 @@ widening still applies. The release drift gate in `check-tag.sh` runs only for a
 and only shapes its advice; the fork tags by hand before pushing, so it never blocks a release here
 and its text is kept as upstream's.
 
+### 4a. The strips' fold control returns
+
+The fork withheld Collie's manual fold control at the tab row's trailing end because the strips then
+folded on their own while the keyboard was up. Collie 1.21 retired that automatic fold (a fold that
+moved the screen under the reader), so after the merge the strips could not be folded at all, which
+upstream's own case caught. The control and its label helper return as upstream's text and
+`fleet-pane-chrome` says so; re-implementing the retired automatic fold in the fork was rejected as
+re-adding behaviour upstream removed on purpose. The owner may prefer otherwise; it is reported.
+
 ### 5. Every entry reviewed against v1.22.6
 
 All 29 remaining entries were reviewed and advanced; none is dropped, because `v1.22.6` does none of

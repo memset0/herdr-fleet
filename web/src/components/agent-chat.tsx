@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { useRevalidator } from "react-router";
 import {
   ArrowUpToLine,
+  ChevronUp,
   EllipsisVertical,
   Loader2,
   Minimize2,
@@ -30,7 +31,7 @@ import { useStableTerminalDraft } from "@/hooks/use-terminal-draft";
 import { useLocale } from "@/hooks/use-locale";
 import { isConnecting } from "@/lib/connection";
 import { canCopyText, copyText } from "@/lib/clipboard";
-import { t } from "@/lib/i18n";
+import { t, type MessageKey } from "@/lib/i18n";
 import { savedAtLabel } from "@/lib/format";
 import { settleAfterSend } from "@/lib/harness/guard";
 import { setStatus } from "@/lib/status";
@@ -84,7 +85,7 @@ import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { CardWaitingCtx } from "@/components/chat-cards";
 import { chatStatusKey, SavedCopyRow, SessionStream } from "@/components/session-stream";
 import { PaneSettingsSheet } from "@/components/pane-settings-sheet";
-import { CompactStripLabels } from "@/components/ui/labelled-strip";
+import { CompactStripLabels, TAB_ROW_SQUARE_TAP_TARGET } from "@/components/ui/labelled-strip";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
 import { MaskedHint } from "@/components/masked-hint";
@@ -222,6 +223,17 @@ const NO_ROWS: readonly string[] = [];
 /** The plain text of one parsed terminal row. */
 const rowText = (line: { segments: readonly { text: string }[] }): string =>
   line.segments.map((segment) => segment.text).join("");
+
+/**
+ * The fold chevron's accessible name, chosen for what is actually on screen. The glyph names
+ * nothing, and "Hide tabs and panes" over a screen with no pane row is a promise about a row that
+ * is not there — the summary bar's own name is built the same way, from the same two counts.
+ */
+function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
+  if (tabCount > 0 && paneCount > 1) return "chat.strips.hide.both";
+  if (tabCount > 0) return "chat.strips.hide.tabs";
+  return "chat.strips.hide.panes";
+}
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
@@ -2398,12 +2410,25 @@ export function AgentChat({
                     // the space has nothing left to land on. Closing any other tab just revalidates so it
                     // drops out of the strip.
                     onClosed={(tabId) => (agent?.tabId === tabId ? closeCurrentTab(tabId) : revalidator.revalidate())}
-                    // DOWNSTREAM PORT — NOTHING AT THE ROW'S TRAILING END. Upstream pins its manual fold
-                    // control here; the fold is automatic (the strips stand down while the keyboard is
-                    // up and come back when it closes), and a second, manual way to reach the same state
-                    // was one control the operator had to keep in their head. Expanding is still one tap
-                    // on the whole folded bar. The pane's state is Collie's own dots and header mark;
-                    // Fleet spells it nowhere else (fleet-pane-chrome).
+                    // The fold's own control, pinned to the row's trailing end where it costs no height:
+                    // a 28px circle centred in the 30px tab row, its hit box the row itself and no
+                    // lower (the way every tab's is: a reach below the row steals taps from the content). Same square recipe as the "+" beside it, transparent
+                    // border included (the reach's numbers assume one): they are two controls of the
+                    // same rank in the same row, and drawing them differently would rank them.
+                    trailing={
+                      <button
+                        type="button"
+                        onClick={toggleStrips}
+                        aria-expanded={true}
+                        aria-label={t(foldLabelKey(stripTabs.length, tabPanes.length))}
+                        className={cn(
+                          TAB_ROW_SQUARE_TAP_TARGET,
+                          "flex size-7 shrink-0 items-center justify-center rounded-full border border-transparent text-muted-foreground transition-colors hover:bg-accent active:scale-95",
+                        )}
+                      >
+                        <ChevronUp className="size-4" />
+                      </button>
+                    }
                   />
                 )}
 

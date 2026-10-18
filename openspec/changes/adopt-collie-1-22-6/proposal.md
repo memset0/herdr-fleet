@@ -58,6 +58,8 @@ None.
 
 - `fleet-harness-compat`: the Codex headless status-row exemption is removed; Codex panes are read
   by the adopted upstream reader alone.
+- `fleet-pane-chrome`: the strips' fold is Collie's own. Collie 1.21 retired the automatic fold the
+  fork relied on when it withheld the manual fold control, so the tab row keeps Collie's control.
 
 `fleet-upstream-sync` carries no delta; this adoption follows it as written. Other capabilities are
 listed in the design only if adapting a port changes what they say.

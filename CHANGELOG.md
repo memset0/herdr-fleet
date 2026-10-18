@@ -27,6 +27,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Fixed
 
+- **Offer Collie's fold control on the Pane strips again.** Collie 1.21 retired the automatic fold the fork relied on, so the tab row's own fold returns.
 - **Keep the Fleet header on the chrome ground under every theme.** The shell scopes Collie's new header band to the chrome colour, so header, mark and rails agree.
 - **Keep the CJK UI fallback under the theme faces.** Plex, Geist, Atkinson and every display face a theme names get the fleet's CJK fallback.
 
