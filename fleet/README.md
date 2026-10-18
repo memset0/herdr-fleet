@@ -41,8 +41,8 @@ for selecting Collie's native Pack authority. It does not implement SSH reachabi
 member, contact a peer, aggregate Hosts, distribute software, or replace Collie's native Pack
 router, loaders, and UI. Collie's native optional Web Push remains available unchanged.
 
-Herdr Fleet runs on Bun 1.4.0 or later, on every machine. That is this product's own floor, above
-Collie's (`MIN_BUN` in `cli/update-check.ts`): from 1.4.0 a timeout signal stays armed after its last
+Herdr Fleet runs on Bun 1.4.0 or later, on every machine. Collie's own floor (`MIN_BUN` in
+`cli/update-check.ts`) is the same 1.4.0 since Collie 1.21.3; Fleet's reason is its own: from 1.4.0 a timeout signal stays armed after its last
 listener is removed, which keeps a speech operation's whole deadline in force between its phases
 without a fork-owned helper (`fleet-stt-deadline-compat`). The crew's pinned-client TLS canary does
 not hold on Bun 1.3.12, so no older runtime may run Pack or multi-host behavior either. The first
@@ -393,6 +393,17 @@ Collie also reads two `config.toml` files beneath its environment: the machine's
 Fleet reads both before starting, through Collie's own resolver and reader, and refuses to start when
 either sets one of the settings above; the error names the file and the key, never the value. Every
 other key is Collie's to apply. Fleet never writes either file.
+
+What the adopted Collie does on its own, and Fleet neither enables nor prevents:
+
+- **Hook edges.** With its send protocol on (Collie's default), the child lists itself in
+  `$XDG_STATE_HOME/collie/hook-targets/` (or `~/.local/state/collie/hook-targets/`) at start, keeps
+  that one owner-only record fresh and removes it on a clean stop, so `collie beacon emit` hooks on
+  the host could reach it. Fleet installs no hook into an operator's agents and runs no Collie CLI
+  verb; without hooks every pane is read from its screen, and only hook-fed extras (an `effective`
+  receipt, the faster re-read at a turn edge, the held permission answer) are absent.
+- **Durable agents** are experimental and off: they start only from a `sources.json` beside Fleet's
+  own configuration or from `COLLIE_MUX=durable`, and Fleet writes neither. Herdr panes are unchanged.
 
 ## Native Web Push actions
 
