@@ -107,6 +107,7 @@ describe("codex", () => {
     row({ timestamp: "t", type: "token_usage_record", payload: {} }),
     row({ timestamp: "t", type: "turn_context", payload: {} }),
     row({ timestamp: "t", type: "world_state", payload: {} }),
+    row({ timestamp: "t", type: "compacted", payload: { message: "a hand-off summary", replacement_history: [] } }),
     item({ type: "message", role: "user", content: [{ type: "input_text", text: "fix the types" }] }),
     item({ type: "message", role: "assistant", content: [{ type: "output_text", text: "Looking." }] }),
     // Injected system prompts: a role the grammar refuses by name.
@@ -393,10 +394,40 @@ describe("pi", () => {
     // An extension's own bookkeeping: `customType` + `data`, no `display`, nothing to show.
     row({ type: "custom", id: "c12", parentId: "p0", customType: "pi.todo", data: {} }),
     ...["model_change", "thinking_level_change", "usage", "label"].map((type) => row({ type, id: `k-${type}`, parentId: "p0" })),
+    // Session names: pi 1.1.0's `session_info`, and Oh My Pi's id-less `title` and its `title_change`.
+    row({ type: "session_info", id: "n1", parentId: "p0", name: "a name" }),
+    row({ type: "title", v: 1, title: "", updatedAt: "t" }),
+    row({ type: "title_change", id: "n2", parentId: "n1", title: "OK", source: "auto" }),
+    // Oh My Pi 18.10's cost ledger and service tier, shaped as a real session wrote them: the tier at
+    // session start (`--service-tier auto`), the usage of a composer prediction after the reply.
+    row({ type: "service_tier_change", id: "s1", parentId: "p0", timestamp: "t", serviceTier: { openai: "auto" } }),
+    row({
+      type: "model_usage",
+      id: "u1",
+      parentId: "m2",
+      timestamp: "t",
+      purpose: "composer-prediction",
+      api: "openai-completions",
+      provider: "p",
+      model: "m",
+      usage: { input: 274, output: 164, cacheRead: 8000, cacheWrite: 0, totalTokens: 8438 },
+      stopReason: "stop",
+    }),
+    // A tier that was cleared writes `serviceTier: null`.
+    row({ type: "service_tier_change", id: "t1", parentId: "u1", timestamp: "t", serviceTier: null }),
   ];
 
   test("the whole measured inventory counts nothing", () => {
     expect(describeUnknowns(tallyOf(createPiReducer(), clean))).toBe("");
+  });
+
+  test("model_usage and service_tier_change are known rows that draw nothing", () => {
+    for (const type of ["model_usage", "service_tier_change"]) {
+      const reducer = createPiReducer();
+      const reduction = reducer.push(row({ type, id: "k1", parentId: "p0", serviceTier: null }));
+      expect(reduction.added, type).toEqual([]);
+      expect(reducer.unknowns().rows.has(type), type).toBe(false);
+    }
   });
 
   test("a new row type, a new role and a new block are each counted at their own level", () => {
@@ -453,11 +484,11 @@ describe("the counter itself", () => {
   });
 });
 
-// An eighth adapter cannot land without a tally: the canary's gate reads every registered adapter's
+// A ninth adapter cannot land without a tally: the canary's gate reads every registered adapter's
 // reducer, and one that answered nothing would be an agent whose drift nobody is watching.
 test("every registered journal adapter's reducer answers a tally", () => {
-  const registry = buildJournalRegistry({ claude: [], codex: [], pi: [], opencode: [], grok: [], hermes: [], muse: [] });
-  expect(journalAgents(registry)).toHaveLength(7);
+  const registry = buildJournalRegistry({ claude: [], codex: [], pi: [], opencode: [], grok: [], hermes: [], muse: [], openclaw: [] });
+  expect(journalAgents(registry)).toHaveLength(8);
   for (const [agent, adapter] of Object.entries(registry)) {
     const tally = adapter.reducer().unknowns();
     expect(tally.rows.size, agent).toBe(0);

@@ -1,0 +1,28 @@
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.296[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5.5 · Claude Max[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/nr-lab/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool exactly once to ask me one question: "Pick a [0m[48;2;55;55;55m      [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mcolour?" with the options Red and Blue (no multiSelect). Do nothing else.[0m[48;2;55;55;55m       [0m
+
+[0m[38;2;153;153;153m● [0mUser declined to answer questions
+[0m[38;2;153;153;153m  ⎿  · Pick a colour? (Red / Blue)[0m
+
+[0m[38;2;153;153;153m✻ Cogitated for 2s · done 8:15 PM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool exactly once with TWO questions: "Pick a colour?" [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55m(Red, Blue) and "Pick a size?" (Small, Large). Neither is multiSelect. Do [0m[48;2;55;55;55m      [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mnothing else.[0m[48;2;55;55;55m                                                                   [0m
+
+[0m[38;2;153;153;153m──────────────────────────────────────────────────────────────────────────────────[0m
+←  ☐ Colour  ☐ Size [0m[38;2;0;0;0m[48;2;177;185;249m ✔ Submit [0m[38;2;153;153;153m →[0m
+
+[0m[1m[38;2;255;255;255mReview your answers[0m
+
+[0m[38;2;255;193;7m⚠ You have not answered all questions[0m
+
+[0m[38;2;153;153;153mReady to submit your answers?[0m
+
+[0m[38;2;177;185;249m❯[0m [0m[38;2;153;153;153m1. [0m[38;2;177;185;249mSubmit answers[0m
+  [0m[38;2;153;153;153m2. [0mCancel

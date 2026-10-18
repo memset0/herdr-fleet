@@ -26,7 +26,7 @@ function stubAdapter(mux: string, target: MuxTarget): MuxAdapter {
     readGrid: (paneId) =>
       Promise.resolve(muxOk({ paneId, text: target.endpoint, truncated: false, revision: 1 })),
     typeText: () => Promise.resolve(muxUnsupported("typeText", "stub")),
-    sendKeys: () => Promise.resolve(muxUnsupported("sendKeys", "stub")),
+    writeKeys: () => Promise.resolve(muxUnsupported("sendKeys", "stub")),
     renamePane: () => Promise.resolve(muxUnsupported("renamePane", "stub")),
     closePane: () => Promise.resolve(muxUnsupported("closePane", "stub")),
     setFocus: () => Promise.resolve(muxUnsupported("setFocus", "stub")),
@@ -96,7 +96,7 @@ describe("buildMuxRegistry", () => {
 
   // Herdr landed behind the contract in spec 02; tmux appended one entry in 04, zellij will in 05.
   test("the shipped list builds", () => {
-    expect(muxNames(buildMuxRegistry())).toEqual(["herdr", "tern", "tmux", "tuios", "zellij"]);
+    expect(muxNames(buildMuxRegistry())).toEqual(["durable", "herdr", "tern", "tmux", "tuios", "zellij"]);
   });
 });
 

@@ -7,7 +7,14 @@
 import { isBlank, lineText } from "../../blocks";
 import { CLAUDE_RULE_GLYPH_CLASS } from "../../rule-glyphs";
 import { displayWidth } from "../../text-width";
+import { readKeyHintFooter } from "../menu-hints";
 import type { PromptFamily } from "../prompt-model";
+import { frameAt, frameEdge, plainRows, type IdleProfile } from "../../surface/frame";
+import { requireProfile } from "../../surface/profile";
+
+/** The Claude profile's input-frame anchors (lib/surface/profiles/claude.json, M56 spec 03). The frame
+ *  module finds the box from them; the box locator (chrome.ts) and insideInputFrame both read them. */
+export const CLAUDE_IDLE: IdleProfile = requireProfile("claude").idle;
 
 // `lineText` / `isBlank` are properties of a StyledLine, not of any grammar, so they live in the
 // neutral core (lib/blocks.ts) where the renderer can reach them without importing a harness. They
@@ -24,6 +31,39 @@ const RULE_ONLY = new RegExp(`^[${CLAUDE_RULE_GLYPH_CLASS}]+$`);
 export function isHorizontalRule(text: string): boolean {
   const compact = text.replace(/\s+/g, "");
   return compact.length >= 3 && RULE_ONLY.test(compact);
+}
+
+// What a wrapped rule leaves on the row under it when it overflowed by one or two columns: one or two
+// U+2500 glyphs, alone. A stub of three or more glyphs is a horizontal rule on its own (`ruleTop`).
+const RULE_STUB = /^─{1,2}$/;
+
+/**
+ * True when row `i` of `texts` is a horizontal rule, or the stub a wrapped rule leaves under itself.
+ * This is hardening against a user theme, not vanilla Claude Code behaviour: a plugin or theme that
+ * draws a gutter beside a dialog narrows the dialog, while Claude Code still draws the dialog's rule
+ * at the full pane width, so the rule overflows by the gutter's width and its last glyphs land alone
+ * on the next row. The observed case is a theme plugin's question bar, a two-column gutter (a
+ * background-coloured cell, then a blank one), which leaves a `──` stub. The rows are never
+ * rewritten, only read as one rule, so the bridge's binding match (`matchInTail` in
+ * bridge/prompt-binding.ts, over contiguous normalised rows) still finds the phone's region.
+ */
+export function isRuleRow(texts: readonly string[], i: number): boolean {
+  const text = texts[i];
+  if (text === undefined) return false;
+  if (isHorizontalRule(text)) return true;
+  return i > 0 && RULE_STUB.test(text.trim()) && isHorizontalRule(texts[i - 1]!);
+}
+
+/**
+ * The first row of the rule that row `i` (an `isRuleRow` row) belongs to. A rule that wrapped beside a
+ * theme's gutter is its full row plus a stub under it, and a gutter three or more columns wide leaves
+ * a stub that reads as a horizontal rule itself, so the rule's first row is the top of the run of rule
+ * rows that ends at `i`. The walk never goes above row `floor`.
+ */
+export function ruleTop(texts: readonly string[], i: number, floor: number): number {
+  let top = i;
+  while (top - 1 >= floor && isHorizontalRule(texts[top - 1]!)) top--;
+  return top;
 }
 
 // A "bare" input-box border: the ONE glyph Claude actually draws its own input-box rules with — U+2500
@@ -87,8 +127,8 @@ const RULE_OR_SPACE_ONLY = new RegExp(`^[${CLAUDE_RULE_GLYPH_CLASS}\\s]*$`);
  *
  * This is layer one of two: the real protection is still structural, not lexical. `locateInputBox`
  * (chrome.ts) only trusts a border when the full bottom-border → ❯ → top-border shape lines up around
- * it (plus the draft-walk cap, MAX_DRAFT_LINES below, bounding how far apart the pieces of that
- * shape may sit), so a lone matching line elsewhere on screen does nothing on its own.
+ * it (plus the draft-walk cap, the profile's `idle.frame.maxDraftRows`, bounding how far apart the
+ * pieces of that shape may sit), so a lone matching line elsewhere on screen does nothing on its own.
  */
 export function isBoxBorder(text: string): boolean {
   const trimmed = text.trim();
@@ -131,8 +171,12 @@ const LOOSE_LABELLED_BORDER = /^─{1,}\s+(.+)\s+─{1,}$/;
  * shared BARE_BORDER_MIN total-width floor) — the shape the renderer's own clamp can produce that
  * `isBoxBorder`'s 2-glyph floor rejects.
  *
- * Used ONLY at `locateInputBox`'s step (e) — the LAST anchor it checks, after the bottom border, the
- * "❯" prompt line, and the draft-walk cap (MAX_DRAFT_LINES, below) have already pinned the rest of
+ * Since M56 spec 03 the frame's own top edge is the Claude profile's `idle.frame.top` anchor
+ * (lib/surface/profiles/claude.json), which spells this same shape as data; the frame module checks it
+ * LAST. This predicate stays for the box locator's marks under the box (chrome.ts isFrameMark), where
+ * a top-border-shaped rule in the tail refuses or is stepped over. The reasoning below is why the
+ * anchor may be this loose: the LAST anchor checked, after the bottom border, the
+ * "❯" prompt line, and the draft-walk cap (`idle.frame.maxDraftRows`) have already pinned the rest of
  * the shape down. That established structure is what pays for the looser floor here: a bare 1-glyph
  * flank would be far too permissive on its own (a bullet-adjacent "─ text" is ordinary prose), but by
  * the time step (e) runs, the only open question is whether THIS line, sitting immediately above an
@@ -160,111 +204,26 @@ export function isInputBoxTopBorder(text: string): boolean {
   return !RULE_OR_SPACE_ONLY.test(m[1]!);
 }
 
-// A long draft WRAPS inside the input box: the "❯ …" prompt line plus continuation lines (indented,
-// no leading "❯") before the bottom border. We scan up past those to find the prompt, bounded by
-// MAX_DRAFT_LINES — but as DEFENSE-IN-DEPTH, not a correctness bound. The caller's read window
-// defaults to 200 lines (COLLIE_READ_LINES, bridge/config.ts) and is client-requestable up to
-// MAX_READ_LINES (10,000, bridge/server.ts), so an unbounded walk would let a stray line that happens
-// to look like a border (see isBoxBorder in markers.ts) pair up with an unrelated quoted "❯" line
-// dozens (or thousands) of lines further up to complete a full (bogus) box shape — the cap, not the
-// border test alone, is what keeps that match from reaching all the way there. Every line the walk
-// crosses counts against this cap, blank or not: a run of blank padding is not a free pass either
-// (see the blank-line skips inside walkFrame below, both bounded by the same counter). The OLD
-// cap (12) was simply too tight: a real 610-char/25-line CJK draft wraps to ~40 rows at a narrow
-// pane's column count (CJK glyphs are 2 cells wide), well past it, which made locateInputBox return
-// null and stalled the send guard for good (issue #76). Removing the cap entirely was considered and
-// rejected for the reason above. 100 comfortably covers the observed ~40-row case plus a worst case
-// around 70–80 rows at a 19-column pane, with margin, while still capping how far the walk can reach.
-const MAX_DRAFT_LINES = 100;
-
-/** A row carrying the input box's prompt marker: "❯", or "!" in shell mode, where Claude paints
- *  the bang in place of the chevron. The bang must be followed by whitespace or end the row, so an
- *  ordinary "!important" line inside the frame is not a prompt. Step 1's frame marks (isFrameMark, chrome.ts)
- *  deliberately do NOT learn it: shell mode's bang only ever appears INSIDE the frame, and a
- *  "!"-led transcript row below the box must stay ordinary text. ADR 0048 step 2. */
-export function isPromptRow(text: string): boolean {
-  const head = text.trimStart();
-  if (head.startsWith("❯")) return true;
-  if (!head.startsWith("!")) return false;
-  const next = head[1];
-  return next === undefined || /\s/.test(next);
-}
+// The prompt row ("❯", or "!" followed by whitespace in shell mode, so an ordinary "!important"
+// line inside the frame is not a prompt) is the profile's `idle.frame.prompt` anchor since M56 spec 03.
+// chrome.ts's marks under the box (isFrameMark) deliberately do NOT learn the bang: shell mode's bang
+// only ever appears INSIDE the frame, and a "!"-led transcript row below the box stays ordinary text.
 
 /**
- * Whether a row starts in the pane's first column. Claude paints its input box's two borders and its
- * prompt row from column 0, and indents every wrapped-draft continuation row (two spaces, under the
- * text after "❯ "). So inside the frame an INDENTED row is draft text, whatever it looks like: a
- * pasted "────" rule or "❯ ls -la" shell prompt is a continuation, never the box's top border or its
- * prompt row. Measured on every box in the Claude fixture corpus (84 boxes, ADR 0048 addendum
- * 2026-09-26): each has its borders and prompt row at column 0 and every continuation row indented.
- * Only the frame walk (walkFrame) asks this; locateInputBox's step 1 frame marks stay indent-blind, because a
- * dialog's pointer row or a statusline's own rule may be indented and must still stop that walk.
- */
-function atColumnZero(text: string): boolean {
-  return text.length > 0 && !/^\s/.test(text);
-}
-
-/** The frame above a bottom border: the "❯" prompt line and the top border, or null. The box
- *  locator (locateInputBox, chrome.ts) runs it from the lowest bare border; insideInputFrame runs it
- *  from the border under one row. */
-export function walkFrame(texts: string[], bottomBorder: number): { top: number; prompt: number } | null {
-  let i = bottomBorder - 1;
-
-  // The "❯" prompt line — the FIRST line of the draft. A long draft wraps onto continuation lines
-  // (indented, no "❯") between the prompt and the bottom border, so scan up past them to the prompt.
-  // Bounded by MAX_DRAFT_LINES (see the comment above — defense-in-depth, not a correctness bound),
-  // and any box border en route aborts the match (we'd have left the box). Only a row at column 0 can
-  // be the prompt or a border (atColumnZero): an indented row is draft text, so a rule or a "❯" line
-  // the user pasted into the draft is walked past like any other continuation. Blank padding is
-  // tolerated on either side, but it draws from the SAME budget as real continuation lines — a bare
-  // `while (isBlank) i--` here used to skip an unlimited run of blank lines for free before this loop
-  // even started counting, which let a wall of blanks stand in for the non-blank filler the draft-walk
-  // cap is supposed to bound.
-  let wrapped = 0;
-  while (i >= 0 && !isFrameRow(texts[i]!) && wrapped < MAX_DRAFT_LINES) {
-    wrapped++;
-    i--;
-  }
-  if (i < 0 || !atColumnZero(texts[i]!) || !isPromptRow(texts[i]!)) return null;
-  const prompt = i;
-  i--;
-  // Blank padding between the prompt and the top border (e.g. a blank first line inside a freshly
-  // opened box) — same shared `wrapped` budget as above, for the same reason: this used to be its own
-  // unbounded `while (isBlank) i--`, so a wall of blanks here could reach an arbitrarily distant top
-  // border for free.
-  while (i >= 0 && isBlank(texts[i]!) && wrapped < MAX_DRAFT_LINES) {
-    wrapped++;
-    i--;
-  }
-
-  // The top border — the LAST anchor checked, so it alone gets the looser flank floor
-  // (isInputBoxTopBorder): the renderer can clamp a labelled top border's flank down to 1 glyph (see
-  // the comment on isInputBoxTopBorder above), and by this point the bottom border, the "❯"
-  // line, and the draft-walk cap have already pinned the rest of the shape down, so the looser test
-  // doesn't reopen the false-positive risk a bare 1-glyph flank would elsewhere.
-  if (i < 0 || !atColumnZero(texts[i]!) || !isInputBoxTopBorder(texts[i]!)) return null;
-  return { top: i, prompt };
-}
-
-/** A row the frame walk stops on: a box border or a prompt row, painted from column 0. */
-function isFrameRow(text: string): boolean {
-  return atColumnZero(text) && (isBoxBorder(text) || isPromptRow(text));
-}
-
-/**
- * Whether row `row` sits inside a Claude input box: the first frame row under it (a column-0 border or
- * prompt row, isFrameRow) is a bare bottom border, and the frame walk up from that border closes on a
- * top border ABOVE `row`. So the row is the box's "❯" prompt row or one of its indented continuation
- * rows: the operator's own draft. A dialog replaces the composer, so a dialog's own words never sit
- * in one, and the dialog evidence tests (namesPlanDialog) skip such rows: draft text is never a
- * dialog. A pure frame test, not the box locator (locateInputBox asks those tests first, so it cannot
- * be asked back); a box the locator would refuse for its tail still holds a draft here.
+ * Whether row `row` sits inside a Claude input box: the first frame edge under it (a column-0 border
+ * or prompt row, `frameEdge`) is a bottom edge, and the frame module's walk up from that edge
+ * (`frameAt`) closes on a top border ABOVE `row`. So the row is the box's "❯" prompt row or one of its
+ * indented continuation rows: the operator's own draft. A dialog replaces the composer, so a dialog's
+ * own words never sit in one, and the dialog evidence tests (namesPlanDialog) skip such rows: draft
+ * text is never a dialog. A pure frame test, not the box locator (locateInputBox asks those tests
+ * first, so it cannot be asked back); a box the locator would refuse for its tail still holds a
+ * draft here.
  */
 export function insideInputFrame(texts: string[], row: number): boolean {
-  for (let i = row + 1; i < texts.length && i - row <= MAX_DRAFT_LINES + 1; i++) {
-    if (!isFrameRow(texts[i]!)) continue;
-    if (!isBareBoxBorder(texts[i]!)) return false;
-    const frame = walkFrame(texts, i);
+  const rows = plainRows(texts);
+  for (let i = row + 1; i < texts.length && i - row <= CLAUDE_IDLE.frame.maxDraftRows + 1; i++) {
+    if (frameEdge(texts[i]!, CLAUDE_IDLE) === null) continue;
+    const frame = frameAt(rows, i, CLAUDE_IDLE);
     return frame !== null && frame.top < row;
   }
   return false;
@@ -441,13 +400,48 @@ export function planFooterLeadRow(texts: string[]): number {
   return rows.length === 0 ? -1 : rows[0]! - 1;
 }
 
-// The gutter Claude Code 2.1.283 paints down the left of a question that spans more than one row
-// ("│ Which fruit do you want?" / "│ Pick the one you like best."). It is chrome, not question text.
+// The gutter Claude Code paints down the left of a question: on the question step of a question that
+// spans more than one row (2.1.283: "│ Which fruit do you want?" / "│ Pick the one you like best."),
+// and on the wizard's review step beside an echoed question (2.1.302: "│ ● …" / "│   …"). It is
+// chrome, not question text.
 const QUESTION_GUTTER = /^\s*│\s?/;
 
 /** A question row with its `│` gutter and outer whitespace removed. */
 export function questionRowText(text: string): string {
   return text.replace(QUESTION_GUTTER, "").trim();
+}
+
+const RULE_RUN = new RegExp(`[${CLAUDE_RULE_GLYPH_CLASS}]{3,}`);
+
+/**
+ * The AskUserQuestion `select` footer when a narrow pane wrapped it onto more than one row, as the
+ * rows it fills at the tail of `texts`: `Enter to select · ↑/↓ to navigate · Esc` over `to cancel`
+ * at 40 columns on Claude Code 2.1.296. Null for a footer on one row (`classifyFooter` reads that
+ * one by itself), and for anything `readKeyHintFooter` does not accept as ONE key-hint block: rows at
+ * one indent, every `·` segment a hint, no blank row inside. FAIL CLOSED on top of that: the joined
+ * text must carry the `Enter to select` phrase, so a wrapped `Esc to cancel` or a wrapped `/effort`
+ * footer never claims the family.
+ */
+export function wrappedSelectFooter(texts: string[]): { startLine: number; lastRow: string } | null {
+  const footer = readKeyHintFooter(texts);
+  if (footer === null || footer.startLine === footer.endLine) return null;
+  if (!/\benter to select\b/i.test(footer.text)) return null;
+  // `readKeyHintFooter` takes "Esc to cancel ──── capture lab ─" for a hint, so a rule folded into the
+  // group would pass as footer text. No footer row holds a run of rule glyphs.
+  for (let i = footer.startLine; i <= footer.endLine; i++) if (RULE_RUN.test(texts[i]!)) return null;
+  return { startLine: footer.startLine, lastRow: texts[footer.endLine]! };
+}
+
+/**
+ * The row a `select` footer starts on when its last non-blank row is `fi`: `fi` itself for a footer
+ * on one row, the first row of the group for a wrapped one. The grammars measure the option rows
+ * against this row, not against `fi`, so the footer's own rows are never read as a description or
+ * counted into the gap above them. Their signatures still end at `fi`, so the phone and the bridge
+ * bind the same rows.
+ */
+export function selectFooterStart(texts: string[], fi: number): number {
+  if (/\benter to select\b/i.test(texts[fi]!)) return fi;
+  return wrappedSelectFooter(texts)?.startLine ?? fi;
 }
 
 /**
@@ -480,6 +474,10 @@ export function questionRowText(text: string): string {
 export function classifyFooter(text: string, texts: string[]): PromptFamily | null {
   const t = text.toLowerCase();
   if (/\benter to select\b/.test(t)) return "select";
+  // The same footer broken over two or three rows by a narrow pane (Claude Code 2.1.296 at 40
+  // columns: `Enter to select · ↑/↓ to navigate · Esc` over `to cancel`). The caller hands over the
+  // LAST row, which then names nothing on its own.
+  if (wrappedSelectFooter(texts)?.lastRow === text) return "select";
   if (/\benter to confirm\b/.test(t)) {
     return namesTrustDialog(texts) ? "trust" : null;
   }

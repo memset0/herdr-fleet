@@ -1,0 +1,42 @@
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.296[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5.5 · Claude Max[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/nr-lab/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool exactly once to ask me one question: "Pick a [0m[48;2;55;55;55m      [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mcolour?" with the options Red and Blue (no multiSelect). Do nothing else.[0m[48;2;55;55;55m       [0m
+
+[0m[38;2;153;153;153m● [0mUser declined to answer questions
+[0m[38;2;153;153;153m  ⎿  · Pick a colour? (Red / Blue)[0m
+
+[0m[38;2;153;153;153m✻ Cogitated for 2s · done 8:15 PM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool exactly once with TWO questions: "Pick a colour?" [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55m(Red, Blue) and "Pick a size?" (Small, Large). Neither is multiSelect. Do [0m[48;2;55;55;55m      [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mnothing else.[0m[48;2;55;55;55m                                                                   [0m
+
+[0m[38;2;153;153;153m● [0mUser declined to answer questions
+[0m[38;2;153;153;153m  ⎿  · Pick a colour? (Red / Blue)[0m
+     [0m[38;2;153;153;153m· Pick a size? (Small / Large)[0m
+
+[0m[38;2;153;153;153m✻ Cooked for 1s · done 8:16 PM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool exactly once with ONE question "Pick toppings?" [0m[48;2;55;55;55m   [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mwith options Cheese, Ham, Olives and multiSelect true. Do nothing else.[0m[48;2;55;55;55m         [0m
+[0m[38;2;153;153;153m──────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;153;153;153m← [0m[38;2;0;0;0m[48;2;177;185;249m ☐ Toppings [0m ✔ Submit  →
+
+[0m[1m[38;2;255;255;255mPick toppings?[0m
+
+[0m[38;2;177;185;249m❯[0m [0m[38;2;153;153;153m1.[0m [ ] [0m[38;2;177;185;249mCheese[0m
+         [0m[38;2;153;153;153mCheese[0m
+  [0m[38;2;153;153;153m2. [0m[ ] Ham
+         [0m[38;2;153;153;153mHam[0m
+  [0m[38;2;153;153;153m3. [0m[ ] Olives
+         [0m[38;2;153;153;153mOlives[0m
+  [0m[38;2;153;153;153m4. [0m[ ] [0m[38;2;153;153;153mType something[0m
+     [0m[1mSubmit[0m
+[0m[38;2;153;153;153m──────────────────────────────────────────────────────────────────────────────────[0m
+  5. Chat about this
+
+[0m[38;2;153;153;153mEnter to select · ↑/↓ to navigate · Esc to cancel[0m

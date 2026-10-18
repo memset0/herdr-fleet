@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { AskPush } from "../durable/ask-push.ts";
+import { AskGuardStore } from "../durable/guard.ts";
 import type { NotifyClock } from "../notifications.ts";
 import type { PushMessage } from "../push.ts";
 import type { AgentStatus, PaneWire } from "../types.ts";
@@ -298,5 +300,196 @@ describe("herdPushGate", () => {
   test("peer mode mutes the herd path so an alert never arrives twice", () => {
     const gate = herdPushGate("peer", { isMuted: () => false });
     expect(gate.isMuted()).toBe(true);
+  });
+});
+
+// ── Asks as data: the guard decides the push, not the way into blocked (ADR 0100) ──────────
+describe("a peer's pane that carries asks", () => {
+  function guarded() {
+    const clock = new FakeClock();
+    const push = new RecordingPush();
+    let now = 1_000_000;
+    const asks = new AskPush(new AskGuardStore(null), () => now);
+    const peer = new PeerNotifier<number>({
+      clock,
+      push,
+      mute: { isMuted: () => false },
+      delayMs: 5_000,
+      isNotifiable: (s) => s === "blocked" || s === "done",
+      asks,
+    });
+    return { clock, push, peer, tick: (ms: number) => (now += ms) };
+  }
+  const ask = (id: string, toolCallId: string) => ({
+    id,
+    kind: "permission",
+    toolCallId,
+    revision: 1,
+    title: "shell wants to run ls",
+    itemId: "item-1",
+    options: [{ id: "allow", label: "Allow", effect: "allow" as const }],
+  });
+  const blockedPanes = (push: RecordingPush) => push.sent.filter((m) => m.type !== "clear").length;
+
+  test("a new ask pushes once, through the coordinator, and a later poll of the same ask does not", () => {
+    const { clock, push, peer } = guarded();
+    peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [ask("a1", "call-1")] })]));
+    clock.fireAll();
+    expect(blockedPanes(push)).toBe(1);
+    expect(push.sent[0]?.host).toBe("laptop");
+    peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [ask("a1", "call-1")] })]));
+    clock.fireAll();
+    expect(blockedPanes(push)).toBe(1);
+  });
+
+  test("two programs on one member that use the same tool call id each push once (M55: the session is in the key)", () => {
+    const { clock, push, peer } = guarded();
+    const desk = { session: "desk" };
+    const cloud = { session: "cloud" };
+    peer.observe("laptop", body([pane("conv-1", "working", "durable", { ...desk, asks: [] }), pane("conv-2", "working", "durable", { ...cloud, asks: [] })]));
+    peer.observe(
+      "laptop",
+      body([
+        pane("conv-1", "blocked", "durable", { ...desk, asks: [ask("a1", "call-1")] }),
+        pane("conv-2", "blocked", "durable", { ...cloud, asks: [ask("a1", "call-1")] }),
+      ]),
+    );
+    clock.fireAll();
+    // The guard let both through: the host's summary counts two blocked panes. Keyed by host and
+    // tool call alone, the second would have read as known and been shown quietly.
+    const sent = push.sent.filter((m) => m.type !== "clear");
+    expect(sent.at(-1)).toMatchObject({ titleCode: "herd.blocked", titleDetail: { count: 2 } });
+  });
+
+  test("re-ask: a restarted program's same question under a new ask id is shown, not pushed", () => {
+    const { clock, push, peer, tick } = guarded();
+    peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [ask("a1", "call-1")] })]));
+    clock.fireAll();
+    expect(blockedPanes(push)).toBe(1);
+    // The program restarts: the pane leaves, comes back idle, then blocked on the same call.
+    tick(10_000);
+    peer.observe("laptop", body([]));
+    peer.observe("laptop", body([pane("conv-1", "idle", "durable", { asks: [] })]));
+    peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [ask("a2", "call-1")] })]));
+    clock.fireAll();
+    expect(blockedPanes(push)).toBe(1);
+  });
+
+  test("a pane without asks still pushes on its way into blocked, as before", () => {
+    const { clock, push, peer } = guarded();
+    peer.observe("laptop", body([pane("w1:p1", "working")]));
+    peer.observe("laptop", body([pane("w1:p1", "blocked")]));
+    clock.fireAll();
+    expect(blockedPanes(push)).toBe(1);
+  });
+
+  test("a hostile burst on one peer pane buzzes the phone once, not once per ask", () => {
+    const { clock, push, peer } = guarded();
+    peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    const burst = Array.from({ length: 50 }, (_, i) => ask(`a${String(i)}`, `call-${String(i)}`));
+    // Five sweeps as the asks pile up, ten at a time, each sweep re-arming the debounce and firing it.
+    for (let upTo = 10; upTo <= 50; upTo += 10) {
+      peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: burst.slice(0, upTo) })]));
+      clock.fireAll();
+    }
+    // The member lists every ask; the guard pushes three of them in the first sweep, which is one
+    // alert for the pane, and nothing after.
+    expect(blockedPanes(push)).toBe(1);
+  });
+
+  test("the lead's push for an ask is generic: the pane's push name, never the ask's title or tool line", () => {
+    const { clock, push, peer } = guarded();
+    peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    const secret = { ...ask("a1", "call-1"), title: "shell wants to run curl https://x/?token=hunter2", tool: { name: "shell", summary: "rm -rf /" } };
+    peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [secret] })]));
+    clock.fireAll();
+    const msg = push.sent.find((m) => m.type !== "clear");
+    expect(msg?.titleCode).toBe("ask.permission");
+    expect(msg?.title).toBe("Permission needed in durable");
+    const text = JSON.stringify(msg);
+    for (const leak of ["hunter2", "curl", "rm -rf", "shell wants"]) expect(text).not.toContain(leak);
+  });
+
+  test("push words the program chose lead the push after the pane's name, with the line as the body", () => {
+    const { clock, push, peer } = guarded();
+    peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    const chosen = { ...ask("a1", "call-1"), push: { title: "Ticket 400 needs a yes", line: "write_note wants to add one line to notes.txt" } };
+    peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [chosen] })]));
+    clock.fireAll();
+    const msg = push.sent.find((m) => m.type !== "clear");
+    expect(msg?.title).toBe("durable: Ticket 400 needs a yes");
+    // The program's words are not Collie's to translate, so the title carries no code.
+    expect(msg?.titleCode).toBeUndefined();
+    expect(msg?.body).toBe("laptop · write_note wants to add one line to notes.txt");
+    // The ask's own title and tool line still never cross.
+    expect(JSON.stringify(msg)).not.toContain("shell wants");
+  });
+
+  test("a push title alone keeps the place as the body, and a push line alone keeps the generic headline", () => {
+    const titleOnly = guarded();
+    titleOnly.peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    titleOnly.peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [{ ...ask("a1", "call-1"), push: { title: "Needs a yes" } }] })]));
+    titleOnly.clock.fireAll();
+    const first = titleOnly.push.sent.find((m) => m.type !== "clear");
+    expect(first?.title).toBe("durable: Needs a yes");
+    expect(first?.body).toBe("laptop · collie");
+
+    const lineOnly = guarded();
+    lineOnly.peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    lineOnly.peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [{ ...ask("a1", "call-1"), push: { line: "One line." } }] })]));
+    lineOnly.clock.fireAll();
+    const second = lineOnly.push.sent.find((m) => m.type !== "clear");
+    expect(second?.titleCode).toBe("ask.permission");
+    expect(second?.title).toBe("Permission needed in durable");
+    expect(second?.body).toBe("laptop · One line.");
+  });
+
+  test("the lead cleans and cuts the words a member sent, and ignores a push that is not text", () => {
+    const { clock, push, peer } = guarded();
+    peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    const hostile = { ...ask("a1", "call-1"), push: { title: `T\u0007${"t".repeat(100)}\u202e`, line: `${"l".repeat(300)}`, extra: "ignored" } };
+    peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [hostile] })]));
+    clock.fireAll();
+    const msg = push.sent.find((m) => m.type !== "clear");
+    // 60 characters of the title (the control and the direction mark are gone), 120 of the line.
+    expect(msg?.title).toBe(`durable: T${"t".repeat(59)}`);
+    expect(msg?.body).toBe(`laptop · ${"l".repeat(120)}`);
+
+    const odd = guarded();
+    odd.peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    const wrong = { ...ask("a1", "call-1"), push: { title: 7, line: null } };
+    odd.peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [JSON.parse(JSON.stringify(wrong))] })]));
+    odd.clock.fireAll();
+    expect(odd.push.sent.find((m) => m.type !== "clear")?.title).toBe("Permission needed in durable");
+  });
+
+  test("the words change nothing about the guard: a repeated ask with words pushes once", () => {
+    const { clock, push, peer } = guarded();
+    const chosen = { ...ask("a1", "call-1"), push: { title: "Needs a yes" } };
+    peer.observe("laptop", body([pane("conv-1", "working", "durable", { asks: [] })]));
+    for (let i = 0; i < 4; i++) {
+      peer.observe("laptop", body([pane("conv-1", "blocked", "durable", { asks: [chosen] })]));
+      clock.fireAll();
+    }
+    expect(blockedPanes(push)).toBe(1);
+  });
+
+  test("past 30 pushes in an hour, the lead sends one summary for the host and then nothing", () => {
+    const { clock, push, peer, tick } = guarded();
+    const panes: ReturnType<typeof pane>[] = [];
+    let floods = 0;
+    for (let i = 0; i < 40; i++) {
+      panes.push(pane(`conv-${String(i)}`, "blocked", "durable", { asks: [ask(`a${String(i)}`, `call-${String(i)}`)] }));
+      peer.observe("laptop", body([...panes]));
+      clock.fireAll();
+      tick(7_000);
+    }
+    floods = push.sent.filter((m) => m.titleCode === "ask.flood").length;
+    expect(floods).toBe(1);
+    const summary = push.sent.find((m) => m.titleCode === "ask.flood");
+    expect(summary?.title).toBe("A durable agent on laptop is raising many asks");
+    expect(summary?.host).toBe("laptop");
   });
 });

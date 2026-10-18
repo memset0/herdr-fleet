@@ -1,15 +1,22 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { ArrowUpToLine, CornerDownLeft, History, Loader2 } from "lucide-react";
 
-import { ItemView, ToolGroup, groupRuns } from "@/components/chat-cards";
+import { ItemView, PendingTurn, ToolGroup, groupRuns } from "@/components/chat-cards";
+import { PromptPin } from "@/components/prompt-pin";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { QUEUED_BLOCK, QUEUED_BUTTON, QUEUED_HEAD, QUEUED_LABEL, QUEUED_TEXT } from "@/components/queued-block";
 import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/chat/chat-message-list";
 import { useLocale } from "@/hooks/use-locale";
 import type { ChatFeed } from "@/hooks/use-chat-window";
-import { itemsOf } from "@/lib/chat-items";
+import { ASKS_SHOWN, asksAt, shownAsks } from "@/lib/ask";
+import { finished, itemsOf } from "@/lib/chat-items";
 import type { ChatStatus } from "@/lib/chat-window";
+import { dropPending, unmatched, usePending } from "@/lib/durable-pending";
 import { t, type MessageKey } from "@/lib/i18n";
+import type { Ask } from "@/lib/types";
+import { AskCard, type AskCardProps } from "@/components/ask-card";
+import { pinAt, promptMap } from "@/lib/prompt-pin";
 import { recallScroll, rememberScroll } from "@/lib/scroll-memory";
 import { cn } from "@/lib/utils";
 
@@ -71,31 +78,27 @@ const STREAM_BLOCK = "flex min-w-0 flex-col [content-visibility:auto] [contain-i
 const LIVE_ROW = "mt-1 flex items-center gap-2 py-2 text-xs font-medium text-muted-foreground";
 
 /**
- * THE QUEUE: what the operator typed while the agent was busy.
- *
- * The operator's own colour, because it is the operator's own words — the same `status-working` well
- * `UserTurn` wears (`chat-cards.tsx`), at a lighter weight, so it reads as "mine, and not sent yet"
- * rather than as a turn the agent ignored. A uniform border with a soft shadow and no left accent,
- * per the house rule for a rounded box.
- *
- * Dashed, and that is the one thing carrying "not yet". A solid well would be indistinguishable from
- * a turn that has landed, which is the single mistake this row must not make.
+ * THE WORKING ROW OF A DURABLE THREAD (M53 spec 10): three dots in the muted ink, where the static "Still working…" line
+ * stands on any other pane. It is drawn while the newest thing in the thread is the person's own line and the program has
+ * not answered yet, and it appears the moment the program accepts a send, before the next read says `working`. The dots
+ * share {@link LIVE_ROW}'s box, so the row going to the static line or to nothing moves no neighbour (DESIGN.md §2). They
+ * dim and brighten in turn (opacity only, `.working-dots` in index.css) and stand still under reduced motion.
  */
-const QUEUED_BLOCK =
-  "mt-1 flex min-w-0 flex-col gap-1 rounded-md border border-dashed border-status-working/40 bg-status-working/5 px-3 py-2";
-const QUEUED_LABEL = "text-xs font-medium text-status-working";
-/** The label row. The button, when there is one, is its only other child, at the right. */
-const QUEUED_HEAD = "flex min-h-7 items-center justify-between gap-2";
-/**
- * "Send now": drawn 28px tall and bought up to the 44px floor as hit area (DESIGN.md §6), so the
- * card does not grow a row for it. `min-w-11` is the width half of the floor; the `::before` is the
- * height half and reaches into the card's own padding, never into the message text under it.
- */
-const SEND_NOW =
-  "relative h-7 min-w-11 gap-1 px-2 text-xs before:absolute before:inset-x-0 before:-inset-y-2 before:content-['']";
+function WorkingRow() {
+  useLocale();
+  return (
+    <div data-slot="stream-working" role="status" aria-label={t("durable.thread.working")} className={LIVE_ROW}>
+      <span aria-hidden="true" className="working-dots flex h-4 items-center gap-1">
+        <span className="size-1.5 rounded-full bg-current" />
+        <span className="size-1.5 rounded-full bg-current" />
+        <span className="size-1.5 rounded-full bg-current" />
+      </span>
+    </div>
+  );
+}
+
 /** How long "Send now" holds its pending face when the queue does not empty first. */
 const SEND_NOW_PENDING_MS = 5_000;
-const QUEUED_TEXT = "wrap-anywhere text-sm whitespace-pre-wrap text-foreground/80";
 
 /**
  * THE QUEUE CARD: one group, however many messages wait, with its one control at the head.
@@ -138,7 +141,7 @@ function QueuedCard({ queued, sendNow }: { queued: readonly string[]; sendNow: (
             variant="outline"
             size="sm"
             data-slot="stream-send-now"
-            className={SEND_NOW}
+            className={QUEUED_BUTTON}
             disabled={pending}
             aria-busy={pending}
             // The accessible name STARTS with the visible words in every language (WCAG 2.5.3, Label in
@@ -163,9 +166,62 @@ function QueuedCard({ queued, sendNow }: { queued: readonly string[]; sendNow: (
   );
 }
 
+/**
+ * How many older pages one tap on a reported prompt may fetch while walking back to it.
+ *
+ * The walk is the operator's own tap, so it may read past a screenful, but a prompt hundreds of turns
+ * back must not turn one tap into an unbounded read. Ten pages of 40 is past every tool run measured;
+ * a walk that runs out stops where it got to, and the pin still names the prompt.
+ */
+const PIN_SEEK_PAGES = 10;
+
+/** When a jump to a prompt re-checks its landing while the blocks above take their real size. */
+const JUMP_SETTLE_MS = [100, 250, 500] as const;
+/** The reader's own moves, on the scroller's parent, which end a jump or a walk to a prompt. */
+const JUMP_STOP_INPUTS = ["pointerdown", "click", "wheel", "touchstart", "keydown"] as const;
+
+/**
+ * The topmost block the reader can see, or -1 while the stream's top edge is on screen.
+ *
+ * "Can see" is measured from the scroller's padding edge, which is where the strip band ends, so a
+ * block hidden under the band does not count as read. Binary search: blocks are in document order and
+ * a long thread holds hundreds of them.
+ *
+ * A block's box is its content plus {@link STREAM_BLOCK}'s 12px padding on every side, pulled back by
+ * the same negative margin, so neighbours OVERLAP by 24px. Measuring the raw box let the block above
+ * reach 24px into a prompt just jumped to (its box top sits on the line), which then read as
+ * "answered further back" with the pin drawn over it (seen on a phone-sized screen, 2026-10-10). So a
+ * block counts as the top one only once it reaches past that overlap.
+ */
+const BLOCK_OVERLAP_PX = 24;
+
+/** The line the reader's view starts at: the scroller's padding edge, below the strip band. */
+function readingLine(el: HTMLElement): number {
+  return el.getBoundingClientRect().top + (Number.parseFloat(getComputedStyle(el).paddingTop) || 0);
+}
+
+function topBlock(el: HTMLElement): number {
+  const nodes = el.querySelectorAll<HTMLElement>(":scope > [data-block]");
+  if (nodes.length === 0) return -1;
+  const line = readingLine(el);
+  if (nodes[0]!.getBoundingClientRect().top >= line) return -1;
+  let lo = 0;
+  let hi = nodes.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (nodes[mid]!.getBoundingClientRect().bottom - BLOCK_OVERLAP_PX > line) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
 /** The top affordance, the same shape and the same words the mirror's own scrollback row uses. */
 const EDGE_ROW =
   "mb-2 flex w-full items-center justify-center gap-1.5 rounded-md py-2 text-xs font-medium text-muted-foreground transition-colors active:bg-muted/50 disabled:opacity-60";
+
+/** The room the top edge leaves for a prompt pin over it: the pin's fixed `h-14` (prompt-pin.tsx)
+ *  plus the 4px its overlay sits down from the scrollport's top (ChatMessageList). */
+const PIN_ROOM = "h-16";
 
 /**
  * THE SAVED-COPY LINE (M46 specs 09 and 10), at the top of the scrolled content of either body.
@@ -251,6 +307,9 @@ export function SessionStream({
   listRef,
   savedCopy = null,
   onSendQueuedNow,
+  asks,
+  durable = false,
+  questionPending = false,
 }: {
   /** The held window plus its one control, from `useChatWindow`. */
   feed: ChatFeed;
@@ -287,10 +346,34 @@ export function SessionStream({
    * sent. The keys are handed back so this body never holds a copy of its own.
    */
   onSendQueuedNow?: (keys: readonly string[]) => Promise<boolean>;
+  /**
+   * The open asks of a pane that carries them as data (ADR 0100), and the props every card shares. Each card sits
+   * under the block that shows its item, or at the tail when that item is not on screen. The list holds
+   * every open ask; the first five are drawn and an "N more" button opens the rest (lib/ask.ts
+   * `shownAsks`). Absent on every pane with a screen, which draws none.
+   */
+  asks?: { list: readonly Ask[]; card: Omit<AskCardProps, "ask"> };
+  /**
+   * The pane is a durable conversation: a program with no screen (ADR 0101). Its thread ends with the working row
+   * ({@link WorkingRow}) in place of the static line while the newest thing is the person's own, and a text the program is
+   * still writing carries a cursor. Every other pane draws what it always drew.
+   */
+  durable?: boolean;
+  /**
+   * A question waits in the terminal that no card answers: OmO's `? Question pending` banner over a
+   * ready editor (HarnessAdapter.questionPending). The thread ends with one status line that says so,
+   * in place of the working line, because the turn waits on the person. The fact comes from the
+   * screen, as the card dock below this body does (ADR 0059); the line claims nothing about the
+   * question itself, which the banner and the running question card carry.
+   */
+  questionPending?: boolean;
 }) {
   // The subscription every `t()` caller owes, plus the counter the memo below needs.
   const { revision } = useLocale();
   const { window, loadOlder, loadingOlder } = feed;
+  // The asks past the first five stay folded until the person opens them (lib/ask.ts `shownAsks`).
+  const [asksOpen, setAsksOpen] = useState(false);
+  const askList = asks === undefined ? undefined : shownAsks(asks.list, asksOpen);
 
   const blocks = useMemo(() => {
     // READ, not merely listed as a dependency, which is what makes it an honest one: `itemsOf`
@@ -305,8 +388,42 @@ export function SessionStream({
     const entries = window.entries.filter((e) => e.abandoned !== true);
     // Tool calls off folds EVERY run, a lone step included, which is the same treatment the History
     // page gives a turn's steps. One idea, one look, two surfaces.
-    return groupRuns(entries.flatMap((e) => itemsOf(e, showCompactions)), showToolCalls ? 3 : 1);
-  }, [window.entries, showToolCalls, showCompactions, revision]);
+    //
+    // A text the program was still writing (`partial`) keeps its cursor only while the pane works: one that stopped
+    // will not grow, and a cursor left blinking on it would be a lie (WIRE.md 7.15).
+    return groupRuns(
+      entries.flatMap((e) => itemsOf(e, showCompactions).map((item) => (working ? item : finished(item)))),
+      showToolCalls ? 3 : 1,
+    );
+  }, [window.entries, showToolCalls, showCompactions, revision, working]);
+
+  // THE PERSON'S OWN LINES THE PROGRAM HAS NOT WRITTEN BACK YET (lib/durable-pending.ts). Only a durable pane's composer
+  // puts any, so every other pane has none and draws nothing here. A line goes when an item of the program's matches it.
+  const pending = usePending(address);
+  const { open: lines, done: answered } = useMemo(
+    () => unmatched(pending, window.entries, Date.now()),
+    [pending, window.entries],
+  );
+  const answeredKey = answered.join("\n");
+  useEffect(() => {
+    if (answeredKey !== "") dropPending(address, answeredKey.split("\n"));
+  }, [address, answeredKey]);
+  // A line the person just sent snaps the thread to its tail, where it stands.
+  const sentCount = lines.length;
+  const heldCount = useRef(sentCount);
+  useLayoutEffect(() => {
+    if (sentCount > heldCount.current) listRef.current?.scrollToBottom();
+    heldCount.current = sentCount;
+  }, [sentCount, listRef]);
+
+  // What the end of a durable thread says. The newest thing is the person's own when a line of theirs is waiting, or when
+  // the last item is a user turn. A text still growing says it is working by itself, with its cursor.
+  const newest = blocks.at(-1)?.at(-1);
+  const personsNewest = lines.some((line) => line.state !== "notSent") || newest?.kind === "user";
+  const growing = newest !== undefined && "partial" in newest && newest.partial === true;
+  const accepted = lines.some((line) => line.state === "sent");
+  const dotsRow = durable && ((working && personsNewest) || accepted);
+  const staticRow = working && !(durable && (personsNewest || growing)) && !questionPending;
 
   // A PANE KEEPS ITS PLACE (ADR 0063). Switching modes unmounts this body and switching panes
   // remounts it, so neither the DOM nor the scroller remembers where the reader was — the same gap
@@ -352,13 +469,13 @@ export function SessionStream({
   // Where the reader was FOLLOWING the tail, `useAutoScroll` re-pins after this, and that is the
   // right answer: they were at the bottom and they stay there.
   const anchor = useRef<{ height: number; top: number; firstId: string } | null>(null);
-  const onLoadOlder = () => {
+  const onLoadOlder = useCallback(() => {
     const el = listRef.current?.getScrollElement();
     const firstId = blocks[0]?.[0]?.id;
     anchor.current =
       el && firstId !== undefined ? { height: el.scrollHeight, top: el.scrollTop, firstId } : null;
     loadOlder();
-  };
+  }, [blocks, listRef, loadOlder]);
   useLayoutEffect(() => {
     const held = anchor.current;
     if (held === null) return;
@@ -371,6 +488,125 @@ export function SessionStream({
     if (el === null || el === undefined) return;
     el.scrollTop = held.top + (el.scrollHeight - held.height);
   }, [blocks, loadingOlder, listRef]);
+
+  // ── THE PROMPT PIN ──────────────────────────────────────────────────────────
+  // Which prompt the turns on screen answer, pinned over the top of the thread (lib/prompt-pin.ts
+  // decides, components/prompt-pin.tsx draws). Only the topmost visible block is measured here, on
+  // scroll and after every commit that changed the blocks, and the state moves only when that block
+  // changes, so a scroll inside one long reply re-renders nothing.
+  const prompts = useMemo(() => promptMap(blocks), [blocks]);
+  const lastPrompt = window.lastPrompt;
+  const holdsLastPrompt = useMemo(
+    () => lastPrompt !== null && window.entries.some((e) => e.uuid === lastPrompt.uuid && e.abandoned !== true),
+    [lastPrompt, window.entries],
+  );
+  const [top, setTop] = useState(-1);
+  useLayoutEffect(() => {
+    const el = listRef.current?.getScrollElement();
+    if (el === null || el === undefined) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      setTop(topBlock(el));
+    };
+    measure();
+    const onScroll = () => {
+      if (frame === 0) frame = requestAnimationFrame(measure);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (frame !== 0) cancelAnimationFrame(frame);
+    };
+  }, [blocks, listRef]);
+  const pin = savedCopy === null ? pinAt(prompts, top, lastPrompt, holdsLastPrompt, window.hasOlder) : null;
+  // The pin a reader at the very top sees. While there is one, the top edge starts under it: the pin
+  // floats over the scrollport, and a reported prompt (a phone with no history of the session yet)
+  // sat on "Load older" and took its tap (2026-10-17). It follows what the stream holds, never the
+  // scroll, so the room changes with a page or a new prompt, not under the reader's thumb.
+  const pinOnTop = savedCopy === null && pinAt(prompts, -1, lastPrompt, holdsLastPrompt, window.hasOlder) !== null;
+
+  // One scroll does not land: the blocks above the target are `content-visibility: auto`, and a page
+  // that just arrived has never been laid out, so each sits at its 64px placeholder until the jump
+  // brings it near the screen and it takes its real height, pushing the target down (a 293px reply
+  // left a prompt 89px below the top on 2026-10-10, measured AFTER the next frame had looked fine).
+  // So the jump re-aligns at a few checkpoints, and gives up the moment the reader touches the list:
+  // a correction that lands after their own scroll would be the app fighting them. "The list" is the
+  // scroller's parent, because the latest-turn button sits beside the scroller, not in it; and a new
+  // jump ends the one before it.
+  const stopJump = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopJump.current?.(), []);
+  const jumpToBlock = useCallback(
+    (index: number) => {
+      const list = listRef.current;
+      const el = list?.getScrollElement();
+      const node = el?.querySelectorAll<HTMLElement>(":scope > [data-block]")[index] ?? null;
+      if (list === null || list === undefined || el === null || el === undefined || node === null) return;
+      stopJump.current?.();
+      const area = el.parentElement ?? el;
+      let touched = false;
+      const stop = () => {
+        touched = true;
+        for (const type of JUMP_STOP_INPUTS) area.removeEventListener(type, stop);
+        if (stopJump.current === stop) stopJump.current = null;
+      };
+      stopJump.current = stop;
+      for (const type of JUMP_STOP_INPUTS) area.addEventListener(type, stop, { passive: true });
+      const realign = () => {
+        if (touched) return;
+        if (Math.abs(node.getBoundingClientRect().top - readingLine(el)) > 1) list.scrollToChild(node, true);
+      };
+      list.scrollToChild(node, true);
+      requestAnimationFrame(realign);
+      for (const ms of JUMP_SETTLE_MS) setTimeout(realign, ms);
+      setTimeout(stop, JUMP_SETTLE_MS.at(-1)! + 1);
+    },
+    [listRef],
+  );
+
+  // A reported prompt the client does not hold yet: walk older pages until it arrives, then jump to
+  // it. Driven by an effect rather than a loop in the handler because each page is a merge and a
+  // render away, and the anchoring above must run on every one of them. The walk looks for the prompt
+  // that was tapped: a newer one landing live meanwhile is not where the reader asked to go.
+  const [seeking, setSeeking] = useState<string | null>(null);
+  const seekPages = useRef(0);
+  // A reader who moves while the pages load has gone somewhere else; the jump at the end would pull
+  // them back. Same inputs, and the same area, as the jump's own stop.
+  const isSeeking = seeking !== null;
+  useEffect(() => {
+    const area = listRef.current?.getScrollElement()?.parentElement;
+    if (!isSeeking || area === null || area === undefined) return;
+    const cancel = () => setSeeking(null);
+    for (const type of JUMP_STOP_INPUTS) area.addEventListener(type, cancel, { passive: true });
+    return () => {
+      for (const type of JUMP_STOP_INPUTS) area.removeEventListener(type, cancel);
+    };
+  }, [isSeeking, listRef]);
+  useEffect(() => {
+    if (seeking === null || loadingOlder) return;
+    const index = blocks.findIndex((g) => g.length === 1 && g[0]!.kind === "user" && g[0]!.id.startsWith(`${seeking}:`));
+    if (index >= 0) {
+      setSeeking(null);
+      jumpToBlock(index);
+      return;
+    }
+    if (window.hasOlder && seekPages.current < PIN_SEEK_PAGES) {
+      seekPages.current += 1;
+      onLoadOlder();
+      return;
+    }
+    setSeeking(null);
+  }, [seeking, loadingOlder, blocks, window.hasOlder, onLoadOlder, jumpToBlock]);
+
+  const onPinTap = () => {
+    if (pin === null) return;
+    if (pin.kind === "held") jumpToBlock(pin.start);
+    else if (pin.kind === "earlier") onLoadOlder();
+    else if (lastPrompt !== null) {
+      seekPages.current = 0;
+      setSeeking(lastPrompt.uuid);
+    }
+  };
 
   const sendNowKeys = window.sendQueuedNow;
   const sendNow =
@@ -401,12 +637,14 @@ export function SessionStream({
       // older turns is an ordinary act in this body and a rare one in that one.
       className="px-3 pt-0 pb-3"
       style={textTokens(fontSize)}
+      overlay={pin !== null ? <PromptPin pin={pin} busy={seeking !== null || (pin.kind === "earlier" && loadingOlder)} onTap={onPinTap} /> : null}
     >
       {/* Top of the window. Older turns come off `hasOlder` and nothing else: what the live window
           has trimmed is the History read's job, reached through `?before=`, and the bridge holds
           none of it in memory. Where there is nothing older, the thread says where it starts — the
           History page's own line, because it is the same fact about the same session. A saved copy takes
           the slot instead of both: there is no bridge to load from (SavedCopyRow). */}
+      {pinOnTop && <div aria-hidden data-slot="pin-room" className={PIN_ROOM} />}
       {savedCopy !== null ? (
         <SavedCopyRow text={savedCopy} />
       ) : window.hasOlder ? (
@@ -422,7 +660,7 @@ export function SessionStream({
         )
       )}
 
-      {blocks.map((group) => (
+      {blocks.map((group, index) => (
         <div key={group[0]!.id} data-block data-n={group.length} className={STREAM_BLOCK}>
           {/* A group of one is an ordinary block, EXCEPT a lone tool call while tool calls are off:
               that one folds too, or "off" would leave every single-step turn drawn in full. */}
@@ -431,19 +669,66 @@ export function SessionStream({
           ) : (
             <ToolGroup items={group} liveOpens={showToolCalls} />
           )}
+          {asks === undefined || askList === undefined ? null : asksAt(blocks, askList.shown, index).map((ask) => <AskCard key={ask.id} ask={ask} {...asks.card} />)}
         </div>
       ))}
+
+      {/* The asks whose item is not on screen: older than the window, or never logged. They stand at
+          the tail, where the next thing the program does will arrive, because an ask is the one block
+          that waits for a person. */}
+      {asks === undefined || askList === undefined ? null : (
+        <>
+          {asksAt(blocks, askList.shown, null).map((ask) => (
+            <div key={ask.id} data-slot="stream-ask" className="my-1">
+              <AskCard ask={ask} {...asks.card} />
+            </div>
+          ))}
+          {asks.list.length > ASKS_SHOWN ? (
+            <button
+              type="button"
+              data-slot="stream-ask-more"
+              aria-expanded={asksOpen}
+              onClick={() => setAsksOpen((open) => !open)}
+              className={EDGE_ROW}
+            >
+              {asksOpen ? t("ask.showFewer") : t("ask.showMore", { count: askList.hidden })}
+            </button>
+          ) : null}
+        </>
+      )}
+
+      {/* THE LINES THE PERSON SENT THAT THE PROGRAM HAS NOT WRITTEN BACK (durable panes only), after the program's own
+          items and before the working row. Each is replaced in place by the program's item (lib/durable-pending.ts). */}
+      {lines.map((line) => (
+        <div key={line.requestId} data-slot="stream-pending" className={STREAM_BLOCK}>
+          <PendingTurn text={line.text} state={line.state} />
+        </div>
+      ))}
+
+      {/* A durable thread's working row: three dots, while the newest thing is the person's own. */}
+      {dotsRow && <WorkingRow />}
 
       {/* A turn is running. Last of the thread, because that is where its answer will arrive. Drawn
           only where the window is actually being read: a pane whose journal cannot be read is busy
           in the chrome, and saying so HERE would promise a turn this body will never show. */}
-      {working && reading && (
+      {staticRow && reading && (
         <div data-slot="stream-live" className={LIVE_ROW}>
           {/* The same mark a running step wears inside a card (`chat-cards.tsx` § StepStatus), so
               "still going" looks the same wherever the stream says it. UNNAMED: it leads the word,
               and a name here is the state announced twice (status-badge.tsx § label). */}
-          <StatusDot status="working" live className="size-2" />
+          <StatusDot status="working" live className="size-2.5" />
           <span>{t("chat.stream.working")}</span>
+        </div>
+      )}
+
+      {/* A question waits in the terminal and no card answers it (OmO's banner). One line, the
+          needs-you mark and the words, no control: the banner prints no keys a card could send, and
+          a reply sent now is OmO's own free-text answer, which the line says. LIVE_ROW's box, so it
+          stands where the working line stood. */}
+      {questionPending && reading && (
+        <div data-slot="stream-question-pending" className={LIVE_ROW}>
+          <StatusDot status="blocked" className="size-2.5" />
+          <span>{t("chat.stream.questionPending")}</span>
         </div>
       )}
 
@@ -477,7 +762,7 @@ export function SessionStream({
           was wrong for one frame. A NEW pane is the exception, because there nothing was expected:
           Codex has no session before its first prompt, and pi writes no log before its first reply.
           A running turn says so on the row above instead, so the two never stand together. */}
-      {empty && explain === null && reading && !working && (
+      {empty && explain === null && reading && !working && lines.length === 0 && (
         <div className="py-16 text-center text-sm text-muted-foreground">{t("chat.stream.empty")}</div>
       )}
     </ChatMessageList>

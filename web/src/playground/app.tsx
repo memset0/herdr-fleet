@@ -61,7 +61,9 @@ export interface SectionEntry {
 export const SECTIONS: readonly SectionEntry[] = [
   { def: { id: "dashboard", title: "Dashboard" }, load: () => import("./sections/dashboard").then((m) => ({ default: m.DashboardSection })) },
   { def: { id: "pane", title: "Pane" }, load: () => import("./sections/pane").then((m) => ({ default: m.PaneSection })) },
+  { def: { id: "composer-states", title: "Composer states" }, load: () => import("./sections/composer-states").then((m) => ({ default: m.ComposerStatesSection })) },
   { def: { id: "actions-row", title: "Actions row" }, load: () => import("./sections/actions-row").then((m) => ({ default: m.ActionsRowSection })) },
+  { def: { id: "programs", title: "Durable agents home" }, load: () => import("./sections/programs").then((m) => ({ default: m.DurableSection })) },
   { def: { id: "crew", title: "Crew" }, load: () => import("./sections/crew").then((m) => ({ default: m.CrewSection })) },
   { def: { id: "machines", title: "Machines" }, load: () => import("./sections/machines").then((m) => ({ default: m.MachinesSection })) },
   { def: { id: "settings", title: "Settings" }, load: () => import("./sections/settings").then((m) => ({ default: m.SettingsSection })) },
@@ -173,9 +175,8 @@ export function PlaygroundApp({ tab }: { tab?: string } = {}) {
 function ScrollToCard({ handle, section }: { handle: string | null; section: string }) {
   useEffect(() => {
     if (handle === null) return;
-    // Not a template-built CSS selector: the e2e handle roll call (`web/e2e/handles.spec.ts`) and
-    // app.test.tsx's own handle test both grep this tree for a card's `state` prop by pattern, and a
-    // selector string assembled the same way would read back as one more handle no card actually has.
+    // Not a template-built CSS selector: a card's handle is compared as a plain attribute value, so a
+    // handle with an odd character cannot break the lookup.
     const el = [...document.querySelectorAll("[data-state]")].find(
       (node) => node.getAttribute("data-state") === handle,
     );

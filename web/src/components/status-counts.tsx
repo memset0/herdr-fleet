@@ -90,7 +90,7 @@ function shownCounts(panes: readonly AgentView[]) {
 function CountMark({ c }: { c: Counted }) {
   return (
     <span aria-hidden className="flex size-3 shrink-0 items-center justify-center">
-      {c.kind === "unseen" ? <UnseenMark size="sm" /> : <StatusDot status={c.status} className="size-2" />}
+      {c.kind === "unseen" ? <UnseenMark /> : <StatusDot status={c.status} />}
     </span>
   );
 }

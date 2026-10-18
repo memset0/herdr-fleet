@@ -190,7 +190,7 @@ function Bead({ active, status }: { active: boolean; status: AgentStatus | null 
           status={status}
           // A hollow resting dot is filled with the surface it sits on, and this bar is the page.
           surface="bg-background"
-          className={cn("size-2", !active && "opacity-50")}
+          className={cn("size-2.5", !active && "opacity-50")}
         />
       )}
     </span>

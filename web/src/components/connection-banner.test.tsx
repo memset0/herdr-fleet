@@ -57,6 +57,7 @@ let liveStale = false;
 function renderBanner(
   props: {
     bridge?: "connected" | "disconnected";
+    muxFault?: "token-refused";
     host?: string;
     servers?: ServerSummary[];
     error?: boolean;
@@ -72,6 +73,7 @@ function renderBanner(
     return (
       <ConnectionBanner
         bridge={props.bridge ?? "disconnected"}
+        muxFault={props.muxFault}
         host={props.host}
         error={props.error ?? false}
         authError={props.authError ?? false}
@@ -173,6 +175,30 @@ describe("ConnectionBanner — the single connection surface", () => {
     expect(screen.getByRole("button", { name: "Hide this notice" })).toBeInTheDocument();
   });
 
+  // M50 spec 14: a durable program that refused this peer's token. Waiting does not cure it, so the
+  // amber bar names it at once instead of "Reconnecting…", and red keeps the same sentence.
+  it("names a refused token in amber and in red, and never says Reconnecting or Herdr for it", async () => {
+    const TOKEN = "The durable agent refused the token. Check COLLIE_DURABLE_TOKEN on this peer.";
+    h.trouble = true;
+    renderBanner({ muxFault: "token-refused" });
+    expect(announced("status")).toHaveTextContent(TOKEN);
+    expect(row()?.className).toMatch(/bg-status-working/);
+    h.lost = true;
+    cfg.reachable = true;
+    act(() => rerenderBanner());
+    await act(async () => {});
+    expect(announced("alert")).toHaveTextContent(TOKEN);
+    expect(announced("alert")).not.toHaveTextContent("Herdr is down");
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it("keeps the token sentence off a member view, where the lead's own mux status says nothing", async () => {
+    h.lost = true;
+    renderBanner({ host: "workshop", bridge: "disconnected", muxFault: "token-refused" });
+    await act(async () => {});
+    expect(announced("alert")).not.toHaveTextContent("refused the token");
+  });
+
   it("does not infer mux failure from a successful config probe after a failed snapshot", async () => {
     h.lost = true;
     renderBanner({ bridge: "connected", error: true });
@@ -259,6 +285,16 @@ describe("ConnectionBanner — the single connection surface", () => {
       expect(announced("alert")).not.toHaveTextContent("workshop");
     });
 
+    it("names the member, not the mux, when the lead has no mux of its own and the member is down", async () => {
+      h.lost = true;
+      renderBanner({ host: "workshop", servers: down("workshop"), bridge: "disconnected", lastSeenAt: 5_000 });
+      await act(async () => {});
+      expect(announced("alert")).toHaveTextContent(/^workshop is unreachable · /);
+      expect(announced("alert")).not.toHaveTextContent("Herdr is down");
+      expect(announced("alert")).not.toHaveTextContent("Can't reach Collie");
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    });
+
     it("never applies to the lead: a down mux there is still the mux", async () => {
       h.lost = true;
       renderBanner({ host: "bluefin", servers: down("workshop"), bridge: "disconnected" });
@@ -280,7 +316,7 @@ describe("ConnectionBanner — the single connection surface", () => {
     setOnline(false);
     renderBanner();
     await act(async () => {});
-    expect(screen.getByText("Offline — can't reach Collie")).toBeInTheDocument();
+    expect(screen.getByText("Offline, can't reach Collie")).toBeInTheDocument();
     expect(row()?.className).toMatch(/bg-status-blocked/); // offline is always red
   });
 
@@ -301,7 +337,7 @@ describe("ConnectionBanner — the single connection surface", () => {
     setOnline(true);
     renderBanner({ error: true, lastSeenAt: new Date(2026, 0, 2, 14, 32).getTime() });
     await act(async () => {});
-    expect(announced("alert")).toHaveTextContent(/Can't reach Collie — last seen \d/);
+    expect(announced("alert")).toHaveTextContent(/Can't reach Collie. Last seen \d/);
   });
 
   it("leaves the red row undated when nothing can date it", async () => {
@@ -462,7 +498,7 @@ describe("ConnectionBanner — offline states", () => {
     renderBanner({ error: true, stale: true, lastSeenAt: SAVED_AT });
     await act(async () => {});
     expect(row()).not.toHaveTextContent(/No connection to the bridge/);
-    expect(row()).toHaveTextContent(/Can't reach Collie — last seen/);
+    expect(row()).toHaveTextContent(/Can't reach Collie. Last seen/);
   });
 
   it("the stale marks clear when the bridge answers: a green flash, then nothing", () => {

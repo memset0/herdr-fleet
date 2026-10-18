@@ -41,13 +41,14 @@ import { isMuxAgentName } from "./agents.ts";
 import { MUX_CAPABILITIES, type MuxCapability } from "./capabilities.ts";
 import { checkIdentitySet, idsLostBetween, isValidMuxId } from "./identity.ts";
 import { canonicalMuxKey, MUX_NAMED_KEYS } from "./keys.ts";
-import type {
-  MuxAdapter,
-  MuxOutcome,
-  MuxPane,
-  MuxRefusalOutcome,
-  MuxSnapshot,
-  MuxSubscription,
+import {
+  type MuxAdapter,
+  type MuxOutcome,
+  type MuxPane,
+  type MuxRefusalOutcome,
+  type MuxSnapshot,
+  type MuxSubscription,
+  muxUnsupported,
 } from "./types.ts";
 
 // ── What a fixture contributes ────────────────────────────────────────────────
@@ -118,8 +119,12 @@ export interface MuxConformanceWorld {
    * ({@link MuxPane.focused}), and a fact nothing can move is a fact nothing proves. It is the
    * perturbation behind "the snapshot reports the terminal's focus", which is the half of the focus
    * contract that holds even where `setFocus` is declined.
+   *
+   * OPTIONAL, for one case only: a multiplexer with no terminal at all (a durable program), where
+   * there is nothing for an operator to focus. A world that omits it is held to the opposite
+   * promise instead: no pane is ever reported focused, and `setFocus` answers `unsupported`.
    */
-  focusOutOfBand(paneId: string): Promise<void>;
+  focusOutOfBand?(paneId: string): Promise<void>;
   /**
    * The herd's SHAPE changes and nothing announces it — the operator changed it with their own
    * keyboard.
@@ -276,7 +281,7 @@ function capabilityCalls(adapter: MuxAdapter, targets: CallTargets): CapabilityC
     {
       capability: "sendKeys",
       writes: true,
-      run: async () => refusalOf(await adapter.sendKeys(targets.paneId, ["a"])),
+      run: async () => refusalOf(await adapter.writeKeys(targets.paneId, ["a"])),
     },
     {
       capability: "renamePane",
@@ -287,6 +292,18 @@ function capabilityCalls(adapter: MuxAdapter, targets: CallTargets): CapabilityC
       capability: "renameTab",
       writes: true,
       run: async () => refusalOf(await adapter.renameTab(targets.tabId, "conformance")),
+    },
+    {
+      capability: "renameSpace",
+      writes: true,
+      // The method is optional: an adapter that cannot name a space has none, and is never asked. A
+      // declaration without the method is what this entry catches.
+      run: async () =>
+        refusalOf(
+          adapter.renameSpace === undefined
+            ? muxUnsupported("renameSpace", "This adapter has no way to name a space.")
+            : await adapter.renameSpace(targets.spaceId, "conformance"),
+        ),
     },
     {
       capability: "createTab",
@@ -960,7 +977,7 @@ const sendsKeepTheirOrder: MuxWorldCheck = {
       if (!declares(adapter, "sendKeys")) return problems;
       const key = sendableNamedKey(adapter);
       if (key === null) return [...problems, "sendKeys is declared but every key in the alphabet is unsupported"];
-      const sent = await adapter.sendKeys(pane.paneId, [key, key]);
+      const sent = await adapter.writeKeys(pane.paneId, [key, key]);
       if (!sent.ok) return [...problems, `sendKeys is declared but answered ${describeRefusal(sent)}`];
       const keyWrites = world.writes().filter((write) => write.kind === "keys");
       const last = keyWrites.at(-1);
@@ -984,7 +1001,7 @@ const unsupportedKeysAreRefused: MuxWorldCheck = {
       const problems: string[] = [];
       for (const key of adapter.capabilities.unsupportedKeys) {
         const before = world.writes().length;
-        const sent = await adapter.sendKeys(pane.paneId, [key]);
+        const sent = await adapter.writeKeys(pane.paneId, [key]);
         if (sent.ok) problems.push(`"${key}" is declared unsupported but sendKeys answered ok`);
         else if (sent.reason !== "refused") {
           // `refused` is the documented answer for a key behind a door that IS open: the whole door
@@ -995,7 +1012,7 @@ const unsupportedKeysAreRefused: MuxWorldCheck = {
       }
       const key = sendableNamedKey(adapter);
       if (key === null) return [...problems, "every key in the alphabet is declared unsupported"];
-      const sent = await adapter.sendKeys(pane.paneId, [key]);
+      const sent = await adapter.writeKeys(pane.paneId, [key]);
       if (!sent.ok) problems.push(`"${key}" is not declared unsupported but answered ${describeRefusal(sent)}`);
       return problems;
     });
@@ -1162,9 +1179,23 @@ const focusFollowsTheMultiplexer: MuxWorldCheck = {
           .filter((pane) => pane.focused && pane.spaceId === target.spaceId)
           .map((pane) => pane.paneId);
 
+      // A world with no terminal cannot have its focus moved. It owes the opposite: nothing is ever
+      // focused, and Collie cannot focus anything either.
+      const focusOutOfBand = world.focusOutOfBand?.bind(world);
+      if (focusOutOfBand === undefined) {
+        const focused = (await adapter.snapshot()).panes.filter((pane) => pane.focused);
+        if (focused.length > 0) {
+          problems.push(`the world has no terminal to focus, and the snapshot still focuses ${focused.map((pane) => pane.paneId).join(", ")}`);
+        }
+        if (declares(adapter, "setFocus")) problems.push("the world has no terminal to focus, and setFocus is declared");
+        const moved = await adapter.setFocus(other.paneId);
+        if (moved.ok) problems.push("the world has no terminal to focus, and setFocus SUCCEEDED");
+        return problems;
+      }
+
       // Half one: the OPERATOR moves focus. This holds for every adapter, declared capability or not
       // — reporting focus is on the floor, and only changing it is a capability.
-      await world.focusOutOfBand(target.paneId);
+      await focusOutOfBand(target.paneId);
       if (!(await focusedNow()).includes(target.paneId)) {
         problems.push(`focus moved to "${target.paneId}" in the multiplexer and the snapshot did not report it`);
       }

@@ -78,6 +78,13 @@ export interface CrewRuntimeFacts {
    * every sweep, so a success clears it without anything having to remember to.
    */
   readonly pairingCollision: PairingCollision | null;
+  /**
+   * The release the lead last stated in `X-Crew-Lead-Release` (crew/follow.ts), as this PEER heard it on
+   * the lead's sweep. Absent on a lead, on a solo machine, and on a peer whose lead has stated none
+   * since this process started (a dev or prerelease lead states nothing). `collie doctor` reads it for
+   * the `durable-lead` row (bridge/durable/old-lead.ts, M50 spec 14). An observation like the rest.
+   */
+  readonly leadRelease?: string;
 }
 
 /** One refused sync: when this process was told, and the labels the deputy named. */
@@ -102,6 +109,11 @@ export interface CrewRuntimeMarker extends CrewRuntimeFacts {
   readonly mode: CrewMode;
   /** `<role>:<memberId>` for every ENROLLED member, sorted — the roster this process is serving. */
   readonly roster: readonly string[];
+  /**
+   * The build this process runs, as `/api/health` names it, or `null` from a build that predates the
+   * field. A TLS-only peer's update gate reads it, since a handshake names no build.
+   */
+  readonly build: string | null;
   /**
    * When this marker was last written. Equals `bootedAt` on the boot write.
    *
@@ -132,12 +144,14 @@ export function markerFor(
   now: number,
   pid: number,
   facts: CrewRuntimeFacts = NO_RUNTIME_FACTS,
+  build: string | null = null,
 ): CrewRuntimeMarker {
   return {
     bootedAt: now,
     pid,
     mode: deriveMode(enrollmentOf(data)).mode,
     roster: rosterSignature(data),
+    build,
     checkpointedAt: now,
     ...facts,
   };
@@ -146,9 +160,9 @@ export function markerFor(
 /**
  * The same marker, re-stamped with facts the process has learned since it booted.
  *
- * Pure, and it never touches the boot half: `bootedAt`, `pid`, `mode` and `roster` describe what
- * this process WIRED, and a checkpoint that could move them would be a second startup path pretending
- * to be a diagnostic. Only {@link CrewRuntimeFacts} and `checkpointedAt` move.
+ * Pure, and it never touches the boot half: `bootedAt`, `pid`, `mode`, `roster` and `build` describe
+ * what this process WIRED, and a checkpoint that could move them would be a second startup path
+ * pretending to be a diagnostic. Only {@link CrewRuntimeFacts} and `checkpointedAt` move.
  */
 export function checkpointMarker(
   boot: CrewRuntimeMarker,
@@ -224,11 +238,12 @@ export function parseMarker(raw: string | null): CrewRuntimeMarker | null {
   if (typeof v.bootedAt !== "number" || typeof v.pid !== "number" || roster === null) return null;
   const mode = v.mode;
   if (mode !== "solo" && mode !== "lead" && mode !== "peer") return null;
-  return {
+  const marker: CrewRuntimeMarker = {
     bootedAt: v.bootedAt,
     pid: v.pid,
     mode,
     roster,
+    build: typeof v.build === "string" && v.build !== "" ? v.build : null,
     // A marker written before the 2026-08-20 amendment carries none of the fields below. Absent reads
     // as "this process reported nothing", which is exactly true of a build that could not — and the
     // renderer says so rather than inventing a receipt. `checkpointedAt` falls back to the boot
@@ -240,6 +255,8 @@ export function parseMarker(raw: string | null): CrewRuntimeMarker | null {
     deposed: parseDeposed(v.deposed),
     pairingCollision: parsePairingCollision(v.pairingCollision),
   };
+  // Additive (M50 spec 14): a marker from an older build has none, and reads exactly as before.
+  return typeof v.leadRelease === "string" && v.leadRelease !== "" ? { ...marker, leadRelease: v.leadRelease } : marker;
 }
 
 export interface RosterDrift {

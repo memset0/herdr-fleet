@@ -237,7 +237,7 @@ function PanePill({
       {isShell ? (
         <TerminalSquare className="size-3.5 shrink-0" />
       ) : (
-        <StatusDot status={pane.status} live />
+        <StatusDot status={pane.status} live className="size-2.5" />
       )}
       <span>{name}</span>
       {/* The number is part of the pill's own text, not a decoration beside it: a screen reader

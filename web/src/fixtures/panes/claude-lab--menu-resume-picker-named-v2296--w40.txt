@@ -1,0 +1,29 @@
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.296[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5.5 · Claude Max[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/nr-lab/project[0m
+
+  Get to finished work sooner with Opus
+  5.5. Switch anytime with [0m[38;2;177;185;249m/model[0m.
+  [0m[38;2;153;153;153m1 more notice hidden[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55m/resume[0m[48;2;55;55;55m                               [0m
+
+[0m[38;2;177;185;249m────────────────────────────────────────[0m
+  [0m[1m[38;2;177;185;249mResume session[0m
+  [0m[2m╭──────────────────────────────────╮[0m
+  [0m[2m│[0m [0m[38;2;153;153;153m⌕ Search…[0m                        [0m[2m│[0m
+  [0m[2m╰──────────────────────────────────╯[0m
+    [0m[38;2;153;153;153mproject[0m
+
+  [0m[38;2;177;185;249m❯ capture lab[0m
+    [0m[38;2;153;153;153m12 seconds ago · master · 3.7KB[0m
+
+    AskUserQuestion colour and size…
+    [0m[38;2;153;153;153m30 seconds ago · master · 188.1KB[0m
+
+    [0m[38;2;153;153;153mCtrl+A to show all projects ·[0m
+    [0m[38;2;153;153;153mCtrl+B to only show current branch[0m
+    [0m[38;2;153;153;153m· Space to preview · Ctrl+R to [0m
+    [0m[38;2;153;153;153mrename · Type to search · Esc to[0m
+    [0m[38;2;153;153;153mcancel[0m
+[0m[38;2;136;136;136m────────────────────────── capture lab ─[0m

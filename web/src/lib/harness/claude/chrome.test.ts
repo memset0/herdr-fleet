@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseAnsi } from "../../ansi";
 import { splitLines, type StyledLine } from "../../blocks";
-import { draftCarriesSend } from "../../reply-action";
+import { draftCarriesSend } from "../../draft-match";
 import { extractAgentsFooter, extractInputDraft, extractStatusLines, hasInputBox, stripChrome } from "./chrome";
 import { lineText } from "./markers";
 
@@ -475,7 +475,7 @@ describe("extractInputDraft — recovers a stranded prompt-line draft", () => {
   // Bug #76 fix: the wrapped-draft scan used to be bounded by MAX_DRAFT_LINES (12), so a draft long
   // enough to wrap past that many continuation rows made locateInputBox return null — the send guard
   // then saw no draft at all and stalled forever even though the text had landed. The bound is now
-  // 100 (defense-in-depth, not a correctness bound — see the comment on MAX_DRAFT_LINES in markers.ts),
+  // 100 (defense-in-depth, not a correctness bound, now `idle.frame.maxDraftRows` in the Claude profile, read by surface/frame.ts),
   // comfortably above real wraps, so a draft this long is still found.
   it("matches a box whose draft wraps past the old 12-line bound", () => {
     const many = Array.from({ length: 20 }, (_, i) => `  continuation ${i}`);
@@ -541,7 +541,7 @@ describe("extractInputDraft — recovers a stranded prompt-line draft", () => {
   // Round-3 finding 2: the two blank-line skips inside locateInputBox step (d) used to be UNBOUNDED
   // (`while (isBlank) i--`), run before/after the counted continuation walk rather than as part of it
   // — so a wall of blank lines could stand in for the non-blank filler above and reach an arbitrarily
-  // distant border for free, defeating MAX_DRAFT_LINES entirely for that shape. Both spots now draw
+  // distant border for free, defeating the draft-row bound (`idle.frame.maxDraftRows`) entirely for that shape. Both spots now draw
   // from the SAME `wrapped` counter as the continuation walk itself.
   it("does not tolerate 105 blank lines between the ❯ line and the bottom border", () => {
     // These blanks sit exactly where the old free pre-skip used to run: contiguous with the bottom
@@ -758,6 +758,8 @@ describe("dialogs are refused by the border and blank checks — not by the row 
     "claude--wizard-q2.txt",
     "claude--wizard-submit-unanswered.txt",
     "claude--wizard-submit.txt",
+    "claude--v2302-wizard-review-long-q--w140.txt",
+    "claude--v2302-wizard-review-barred--w140.txt",
   ];
 
   it.each(DIALOG_FIXTURES)("%s surfaces no box, so no chrome is stripped from it", (name) => {
@@ -839,6 +841,8 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     // Hand-built from a live 82-column observation: a clipped "…ugin:…" command name inside the popup.
     // Before the box was found by its own frame, the clipped row hid the box: draft null, stripped 1.
     { fixture: "autocomplete-slash-clipped", statusRows: 0, draft: "/model", stripped: 32 },
+    // A reply's box table cut out of its screen (table-run.test.ts): no box, nothing to strip.
+    { fixture: "box-table-vs16-emoji", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "done", statusRows: 2, draft: null, stripped: 28 },
     { fixture: "ghost-suggestion", statusRows: 4, draft: null, stripped: 21 },
     { fixture: "ghost-typed-over", statusRows: 4, draft: "hello real draft text", stripped: 21 },
@@ -983,6 +987,62 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "v2289-switch-model-yes", statusRows: 0, draft: null, stripped: 1 },
     { fixture: "v2289-switch-model-yes--w50", statusRows: 0, draft: null, stripped: 1 },
     { fixture: "v2291-permission-bash-subagent", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-under-long-task-list", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-under-task-list", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-wizard-under-task-list", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2301-hold-subagent", statusRows: 1, draft: null, stripped: 8 },
+    // The 2026-10-16 incident on lane 8788: the agents panel under the box while a fork runs. The
+    // panel is the footer, the three rows over it are the statusline; "↓ to view" is a status hint.
+    { fixture: "v2301-fork-running-main-idle", statusRows: 3, draft: null, stripped: 11 },
+    { fixture: "v2301-synth-agents-panel", statusRows: 3, draft: null, stripped: 12 },
+    { fixture: "v2301-synth-agents-panel-walk-fails", statusRows: 3, draft: null, stripped: 14 },
+    // The scratch-bridge lab the same day: the panel under an empty box (the grey suggestion is no
+    // draft), and under a typed draft, where the mode row drops its two hints.
+    { fixture: "v2301-lab-agents-panel-empty", statusRows: 1, draft: null, stripped: 8 },
+    { fixture: "v2301-lab-agents-panel-draft", statusRows: 1, draft: "draft text in the box", stripped: 9 },
+    // The same lab with eleven agents: five rows and "↓ 6 more", the tasks pill focused ("Enter to view
+    // tasks" on the mode row), and the panel itself focused ("↑/↓ to select", "❯ ● main").
+    { fixture: "v2301-lab-agents-panel-more", statusRows: 1, draft: null, stripped: 14 },
+    { fixture: "v2301-lab-agents-panel-tasks-pill", statusRows: 1, draft: null, stripped: 13 },
+    { fixture: "v2301-lab-agents-panel-focused", statusRows: 1, draft: null, stripped: 14 },
+    { fixture: "v2301-idle", statusRows: 1, draft: null, stripped: 6 },
+    // Claude Code 2.1.301 around a running turn (send-queue lab, 2026-10-16): the operator's two-row
+    // statusline plus the mode row; the draft typed during the turn is read as a draft.
+    { fixture: "v2301-done-shell-running--w100", statusRows: 3, draft: null, stripped: 23 },
+    { fixture: "v2301-idle-after-turn--w100", statusRows: 3, draft: null, stripped: 16 },
+    { fixture: "v2301-queued-taken--w100", statusRows: 3, draft: null, stripped: 7 },
+    { fixture: "v2301-spinner-no-timer--w100", statusRows: 2, draft: null, stripped: 6 },
+    // The /cost and /usage panel drawn over a live box (M56 spec 15 review): the box and its footer stay.
+    { fixture: "v2301-usage-panel-over-box--w40", statusRows: 1, draft: null, stripped: 7 },
+    { fixture: "v2301-usage-panel-over-box--w82", statusRows: 1, draft: null, stripped: 10 },
+    { fixture: "v2301-working-draft--w100", statusRows: 3, draft: "then give it a title", stripped: 7 },
+    { fixture: "v2301-working-queued-message--w100", statusRows: 3, draft: null, stripped: 7 },
+    { fixture: "v2301-working-quiet--w100", statusRows: 3, draft: null, stripped: 7 },
+    { fixture: "v2302-preview-wrapped-rule--w141", statusRows: 0, draft: null, stripped: 0 },
+    // Claude Code 2.1.302's slash list under a box holding `/model` (reconstructed from a masked field
+    // capture, 2026-10-17): the command in the left column, its description in a second column. No
+    // statusline while the list is open; the list is stripped with the box, as in autocomplete-slash-long.
+    { fixture: "v2302-slash-model-list--w119", statusRows: 0, draft: "/model", stripped: 23 },
+    // The same list drawn over the box on a tall pane (captured, lane 8788, 2026-10-17), the statusline under it.
+    { fixture: "v2302-slash-model-list-above--w119", statusRows: 2, draft: "/model", stripped: 5 },
+    // The list under the box on the harness lab's 120 x 40 tmux pane (captured 2026-10-17), the screen scrolled up.
+    { fixture: "v2302-slash-model-list--w120--h40", statusRows: 0, draft: "/model", stripped: 24 },
+    { fixture: "v2302-slash-effort-list--w120--h40", statusRows: 0, draft: "/effort", stripped: 24 },
+    { fixture: "v2302-heads-up-above-box--w142", statusRows: 2, draft: null, stripped: 6 },
+    // The fix rig's 120 x 36 Herdr pane (captured 2026-10-17): an empty box on a screen whose rows reach
+    // the bottom, and the same pane with the list under the box, blank rows under the list.
+    { fixture: "v2302-idle-full-screen--w120--h36", statusRows: 1, draft: null, stripped: 5 },
+    { fixture: "v2302-slash-model-list-padded--w120--h36", statusRows: 0, draft: "/model", stripped: 16 },
+    // A multiSelect step with the pointer on its "Type something" field (sanitised field capture, 2026-10-17).
+    { fixture: "v2302-multiselect-field-focused--w160", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2302-notice-over-agents-panel--w69", statusRows: 2, draft: null, stripped: 11 },
+    { fixture: "v2302-turn-ended-yn--w119", statusRows: 3, draft: null, stripped: 7 },
+    { fixture: "v2302-turn-ending-stop-hooks--w119", statusRows: 3, draft: null, stripped: 7 },
+    { fixture: "v2302-wizard-long-question--w54", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2302-wizard-review-barred--w140", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2302-wizard-review-long-q--w140", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2302-working-agents-panel--w119", statusRows: 3, draft: null, stripped: 11 },
+    { fixture: "v2302-working-list-echo--w119", statusRows: 3, draft: null, stripped: 7 },
     { fixture: "wizard-multiselect-checked", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-final", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-pointer-next", statusRows: 0, draft: null, stripped: 0 },

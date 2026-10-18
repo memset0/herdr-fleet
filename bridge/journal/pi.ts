@@ -50,7 +50,7 @@ import {
 } from "./reduce.ts";
 import { clamp, type Clamped, MAX_RESULT_CHARS, MAX_TEXT_CHARS, stripAnsi, summarizeToolInput } from "./text.ts";
 import { parseUnifiedDiff } from "./diff.ts";
-import { classifyToolCall, type ToolCall } from "./tool-call.ts";
+import { answerLabels, classifyToolCall, questionKey, type ToolCall } from "./tool-call.ts";
 import type {
   AgentSessionRef,
   JournalAdapter,
@@ -209,7 +209,13 @@ const PI_EXIT_STATUS = /(?:^|\n)Command exited with code (\d+)\s*$/;
  * only `Successfully wrote N bytes to <path>`, so "the file was new" is not knowable here, and
  * guessing it would claim a creation that may have been an overwrite.
  */
-function enrichCall(call: ToolCall, raw: JsonValue | undefined, text: string, isError: boolean): void {
+function enrichCall(
+  call: ToolCall,
+  raw: JsonValue | undefined,
+  text: string,
+  isError: boolean,
+  questionIds?: ReadonlyMap<string, string>,
+): void {
   const details: JsonObject | undefined =
     raw !== null && raw !== undefined && typeof raw === "object" && !Array.isArray(raw) ? raw : undefined;
   if (call.kind === "edit") {
@@ -230,6 +236,42 @@ function enrichCall(call: ToolCall, raw: JsonValue | undefined, text: string, is
     else if (!isError) call.exitCode = 0;
     return;
   }
+  if (call.kind === "question") {
+    // One list of chosen labels per question, in question order (`[["Blue"]]`), the shape the
+    // question card reads. pi's own log does not write it; OpenClaw's `ask_user` answers do, once
+    // its normaliser has put them in order (journal/openclaw.ts). Anything of another shape is left
+    // unread rather than guessed at.
+    const answers = details?.answers;
+    if (
+      Array.isArray(answers) &&
+      answers.length === call.questions.length &&
+      answers.every((a) => Array.isArray(a) && a.every((l) => typeof l === "string"))
+    ) {
+      // SAFETY: every element was just checked to be an array of strings.
+      call.answers = answers as string[][];
+      return;
+    }
+    // OmO records `details.answers` beside `status: "answered"`, in two shapes (OmO 5.1.30, read off
+    // real rows 2026-10-12): `ask_user_question` keys it by the question's TEXT,
+    // `{ "<question>": "Green" }`, and `request_user_input` by the question's `id` from the call,
+    // `{ "color": { "answers": ["Blue"] } }`. A dismissed call is `status: "cancelled"` with
+    // `answers: {}`, so it fills nothing. Mapped onto question order, the shape opencode's
+    // `metadata.answers` already has.
+    const keyed = details?.answers;
+    if (keyed === null || keyed === undefined || typeof keyed !== "object" || Array.isArray(keyed)) return;
+    // Keys go through the card's own clamp, so a long or padded question still finds its answer.
+    const byText = new Map<string, JsonValue>();
+    for (const [key, value] of Object.entries(keyed)) {
+      const question = questionKey(key);
+      if (question !== undefined && value !== undefined) byText.set(question, value);
+    }
+    const lists = call.questions.map((q) => {
+      const id = questionIds?.get(q.question);
+      return answerLabels(byText.get(q.question) ?? (id === undefined ? undefined : keyed[id]));
+    });
+    if (lists.some((list) => list.length > 0)) call.answers = lists;
+    return;
+  }
   if (call.kind === "other") {
     // The one thing an unrecognised pi tool records that a view can draw: the answer a question got.
     // It joins the STRUCTURED summary only — the part's own `summary` is the call's one-line form and
@@ -237,6 +279,22 @@ function enrichCall(call: ToolCall, raw: JsonValue | undefined, text: string, is
     const answer = details?.answer;
     if (typeof answer === "string" && answer.trim() !== "") call.summary = `${call.summary} → ${answer}`;
   }
+}
+
+/** A pi call waiting for its result, plus each question's `id` by its text when the call asked any. */
+type PiPending = PendingTool & { questionIds?: ReadonlyMap<string, string> };
+
+/** The `id` of each question a call's input names, keyed by the question's text. */
+function questionIdsOf(input: JsonValue | undefined): Map<string, string> {
+  const ids = new Map<string, string>();
+  if (input === null || input === undefined || typeof input !== "object" || Array.isArray(input)) return ids;
+  if (!Array.isArray(input.questions)) return ids;
+  for (const q of input.questions) {
+    if (q === null || typeof q !== "object" || Array.isArray(q)) continue;
+    const question = questionKey(q.question);
+    if (question !== undefined && typeof q.id === "string") ids.set(question, q.id);
+  }
+  return ids;
 }
 
 /**
@@ -358,6 +416,14 @@ function bashExecutionParts(m: JsonObject): TranscriptPart[] {
  *
  * `image` is in `parts` and IS rendered — pi is the one harness whose pictures reach the phone
  * (#292) — even though those 44 sessions carry none.
+ *
+ * `session_info` (pi 1.1.0, the session's `name`) and Oh My Pi 18.10's `title` and `title_change`
+ * were met by the harness canary on 2026-10-12. All three name the session and draw nothing; the
+ * pane's label comes from the multiplexer, not from here.
+ *
+ * Oh My Pi 18.10's `service_tier_change` (written at session start when a tier is set) and
+ * `model_usage` (the cost of a call outside the transcript, such as a composer prediction) were
+ * met in a real session on 2026-10-13. Both are bookkeeping and draw nothing.
  */
 const PI_KNOWN: KnownTypes = {
   rows: [
@@ -371,6 +437,11 @@ const PI_KNOWN: KnownTypes = {
     "usage",
     "label",
     "custom",
+    "session_info",
+    "title",
+    "title_change",
+    "service_tier_change",
+    "model_usage",
   ],
   roles: ["user", "assistant", "toolResult", "bashExecution", "system"],
   parts: ["text", "thinking", "image", "toolCall"],
@@ -379,7 +450,7 @@ const PI_KNOWN: KnownTypes = {
 export function createPiReducer(): RowReducer {
   // toolCall id → the part awaiting its result and the turn it went out in, so a later `toolResult`
   // row lands on its own call and can name where that call is drawn.
-  const pendingTools = new Map<string, PendingTool>();
+  const pendingTools = new Map<string, PiPending>();
   // What this reducer met and had no branch for, asked for once per session by the canary.
   const unknown = createUnknownCounter(PI_KNOWN);
 
@@ -487,7 +558,7 @@ export function createPiReducer(): RowReducer {
         target.part.result = toolResult(resultText, isError, imageUrl);
         // `details` rides on the RESULT ROW, not on a content block — it is pi's own record of what
         // the call did, and the only place a patch or an answer ever appears.
-        if (target.part.call) enrichCall(target.part.call, m.details, resultText, isError);
+        if (target.part.call) enrichCall(target.part.call, m.details, resultText, isError, target.questionIds);
         // Both mutations above landed in a turn that went out rows ago. Name it.
         changed.add(target.uuid);
       } else if (resultText.trim() !== "" || imageUrl) {
@@ -524,7 +595,11 @@ export function createPiReducer(): RowReducer {
 
     const role: TranscriptEntry["role"] = m.role === "assistant" ? "assistant" : "user";
     const parts: TranscriptPart[] = [];
-    const content = Array.isArray(m.content) ? m.content : [];
+    // `content` is a block list in pi's own log, and a plain STRING in the same format as OpenClaw
+    // writes it (journal/openclaw.ts), where every user turn is one. A string is one text block:
+    // walking arrays alone dropped every OpenClaw user turn without a trace (issue #401).
+    const content: JsonValue[] =
+      typeof m.content === "string" ? [{ type: "text", text: m.content }] : Array.isArray(m.content) ? m.content : [];
     for (const b of content) {
       // A `continue` over the BLOCK, not the row: the other blocks of this turn still count.
       if (b === null || typeof b !== "object" || Array.isArray(b)) continue;
@@ -559,7 +634,12 @@ export function createPiReducer(): RowReducer {
           // The turn is named here, before it exists, because `uuid` is read off the row above and
           // the part is already the object the turn will carry. `rememberPending` is what keeps an
           // orphan call from growing this map for the life of a session.
-          rememberPending(pendingTools, b.id, { part, uuid });
+          const pending: PiPending = { part, uuid };
+          if (part.call?.kind === "question") {
+            const ids = questionIdsOf(b.arguments);
+            if (ids.size > 0) pending.questionIds = ids;
+          }
+          rememberPending(pendingTools, b.id, pending);
         }
         parts.push(part);
       }

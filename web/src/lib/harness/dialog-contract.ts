@@ -24,6 +24,7 @@
 // never a harness — so a model module can never end up depending on an adapter.
 
 import type { Block } from "../blocks";
+import type { ColumnRange } from "../column-range";
 import { menusEqual, menusSameIdentity, type MenuModel } from "./menu-model";
 import { multiSelectEquals, multiSelectIdentity, type MultiSelectModel } from "./multi-select-model";
 import { previewCoreEqual, previewsEqual, type PreviewSelectModel } from "./preview-model";
@@ -62,7 +63,38 @@ export type DialogKind = keyof DialogModels;
  * `autocomplete` it would have locked the composer out of a pane whose input box is demonstrably live.
  */
 export function blockOwnsKeyboard(block: Block): boolean {
+  // A menu lifted off a notice ABOVE a live input box (`MenuModel.liveBox`) is the one card whose
+  // screen leaves the keyboard to the box: the notice's keys act only on a box holding one digit.
+  if (block.kind === "menu" && block.menu.liveBox !== undefined) return false;
   return block.kind in DIALOG_CONTRACT;
+}
+
+/** What the composer calls a READ dialog in its placeholder ("Menu is waiting"). */
+export type DialogNoun = "menu" | "permission" | "question" | "dialog";
+
+/** The noun for the first dialog that owns the keyboard in these blocks, or null when none does. A
+ *  picker is a menu, a permission or trust prompt is a permission, every other pick or form is a
+ *  question, and a kind with no better word is "dialog". */
+export function dialogNounOf(blocks: readonly Block[]): DialogNoun | null {
+  for (const block of blocks) {
+    switch (block.kind) {
+      case "menu":
+        if (block.menu.liveBox !== undefined) break;
+        return "menu";
+      case "prompt-select":
+        return block.prompt.family === "permission" || block.prompt.family === "trust" ? "permission" : "question";
+      case "wizard":
+      case "preview-select":
+      case "multi-select":
+        return "question";
+      case "unread-dialog":
+        return "dialog";
+      case "raw":
+      case "autocomplete":
+        break;
+    }
+  }
+  return null;
 }
 
 /** Pull the typed model off a block of `kind`, or null when the block is a different kind. The one
@@ -120,6 +152,12 @@ export interface DialogComparators<M> {
    * that never carry one, and `undefined` for a model that does not.
    */
   styled?(m: M): string | undefined;
+  /**
+   * The display columns of each row of the region (`expected_columns`, lib/column-range.ts), for a
+   * model read from part of its rows because something beside it on the same rows moves on its own.
+   * Absent on the kinds that never carry one, and `undefined` for a model that does not: whole rows.
+   */
+  columns?(m: M): ColumnRange | undefined;
 }
 
 /** The shape of the contract table: one row of comparators per interactive block kind. */
@@ -136,6 +174,7 @@ export const DIALOG_CONTRACT: DialogContract = {
     signature: (m) => m.signature,
     region: (m) => m.signature,
     styled: (m) => m.styledSignature,
+    columns: (m) => m.bindColumns,
   },
   wizard: {
     // Every wizard key commits too — a digit selects AND advances; Left/Right change the step.
@@ -163,7 +202,9 @@ export const DIALOG_CONTRACT: DialogContract = {
   menu: {
     // A footer-named key COMMITS (in the `/model` picker, Enter writes the user's default), so it
     // takes the full signature check; an arrow only moves the highlight — which is precisely what
-    // changes the signature — so it compares identity without the leftRight label.
+    // changes the signature — so it compares identity without the leftRight label. A card off a notice
+    // above a live box (`liveBox`) has digit keys only, each printed on its key row, and no arrows: its
+    // region is the notice's rows, which the bridge finds in its fresh read or refuses the tap.
     commits: menusEqual,
     identity: menusSameIdentity,
     signature: (m) => m.signature,

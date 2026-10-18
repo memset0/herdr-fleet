@@ -1,0 +1,18 @@
+[0m[38;2;99;148;255m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+ [0m[1m  Session Tree[0m                                                                                                  
+[0m[38;2;160;160;160m  ↑/↓ move · ←/→ page · ctrl+←/→ branch · ctrl+x copy · ctrl+e edit · shift+l label · shift+t label time[0m
+[0m[38;2;160;160;160m  filters ctrl+d/t/u/l/a · cycle ctrl+o/shift+ctrl+o[0m
+  [0m[38;2;160;160;160mType to search:[0m
+[0m[38;2;99;148;255m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+  [0m[38;2;228;101;225m• [senpi-task.usage]: [0m<omo-senpi-task> Background task results are automatically delivered: an idle session is 
+  [0m[38;2;228;101;225m• [environment-context]: [0m<environment_context>   <cwd>/home/demo/sandbox/collie-pi-labs/omo-lab/work</cwd>   <c
+  [0m[38;2;228;101;225m• user: [0mstty size
+  [0m[38;2;228;101;225m• [senpi.todo-first-turn]: [0m<system-reminder> This is the first request of the session. Before continuing, call 
+  [0m[38;2;228;101;225m• [0m[38;2;160;160;160m[todo: {"op":"view"}][0m
+[0m[38;2;228;101;225m[48;2;27;47;93m› • [0m[1m[38;2;0;194;0m[48;2;27;47;93massistant: [0m[1m[48;2;27;47;93mI'm looking at a system reminder asking me to initialize a todo list, but there's no actual user r[0m
+[0m[38;2;160;160;160m  (6/6)[0m
+
+[0m[38;2;99;148;255m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;228;101;225m…sandbox/collie-pi-labs/omo-lab/work[0m[38;2;123;123;123m • [0m[38;2;130;130;130mCH97.0%[0m[38;2;123;123;123m • [0m[38;2;0;194;0m$0.018[0m[38;2;123;123;123m • [0m[38;2;160;160;160m24K/200K (12.0%) (auto)[0m  [0m[38;2;228;101;225manthropic/claude-haiku-4.5[0m[38;2;130;130;130m:off[0m
+(😺 OmO Native by Q Kim) mem:work-00392473 just now (+1)

@@ -118,6 +118,88 @@ export function parsePiFooter(text: string): PiFooter | null {
   return footer;
 }
 
+// A picker's key-hint row (.adr/0098, "Pickers"). pi's own pickers and OmO's print one; a question
+// footer is one too. Wider keys than the question contract above, because a picker names chords
+// (`ctrl+←/→ branch`, `shift+t label time`, `ctrl+d/t/u/l/a`), and one more separator, OmO's single
+// space between pairs (`enter select ctrl+s select as default ctrl+f favorite`). The row still has to
+// be NOTHING BUT pairs, so prose that mentions a key is not one.
+
+const NAMED_KEY = "enter|return|esc|escape|tab|space|backspace|delete|home|end|pgup|pgdn|pageup|pagedown";
+const ARROW_KEY = "↑↓|↑/↓|←→|←/→|↑|↓|←|→";
+const MODIFIER = "(?:ctrl|shift|alt|meta|cmd|super)\\+";
+/** One key: modifiers, then a named key, an arrow, a letter or a digit. */
+const KEY_ATOM = `(?:${MODIFIER})*(?:${NAMED_KEY}|${ARROW_KEY}|[a-z0-9])`;
+/** A key token, with the alternatives a hint row joins by `/` (`escape/ctrl+c`, `ctrl+d/t/u/l/a`). */
+const HINT_KEY = new RegExp(`^${KEY_ATOM}(?:/(?:${KEY_ATOM}|${ARROW_KEY}))*$`, "i");
+/** A chord or an arrow: a token no English word spells, which the single-space form must carry. */
+const CHORD = new RegExp(`${MODIFIER}|[↑↓←→]`, "i");
+
+/** A key token of a hint row. A bare letter or digit counts only when `bare` allows it. */
+function hintKey(token: string, bare: boolean): boolean {
+  if (token === "1-9") return bare;
+  if (!HINT_KEY.test(token)) return false;
+  return bare || !/^[a-z0-9]$/i.test(token);
+}
+
+/**
+ * The number of key/action pairs on one key-hint row, or 0 when the row is not one. A row is a hint
+ * row when it is nothing but pairs, two or more:
+ *   - split by the separators the footers use (` • `, ` · `, two or more spaces), every segment a
+ *     `<key> <action>` or `<key> to <action>` pair (`ctrl+p path (off)` is one);
+ *   - or, with no such separator, single-space pairs: the row opens with a key, every key is followed
+ *     by at least one word, a bare letter is not a key, and one key is a chord or an arrow
+ *     (`enter select ctrl+s select as default ctrl+f favorite`). A chord or an arrow always starts a
+ *     pair. A named key starts one only after the current pair has its action, so a named key right
+ *     after a key is that key's action: `ctrl+d delete ctrl+r rename` is two pairs.
+ */
+export function keyHintPairs(text: string): number {
+  const trimmed = text.trim();
+  if (trimmed === "") return 0;
+  const segments = trimmed.split(SEPARATOR).map((s) => s.trim()).filter((s) => s.length > 0);
+  if (segments.length >= 2) {
+    for (const segment of segments) {
+      const m = HINT.exec(segment);
+      if (m === null || !hintKey(m[1]!, true)) return 0;
+    }
+    return segments.length;
+  }
+  const tokens = trimmed.split(" ");
+  let pairs = 0;
+  let verbs = 0;
+  let chord = false;
+  for (const token of tokens) {
+    const key = hintKey(token, false);
+    const chorded = key && CHORD.test(token);
+    // A chord after a key with no action yet: that key had no action, so this is no hint row.
+    if (chorded && pairs > 0 && verbs === 0) return 0;
+    if (chorded || (key && (pairs === 0 || verbs > 0))) {
+      pairs++;
+      verbs = 0;
+      chord ||= chorded;
+    } else {
+      if (pairs === 0) return 0;
+      verbs++;
+    }
+  }
+  if (verbs === 0 || pairs < 2 || !chord) return 0;
+  return pairs;
+}
+
+/**
+ * The key-hint rows of pi 1.2.0's two list dialogs whose rows are not all key/action pairs: `/settings`
+ * (`Type to search · Enter/Space to change · Esc to cancel`, pi--v120-settings-padded2.txt) leads with
+ * the search hint, and `/scoped-models` (`Enter toggle · Ctrl+A all · ... · Ctrl+S save · all enabled`,
+ * pi--v120-scoped-models-padded2.txt) ends on a status. Matched on the stable fragment, since the
+ * rest of the row changes with the width and the state. Both screens draw a search input row
+ * (`> ` and the cursor cell) that reads as an editor, so the hint row is the only evidence of a dialog.
+ */
+const LIST_DIALOG_HINTS = [/\bType to search\s+[•·]\s+Enter\/Space to change\b/, /\bEnter toggle\s+[•·]\s+Ctrl\+A all\b/];
+
+/** Whether a row is one of pi 1.2.0's list-dialog hint rows (`LIST_DIALOG_HINTS`). */
+export function listDialogHint(text: string): boolean {
+  return LIST_DIALOG_HINTS.some((re) => re.test(text));
+}
+
 function enterRole(verb: string): EnterRole {
   if (verb === "select" || verb === "confirm") return "select";
   if (verb === "submit") return "submit";

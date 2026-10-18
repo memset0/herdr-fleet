@@ -27,7 +27,7 @@
 // is false because detectPlanMenu claims the screen. Option 1 on a permission card is
 // always-approve and is never a button.
 
-import { trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
+import { lineText, trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
 import {
   composerPrompt,
@@ -42,6 +42,7 @@ import { detectAskRegion } from "./ask";
 import { detectPermissionRegion } from "./permission";
 import { detectPlanMenuRegion } from "./plan-menu";
 import { detectModelPickerRegion } from "./model-picker";
+import { detectTrustRegion } from "./trust";
 
 export function grokBuildBlocks(lines: StyledLine[]): Block[] {
   // Drop Grok's full-screen theme-canvas paint before any block is built, so every rendered
@@ -88,10 +89,47 @@ export function grokBuildBlocks(lines: StyledLine[]): Block[] {
     return blocks;
   }
 
+  const trust = detectTrustRegion(lines);
+  if (trust) {
+    const before = trimTrailingBlank(lines.slice(0, trust.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "prompt-select", prompt: trust.model, lines: lines.slice(trust.startLine) });
+    return blocks;
+  }
+
   return [{ kind: "raw", lines: stripChrome(lines) }];
 }
 
 export { extractStatusLines, extractInputDraft };
+
+// How many of the screen's last non-blank rows may carry a dialog's footer: the same window Claude's
+// `modalOnScreen` reads (claude/index.ts MODAL_HINT_ROWS).
+const MODAL_HINT_ROWS = 6;
+// grok's footer grammar: `Key:verb` hints joined by ` │ ` (`Tab:next answer  │  Esc:scrollback  │
+// Shift+x:dismiss`, grok/ASK_NOTES.md; `… │ Ctrl+c:cancel │ Esc:scrollback`, PERMISSION_NOTES.md).
+const KEY_HINT = /^[A-Za-z][\w+.-]*:\S/;
+
+/** A row of two or more `Key:verb` hints joined by `│`. */
+function isKeyHintRow(text: string): boolean {
+  const hints = text.trim().split(/\s*│\s*/);
+  return hints.length >= 2 && hints.every((hint) => KEY_HINT.test(hint));
+}
+
+/**
+ * Positive evidence of a grok dialog for the unread-dialog card (.adr/0053, addendum 2026-09-26): one
+ * of the last rows is grok's key-hint footer. The shell after exit (`Resume this session with: grok
+ * --resume <id>`) prints none, and the card no longer flashes over it, which would have offered to
+ * send ctrl+c to the shell (harness canary 2026-10-12, Grok Build 1.0.50).
+ */
+function grokModalOnScreen(lines: StyledLine[]): boolean {
+  const rows: string[] = [];
+  for (let i = lines.length - 1; i >= 0 && rows.length < MODAL_HINT_ROWS; i--) {
+    const text = lineText(lines[i]!);
+    if (text.trim() !== "") rows.push(text);
+  }
+  return rows.some(isKeyHintRow);
+}
 
 export const grokAdapter: HarnessAdapter = {
   agent: "grok",
@@ -105,6 +143,7 @@ export const grokAdapter: HarnessAdapter = {
   // (`Tab:next answer │ Esc:scrollback │ Shift+x:dismiss`): on grok, Escape opens the scrollback
   // view. Ctrl+C is the cancel.
   cancelKey: "ctrl+c",
+  modalOnScreen: grokModalOnScreen,
   composerPrompt,
   // Drops the scrollbar track and the terminal padding from the phone mirror's wrapped view.
   prepareDisplay: prepareGrokDisplay,

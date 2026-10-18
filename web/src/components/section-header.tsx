@@ -1,6 +1,8 @@
 import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { StatusDot } from "@/components/status-badge";
+import type { AgentStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface SectionHeaderProps {
@@ -8,7 +10,13 @@ interface SectionHeaderProps {
   label: string;
   /** Item count shown beside the label. Omit to show no count. */
   count?: number;
-  /** Bullet colour class from the status palette (e.g. "bg-status-blocked"). */
+  /**
+   * The status this section is lit for, drawn as its status mark (a triangle for blocked), in front
+   * of the label. Unnamed: the label beside it says what the section is. Not the same as `dot`.
+   */
+  mark?: AgentStatus;
+  /** A plain round bullet in a status-palette class ("bg-status-unknown"), for a section that is a
+   *  kind of thing and not a state: Shells, Launch. A STATE uses `mark`, which has a shape. */
   dot?: string;
   /** Render the label in the alert colour — the "Needs you" section. */
   accent?: boolean;
@@ -53,6 +61,7 @@ interface SectionHeaderProps {
 export function SectionHeader({
   label,
   count,
+  mark,
   dot,
   accent,
   open,
@@ -75,6 +84,7 @@ export function SectionHeader({
           aria-hidden
         />
       )}
+      {mark !== undefined && <StatusDot status={mark} className="size-2.5" />}
       {dot && <span className={cn("size-2 shrink-0 rounded-full", dot)} aria-hidden />}
       <span className="truncate">{label}</span>
       {count !== undefined && <span className="opacity-60 tabular-nums">({count})</span>}
@@ -96,7 +106,7 @@ export function SectionHeader({
   const type =
     toneName === "strong" && !accent
       ? "text-[13px] font-semibold tracking-normal"
-      : "text-xs font-semibold uppercase tracking-wide";
+      : "text-xs font-semibold label-caps";
 
   return (
     // No horizontal inset of its own: R2 — a section label begins on the page gutter, on the same

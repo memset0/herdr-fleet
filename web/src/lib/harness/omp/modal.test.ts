@@ -32,6 +32,9 @@ const SWITCH_WITH_A_WAY_OUT = ALL.filter(
 // keycaps of omp 18.4, the text keycaps of omp 17.x to 18.1, and the approval dialog's lower-case
 // `esc cancel`.
 const MODALS_WITH_A_WAY_OUT = [
+  // omp 18.6.1's Models picker and settings screen, the screens `/model` and `/settings` open (lab, 2026-10-17).
+  "omp--v18-6-model-selector-empty--w120.txt",
+  "omp--v18-6-settings-screen--w120.txt",
   "omp--approval-bash.txt",
   "omp--approval-write--deny.txt",
   "omp--approval-write.txt",
@@ -73,6 +76,15 @@ const MODALS_WITH_A_WAY_OUT = [
   // The Ask tool in omp 18.8 with option descriptions (#372), LIFTED like the 18.4.10 single select.
   "omp--v18-8-ask-single-described-moved.txt",
   "omp--v18-8-ask-single-described.txt",
+  "omp--v18-10-ask-single.txt",
+  "omp--v18-10-ask-batch.txt",
+  "omp--v18-10-ask-batch-moved.txt",
+  "omp--v18-10-ask-batch-second.txt",
+  "omp--v18-10-ask-batch-third.txt",
+  "omp--v18-10-ask-batch-review.txt",
+  "omp--v18-10-ask-long.txt",
+  "omp--v18-10-ask-long-expanded.txt",
+  "omp--v18-10-ask-revisited.txt",
   // The compact model picker (`/switch`, Alt+P) in omp 18.4.10. Its footer ends `⎋ close · Alt+P task
   // model`, one segment past the way out (modal.ts header). The session state is LIFTED (omp/switch.ts)
   // and draws no card; the task-model state, the `@` quick-roles state, a search with no match and the

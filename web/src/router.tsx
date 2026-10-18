@@ -17,6 +17,7 @@ import { SpaceRoute } from "@/routes/space";
 import { NewRoute } from "@/routes/new";
 import { NewAddRoute } from "@/routes/new-add";
 import { HistoryRoute } from "@/routes/history";
+import { ConversationRoute, ConversationsRoute } from "@/routes/conversations";
 import { ChangesRoute } from "@/routes/changes";
 import { SettingsRoute } from "@/routes/settings";
 import {
@@ -163,6 +164,11 @@ export const router = createBrowserRouter([
         // navigation; the view pages back through it with direct api calls.
         shouldRevalidate: () => false,
       },
+      // A durable program's own history (M53 spec 11): its list of conversations, and one of them read
+      // only. Neither has a loader. Each reads on open and on its Load more tap, so the poll loop's
+      // revalidate() fetches nothing for them; `shouldRevalidate` states the same opt-out as History's.
+      { path: "conversations", element: <ConversationsRoute />, shouldRevalidate: () => false },
+      { path: "conversations/:id", element: <ConversationRoute />, shouldRevalidate: () => false },
       {
         // The Changes view (ADR 0065). No loader: the view reads the list and an open file's diff
         // itself, on open, on its own 5 s beat while visible and on its refresh button, so the poll

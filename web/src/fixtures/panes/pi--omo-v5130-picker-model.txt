@@ -1,0 +1,37 @@
+[0m[38;2;99;148;255m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+
+[0m[38;2;167;167;0mOnly showing models from configured providers. Use /login to add providers.[0m                                      
+
+[0m[38;2;130;130;130menter[0m[38;2;160;160;160m select[0m [0m[38;2;130;130;130mctrl+s[0m[38;2;160;160;160m select as default[0m [0m[38;2;130;130;130mctrl+f[0m[38;2;160;160;160m favorite[0m                                                            
+
+> [0m[7m [0m                                                                                                              
+
+[0m[38;2;228;101;225m→ [0m[38;2;130;130;130m  [0m[38;2;228;101;225manthropic/claude-haiku-4.5[0m [0m[38;2;160;160;160m[openrouter][0m[38;2;0;194;0m ✓[0m                                                                    
+  [0m[38;2;130;130;130m  [0m~anthropic/claude-fable-latest [0m[38;2;160;160;160m[openrouter][0m                                                                  
+  [0m[38;2;130;130;130m  [0m~anthropic/claude-haiku-latest [0m[38;2;160;160;160m[openrouter][0m                                                                  
+  [0m[38;2;130;130;130m  [0m~anthropic/claude-opus-latest [0m[38;2;160;160;160m[openrouter][0m                                                                   
+  [0m[38;2;130;130;130m  [0m~anthropic/claude-sonnet-latest [0m[38;2;160;160;160m[openrouter][0m                                                                 
+  [0m[38;2;130;130;130m  [0m~deepseek/deepseek-flash-latest [0m[38;2;160;160;160m[openrouter][0m                                                                 
+  [0m[38;2;130;130;130m  [0m~deepseek/deepseek-pro-latest [0m[38;2;160;160;160m[openrouter][0m                                                                   
+  [0m[38;2;130;130;130m  [0m~deepseek/deepseek-v4-flash-latest [0m[38;2;160;160;160m[openrouter][0m                                                              
+  [0m[38;2;130;130;130m  [0m~google/gemini-flash-latest [0m[38;2;160;160;160m[openrouter][0m                                                                     
+  [0m[38;2;130;130;130m  [0m~google/gemini-pro-latest [0m[38;2;160;160;160m[openrouter][0m                                                                       
+  [0m[38;2;130;130;130m  [0m~moonshotai/kimi-latest [0m[38;2;160;160;160m[openrouter][0m                                                                         
+  [0m[38;2;130;130;130m  [0m~openai/gpt-astra-latest [0m[38;2;160;160;160m[openrouter][0m                                                                        
+  [0m[38;2;130;130;130m  [0m~openai/gpt-luna-latest [0m[38;2;160;160;160m[openrouter][0m                                                                         
+  [0m[38;2;130;130;130m  [0m~openai/gpt-mini-latest [0m[38;2;160;160;160m[openrouter][0m                                                                         
+  [0m[38;2;130;130;130m  [0m~openai/gpt-sol-latest [0m[38;2;160;160;160m[openrouter][0m                                                                          
+  [0m[38;2;130;130;130m  [0m~openai/gpt-terra-latest [0m[38;2;160;160;160m[openrouter][0m                                                                        
+  [0m[38;2;130;130;130m  [0m~x-ai/grok-latest [0m[38;2;160;160;160m[openrouter][0m                                                                               
+  [0m[38;2;130;130;130m  [0m~z-ai/glm-flash-latest [0m[38;2;160;160;160m[openrouter][0m                                                                          
+  [0m[38;2;130;130;130m  [0m~z-ai/glm-latest [0m[38;2;160;160;160m[openrouter][0m                                                                                
+  [0m[38;2;130;130;130m  [0maion-labs/aion-2.0 [0m[38;2;160;160;160m[openrouter][0m                                                                              
+[0m[38;2;160;160;160m  … 372 more below[0m                                                                                               
+
+[0m[38;2;160;160;160m  Model Name: Anthropic: Claude Haiku 4.5[0m                                                                        
+
+[0m[38;2;0;194;0m  Model catalogs refreshed.[0m                                                                                      
+
+[0m[38;2;99;148;255m─────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;228;101;225m…sandbox/collie-pi-labs/omo-lab/work[0m[38;2;123;123;123m • [0m[38;2;130;130;130mCH97.0%[0m[38;2;123;123;123m • [0m[38;2;0;194;0m$0.018[0m[38;2;123;123;123m • [0m[38;2;160;160;160m24K/200K (12.0%) (auto)[0m  [0m[38;2;228;101;225manthropic/claude-haiku-4.5[0m[38;2;130;130;130m:off[0m
+(😺 OmO Native by Q Kim) mem:work-00392473 just now (+1)

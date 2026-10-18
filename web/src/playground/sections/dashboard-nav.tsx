@@ -256,7 +256,7 @@ function DashBody({
           <SectionHeader
             label={g.label}
             tone="strong"
-            dot={g.panes.some((p) => bucketOf(p) === "needs") ? "bg-status-blocked" : undefined}
+            mark={g.panes.some((p) => bucketOf(p) === "needs") ? "blocked" : undefined}
             trailing={
               <span className="flex shrink-0 items-center gap-3">
                 <StatusCounts panes={g.panes} className="text-[11px] text-muted-foreground" />

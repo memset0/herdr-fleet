@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopt Collie v1.22.6 as real ancestry.** Collie's checked send pipeline, held sends, send notices and Recent sends, per-harness input profiles (Codex sends with Tab), themes, hook edges and experimental durable agents arrive as upstream behaviour; a lead on this release refuses checked text to a member still on 3.16, so update the lead first, then every member.
+
 ## [3.16.3] - 2026-10-13
 
 Lead-only release: rebuild and restart Fleet on the lead; members need no redeployment.

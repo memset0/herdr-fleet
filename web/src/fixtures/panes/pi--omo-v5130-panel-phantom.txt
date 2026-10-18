@@ -1,0 +1,18 @@
+[0m[48;2;75;28;74m [0m[38;2;130;130;130m[48;2;75;28;74mmemory.reflection.sandbox to "off" in your omo config, or allow unprivileged user         [0m[38;2;228;101;225mSESSION  $0.05 · 483[0m            
+[0m[48;2;75;28;74m [0m[38;2;130;130;130m[48;2;75;28;74mnamespaces on the host. Run /reflect to retry now; the next automatic probe is at         [0mmodel   claude-haiku-4.5        
+[0m[48;2;75;28;74m [0m[38;2;130;130;130m[48;2;75;28;74m2026-10-12T20:53:29.223Z.[0m[48;2;75;28;74m                                                                 [0m[38;2;160;160;160melapsed 1s[0m                      
+[0m[48;2;75;28;74m                                                                                           [0m[38;2;160;160;160mtokens  in 46 · out 437[0m         
+                                                                                           [0m[38;2;160;160;160mcache   99% hit[0m                 
+ [0m[38;2;167;167;0mWarning: Automatic memory reflection paused after 4 failures · bwrap: Can't find source   [0m                                
+ [0m[38;2;167;167;0mpath                                                                                      [0m[38;2;228;101;225mCONTEXT  24.7K/200K[0m             
+ [0m[38;2;167;167;0m/home/demo/sandbox/collie-pi-labs/omo-lab/home/.omo/memory/agents/work-00392473/runtime/r [0m[38;2;228;101;225mused    ██▍░░░░░░░░░░░░░░░░ 12%[0m 
+ [0m[38;2;167;167;0meflection-sessions: No such file or directory · the sandbox helper (bwrap) cannot create  [0m                                
+ [0m[38;2;167;167;0ma user namespace on this host; set memory.reflection.sandbox to "off" in your omo config, [0m[38;2;228;101;225mMEMORY  work-00392473[0m           
+ [0m[38;2;167;167;0mor allow unprivileged user namespaces on the host · next automatic probe                  [0m[38;2;160;160;160mreflect 2 failed[0m                
+ [0m[38;2;167;167;0m2026-10-12T20:53:29.223Z; run /reflect to retry now[0m                                       [0m[38;2;160;160;160mkibitz  4 wakes · 32s ago[0m       
+                                                                                           [0m[38;2;160;160;160mfacts   10 queued[0m               
+[0m[38;2;112;112;112m───────────────────────────────────────────────────────────────────────────────────────────[0m                                
+[0m[38;2;112;112;112m❯[0m [0m[7m [0m                                                                                        [0m[38;2;160;160;160m…box/collie-pi-labs/omo-lab/work[0m
+[0m[38;2;112;112;112m───────────────────────────────────────────────────────────────────────────────────────────[0m                                
+[0m[38;2;228;101;225m…b/work[0m[38;2;123;123;123m • [0m[38;2;160;160;160mPick a Color Choice[0m[38;2;123;123;123m • [0m[38;2;130;130;130m…[0m[38;2;123;123;123m • [0m[38;2;160;160;160m25K/200K (12.4%) (auto)[0m  [0m[38;2;228;101;225manthropic/claude-haiku-4.5[0m[38;2;130;130;130m:off[0m                                
+(😺 OmO Native by Q Kim) mem:work-00392473 3m ago (+4) paused [0m[38;2;118;129;134m│[0m [0m[38;2;167;152;215mBoard[0m [0m[38;2;104;183;141m3[0m                                                    

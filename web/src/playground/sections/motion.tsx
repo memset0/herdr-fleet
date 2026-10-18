@@ -257,9 +257,9 @@ function StatusIndicatorsCard() {
       label="StatusDot, StatusBadge & StatusWord"
       reach="any agent row (dashboard, tab strip, pane strip, pane header) for the dot; the pane
         header's line 1 for the word."
-      note="Every dot below has `live` breathing ON so the animation can be judged. In the real app
-        exactly ONE dot per pane ever breathes (the pane chip and the pane header's own badge); every
-        other mount shows a solid, still dot for the same working state. Stale examples show the
+      note="Every mark below has `live` ON so the turn can be judged. In the real app exactly ONE
+        mark per pane ever turns (the pane chip and the pane header's own badge); every other mount
+        shows a still mark for the same working state. Stale examples show the
         frozen-last-snapshot dim (opacity-40) the three primitives share."
       span={2}
     >

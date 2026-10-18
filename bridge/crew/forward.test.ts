@@ -12,8 +12,11 @@ import {
   forwardPaneId,
   forwardParams,
   forwardToPeer,
+  REPLY_OLD_MEMBER_TEXT,
+  SEND_OLD_MEMBER_DETAIL,
   crewRouteFor,
   proxiedResponse,
+  textAnswerOf,
   type ForwardDeps,
   type ForwardErrorCode,
   type ForwardTransport,
@@ -21,6 +24,7 @@ import {
 import { crewDeviceOf } from "./peer-gate.ts";
 import { crewTimeoutBudget, WRITE_BUDGET_MS, type CrewLink, type PeerOutcome } from "./peer-client.ts";
 import type { PeerState } from "./registry.ts";
+import { readSend, readSendReply } from "../../web/src/lib/send-protocol.ts";
 
 // The lead's forwarding path (CREW_PROTOCOL.md §5, §9.1, §10.3, §12, §13).
 //
@@ -129,6 +133,27 @@ describe("which routes cross a link", () => {
     expect(crewRouteFor("/api/workspace")).toBe("workspace");
   });
 
+  test("an answer to an ask crosses the link as a write, to the member that owns the pane (ADR 0100)", () => {
+    expect(crewRouteFor("/api/pane/w1:p1/answer")).toBe("pane/w1:p1/answer");
+    expect(apiPathFor("pane/w1:p1/answer")).toBe("/api/pane/w1:p1/answer");
+    expect(forwardKind("pane/w1:p1/answer")).toBe("write");
+    expect(forwardPaneId("pane/conv%2001/answer")).toBe("conv 01");
+    // Nothing hangs under it: an answer is one route, not a family.
+    expect(crewRouteFor("/api/pane/w1:p1/answer/x")).toBeNull();
+  });
+
+  test("a send and an abort cross the link as writes, to the member that owns the pane and its receipt (ADR 0101)", () => {
+    for (const action of ["send", "abort"]) {
+      expect(crewRouteFor(`/api/pane/conv-02/${action}`)).toBe(`pane/conv-02/${action}`);
+      expect(apiPathFor(`pane/conv-02/${action}`)).toBe(`/api/pane/conv-02/${action}`);
+      expect(forwardKind(`pane/conv-02/${action}`)).toBe("write");
+      expect(forwardPaneId(`pane/conv%2002/${action}`)).toBe("conv 02");
+      // The member's control route writes `send` or `abort` (bridge/durable/control.ts), so the lead's line matches.
+      expect(forwardAuditAction(`pane/conv-02/${action}`)).toBe(action);
+      expect(crewRouteFor(`/api/pane/conv-02/${action}/x`)).toBeNull();
+    }
+  });
+
   test("launch and its rows cross the link too — rows must come from the host that runs them", () => {
     expect(crewRouteFor("/api/launch")).toBe("launch");
     expect(crewRouteFor("/api/launchers")).toBe("launchers");
@@ -215,12 +240,19 @@ describe("which routes cross a link", () => {
     // The list IS the inventory of what crosses a link; `chat` joined it with the live window, and
     // `files` with the Files view (ADR 0083).
     expect(paneActions).toEqual([
-      "changes", "chat", "close", "files", "focus", "history", "keys", "rename", "reply", "upload",
+      "abort", "action", "answer", "changes", "chat", "close", "files", "focus", "history", "keys", "rename", "reply", "send", "upload",
     ]);
     for (const action of paneActions) expect(crewRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
     const tabActions = tab.match(alternation)![1]!.split("|").toSorted();
     expect(tabActions).toEqual(["close", "rename"]);
     for (const action of tabActions) expect(crewRouteFor(`/api/tab/x/${action}`)).toBe(`tab/x/${action}`);
+    // A space's rename (M53 spec 05) is the same pairing: one id segment and the literal `rename`.
+    const space = server.match(/^const SPACE_ACTION_ROUTE = (.+);$/m)![1]!;
+    expect(space).toBe("/^\\/api\\/space\\/([^/]+)\\/rename$/");
+    expect(crewRouteFor("/api/space/x/rename")).toBe("space/x/rename");
+    expect(crewRouteFor("/api/space/x/close")).toBeNull();
+    expect(crewRouteFor("/api/space/x")).toBeNull();
+    expect(apiPathFor("space/x/rename")).toBe("/api/space/x/rename");
     // The blob route is the same pairing: server.ts matches the hash as one opaque segment, so this
     // grammar must too — a tighter one here would make a hash the phone can fetch locally
     // unfetchable across a link, and a looser one would forward a shape no peer route answers.
@@ -254,6 +286,28 @@ describe("which routes cross a link", () => {
     expect(crewRouteFor("/api/workspace/w1/files/exist")).toBeNull();
     expect(apiPathFor("pane/w1:p1/files/image")).toBe("/api/pane/w1:p1/files/image");
     expect(apiPathFor("workspace/w1/files/image")).toBe("/api/workspace/w1/files/image");
+    // A durable program's history (M53 spec 11): the list, then one opaque id with `items` or `reopen`.
+    const conversations = server.match(/^const DURABLE_CONVERSATIONS_ROUTE = (.+);$/m)![1]!;
+    const conversation = server.match(/^const DURABLE_CONVERSATION_ROUTE = (.+);$/m)![1]!;
+    expect(conversations).toBe("/^\\/api\\/durable\\/conversations$/");
+    expect(conversation).toBe("/^\\/api\\/durable\\/conversation\\/([^/]+)\\/(items|reopen)$/");
+    expect(crewRouteFor("/api/durable/conversations")).toBe("durable/conversations");
+    for (const action of ["items", "reopen"]) expect(crewRouteFor(`/api/durable/conversation/c1/${action}`)).toBe(`durable/conversation/c1/${action}`);
+    expect(crewRouteFor("/api/durable/conversation/c1/close")).toBeNull();
+    expect(crewRouteFor("/api/durable/conversations/x")).toBeNull();
+    expect(apiPathFor("durable/conversation/c1/items")).toBe("/api/durable/conversation/c1/items");
+  });
+
+  test("history: the program's list and items are reads, a reopen is a write audited as durable.reopen, and the items are masked as History", () => {
+    expect(forwardKind("durable/conversations")).toBe("read");
+    expect(forwardKind("durable/conversation/c1/items")).toBe("read");
+    expect(forwardKind("durable/conversation/c1/reopen")).toBe("write");
+    expect(forwardAuditAction("durable/conversations")).toBeNull();
+    expect(forwardAuditAction("durable/conversation/c1/items")).toBeNull();
+    expect(forwardAuditAction("durable/conversation/c1/reopen")).toBe("durable.reopen");
+    expect(textAnswerOf("durable/conversation/c1/items")).toBe("history");
+    expect(textAnswerOf("durable/conversations")).toBeNull();
+    expect(forwardPaneId("durable/conversation/c1/reopen")).toBeUndefined();
   });
 
   test("read vs write is decided exactly as server.ts decides it — history is a READ", () => {
@@ -263,7 +317,7 @@ describe("which routes cross a link", () => {
     // must be attempted against a stale member rather than refused before it is tried (§10.3).
     expect(forwardKind("pane/w1:p1/chat")).toBe("read");
     expect(forwardKind("pane/w1:p1/changes")).toBe("read");
-    for (const action of ["reply", "keys", "upload", "close", "rename", "focus"]) {
+    for (const action of ["reply", "keys", "upload", "close", "rename", "focus", "answer", "send", "abort"]) {
       expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
     }
     expect(forwardKind("tab")).toBe("write");
@@ -282,12 +336,15 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("pane/w1:p1/reply")).toBe("reply");
     expect(forwardAuditAction("pane/w1:p1/keys")).toBe("keys");
     expect(forwardAuditAction("pane/w1:p1/upload")).toBe("upload");
+    // The member's answer route writes `answer` (bridge/durable/answer.ts), so the lead's line matches.
+    expect(forwardAuditAction("pane/w1:p1/answer")).toBe("answer");
     expect(forwardAuditAction("pane/w1:p1/close")).toBe("pane.close");
     expect(forwardAuditAction("pane/w1:p1/rename")).toBe("pane.rename");
     // DOWNSTREAM PORT — read off the peer's own handler, which namespaces itself.
     expect(forwardAuditAction("pane/w1:p1/focus")).toBe("pane.focus");
     expect(forwardAuditAction("tab")).toBe("tab.create");
     expect(forwardAuditAction("tab/w1:t1/rename")).toBe("tab.rename");
+    expect(forwardAuditAction("space/w1/rename")).toBe("space.rename");
     expect(forwardAuditAction("tab/w1:t1/close")).toBe("tab.close");
     expect(forwardAuditAction("workspace")).toBe("workspace.create");
     // Reads are not audited today and do not become audited by crossing a link.
@@ -591,6 +648,83 @@ describe("request shaping", () => {
 });
 
 // ── §10.3 Writes: refuse before attempting, never retry an ambiguous one ─────
+
+// ── M56 compat: a text reply to a member with no Surface reader ──────────────
+
+describe("a text reply to a member that sent no Surface reader version (an older build)", () => {
+  const REPLY = "/api/pane/w1:p1/reply?host=laptop";
+
+  test("a text submit is refused at once with the reply route's own shape, and the member is never dialled", async () => {
+    for (const body of [`{"text":"hi","submit":true}`, `{"text":"hi"}`, `{"text":"hi","submit":true,"expected_prompt":"Approve?"}`]) {
+      const { transport, calls } = transportOf(() => ok(new Response("{}")));
+      const [req, url] = post(REPLY, body);
+      const res = await forward(req, url, { transport, surfaceVersion: null });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: false,
+        textDelivered: false,
+        error: REPLY_OLD_MEMBER_TEXT,
+        code: "reply.send_failed",
+        detail: { reason: REPLY_OLD_MEMBER_TEXT },
+        send: { receipt: { outcome: "refused" }, offers: ["keys"], detail: SEND_OLD_MEMBER_DETAIL },
+      });
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  test("the refusal carries a send answer the phone reads, with the phone's own request id (2026-10-17 field case)", async () => {
+    const { transport, calls } = transportOf(() => ok(new Response("{}")));
+    const [req, url] = post(`${REPLY}&session=main`, `{"text":"/model","submit":true,"id":"phone-req-0001","mode":"command"}`);
+    const audit: unknown[] = [];
+    const res = await forward(req, url, { transport, surfaceVersion: null, audit: (entry) => audit.push(entry) });
+    const body = await res.json();
+    expect(body.send.receipt).toEqual({ outcome: "refused", requestId: "phone-req-0001" });
+    // What the phone makes of it: a refusal, nothing typed, and the bridge's own sentence under it.
+    const reply = readSendReply(body.send);
+    expect(reply).not.toBeNull();
+    expect(readSend(reply!)).toMatchObject({ clear: false, note: "refused", detail: SEND_OLD_MEMBER_DETAIL });
+    // The lead says why no forward followed the tap: one `reply` line naming the member.
+    expect(audit).toEqual([{ action: "reply", host: "laptop", paneId: "w1:p1", session: "main", outcome: "old_member" }]);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("with a Surface reader version, or with none known to the caller, the same reply is forwarded", async () => {
+    for (const surfaceVersion of [2, undefined]) {
+      const { transport, calls } = transportOf(() => ok(new Response(`{"ok":true}`)));
+      const [req, url] = post(REPLY, `{"text":"hi","submit":true,"id":"phone-req-0001"}`);
+      const res = await forward(req, url, { transport, surfaceVersion });
+      expect(await res.json()).toEqual({ ok: true });
+      expect(calls.map((c) => c.route)).toEqual(["pane/w1:p1/reply"]);
+      // The body still streams on whole: the refusal check reads a clone.
+      expect(await new Response(calls[0]?.init.body).text()).toBe(`{"text":"hi","submit":true,"id":"phone-req-0001"}`);
+    }
+  });
+
+  test("keys, raw text with submit false, other routes and a body that is not JSON go to the old member as before", async () => {
+    const sent: [string, string][] = [
+      ["/api/pane/w1:p1/keys?host=laptop", `{"keys":["1"]}`],
+      [REPLY, `{"text":"hi","submit":false}`],
+      [REPLY, `{"text":"","submit":true,"expected_prompt":"Approve?"}`],
+      [REPLY, "not json"],
+      ["/api/pane/w1:p1/rename?host=laptop", `{"name":"x","text":"hi"}`],
+    ];
+    for (const [path, body] of sent) {
+      const { transport, calls } = transportOf(() => ok(new Response(`{"ok":true}`)));
+      const [req, url] = post(path, body);
+      const res = await forward(req, url, { transport, surfaceVersion: null });
+      expect(await res.json()).toEqual({ ok: true });
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  test("a member that is not reachable is still refused as unreachable first", async () => {
+    const { transport, calls } = transportOf(() => ok(new Response("{}")));
+    const [req, url] = post(REPLY, `{"text":"hi","submit":true}`);
+    const res = await forward(req, url, { transport, state: DEAD, surfaceVersion: null });
+    expect((await failureBody(res)).code).toBe("host_unreachable");
+    expect(calls).toHaveLength(0);
+  });
+});
 
 describe("a write to a member that is not reachable (§10.3)", () => {
   test("it is refused BEFORE it is attempted, naming the member and its lastSeenAt", async () => {

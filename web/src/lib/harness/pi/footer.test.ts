@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePiFooter } from "./footer";
+import { keyHintPairs, parsePiFooter } from "./footer";
 
 describe("parsePiFooter: the footers the corpus prints", () => {
   it.each([
@@ -61,5 +61,48 @@ describe("parsePiFooter: what is not a footer", () => {
 
   it("does not take typed digits for a digit plan", () => {
     expect(parsePiFooter("↑↓ navigate • type a number • Esc to cancel")?.digitsSelect).toBe(false);
+  });
+});
+
+// A picker's key-hint row (.adr/0098, "Pickers"): the rows the lab captures print, 2026-10-12.
+describe("keyHintPairs: the pickers' hint rows", () => {
+  it.each([
+    ["enter select ctrl+s select as default ctrl+f favorite", 3], // OmO /model, single spaces
+    ["↑/↓ move · ←/→ page · ctrl+←/→ branch · ctrl+x copy · ctrl+e edit · shift+l label · shift+t label time", 7], // /tree
+    ["ctrl+s sort · ctrl+n named · ctrl+d delete · ctrl+p path (off) · ctrl+r rename", 5], // /resume
+    ["Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel", 3], // stock /model
+    ["↑↓ move  1-9 select  space select  enter next  tab next question  c comment  esc cancel", 7], // OmO ask
+    ["↑↓ navigate • Enter to select • Esc to cancel", 3], // stock question
+    // `to` wording joined by a separator: each segment is `<key> to <action>`, two pairs.
+    ["enter to confirm · esc to cancel", 2],
+    // Single spaces: a chord always starts a pair, and a named key right after a key is its action.
+    ["enter select ctrl+d delete ctrl+r rename", 3],
+    ["ctrl+s sort ctrl+n named ctrl+d delete ctrl+p path (off) ctrl+r rename", 5],
+    ["↑/↓ move ←/→ page enter select", 3],
+    ["alt+x end shift+tab back", 2],
+    ["super+x home ctrl+e end", 2],
+  ])("%s → %i pairs", (text, pairs) => {
+    expect(keyHintPairs(text)).toBe(pairs);
+  });
+
+  it.each([
+    ["the other /resume row, with a pattern and a phrase", 'tab scope · re:<pattern> regex · "phrase" exact'],
+    ["the /tree filter row, action first", "filters ctrl+d/t/u/l/a · cycle ctrl+o/shift+ctrl+o"],
+    ["OmO's question banner", "enter or alt+up to answer · /answer · or just type your reply"],
+    ["the banner's mouse row", "click an option · shift+drag to select text"],
+    ["a status row", "↑4.9k ↓62 $0.005 1.2%/200k (auto)                anthropic/claude-haiku-4.5 • thinking off"],
+    ["one pair", "enter select"],
+    ["single spaces with no chord or arrow", "enter select tab next"],
+    ["prose that names keys", "press enter to select it then ctrl+s to save"],
+    ["a key with no action", "enter ctrl+s save"],
+    ["a chord with no action before the next chord", "ctrl+d ctrl+r rename"],
+    ["a chord at the end with no action", "enter select ctrl+d"],
+    // `to` wording with single spaces is two pairs (`enter` [to confirm], `esc` [to cancel]), but
+    // with no chord or arrow it is not a hint row: plain words could spell it.
+    ["the `to` form with single spaces", "enter to confirm esc to cancel"],
+    ["a sentence", "Pick a color for the Collie probe?"],
+    ["an empty row", ""],
+  ])("declines %s", (_name, text) => {
+    expect(keyHintPairs(text)).toBe(0);
   });
 });

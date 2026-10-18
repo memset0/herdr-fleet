@@ -31,7 +31,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseAnsi, type AnsiSegment } from "../ansi";
 import { lineText, splitLines, type StyledLine } from "../blocks";
-import { draftCarriesSend } from "../reply-action";
+import { draftCarriesSend } from "../draft-match";
 import { displayWidth } from "../text-width";
 import { agyAdapter } from "./agy";
 import { claudeAdapter } from "./claude";
@@ -314,6 +314,7 @@ const COMPOSERS: Composer[] = [
       "codex--v0157-draft-notice.txt",
       "codex--v0157-busy-streaming.txt",
       "codex--reporter-294-busy-agents-hint.txt",
+      "codex--v0163-agents-hint-warnings.txt",
     ],
     band(texts) {
       let status = texts.length - 1;
@@ -349,7 +350,7 @@ const COMPOSERS: Composer[] = [
       if (found === null) return null;
       return { top: found.prompt - 1, prompt: found.prompt, draftEnd: found.closer, width: displayWidth(texts[found.closer]!.trimEnd()) - 2 };
     },
-    draft: { omit: { indented: "a known gap, see KNOWN_DRAFT_GAPS" }, rows: gutterRows("❯") },
+    draft: { omit: {}, rows: gutterRows("❯") },
   },
   {
     name: "omp (rule composer)",
@@ -501,18 +502,9 @@ function expectRoundTrip(composer: Composer, frame: StyledLine[], draft: string[
  * Drafts a reader does not survive yet. Each is left out of its composer's generated drafts (`omit`)
  * and pinned here instead as `it.fails`, so it shows in every run and turns red the day it is fixed.
  */
-const KNOWN_DRAFT_GAPS: { composer: string; kind: LineKind; draft: string[]; why: string }[] = [
-  {
-    // Muse's continuation test is `/^ {2}\S/` (muse/markers.ts), the same test Codex had until an
-    // indented draft line refused every send (codex/chrome.ts, CONTINUATION). A typed indent after
-    // the two-column gutter reads as a torn frame, and the composer is lost. No Muse capture of an
-    // indented line exists yet; the draft below is the Codex one (codex--v0151-draft-indented-line.txt).
-    composer: "muse",
-    kind: "indented",
-    draft: ["please move all the images across to the new blog", "  then take the originals down"],
-    why: "an indented draft line reads as a torn frame (no issue filed yet)",
-  },
-];
+// Muse's indented line left this list on 2026-10-12: the harness canary typed one into Muse 1.4.6,
+// the composer was lost exactly as pinned here, and muse/markers.ts took Codex's gutter-only test.
+const KNOWN_DRAFT_GAPS: { composer: string; kind: LineKind; draft: string[]; why: string }[] = [];
 
 describe("draft round-trip: generated drafts stay composer and read back as send evidence", () => {
   for (const composer of COMPOSERS) {
@@ -642,6 +634,7 @@ const CODEX_READ_BY_PAINT = [
   "codex--v0157-draft-notice.txt",
   "codex--v0157-busy-streaming.txt",
   "codex--reporter-294-busy-agents-hint.txt",
+  "codex--v0163-agents-hint-warnings.txt",
 ];
 
 /**
@@ -660,7 +653,16 @@ const KNOWN_PAINT_GAPS: { composer: string; paint: RepaintName; frames: string[]
     frames: CODEX_READ_BY_PAINT,
     why: "a status row with no paint is prose by design, no issue filed",
   },
-  // DOWNSTREAM PORT (FORK.toml codex-headless-status-row-port): the headless notice gap is read now.
+  {
+    // The right-aligned notice (`⚠ 1 warning · f2 to view`) is accepted only when every one of its
+    // segments is painted (codex/markers.ts, isRightNotice), and its glue text carries the same muted
+    // colour the separators lose here. No headless capture shows a notice, so how Codex paints one
+    // with no client attached is not known yet; the notice rule was left as it is (#294).
+    composer: "codex",
+    paint: "no client attached",
+    frames: ["codex--v0156-draft-multiline.txt"],
+    why: "#294, a right-aligned notice with no colour, no capture yet",
+  },
   {
     // The status-row acceptor refuses a bold field or a bold separator ON PURPOSE: every Codex
     // dialog footer paints its key names bold, and that is what keeps a footer from passing as a

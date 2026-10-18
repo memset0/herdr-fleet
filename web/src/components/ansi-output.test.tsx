@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { MemoryRouter } from "react-router";
 
@@ -10,6 +10,7 @@ import { AnsiOutput } from "./ansi-output";
 import { FileLinksProvider } from "./file-links";
 import { paneLinkHandlers, PaneFileLinks, testFileOpener } from "@/test/file-links";
 import { server } from "@/test/setup";
+import { setDeviceToken } from "@/lib/pairing";
 import { codexPaddingScreen } from "@/test/codex-padding";
 
 const ESC = "\x1b";
@@ -134,10 +135,12 @@ describe("terminal mirror colour space", () => {
   // inherited light-dark() token resolves against THIS element's colour-scheme (dark), not the
   // root's — but the mirror deliberately keeps a single spelling so nobody has to know that to read
   // it. Mixing the two is the regression this catches; a computed-style test would not.
-  it("uses literal dark-space colours, never theme tokens", () => {
+  // Since M57 spec 17 a theme's `ansi` block may set the mirror's own ground and ink; the literals
+  // stay as the fallbacks, so without one the pixels are the dark-space values they always were.
+  it("uses the mirror's own dark-space colours, the literals as fallbacks, never page tokens", () => {
     const pre = mirror("hello");
-    expect(pre.className).toContain("bg-[#0a0a0a]");
-    expect(pre.className).toContain("text-[#fafafa]");
+    expect(pre.className).toContain("bg-[color:var(--mirror-ground,#0a0a0a)]");
+    expect(pre.className).toContain("text-[color:var(--mirror-ink,#fafafa)]");
     expect(pre.className).not.toMatch(/\bbg-background\b/);
     expect(pre.className).not.toMatch(/\btext-foreground\b/);
   });
@@ -212,8 +215,8 @@ describe("native mirror (muse)", () => {
     expect(pre.className).toContain("terminal-muse");
     expect(pre.className).toContain("bg-[#fffbf8]");
     expect(pre.className).toContain("text-[#0a0a0a]");
-    expect(pre.className).toContain("dark:bg-[#0a0a0a]");
-    expect(pre.className).toContain("dark:text-[#fafafa]");
+    expect(pre.className).toContain("dark:bg-[color:var(--mirror-ground,#0a0a0a)]");
+    expect(pre.className).toContain("dark:text-[color:var(--mirror-ink,#fafafa)]");
     expect(pre.className).not.toContain("invert(1)");
   });
 
@@ -448,10 +451,63 @@ describe("mirror line wrapping", () => {
     expect(diffSpan.getAttribute("style")).toContain("rgb(33, 58, 43)");
   });
 
+  it("drops Codex's composer padding band from the mirror: no painted blank row is left behind", () => {
+    const body = Array.from({ length: 60 }, (_, i) => `Earlier output ${i}`).join("\n") + "\n";
+    const { container } = render(<AnsiOutput text={body + codexPaddingScreen} agent="codex" />);
+    const pre = container.querySelector("pre")!;
+
+    // The transcript stays, down to its last line; the prompt, its two background-only rows and the
+    // statusline belong to the composer and are not drawn in the mirror.
+    expect(pre.textContent).toBe(`${body}• Verification complete. Keep this transcript.`);
+    const paintedBlanks = [...pre.querySelectorAll("span")].filter(
+      (span) => span.textContent?.trim() === "" && span.style.backgroundColor !== "",
+    );
+    expect(paintedBlanks).toHaveLength(0);
+  });
+
   it("does not suppress the same ANSI background for an unknown agent", () => {
     const user = `${ESC}[48;2;240;240;240mordinary terminal output${ESC}[0m`;
     const { container } = render(<AnsiOutput text={user} agent="shell" />);
     expect(container.querySelector(".terminal-mobile-transparent-bg")).toBeNull();
+  });
+});
+
+// With wrapping off the screen is a grid. A CJK glyph falls back to a face whose advance is not two
+// cells (components/painted-cells.tsx), so outside tables too each one is held to two cells, or
+// every wall to its right drifts. Wrapping prose keeps its natural advances.
+describe("fixed-column terminal text", () => {
+  const text = `${ESC}[35m→ 1. 커피${ESC}[0m   │ details\n  2. 차      │ https://example.com\n`;
+
+  it("holds Hangul to two cells outside tables when wrapping is off", () => {
+    const { container } = render(<AnsiOutput text={text} wrap={false} query="커피" />);
+    const pre = container.querySelector("pre")!;
+    const cells = [...pre.querySelectorAll('[class~="w-[2ch]"]')];
+
+    expect(cells.map((cell) => cell.textContent).join("")).toBe("커피차");
+    expect(pre.textContent).toBe("→ 1. 커피   │ details\n  2. 차      │ https://example.com\n");
+    expect(pre.querySelector("[data-find-match]")!.textContent).toBe("커피");
+    expect(pre.querySelector("a")!.textContent).toBe("https://example.com");
+  });
+
+  it("keeps the underline on the wide Hangul inside a link", () => {
+    const { container } = render(
+      <AnsiOutput text="open https://example.com/커피 now" wrap={false} />,
+    );
+    const link = container.querySelector("a")!;
+    const cells = [...link.querySelectorAll<HTMLElement>('[class~="w-[2ch]"]')];
+
+    expect(link.textContent).toBe("https://example.com/커피");
+    expect(cells.map((cell) => cell.textContent)).toEqual(["커", "피"]);
+    // An underline does not propagate into an inline-block child, so each wide piece draws the
+    // link's decoration itself.
+    expect(link.className).toContain("underline");
+    for (const cell of cells) expect(cell.className).toContain("[text-decoration:inherit]");
+  });
+
+  it("keeps wrapping prose free of fixed-width cells", () => {
+    const { container } = render(<AnsiOutput text="한글 설명입니다." />);
+    expect(container.querySelector('[class~="w-[2ch]"]')).toBeNull();
+    expect(container.querySelector("pre")!.textContent).toBe("한글 설명입니다.");
   });
 });
 
@@ -497,6 +553,22 @@ describe("a table pans while the mirror around it wraps", () => {
 
   it("does not nest a scroller inside the wrap-off pan, which is already column-faithful", () => {
     expect(mirror({ wrap: false }).querySelector("span.overflow-x-auto")).toBeNull();
+  });
+
+  it("holds each double-width character of a run to two columns, so a CJK table's walls line up", () => {
+    // The mirror's monospace stack has no CJK face, so an ideograph falls back to a font whose
+    // advance is not two ASCII cells, and every wall after it drifts. Each one in a run sits in a
+    // box exactly 2ch wide instead; prose outside the run keeps its free wrapping.
+    const table = ["┌──────────┬────────┐", "│ 用水位置 │ 建議   │", "├──────────┼────────┤", "│ 廚房     │ 淨水   │", "└──────────┴────────┘"].join("\n");
+    const text = `中文說明\n\n${table}\n`;
+    const { container } = render(<AnsiOutput text={text} />);
+    const pre = container.querySelector("pre")!;
+    const run = pre.querySelector("span.overflow-x-auto")!;
+    const cells = [...run.querySelectorAll('[class~="w-[2ch]"]')];
+
+    expect(cells.map((c) => c.textContent).join("")).toBe("用水位置建議廚房淨水");
+    expect(pre.querySelectorAll('[class~="w-[2ch]"]')).toHaveLength(cells.length);
+    expect(pre.textContent).toBe(text);
   });
 
   it("leaves the border clip alone: a rule beside a table stays clipped and outside the run", () => {
@@ -828,6 +900,61 @@ describe("terminal mirror image placeholders", () => {
     fireEvent.error(await firstImg(container));
     expect(container.querySelector("img")).toBeNull();
     expect(container.textContent).toContain("[Image]");
+  });
+
+  it("fetches the picture's bytes with the pairing token, from the blob path the journal named", async () => {
+    const seen: { path: string; auth: string | null }[] = [];
+    server.use(
+      http.get("/api/blobs/:hash", ({ request }) => {
+        seen.push({ path: new URL(request.url).pathname, auth: request.headers.get("authorization") });
+        return new HttpResponse(new Uint8Array([1]), { headers: { "content-type": "image/png" } });
+      }),
+    );
+    setDeviceToken("tok-test-placeholder");
+    const { container } = render(
+      <AnsiOutput text={`header\n${KITTY_PLACEHOLDER}\nfooter`} images={[BLOB]} />,
+    );
+    const img = await firstImg(container);
+    // The link around the picture is the object URL the page minted itself, not the bridge path.
+    expect(img.closest("a")?.getAttribute("href")).toMatch(/^blob:/);
+    expect(seen).toEqual([{ path: BLOB, auth: "Bearer tok-test-placeholder" }]);
+  });
+
+  it("speaks German: the badge and the matched-by-order line come from the German catalog", async () => {
+    vi.resetModules();
+    const [{ AnsiOutput: FreshOutput }, { __resetLocale, setLocale, whenLocaleReady }, { de }, { en }] =
+      await Promise.all([
+        import("./ansi-output"),
+        import("@/lib/i18n"),
+        import("@/lib/i18n/messages/de"),
+        import("@/lib/i18n/messages/en"),
+      ]);
+    __resetLocale();
+    try {
+      const { container } = render(
+        <FreshOutput text={`header\n${KITTY_PLACEHOLDER}\n${"x"}\n${KITTY_PLACEHOLDER}\nfooter`} images={[BLOB]} />,
+      );
+      await act(async () => {
+        setLocale("de");
+        await whenLocaleReady("de");
+      });
+      await vi.waitFor(() => expect(container.textContent).toContain(de["mirror.imageBadge"]));
+      expect(container.textContent).toContain(de["mirror.imageMatchedByOrder"]);
+      // All three differ from English, so this cannot pass by falling back to it.
+      expect(de["mirror.imageBadge"]).not.toBe(en["mirror.imageBadge"]);
+      expect(de["mirror.imageMatchedByOrder"]).not.toBe(en["mirror.imageMatchedByOrder"]);
+      expect(de["mirror.imageAlt"]).not.toBe(en["mirror.imageAlt"]);
+      expect(container.textContent).not.toContain(en["mirror.imageBadge"]);
+      expect(container.textContent).not.toContain(en["mirror.imageMatchedByOrder"]);
+      const img = await vi.waitFor(() => {
+        const found = container.querySelector("img");
+        if (found === null) throw new Error("no picture yet");
+        return found;
+      });
+      expect(img.getAttribute("alt")).toBe(de["mirror.imageAlt"]);
+    } finally {
+      __resetLocale();
+    }
   });
 
   it("falls back to the badge when the bridge refuses the bytes", async () => {

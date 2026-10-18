@@ -1,7 +1,7 @@
 // Thin REST client for the bridge. Everything is same-origin, so credentials/headers are
 // minimal. Each call throws on a non-2xx so callers (route loaders / action handlers) surface errors.
 
-import { parseApiErrorFields, type ApiErrorDetail, type ApiErrorFields } from "./api-error-codes";
+import { apiErrorFieldsOf, parseApiErrorFields, type ApiErrorDetail, type ApiErrorFields } from "./api-error-codes";
 import { trackBusy } from "./busy";
 import {
   beginLongUpload,
@@ -14,15 +14,23 @@ import {
 } from "./connection-health";
 import { markDead as markPaneDead, markLive as markPaneLive } from "./liveness";
 import { abortSignalAfter, abortSignalAny } from "./env";
-import { asJsonString, parseJsonObject, type JsonObject } from "./json";
+import { asJsonObject, asJsonString, parseJsonObject, type JsonObject } from "./json";
+import { readHeldCancelAnswer, readSendReceipts, readSendReply, type SendReply } from "./send-protocol";
+import type { HeldCancelAnswer, SendReceiptRow, SendRequestBody } from "./surface/send";
+import type { AnswerBody } from "./surface/ask";
+import { readAskTapReply, type AskTapReply } from "./ask-reply";
 import { authHeader, clearNotPaired, EXPIRED_BODY, markExpired, markNotPaired, NOT_PAIRED_BODY } from "./pairing";
 import { pairingRefused } from "./wipe";
 import { fileVersionOf } from "./file-image-cache";
 import { isLead, normalizeScope, paneScopeKey, type Scope } from "./scope";
+import { textRouteFor } from "./send-path";
 import { stampSend } from "./poll-intent";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
+import { noteServerDate } from "./server-clock";
 import { mounted } from "./base-path";
 import { CHAT_UNCHANGED, type ChatAnswer } from "./chat-window";
+import { decidedOf, parseAsk, type AnswerResult, type AskAnswer } from "./ask";
+import type { ColumnRange } from "./column-range";
 import type {
   ActionResponse,
   AddedLauncherResponse,
@@ -48,6 +56,9 @@ import type {
   FileReadResponse,
   FilesListResponse,
   PaneHistoryResponse,
+  DurableConversationItemsResponse,
+  DurableConversationsResponse,
+  ReopenConversationResponse,
   CrewStatusResponse,
   MachineAlerts,
   MachineHistoryResponse,
@@ -120,6 +131,11 @@ class ApiError extends Error {
     this.status = status;
     this.fields = fields;
   }
+}
+
+/** The HTTP status an API request failed with, or `undefined` for anything that is not one (a network error). */
+export function apiErrorStatus<TThrown>(error: TThrown): number | undefined {
+  return error instanceof ApiError ? error.status : undefined;
 }
 
 /** True when an API request failed with the given HTTP status. */
@@ -383,7 +399,11 @@ function normaliseProxyRedirect(res: Response): Response {
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   // Every caller spells a root-absolute `/api/…`; the mount is applied here, once (ADR 0052).
   try {
-    return normaliseProxyRedirect(await fetch(mounted(path), { ...init, redirect: "manual" }));
+    const sentAt = Date.now();
+    const res = await fetch(mounted(path), { ...init, redirect: "manual" });
+    // The bridge's clock, off the `Date` header every response carries (lib/server-clock.ts).
+    noteServerDate(res.headers.get("date"), sentAt, Date.now());
+    return normaliseProxyRedirect(res);
   } catch (error) {
     throw deadlineError(error, init?.signal);
   }
@@ -719,6 +739,58 @@ export function fetchHistory(
     signal,
     headers: { "x-collie-seen": "1" },
   });
+}
+
+/** Rows per page of the program's conversation list. The bridge caps a page at 100. */
+export const DURABLE_CONVERSATIONS_PAGE = 100;
+/** Items per page of one conversation. The bridge caps a page at 1000. */
+export const DURABLE_ITEMS_PAGE = 1000;
+
+/**
+ * GET /api/durable/conversations: the conversations a durable program lists, newest first (M53 spec 11).
+ * `after` is the previous page's `next`. `available: false` is an ordinary answer, not a failure.
+ * Like fetchHistory it is a one-shot read on navigation and on a "Load more" tap, never on the poll loop.
+ */
+export function fetchDurableConversations(
+  opts: { after?: string; limit?: number } = {},
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<DurableConversationsResponse> {
+  const q = new URLSearchParams();
+  if (opts.after) q.set("after", opts.after);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return req<DurableConversationsResponse>(withScope(`/api/durable/conversations${qs ? `?${qs}` : ""}`, scope), { signal });
+}
+
+/**
+ * GET /api/durable/conversation/:id/items: one conversation's items, oldest first. `more: true` in the
+ * answer means ask again with `after` set to its `next` for the newer items that follow.
+ */
+export function fetchDurableConversationItems(
+  id: string,
+  opts: { after?: string; limit?: number } = {},
+  scope?: Scope,
+  signal?: AbortSignal,
+): Promise<DurableConversationItemsResponse> {
+  const q = new URLSearchParams();
+  if (opts.after) q.set("after", opts.after);
+  if (opts.limit) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  const path = `/api/durable/conversation/${encodeURIComponent(id)}/items${qs ? `?${qs}` : ""}`;
+  return req<DurableConversationItemsResponse>(withScope(path, scope), { signal });
+}
+
+/**
+ * POST /api/durable/conversation/:id/reopen: ask the program to take a closed conversation back (M53 spec
+ * 11). No body. A write, so it goes through the same transport as every other mutation: a refusal that
+ * arrives as a non-2xx status throws an ApiError, and one that arrives as `{ ok: false }` is a value.
+ */
+export function reopenDurableConversation(id: string, scope?: Scope): Promise<ReopenConversationResponse> {
+  return req<ReopenConversationResponse>(
+    withScope(`/api/durable/conversation/${encodeURIComponent(id)}/reopen`, scope),
+    { method: "POST" },
+  );
 }
 
 /**
@@ -1148,6 +1220,7 @@ export function sendKeys(
   scope?: Scope,
   expectedPrompt?: string,
   expectedStyled?: string,
+  expectedColumns?: ColumnRange,
 ): Promise<ActionResponse> {
   stampSend(paneId);
   // Snapshot what the client has seen NOW, before the key can change anything: `settleAfterSend`
@@ -1163,12 +1236,308 @@ export function sendKeys(
       {
         method: "POST",
         // As in `sendReply`: an `undefined` property is omitted by `JSON.stringify`. The bridge honours
-        // `expected_styled` only beside `expected_prompt` (ADR 0080 point 7); an older bridge ignores it.
-        body: JSON.stringify({ keys, expected_prompt: expectedPrompt, expected_styled: expectedStyled }),
+        // `expected_styled` (ADR 0080 point 7) and `expected_columns` (lib/column-range.ts) only beside
+        // `expected_prompt`. An older bridge ignores both: without the columns it compares whole rows,
+        // which refuses a column-bound tap rather than passing it.
+        body: JSON.stringify({
+          keys,
+          expected_prompt: expectedPrompt,
+          expected_styled: expectedStyled,
+          expected_columns: expectedColumns,
+        }),
       },
       recoverPromptChanged,
     ),
   );
+}
+
+// ── A pane with no screen: answer an ask, send, stop (ADR 0100, ADR 0101) ─────────────────────────
+//
+// Three writes that name WHAT THE PHONE SAW and carry a request id minted for the tap. None of them
+// types keys: a pane with no screen has none. Each answers one of a few outcomes as a VALUE, because
+// 409 and 504 are answers here and not failures; a transport error still throws, and the caller reads
+// it as "may have arrived". An OLDER machine answers 404 to all three (the routes are additive over a
+// crew link), which reads as `stale` with `older`, the way `fetchChat` reads its own 404.
+
+/** The status a recovered answer arrived with, kept on its body so one reader handles 200 and the rest. */
+const HTTP_STATUS = "httpStatus";
+
+/** Turn a refusal-shaped answer (404, 409, 504) into a body the readers below take; null falls through to the error path. */
+const recoverOutcome = (status: number, detail: string): JsonObject | null =>
+  status === 404 || status === 409 || status === 504 ? { ...parseJsonObject(detail), [HTTP_STATUS]: status } : null;
+
+/** The old-peer reading: the route is missing on that machine. */
+const isMissingRoute = (body: JsonObject): boolean => body[HTTP_STATUS] === 404;
+
+/** What `POST /api/pane/:id/answer` came to, as the card reads it (lib/ask.ts `AnswerResult`). */
+function answerResultOf(body: JsonObject | undefined): AnswerResult | null {
+  if (body === undefined) return null;
+  if (isMissingRoute(body)) return { outcome: "stale", older: true };
+  switch (body.outcome) {
+    case "taken":
+      return body.replayed === true ? { outcome: "taken", replayed: true } : { outcome: "taken" };
+    case "too-late": {
+      const result: AnswerResult = { outcome: "too-late" };
+      const decided = decidedOf(body.decided);
+      if (decided !== undefined) result.decided = decided;
+      if (body.replayed === true) result.replayed = true;
+      return result;
+    }
+    case "stale": {
+      const ask = parseAsk(body.ask);
+      return ask === undefined ? { outcome: "stale" } : { outcome: "stale", ask };
+    }
+    case "unknown":
+      return { outcome: "unknown" };
+    case "maybe-applied":
+      return { outcome: "maybe-applied" };
+    case "refused":
+      return { outcome: "refused", detail: asJsonString(body.detail) ?? "" };
+    default:
+      return null;
+  }
+}
+
+/**
+ * POST /api/pane/:id/answer: a person's tap answers one ask. `requestId` is minted per tap and reused
+ * only by "Try again" after an `unknown`; `revision` is the one the card showed. Never called by
+ * anything but a tap (ADR 0100 point 4). The body carries exactly one of `optionId` (a permission),
+ * `optionIds` (a choice), `text` or `values` (a form), by the kind of the ask.
+ */
+export async function answerAsk(
+  paneId: string,
+  answer: { requestId: string; askId: string; revision: number } & AskAnswer,
+  scope?: Scope,
+): Promise<AnswerResult> {
+  const body = await req<JsonObject>(
+    withScope(`/api/pane/${encodeURIComponent(paneId)}/answer`, scope),
+    { method: "POST", body: JSON.stringify(answer) },
+    recoverOutcome,
+  );
+  const result = answerResultOf(body);
+  if (result === null) throw new ApiError("The answer route sent a body this phone cannot read.", 502);
+  return result;
+}
+
+/** Which of the two names a control carries: the turn the phone saw, or the ask it answers inside. */
+export type ControlTarget = { turnId: string } | { askId: string };
+
+/** What a send or an abort came to. `stale` carries what is current, so the pane can say what moved. */
+export type ControlResult =
+  | { outcome: "ok" }
+  | { outcome: "stale"; turnId?: string; askIds: string[]; older?: true }
+  | { outcome: "refused"; reason: string; detail: string }
+  | { outcome: "maybe-applied" }
+  | { outcome: "unknown" };
+
+function controlResultOf(body: JsonObject | undefined): ControlResult | null {
+  if (body === undefined) return null;
+  if (isMissingRoute(body)) return { outcome: "stale", askIds: [], older: true };
+  switch (body.outcome) {
+    case "ok":
+      return { outcome: "ok" };
+    case "stale": {
+      const ids = Array.isArray(body.askIds) ? body.askIds.map(asJsonString).filter((id): id is string => id !== undefined) : [];
+      const turnId = asJsonString(body.turnId);
+      return turnId === undefined ? { outcome: "stale", askIds: ids } : { outcome: "stale", turnId, askIds: ids };
+    }
+    case "unknown":
+      return { outcome: "unknown" };
+    case "maybe-applied":
+      return { outcome: "maybe-applied" };
+    case "refused":
+      return { outcome: "refused", reason: asJsonString(body.reason) ?? "refused", detail: asJsonString(body.detail) ?? "" };
+    default:
+      return null;
+  }
+}
+
+async function postControl(paneId: string, route: "send" | "abort" | "action", body: JsonObject, scope: Scope | undefined): Promise<ControlResult> {
+  // The operator is watching from the tap on, as every write to a pane assumes (poll-intent).
+  stampSend(paneId);
+  const got = await req<JsonObject>(
+    withScope(`/api/pane/${encodeURIComponent(paneId)}/${route}`, scope),
+    { method: "POST", body: JSON.stringify(body) },
+    recoverOutcome,
+  );
+  const result = controlResultOf(got);
+  if (result === null) throw new ApiError(`The ${route} route sent a body this phone cannot read.`, 502);
+  if (result.outcome === "ok") stampSend(paneId);
+  return result;
+}
+
+/** The longest first line a plain refusal shows: a sentence, never a page. */
+const PLAIN_LINE_MAX = 160;
+
+/**
+ * What a refusal whose body is NOT JSON says: its status and the body's first line, for example
+ * `HTTP 400: bad send request`. Null for a JSON body, which the error catalogue reads instead. Before
+ * 2026-10-17 a Send Protocol route that met such a body said only that it could not read it.
+ */
+export function plainFailureMessage(status: number, detail: string): string | null {
+  if (parseJsonObject(detail) !== undefined) return null;
+  const line = detail.split(/\r?\n/).map((part) => part.trim()).find((part) => part !== "");
+  if (line === undefined) return `HTTP ${status}`;
+  return `HTTP ${status}: ${line.length > PLAIN_LINE_MAX ? `${line.slice(0, PLAIN_LINE_MAX - 1)}…` : line}`;
+}
+
+/**
+ * A Send Protocol route's recover: the caller's own first, then a plain-text refusal turned into
+ * {@link plainFailureMessage}, with its status kept for the callers that branch on it.
+ */
+function sendRecover<T>(recover?: Recover<T>): Recover<T> {
+  return (status, detail) => {
+    const recovered = recover?.(status, detail);
+    if (recovered !== null && recovered !== undefined) return recovered;
+    const plain = plainFailureMessage(status, detail);
+    if (plain !== null) throw new ApiError(plain, status);
+    return null;
+  };
+}
+
+/**
+ * The `send` answer off a crew member's reply route. A reply that came back without one is a refusal
+ * in the reply route's own shape (`{ ok: false, error, code }`), and it is thrown as that refusal, so
+ * the notice says what it says instead of "a body this phone cannot read".
+ */
+function sendOfReply(answer: JsonObject): JsonObject | undefined {
+  const send = asJsonObject(answer.send);
+  if (send !== undefined) return send;
+  const fields = answer.ok === false ? apiErrorFieldsOf(answer) : undefined;
+  if (fields !== undefined) throw new ApiError(fields.error ?? "The reply route refused the send.", 200, fields);
+  return undefined;
+}
+
+/**
+ * POST /api/send: one Send Protocol request (M56 spec 05), on a bridge that marks the pane with
+ * `sendProtocol`. Every outcome is a 200 with the answer; a refusal is an answer, not an error. The
+ * phone keeps the id for a retry of the same intent, so a lost answer never sends twice.
+ */
+export async function postSend(body: SendRequestBody, scope?: Scope): Promise<SendReply> {
+  stampSend(body.pane);
+  // A pane on a crew member goes through the pane's reply route, which the lead forwards to the
+  // member like any other write; the member runs the same Send Protocol on its own screen and puts
+  // the answer under `send` (M56 spec 06). `/api/send` serves this machine's own panes only.
+  const route = textRouteFor({ program: false, crew: !isLead(scope), sendProtocol: true });
+  const got = route === "pane-reply"
+    ? sendOfReply(
+        await req<JsonObject>(
+          withScope(`/api/pane/${encodeURIComponent(body.pane)}/reply`, scope),
+          {
+            method: "POST",
+            body: JSON.stringify({ text: body.text, submit: true, id: body.id, mode: body.mode, rowsHash: body.rowsHash, capAck: body.capAck }),
+          },
+          sendRecover(),
+        ),
+      )
+    : await req<JsonObject>(withScope("/api/send", scope), { method: "POST", body: JSON.stringify(body) }, sendRecover());
+  const reply = readSendReply(got);
+  if (reply === null) throw new ApiError("The send route sent a body this phone cannot read.", 502);
+  if (reply.outcome === "sent" || reply.outcome === "effective") stampSend(body.pane);
+  return reply;
+}
+
+/**
+ * POST /api/send for a program on this machine (M56 spec 14): the bridge's structured driver runs the
+ * request, with the same answer as for a terminal pane. A program on a crew member never comes here; it
+ * keeps the program's own send route (lib/send-path.ts), so this refuses one before any request.
+ */
+export async function postProgramSend(body: SendRequestBody, scope?: Scope): Promise<SendReply> {
+  if (textRouteFor({ program: true, crew: !isLead(scope), sendProtocol: true }) !== "api-send") {
+    throw new ApiError("A durable agent on a crew member takes its own send route.", 400);
+  }
+  stampSend(body.pane);
+  const got = await req<JsonObject>(withScope("/api/send", scope), { method: "POST", body: JSON.stringify(body) }, sendRecover());
+  const reply = readSendReply(got);
+  if (reply === null) throw new ApiError("The send route sent a body this phone cannot read.", 502);
+  if (reply.outcome === "sent" || reply.outcome === "effective") stampSend(body.pane);
+  return reply;
+}
+
+/**
+ * GET /api/send/receipts: the last ten sends the bridge ran for a pane, newest first (M56 spec 09):
+ * outcome, reason, time, keys by name and gaps. Never text and never a row of the screen. This
+ * machine's own panes only: a pane on a crew member answers nothing here, and the list is empty.
+ */
+export async function getSendReceipts(paneId: string, scope?: Scope): Promise<SendReceiptRow[]> {
+  if (normalizeScope(scope).host) return [];
+  const got = await req<JsonObject>(withScope(`/api/send/receipts?pane=${encodeURIComponent(paneId)}`, scope), undefined, sendRecover());
+  return readSendReceipts(got).receipts.slice();
+}
+
+/**
+ * DELETE /api/send/<id>: take back a held send, or dismiss an ended one (M56 spec 15). `refused` is an
+ * answer, not an error: the request is going out now, and a 409 carries it. This machine's own panes
+ * only; the route does not cross a crew link, so a pane on a member never comes here.
+ */
+export async function cancelHeldSend(requestId: string, paneId: string, scope?: Scope): Promise<HeldCancelAnswer> {
+  if (!isLead(scope)) throw new ApiError("A held send on a crew member is cancelled on that machine.", 400);
+  stampSend(paneId);
+  const got = await req<JsonObject>(
+    withScope(`/api/send/${encodeURIComponent(requestId)}?pane=${encodeURIComponent(paneId)}`, scope),
+    { method: "DELETE" },
+    // A 409 is the answer "it is going out now", a value; an unknown id (404) stays an error.
+    sendRecover((status, detail) => (status === 409 ? (parseJsonObject(detail) ?? null) : null)),
+  );
+  const answer = readHeldCancelAnswer(got);
+  if (answer === null) throw new ApiError("The send route sent a body this phone cannot read.", 502);
+  return answer;
+}
+
+/**
+ * POST /api/ask/<id>: a tap on a dialog card as one Answer to the single-use ask the bridge minted
+ * (M56 spec 08). This machine's own panes only; a crew member's pane keeps the guarded key route.
+ * Every outcome is a 200 with the reply; a refusal is a reply, not an error.
+ */
+export async function postAskAnswer(askId: string, body: AnswerBody, scope?: Scope): Promise<AskTapReply> {
+  stampSend(body.pane);
+  const got = await req<JsonObject>(withScope(`/api/ask/${encodeURIComponent(askId)}`, scope), { method: "POST", body: JSON.stringify(body) }, sendRecover());
+  const reply = readAskTapReply(got);
+  if (reply === null) throw new ApiError("The ask route sent a body this phone cannot read.", 502);
+  if (reply.outcome === "sent") stampSend(body.pane);
+  return reply;
+}
+
+/**
+ * POST /api/pane/:id/send: text for a pane with no screen. It names the turn or the ask the phone saw
+ * and carries a request id; a stale name is refused with 409 before anything reaches the program.
+ * `steer` says the text is for the turn that is running, not a new one.
+ */
+export function sendToPane(
+  paneId: string,
+  send: { requestId: string; text: string; steer: boolean; target: ControlTarget | null },
+  scope?: Scope,
+): Promise<ControlResult> {
+  const body: JsonObject = { requestId: send.requestId, text: send.text };
+  if (send.steer) body.steer = true;
+  if (send.target !== null) Object.assign(body, send.target);
+  return postControl(paneId, "send", body, scope);
+}
+
+/**
+ * POST /api/pane/:id/action: a tap on one of the buttons a durable program lists for the pane (M53 spec 07).
+ * It names the action and carries a request id, and the turn the phone saw when it has one: a turn that
+ * moved is refused with 409 before anything reaches the program. Same answers as a send or an abort.
+ */
+export function runPaneAction(
+  paneId: string,
+  run: { requestId: string; actionId: string; turnId?: string | undefined },
+  scope?: Scope,
+): Promise<ControlResult> {
+  const body: JsonObject = { requestId: run.requestId, actionId: run.actionId };
+  if (run.turnId !== undefined && run.turnId !== "") body.turnId = run.turnId;
+  return postControl(paneId, "action", body, scope);
+}
+
+/** POST /api/pane/:id/abort: stop the turn the phone saw. Same names and the same stale rule as a send. */
+export function abortPane(
+  paneId: string,
+  abort: { requestId: string; target: ControlTarget | null },
+  scope?: Scope,
+): Promise<ControlResult> {
+  const body: JsonObject = { requestId: abort.requestId };
+  if (abort.target !== null) Object.assign(body, abort.target);
+  return postControl(paneId, "abort", body, scope);
 }
 
 /**
@@ -1244,6 +1613,21 @@ export function renameTab(
   });
 }
 
+/**
+ * Set a space's name, on a machine whose multiplexer declares `renameSpace` (a durable program that takes
+ * renames). Non-empty required, like a tab: the bridge 400s a blank label.
+ */
+export function renameSpace(
+  spaceId: string,
+  label: string,
+  scope?: Scope,
+): Promise<ActionResponse> {
+  return req<ActionResponse>(withScope(`/api/space/${encodeURIComponent(spaceId)}/rename`, scope), {
+    method: "POST",
+    body: JSON.stringify({ label }),
+  });
+}
+
 /** Close a tab, killing every pane inside it. */
 export function closeTab(tabId: string, scope?: Scope): Promise<ActionResponse> {
   return req<ActionResponse>(withScope(`/api/tab/${encodeURIComponent(tabId)}/close`, scope), {
@@ -1303,6 +1687,8 @@ export type StartWhat =
   | { kind: "row"; command: string }
   | { kind: "harness"; id: string }
   | { kind: "shell" }
+  /** A starter a durable program offers, by its id (ADR 0102). It takes no text and never starts on a branch's folder. */
+  | { kind: "starter"; id: string }
   /** A one-off line the person typed, or took from the machine's history (ADR 0095). Never on a branch. */
   | { kind: "run"; line: string };
 
@@ -1314,6 +1700,7 @@ interface StartLaunchBody {
   command?: string;
   harness?: string;
   shell?: true;
+  starter?: string;
   cwd?: string;
   requestId: string;
 }
@@ -1326,8 +1713,10 @@ export function startLaunch(what: BranchableWhat, opts: { cwd?: string; requestI
   const body: StartLaunchBody = { requestId: opts.requestId };
   if (what.kind === "row") body.command = what.command;
   else if (what.kind === "harness") body.harness = what.id;
+  else if (what.kind === "starter") body.starter = what.id;
   else body.shell = true;
-  if (opts.cwd !== undefined) body.cwd = opts.cwd;
+  // A starter has no folder: the bridge ignores one, so none is sent.
+  if (opts.cwd !== undefined && what.kind !== "starter") body.cwd = opts.cwd;
   return req<CreateResponse>(withScope("/api/launch", scope), { method: "POST", body: JSON.stringify(body) });
 }
 

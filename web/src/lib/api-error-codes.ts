@@ -21,7 +21,7 @@
 // `{name}` convention `t()` uses, so a translated string can consume them directly
 // (e.g. `upload.too_large` + `{ maxBytes: 10485760 }`).
 
-import { asJsonNumber, asJsonObject, asJsonString, parseJsonObject, type JsonValue } from "./json";
+import { asJsonNumber, asJsonObject, asJsonString, parseJsonObject, type JsonObject, type JsonValue } from "./json";
 
 /** The values a bridge sentence was built from, for a translated one to reuse. */
 export type ApiErrorDetail = Readonly<Record<string, string | number>>;
@@ -51,6 +51,7 @@ export const API_ERROR_CODES = [
   "tab.create_failed",
   "tab.rename_failed",
   "tab.close_failed",
+  "space.rename_failed",
   "tab.workspace_required",
   "workspace.create_failed",
 
@@ -161,6 +162,9 @@ export const API_ERROR_CODES = [
   "update.peers_packaged",
   "update.packaged",
   "update.start_failed",
+
+  // Reopening a durable program's closed conversation, POST /api/durable/conversation/:id/reopen
+  "durable.reopen_failed",
 ] as const;
 
 /** Every code the bridge can send. Derived from the list, so there is exactly one place to edit. */
@@ -200,7 +204,14 @@ export interface ApiErrorFields {
  */
 export function parseApiErrorFields(body: string): ApiErrorFields | undefined {
   const parsed = parseJsonObject(body);
-  if (parsed === undefined) return undefined;
+  return parsed === undefined ? undefined : apiErrorFieldsOf(parsed);
+}
+
+/**
+ * The same read over a body that already parsed: a 200 that answered `{ ok: false, … }` where the
+ * caller expected another shape (a reply route's refusal with no `send` beside it).
+ */
+export function apiErrorFieldsOf(parsed: JsonObject): ApiErrorFields | undefined {
   const error = asJsonString(parsed.error);
   const code = asJsonString(parsed.code);
   // Neither half present ⇒ not an error body at all. A 200-shaped document that happens to be JSON

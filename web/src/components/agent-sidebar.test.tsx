@@ -87,7 +87,7 @@ describe("ThreadSidebar", () => {
     const { container } = render(
       <ThreadSidebar agents={[...fixtureAgents, idleAgent]} currentPaneKey="" onSelect={vi.fn()} />,
     );
-    const lit = [...container.querySelectorAll("h3")].filter((h) => h.querySelector(".bg-status-blocked"));
+    const lit = [...container.querySelectorAll("h3")].filter((h) => h.querySelector(".text-status-blocked"));
     expect(lit.map((h) => h.textContent)).toEqual([expect.stringContaining("webapp")]);
   });
 
@@ -239,9 +239,9 @@ describe("ThreadSidebar", () => {
         onSelect={vi.fn()}
       />,
     );
-    // The same status palette the badges use: the needs-you heading dot, the working count's dot, and
-    // the Shells section's bullet.
-    for (const cls of ["bg-status-blocked", "bg-status-working", "bg-status-unknown"]) {
+    // The same status palette the badges use: the needs-you heading mark, the working count's mark
+    // (both shapes, inked with the token), and the Shells section's plain bullet.
+    for (const cls of ["text-status-blocked", "text-status-working", "bg-status-unknown"]) {
       expect(container.getElementsByClassName(cls).length).toBeGreaterThan(0);
     }
   });
@@ -749,5 +749,20 @@ describe("ThreadSidebar: the order toggle", () => {
     expect(headings()).toEqual(["Pinned", expect.stringContaining("Newest first")]);
     // The oldest pane of the three, first on the sheet, because it is pinned.
     expect(names()[0]).toContain("webapp");
+  });
+});
+
+describe("ThreadSidebar: subtitle and badge of a durable pane", () => {
+  it("draws the badge next to the name and the subtitle as a third line", () => {
+    const durable: AgentView = { ...idleAgent, agent: "durable", sessionName: "Ticket #3", subtitle: "a customer cannot log in", badge: { count: 2 } };
+    const { container } = render(<ThreadSidebar agents={[durable]} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(container.querySelector('[data-slot="pane-badge"]')).toHaveTextContent("2");
+    expect(container.querySelector('[data-slot="pane-row-subtitle"]')).toHaveTextContent("a customer cannot log in");
+  });
+
+  it("draws neither for a pane that has none", () => {
+    const { container } = render(<ThreadSidebar agents={[idleAgent]} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(container.querySelector('[data-slot="pane-badge"]')).toBeNull();
+    expect(container.querySelector('[data-slot="pane-row-subtitle"]')).toBeNull();
   });
 });

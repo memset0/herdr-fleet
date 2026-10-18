@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
-import { ArrowLeft, History, Server } from "lucide-react";
+import { ArrowLeft, Check, History, Server } from "lucide-react";
 
 import { AgentIcon } from "@/components/agent-icon";
 import { RouteHeader } from "@/components/app-header";
@@ -12,6 +12,7 @@ import { StatusArea } from "@/components/status-area";
 import { Button } from "@/components/ui/button";
 import { BottomBar } from "@/components/ui/bottom-bar";
 import { Collapse } from "@/components/ui/collapse";
+import { ListGroup } from "@/components/ui/list-group";
 import { Notice } from "@/components/ui/notice";
 import { OneOf } from "@/components/ui/one-of";
 import { Segmented } from "@/components/ui/segmented";
@@ -61,6 +62,7 @@ import {
   rememberKind,
   startFingerprint,
   summaryKey,
+  takesFolder,
   summaryWhat,
   unavailableText,
   whatFor,
@@ -69,6 +71,7 @@ import {
   type CommandPick,
   type Kind,
   type Offer,
+  type OfferItem,
   type SummaryParts,
   type Unavailable,
 } from "@/lib/new-page";
@@ -139,8 +142,11 @@ function NewPage({ search }: { search: string }) {
   // ── What this machine offers ──────────────────────────────────────────────────────────────────
   const launchers = useLaunchers(target);
   const loaded = launchers.loadedFor === launchersKey(target);
-  // Worktrees are the lead's alone, so the lead's multiplexer is the one asked.
-  const canWorktree = useMuxCapability("createWorktree").capable;
+  // Worktrees are the lead's alone, so the lead's multiplexer is the one asked, in the session the page
+  // opens into (M55).
+  const canWorktree = useMuxCapability("createWorktree", { session: target.session }).capable;
+  // Whether the CHOSEN machine has a screen (ADR 0102): one with none starts only its program's starters.
+  const chosenGrid = useMuxCapability("paneGrid", target);
   const offer: Offer = offerFor({
     harnesses: loaded ? launchers.harnesses : null,
     items: loaded ? launchers.items : null,
@@ -152,6 +158,7 @@ function NewPage({ search }: { search: string }) {
     refusal,
     canWorktree,
     memberChosen: multiHost && chosen !== lead ? { lead: leadName } : undefined,
+    screenless: !chosenGrid.capable,
   });
   const home = loaded ? launchers.home : "";
   const { folders, star } = useFolders(target, true);
@@ -166,7 +173,7 @@ function NewPage({ search }: { search: string }) {
   const [kindPick, setKindPick] = useState<Kind | null>(null);
   // `?pick=` is where "Add your own" sends the person back to: the row it just made, chosen. It only
   // stands in for a pick the person has not made on this page.
-  const kind = kindPick ?? kindOfKey(offer, at.pick) ?? defaultKind(offer, loaded, rememberedKind, again);
+  const kind = offer.startersOnly ? "agent" : (kindPick ?? kindOfKey(offer, at.pick) ?? defaultKind(offer, loaded, rememberedKind, again));
   const [agentPick, setAgentPick] = useState<string | null>(null);
   const [commandPick, setCommandPick] = useState<CommandPick | null>(null);
   // The line in the "Type a command…" field. Kept when the select moves away and back.
@@ -198,7 +205,7 @@ function NewPage({ search }: { search: string }) {
   const pinned = chosenItem?.cwd;
   // A machine older than 1.19.0 ignores a folder on a row, so it is not offered there.
   const legacy = loaded && !offer.shellById;
-  const showWhere = pinned === undefined && !(legacy && what?.kind === "row");
+  const showWhere = pinned === undefined && !(legacy && what?.kind === "row") && takesFolder(what);
 
   const [branchOn, setBranchOn] = useState(from !== undefined);
   const [branchName, setBranchName] = useState(() => branchOffName());
@@ -208,7 +215,7 @@ function NewPage({ search }: { search: string }) {
   // The worktree block shows for anything chosen. A command row or a one-off line cannot start in
   // one: the switch is off and disabled there, and its reason line says so. "Type a command…" shows it
   // before the first character, so typing moves nothing.
-  const branchShown = what !== null || (kind === "shell" && command.kind === "typed");
+  const branchShown = (what !== null && what.kind !== "starter") || (kind === "shell" && command.kind === "typed");
   const branchBlocked: Unavailable | null =
     offer.branchBlocked ?? (branchAllowed(offer, what) ? null : { kind: "commandRow" });
   const branchActive = branchShown && branchBlocked === null && branchOn;
@@ -286,6 +293,7 @@ function NewPage({ search }: { search: string }) {
   // line says so before Start, so nothing is rewritten silently.
   const folderText = shortenHome(pinned ?? folderShown(cwd, home), home);
   const parts: SummaryParts = { what: shownWhat, folder: folderText };
+  if (!takesFolder(what)) parts.noFolder = true;
   if (machineName !== undefined) parts.machine = machineName;
   if (branchActive) parts.branch = { name: branchName.trim(), base: baseName };
   const summary =
@@ -348,7 +356,7 @@ function NewPage({ search }: { search: string }) {
         what: ask.what,
         label: whatLabel(ask.what, offer, t("newPage.shell")),
         // A row with a fixed folder remembers none: Again runs it where the operator pinned it.
-        cwd: itemOf(offer, ask.what)?.cwd !== undefined ? null : (sendCwd ?? null),
+        cwd: itemOf(offer, ask.what)?.cwd !== undefined || !takesFolder(ask.what) ? null : (sendCwd ?? null),
         branch: ask.branch ? { folder: folderChoice } : null,
         at: Date.now(),
       });
@@ -496,7 +504,9 @@ function NewPage({ search }: { search: string }) {
             >
               <ArrowLeft className="size-5" />
             </Button>
-            <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{t("home.new.label")}</h1>
+            <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">
+              {offer.startersOnly ? t("newPage.starters.title") : t("home.new.label")}
+            </h1>
           </>
         }
       />
@@ -543,16 +553,28 @@ function NewPage({ search }: { search: string }) {
         {/* Agent or Command: one segment, one select. Both halves are always listed in full; what
             cannot run on this machine is disabled in its select, with its reason in brackets. */}
         <div className="flex flex-col gap-2">
+          {offer.startersOnly ? null : (
           <Segmented
-            label={t("newPage.what")}
-            value={kind}
-            onChange={chooseKind}
-            options={[
-              { value: "agent", label: t("newPage.kind.agent") },
-              { value: "shell", label: t("newPage.shell") },
-            ]}
-          />
-          {kind === "agent" ? (
+              label={t("newPage.what")}
+              value={kind}
+              onChange={chooseKind}
+              options={[
+                { value: "agent", label: t("newPage.kind.agent") },
+                { value: "shell", label: t("newPage.shell") },
+              ]}
+            />
+          )}
+          {offer.startersOnly ? (
+            // A program's starters are the whole choice on a machine with no screen, so each is a row in
+            // sight, not an option behind a select (durable-simple, 2026-10-13). One tap picks it; Start
+            // below starts it.
+            <StarterRows
+              items={offer.agents}
+              chosen={agentItem?.key ?? null}
+              onChoose={setAgentPick}
+              disabled={busy}
+            />
+          ) : kind === "agent" ? (
             <Select
               aria-label={t("newPage.kind.agent")}
               value={agentItem?.key ?? ""}
@@ -584,42 +606,56 @@ function NewPage({ search }: { search: string }) {
               }
             />
           )}
+          {offer.startersOnly ? (
+            // A machine that starts only its program's starters has no Command half and no docs link
+            // about adding agents to say. If the program offers none yet, one line says so.
+            <Collapse open={loaded && offer.agents.length === 0}>
+              {loaded && offer.agents.length === 0 ? (
+                <p data-slot="new-starters-none" className="text-xs text-muted-foreground">
+                  {t("newPage.starters.none")}
+                </p>
+              ) : null}
+            </Collapse>
+          ) : (
+            <>
           {/* One note and one link under the select, whichever half is on. The two share a box as big
-              as the larger, so the Segmented switch moves nothing (DESIGN.md §2). */}
-          <OneOf
-            active={kind}
-            className="justify-items-start"
-            options={[
-              {
-                key: "agent",
-                node: (
-                  <DocsNote
-                    note={t("newPage.agents.note")}
-                    href={NEW_PAGE_DOCS.agent}
-                    link={t("newPage.agents.docs")}
-                    onAdd={adds ? () => openAdd("agent") : undefined}
-                    noPrompts={kind === "agent" && agentItem?.noPrompts === true}
-                  >
-                    <Collapse open={offer.agentsNote !== null}>
-                      {offer.agentsNote !== null ? <Reason reason={offer.agentsNote} /> : null}
-                    </Collapse>
-                  </DocsNote>
-                ),
-              },
-              {
-                key: "shell",
-                node: (
-                  <DocsNote
-                    note={t("newPage.commands.note")}
-                    href={NEW_PAGE_DOCS.command}
-                    link={t("newPage.commands.docs")}
-                    onAdd={adds ? () => openAdd("shell") : undefined}
-                    noPrompts={kind === "shell" && command.kind !== "typed" && itemOf(offer, command)?.noPrompts === true}
-                  />
-                ),
-              },
-            ]}
-          />
+                  as the larger, so the Segmented switch moves nothing (DESIGN.md §2). */}
+              <OneOf
+                active={kind}
+                className="justify-items-start"
+                options={[
+                  {
+                    key: "agent",
+                    node: (
+                      <DocsNote
+                        note={t("newPage.agents.note")}
+                        href={NEW_PAGE_DOCS.agent}
+                        link={t("newPage.agents.docs")}
+                        onAdd={adds ? () => openAdd("agent") : undefined}
+                        noPrompts={kind === "agent" && agentItem?.noPrompts === true}
+                      >
+                        <Collapse open={offer.agentsNote !== null}>
+                          {offer.agentsNote !== null ? <Reason reason={offer.agentsNote} /> : null}
+                        </Collapse>
+                      </DocsNote>
+                    ),
+                  },
+                  {
+                    key: "shell",
+                    node: (
+                      <DocsNote
+                        note={t("newPage.commands.note")}
+                        href={NEW_PAGE_DOCS.command}
+                        link={t("newPage.commands.docs")}
+                        onAdd={adds ? () => openAdd("shell") : undefined}
+                        noPrompts={kind === "shell" && command.kind !== "typed" && itemOf(offer, command)?.noPrompts === true}
+                      />
+                    ),
+                  },
+                ]}
+              />
+            </>
+          )}
         </div>
 
         {showWhere ? (
@@ -951,6 +987,51 @@ function BranchBlock(p: BranchBlockProps) {
           </div>
         ) : null}
       </Collapse>
+    </div>
+  );
+}
+
+/**
+ * The starters of a program, one row each, exactly one chosen: a radio group in one `ui/list-group.tsx`.
+ * The chosen row carries a check in a reserved slot, so choosing moves nothing (DESIGN.md §2). A starter the
+ * program cannot run now is drawn dimmed with its reason, and cannot be chosen.
+ */
+function StarterRows({
+  items,
+  chosen,
+  onChoose,
+  disabled,
+}: {
+  items: readonly OfferItem[];
+  chosen: string | null;
+  onChoose: (key: string) => void;
+  disabled: boolean;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div role="radiogroup" aria-label={t("newPage.starters.label")} data-slot="new-starters">
+      <ListGroup>
+        {items.map((item) => {
+          const on = item.key === chosen;
+          const off = disabled || item.unavailable !== null;
+          return (
+            <button
+              key={item.key}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              disabled={off}
+              onClick={() => onChoose(item.key)}
+              className="flex h-11 w-full items-center gap-3 px-3.5 text-left text-sm transition-colors hover:bg-muted/50 active:bg-muted disabled:opacity-50"
+            >
+              <span className="min-w-0 flex-1 truncate">{optionText(item, t("newPage.shell"))}</span>
+              <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
+                {on && <Check className="size-4" />}
+              </span>
+            </button>
+          );
+        })}
+      </ListGroup>
     </div>
   );
 }

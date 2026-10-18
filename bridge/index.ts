@@ -22,10 +22,10 @@ import { localWatchPane, peerWatchPane } from "./cache/watch-key.ts";
 import { buildJournalRegistry } from "./journal/registry.ts";
 import { createCacheRulesReader } from "./operator-cache-rules.ts";
 import { AuditLog, fileAuditAppender } from "./audit.ts";
-import { beaconReader, hooksInstalledProbe } from "./beacon-io.ts";
+import { beaconReader, fileEdgeSpool, fileSourceStore, hooksInstalledProbe, procBeaconLiveness, registerHookTarget, type HookTargetRegistration } from "./beacon-io.ts";
 import { withAgentBeacons } from "./beacon/decorate.ts";
 import { withAgentHints } from "./beacon/hint.ts";
-import { loadConfig, loadConfigLayer, nonLoopbackBindRefusal, resolveConfigDir, type Config } from "./config.ts";
+import { holdPrivateFile, loadConfig, loadConfigLayer, nonLoopbackBindRefusal, resolveConfigDir, type Config } from "./config.ts";
 import { applyConfigLayer } from "./config-source.ts";
 import {
   aclRepairAllowed,
@@ -37,6 +37,7 @@ import {
 } from "./owner-only.ts";
 import type { AgentView, CrewMode, CrewStatusResponse } from "./types.ts";
 import { EventPoker } from "./event-poker.ts";
+import { durableLogDir, moveFlatLogs, sourceLogDir } from "./durable/log.ts";
 import { GitHeads } from "./git-head.ts";
 import { exePathOf, exeReplaced } from "./exe-replaced.ts";
 import {
@@ -48,6 +49,7 @@ import {
   releaseManagedFrontDoor,
   shouldReleaseFrontDoor,
 } from "./front-door.ts";
+import { createDurableMux, describeDurableTarget, DURABLE_LOG_DIR_OPTION, DURABLE_MUX } from "./mux/durable/adapter.ts";
 import { HERDR_DIAL_MODE_OPTION } from "./mux/herdr/adapter.ts";
 import { DEFAULT_TIMEOUT_MS } from "./mux/herdr/client.ts";
 import { deriveConfigRoot } from "./mux/herdr/sessions.ts";
@@ -70,6 +72,12 @@ import { FolderStore } from "./folders.ts";
 import { WorktreeBaseStore } from "./worktree-bases.ts";
 import { WorktreeReceiptStore } from "./worktree-receipts.ts";
 import { LaunchReceiptStore } from "./launch-receipts.ts";
+import { StarterReceiptStore } from "./starter-launch.ts";
+import { AnswerReceiptStore } from "./durable/answer.ts";
+import { ControlReceiptStore } from "./durable/control.ts";
+import { askFloodMessage, AskPush, LOCAL_ASK_HOST } from "./durable/ask-push.ts";
+import { AskGuardStore } from "./durable/guard.ts";
+import { OldLeadNotice } from "./durable/old-lead.ts";
 import { AddedLauncherStore, addedFileIo } from "./launchers-added.ts";
 import { RecentRunStore, recentRunFileIo } from "./recent-runs.ts";
 import { WorktreeChoiceStore } from "./worktree-choices.ts";
@@ -164,17 +172,23 @@ import {
 } from "./crew/trust-store.ts";
 import { currentWarrant, discardForeignWarrant, refreshWarrant, type WarrantPush } from "./crew/warrant.ts";
 import { Push } from "./push.ts";
+import { currentNotesReader } from "./release-notes.ts";
 import { pluginRoot } from "./root.ts";
 import { buildId, startServer } from "./server.ts";
 import {
+  DEFAULT_SESSION_NAME,
   herdTagFor,
   SessionRegistry,
+  sessionNameFor,
+  type ProgramProbe,
   type SessionFactory,
 } from "./sessions.ts";
+import { bootSources, ENV_SOURCE_NAME, planPrograms, PROGRAMS_OFF_LOG, programsOff, sourcesPath, sourceTransportEnv, type DurableSource, type ProgramPlan } from "./sources.ts";
 import { Snooze } from "./snooze.ts";
 import { StateEngine } from "./state-engine.ts";
 import {
   bridgeStampSync,
+  githubReleaseUrl,
   mirrorValue,
   releaseFetchers,
   UpdateMonitor,
@@ -196,6 +210,19 @@ import {
   updateStartCommand,
 } from "./update-action.ts";
 import { collieVersion, collieVersionBare } from "./version.ts";
+import { SurfaceShadow, type ShadowOptions } from "./surface/shadow.ts";
+import { AskAnswerer, AskBook } from "./surface/ask.ts";
+import { gateFor } from "./surface/key-gate.ts";
+import { RowRing, SendProtocol, SessionLocks } from "./surface/protocol.ts";
+import { ProgramDriver, type ProgramPort } from "./surface/durable-driver.ts";
+import { RequestStore } from "./surface/requests.ts";
+import { HoldStore } from "./surface/holds.ts";
+import { SurfaceLedger } from "./surface/counters.ts";
+import { deliverEdge, EdgeRouter, type EdgeTarget } from "./surface/edges.ts";
+import { counterWordOf, HoldBook, HoldServer, takeHold, type HoldTarget } from "./surface/hold.ts";
+import { holdSocketPath } from "./beacon/paths.ts";
+import { VersionCache } from "./surface/binary-version.ts";
+import { findProfile, loadProfiles, profileForPlatform, type ProfileMatch } from "../web/src/lib/surface/profile.ts";
 
 // How often the registry rescans the filesystem for sessions that appeared/disappeared after boot.
 const SESSION_REFRESH_MS = 15_000;
@@ -236,6 +263,39 @@ try {
   console.error(`[bridge] FATAL: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
+
+// The durable programs this Collie runs beside its terminal mux (M55, bridge/sources.ts): each entry of
+// `sources.json` is one more session. A missing file is none, and nothing below changes; a file that is
+// there and wrong stops the bridge here with the entry and the field named, because a listed program
+// that is silently skipped is a phone that never shows it. `COLLIE_MUX=durable` (the old env form) makes
+// its one program, `default`, the primary session.
+//
+// `COLLIE_PROGRAMS=off` is the kill switch: the file is not read, one line says so, and the bridge boots
+// as if it did not exist. The env form of a durable-only instance is not the file and stays.
+let programs: ProgramPlan;
+try {
+  if (programsOff(process.env)) console.log(PROGRAMS_OFF_LOG);
+  const listed = bootSources(resolveConfigDir(), process.env);
+  // The file can carry a bearer token, so it is held owner-only like `.env`: tightened, never refused.
+  if (listed.length > 0) {
+    const held = holdPrivateFile(sourcesPath(resolveConfigDir()), aclRepair);
+    if (held.warning !== null) console.warn(held.warning);
+  }
+  programs = planPrograms({
+    durableOnly: cfg.mux === DURABLE_MUX,
+    env: process.env,
+    sources: listed,
+    primaryName: sessionNameFor(cfg.socketPath, deriveConfigRoot(cfg.socketPath)),
+  });
+} catch (err) {
+  console.error(`[bridge] FATAL: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+/** Whether this Collie runs any durable program, as the primary or beside it. */
+const runsPrograms = programs.primary !== undefined || programs.others.length > 0;
+// One folder per program since M55: logs a durable-only build wrote directly under `durable/` were its
+// one program's, which is `default`. Once, at boot, before any adapter opens a log.
+await moveFlatLogs(cfg.stateDir, ENV_SOURCE_NAME);
 
 // The crew mode, resolved BEFORE anything is wired, because a peer wires fewer things than a lead
 // (CREW_PROTOCOL.md §3) and a mode discovered halfway through startup would already have opened
@@ -538,6 +598,14 @@ if (crew.mode !== "solo") console.log(`[crew] mode: ${crew.mode}`);
 // listener that tried to bind it first is what crash-looped in the drill.
 releaseFrontDoor(crew.mode, deposed !== null, "this collie is a peer");
 
+const rootDir = pluginRoot();
+// What this process answers `GET /crew/v1/hello` with (CREW_PROTOCOL.md §5, §7.1). Resolved ONCE,
+// here, by the same rule `collie version` uses (`bridge/version.ts`, shared with `cli/context.ts`)
+// so one machine never reports two different versions — and never per request, since the answer
+// cannot change without a restart. Bare: no `(manifest; web not built)` parenthetical on the wire,
+// or a machine with an unbuilt bundle would read as skewed against every peer including itself.
+const crewVersion = collieVersionBare(rootDir);
+
 // The roster THIS PROCESS wired, left on disk for `collie crew status` to compare the store against
 // (bridge/crew/staleness.ts). A membership change can arrive over the wire — the first enrollment
 // lands in a running lead, a promotion demotes a running lead — and no re-read follows, by design.
@@ -548,8 +616,9 @@ releaseFrontDoor(crew.mode, deposed !== null, "this collie is a peer");
 //
 // Built from the store AS THE GATE LEFT IT, not from the bytes read at line one: a machine that
 // self-healed at boot (§18.11) really did wire a peer's roster, and a marker claiming otherwise
-// would make `crew status` report drift against a store that is perfectly in step.
-const bootMarker = markerFor(trustStore.current(), Date.now(), process.pid);
+// would make `crew status` report drift against a store that is perfectly in step. The build rides
+// along for the update gate, which reaches a TLS-only peer by handshake and learns no build from it.
+const bootMarker = markerFor(trustStore.current(), Date.now(), process.pid, NO_RUNTIME_FACTS, crewVersion);
 if (bootTrust !== null) {
   try {
     await writeFile(crewRuntimePath(cfg.stateDir), formatMarker(bootMarker), { mode: 0o600 });
@@ -671,7 +740,9 @@ await activity.load();
 // once, and handed to both the tracker and the server, so the probe and the history route share the
 // adapters' memoised path caches. Null when `COLLIE_TRANSCRIPT` is off: no journal means no probe, and
 // every pane then reads exactly as it did before this feature existed.
-const journals = cfg.transcript ? buildJournalRegistry(cfg.journalRoots) : null;
+const journals = cfg.transcript
+  ? buildJournalRegistry({ ...cfg.journalRoots, durable: [durableLogDir(cfg.stateDir)] })
+  : null;
 const cacheRulesReader = createCacheRulesReader(cfg.cacheRulesFile);
 const paneCache =
   journals === null
@@ -710,6 +781,27 @@ await worktreeBases.load();
 const launchReceipts = new LaunchReceiptStore(cfg.stateDir);
 await launchReceipts.load();
 
+// One receipt per starter run (ADR 0102, bridge/starter-launch.ts). Loading writes nothing.
+const starterReceipts = new StarterReceiptStore(cfg.stateDir);
+await starterReceipts.load();
+
+// One receipt per answer to an ask, written before the answer leaves (ADR 0100,
+// bridge/durable/answer.ts). Loading writes nothing: the file appears on the first answer.
+const answerReceipts = new AnswerReceiptStore(cfg.stateDir);
+await answerReceipts.load();
+
+// One receipt per send or abort on a durable pane, written before the control leaves (ADR 0101,
+// bridge/durable/control.ts). Loading writes nothing: the file appears on the first control.
+const controlReceipts = new ControlReceiptStore(cfg.stateDir);
+await controlReceipts.load();
+
+// The push guard for asks that travel as data (ADR 0100, bridge/durable/guard.ts), keyed on
+// (host, toolCallId), one memory for this machine's panes and for every peer's. Loading writes
+// nothing: the file appears when a pane that carries asks first opens one.
+const askGuard = new AskGuardStore(cfg.stateDir);
+askGuard.load();
+const askPush = new AskPush(askGuard);
+
 // The New sheet's last branch choices per repo on this machine (M48, bridge/worktree-choices.ts).
 // Loading writes nothing: the file appears on the first branch create that works.
 const worktreeChoices = new WorktreeChoiceStore(cfg.stateDir);
@@ -741,7 +833,6 @@ const cacheWarden = new CacheWarden({
 // The running plugin version, captured NOW at module load — never re-read from disk later, or a
 // post-pull package.json would mask the very update we detect (same class of bug as the buildId gap).
 // The bridge-source stamp is snapshotted here too, so a rebuilt-but-not-restarted process reads stale.
-const rootDir = pluginRoot();
 const bridgeDir = join(rootDir, "bridge");
 // SAFETY: this is the plugin's OWN package.json, shipped in the same checkout as this file, and
 // `scripts/check-version.sh` gates every build on its `version` being present and agreeing with the
@@ -749,13 +840,6 @@ const bridgeDir = join(rootDir, "bridge");
 const currentVersion = (
   JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8")) as { version: string }
 ).version;
-
-// What this process answers `GET /crew/v1/hello` with (CREW_PROTOCOL.md §5, §7.1). Resolved ONCE,
-// here, by the same rule `collie version` uses (`bridge/version.ts`, shared with `cli/context.ts`)
-// so one machine never reports two different versions — and never per request, since the answer
-// cannot change without a restart. Bare: no `(manifest; web not built)` parenthetical on the wire,
-// or a machine with an unbuilt bundle would read as skewed against every peer including itself.
-const crewVersion = collieVersionBare(rootDir);
 
 const updateStore = new UpdateStateStore(cfg);
 await updateStore.load();
@@ -870,6 +954,9 @@ const updateMonitor = new UpdateMonitor({
   // also what makes a bridge restarted BY an update resume reporting that run at startup instead of
   // saying nothing happened.
   runState: () => readUpdateRun(cfg.stateDir),
+  // What this version changed (1.21.1), from the CHANGELOG.md that ships beside package.json in every
+  // checkout and payload. Read on the first Updates page open, once; no network.
+  currentNotes: currentNotesReader(rootDir, currentVersion, githubReleaseUrl(updateRepo, currentVersion)),
   // One push a DAY, naming every release folded into it — the digest decides that; this only renders it.
   notify: (versions, linkChange, urgent) =>
     void push.send({
@@ -1066,6 +1153,22 @@ const crewFollower =
       })
     : undefined;
 
+/**
+ * A durable peer names a lead too old to show its panes properly (M50 spec 14, bridge/durable/old-lead.ts).
+ * Any peer that runs a durable program counts, as the primary or as a source beside its terminal mux
+ * (M55). `undefined` on every other machine: a lead, a solo instance, or a peer that runs no program.
+ */
+const oldLead = crew.mode === "peer" && runsPrograms ? new OldLeadNotice() : undefined;
+
+/** The lead's two follow headers, handed to whichever of the follower and the old-lead notice exist. */
+const onFollow =
+  crewFollower === undefined && oldLead === undefined
+    ? undefined
+    : (a: { readonly leadRelease: string | null; readonly turn: string | null }): void => {
+        oldLead?.observe(a.leadRelease);
+        crewFollower?.observe(a);
+      };
+
 async function updatePreflightReport(fresh: boolean) {
   if (!canRunUpdate) return null;
   if (fresh && freshPreflightGate.admit()) {
@@ -1086,6 +1189,10 @@ const muxRegistry = buildMuxRegistry();
 // silent — the log named one only when it could not be reached — so `collie logs` could not answer
 // the first question a tmux or zellij operator asks (docs/multiplexers.md → "Did it work?").
 console.log(`[bridge] mux: ${describeMux(muxRegistry, cfg.mux, cfg.muxEndpoint)}`);
+// And each program beside it, one line each, from the source's own settings. Never the token.
+for (const source of programs.others) {
+  console.log(`[bridge] program "${source.name}": ${DURABLE_MUX}, ${describeDurableTarget(sourceTransportEnv(source))}`);
+}
 
 // Are the agent's own hooks installed (M11/02)? Probed through `cli/hooks.ts`'s definition of
 // "installed", cached for a few seconds, and shared by every session: it is a property of this HOST,
@@ -1103,7 +1210,10 @@ const hooksInstalled = hooksInstalledProbe({ home: homedir(), env: process.env }
  */
 function withBeaconsIfBlind(adapter: MuxAdapter, target: MuxTarget): MuxAdapter {
   const matcher = factoryFor(muxRegistry, adapter.mux)?.beaconMatcher?.(target);
-  const seeing = matcher === undefined ? adapter : withAgentBeacons(adapter, beaconReader(cfg.stateDir), { matcher, hooksInstalled });
+  // Herdr has a matcher too since M56 spec 11, for the hook edges, but it sees agents on its own wire:
+  // the decorator wraps only an adapter that cannot.
+  const blind = matcher !== undefined && !adapter.capabilities.supports.agentDetection && !adapter.capabilities.supports.agentSessionRef;
+  const seeing = blind ? withAgentBeacons(adapter, beaconReader(cfg.stateDir), { matcher, hooksInstalled }) : adapter;
   // The hint tier sits OUTSIDE the decorator, so it reads the DECORATED declaration and retires
   // itself the moment that declaration says agents are visible (M11/05). Applied to every adapter,
   // including one that was never decorated: it suppresses itself there for the same reason.
@@ -1122,8 +1232,22 @@ function withBeaconsIfBlind(adapter: MuxAdapter, target: MuxTarget): MuxAdapter 
 // (config.ts). Both per-adapter knobs ride the target's OPAQUE options — which local dialer opens a
 // filesystem-path endpoint is Herdr's question, where the tmux binary is, is tmux's, and the registry
 // reads neither key.
-const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
-  const target = {
+//
+// A PROGRAM SESSION (M55) is the one other branch: its adapter is the durable one, built from its own
+// source entry (bridge/sources.ts) and never from `process.env`, with its log in its own folder,
+// `<stateDir>/durable/<source>/`. Everything after the adapter is the same wiring for both.
+/** One session's adapter, the target it was built for, and, for a program, what its card reads. */
+interface BuiltAdapter {
+  readonly adapter: MuxAdapter;
+  readonly target: MuxTarget;
+  readonly probe?: ProgramProbe;
+  /** A program's structured state and its two writes, for the structured driver (M56 spec 14). */
+  readonly structured?: ProgramPort;
+}
+
+/** The adapter for one terminal session, exactly as every session was built before programs. */
+function terminalAdapter(socketPath: string): BuiltAdapter {
+  const target: MuxTarget = {
     endpoint: cfg.mux === DEFAULT_MUX ? socketPath : cfg.muxEndpoint,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     options: {
@@ -1133,7 +1257,92 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
       [TERN_BINARY_OPTION]: cfg.ternBin,
     },
   };
-  const herdr = withBeaconsIfBlind(createMux(muxRegistry, cfg.mux, target), target);
+  return { adapter: createMux(muxRegistry, cfg.mux, target), target };
+}
+
+/** The adapter for one program, and what its session card reads off it. */
+function programAdapter(source: DurableSource): BuiltAdapter {
+  const logDir = sourceLogDir(cfg.stateDir, source.name);
+  const target: MuxTarget = { endpoint: "", timeoutMs: DEFAULT_TIMEOUT_MS, options: { [DURABLE_LOG_DIR_OPTION]: logDir } };
+  const program = createDurableMux(sourceTransportEnv(source), target.options);
+  return { adapter: program, target, probe: { phase: () => program.phase(), hostName: () => program.hostName(), versionRefusal: () => program.versionRefusal() }, structured: program };
+}
+
+// The Send Protocol's request store (M56 spec 05), one for the bridge, under the state directory.
+// Created only with the flag on, so an instance without it touches no new file. On start every request
+// a previous run left unsettled ends `unknown` (a crash), and settled ones past a week are dropped.
+const sendStore = cfg.sendProtocol ? new RequestStore(join(cfg.stateDir, "sends")) : null;
+if (sendStore !== null) {
+  const recovered = sendStore.recover(SendProtocol.crashReceipt);
+  if (recovered.length > 0) console.log(`[send] ${String(recovered.length)} send request(s) left unsettled by the last run read as unknown`);
+  const recoveredAsks = sendStore.recoverAsks(AskAnswerer.crashReceipt);
+  if (recoveredAsks.length > 0) console.log(`[ask] ${String(recoveredAsks.length)} ask answer(s) left unsettled by the last run read as unknown`);
+  sendStore.prune();
+}
+// The hold queue (M56 spec 15): a send the harness cannot take during its turn waits here, one file per
+// request under `<stateDir>/held/`, and is replayed on start. A request that was going out when the
+// last run stopped was settled `unknown` above; its row ends with that, the text kept for a Resend.
+const holdStore = sendStore === null ? null : new HoldStore(join(cfg.stateDir, "held"));
+if (holdStore !== null && sendStore !== null) {
+  const changed = SendProtocol.reconcileHolds(holdStore, sendStore);
+  const waiting = holdStore.list().filter((entry) => entry.state === "held").length;
+  if (changed > 0 || waiting > 0) console.log(`[send] hold queue replayed: ${String(waiting)} held, ${String(changed)} row(s) settled after the last run`);
+}
+// The Surface counters (M56 spec 09): one ledger for the bridge, a day file under `<stateDir>/surface/`.
+// Created with either flag, so an instance that computes no Surface touches no new file. It never
+// blocks a send and never changes a verdict.
+const surfaceLedger = cfg.sendProtocol || cfg.surfaceShadow ? new SurfaceLedger(cfg.stateDir) : null;
+// The hook edges (M56 spec 11): the harness's own hook writes one file per event into
+// `<stateDir>/edges/`, and this router places each on one pane of a terminal session. Built with the
+// Surface, so an instance that computes no Surface takes no edge. Each session that can take edges
+// adds its target in `makeSession`; the router reads only the targets of sessions still registered.
+const edgeTargets = new Map<string, HoldTarget>();
+// This bridge's hook target file (bridge/beacon/hook-targets.ts): written once the router takes
+// edges, kept on each liveness tick, removed on a clean stop.
+let hookTarget: HookTargetRegistration | null = null;
+const edgeRouter =
+  surfaceLedger === null
+    ? null
+    : new EdgeRouter({
+        spool: fileEdgeSpool(cfg.stateDir),
+        store: fileSourceStore(cfg.stateDir),
+        keep: () => hookTarget?.keep(),
+        liveness: procBeaconLiveness(),
+        targets: () => {
+          const live = new Set(registry.ordered().map((runtime) => runtime.name));
+          return [...edgeTargets].filter(([name]) => live.has(name)).map(([, target]) => target);
+        },
+        // A dropped edge counts under its own harness, with no version: no pane named one.
+        onDrop: (record) => surfaceLedger.edge({ harness: record?.harness ?? "-", version: "-", profileId: "-", status: "-" }, "dropped"),
+      });
+// Hook-held permissions (M56 spec 12): the harness's permission hook connects to this bridge's local
+// socket (`<stateDir>/hold/sock`, 0600 in a 0700 directory) and waits for a tap. Built with the edges
+// and the Send Protocol, since the hold is placed like an edge and answered through the ask route. It
+// takes the same targets as the edges; a session without an ask book answers no hold.
+const holdServer =
+  edgeRouter === null || sendStore === null
+    ? null
+    : new HoldServer({
+        socketPath: holdSocketPath(cfg.stateDir),
+        host: HOST,
+        liveness: procBeaconLiveness(),
+        targets: () => {
+          const live = new Set(registry.ordered().map((runtime) => runtime.name));
+          return [...edgeTargets].filter(([name]) => live.has(name)).map(([, target]) => target);
+        },
+      });
+const sendVersions = new VersionCache();
+/** A harness's profile at its binary's version, for the send path. Null when the harness has none. */
+async function sendProfile(harness: string): Promise<ProfileMatch | null> {
+  const profile = findProfile(loadProfiles(), harness);
+  if (profile === undefined) return null;
+  return profileForPlatform(profile.id, await sendVersions.versionOf(profile), HOST.platform);
+}
+
+const makeSession: SessionFactory = (name, endpoint, isPrimary) => {
+  const built = endpoint.kind === "program" ? programAdapter(endpoint.source) : terminalAdapter(endpoint.socketPath);
+  const target = built.target;
+  const herdr = withBeaconsIfBlind(built.adapter, target);
   const engine = new StateEngine(herdr, cfg.pollMs);
 
   // Event-poked polling: a long-lived watch on the multiplexer pokes an immediate re-poll on any
@@ -1202,18 +1411,194 @@ const makeSession: SessionFactory = (name, socketPath, isPrimary) => {
   const notifications = new NotificationCoordinator(clock, sink, cfg.notifyDelayMs, (status) =>
     notifyPrefs.isNotifiable(status),
   );
-  engine.onTransition((agent, from, to) => notifications.onTransition(agent, from, to));
+  // A pane whose adapter raises asks as data (ADR 0100) does not push on its way into `blocked`: the
+  // ask guard decides, once per ask, after each poll. Every other pane, and every other transition,
+  // reaches the coordinator as before. In peer mode the sink is muted anyway and the lead runs the
+  // guard over the swept body, so a peer runs none and writes no guard file.
+  const openAsks = herdr.openAsks?.bind(herdr);
+  const guarded = openAsks !== undefined && crew.mode !== "peer";
+  engine.onTransition((agent, from, to) => {
+    if (guarded && AskPush.holds({ asks: openAsks(agent.paneId) }, to)) return;
+    notifications.onTransition(agent, from, to);
+  });
   engine.onRemove((paneId) => notifications.onRemove(paneId));
+  if (guarded) {
+    engine.onUpdate((s) =>
+      askPush.observe(
+        LOCAL_ASK_HOST,
+        s.agents.map((agent) => ({ agent, paneId: agent.paneId, asks: openAsks(agent.paneId) })),
+        ({ agent }, text) => notifications.onTransition(agent, agent.status, "blocked", "ask", text),
+        // The hourly breaker tripped: one summary, under the same snooze and the same "blocked"
+        // preference as every herd push.
+        () => {
+          const named = name === DEFAULT_SESSION_NAME ? hostname() : `${hostname()} (${name})`;
+          if (!snooze.isMuted() && notifyPrefs.isNotifiable("blocked")) void push.send(askFloodMessage(LOCAL_ASK_HOST, named, name));
+        },
+        // Each session is its own scope in the guard (M55): two programs may share a tool call id.
+        name,
+      ),
+    );
+  }
+
+  // Surface shadow mode (M56 spec 04): each poll's agent panes are read once more and their Surface
+  // folded beside the old readers. Fired and not awaited, like the cache probe: a poll never waits on
+  // it, and `observe` never throws. A terminal session only; a program session has no screen.
+  // The Send Protocol (M56 spec 05) needs the pane's Surface on the snapshot, so its flag turns the
+  // Surface computation on too. With the protocol on, the Surface is the verdict (M56 spec 06): the
+  // comparison with the old readers stops, and only `COLLIE_SURFACE_SHADOW=1` with the protocol off
+  // still runs it. That comparison is the part a later change deletes.
+  const computeSurface = (cfg.surfaceShadow || cfg.sendProtocol) && endpoint.kind === "terminal";
+  // A pane's generation is its agent and the session the agent named: a pane that holds another
+  // program now is not the pane a request or an ask was taken for.
+  const generationOf = (paneId: string): string | null => {
+    const { agents, shellPanes } = engine.current();
+    const pane = agents.find((agent) => agent.paneId === paneId) ?? shellPanes.find((shell) => shell.paneId === paneId);
+    return pane === undefined ? null : `${pane.agent}:${pane.agentSession?.value ?? "-"}`;
+  };
+  const sends = sendStore !== null && endpoint.kind === "terminal";
+  // The session's single-use ask ids (M56 spec 08): the poll's Surface, the Send Protocol's reads and
+  // the answer route all lift through this one book, so the id on the phone is the id the route knows.
+  const askBook = sends ? new AskBook() : undefined;
+  const shadowOptions: ShadowOptions = { mux: herdr, pollMs: cfg.pollMs, compare: cfg.surfaceShadow && !cfg.sendProtocol, ledger: surfaceLedger ?? undefined };
+  const surface = computeSurface
+    ? new SurfaceShadow(askBook === undefined ? shadowOptions : { ...shadowOptions, asks: { book: askBook, generation: generationOf } })
+    : undefined;
+  // The held sends (M56 spec 15) ride the same poll: once the Surface has read the panes, a pane that
+  // reads free releases its oldest held request, and the queue ends what expired or lost its pane.
+  // `send` is declared below; the poll's first update comes after `engine.start()`.
+  if (surface !== undefined) {
+    engine.onUpdate((s) => {
+      void surface.observe(s.agents).then(() => send?.tickHolds(name, (paneId) => surface.surfaceOf(paneId)));
+    });
+  }
+  // One protocol per terminal session: its own locks, the adapter's one key gate, the bridge's one
+  // request store. The ask answerer shares the locks, the gate and the store, so a send and an answer
+  // never run on one pane at once and every key leaves through the one gate.
+  const locks = new SessionLocks();
+  const ring = new RowRing();
+  const send =
+    sends && sendStore !== null && askBook !== undefined
+      ? new SendProtocol({
+          mux: herdr,
+          gate: gateFor(herdr),
+          store: sendStore,
+          locks,
+          ring,
+          ledger: surfaceLedger ?? undefined,
+          profile: (harness) => sendProfile(harness),
+          generation: generationOf,
+          asks: askBook,
+          holds: holdStore ?? undefined,
+        })
+      : undefined;
+  const asks =
+    sends && sendStore !== null && askBook !== undefined
+      ? new AskAnswerer({ mux: herdr, gate: gateFor(herdr), store: sendStore, locks, ring, book: askBook, profile: (harness) => sendProfile(harness), generation: generationOf })
+      : undefined;
+  // The structured driver (M56 spec 14): a program session's Surface, Send and Ask from its structured
+  // state, with the Send Protocol on. It is the one driver of its session; no screen fold runs beside it.
+  const driver =
+    sendStore !== null && endpoint.kind === "program" && built.structured !== undefined
+      ? new ProgramDriver({ session: name, port: built.structured, store: sendStore, locks, ledger: surfaceLedger ?? undefined })
+      : undefined;
+  // One driver per session: a program session has no screen fold, and a terminal session no structured driver.
+  if (driver !== undefined && surface !== undefined) throw new Error(`session ${name}: a screen Surface and the structured driver must never both run`);
+  if (driver !== undefined) engine.onUpdate((s) => driver.observe(s.agents.map((agent) => agent.paneId)));
+
+  // This session's hook-held permissions (M56 spec 12): one book beside the ask book. The ask book
+  // asks it first on every read of a pane with a live hold, so no keys ask is minted for that dialog.
+  const holdBook =
+    askBook !== undefined && holdServer !== null
+      ? new HoldBook({
+          count: (held, outcome) => {
+            const key = surface?.counterKeyOf(held.paneId) ?? { harness: held.request.harness, version: "-", profileId: "-", status: "-" };
+            surfaceLedger?.hold(key, counterWordOf(outcome));
+          },
+        })
+      : undefined;
+  if (holdBook !== undefined) askBook?.attachHolds(holdBook);
+
+  // This session's hook edges (M56 spec 11): a terminal session with a Surface and a beacon matcher.
+  // Herdr has a matcher for this alone; tmux and zellij use the one that lifts their agents.
+  const edgeMatcher = surface === undefined || edgeRouter === null ? undefined : factoryFor(muxRegistry, built.adapter.mux)?.beaconMatcher?.(target);
+  if (surface !== undefined && edgeRouter !== null && edgeMatcher !== undefined) {
+    const foreground = herdr.foregroundProcesses?.bind(herdr);
+    const edgeTarget: EdgeTarget = {
+      session: name,
+      matcher: edgeMatcher,
+      paneIds: () => {
+        const { agents, shellPanes } = engine.current();
+        return [...agents, ...shellPanes].map((pane) => pane.paneId);
+      },
+      // A pane the shadow has not read yet (an agent that just started) takes no edge into a fold; the
+      // edge still counts, under its harness with no version, like a dropped one. A subagent's edge
+      // never reaches the fold (deliverEdge), only the hold book.
+      deliver: (paneId, edge) =>
+        deliverEdge(
+          {
+            fold: (pane, kind, at) => surface.edge(pane, kind, at),
+            unfolded: (record, kind) => surfaceLedger?.edge({ harness: record.harness, version: "-", profileId: "-", status: "-" }, kind),
+            promptEdge: (pane, hash, at) => send?.promptEdge(pane, hash, at),
+            hold: (pane, kind, info) => holdBook?.edge(pane, kind, info),
+          },
+          paneId,
+          edge,
+        ),
+    };
+    const holdTarget: HoldTarget =
+      holdBook === undefined
+        ? edgeTarget
+        : {
+            ...edgeTarget,
+            hold: (paneId, request, conn, onClose) => {
+              takeHold(
+                {
+                  book: holdBook,
+                  generation: generationOf,
+                  profile: (harness) => loadProfiles().get(harness)?.hold,
+                  reread: (pane) => surface.edge(pane, "dialog", Date.now()),
+                  log: (line) => console.log(line),
+                },
+                paneId,
+                request,
+                conn,
+                onClose,
+              );
+            },
+          };
+    edgeTargets.set(name, foreground === undefined ? holdTarget : { ...holdTarget, foreground });
+  } else {
+    edgeTargets.delete(name);
+  }
+  // "holds" also while a hold from the pane is live, which proves it before the next edge says so.
+  const hooks =
+    edgeTargets.has(name) && edgeRouter !== null
+      ? (paneId: string) => {
+          const word = edgeRouter.hooksOf(name, paneId);
+          return word === "live" && holdBook?.live(paneId) === true ? "holds" : word;
+        }
+      : undefined;
+  const hold = holdBook === undefined ? undefined : (paneId: string) => holdBook.note(paneId);
 
   engine.start();
   poker.start();
-  return { herdr, engine, poker, notifications };
+  const parts = built.probe === undefined ? { herdr, engine, poker, notifications } : { herdr, engine, poker, notifications, program: built.probe };
+  const withHooks = hooks === undefined ? parts : { ...parts, hooks };
+  const withSurface = surface === undefined ? withHooks : { ...withHooks, surface };
+  const withSend = send === undefined ? withSurface : { ...withSurface, send };
+  const withAsks = asks === undefined ? withSend : { ...withSend, asks };
+  const withHold = hold === undefined ? withAsks : { ...withAsks, hold };
+  return driver === undefined ? withHold : { ...withHold, driver };
 };
 
 const registry = new SessionRegistry({
   configRoot: deriveConfigRoot(cfg.socketPath),
   primarySocketPath: cfg.socketPath,
   factory: makeSession,
+  // The programs (M55). A durable-only instance's one program is the primary; every other source is a
+  // session beside it, kept for the life of the process. Both are empty on an instance with no program.
+  primarySource: programs.primary,
+  sources: programs.others,
   // The OPERATOR's switch, and nothing else. Whether this multiplexer has other instances on this
   // machine to front is the adapter's own `listSessions` declaration, asked by `registry.refresh()`.
   // An adapter that keeps no such list refuses the call and the registry pins to the primary. This
@@ -1236,6 +1621,19 @@ if (primary && !(await primary.herdr.reachable())) {
 // started/stopped after boot is picked up (or disposed) within SESSION_REFRESH_MS. A no-op when
 // multi-session is off. unref() so the timer never keeps the process alive; cleared on shutdown.
 await registry.refresh();
+// Held sends of a session that no longer exists go, text and all (M56 spec 15 review).
+if (holdStore !== null && sendStore !== null) {
+  const dropped = SendProtocol.dropHoldsOutside(holdStore, sendStore, new Set(registry.all().map((runtime) => runtime.name)));
+  if (dropped > 0) console.log(`[send] dropped ${String(dropped)} held send(s) of sessions that no longer exist`);
+}
+// Take hook edges from here on: every session the registry knows has added its target. The hook
+// target file tells every emitter on this host to write its edges into this state dir too.
+edgeRouter?.start();
+// And hook holds (M56 spec 12), before the target file names this state dir: a hook that reads the
+// registry finds the socket listening. A bridge that cannot own the socket (another bridge holds it,
+// or the path is not safe) runs with no holds: every permission stays a screen ask.
+if (holdServer !== null && (await holdServer.start())) console.log(`[surface] hold socket at ${holdSocketPath(cfg.stateDir)}`);
+hookTarget = edgeRouter === null ? null : registerHookTarget(cfg.stateDir);
 const refreshTimer = setInterval(() => {
   void registry.refresh();
   void checkpointRuntime();
@@ -1272,6 +1670,7 @@ const peerNotifier =
         mute: snooze,
         delayMs: cfg.notifyDelayMs,
         isNotifiable: (status) => notifyPrefs.isNotifiable(status),
+        asks: askPush,
       })
     : undefined;
 
@@ -1399,13 +1798,16 @@ const activatedGeneration =
 
 runtimeFacts = () => {
   const facts = leadContact.facts();
-  return {
+  const held: CrewRuntimeFacts = {
     anchoredGeneration: activatedGeneration,
     leadLastDialledAt: facts.lastDialledAt,
     leadRefusedSecretAt: facts.leadRefusedSecretAt,
     deposed: deposed === null ? null : { ...deposed, outcome: outcomeNow(deposed, facts) },
     pairingCollision,
   };
+  // For `collie doctor`'s `durable-lead` row: only a durable peer that has heard its lead state one.
+  const leadRelease = oldLead?.leadRelease() ?? null;
+  return leadRelease === null ? held : { ...held, leadRelease };
 };
 void checkpointRuntime();
 
@@ -2011,6 +2413,8 @@ const server = startServer({
   // string, resolved once, so the detached updater's health gate and a peer can never be told two
   // different things about this machine (M15/04).
   version: crewVersion,
+  // The Surface counters' totals for `/api/health` (M56 spec 09); null with no ledger.
+  surfaceTotals: () => surfaceLedger?.totals() ?? null,
   audit,
   activity,
   // Built above so the cache tracker probes through the same adapters this serves history from.
@@ -2022,6 +2426,9 @@ const server = startServer({
   worktreeReceipts,
   worktreeBases,
   launchReceipts,
+  starterReceipts,
+  answerReceipts,
+  controlReceipts,
   worktreeChoices,
   addedLaunchers,
   recentRuns,
@@ -2065,10 +2472,11 @@ const server = startServer({
             updateRun: () => peerRunWire(readUpdateRun(cfg.stateDir)),
             // ADR 0084: this machine's own last load sample, the one the sampler already holds.
             machineStats: () => machineSampler.latest(),
-            // §20's two REQUEST headers, handed to this peer's own follow. A build with no follower
-            // — a lead, or a checkout with nothing compiled — passes `undefined` and ignores both,
-            // which is a correct peer.
-            onFollow: crewFollower === undefined ? undefined : (a) => crewFollower.observe(a),
+            // §20's two REQUEST headers, handed to this peer's own follow, and the release header to a
+            // durable peer's old-lead notice. A build with neither — a lead, or a checkout with nothing
+            // compiled that drives no durable program — passes `undefined` and ignores both, which is
+            // a correct peer.
+            onFollow,
             onMembershipChange: crewStoreChanged,
             // Gap A (§18.9), and its rotation-shaped sibling. Two receipts, one holder, in memory.
             onLeadDialled: (at) => leadContact.record(at),
@@ -2127,6 +2535,9 @@ const shutdown = async () => {
   // The CLI's read credential dies with the process that holds its hash (bridge/local-secret.ts).
   await removeLocalSecret(cfg.stateDir, localSecret);
   clearInterval(refreshTimer);
+  edgeRouter?.stop();
+  hookTarget?.remove();
+  holdServer?.stop();
   registry.disposeAll();
   // The codex speech-to-text provider owns a `codex app-server` child (bridge/stt/codex-auth.ts).
   // A no-op when speech-to-text is off, or configured to a provider that holds nothing open.
@@ -2135,6 +2546,8 @@ const shutdown = async () => {
   // persist them before exiting, or every restart quietly resurrects alerts you'd already cleared.
   activity.stop();
   await activity.flush();
+  // The surface counters write at most once a minute; the last few go to disk here (sync, never throws).
+  surfaceLedger?.flush();
   // The day of minutes is saved every five minutes from the tick; the last few go to disk here.
   await machineWatch?.flush();
   clearInterval(sweepTimer);

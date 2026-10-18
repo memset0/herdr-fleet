@@ -1,0 +1,18 @@
+[0m[48;2;30;58;28m [0m[1m[38;2;228;101;225m[48;2;30;58;28mI. Greeting[0m[48;2;30;58;28m                                                                               [0m[38;2;228;101;225mSESSION  $0.01 · 549[0m            
+[0m[48;2;30;58;28m   [0m[9m[38;2;130;130;130m[48;2;30;58;28m[✓] Greet user and offer a one-line tour[0m[48;2;30;58;28m                                                [0mmodel   claude-haiku-4.5        
+[0m[48;2;30;58;28m                                                                                           [0m[38;2;160;160;160melapsed 34s[0m                     
+                                                                                           [0m[38;2;160;160;160mtokens  in 32 · out 517[0m         
+ [0m[38;2;160;160;160m────────────────────────────────────────────────────────────────────────────────[0m          [0m[38;2;160;160;160mcache   98% hit[0m                 
+                                                                                                                           
+ [0m[1mAsk:[0m You arrived at the OMO session — wanted: a greeting and one-line tour. [0m[1mFor you:[0m OMO  [0m[38;2;228;101;225mCONTEXT  23.7K/200K[0m             
+ is an AI coding agent that reads your code, runs real builds and tests, makes precise     [0m[38;2;228;101;225mused    ██▎░░░░░░░░░░░░░░░░ 12%[0m 
+ edits, and spawns parallel work when helpful. I work by your direction and verify                                         
+ everything before stopping. [0m[1mNow:[0m none. [0m[1mNext:[0m none.                                        [0m[38;2;228;101;225mTOOLS  2[0m                        
+                                                                                           [0m[38;2;160;160;160mtodo[0m                            
+ [0m[38;2;130;130;130mTPS 122.0 tok/s. Cache hit 98.8%, 4.2s[0m                                                    [0m[38;2;160;160;160mtodo[0m                            
+                                                                                                                           
+[0m[38;2;112;112;112m───────────────────────────────────────────────────────────────────────────────────────────[0m[38;2;228;101;225mMEMORY  work-00392473[0m           
+[0m[38;2;112;112;112m❯[0m hello collie draft[0m[7m [0m                                                                      [0m[38;2;160;160;160mfacts   4 queued[0m                
+[0m[38;2;112;112;112m───────────────────────────────────────────────────────────────────────────────────────────[0m                                
+[0m[38;2;228;101;225m…/omo-lab/work[0m[38;2;123;123;123m • [0m[38;2;130;130;130mCH97.8%[0m[38;2;123;123;123m • [0m[38;2;0;194;0m$0.011[0m[38;2;123;123;123m • [0m[38;2;160;160;160m24K/200K (11.9%) (auto)[0m  [0m[38;2;228;101;225manthropic/claude-haiku-4.5[0m[38;2;130;130;130m:off[0m[38;2;160;160;160m…box/collie-pi-labs/omo-lab/work[0m
+(😺 OmO Native by Q Kim)                                                                                                   

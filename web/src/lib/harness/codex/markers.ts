@@ -10,7 +10,6 @@
 
 import type { AnsiSegment } from "../../ansi";
 import { isBlank, lineText, type StyledLine } from "../../blocks";
-import { fleetReadsUnpaintedNotice, withFleetCodexStatusSegments } from "../../fleet-codex-status-row";
 
 // `lineText` / `isBlank` are properties of a StyledLine, not of any grammar, so they live in the
 // neutral core (lib/blocks.ts). Re-exported here so the Codex grammars keep their single import
@@ -225,6 +224,35 @@ function splitPaintedGaps(segments: AnsiSegment[]): AnsiSegment[] {
   return out;
 }
 
+/**
+ * A separator whose leading space arrives in the paint of the field before it, moved back onto the
+ * separator. Once a thread has a title, Codex 0.159.3 paints the status row as `<path> ` in the
+ * path's colour, then `· ` unpainted, then the title (codex--v0159-task-title.txt, harness canary
+ * 2026-10-12). Neither segment was a field or a separator, so the row was refused after the first
+ * turn of every thread: no composer, the unread-dialog card, and every later send refused. As with
+ * `splitPaintedGaps`, a space draws no ink, so its paint is not evidence; the separator keeps its own
+ * paint, and the paint tests below still run on it unchanged.
+ */
+function rejoinSplitSeparators(segments: AnsiSegment[]): AnsiSegment[] {
+  const tail = STATUS_SEPARATOR.slice(1);
+  return segments.map((segment, index) => {
+    const prev = segments[index - 1];
+    if (prev !== undefined && carriesSeparatorSpace(prev) && segment.text.startsWith(tail)) {
+      segment = { ...segment, text: ` ${segment.text}` };
+    }
+    const next = segments[index + 1];
+    if (next !== undefined && carriesSeparatorSpace(segment) && next.text.startsWith(tail)) {
+      segment = { ...segment, text: segment.text.slice(0, -1) };
+    }
+    return segment;
+  });
+}
+
+/** A painted field with exactly one space after its text: the space a separator lost. */
+function carriesSeparatorSpace(segment: AnsiSegment): boolean {
+  return segment.fg !== undefined && /^\S(?:.*\S)? $/u.test(segment.text);
+}
+
 // The busy row's spinner frames: the ten of the dots spinner, the only run of them in the 0.156.1
 // binary (beside its status-surface code). The canary's busy captures hold `⠋` and `⠧`. The starfield
 // draws from eight single-dot glyphs instead (`⠁⠂⠄⠈⠐⠠⡀⢀`, every sparkle in
@@ -249,17 +277,39 @@ function isSpinnerFrame(segment: AnsiSegment): boolean {
 // status row on its own, so it adds no way in for a row that was refused without it.
 const MAX_NOTICE_SEGMENTS = 12;
 
-function isRightNotice(segments: AnsiSegment[], rowPaint: string | null): boolean {
+function isRightNotice(segments: AnsiSegment[]): boolean {
   if (segments.length === 0 || segments.length > MAX_NOTICE_SEGMENTS) return false;
   if (segments[0]!.text.trimStart() !== segments[0]!.text) return false;
   let chars = 0;
   for (const segment of segments) {
     if (segment.bg !== undefined) return false;
-    if (segment.fg === undefined && segment.dim !== true && !fleetReadsUnpaintedNotice(rowPaint)) return false;
+    if (segment.fg === undefined && segment.dim !== true) return false;
     if (isGapSegment(segment)) return false;
     chars += codePointCount(segment.text);
   }
   return chars <= MAX_STATUS_FIELD_CHARS;
+}
+
+// Codex 0.163.0 draws ` · ← for agents` on the status row itself, after the last field (#454; the
+// 0.157.0 key-hint row carries the same words on its own row, and why the 0.163.0 pane shows the hint
+// is not known). Three segments: the ordinary separator, the `←` key in BOLD, and ` for agents` in the
+// separator's own quiet paint. Neither of the last two is a field or a separator, so the row was
+// refused and the pane had no composer. It is accepted only as the row's tail, exactly these words,
+// the glue in the row's one separator paint, so a hint anywhere else and an unpainted echo stay
+// refused. The key's bold is not asked for: the words, the position and the glue paint already
+// decide, and invariants.test.ts repaints the whole band with bold off.
+const AGENTS_HINT_KEY = "\u2190";
+const AGENTS_HINT_GLUE = " for agents";
+
+/** True when `segments[i]` is the row's separator (in `paint`) and the two segments after it are the
+ *  daemon hint: a `←` with no fill, then ` for agents` in that same separator paint. */
+function isAgentsHint(segments: AnsiSegment[], i: number, paint: string): boolean {
+  const key = segments[i + 1];
+  const glue = segments[i + 2];
+  if (key === undefined || glue === undefined) return false;
+  if (key.text !== AGENTS_HINT_KEY || key.bg !== undefined) return false;
+  if (key.italic === true || key.underline === true) return false;
+  return glue.text === AGENTS_HINT_GLUE && separatorPaint(glue) === paint;
 }
 
 /** Trailing renderer padding is FOLDED, not matched: whitespace-only tail segments are dropped
@@ -293,7 +343,7 @@ function isStyledStatusRow(text: string, line: StyledLine): boolean {
 
   const folded = foldTrailingPadding(line.segments);
   if (folded === null) return false;
-  const segments = withFleetCodexStatusSegments(splitPaintedGaps(folded));
+  const segments = splitPaintedGaps(rejoinSplitSeparators(folded));
   if (!isIndentSegment(segments[0]!)) return false;
 
   let fields = 0;
@@ -312,7 +362,7 @@ function isStyledStatusRow(text: string, line: StyledLine): boolean {
 
     const next = segments[i]!;
     if (isGapSegment(next)) {
-      if (fields < MIN_STATUS_FIELDS || !isRightNotice(segments.slice(i + 1), paint)) return false;
+      if (fields < MIN_STATUS_FIELDS || !isRightNotice(segments.slice(i + 1))) return false;
       break;
     }
     const suffix = quietSuffixFieldPaint(next);
@@ -322,6 +372,15 @@ function isStyledStatusRow(text: string, line: StyledLine): boolean {
     if (suffix !== null) {
       if (fields < MIN_STATUS_FIELDS || i !== segments.length - 1) return false;
       fields++;
+      break;
+    }
+    // The daemon hint: this separator, then `←` and `for agents`, as the row's last segments before
+    // an optional gap and notice. Not a field, so it never counts toward the two.
+    if (isAgentsHint(segments, i, paint)) {
+      if (fields < MIN_STATUS_FIELDS) return false;
+      const after = i + 3;
+      if (after === segments.length) break;
+      if (!isGapSegment(segments[after]!) || !isRightNotice(segments.slice(after + 1))) return false;
       break;
     }
     // A busy row: this separator, then a spinner frame as the very last segment. The frame is not a

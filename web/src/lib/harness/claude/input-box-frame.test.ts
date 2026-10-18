@@ -6,7 +6,7 @@ import { parseAnsi } from "../../ansi";
 import { splitLines, type StyledLine } from "../../blocks";
 import { detectAutocompleteRegion } from "./autocomplete";
 import { extractInputDraft, extractStatusLines, hasInputBox, inputBoxTail, namesAModalKey } from "./chrome";
-import { draftCarriesSend } from "../../reply-action";
+import { draftCarriesSend } from "../../draft-match";
 import { claudeAdapter, claudeBuildBlocks } from "./index";
 import { lineText } from "./markers";
 import { detectMarketplacesRegion } from "./marketplaces";
@@ -97,6 +97,47 @@ describe("parity with the old walk on the real corpus", () => {
     "claude--v2283-plugin-marketplaces-updated--w120.txt",
     "claude--v2283-plugin-marketplaces-updated--w40.txt",
     "claude--v2283-plugin-marketplaces-updated--w82.txt",
+    "claude--v2301-hold-subagent.txt",
+    // The agents panel under the box (incident 2026-10-16): the panel is the footer, and the mode
+    // row's "↓ to view" is the composer's own hint.
+    "claude--v2301-fork-running-main-idle.txt",
+    "claude--v2301-synth-agents-panel.txt",
+    "claude--v2301-synth-agents-panel-walk-fails.txt",
+    "claude--v2301-lab-agents-panel-empty.txt",
+    "claude--v2301-lab-agents-panel-draft.txt",
+    "claude--v2301-lab-agents-panel-more.txt",
+    "claude--v2301-lab-agents-panel-tasks-pill.txt",
+    "claude--v2301-lab-agents-panel-focused.txt",
+    "claude--v2301-idle.txt",
+    "claude--v2301-done-shell-running--w100.txt",
+    "claude--v2301-idle-after-turn--w100.txt",
+    "claude--v2301-queued-taken--w100.txt",
+    "claude--v2301-spinner-no-timer--w100.txt",
+    "claude--v2301-usage-panel-over-box--w40.txt",
+    "claude--v2301-usage-panel-over-box--w82.txt",
+    "claude--v2301-working-draft--w100.txt",
+    "claude--v2301-working-queued-message--w100.txt",
+    "claude--v2301-working-quiet--w100.txt",
+    // Claude Code 2.1.302's slash list under a box holding `/model` (reconstructed from a masked field
+    // capture): the box stands, as in the older autocomplete captures above.
+    "claude--v2302-slash-model-list--w119.txt",
+    // The same list drawn over the box on a tall pane (captured, lane 8788): the box and statusline stand.
+    "claude--v2302-slash-model-list-above--w119.txt",
+    // The list under the box on the harness lab's 120 x 40 tmux pane (captured 2026-10-17): it scrolls
+    // the screen up, and the box stands.
+    "claude--v2302-slash-effort-list--w120--h40.txt",
+    "claude--v2302-slash-model-list--w120--h40.txt",
+    "claude--v2302-heads-up-above-box--w142.txt",
+    // The notice over the agents panel at 69 columns (derived from a bridge read): the box stands.
+    "claude--v2302-notice-over-agents-panel--w69.txt",
+    // The fix rig's Herdr pane, 120 x 36 (captured 2026-10-17): a screen whose rows reach the bottom
+    // with an empty box, and the same pane with the list under a box holding `/model`; the box stands.
+    "claude--v2302-idle-full-screen--w120--h36.txt",
+    "claude--v2302-slash-model-list-padded--w120--h36.txt",
+    "claude--v2302-turn-ended-yn--w119.txt",
+    "claude--v2302-turn-ending-stop-hooks--w119.txt",
+    "claude--v2302-working-agents-panel--w119.txt",
+    "claude--v2302-working-list-echo--w119.txt",
     "claude--working-esc-to-interrupt.txt",
     "claude--working.txt",
   ]);
@@ -333,7 +374,17 @@ describe("invariant: rows appended below a box never change the box or its draft
   // "❯" mark refuses: the rule pinned by "a ❯-led row in an unknown tail refuses" above. The stall
   // that follows is this module's designed failure mode (a false refusal, never a blind keystroke),
   // and the capture's own test below pins both halves of the bound.
-  const POINTER_TAILS = { "claude--footer-pointed-agent.txt": true } satisfies Record<string, true>;
+  // The focused agents panel of 2.1.301 ("❯ ● main", lab 2026-10-16) is the same class, and so is
+  // 2.1.302's slash list, whose pointer row ("  ❯ /model") stands in the tail under the box (the
+  // reconstructed field screen, the two harness lab captures and the fix rig's capture).
+  const POINTER_TAILS = {
+    "claude--footer-pointed-agent.txt": true,
+    "claude--v2301-lab-agents-panel-focused.txt": true,
+    "claude--v2302-slash-model-list--w119.txt": true,
+    "claude--v2302-slash-effort-list--w120--h40.txt": true,
+    "claude--v2302-slash-model-list--w120--h40.txt": true,
+    "claude--v2302-slash-model-list-padded--w120--h36.txt": true,
+  } satisfies Record<string, true>;
 
   it.each(BOX_FIXTURES.filter((name) => !Object.hasOwn(POINTER_TAILS, name)))("%s", (name) => {
     const base = textRows(load(name));

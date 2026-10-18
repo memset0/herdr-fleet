@@ -12,9 +12,11 @@ import { groupPanesByWorkspace } from "@/lib/pane-groups";
 import { inRankOrder, type PaneOrder } from "@/lib/pane-order";
 import { pinMatcher, type Pin } from "@/lib/pins";
 import { paneName, panePlaceParts } from "@/lib/pane-name";
+import { paneSubtitle } from "@/lib/pane-marks";
+import { PaneBadge } from "@/components/pane-badge";
 import { shortenHome } from "@/lib/shorten-home";
 import { bucketOf, isAttention, worstTriage, type TriageKey } from "@/lib/triage";
-import type { AgentView, Launcher, ServerSummary, TabView } from "@/lib/types";
+import type { AgentStatus, AgentView, Launcher, ServerSummary, TabView } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { useFrozenRanks } from "@/hooks/use-frozen-ranks";
 import { useLocale } from "@/hooks/use-locale";
@@ -302,7 +304,7 @@ export function ThreadSidebar({
               id={`switch-ws-${g.key.replace(/[^A-Za-z0-9_-]/gu, "_")}`}
               label={g.label}
               tone="strong"
-              dot={worstTriage(g.panes) === "needs" ? "bg-status-blocked" : undefined}
+              mark={worstTriage(g.panes) === "needs" ? "blocked" : undefined}
               trailing={<StatusCounts panes={g.panes} className="shrink-0 text-[11px] text-muted-foreground" />}
             >
               {rows.map((a) => (
@@ -370,6 +372,7 @@ function Section({
   headingId,
   label,
   count,
+  mark,
   dot,
   tone,
   trailing,
@@ -382,8 +385,10 @@ function Section({
   headingId?: string;
   label: string;
   count?: number;
-  /** Status-palette bullet beside the header — the same colors the status badges use. A workspace
-   *  heading carries one only while a pane inside needs you, as on the dashboard. */
+  /** The status mark beside the header. A workspace heading carries one only while a pane inside
+   *  needs you, as on the dashboard. */
+  mark?: AgentStatus | undefined;
+  /** A plain status-palette bullet, for a section that is a kind of thing (Shells, Launch). */
   dot?: string | undefined;
   tone?: "muted" | "strong";
   trailing?: React.ReactNode;
@@ -400,6 +405,7 @@ function Section({
         className="px-2"
         {...(headingId !== undefined ? { id: headingId } : {})}
         {...(count !== undefined ? { count } : {})}
+        {...(mark !== undefined ? { mark } : {})}
         {...(dot !== undefined ? { dot } : {})}
         {...(tone !== undefined ? { tone } : {})}
         {...(trailing !== undefined ? { trailing } : {})}
@@ -431,6 +437,7 @@ function PaneRow({
   // same nine characters, and the tab is the only one of the two that discriminates.
   const name = paneName(pane);
   const { space, tab } = panePlaceParts(pane);
+  const subtitle = paneSubtitle(pane);
   return (
     <button
       id={id}
@@ -465,6 +472,7 @@ function PaneRow({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-1">
           <span className="min-w-0 truncate text-sm font-medium">{name}</span>
+          <PaneBadge pane={pane} className="shrink-0 self-center" />
           {/* The cache reading trails the name, same corner as the dashboard row (agent-card.tsx,
               via PaneMeta), but without PaneMeta's host and session chips: this sheet asked for the
               cache reading alone, and a crew-wide switcher row is a separate call. `row`, not
@@ -492,6 +500,12 @@ function PaneRow({
             </>
           )}
         </div>
+        {/* A durable program's own line, when it set one (WIRE.md 7.11). A third line only for such a pane. */}
+        {subtitle !== null && (
+          <div data-slot="pane-row-subtitle" className="min-w-0 truncate text-[11px] text-muted-foreground">
+            {subtitle}
+          </div>
+        )}
       </div>
     </button>
   );

@@ -31,6 +31,8 @@ const allAgyFixtures = readdirSync(PANES_DIR)
   .toSorted();
 
 const PINNED = [
+  "muse--approval-date-147.txt",
+  "muse--approval-ls-147.txt",
   "muse--approval-ls-moved.txt",
   "muse--approval-ls.txt",
   "muse--approval-network-moved.txt",
@@ -40,6 +42,12 @@ const PINNED = [
   "muse--ask-color-notes-typed.txt",
   "muse--ask-color.txt",
   "muse--ask-drinks.txt",
+  "muse--ask-multi-q1.txt",
+  "muse--ask-multi-q2.txt",
+  "muse--ask-multi-review.txt",
+  "muse--ask-season.txt",
+  "muse--ask-toppings-147-moved.txt",
+  "muse--ask-toppings-147.txt",
   "muse--ask-toppings-checked.txt",
   "muse--ask-toppings-notes-open.txt",
   "muse--ask-toppings-review.txt",
@@ -53,14 +61,23 @@ const PINNED = [
   "muse--draft-wrapped.txt",
   "muse--fresh-idle.txt",
   "muse--palette-exact.txt",
+  "muse--palette-hint-moved.txt",
+  "muse--palette-hint-skills.txt",
+  "muse--palette-hint.txt",
   "muse--palette-partial.txt",
+  "muse--palette-skill.txt",
+  "muse--palette-typed-arg.txt",
   "muse--quoted-dialogs-bare.txt",
+  "muse--resume-picker-moved.txt",
+  "muse--resume-picker.txt",
   "muse--tasks-popup-approval.txt",
   "muse--tasks-popup-draft.txt",
   "muse--tasks-popup.txt",
   "muse--tip-loop.txt",
   "muse--tip-paste.txt",
+  "muse--trust-prompt-147.txt",
   "muse--trust-prompt.txt",
+  "muse--turn-running.txt",
   "muse--working.txt",
 ];
 
@@ -68,6 +85,8 @@ const PINNED = [
 // captures, which decline deliberately (the note input owns the keyboard) while still failing the
 // composer gate (NOT_READY below).
 const LIFTED = [
+  "muse--approval-date-147.txt",
+  "muse--approval-ls-147.txt",
   "muse--approval-ls-moved.txt",
   "muse--approval-ls.txt",
   "muse--approval-network-moved.txt",
@@ -75,10 +94,19 @@ const LIFTED = [
   "muse--ask-color-moved.txt",
   "muse--ask-color.txt",
   "muse--ask-drinks.txt",
+  "muse--ask-multi-q1.txt",
+  "muse--ask-multi-q2.txt",
+  "muse--ask-multi-review.txt",
+  "muse--ask-season.txt",
+  "muse--ask-toppings-147-moved.txt",
+  "muse--ask-toppings-147.txt",
   "muse--ask-toppings-checked.txt",
   "muse--ask-toppings-review.txt",
   "muse--ask-toppings.txt",
+  "muse--resume-picker-moved.txt",
+  "muse--resume-picker.txt",
   "muse--tasks-popup-approval.txt",
+  "muse--trust-prompt-147.txt",
   "muse--trust-prompt.txt",
 ];
 
@@ -202,6 +230,68 @@ describe("museBuildBlocks", () => {
     }
   });
 
+  it("lifts the 1.4.7 approvals (hint row below the options) with digit-alone keys", () => {
+    for (const [name, scope] of [
+      ["muse--approval-ls-147.txt", "ls ..."],
+      ["muse--approval-date-147.txt", "date ..."],
+    ] as const) {
+      const lines = splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
+      const prompt = museAdapter.buildBlocks(lines).find((b) => b.kind === "prompt-select");
+      expect(prompt?.kind, name).toBe("prompt-select");
+      if (prompt?.kind !== "prompt-select") continue;
+      expect(prompt.prompt.family).toBe("permission");
+      expect(prompt.prompt.question).toBe("Would you like to run the following command?");
+      expect(prompt.prompt.options.map((o) => o.label)).toEqual([
+        "Allow this stage once (y)",
+        `Always allow in this workspace: ${scope} (p)`,
+        "Abort the entire command (esc)",
+      ]);
+      expect(prompt.prompt.options.map((o) => o.keys)).toEqual([["1"], ["2"], ["3"]]);
+      expect(prompt.prompt.signature).not.toContain("Change approval defaults");
+    }
+  });
+
+  it("lifts the multi-question pages with digit+Enter keys", () => {
+    for (const [name, question, progress] of [
+      ["muse--ask-multi-q1.txt", "What is your favorite color?", "1 of 2"],
+      ["muse--ask-multi-q2.txt", "What is your favorite pet?", "2 of 2"],
+    ] as const) {
+      const lines = splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
+      const prompt = museAdapter.buildBlocks(lines).find((b) => b.kind === "prompt-select");
+      expect(prompt?.kind, name).toBe("prompt-select");
+      if (prompt?.kind !== "prompt-select") continue;
+      expect(prompt.prompt.family).toBe("select");
+      expect(prompt.prompt.question).toBe(question);
+      expect(prompt.prompt.options.map((o) => o.keys)).toEqual([
+        ["1", "Enter"],
+        ["2", "Enter"],
+        ["3", "Enter"],
+        ["4", "Enter"],
+      ]);
+      expect(prompt.prompt.signature).toContain(progress);
+    }
+  });
+
+  it("lifts the 1.4.7 checkbox and review in pointer mode", () => {
+    const checkbox = museAdapter
+      .buildBlocks(splitLines(parseAnsi(readFileSync(join(PANES_DIR, "muse--ask-toppings-147.txt"), "utf8"))))
+      .find((b) => b.kind === "multi-select");
+    expect(checkbox?.kind).toBe("multi-select");
+    if (checkbox?.kind !== "multi-select" || checkbox.multi.phase !== "checkbox") return;
+    expect(checkbox.multi.toggle).toBe("pointer");
+    expect(checkbox.multi.pointerRow).toBe(1);
+    expect(checkbox.multi.advanceLabel).toBe("Submit answer");
+
+    const review = museAdapter
+      .buildBlocks(splitLines(parseAnsi(readFileSync(join(PANES_DIR, "muse--ask-multi-review.txt"), "utf8"))))
+      .find((b) => b.kind === "multi-select");
+    expect(review?.kind).toBe("multi-select");
+    if (review?.kind !== "multi-select" || review.multi.phase !== "review") return;
+    expect(review.multi.submit).toBe("pointer");
+    expect(review.multi.pointer).toBe("submit");
+    expect(review.multi.incomplete).toBe(false);
+  });
+
   it("lifts the color question (both pointer positions) with digit+Enter keys", () => {
     for (const name of ["muse--ask-color.txt", "muse--ask-color-moved.txt"]) {
       const lines = splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
@@ -269,16 +359,16 @@ describe("museBuildBlocks", () => {
   });
 
   it("lifts the trust prompt with digit-alone keys", () => {
-    const lines = splitLines(
-      parseAnsi(readFileSync(join(PANES_DIR, "muse--trust-prompt.txt"), "utf8")),
-    );
-    const prompt = museAdapter.buildBlocks(lines).find((b) => b.kind === "prompt-select");
-    expect(prompt?.kind).toBe("prompt-select");
-    if (prompt?.kind !== "prompt-select") return;
-    expect(prompt.prompt.family).toBe("trust");
-    expect(prompt.prompt.question).toBe("Do you trust this workspace?");
-    expect(prompt.prompt.options.map((o) => o.label)).toEqual(["Trust and continue", "Quit"]);
-    expect(prompt.prompt.options.map((o) => o.keys)).toEqual([["1"], ["2"]]);
+    for (const name of ["muse--trust-prompt.txt", "muse--trust-prompt-147.txt"]) {
+      const lines = splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
+      const prompt = museAdapter.buildBlocks(lines).find((b) => b.kind === "prompt-select");
+      expect(prompt?.kind, name).toBe("prompt-select");
+      if (prompt?.kind !== "prompt-select") continue;
+      expect(prompt.prompt.family).toBe("trust");
+      expect(prompt.prompt.question).toBe("Do you trust this workspace?");
+      expect(prompt.prompt.options.map((o) => o.label)).toEqual(["Trust and continue", "Quit"]);
+      expect(prompt.prompt.options.map((o) => o.keys)).toEqual([["1"], ["2"]]);
+    }
   });
 
   it("declines open notes to raw (the note owns the keyboard)", () => {
@@ -514,3 +604,24 @@ describe("muse: a focused tasks popup that names x to stop refuses the composer"
   );
 });
 
+describe("muse: the /resume session picker lifts as a menu (1.4.8)", () => {
+  const lines = (name: string) => splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
+  const menuOf = (name: string) => {
+    const block = museAdapter.buildBlocks(lines(name)).find((b) => b.kind === "menu");
+    return block?.kind === "menu" ? block.menu : null;
+  };
+
+  it("offers Up/Down, Resume and Exit, and nothing that quits", () => {
+    const menu = menuOf("muse--resume-picker.txt");
+    expect(menu?.title).toBe("Resume a previous session");
+    expect(menu?.actions.map((a) => [a.label, a.keys.join("+")])).toEqual([
+      ["Resume", "Enter"],
+      ["Exit", "Escape"],
+    ]);
+    expect(menu?.nav.upDown).toBe(true);
+  });
+
+  it("changes its signature when the highlight moves", () => {
+    expect(menuOf("muse--resume-picker-moved.txt")?.signature).not.toBe(menuOf("muse--resume-picker.txt")?.signature);
+  });
+});

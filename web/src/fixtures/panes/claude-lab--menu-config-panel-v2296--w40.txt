@@ -1,0 +1,77 @@
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.296[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5.5 · Claude Max[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/nr-lab/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool exactly [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55monce with TWO questions: "Pick a [0m[48;2;55;55;55m     [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mcolour?" (Red, Blue) and "Pick a [0m[48;2;55;55;55m     [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55msize?" (Small, Large). Neither is [0m[48;2;55;55;55m    [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mmultiSelect. Do nothing else.[0m[48;2;55;55;55m         [0m
+
+[0m[38;2;153;153;153m● [0mUser declined to answer questions
+[0m[38;2;153;153;153m  ⎿  · Pick a colour? (Red / Blue)[0m
+     [0m[38;2;153;153;153m· Pick a size? (Small / Large)[0m
+
+[0m[38;2;153;153;153m✻ Churned for 2s · done 8:31 PM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool exactly [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55monce to ask me one question: "Pick a [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mcolour?" with the options Red and [0m[48;2;55;55;55m    [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mBlue (no multiSelect). Do nothing [0m[48;2;55;55;55m    [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55melse.[0m[48;2;55;55;55m                                 [0m
+
+[0m[38;2;153;153;153m● [0mUser declined to answer questions
+[0m[38;2;153;153;153m  ⎿  · Pick a colour? (Red / Blue)[0m
+
+[0m[38;2;153;153;153m✻ Sautéed for 1s · done 8:32 PM[0m
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool exactly [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55monce with ONE question "Pick [0m[48;2;55;55;55m         [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mtoppings?" with options Cheese, Ham, [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mOlives and multiSelect true. Do [0m[48;2;55;55;55m      [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mnothing else.[0m[48;2;55;55;55m                         [0m
+
+[0m[38;2;153;153;153m● [0mUser declined to answer questions
+[0m[38;2;153;153;153m  ⎿  · Pick toppings? (Cheese / Ham / [0m
+     [0m[38;2;153;153;153mOlives)[0m
+
+[0m[38;2;153;153;153m✻[0m [0m[38;2;153;153;153mBrewed for 1s · done 8:33 PM[0m
+         
+[0m[38;2;153;153;153m[48;2;55;55;55m❯[0m[48;2;55;55;55m [0m[38;2;255;255;255m[48;2;55;55;55m/resume[0m[48;2;55;55;55m [0m
+[0m[38;2;153;153;153m  ⎿  [0mResume cancelled
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55m/config[0m[48;2;55;55;55m                               [0m
+
+[0m[38;2;177;185;249m────────────────────────────────────────[0m
+  [0m[1m[38;2;177;185;249mSettings[0m  Status  [0m[1m[7m Config [0m  Usage
+   Stats
+
+
+  [0m[38;2;177;185;249m╭──────────────────────────────────╮[0m
+  [0m[38;2;177;185;249m│ [0m⌕ [0m[7mS[0m[38;2;153;153;153mearch settings…               [0m[38;2;177;185;249m│[0m
+  [0m[38;2;177;185;249m╰──────────────────────────────────╯[0m
+
+  [0m[38;2;153;153;153m❯ [0mAuto-compact
+      true
+    Continue automatically at usage l…
+      true
+    Switch models when a message is f…
+      Not asked yet[0m[38;2;153;153;153m ›[0m
+    Show tips
+      false
+    Claude-drafted feedback
+      notify
+    Reduce motion
+      false
+    Thinking mode
+      [0m[38;2;153;153;153mtrue[0m
+    [0m[38;2;153;153;153mThinking can't be turned off for[0m
+    [0m[38;2;153;153;153mSonnet 5.5[0m
+    Prompt suggestions
+      false
+
+    [0m[38;2;153;153;153m↓ 36 more[0m
+
+  [0m[38;2;153;153;153mType to filter · Enter/↓ to select ·[0m
+  [0m[38;2;153;153;153m↑ to tabs · Esc to clear[0m

@@ -5,6 +5,8 @@ import {
   type NotifyClock,
   type PushSender,
 } from "../notifications.ts";
+import { askFloodMessage, AskPush } from "../durable/ask-push.ts";
+import { DEFAULT_GUARD_SESSION } from "../durable/guard.ts";
 import type { AgentStatus, AgentView, CrewMode, PaneWire } from "../types.ts";
 import type { PeerSnapshotBody } from "./merge.ts";
 import { crewHerdTagFor } from "./tags.ts";
@@ -88,6 +90,11 @@ export interface PeerNotifierDeps<H> {
   readonly delayMs: number;
   /** The LEAD's notify prefs, read live — same reason, same construction. */
   readonly isNotifiable: (status: AgentStatus) => boolean;
+  /**
+   * The push guard for panes that carry asks as data (ADR 0100), keyed on `(member id, toolCallId)`.
+   * Absent: every pane pushes on its way into `blocked`, as before.
+   */
+  readonly asks?: AskPush;
 }
 
 /**
@@ -120,7 +127,11 @@ export class PeerNotifier<H = unknown> {
     const entry = this.hosts.get(host) ?? this.create(host);
     const diff = diffPeerAgents(entry.statuses, body.agents);
     entry.statuses = diff.statuses;
+    const asks = this.deps.asks;
     for (const t of diff.transitions) {
+      // A pane that carries asks as data does not push on its way into `blocked`: the guard below
+      // decides that, once per ask (ADR 0100). Every other transition reaches the coordinator.
+      if (asks !== undefined && AskPush.holds(t.pane, t.to)) continue;
       // `PaneWire` is `AgentView` minus the server-only session fields, so it is exactly what the
       // coordinator reads (agent, workspaceLabel, cwd, paneId) — no re-hydration, no second shape.
       // SAFETY: `PaneWire` IS `AgentView` minus `agentSession` and `sessionAgent`, both server-only,
@@ -129,6 +140,33 @@ export class PeerNotifier<H = unknown> {
       entry.coordinator.onTransition(t.pane as AgentView, t.from, t.to);
     }
     for (const id of diff.removed) entry.coordinator.onRemove(id);
+    // The ask guard runs HERE, on the lead, because the lead is the one that pushes for a peer's
+    // panes (§5); the peer's own herd path is muted and runs no guard. A guarded push goes through
+    // the coordinator with the cause `ask`, so it reads "Permission needed in <pane>" and nothing of
+    // the ask itself. When the host's hourly breaker trips, one summary push, then silence.
+    // One observation per session the member's panes are in (M55): each program on that machine is its
+    // own scope, so one program's asks never close another's. A pane with no session tag is `default`.
+    if (asks === undefined) return;
+    // Every session the member listed is observed, an empty one too, so a program whose last pane went
+    // away closes what it had open, as one observation of the whole host used to.
+    const bySession = new Map<string, PaneWire[]>([[DEFAULT_GUARD_SESSION, []], ...body.sessions.map((s): [string, PaneWire[]] => [s.name, []])]);
+    for (const pane of body.agents) {
+      const session = pane.session ?? DEFAULT_GUARD_SESSION;
+      bySession.set(session, [...(bySession.get(session) ?? []), pane]);
+    }
+    for (const [session, panes] of bySession) {
+      asks.observe(
+        host,
+        panes,
+        // SAFETY: as above, `PaneWire` IS `AgentView` minus the two server-only session fields.
+        (pane, text) => entry.coordinator.onTransition(pane as AgentView, pane.status, "blocked", "ask", text),
+        () => {
+          const named = session === DEFAULT_GUARD_SESSION ? host : `${host} (${session})`;
+          if (!this.deps.mute.isMuted() && this.deps.isNotifiable("blocked")) this.deps.push.send(askFloodMessage(host, named, session));
+        },
+        session,
+      );
+    }
   }
 
   /**
@@ -138,6 +176,8 @@ export class PeerNotifier<H = unknown> {
    * waiting for a resolution that can never arrive.
    */
   forget(host: string): void {
+    // The guard's keys for this host close now, and are forgotten a day later (ADR 0100).
+    this.deps.asks?.forget(host);
     const entry = this.hosts.get(host);
     if (!entry) return;
     entry.coordinator.clearAll();

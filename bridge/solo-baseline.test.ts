@@ -20,6 +20,7 @@ import { machineRosterOf, MachineWatch, SOLO_MACHINE_ID } from "./machines.ts";
 import type { PushMessage } from "./push.ts";
 import { TrustStore } from "./crew/trust-store.ts";
 import { Snooze } from "./snooze.ts";
+import { bootSources, planPrograms, sourcesPath, type DurableSource } from "./sources.ts";
 import {
   SessionRegistry,
   herdTagFor,
@@ -196,7 +197,7 @@ const hasJournal = (agent: string) => agent === "claude";
  * A registry over exactly one session (the primary), built with the same fake-factory convention as
  * sessions.test.ts. `list()` is the REAL implementation — this pins what a solo `sessions` looks like.
  */
-function soloRegistry(): SessionRegistry {
+function soloRegistry(sources: readonly DurableSource[] = []): SessionRegistry {
   const factory: SessionFactory = () => ({
     // The registry's only discovery: an adapter reporting nothing but the primary itself.
     herdr: stubPart<SessionParts["herdr"]>({ listSessions: () => Promise.resolve(muxOk([])) }),
@@ -209,6 +210,7 @@ function soloRegistry(): SessionRegistry {
     primarySocketPath: "/home/you/.config/herdr/herdr.sock",
     factory,
     multiSession: true,
+    sources,
   });
 }
 
@@ -262,6 +264,9 @@ const SNAPSHOT_KEYS = {
   ts: true,
   // Present on the type since M4/04, absent from every solo body — see the section header.
   servers: true,
+  // Not a crew dimension: present only while the mux is down for a refused durable token (M50 spec
+  // 14), so a healthy solo body carries no such key and no golden byte moved.
+  muxFault: true,
 } satisfies Record<keyof SnapshotResponse, true>;
 
 const SESSION_SUMMARY_KEYS = {
@@ -328,6 +333,36 @@ const PANE_WIRE_KEYS = {
   // own disk. Attached at serialise time like `cache`, and absent here: this baseline builds its body
   // with no reader, so no golden byte moved.
   gitHead: true,
+  // Not a crew dimension: the open asks of a pane whose adapter raises them as data (ADR 0100). Only
+  // the `durable` adapter fills it, so it is absent on every pane here and no golden byte moved.
+  asks: true,
+  // Not a crew dimension either: the newest turn of a pane whose adapter takes guarded controls
+  // (ADR 0101). Only the `durable` adapter fills it, so it is absent here and no golden byte moved.
+  turnId: true,
+  // Not crew dimensions: a durable program's line under the title and its small mark (WIRE.md 7.11).
+  // Only the `durable` adapter fills them, so they are absent here and no golden byte moved.
+  subtitle: true,
+  badge: true,
+  progress: true,
+  // Not a crew dimension either: the belt buttons of a pane whose program lists actions (M53 spec 07).
+  // Only the `durable` adapter fills it, so it is absent here and no golden byte moved.
+  actions: true,
+  // Not a crew dimension: the pane's input surface (M56 spec 04). Only Surface shadow mode fills it,
+  // and it is off by default, so it is absent on every pane here and no golden byte moved.
+  surface: true,
+  // Not a crew dimension: the pane's hook source, live or none (M56 spec 11). It rides with `surface`
+  // only, on a session that takes hook edges, and this harness builds none, so no golden byte moved.
+  hooks: true,
+  // Not a crew dimension: the pane's hook-held permission (M56 spec 12). It rides with `surface` only,
+  // on a session that takes holds, and this harness builds none, so no golden byte moved.
+  hold: true,
+  // Not a crew dimension: the Send Protocol's mark (M56 spec 05). It is on by default since spec 06
+  // (COLLIE_SEND_PROTOCOL=0 turns text sending off), but a pane carries it only when its session runtime
+  // has a Send Protocol, and this harness builds none, so it is absent here and no golden byte moved.
+  sendProtocol: true,
+  // Not a crew dimension: the pane's held sends (M56 spec 15). They ride with `sendProtocol` and only
+  // when a send is held, and this harness builds no Send Protocol, so no golden byte moved.
+  held: true,
 } satisfies Record<keyof PaneWire, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -364,6 +399,9 @@ const UPDATE_STATUS_KEYS = {
   // is the whole point: a dismissal kept per browser is a dismissal that holds in one browser.
   dismissedVersion: true,
   dismissedCrewVersion: true,
+  // When the crew notice was closed (1.21.1). Optional, and absent until a crew close is made, so the
+  // golden bodies below carry no such key.
+  dismissedCrewAt: true,
   // The release ahead changes the crew wire (M27/06). Optional, and ABSENT on a solo instance by
   // construction: there is no link to change, so the golden bodies below carry no such key.
   linkChange: true,
@@ -404,11 +442,12 @@ const TAB_KEYS = {
 } satisfies Record<keyof TabView, true>;
 
 describe("solo zero-tax — wire shapes carry no crew dimension", () => {
-  test("SnapshotResponse carries `servers` as OPTIONAL and nothing else new", () => {
+  test("SnapshotResponse carries `servers` as OPTIONAL and nothing else new (and `muxFault`, absent while healthy)", () => {
     expect(Object.keys(SNAPSHOT_KEYS).toSorted()).toEqual([
       "agents",
       "bridge",
       "device",
+      "muxFault",
       "notifications",
       "servers",
       "sessions",
@@ -439,7 +478,10 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
   // bodies below prove; this list is the tripwire that a THIRD such field cannot be added quietly.
   test("PaneWire carries the two address dimensions and nothing else", () => {
     expect(Object.keys(PANE_WIRE_KEYS).toSorted()).toEqual([
+      "actions",
       "agent",
+      "asks",
+      "badge",
       // Fleet optional identity; legacy golden bodies still omit both.
       "bindingId",
       "bindingSession",
@@ -448,7 +490,10 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
       "focused",
       "gitHead",
       "hasSession",
+      "held",
       "hint",
+      "hold",
+      "hooks",
       "host",
       "kind",
       "lastActiveAt",
@@ -456,16 +501,21 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
       "model",
       "paneId",
       "paneLabel",
+      "progress",
       "readableLines",
+      "sendProtocol",
       "session",
       "sessionName",
       "soleTabName",
       "status",
+      "subtitle",
+      "surface",
       "tabId",
       "tabLabel",
       "tabPosition",
       "terminalTitle",
       "terminalTitleStale",
+      "turnId",
       "workspaceId",
       "workspaceLabel",
       "workspaceNumber",
@@ -480,6 +530,7 @@ describe("solo zero-tax — wire shapes carry no crew dimension", () => {
       "current",
       // The two bands the operator can close (M17/08): this host's offer, and the quiet notice about
       // a machine a package manager owns. Required and null when nothing was closed.
+      "dismissedCrewAt",
       "dismissedCrewVersion",
       "dismissedVersion",
       "installKind",
@@ -537,6 +588,24 @@ describe("solo zero-tax — the snapshot body is byte-for-byte today's", () => {
 
   test("assembles to the committed golden, byte for byte", () => {
     expectGolden("snapshot.json", `${body}\n`);
+  });
+
+  // COLLIE_PROGRAMS=off (M55 spec 16): a sources.json that lists a program is ignored whole, so the
+  // registry the bridge would build from it lists the same sessions and the snapshot is these bytes.
+  test("COLLIE_PROGRAMS=off: a sources.json with a program leaves the snapshot byte-identical to solo", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "collie-programs-off-"));
+    try {
+      writeFileSync(sourcesPath(dir), JSON.stringify([{ name: "desk", kind: "durable", socket: "/run/desk.sock" }]), { mode: 0o600 });
+      const plan = (env: Record<string, string>) =>
+        planPrograms({ durableOnly: false, env, sources: bootSources(dir, env), primaryName: "herdr" });
+      // The control: with the switch unset the same file does add a program, so the assertion below is not vacuous.
+      expect(plan({}).others).toHaveLength(1);
+      const off = plan({ COLLIE_PROGRAMS: "off" });
+      expect(off).toEqual({ primary: undefined, others: [] });
+      expect(JSON.stringify(soloSnapshot(soloRegistry(off.others)), null, 2)).toBe(body);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   // Deep equality, not a subset match: an added key fails here even if the golden were regenerated
@@ -623,6 +692,11 @@ describe("solo zero-tax — routes", () => {
       // read-gated like the pane read beside it, so a `?host=` call forwards to the member whose
       // journal named the file (CREW_PROTOCOL.md §9.1).
       "/^\\/api\\/blobs\\/([^/]+)$/",
+      // A durable program's own history (M53 spec 11): its conversation list, and the items or a reopen of one.
+      // Session-scoped like the pane routes: an adapter without the reads answers `unsupported`, and a `?host=`
+      // call forwards to the member the program runs on.
+      "/^\\/api\\/durable\\/conversation\\/([^/]+)\\/(items|reopen)$/",
+      "/^\\/api\\/durable\\/conversations$/",
       // Machines (ADR 0084): one machine's day of minutes, and its alert rules. A lead and a solo
       // collie answer for every machine they keep watch over; a peer 404s (`crew.not_lead`), and none
       // is forwardable — `bridge/crew/router.test.ts` pins all three as 404 across a link.
@@ -633,13 +707,20 @@ describe("solo zero-tax — routes", () => {
       // the poll path, forwarded to the owning member and taxing a solo instance with nothing.
       // `files` is the Files view (ADR 0083): one folder or one file under the Changes root, a read
       // gated on an authorised device and forwarded to the owning member like `changes`.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/",
+      // `answer` answers an ask by id (ADR 0100): a write, forwarded to the owning member, and only a
+      // pane whose adapter raises asks as data takes it, so a solo Herdr bridge answers it the refusal.
+      // `send` and `abort` name the turn the phone saw (ADR 0101): writes, forwarded the same way, and
+      // only a pane whose adapter takes guarded controls takes them; a Herdr pane gets the refusal.
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|answer|send|abort|action))?$/",
       // Which paths exist under the Files root (ADR 0088), asked in one batch for the pane view's
       // links: a read with the Files gate, one `lstat` per path, not forwarded across a crew link.
       "/^\\/api\\/pane\\/([^/]+)\\/files\\/exist$/",
       // One picture under the Files root, as its bytes (ADR 0090): the Files read's checks and gate,
       // the type read off the bytes, forwarded to the owning member like `files`.
       "/^\\/api\\/pane\\/([^/]+)\\/files\\/image$/",
+      // A space's rename (M53 spec 05): a write, forwarded to the owning member, and only an adapter that
+      // declares `renameSpace` takes it; every other bridge answers it the refusal.
+      "/^\\/api\\/space\\/([^/]+)\\/rename$/",
       // The Whistle model as bytes (ADR 0096 Decision 9): a content-addressed READ, the hash compared
       // with the held file's and never made into a path. Lead-local, not forwardable.
       "/^\\/api\\/stt\\/model\\/([^/]+)$/",
@@ -658,6 +739,10 @@ describe("solo zero-tax — routes", () => {
       // included, and then answers 404 instead of the SPA's app shell. Not a route of its own, and it
       // registers nothing on the crew link.
       "/api/*",
+      // Ask v1 (M56 spec 08): a SOLO route that legitimately extends this list, named here rather than
+      // exempted. Write-gated through the same closure a send rides, this collie's own sessions only,
+      // and a 404 when the Send Protocol is off (COLLIE_SEND_PROTOCOL=0, on by default since spec 06). No crew route.
+      "/api/ask/*",
       // The prompt-cache rule catalog (M28/02). A process-scoped READ, gated exactly as `/api/config`
       // is, and the only route this feature adds. Not forwarded across the crew link.
       "/api/cache-rules",
@@ -733,6 +818,15 @@ describe("solo zero-tax — routes", () => {
       // than exempted. It is session-scoped and read-gated, and it registers no crew route of its
       // own: a lead reaches a peer's through the peer's existing `/crew/v1/*` dispatch.
       "/api/refresh",
+      // The Send Protocol (M56 spec 05): a SOLO route that legitimately extends this list, named here
+      // rather than exempted. Write-gated through the same closure a reply rides, this collie's own
+      // sessions only, and a 404 only when the operator set COLLIE_SEND_PROTOCOL=0 (the flag is on by
+      // default since spec 06). No crew route.
+      "/api/send",
+      // The Cancel on a queued row (M56 spec 15): `DELETE /api/send/<id>`, write-gated like a send, this
+      // collie's own sessions only. No crew route.
+      "/api/send/*",
+      "/api/send/receipts",
       "/api/snapshot",
       // Speech-to-text (bridge/stt/) — a SOLO feature that legitimately extends this list, named
       // here rather than exempted, exactly as device pairing is. It is off until an operator
@@ -747,6 +841,10 @@ describe("solo zero-tax — routes", () => {
       // whose operator never taps "Download to host" downloads nothing and writes nothing through it.
       "/api/stt/whistle",
       "/api/subscribe",
+      // Surface shadow mode's debug read (M56 spec 04): a SOLO route that legitimately extends this
+      // list, named here rather than exempted. Read-gated, this collie's own sessions only, and a 404
+      // unless the operator set COLLIE_SURFACE_SHADOW=1. It registers no crew route.
+      "/api/surface",
       "/api/tab",
       // Starting an update from the phone (M15/05) — a SOLO route that legitimately extends this
       // list, named here rather than exempted. Write-gated through the same closure a send rides,
@@ -831,6 +929,8 @@ const CONFIG_KEYS = {
   vapidSubject: true,
   stateDir: true,
   multiSession: true,
+  surfaceShadow: true,
+  sendProtocol: true,
   skipServe: true,
   basePath: true,
   uploadExtraTypes: true,
@@ -873,10 +973,12 @@ describe("solo zero-tax — config", () => {
       "quickRepliesFile",
       "readLines",
       "redact",
+      "sendProtocol",
       "skipServe",
       "socketPath",
       "stateDir",
       "submitKeys",
+      "surfaceShadow",
       "tailscaleHosts",
       "ternBin",
       "themeFile",
@@ -912,7 +1014,7 @@ describe("solo zero-tax — config", () => {
   // Read from `bridge/config-schema.ts` rather than by grepping `config.ts`'s source, because the
   // schema is now the single declaration of what every setting is (ADR 0040). The rows that carry a
   // `configField` are exactly the settings `loadConfig` resolves, which is the list §11 pins. A
-  // CONFIG FILE ADDS NO ENV KEY, so this list is the 38 names it has always been plus `COLLIE_BASE_PATH` (ADR 0052), `COLLIE_MUSE_ROOT` and the two `COLLIE_ACCESS_*` keys (ADR 0081) — the two
+  // CONFIG FILE ADDS NO ENV KEY, so this list is the 38 names it has always been plus `COLLIE_BASE_PATH` (ADR 0052), `COLLIE_MUSE_ROOT`, `COLLIE_OPENCLAW_ROOT` (#401) and the two `COLLIE_ACCESS_*` keys (ADR 0081) — the two
   // `COLLIE_MUX_ENDPOINT_<NAME>` rows collapse back to the prefix the old grep saw, because the env
   // name is built at the call site and the file key must not be.
   test("the schema names exactly today's COLLIE_* env keys — no crew enrollment key", () => {
@@ -945,6 +1047,7 @@ describe("solo zero-tax — config", () => {
       "COLLIE_MUX",
       "COLLIE_MUX_ENDPOINT_",
       "COLLIE_NOTIFY_DELAY_MS",
+      "COLLIE_OPENCLAW_ROOT",
       "COLLIE_OPENCODE_ROOT",
       "COLLIE_PI_ROOT",
       "COLLIE_POLL_IDLE_MS",
@@ -953,9 +1056,11 @@ describe("solo zero-tax — config", () => {
       "COLLIE_PUBLIC_HOSTS",
       "COLLIE_READ_LINES",
       "COLLIE_REDACT",
+      "COLLIE_SEND_PROTOCOL",
       "COLLIE_SKIP_SERVE",
       "COLLIE_STATE_DIR",
       "COLLIE_SUBMIT_KEYS",
+      "COLLIE_SURFACE_SHADOW",
       "COLLIE_TAILSCALE_HOSTS",
       "COLLIE_TERN_BIN",
       "COLLIE_TMUX_BIN",
@@ -984,6 +1089,9 @@ const STATE_DIR_ENTRIES = [
   // never on Linux or macOS, and never on a Windows install whose folders were private already.
   "acl-backups",
   "activity.json",
+  // One receipt per answer to an ask (ADR 0100), written before the answer leaves. Written by use and
+  // by nothing else: absent until the first answer from a phone.
+  "answer-receipts.json",
   "audit.log",
   // Agent beacons (M11/01) — a directory, and one no bridge module ever writes: the bridge only ever
   // READS it, and the emitter that fills it is a CLI verb the operator installs a hook for. An
@@ -996,12 +1104,30 @@ const STATE_DIR_ENTRIES = [
   // The one-off lines a phone ran on this machine, newest first (ADR 0095). Written by use and by
   // nothing else: absent until the first one-off run that works.
   "commands-recent.json",
+  // One receipt per send or abort on a durable pane (ADR 0101), written before the control leaves.
+  // Written by use and by nothing else: absent until the first one from a phone.
+  "control-receipts.json",
+  // The bridge's own log of a durable program's panes (ADR 0099), one file per pane inside this folder.
+  // Written only by a bridge that drives `COLLIE_MUX=durable`: the factory that builds the writer is
+  // never called for Herdr, tmux or zellij, so every other instance never has this folder.
+  "durable",
+  // The push guard's memory for asks that travel as data (ADR 0100), keyed on (host, toolCallId).
+  // Written only when a pane that carries asks opens or closes one: a bridge with no durable pane,
+  // and no peer with one, never writes it.
+  "durable-asks.json",
+  // The hook edges (M56 spec 11): a spool directory the bridge takes from and empties, and one no
+  // bridge module ever writes into. The emitter behind `collie hooks install` fills it, so an instance
+  // whose operator never installed the hooks never has this directory at all.
+  "edges",
   // The new-space sheet's folder list (M40/02, #289), and a §11 row RENEGOTIATED ON PURPOSE: it is
   // the one entry here a solo instance's own operator writes through ordinary use, from the phone.
   // Absent until the first space created with a folder or the first star — both are acts, and a
   // bridge that is only started, only read, or only ever asked for spaces in home writes none of it,
   // so the four entries asserted below hold. Driven in "the folder list appears only on use".
   "folders.json",
+  // The hold queue (M56 spec 15): one file per send the harness could not take during its turn, kept
+  // until the pane reads free, so a restart replays it. Created with the Send Protocol, like `sends`.
+  "held",
   // One receipt per launch the phone tagged with a request id (ADR 0091), so a retried Start never
   // opens a second pane. Written by use and by nothing else: absent until the first launch that
   // carries an id succeeds.
@@ -1026,12 +1152,23 @@ const STATE_DIR_ENTRIES = [
   "paired-devices.json",
   "pairing-pending.json",
   "push-subscriptions.json",
+  // The Send Protocol's request files and receipts (M56 spec 05), one per request id in this folder.
+  // Created by a bridge that sends text, which is the default since spec 06: with COLLIE_SEND_PROTOCOL=0
+  // nothing builds the store, so such an instance never has this folder.
+  "sends",
   "snooze.json",
+  // One receipt per starter a phone ran on a durable program (ADR 0102). Written by use and by nothing
+  // else: absent until the first starter run, which only a peer on `COLLIE_MUX=durable` can offer.
+  "starter-receipts.json",
   // Speech-to-text settings. Absent until the operator runs `collie stt setup`. The bridge writes it
   // in one case only: the Host speech provider card in Settings, which writes Whistle or Codex (after
   // the consent) or removes the file, and only while no key, command or environment names a provider
   // (bridge/stt/host-http.ts, ADR 0097).
   "stt.json",
+  // The Surface counters (M56 spec 09): one counters file a day, the lab's inbox and its examples, all
+  // in this folder. Created by a bridge that computes a Surface (the Send Protocol, on by default, or
+  // COLLIE_SURFACE_SHADOW=1) the first time it reads an agent pane or settles a send.
+  "surface",
   // The detached updater's own stdout and stderr (#283), with the run before it kept beside it as
   // `update-runner.log.1`. Absent until the first update started from the phone: the bridge opens it
   // only to hand the descriptor to the runner it spawns.

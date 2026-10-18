@@ -326,12 +326,12 @@ describe("ActionsRow", () => {
   });
 });
 
-// ANOTHER PANE NEEDS YOU: the switcher mark wears a red dot, and its name says why. Red only, so the
-// caller passes `alert` only for a blocked pane elsewhere (agent-chat.tsx).
+// ANOTHER PANE NEEDS YOU: the switcher mark wears the needs-you mark (the triangle, in red), and its
+// name says why. The caller passes `alert` only for a blocked pane elsewhere (agent-chat.tsx).
 describe("ActionsRow — the switcher mark's alert", () => {
-  const dotOf = (el: HTMLElement) => el.querySelector(".bg-status-blocked");
+  const dotOf = (el: HTMLElement) => el.querySelector(".text-status-blocked");
 
-  it("draws the red dot only when alerted", () => {
+  it("draws the needs-you mark only when alerted", () => {
     const { rerender } = render(
       <ActionsRow general={[general()]} agent="claude" onRun={took} handle={{ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane" }} />,
     );

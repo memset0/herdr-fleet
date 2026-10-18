@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -12,7 +12,10 @@ import { serializeTrustStore, TrustStore, type TrustStoreData, type TrustStoreIo
 import { fakeBeaconReader, FAKE_BEACON_NOW, type FakeBeacon } from "../bridge/beacon/fake.ts";
 import { BEACON_SCHEMA_VERSION } from "../bridge/beacon/types.ts";
 import type { JsonObject } from "../bridge/json.ts";
+import { FakeDurableProgram, SOCKET_ONLY_SKIP } from "../bridge/mux/durable/fixture.ts";
+import { SYSTEM_PROBE, type SocketProbe } from "../bridge/mux/durable/client.ts";
 import { BEACON_HOOKS } from "./beacon.ts";
+import { durableFindings } from "./durable-findings.ts";
 import type { CliContext } from "./context.ts";
 import {
   cmdDoctor,
@@ -326,11 +329,12 @@ interface HelloBody {
   protocol: number;
   member: string;
   version?: string;
+  surfaceVersion?: number;
 }
 
 /** A `hello` answer: §6's two headers, the optional §5 `version`, and an HTTP `Date` the clock reads. */
 function hello(
-  over: { version?: string | null; date?: number | null; memberId?: string } = {},
+  over: { version?: string | null; date?: number | null; memberId?: string; surfaceVersion?: number } = {},
 ): Response {
   const headers = new Headers({
     "content-type": "application/json",
@@ -341,6 +345,7 @@ function hello(
   const version = over.version === undefined ? "1.0.0-alpha.12" : over.version;
   const body: HelloBody = { protocol: CREW_PROTOCOL_VERSION, member: over.memberId ?? "laptop" };
   if (version !== null) body.version = version;
+  if (over.surfaceVersion !== undefined) body.surfaceVersion = over.surfaceVersion;
   return new Response(JSON.stringify(body), { status: 200, headers });
 }
 
@@ -407,6 +412,7 @@ describe("collie doctor — the contract", () => {
       "integration-grok",
       "integration-hermes",
       "integration-muse",
+      "integration-openclaw",
       "integration-opencode",
       "integration-pi",
       "integration-omp",
@@ -679,6 +685,21 @@ describe("collie doctor — the local checks", () => {
     // The tailnet name this host answers with is the address it suggests — not a placeholder.
     expect(bind?.remedy).toContain("COLLIE_HOST=laptop.tail.ts.net");
     expect(code).toBe(EXIT.FAIL);
+  });
+
+  // ADR 0013's tunnel row: a peer that dials its lead on loopback is behind an operator-owned tunnel
+  // (or shares the lead's host), so the lead's dial lands on loopback too and the default bind is right.
+  test("bind: loopback on a PEER whose lead is dialled on loopback is a tunnel, not the trap", async () => {
+    for (const address of ["http://127.0.0.1:18787", "127.0.0.1:18787", "[::1]:8787", "https://localhost:8787"]) {
+      const peer = peerStore({ lead: member({ memberId: "desk", role: "lead", address }) });
+      const { byCheck } = await findings(
+        harness(peer, [hello({ memberId: "desk" })], {
+          files: without({ ...healthyFiles(), ...markerFile(peer) }, HANDLER),
+        }),
+      );
+      expect(byCheck.get("bind")?.status, address).toBe("ok");
+      expect(byCheck.get("bind")?.detail, address).toContain("reaches its lead on loopback too");
+    }
   });
 
   test("bind: loopback on a lead or solo is the RIGHT answer, not a finding", async () => {
@@ -1373,6 +1394,22 @@ describe("collie doctor — the crew checks", () => {
     expect(code).toBe(EXIT.OK);
   });
 
+  test("member-surface: names each member's reader version, or none for an older build", async () => {
+    const withReader = await findings(
+      harness(LEAD, [hello({ surfaceVersion: 2 })], { files: { ...healthyFiles(), ...markerFile(LEAD) } }),
+    );
+    const named = withReader.byCheck.get("member-surface");
+    expect(named?.status).toBe("ok");
+    expect(named?.scope).toBe("crew");
+    expect(named?.detail).toContain("laptop reader 2");
+    const silent = await findings(
+      harness(LEAD, [hello()], { files: { ...healthyFiles(), ...markerFile(LEAD) } }),
+    );
+    expect(silent.byCheck.get("member-surface")?.status).toBe("ok");
+    expect(silent.byCheck.get("member-surface")?.detail).toContain("laptop none (older build)");
+    expect(silent.code).toBe(EXIT.OK);
+  });
+
   test("member-versions: same version everywhere is one quiet ✓", async () => {
     const { byCheck } = await findings(
       harness(LEAD, [hello()], { files: { ...healthyFiles(), ...markerFile(LEAD) } }),
@@ -1478,7 +1515,7 @@ describe("mux", () => {
     const finding = byCheck.get("mux")!;
     expect(finding.status).toBe("error");
     expect(finding.detail).toContain("no multiplexers are running");
-    expect(finding.remedy).toContain("COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start");
+    expect(finding.remedy).toContain("COLLIE_MUX=<durable|herdr|tern|tmux|tuios|zellij> collie start");
   });
 
   test("nothing configured and two multiplexers running is an error naming both", async () => {
@@ -1777,8 +1814,9 @@ describe("beacon-hooks-claude", () => {
     expect(finding.status).toBe("ok");
     expect(finding.remedy).toBeNull();
     expect(finding.detail).toContain(OWN_BINARY);
-    // Installed anyway under Herdr is still ✓, and says out loud that nothing here needs it.
+    // Installed under Herdr is still ✓, and says that Herdr needs it for hook edges only.
     expect(finding.detail).toContain("does not need");
+    expect(finding.detail).toContain("hook edges only");
   });
 
   test("a stale marker version is a warn whose remedy is the self-heal", async () => {
@@ -2504,5 +2542,326 @@ describe("stt.whistle-model", () => {
   test("the host engine is Whistle and the model is missing: a warning naming the verb", async () => {
     const { byCheck } = await run(() => undefined, (dir) => ({ [join(dir, "stt.json")]: JSON.stringify({ provider: "whistle" }) }));
     expect(byCheck.get("stt.whistle-model")).toMatchObject({ status: "warn", remedy: "run `collie stt whistle`" });
+  });
+});
+
+// ── doctor durable ───────────────────────────────────────────────────────────
+// The rows read a REAL socket: the fixture program of `bridge/mux/durable/fixture.ts` listens on one,
+// and the privacy check and the client are the adapter's own. Only the owner case needs a stand-in
+// user id, which the section takes through its `probe` seam.
+
+// Socket only: every row here reads a Unix socket. Windows has no socket transport (WIRE.md section 1A),
+// and `cli/durable-findings.test.ts` covers its rows with a fake platform.
+describe.skipIf(SOCKET_ONLY_SKIP)("doctor durable", () => {
+  const started: FakeDurableProgram[] = [];
+  const scratch: string[] = [];
+  afterEach(async () => {
+    for (const program of started.splice(0)) await program.close();
+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function startFake(): Promise<FakeDurableProgram> {
+    const made = await FakeDurableProgram.start();
+    started.push(made);
+    return made;
+  }
+  const onDurable = (socket: string | undefined) => ({ COLLIE_MUX: "durable", COLLIE_DURABLE_SOCKET: socket });
+  const durableRows = (run: JsonRun): [string, string][] =>
+    run.raw.filter((f) => f.check.startsWith("durable-")).map((f) => [f.check, f.status]);
+
+  test("a ready program in range gives four ok rows, skips the two https rows, and the mux line defers to them", async () => {
+    const fake = await startFake();
+    const run = await findings(harness(null, [], { env: onDurable(fake.socketPath) }));
+    expect(durableRows(run)).toEqual([
+      ["durable-env", "ok"],
+      ["durable-socket", "ok"],
+      ["durable-url", "skipped"],
+      ["durable-token", "skipped"],
+      ["durable-hello", "ok"],
+      ["durable-ready", "ok"],
+      ["durable-lead", "skipped"],
+    ]);
+    expect(run.byCheck.get("durable-env")!.detail).toContain("transport: private socket");
+    expect(run.byCheck.get("durable-url")!.detail).toContain("this peer uses the socket");
+    expect(run.byCheck.get("durable-hello")!.detail).toContain("speaks 1..1");
+    expect(run.byCheck.get("mux")).toMatchObject({ status: "ok", detail: "durable, see the durable-* lines · set by COLLIE_MUX" });
+    expect(run.byCheck.get("beacon-hooks-claude")!.status).toBe("ok");
+    expect(fake.requests.every((r) => r.path === "/session/v1/hello")).toBe(true);
+  });
+
+  test("a mux other than durable gets no durable rows", async () => {
+    const run = await findings(harness(null, [], { env: { COLLIE_MUX: "herdr", COLLIE_DURABLE_SOCKET: "/tmp/x.sock" } }));
+    expect(durableRows(run)).toEqual([]);
+  });
+
+  test("an unset or relative variable fails the env row, names the variable and skips the rest", async () => {
+    for (const value of [undefined, "", "relative.sock"]) {
+      const run = await findings(harness(null, [], { env: onDurable(value) }));
+      expect(durableRows(run)).toEqual([
+        ["durable-env", "error"],
+        ["durable-socket", "skipped"],
+        ["durable-url", "skipped"],
+        ["durable-token", "skipped"],
+        ["durable-hello", "skipped"],
+        ["durable-ready", "skipped"],
+        ["durable-lead", "skipped"],
+      ]);
+      const row = run.byCheck.get("durable-env")!;
+      expect(row.detail).toContain("COLLIE_DURABLE_SOCKET");
+      expect(row.remedy).toContain("COLLIE_DURABLE_SOCKET");
+      expect(run.code).toBe(EXIT.FAIL);
+    }
+  });
+
+  test("a path with nothing at it fails the socket row and says the program is not running", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "doctor-durable-"));
+    scratch.push(dir);
+    const run = await findings(harness(null, [], { env: onDurable(join(dir, "none.sock")) }));
+    const row = run.byCheck.get("durable-socket")!;
+    expect(row.status).toBe("error");
+    expect(row.detail).toContain("nothing is at");
+    expect(row.remedy).toContain("start the durable agent");
+    expect(run.byCheck.get("durable-hello")!.status).toBe("skipped");
+  });
+
+  test("a regular file is refused as not a socket", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "doctor-durable-"));
+    scratch.push(dir);
+    const file = join(dir, "plain.sock");
+    writeFileSync(file, "", { mode: 0o600 });
+    const run = await findings(harness(null, [], { env: onDurable(file) }));
+    expect(run.byCheck.get("durable-socket")!.detail).toContain("is not a socket");
+  });
+
+  test("a socket open to the group is refused with its mode and the fix", async () => {
+    const fake = await startFake();
+    chmodSync(fake.socketPath, 0o660);
+    const run = await findings(harness(null, [], { env: onDurable(fake.socketPath) }));
+    const row = run.byCheck.get("durable-socket")!;
+    expect(row.status).toBe("error");
+    expect(row.detail).toContain("mode 0660");
+    expect(row.detail).toContain("must be 0600");
+    expect(row.remedy).toContain("chmod 600");
+    expect(run.byCheck.get("durable-hello")!.status).toBe("skipped");
+    expect(fake.requests).toEqual([]);
+  });
+
+  test("a socket owned by another user is refused and never dialled", async () => {
+    const fake = await startFake();
+    const probe: SocketProbe = { lstat: SYSTEM_PROBE.lstat, uid: () => (SYSTEM_PROBE.uid() ?? 0) + 1 };
+    const rows = await durableFindings({ ctx: context(onDurable(fake.socketPath)), probe });
+    const row = rows.find((f) => f.check === "durable-socket")!;
+    expect(row.status).toBe("error");
+    // The walk meets the socket's own folder first, and that folder is not the other user's either.
+    expect(row.detail).toContain("belongs to user");
+    expect(rows.find((f) => f.check === "durable-hello")!.status).toBe("skipped");
+    expect(fake.requests).toEqual([]);
+  });
+
+  test("a program that is down behind a stale socket fails the hello row with the reason", async () => {
+    const fake = await startFake();
+    fake.override = () => new Response("nope", { status: 500 });
+    const run = await findings(harness(null, [], { env: onDurable(fake.socketPath) }));
+    const row = run.byCheck.get("durable-hello")!;
+    expect(row.status).toBe("error");
+    expect(row.detail).toContain("status 500");
+    expect(run.byCheck.get("durable-ready")!.status).toBe("skipped");
+  });
+
+  test("a socket that answers without the durable service name fails the hello row as the wrong program", async () => {
+    const fake = await startFake();
+    fake.hello.service = undefined;
+    const run = await findings(harness(null, [], { env: onDurable(fake.socketPath) }));
+    const row = run.byCheck.get("durable-hello")!;
+    expect(row.status).toBe("error");
+    expect(row.detail).toContain("not a durable agent");
+    expect(row.remedy).toContain("COLLIE_DURABLE_SOCKET");
+    expect(run.byCheck.get("durable-ready")!.status).toBe("skipped");
+  });
+
+  test("a program whose range does not overlap fails the hello row with both ranges", async () => {
+    const fake = await startFake();
+    fake.range = { min: 2, max: 3 };
+    fake.override = (path) =>
+      path === "/session/v1/hello" ? Response.json({ ...fake.hello, protocol: { min: 2, max: 3 }, epoch: fake.epoch, ready: true }) : undefined;
+    const run = await findings(harness(null, [], { env: onDurable(fake.socketPath) }));
+    const row = run.byCheck.get("durable-hello")!;
+    expect(row.status).toBe("error");
+    expect(row.detail).toContain("the durable agent speaks 2..3, this Collie speaks 1..1");
+    expect(run.byCheck.get("durable-socket")!.status).toBe("ok");
+    expect(run.byCheck.get("durable-ready")!.status).toBe("skipped");
+  });
+
+  test("a program that asks for a token, or sends an unreadable hello, fails the hello row", async () => {
+    const fake = await startFake();
+    fake.asksForToken = true;
+    let run = await findings(harness(null, [], { env: onDurable(fake.socketPath) }));
+    expect(run.byCheck.get("durable-hello")!.detail).toContain("asks for a token");
+    fake.asksForToken = false;
+    fake.override = (path) => (path === "/session/v1/hello" ? new Response("not json", { status: 200 }) : undefined);
+    run = await findings(harness(null, [], { env: onDurable(fake.socketPath) }));
+    expect(run.byCheck.get("durable-hello")!.detail).toContain("unreadable");
+  });
+
+  test("a program that is not ready yet is a warning on the ready row, not a failure", async () => {
+    const fake = await startFake();
+    fake.ready = false;
+    const run = await findings(harness(null, [], { env: onDurable(fake.socketPath) }));
+    expect(durableRows(run)).toEqual([
+      ["durable-env", "ok"],
+      ["durable-socket", "ok"],
+      ["durable-url", "skipped"],
+      ["durable-token", "skipped"],
+      ["durable-hello", "ok"],
+      ["durable-ready", "warn"],
+      ["durable-lead", "skipped"],
+    ]);
+    expect(run.byCheck.get("durable-ready")!.remedy).toContain("collie doctor");
+    expect(run.code).toBe(EXIT.OK);
+  });
+});
+
+// ── the surface table (M56 spec 09) ──────────────────────────────────────────
+// A summary line and one line per harness and version, read from the bridge's day files over the last
+// seven days. A read: doctor writes nothing. With no counters there is no line at all, so a fresh
+// install reads exactly as it did.
+
+describe("doctor: the surface table (M56 spec 09)", () => {
+  const dayFile = (daysAgo: number): string => `${STATE}/surface/counters-${new Date(T0 - daysAgo * 86_400_000).toISOString().slice(0, 10)}.json`;
+  const day = (daysAgo: number, rows: Row[]): [string, string] => [
+    dayFile(daysAgo),
+    JSON.stringify({ date: new Date(T0 - daysAgo * 86_400_000).toISOString().slice(0, 10), rows: Object.fromEntries(rows.map((r, i) => [`k${String(i)}`, r])), unknownFrames: {}, manualAt: {} }),
+  ];
+  interface Row {
+    harness: string;
+    version: string;
+    profileId: string;
+    status: string;
+    free: number;
+    unknown: Record<string, number>;
+    modal: Record<string, number>;
+    refused: Record<string, number>;
+    probed: number;
+    manual: number;
+    sent: number;
+    effective: number;
+    unknown_outcome: number;
+    discarded: number;
+    held?: number;
+    held_sent?: number;
+    held_expired?: number;
+    held_cancelled?: number;
+  }
+  const row = (over: Partial<Row> = {}): Row => ({
+    harness: "agent",
+    version: "2.1.301",
+    profileId: "agent",
+    status: "provisional",
+    free: 100,
+    unknown: { "no-match": 6, "weak-cue": 2 },
+    modal: { permission: 3 },
+    refused: { not_free: 4 },
+    probed: 5,
+    manual: 1,
+    sent: 9,
+    effective: 0,
+    unknown_outcome: 1,
+    discarded: 1,
+    ...over,
+  });
+  const run = async (entries: [string, string][]) => findings(harness(null, [], { files: { ...healthyFiles(), ...Object.fromEntries(entries) } }));
+
+  test("surface: a host with no counters has no surface line at all", async () => {
+    const { raw } = await findings(harness(null));
+    expect(raw.filter((f) => f.check.startsWith("surface"))).toEqual([]);
+  });
+
+  test("surface: prints a summary and one line per harness and version, adding the last seven days", async () => {
+    const { byCheck, code } = await run([day(0, [row()]), day(3, [row({ free: 50, manual: 2 })]), day(10, [row({ free: 9999 })])]);
+    expect(code).toBe(0);
+    const summary = byCheck.get("surface")!;
+    expect(summary.status).toBe("ok");
+    expect(summary.detail).toContain("free 150 · unknown 16 · manual 3");
+    expect(summary.detail).toContain(join(STATE, "surface", "examples"));
+    expect(summary.detail).toContain(join(STATE, "surface", "inbox.jsonl"));
+    expect(summary.detail).toContain("3 day files");
+    const line = byCheck.get("surface-agent-2.1.301")!;
+    // 8 refusals against 18 sends is above the refusal rate, so the line warns (2026-10-17).
+    expect(line.status).toBe("warn");
+    expect(line.remedy).toContain("8 sends refused by the reader against 18 that went out on agent 2.1.301, most of them not_free (8)");
+    expect(line.detail).toBe(
+      "2.1.301 provisional · free 150 · unknown 16 (no-match 12, weak-cue 4) · modal 6 (permission 6) · refused 8 (not_free 8) · probed 10 · manual 3 · sent 18 · effective 0 · unknown-outcome 2 · typed-not-submitted 0 · discarded 2",
+    );
+  });
+
+  test("surface: a row that held sends (M56 spec 15) names the four held counts after discarded; one that held none reads as before", async () => {
+    const { byCheck } = await run([day(0, [row({ held: 3, held_sent: 1, held_expired: 1, held_cancelled: 1 }), row({ version: "2.1.302" })])]);
+    expect(byCheck.get("surface-agent-2.1.301")!.detail).toEndWith("discarded 1 · held 3 · held-sent 1 · held-expired 1 · held-cancelled 1");
+    expect(byCheck.get("surface-agent-2.1.302")!.detail).toEndWith("discarded 1");
+  });
+
+  test("surface: another version of the same harness is its own line", async () => {
+    const { raw } = await run([day(0, [row(), row({ version: "2.1.302" })])]);
+    expect(raw.filter((f) => f.check.startsWith("surface-")).map((f) => f.check)).toEqual(["surface-agent-2.1.301", "surface-agent-2.1.302"]);
+  });
+
+  test("surface: a person typing past an unreadable screen as often as the cap is a warning that names the inbox, and never an error", async () => {
+    const { byCheck, code } = await run([day(0, [row({ manual: 5 })])]);
+    const line = byCheck.get("surface-agent-2.1.301")!;
+    expect(line.status).toBe("warn");
+    expect(line.remedy).toContain(join(STATE, "surface", "inbox.jsonl"));
+    expect(code).toBe(0);
+  });
+
+  test("surface: refusals above 0.3 per send that went out, over at least 10 sends, warn and name the top reason", async () => {
+    // 2026-10-17: the field case, seven not_free refusals against a handful of sends.
+    const { byCheck, code } = await run([day(0, [row({ manual: 0, sent: 8, effective: 2, refused: { not_free: 3, probe_failed: 1, draft_present: 5 } })])]);
+    const line = byCheck.get("surface-agent-2.1.301")!;
+    expect(line.status).toBe("warn");
+    expect(line.remedy).toContain("4 sends refused by the reader against 10 that went out on agent 2.1.301, most of them not_free (3)");
+    expect(line.remedy).toContain(join(STATE, "surface", "examples"));
+    expect(code).toBe(0);
+  });
+
+  test("surface: the refusal warning needs both the rate and the ten sends", async () => {
+    const atRate = await run([day(0, [row({ manual: 0, sent: 10, effective: 0, refused: { not_free: 3 } })])]);
+    expect(atRate.byCheck.get("surface-agent-2.1.301")!.status).toBe("ok");
+    const fewSends = await run([day(0, [row({ manual: 0, sent: 5, effective: 4, refused: { not_free: 9 } })])]);
+    expect(fewSends.byCheck.get("surface-agent-2.1.301")!.status).toBe("ok");
+    // Seven days add up: two days of 5 sends and 2 refusals each pass both limits together.
+    const twoDays = await run([day(0, [row({ manual: 0, sent: 5, refused: { bound: 2 } })]), day(2, [row({ manual: 0, sent: 5, refused: { bound: 2 } })])]);
+    expect(twoDays.byCheck.get("surface-agent-2.1.301")!.remedy).toContain("most of them bound (4)");
+  });
+
+  test("surface: only the reader's refusals count toward the warning, never the person's or the pane's", async () => {
+    const theirs = { draft_present: 4, unconfirmed: 3, stale_surface: 2, busy: 2, id_reused: 1, pane_gone: 1, turn_running: 5 };
+    const quiet = await run([day(0, [row({ manual: 0, sent: 10, refused: { ...theirs, not_free: 3 } })])]);
+    expect(quiet.byCheck.get("surface-agent-2.1.301")!.status).toBe("ok");
+    const loud = await run([day(0, [row({ manual: 0, sent: 10, refused: { ...theirs, bound: 2, probe_failed: 2 } })])]);
+    expect(loud.byCheck.get("surface-agent-2.1.301")!.remedy).toContain("4 sends refused by the reader against 10");
+    expect(loud.byCheck.get("surface-agent-2.1.301")!.remedy).not.toContain("turn_running");
+  });
+
+  test("surface: a row with both warnings carries both remedies", async () => {
+    const { byCheck } = await run([day(0, [row({ manual: 5, sent: 10, refused: { not_free: 6 } })])]);
+    const line = byCheck.get("surface-agent-2.1.301")!;
+    expect(line.status).toBe("warn");
+    expect(line.remedy).toContain(join(STATE, "surface", "inbox.jsonl"));
+    expect(line.remedy).toContain("most of them not_free (6)");
+  });
+
+  test("surface: the plain output carries the table and a torn file is skipped", async () => {
+    const h = harness(null, [], { files: { ...healthyFiles(), ...Object.fromEntries([day(0, [row()])]), [dayFile(1)]: "{ torn" } });
+    await cmdDoctor(h.deps, []);
+    const out = h.io.stdout.join("\n");
+    expect(out).toMatch(/✓\s+surface\s+last 7 days: free 100 · unknown 8 · manual 1/u);
+    expect(out).toMatch(/surface-agent-2\.1\.301\s+2\.1\.301 provisional · free 100/u);
+  });
+
+  test("surface: doctor writes nothing while it reads the counters", async () => {
+    const h = harness(null, [], { files: { ...healthyFiles(), ...Object.fromEntries([day(0, [row()])]) } });
+    const before = JSON.stringify([...h.files.entries.entries()]);
+    await cmdDoctor(h.deps, ["--json"]);
+    expect(JSON.stringify([...h.files.entries.entries()])).toBe(before);
   });
 });

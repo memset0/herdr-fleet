@@ -1,7 +1,7 @@
 import type { JsonValue } from "../json.ts";
 import type { SnapshotView } from "../sessions.ts";
 import { parsePeerMachineStats } from "../machine-parse.ts";
-import type { MachineSample, MuxConfig, SnapshotResponse } from "../types.ts";
+import type { MachineSample, MuxConfig, SessionCard, SnapshotResponse } from "../types.ts";
 import { forwardToPeer, type ForwardDeps, type ForwardTransport } from "./forward.ts";
 import {
   mergeSnapshot,
@@ -210,7 +210,9 @@ export interface CrewLeadDeps {
    */
   readonly hello?: (
     link: CrewLink,
-  ) => Promise<PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null }>>;
+  ) => Promise<
+    PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null; readonly sessions?: readonly SessionCard[] | null; readonly surfaceVersion?: number }>
+  >;
   /** This collie's member id and label — the `servers[0]` entry (§9.2). */
   readonly self: { readonly id: string; readonly name: string };
   /**
@@ -370,6 +372,14 @@ export class CrewLead {
    */
   private readonly muxBlocks = new Map<string, MuxConfig>();
   /**
+   * What each member said about its sessions on its last hello (M55), assigned like {@link muxBlocks}.
+   * Present only for a member that runs a durable program; a member without an entry answers every
+   * `&session=` with its block.
+   */
+  private readonly sessionCards = new Map<string, readonly SessionCard[]>();
+  /** The Surface reader version each member sent on its last hello (M56 spec 09), assigned like {@link muxBlocks}. */
+  private readonly surfaceVersions = new Map<string, number>();
+  /**
    * Members whose CURRENT link has already answered a hello, so their block is as fresh as the link.
    *
    * The sweep dials `snapshot`, not `hello`, so without this the lead would only ever learn a block
@@ -380,6 +390,17 @@ export class CrewLead {
    * past one.
    */
   private readonly muxAsked = new Set<string>();
+  /**
+   * The release each member's last sweep answer named, so a change between two sweeps can be seen.
+   *
+   * A member's hello is asked once per link ({@link muxAsked}), and a member that updates restarts so
+   * fast that no sweep may fail in between. Its old hello then stayed the lead's whole answer: on
+   * 2026-10-17 a lead restarted at 1.22.1 while its member still ran 1.21.3, the member followed 28 s
+   * later, and the lead kept "no Surface reader" and refused every text to it until the lead itself
+   * restarted. A changed version forgets the hello, so the same sweep asks once more, and a member
+   * that rolled back is learned the same way.
+   */
+  private readonly sweptVersions = new Map<string, string>();
   /**
    * The state each member's last journal line named. A line is written when this string changes and
    * never otherwise, so the sweep's 1.5 s cadence cannot turn a down peer into a stream.
@@ -465,6 +486,9 @@ export class CrewLead {
         // A member that left takes its declaration with it, so nothing can answer `?host=` for a
         // machine this lead no longer knows.
         this.muxBlocks.delete(id);
+        this.sessionCards.delete(id);
+        this.surfaceVersions.delete(id);
+        this.sweptVersions.delete(id);
         this.muxAsked.delete(id);
         this.loggedState.delete(id);
         this.contactResets.delete(id);
@@ -538,6 +562,10 @@ export class CrewLead {
         // goes through the same seam the verdict probe uses, so it arms no timer (§10.1) and at most
         // one hello per member is ever in flight. Any other outcome forgets the answer instead, so
         // the next return re-asks rather than serving a block from before the link dropped.
+        // A member that now names another release than its last sweep did has restarted on it, and
+        // its hello may say something else (its reader version above all). Forget the old one, so the
+        // line below asks once. The next sweep names the same release and asks nothing.
+        if (seen !== null) this.noteSweptVersion(memberId, seen);
         if (outcome.ok) this.learnCapabilities(link);
         else this.muxAsked.delete(memberId);
         // §18.10: this member follows somebody else. Handed straight over — a lead that has been
@@ -905,7 +933,9 @@ export class CrewLead {
         // M22/03: ASSIGNED, never merged. Whatever this hello said about that member's multiplexer
         // is now the whole answer for it, and a hello that said nothing drops the entry — which
         // reads as "use the lead's", not as "every capability present". See {@link muxBlocks}.
-        if (outcome.ok) this.setCapabilities(link.memberId, outcome.value.mux ?? null);
+        if (outcome.ok) this.setCapabilities(link.memberId, outcome.value.mux ?? null, outcome.value.sessions ?? null);
+        // M56 spec 09: ASSIGNED too. A member that stops sending the field has no reader version here.
+        if (outcome.ok) this.setSurfaceVersion(link.memberId, outcome.value.surfaceVersion ?? null);
       }
     } catch (err) {
       // Defensive, exactly as `sweep` is: failure is a value everywhere in the crew client, so a
@@ -925,11 +955,51 @@ export class CrewLead {
     this.probe(link);
   }
 
+  /** Bank the release one sweep answer named, and forget the member's hello when it changed. See {@link sweptVersions}. */
+  private noteSweptVersion(memberId: string, version: string): void {
+    const before = this.sweptVersions.get(memberId);
+    this.sweptVersions.set(memberId, version);
+    if (before === undefined || before === version) return;
+    this.muxAsked.delete(memberId);
+    this.log(`[crew] ${memberId}: now runs ${version} (was ${before}), asking its hello again`);
+  }
+
+  /** Record the Surface reader version one hello carried, or drop the entry when it carried none. */
+  private setSurfaceVersion(memberId: string, version: number | null): void {
+    if (version === null) this.surfaceVersions.delete(memberId);
+    else this.surfaceVersions.set(memberId, version);
+  }
+
+  /** The Surface reader version a member sent on its last hello, or `null` (M56 spec 09). It dials nobody. */
+  surfaceVersionFor(memberId: string): number | null {
+    return this.surfaceVersions.get(memberId) ?? null;
+  }
+
   /** Record one hello's whole answer about a member's multiplexer. See {@link muxBlocks}. */
-  private setCapabilities(memberId: string, block: MuxConfig | null): void {
+  private setCapabilities(memberId: string, block: MuxConfig | null, cards: readonly SessionCard[] | null = null): void {
     this.muxAsked.add(memberId);
     if (block === null) this.muxBlocks.delete(memberId);
     else this.muxBlocks.set(memberId, block);
+    if (cards === null) this.sessionCards.delete(memberId);
+    else this.sessionCards.set(memberId, cards);
+  }
+
+  /**
+   * One member session's block, built from the card that member sent (M55), or `null` when it sent no
+   * card by that name. The route then answers with the member's block, which is its primary's. A card
+   * carries the capability answers and the multiplexer's name; the key spellings and the notes are the
+   * member block's when the card's multiplexer is the block's own, and empty otherwise.
+   */
+  sessionMuxFor(memberId: string, session: string): MuxConfig | null {
+    const card = this.sessionCards.get(memberId)?.find((c) => c.name === session);
+    if (card === undefined) return null;
+    const block = this.muxBlocks.get(memberId);
+    const same = block !== undefined && block.name === card.mux;
+    // SAFETY: `caps` was read key by key as booleans (peer-client.ts `parseSessionCards`), and the
+    // nominal key type is the capability names THIS build knows, for the reason `parseMuxReport` keeps
+    // a newer member's extra key.
+    const capabilities = { ...card.caps } as MuxConfig["capabilities"];
+    return { name: card.mux, capabilities, unsupportedKeys: same ? [...block.unsupportedKeys] : [], notes: same ? { ...block.notes } : {} };
   }
 
   /**
@@ -974,6 +1044,9 @@ export class CrewLead {
       link: resolved.link,
       state: resolved.state,
       transport: this.deps.proxy,
+      // What this member's last hello said about its Surface reader: `null` for an older build, which
+      // makes the forward refuse a text reply instead of letting that build type it blind.
+      surfaceVersion: this.surfaceVersionFor(resolved.link.memberId),
       // This lead's own cap, for §13's refuse-before-forward. The peer enforces its own on arrival.
       maxUploadBytes: this.deps.maxUploadBytes,
       // Every landed forward refreshes this member's receipt, so a watched peer's freshness tracks

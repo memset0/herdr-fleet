@@ -45,6 +45,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseAnsi } from "../ansi";
+import { displayWidth } from "../text-width";
 import { lineText, splitLines, type Block, type MultiSelectModel, type StyledLine } from "../blocks";
 import type { HarnessAdapter } from "./types";
 import {
@@ -59,7 +60,11 @@ import { WALK_GAPS, WALK_PAIRS, walkGroupKey } from "./walk-pairs";
 // The bridge's own verifier, imported so the phone's `styledSignature` is checked against what the
 // bridge really computes from the same bytes (a web test may import the bridge's pure modules; the
 // bridge imports web/src/lib/styled-region.ts the other way, and neither pulls a cycle).
-import { verifyExpectedStyled } from "../../../../bridge/prompt-binding.ts";
+import { verifyExpectedStyled, verifyPromptBinding } from "../../../../bridge/prompt-binding.ts";
+import { cropRawColumns, type ColumnRange } from "../column-range";
+import { trailingTaskChecklistStart } from "../task-checklist";
+import { findInputFrame, plainRows } from "../surface/frame";
+import { loadProfiles } from "../surface/profile";
 import {
   DIALOG_CONTRACT,
   dialogComparators,
@@ -87,8 +92,12 @@ import {
 // sits one level ABOVE the per-detector tests, so it's two ".."s to src, not three.
 const PANES_DIR = join(import.meta.dirname, "..", "..", "fixtures", "panes");
 
+function loadRaw(name: string): string {
+  return readFileSync(join(PANES_DIR, name), "utf8");
+}
+
 function loadLines(name: string): StyledLine[] {
-  return splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8")));
+  return splitLines(parseAnsi(loadRaw(name)));
 }
 
 // A single unstyled visual line — the minimum an AnsiSegment needs (no colour flags). Used to
@@ -97,11 +106,12 @@ function textLine(text: string): StyledLine {
   return { segments: [{ text, style: {}, muted: false }] };
 }
 
-// `DEFAULT_PROMPT_TAIL_LINES` in bridge/prompt-binding.ts, plus the two steps of the matcher this
-// suite has to reproduce to check an adapter against it. Mirrored rather than imported: nothing in
-// web/ imports bridge code (wire types are mirrored the same way). Both sides work on ALREADY-parsed
-// text here, so the bridge's SGR strip has nothing left to do — what remains is its rstrip and its
-// "blank rows are not rows" rule, which is the counting the tail window is expressed in.
+// `DEFAULT_PROMPT_TAIL_LINES` in bridge/prompt-binding.ts, plus the steps of its matcher this suite
+// has to reproduce to count the rows under a match: the normalisation, the last match, and the two
+// cuts at the end of the read (`rowsBelowMatch`). Mirrored rather than imported: the bridge's matcher
+// answers a verdict, not a count. Both sides work on ALREADY-parsed text here, so the bridge's SGR
+// strip has nothing left to do — what remains is its rstrip and its "blank rows are not rows" rule,
+// which is the counting the tail window is expressed in.
 const BRIDGE_PROMPT_TAIL_LINES = 6;
 
 function normalizeRegion(text: string): string[] {
@@ -124,6 +134,40 @@ function lastMatchEnd(fresh: string[], expected: string[]): number {
   return end;
 }
 
+/** The normalized index of the first row of the footer run a profile names under an input box
+ *  (`Frame.volatile.named`), as the bridge finds it: only profiles that declare
+ *  `idle.volatile.below.footerRows` are asked, the first whose frame names one decides, or null. */
+function namedFooterStart(rows: readonly string[]): number | null {
+  for (const profile of loadProfiles().values()) {
+    if (profile.idle.volatile.below.footerRows === undefined) continue;
+    const first = findInputFrame(plainRows(rows), profile.idle)?.volatile.named[0];
+    if (first === undefined) continue;
+    return rows.slice(0, first.row).filter((row) => row.replace(/\s+$/, "").length > 0).length;
+  }
+  return null;
+}
+
+/**
+ * The non-blank rows the bridge counts below the last match of `expected` in a read of `rows`, or null
+ * when the read does not hold it (bridge/prompt-binding.ts `matchText`). A task checklist that ends the
+ * read is not counted. Nor is the footer run a profile names under its box, cut only when the read
+ * would be refused `not_in_tail` without the cut, the uncut count kept when the cut leaves the match
+ * unfound or still out of the tail. A generic footer (`Frame.volatile.footer`) is never cut.
+ */
+function rowsBelowMatch(rows: readonly string[], expected: string[]): number | null {
+  const read = normalizeRegion(rows.join("\n"));
+  const end = trailingTaskChecklistStart(read) ?? read.length;
+  const matchEnd = lastMatchEnd(read.slice(0, end), expected);
+  if (matchEnd === -1) return null;
+  const below = end - 1 - matchEnd;
+  if (below < BRIDGE_PROMPT_TAIL_LINES) return below;
+  const footer = namedFooterStart(rows);
+  if (footer === null || footer >= end) return below;
+  const aboveFooter = lastMatchEnd(read.slice(0, footer), expected);
+  if (aboveFooter === -1 || footer - 1 - aboveFooter >= BRIDGE_PROMPT_TAIL_LINES) return below;
+  return footer - 1 - aboveFooter;
+}
+
 // A couple of lines of ordinary agent output to append below a dialog. They must be NON-blank (a
 // trailing blank run is trimmed off the tail by every detector, which would re-expose the footer)
 // and must not themselves look like a menu footer or option row — so appending them makes the
@@ -144,6 +188,11 @@ function lastNonBlank(lines: StyledLine[]): number {
   let i = lines.length - 1;
   while (i >= 0 && lines[i]!.segments.map((s) => s.text).join("").trim() === "") i--;
   return i < 0 ? lines.length : i;
+}
+
+/** Whether a block is a menu lifted off a notice above a live box (`MenuModel.liveBox`). */
+function isNoticeMenu(block: Block): boolean {
+  return block.kind === "menu" && block.menu.liveBox !== undefined;
 }
 
 /** The signatures of every menu block in a build — the race guard's freshness token, in order. */
@@ -176,12 +225,45 @@ function modelsIn<K extends DialogKind>(blocks: Block[], kind: K): DialogModels[
   });
 }
 
-/** Append a marker to line `i`, keeping every existing segment (and its styling — the wizard's
- *  current chip is marked ONLY by a background colour, so a re-synthesised plain line would change
- *  more than the text). */
-function perturbLine(lines: StyledLine[], i: number): StyledLine[] {
+/** Change one letter of line `i` that lies inside `columns`, keeping its width and every style. A model
+ *  read from a column range (`bindColumns`) ignores what lies outside it, so the marker
+ *  {@link perturbLine} appends at the row's end would land beside the dialog, not in it. Null when
+ *  the row has no ASCII letter in range. */
+function perturbLineInColumns(lines: StyledLine[], i: number, columns: ColumnRange): StyledLine[] | null {
+  let column = 0;
+  const segments = lines[i]!.segments;
+  for (let s = 0; s < segments.length; s++) {
+    const chars = Array.from(segments[s]!.text);
+    for (let c = 0; c < chars.length; c++) {
+      if (column >= columns.start && column < columns.end && /[a-z]/.test(chars[c]!)) {
+        chars[c] = chars[c] === "q" ? "x" : "q";
+        const copy = [...lines];
+        copy[i] = { ...lines[i]!, segments: segments.with(s, { ...segments[s]!, text: chars.join("") }) };
+        return copy;
+      }
+      column += displayWidth(chars[c]!);
+    }
+  }
+  return null;
+}
+
+/** Change visible text without discarding style-only dialog identity. The in-text probe keeps
+ * fixed-width borders intact when appending outside the box would invalidate the grammar. */
+function perturbLine(lines: StyledLine[], i: number, withinText: boolean): StyledLine[] {
+  const segments = [...lines[i]!.segments];
+  if (withinText) {
+    const at = segments.findLastIndex((segment) => /[\p{L}\p{N}]/u.test(segment.text));
+    if (at < 0) return lines;
+    const segment = segments[at]!;
+    segments[at] = {
+      ...segment,
+      text: segment.text.replace(/[\p{L}\p{N}]/u, (char) => char === "z" ? "x" : "z"),
+    };
+  } else {
+    segments.push({ text: " zqx", style: {}, muted: false });
+  }
   const copy = [...lines];
-  copy[i] = { segments: [...lines[i]!.segments, { text: " zqx", style: {}, muted: false }] };
+  copy[i] = { segments };
   return copy;
 }
 
@@ -218,7 +300,9 @@ function perturbRegion<K extends DialogKind>(
   const start = lines.length - region.lines.length; // the region is the buffer's tail slice
   const footer = lastNonBlank(lines);
   const signature = DIALOG_CONTRACT[kind].signature;
-  const before = signature(modelsIn(blocks, kind).at(-1)!);
+  const tapped = modelsIn(blocks, kind).at(-1)!;
+  const before = signature(tapped);
+  const columns = dialogComparators(kind).columns?.(tapped);
 
   const candidates = [
     ...range(start, lines.length), // the region itself, top-down
@@ -227,9 +311,14 @@ function perturbRegion<K extends DialogKind>(
   for (const i of candidates) {
     if (i === footer) continue;
     if (lineIsBlank(lines[i]!)) continue;
-    const after = modelsIn(adapter.buildBlocks(perturbLine(lines, i)), kind);
-    if (after.length !== count) continue; // this row is load-bearing for detection — try another
-    if (signature(after.at(-1)!) !== before) return after.at(-1)!;
+    for (const withinText of [false, true]) {
+      const perturbed =
+        columns === undefined ? perturbLine(lines, i, withinText) : perturbLineInColumns(lines, i, columns);
+      if (perturbed === null) continue;
+      const after = modelsIn(adapter.buildBlocks(perturbed), kind);
+      if (after.length !== count) continue; // this row is load-bearing for detection — try another
+      if (signature(after.at(-1)!) !== before) return after.at(-1)!;
+    }
   }
   return null;
 }
@@ -569,7 +658,30 @@ export function describeAdapterConformance(
       for (const name of ownFixtures) {
         it(`${name}: does NOT lift once ordinary output scrolls below it`, () => {
           const scrolled = [...loadLines(name), ...trailingOutput()];
-          expect(interactiveBlocks(adapter.buildBlocks(scrolled))).toEqual([]);
+          // A notice card (`MenuModel.liveBox`, ADR 0109) is exempt here. It lifts only with the live
+          // input box under it, whose status rows cannot be told from output walked as status rows. Its
+          // binding region runs through the box's bottom edge, so the bridge binds the tap only while
+          // that box still stands inside its tail window: the leg below holds both halves of that.
+          expect(interactiveBlocks(adapter.buildBlocks(scrolled)).filter((b) => !isNoticeMenu(b))).toEqual([]);
+        });
+      }
+
+      for (const name of ownFixtures.filter((fixture) => adapter.buildBlocks(loadLines(fixture)).some(isNoticeMenu))) {
+        it(`${name}: a notice card binds only while its box stands in the bridge's tail window`, () => {
+          // A notice card that still lifts under scrolled output names a region the bridge finds inside
+          // its window (bridge/prompt-binding.ts), box and all.
+          const scrolled = [...loadLines(name), ...trailingOutput()];
+          for (const block of adapter.buildBlocks(scrolled).filter(isNoticeMenu)) {
+            if (block.kind !== "menu") continue;
+            // Counted as the bridge counts them: a named footer run under the box is not (`rowsBelowMatch`).
+            const below = rowsBelowMatch(scrolled.map(lineText), normalizeRegion(block.menu.signature));
+            expect(below).not.toBeNull();
+            expect(below!).toBeLessThan(BRIDGE_PROMPT_TAIL_LINES);
+          }
+          // Output enough to push the box out of that window: the bridge would refuse the region, so no
+          // card lifts at all.
+          const buried = [...loadLines(name), ...Array.from({ length: BRIDGE_PROMPT_TAIL_LINES }, () => trailingOutput()).flat()];
+          expect(interactiveBlocks(adapter.buildBlocks(buried))).toEqual([]);
         });
       }
     });
@@ -579,10 +691,46 @@ export function describeAdapterConformance(
     // honest about it. What is pinned here is what a menu block PROMISES the renderer and the race
     // guard — not how any one harness finds it.
     describe("menu blocks (the generic modal contract)", () => {
+      // A menu lifted off a notice ABOVE a live box (`MenuModel.liveBox`, ADR 0109) is held to its own
+      // contract below: its keys are digits its key row printed, and the box stays the composer's.
       const menuFixtures = ownFixtures.filter((name) =>
-        adapter.buildBlocks(loadLines(name)).some((b) => b.kind === "menu"),
+        adapter.buildBlocks(loadLines(name)).some((b) => b.kind === "menu" && !isNoticeMenu(b)),
       );
+      const noticeFixtures = ownFixtures.filter((name) => adapter.buildBlocks(loadLines(name)).some(isNoticeMenu));
       if (menuFixtures.length === 0) it.todo("adapter lifts no menu blocks from its own fixtures");
+
+      for (const name of noticeFixtures) {
+        // .adr/0009 still holds: no key is synthesised. Each is one digit the notice's own key row
+        // printed as `<digit>:` (the last row of the block), in the printed order. The row is parsed
+        // here on its own terms, not the reader's: every keyed item, a letter or a digit after a space,
+        // the row's start or a separator glyph, so a letter key the reader dropped shows.
+        it(`${name}: a notice card's keys are the digits its key row printed`, () => {
+          for (const block of adapter.buildBlocks(loadLines(name))) {
+            if (block.kind !== "menu" || block.menu.liveBox === undefined) continue;
+            const keyRow = lineText(block.lines.at(-1)!);
+            const printed = [...keyRow.matchAll(/(?:^|[\s|│·•])([A-Za-z0-9])[:)]/gu)].map((m) => m[1]!);
+            expect(printed.every((key) => /^\d$/u.test(key)), `${name}: a key row with a letter key lifted a card`).toBe(true);
+            expect(block.menu.actions.map((a) => a.keys)).toEqual(printed.map((key) => [key]));
+            expect(block.menu.nav).toEqual({ upDown: false });
+          }
+        });
+
+        it(`${name}: composerReady is true under a notice card (the box keeps the keys)`, () => {
+          if (!adapter.composerReady) return;
+          expect(adapter.composerReady(loadLines(name))).toBe(true);
+        });
+
+        // A row between the key row and the box breaks the notice's exact shape: no interactive block
+        // lifts at all, and the screen falls back to what it was without the reader.
+        it(`${name}: a splice that breaks the notice lifts no card`, () => {
+          const lines = loadLines(name);
+          const block = adapter.buildBlocks(lines).find(isNoticeMenu)!;
+          const keyRow = lines.indexOf(block.lines.at(-1)!);
+          const perturbed = [...lines];
+          perturbed.splice(keyRow + 1, 0, textLine("  ○ Something else entirely"));
+          expect(interactiveBlocks(adapter.buildBlocks(perturbed))).toEqual([]);
+        });
+      }
 
       for (const name of menuFixtures) {
         // .adr/0009 at the CI edge: a synthesised digit is a VALID Herdr key, so the key-grammar leg
@@ -682,17 +830,37 @@ export function describeAdapterConformance(
             // tap on a screen that never moved — Muse's checkbox shipped exactly that (question →
             // Submit left 6 rows below the match) until a live toggle caught it. Same normalisation
             // as the composerPrompt leg above: trailing whitespace off, blanks dropped.
-            const lines = loadLines(name);
-            const fresh = normalizeRegion(lines.map(lineText).join("\n"));
+            const whole = loadLines(name).map(lineText);
             for (const model of modelsOf(adapter, name, kind)) {
+              // A model read from a column range is matched, as the bridge matches it, against the
+              // read cut to that range (lib/column-range.ts).
+              const columns = contract.columns?.(model);
+              const read =
+                columns === undefined ? whole : splitLines(parseAnsi(cropRawColumns(loadRaw(name), columns))).map(lineText);
+              // Nor, as the bridge does not, is a task checklist that ends the read counted against the
+              // tail (lib/task-checklist.ts), nor a named footer run under the box the region ends above
+              // (`rowsBelowMatch`, cut only where the uncut read would be refused).
               const expected = normalizeRegion(contract.region(model));
-              const matchEnd = lastMatchEnd(fresh, expected);
-              expect(matchEnd, `${name}: the ${kind} region is not on its own screen`).toBeGreaterThan(-1);
+              const below = rowsBelowMatch(read, expected);
+              expect(below, `${name}: the ${kind} region is not on its own screen`).not.toBeNull();
               expect(
-                fresh.length - 1 - matchEnd,
-                `${name}: ${fresh.length - 1 - matchEnd} non-blank rows sit below the ${kind} region — ` +
+                below!,
+                `${name}: ${String(below)} non-blank rows sit below the ${kind} region — ` +
                   `the bridge can only bind within the last ${BRIDGE_PROMPT_TAIL_LINES}`,
               ).toBeLessThan(BRIDGE_PROMPT_TAIL_LINES);
+            }
+          });
+
+          // A model that names a column range (`bindColumns`) binds to what the bridge's own verifier
+          // finds in the raw capture after cutting it to that range: the phone's crop and the
+          // bridge's must agree cell for cell.
+          it(`${name}: a ${kind} column range binds to its own raw capture through the bridge's verifier`, () => {
+            for (const model of modelsOf(adapter, name, kind)) {
+              const columns = contract.columns?.(model);
+              if (columns === undefined) continue;
+              expect(verifyPromptBinding(loadRaw(name), contract.region(model), contract.styled?.(model), columns)).toEqual(
+                contract.styled?.(model) === undefined ? { ok: true } : { ok: true, styled: "checked" },
+              );
             }
           });
 

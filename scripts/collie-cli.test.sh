@@ -550,7 +550,7 @@ firstrun HERDR_SOCKET_PATH="${F_HOME}/absent.sock" "$BIN" start \
   && fail "\`collie start\` came up with no multiplexer to mirror"
 assert_contains "$STDERR" "no COLLIE_MUX is set"
 assert_contains "$STDERR" "no multiplexers are running"
-assert_contains "$STDERR" "COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start"
+assert_contains "$STDERR" "COLLIE_MUX=<durable|herdr|tern|tmux|tuios|zellij> collie start"
 [ -f "${F_CONFIG}/.env" ] && fail "a refused start still wrote a config"
 
 # Exactly one found, and no terminal to ask at: auto-selected, said out loud, and written down.
@@ -2485,11 +2485,14 @@ assert_contains "$STDERR" "is a symlink"
 assert_eq "$(cat "$SETTINGS_ELSEWHERE")" "{}"
 rm -f "$CLAUDE_SETTINGS"
 
-# An unknown harness is a usage error, and writes nothing.
+# An unknown harness is a usage error, and writes nothing. Codex was the example here until M56
+# spec 13 gave it an emitter, so the name is now one no harness will ever take.
 rc=0
-beacon_env hooks install codex || rc=$?
+beacon_env hooks install not-a-harness || rc=$?
 assert_eq "$rc" "2"
+assert_contains "$STDERR" "usage: collie hooks install"
 [ ! -e "$CLAUDE_SETTINGS" ] || fail "a usage error still wrote a settings file"
+[ ! -e "${BEACON_HOME}/.codex" ] || fail "a usage error still wrote a Codex config"
 
 # ── The emitter ──────────────────────────────────────────────────────────────
 # Outside a multiplexer: nothing at all, and exit 0.

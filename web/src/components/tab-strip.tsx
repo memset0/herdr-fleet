@@ -18,7 +18,7 @@ import { hostKey } from "@/lib/hosts";
 import { tabCellTitle, type TabTitle } from "@/lib/pane-name";
 import { statusLabel } from "@/lib/types";
 import type { AgentView, TabView } from "@/lib/types";
-import { useMuxCapability } from "@/lib/mux-capability";
+import { useMuxCapability, useMuxDeclared } from "@/lib/mux-capability";
 import type { Scope } from "@/lib/scope";
 import { t as translate } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -33,6 +33,13 @@ interface TabStripProps {
   selected: string | null;
   onSelect: (tabId: string | null) => void;
   onNewTab: (workspaceId: string) => void;
+  /**
+   * Where the "+" goes on a machine that makes no tab by hand but offers its program's starters (a
+   * durable program, M51 spec 08): the New page for that machine. Drawn instead of `onNewTab` only
+   * when the machine declares no `createTab` and does declare `starters`. Absent: the "+" hides as
+   * it always did.
+   */
+  onNewStarters?: () => void;
   /** True while this Space's own "+" create is in flight — disables the button and swaps its icon
    *  for a spinner, so a second tap during the round trip is refused rather than silently ignored
    *  (the hook already ignores it; this is the feedback that stops the operator tapping twice). */
@@ -125,6 +132,7 @@ export function TabStrip({
   selected,
   onSelect,
   onNewTab,
+  onNewStarters,
   creatingTab = false,
   allowAll = true,
   scope,
@@ -138,6 +146,7 @@ export function TabStrip({
   const [sheetTab, setSheetTab] = useState<TabView | null>(null);
   // Asked of the machine these tabs live on (M22/03); absent scope is the lead, as everywhere.
   const newTab = useMuxCapability("createTab", scope);
+  const startersOpen = useMuxDeclared("starters", scope) && onNewStarters !== undefined;
   // Actions need both callbacks wired (revalidate on rename, fall back on close); without them the
   // tabs stay plain tap-to-switch — long-press is inert.
   const actionsEnabled = !!onRenamed && !!onClosed;
@@ -237,7 +246,7 @@ export function TabStrip({
               open a tab, the way they arrive needing to know where their agent's history went. Every
               adapter shipped today declares `createTab`, so this hides on none of them — it asks
               anyway, because the alternative is a fourth adapter discovering the answer by 500ing. */}
-          {newTab.capable && (
+          {(newTab.capable || startersOpen) && (
             // 28px drawn, 30x44 hit. 28 and not the old 32 because the row is 30 now: the circle
             // must sit inside it. The hit is TAB_ROW_SQUARE_TAP_TARGET's: the row's own 30px, and
             // 8px out on each side, where it is last in the row and the scroller's 12px gap keeps it
@@ -247,7 +256,7 @@ export function TabStrip({
               reach={TAB_ROW_SQUARE_TAP_TARGET}
               label={translate("space.tabStrip.new.aria")}
               busy={creatingTab}
-              onClick={() => onNewTab(workspaceId)}
+              onClick={() => (newTab.capable ? onNewTab(workspaceId) : onNewStarters?.())}
             />
           )}
         </div>
@@ -367,7 +376,7 @@ function Tab({
         // the open tab's border is the only box any cell draws.
       )}
     >
-      {status === "ready" && <UnseenMark size="sm" />}
+      {status === "ready" && <UnseenMark className="size-2.5" />}
       {status && status !== "ready" && (
         <>
           {/* A hollow resting dot is filled with the surface it sits ON, and every tab, open or
@@ -375,9 +384,9 @@ function Tab({
           <StatusDot
             status={TRIAGE_STATUS[status]}
             surface="bg-chrome"
-            className="size-1.5"
+            className="size-2.5"
           />
-          {/* The dot is colour-only; say it in words for screen readers. */}
+          {/* The mark is a shape and a colour; say it in words for screen readers. */}
           <span className="sr-only">{statusLabel(TRIAGE_STATUS[status])}</span>
         </>
       )}

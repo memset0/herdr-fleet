@@ -28,7 +28,7 @@ import {
   segmentClassName,
   segmentStyle,
 } from "@/components/mirror-space";
-import { renderCells } from "@/components/painted-cells";
+import { renderCells, renderWideCells } from "@/components/painted-cells";
 import { AuthedImageCard } from "@/components/authed-image-card";
 import { findMatches, splitSegment, type FindMatch } from "@/lib/find";
 import { findLinks, type LinkMatch } from "@/lib/links";
@@ -442,14 +442,16 @@ export const AnsiOutput = memo(function AnsiOutput({
   // span per painted run, with no style object (components/painted-cells.tsx).
   let offset = 0;
   let currentAssigned = false;
+  // Fixed-column rows use two-cell glyphs; wrapping prose keeps its natural advances.
+  let paintCells = renderCells;
 
   // A run of plain text at global offset `start` → nodes, with find matches split out and
   // highlighted. `currentAssigned` refs only the first slice of the focused match (a match can span
   // segments on a colour change) so scrollIntoView targets one stable node.
   const renderFind = (run: string, start: number): ReactNode => {
-    if (matches.length === 0) return renderCells(run);
+    if (matches.length === 0) return paintCells(run);
     return splitSegment(run, start, matches).map((p, j) => {
-      if (p.matchIndex === null) return <Fragment key={j}>{renderCells(p.text)}</Fragment>;
+      if (p.matchIndex === null) return <Fragment key={j}>{paintCells(p.text)}</Fragment>;
       const isCurrent = p.matchIndex === currentMatch;
       const attach = isCurrent && !currentAssigned;
       if (attach) currentAssigned = true;
@@ -482,7 +484,7 @@ export const AnsiOutput = memo(function AnsiOutput({
               : "bg-yellow-400/30",
           )}
         >
-          {renderCells(p.text)}
+          {paintCells(p.text)}
         </span>
       );
     });
@@ -540,6 +542,7 @@ export const AnsiOutput = memo(function AnsiOutput({
   // untouched: a detected table owns its own rows, and nothing beyond them.
   const renderLine = (line: StyledLine, li: number, lead: boolean, inRun: boolean): ReactNode => {
     if (li > 0) offset += 1; // the "\n" separating this line from the previous
+    paintCells = inRun || !wrap ? renderWideCells : renderCells;
     const segNodes = line.segments.map((s, si) => {
       const segStart = offset;
       offset += s.text.length;

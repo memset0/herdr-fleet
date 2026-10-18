@@ -103,6 +103,9 @@ The config file groups every setting under a `[section]`. The environment name o
 | `standby` | the deputy's second door: port, bind address, arming |
 | `update` | where releases come from, how many versions stay, a GitHub token for the release check |
 | `serve` | whether Collie publishes the front door, on what, and under which path (`base_path`) |
+
+The durable agents one Collie runs beside its multiplexer are not in `config.toml`. Each is one entry in
+`sources.json`, in the same folder as `.env` ([Durable agents](durable-agents.md#attach-a-durable-agent)).
 | `stt` | speech-to-text, absent until `collie stt setup` runs |
 
 To read history from multiple agent home directories, provide a comma-separated list in
@@ -348,8 +351,9 @@ label = "Top"                # optional; defaults to the first word of command
 ```
 
 Where the row opens depends on where you start it, not on the row. From the **New page** (Shell,
-then the row in the Command select), Start creates a new Space named after the row. From a **pane** — the switcher sheet you reach by
-swiping up — a tap opens a new **tab in that pane's own Space**, beside it.
+then the row in the Command select), Start creates a new Space named after its folder, and the
+row's label names the tab. From a **pane** — the switcher sheet you reach by
+swiping up — a tap opens a new **tab in that pane's own Space**, beside it, named after the row.
 
 Either way the bridge types the `command` into the fresh shell and sends Enter. The command owns
 its own lifetime: one that closes itself takes the Space or tab with it, and `htop` stays until you
@@ -462,6 +466,35 @@ every add, rename and removal.
 > once before it first starts that row, and shows the command, the folder and the machine. Set
 > `adds = false` to turn off every phone-added row on a machine.
 
+### Reaching a durable agent (experimental)
+
+Each durable agent a Collie runs beside its terminal is one entry in `sources.json`, written by
+`collie durable attach` ([Durable agents](durable-agents.md#attach-a-durable-agent)). The first three
+variables below are the older form, for a durable-only instance (`COLLIE_MUX=durable`) that drives
+one durable agent, named `default`. Set the socket, or the URL with its token, never both.
+
+| variable | example | what it means |
+| --- | --- | --- |
+| `COLLIE_DURABLE_SOCKET` | `/run/user/1000/durable/session.sock` | the durable agent's private Unix socket on this machine. Absolute, at most 103 bytes, mode `0600` |
+| `COLLIE_DURABLE_URL` | `https://durable-member.example.com` | the address of a durable agent you deployed behind TLS. `https://` only, or `http://127.0.0.1:<port>` for a durable agent on this machine. At most 2048 bytes, no query |
+| `COLLIE_DURABLE_TOKEN` | `your-32-byte-random-token-here` | the bearer token sent with every request to the URL. At least 32 bytes. A file holding it must be mode 600, and Collie never prints it |
+| `COLLIE_PROGRAMS` | `off` | the kill switch for durable agents. The bridge ignores `sources.json`, logs one line and registers no durable agent, so the phone shows no Durable agents section. `collie doctor` and `collie durable list` say durable agents are off. Unset it, then `collie restart`, to bring them back. It does not turn off the env form above |
+
+Both set, a URL without a token, or a token without a URL is a config error: the instance starts
+and shows the durable agent as unreachable with that reason. Over https every poll is a billed request,
+so Collie polls every 2 s while a phone watches and every 10 s otherwise.
+[Durable agents](durable-agents.md#two-ways-to-reach-a-durable-agent) says what each way keeps out, and what
+it does not.
+
+### Starters from a durable agent (experimental)
+
+A durable agent lists its starters on the New page that you open from it, under
+**New conversation**. A starter is a named way to begin a conversation, such as a code review. It
+takes no text: you tap it, and the durable agent decides what to start. The new conversation opens as a
+pane. A tap repeated with the same request id opens the same conversation and starts nothing new,
+and if the durable agent does not answer, **Try again** sends the same request id. A durable agent that cannot
+be reached lists no starters. This is experimental and may change in any minor release.
+
 ### One-off commands and their history
 
 A phone can also run a command that is not a launcher, once. Collie opens a shell in the folder you
@@ -506,8 +539,9 @@ typed.
 ## Your own typefaces
 
 The interface font is a per-device setting. Under **Settings → Appearance → Typeface**, you can choose between
-System, Space Grotesk (the default), and Aldrich. You can add custom fonts in `theme.toml`, the
-fourth configuration file:
+System, Space Grotesk, Aldrich (the default), IBM Plex Sans, Geist and Atkinson Hyperlegible Next. A
+[theme](themes.md) that names a face writes it here once, when you pick the theme. You can add custom fonts in
+`theme.toml`, the fourth configuration file:
 
 ```bash
 cp theme.toml.example ~/.config/collie/theme.toml
@@ -527,7 +561,7 @@ Custom fonts append to the built-in list rather than replacing it
 `commands.toml` and the other configuration files. Because fonts do not trigger actions, there is
 nothing to shadow.
 
-They appear below the three default entries, and each client device selects its own.
+They appear below the shipped entries, and each client device selects its own.
 
 Three behaviors to note:
 
@@ -742,14 +776,16 @@ By default, one Collie instance serves every Herdr session it finds.
 
 `COLLIE_MULTI_SESSION=on` (the default) discovers and serves every named Herdr session under your
 config root, switchable from the header. Setting `COLLIE_MULTI_SESSION=off` serves only the primary
-session. Every discovered session is accessible through the same URL, including private or sandbox
+Herdr session. Every discovered Herdr session is accessible through the same URL, including private or sandbox
 sessions. [Security](security.md) lists this behavior as a sharp edge.
 
 ## Dark mode / light mode
 
 > **Note.** Collie follows your phone's appearance by default.
 
-To pin it, open **Settings → Appearance → Theme** and pick **System**, **Light** or **Dark**. The setting is
+To pin it, open **Settings → Appearance**, find the **Appearance** card under the **Theme** card, and pick
+**System**, **Light** or **Dark**. The [Theme](themes.md) card picks the colours; this card picks the light or
+the dark half of them. The setting is
 stored **per device** in the browser rather than on the bridge. Your phone can remain on Dark while
 a laptop tracks the OS. The preference persists across reloads and PWA reinstalls on the same
 device.
@@ -822,6 +858,12 @@ cannot work this out.
 | Herdr | The matching Herdr integration for that agent, installed once with `herdr integration install <agent>` (for example `claude`, `codex`, `opencode`, `pi`, `omp`, `grok`, `hermes`), then restart the agent | Every agent that has an integration and a session log Collie reads |
 | tmux, zellij, Tern (experimental) | Collie's [beacon hooks](multiplexers.md#agent-beacons-optional-linux) | Claude Code only, after `collie hooks install claude` |
 | tuios | The tuios daemon | The agents the daemon reports |
+
+OpenClaw needs no Herdr integration for Chat. Herdr does not pass an OpenClaw session on, so Collie
+reads the session name off the footer of `openclaw tui` (`agent main (main) | session work | …`) and
+opens that agent's session database under `$OPENCLAW_STATE_DIR`, or `~/.openclaw`, read-only. Set
+`openclaw_root` when the state folder is somewhere else. The pane must report itself to Herdr as
+agent `openclaw`. Collie never reads OpenClaw's config file or its gateway token.
 
 `herdr integration status` shows which integrations are installed. A hook is read when the agent
 starts, so an agent that was already running when you installed it needs a restart. Oh My Pi is the

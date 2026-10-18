@@ -15,6 +15,8 @@ import { fetchPane, sendKeys } from "./api";
 import { parseAnsi } from "./ansi";
 import { splitLines } from "./blocks";
 import { dialogDetector, sendBoundKeys, sendGuardedKeys } from "./dialog-guard";
+import { buildBlocks } from "./harness";
+import { DIALOG_CONTRACT, dialogModelOf, type DialogKind, type DialogModels } from "./harness/dialog-contract";
 import { submitPromptOption } from "./prompt-action";
 
 const mockFetchPane = vi.mocked(fetchPane);
@@ -112,6 +114,83 @@ describe("the guard refuses when the fresh screen isn't the tapped dialog", () =
       p.options[0]!.keys,
     );
 
+    expect(res).toEqual({ status: "changed" });
+    expect(mockSendKeys).not.toHaveBeenCalled();
+  });
+});
+
+// Claude Code 2.1.296 draws a closing rule with the session name under some dialogs in a renamed
+// session (claude/closing-rule.ts). The phone renders and the guard re-derives through the same
+// adapter entry point, so both read the same rows: the model the user tapped and the model the guard
+// derives from the fresh read are one dialog, and the region the first write is bound to is the text
+// the bridge finds in the raw read, one row above its end.
+describe("a dialog in a named session is tapped, guarded and bound like an unnamed one", () => {
+  const NAMED: [DialogKind, string][] = [
+    ["prompt-select", "claude-lab--ask-single-named-v2296--w82.txt"],
+    ["multi-select", "claude-lab--ask-multi-named-v2296--w82.txt"],
+    ["wizard", "claude-lab--ask-wizard-named-v2296--w82.txt"],
+    ["wizard", "claude-lab--ask-wizard-review-named-v2296--w82.txt"],
+    ["menu", "claude-lab--menu-config-panel-named-v2296--w82.txt"],
+    ["prompt-select", "claude-lab--menu-resume-picker-named-v2296--w82.txt"],
+  ];
+
+  /** The phone's model: what `buildBlocks` renders from this read, taken the way the card does. */
+  function rendered<K extends DialogKind>(kind: K, text: string): DialogModels[K] | null {
+    const blocks = buildBlocks(lines(text), { agent: "claude" });
+    for (const block of blocks.toReversed()) {
+      const model = dialogModelOf(block, kind);
+      if (model !== null) return model;
+    }
+    return null;
+  }
+
+  /** Whether the guard's commits comparator calls the fresh model the tapped one, and the region the
+   *  first write is bound to. Generic in the kind, so the contract row keeps its own model type. */
+  function guardVerdict<K extends DialogKind>(kind: K, name: string) {
+    const text = fixture(name);
+    const phone = rendered(kind, text);
+    const fresh = dialogDetector(kind, "claude")(lines(text));
+    expect(phone, "the phone lifts the dialog").not.toBeNull();
+    expect(fresh, "the guard re-derives it").not.toBeNull();
+    const row = DIALOG_CONTRACT[kind];
+    return {
+      same: row.commits(phone!, fresh!),
+      sameRegion: row.region(phone!) === row.region(fresh!),
+    };
+  }
+
+  it.each(NAMED)("%s: %s re-derives to the model the phone rendered", (kind, name) => {
+    expect(guardVerdict(kind, name)).toEqual({ same: true, sameRegion: true });
+  });
+
+  it.each(NAMED)("%s: %s has the model of the same screen without the rule", (kind, name) => {
+    const text = fixture(name);
+    // The screen an unnamed session shows: the same bytes minus the final row.
+    const unnamed = text.slice(0, text.lastIndexOf("\n"));
+    expect(rendered(kind, text)).toEqual(rendered(kind, unnamed));
+  });
+
+  it("sends a bound tap on a named wizard step: the region is the signature, no rule in it", async () => {
+    const text = fixture("claude-lab--ask-wizard-named-v2296--w82.txt");
+    pane(text);
+    const model = rendered("wizard", text)!;
+    const res = await sendGuardedKeys(
+      { paneId: "w1:p1", requestedLines: 200, detectedRevision: 0, agent: "claude", kind: "wizard", model },
+      ["1"],
+    );
+    expect(res).toEqual({ status: "sent" });
+    expect(mockSendKeys).toHaveBeenCalledWith("w1:p1", ["1"], undefined, model.signature);
+    expect(model.signature).not.toContain("capture lab");
+    expect(model.signature.split("\n").some((row: string) => row.includes("capture lab"))).toBe(false);
+  });
+
+  it("refuses the tap when the named screen has moved on to a different step", async () => {
+    pane(fixture("claude-lab--ask-wizard-review-named-v2296--w82.txt"));
+    const model = rendered("wizard", fixture("claude-lab--ask-wizard-named-v2296--w82.txt"))!;
+    const res = await sendGuardedKeys(
+      { paneId: "w1:p1", requestedLines: 200, detectedRevision: 0, agent: "claude", kind: "wizard", model },
+      ["1"],
+    );
     expect(res).toEqual({ status: "changed" });
     expect(mockSendKeys).not.toHaveBeenCalled();
   });

@@ -1,11 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { render } from "@testing-library/react";
 
 import { type AgentStatus } from "@/lib/types";
-import { StatusDot, StatusWord } from "./status-badge";
+import { StatusBadge, StatusDot, StatusWord } from "./status-badge";
+
+const indexCss = readFileSync(join(import.meta.dirname, "..", "index.css"), "utf8");
 
 // Exhaustive BY CONSTRUCTION: a `Record<AgentStatus, …>` object literal is complete-checked by tsc,
 // so adding a sixth status to lib/types.ts fails the typecheck here rather than quietly leaving one
-// state untested. Same trick the component's own DOT/RING/WORD maps use.
+// state untested. Same trick the component's own TONE/WORD maps use.
 const ALL_STATUSES = {
   idle: true,
   working: true,
@@ -48,30 +53,128 @@ describe("StatusDot — the glyph", () => {
     expect(hidden?.getAttribute("aria-label")).toBeNull();
   });
 
-  it("stops breathing and dims when the reading is frozen, and does both again in reverse", () => {
-    // A "working" dot breathes (a slow opacity fade, `.status-breathe`) ONLY when the caller opts in
-    // with `live` — the pane chip and the pane header's agent badge, the two spots where the operator
-    // is actually watching one pane. While the connection is not live that breathe is a lie twice
-    // over: the reading is the LAST snapshot's, and an animation is the one thing on a page that says
-    // "this is arriving now". So stale removes the breathe AND dims, together — dimming one mark of a
+  it("draws a different SHAPE for every status, so the state reads without its colour (issue 420)", () => {
+    // The silhouette is the contract: five states, five different drawings. What each drawing is
+    // made of is read off the SVG itself, not off a class, because a class is exactly what colour
+    // blindness cannot see. Two statuses sharing a signature would be the regression.
+    const signature = (status: AgentStatus) => {
+      const svg = render(<StatusDot status={status} />).container.querySelector("svg");
+      expect(svg).not.toBeNull();
+      return [...(svg?.children ?? [])]
+        .map((el) => `${el.tagName}[${el.getAttribute("d") ?? ""}|${el.getAttribute("fill")}|${el.getAttribute("stroke-dasharray") ?? ""}]`)
+        .join(" ");
+    };
+    const signatures = STATUSES.map(signature);
+    expect(new Set(signatures).size).toBe(STATUSES.length);
+
+    // Needs you is a filled triangle, point up: three corners, apex above the base, its own colour
+    // as the fill AND as a round-joined stroke that makes it as heavy as the disc beside it.
+    const triangle = render(<StatusDot status="blocked" />).container.querySelector("path");
+    expect(triangle?.getAttribute("d")).toBe("M6 1.3 L11 10.5 H1 Z");
+    expect(triangle?.getAttribute("fill")).toBe("currentColor");
+    expect(triangle?.getAttribute("stroke")).toBe("currentColor");
+    expect(triangle?.getAttribute("stroke-width")).toBe("1.8");
+    expect(triangle?.getAttribute("stroke-linejoin")).toBe("round");
+
+    // Working has its LEFT half filled, inside a ring. Done is a filled disc. Idle is a hollow ring.
+    // Unknown is the same ring DASHED, so the two resting states stay apart.
+    const working = render(<StatusDot status="working" />).container.querySelector("svg");
+    expect(working?.querySelector("circle")?.getAttribute("fill")).toBe("none");
+    expect(working?.querySelector("path")?.getAttribute("d")).toBe("M6 1.5 A4.5 4.5 0 0 0 6 10.5 Z");
+    expect(render(<StatusDot status="done" />).container.querySelector("circle")?.getAttribute("fill")).toBe(
+      "currentColor",
+    );
+    const idle = render(<StatusDot status="idle" />).container.querySelector("circle");
+    expect(idle?.getAttribute("fill")).toBe("none");
+    expect(idle?.getAttribute("stroke-dasharray")).toBeNull();
+    const unknown = render(<StatusDot status="unknown" />).container.querySelector("circle");
+    expect(unknown?.getAttribute("fill")).toBe("none");
+    expect(unknown?.getAttribute("stroke-dasharray")).not.toBeNull();
+  });
+
+  it("keeps each status in its own --status-* token, and draws every shape in the same 12px box", () => {
+    for (const status of STATUSES) {
+      const { container } = render(<StatusDot status={status} />);
+      const dot = container.firstElementChild;
+      expect(dot?.className).toContain(`text-status-${status}`);
+      expect(dot?.className).toContain("size-3");
+      expect(container.querySelector("svg")?.getAttribute("viewBox")).toBe("0 0 12 12");
+    }
+  });
+
+  it("fills a resting ring with the surface it sits on, and no filled shape needs one", () => {
+    for (const status of ["idle", "unknown"] as const) {
+      const { container } = render(<StatusDot status={status} surface="bg-card" />);
+      expect(container.querySelector(".bg-card")).not.toBeNull();
+    }
+    for (const status of ["blocked", "working", "done"] as const) {
+      const { container } = render(<StatusDot status={status} surface="bg-card" />);
+      expect(container.querySelector(".bg-card")).toBeNull();
+    }
+  });
+
+  // The pane header's badge sits on the agent's tile: unbacked, the tile showed through the working
+  // mark's empty half and around the triangle (2026-10-14).
+  it("backs every shape with its surface when asked, and only the resting rings when not", () => {
+    for (const status of STATUSES) {
+      const { container } = render(<StatusDot status={status} surface="bg-card" backed />);
+      expect(container.querySelector(".bg-card")).not.toBeNull();
+    }
+  });
+
+  it("turns the working mark and dims when the reading is frozen, and does both again in reverse", () => {
+    // A "working" mark turns (rotation only, `.status-turn`) ONLY when the caller opts in with
+    // `live` — the pane chip, the spot where the operator is actually watching one pane. While the connection is not live that turn is a lie twice over:
+    // the reading is the LAST snapshot's, and an animation is the one thing on a page that says
+    // "this is arriving now". So stale removes the turn AND dims, together — dimming one mark of a
     // pair and animating the other would leave a frozen reading looking half live.
     const live = render(<StatusDot status="working" live />);
-    expect(live.container.querySelector(".status-breathe")).not.toBeNull();
+    expect(live.container.querySelector("svg.status-turn")).not.toBeNull();
     expect(live.container.firstElementChild?.className).not.toContain("opacity-40");
 
     const frozen = render(<StatusDot status="working" live stale />);
-    expect(frozen.container.querySelector(".status-breathe")).toBeNull();
+    expect(frozen.container.querySelector(".status-turn")).toBeNull();
     expect(frozen.container.firstElementChild?.className).toContain("opacity-40");
   });
 
-  it("stays a solid, still dot everywhere `live` isn't passed, e.g. the tab chip", () => {
+  it("turns nothing but the working mark, even when `live` is passed to the others", () => {
+    for (const status of STATUSES.filter((s) => s !== "working")) {
+      expect(render(<StatusDot status={status} live />).container.querySelector(".status-turn")).toBeNull();
+    }
+  });
+
+  it("stays still everywhere `live` isn't passed, e.g. the tab chip", () => {
     // Most call sites (tab-strip.tsx, space-strip.tsx, ui/chip.tsx, agent-card.tsx,
     // space-overview.tsx, strips-summary.tsx) never pass `live`. A pane mounts several of these at
-    // once; if each one breathed on its own unsynchronized clock the page would blink. Only the ONE
-    // dot the operator is watching a pane through animates.
+    // once; if each one turned on its own unsynchronized clock the page would blink. Only the ONE
+    // mark the operator is watching a pane through animates.
     const notLive = render(<StatusDot status="working" />);
-    expect(notLive.container.querySelector(".status-breathe")).toBeNull();
+    expect(notLive.container.querySelector(".status-turn")).toBeNull();
     expect(notLive.container.querySelector(".animate-ping")).toBeNull();
+    expect(notLive.container.querySelector(".status-breathe")).toBeNull();
+  });
+
+  it("defines the turn as a linear 1.8s rotation and nothing else, and stops it under reduced motion", () => {
+    // jsdom does not apply index.css, so the rule is read from the source: one keyframe, rotate only
+    // (no opacity, no scale), `linear`, 1.8s a turn, and `animation: none` in the reduced-motion
+    // query. The opacity breathe it replaced is gone.
+    const rule = /\.status-turn\s*\{\s*animation:\s*status-turn\s+1\.8s\s+linear\s+infinite;\s*\}/.exec(indexCss);
+    expect(rule).not.toBeNull();
+    const frames = /@keyframes status-turn\s*\{([^@]*?\})\s*\}/.exec(indexCss)?.[1] ?? "";
+    expect(frames).toContain("transform: rotate(360deg)");
+    expect(frames).not.toMatch(/opacity|scale/);
+    expect(indexCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.status-turn\s*\{\s*animation:\s*none;\s*\}\s*\}/,
+    );
+    expect(indexCss).not.toContain("status-breathe");
+  });
+});
+
+describe("StatusBadge — the chip's mark", () => {
+  it("draws the same shape the dot does, beside the word", () => {
+    const { container } = render(<StatusBadge status="blocked" />);
+    expect(container.querySelector("path")?.getAttribute("d")).toBe("M6 1.3 L11 10.5 H1 Z");
+    expect(container.querySelector(".status-turn")).toBeNull();
   });
 });
 

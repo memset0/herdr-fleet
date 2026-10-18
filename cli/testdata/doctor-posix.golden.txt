@@ -15,7 +15,7 @@ local:
   ✓        front-door            laptop.tail.ts.net:443 → http://127.0.0.1:8787 (recorded and live)
   ✓        pairing               1 device(s) paired
   ✓        mux                   herdr — see herdr-socket · no COLLIE_MUX, so `start` picks it: a Herdr socket at /home/pat/.config/herdr/herdr.sock
-  ✓        beacon-hooks-claude   v1 in 1 settings file, running `/opt/collie/bin/collie`, which herdr does not need — it reports agents itself
+  ✓        beacon-hooks-claude   v1 in 1 settings file, running `/opt/collie/bin/collie`; herdr names agents itself and does not need them for that, so they give hook edges only
   skipped: beacons               no agent has written one yet — the emitter is installed, and a beacon appears at an agent's first hook event → start (or prompt) an agent in a pane and re-run `collie doctor`
   ✓        herdr-version         herdr 0.9.3
   ✓        integration-claude    installed and current
@@ -23,12 +23,13 @@ local:
   ✓        integration-grok      installed and current
   skipped: integration-hermes    this Herdr build does not list hermes — Collie can read its journal, Herdr has no hook for it → upgrade Herdr (`herdr --version` names this build), or read that pane's history from the agent's own log
   ✓        integration-muse      no hook — the adapter finds the session log itself
+  ✓        integration-openclaw  no hook — the adapter finds the session log itself
   ✓        integration-opencode  installed and current
   ✓        integration-pi        installed and current
   skipped: integration-omp       this Herdr build does not list omp — Collie can read its journal, Herdr has no hook for it → upgrade Herdr (`herdr --version` names this build), or read that pane's history from the agent's own log
   ✓        hook-python3          /fake/python3
   skipped: agent-sessions        the bridge reports no agent panes → start an agent in a pane, then re-run `collie doctor`
-  ✓        journal-roots         1 of 8 roots present — claude: /home/pat/.claude/projects (resolved from /home/pat; the BRIDGE resolves them from ITS OWN user's home)
+  ✓        journal-roots         1 of 9 roots present — claude: /home/pat/.claude/projects (resolved from /home/pat; the BRIDGE resolves them from ITS OWN user's home)
   ✓        cache-claims          12 cache rules and 8 reset rules, every claim carrying the page it was read on; the oldest was checked <N> days ago
   ✓        cache-rules           no /cfg/cache-rules.toml — every TTL is the shipped rule
   ✓        cache-env             no Claude Code cache variable is set in this shell
@@ -55,7 +56,7 @@ local:
   ✓        front-door            laptop.tail.ts.net:443 → http://127.0.0.1:8787 (recorded and live)
   ✓        pairing               1 device(s) paired
   ✓        mux                   herdr — see herdr-socket · no COLLIE_MUX, so `start` picks it: a Herdr socket at /home/pat/.config/herdr/herdr.sock
-  ✓        beacon-hooks-claude   v1 in 1 settings file, running `/opt/collie/bin/collie`, which herdr does not need — it reports agents itself
+  ✓        beacon-hooks-claude   v1 in 1 settings file, running `/opt/collie/bin/collie`; herdr names agents itself and does not need them for that, so they give hook edges only
   skipped: beacons               no agent has written one yet — the emitter is installed, and a beacon appears at an agent's first hook event → start (or prompt) an agent in a pane and re-run `collie doctor`
   ✓        herdr-version         herdr 0.9.3
   ✓        integration-claude    installed and current
@@ -63,12 +64,13 @@ local:
   ✓        integration-grok      installed and current
   skipped: integration-hermes    this Herdr build does not list hermes — Collie can read its journal, Herdr has no hook for it → upgrade Herdr (`herdr --version` names this build), or read that pane's history from the agent's own log
   ✓        integration-muse      no hook — the adapter finds the session log itself
+  ✓        integration-openclaw  no hook — the adapter finds the session log itself
   ✓        integration-opencode  installed and current
   ✓        integration-pi        installed and current
   skipped: integration-omp       this Herdr build does not list omp — Collie can read its journal, Herdr has no hook for it → upgrade Herdr (`herdr --version` names this build), or read that pane's history from the agent's own log
   ✓        hook-python3          /fake/python3
   skipped: agent-sessions        the bridge reports no agent panes → start an agent in a pane, then re-run `collie doctor`
-  ✓        journal-roots         1 of 8 roots present — claude: /home/pat/.claude/projects (resolved from /home/pat; the BRIDGE resolves them from ITS OWN user's home)
+  ✓        journal-roots         1 of 9 roots present — claude: /home/pat/.claude/projects (resolved from /home/pat; the BRIDGE resolves them from ITS OWN user's home)
   ✓        cache-claims          12 cache rules and 8 reset rules, every claim carrying the page it was read on; the oldest was checked <N> days ago
   ✓        cache-rules           no /cfg/cache-rules.toml — every TTL is the shipped rule
   ✓        cache-env             no Claude Code cache variable is set in this shell

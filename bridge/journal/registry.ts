@@ -12,9 +12,11 @@
 
 import { claudeJournal } from "./claude.ts";
 import { codexJournal } from "./codex.ts";
+import { durableJournal } from "./durable.ts";
 import { grokJournal } from "./grok.ts";
 import { hermesJournal } from "./hermes.ts";
 import { museJournal } from "./muse.ts";
+import { openclawJournal } from "./openclaw.ts";
 import { opencodeJournal } from "./opencode.ts";
 import { piJournal } from "./pi.ts";
 import type { JournalAdapter } from "./types.ts";
@@ -44,6 +46,15 @@ export interface JournalRoots {
   hermes: readonly string[];
   /** Muse's `sessions` directory — `YYYY/MM/DD/<uuid>/session.jsonl` lives under it. */
   muse: readonly string[];
+  /**
+   * The folder of the bridge's own pane logs for a `durable` peer (`bridge/durable/log.ts`). ABSENT
+   * for every caller that has no state dir to name, and the adapter is then not in the registry: it
+   * is not a harness, so `KNOWN_HARNESS_NAMES` (built with no roots) never lists it.
+   */
+  durable?: readonly string[];
+  /** OpenClaw's state folder (`$OPENCLAW_STATE_DIR`, `~/.openclaw`), one SQLite per agent under
+   *  `agents/<id>/agent/`. */
+  openclaw: readonly string[];
 }
 
 /**
@@ -53,7 +64,7 @@ export interface JournalRoots {
  * never drift from the adapter it points at — the same guarantee the frontend registry gives.
  */
 export function buildJournalRegistry(roots: JournalRoots): Record<string, JournalAdapter> {
-  const adapters = [
+  const adapters: JournalAdapter[] = [
     claudeJournal(roots.claude),
     codexJournal(roots.codex),
     piJournal(roots.pi),
@@ -61,7 +72,9 @@ export function buildJournalRegistry(roots: JournalRoots): Record<string, Journa
     grokJournal(roots.grok),
     hermesJournal(roots.hermes),
     museJournal(roots.muse),
+    openclawJournal(roots.openclaw),
   ];
+  if (roots.durable !== undefined) adapters.push(durableJournal(roots.durable));
   return Object.fromEntries(adapters.map((a) => [a.agent, a]));
 }
 
@@ -75,7 +88,7 @@ export function buildJournalRegistry(roots: JournalRoots): Record<string, Journa
  * COULD have a transcript (registry.test.ts fails when the two drift).
  *
  * An alias never adds an adapter, so it is absent from {@link KNOWN_HARNESS_NAMES}: that list
- * answers "which adapters does this build have", and the answer is still seven.
+ * answers "which adapters does this build have", and the answer is still eight.
  */
 export const AGENT_ALIASES = { omp: "pi" } as const;
 
@@ -115,12 +128,14 @@ export const DRAWS_IMAGES_OFF_GRID: readonly string[] = ["omp", "pi"];
  * Agents whose adapter finds the session itself when the pane names none.
  *
  * Herdr reports a session only for agents with an integration; Muse has none, so its panes never
- * carry a ref and the adapter discovers the log by cwd instead (`JournalAdapter.discover`). The
+ * carry a ref and the adapter discovers the log by cwd instead (`JournalAdapter.discover`). OpenClaw
+ * reports through a source of its own, which Herdr drops (#401), so its adapter reads the session
+ * off the pane's footer. The
  * name list exists for the one consumer that works from names alone: `collie doctor`, whose
  * history section must not advise `herdr integration install` for an agent no hook could ever
  * report. Pinned against the adapters themselves in registry.test.ts, so the two cannot drift.
  */
-export const DISCOVERS_OWN_SESSIONS: readonly string[] = ["muse"];
+export const DISCOVERS_OWN_SESSIONS: readonly string[] = ["muse", "openclaw"];
 
 /**
  * The same pairs as a Map, which is how {@link adapterFor} asks.
@@ -165,5 +180,5 @@ export function journalAgents(registry: Record<string, JournalAdapter>): string[
  * identity off a match against it — see `bridge/mux/types.ts` § `MuxPane.agent`.
  */
 export const KNOWN_HARNESS_NAMES: readonly string[] = journalAgents(
-  buildJournalRegistry({ claude: [], codex: [], pi: [], opencode: [], grok: [], hermes: [], muse: [] }),
+  buildJournalRegistry({ claude: [], codex: [], pi: [], opencode: [], grok: [], hermes: [], muse: [], openclaw: [] }),
 );
