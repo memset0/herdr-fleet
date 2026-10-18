@@ -56,8 +56,10 @@ None.
 
 ### Modified Capabilities
 
-- `fleet-harness-compat`: the Codex headless status-row exemption is removed; Codex panes are read
-  by the adopted upstream reader alone.
+- `fleet-harness-compat` is retired: its one requirement was the Codex headless status-row exemption,
+  which this adoption removes, so the capability's specification is deleted with it (OpenSpec cannot
+  archive a delta that leaves a capability with no requirement). Codex panes are read by the adopted
+  upstream reader alone.
 - `fleet-pane-chrome`: the strips' fold is Collie's own. Collie 1.21 retired the automatic fold the
   fork relied on when it withheld the manual fold control, so the tab row keeps Collie's control.
 

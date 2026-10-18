@@ -24,7 +24,7 @@
 
 ## 5. Themes, hooks, durable agents, build
 
-- [ ] 5.1 Fleet shell, fonts and density markers under the default theme unchanged and under the other themes legible
+- [x] 5.1 Fleet shell, fonts and density markers under the default theme unchanged and under the other themes legible
 - [x] 5.2 Hooks and durable agents: Fleet enables neither; record the bridge's behaviour without them
 - [x] 5.3 Main script under the service worker's precache limit; Bun floor; release drift gate against the fork's publication rule
 
@@ -32,19 +32,36 @@
 
 - [x] 6.1 Set `[upstream]` to `v1.22.6`; review every invasive entry with its verify list; record the decisions table in the design
 - [x] 6.2 Advance `reviewed = "v1.22.6"`; add the `UPSTREAM.md` row; record check-fork counts before and after
-- [ ] 6.3 Both typechecks, lint, `test:fork`, `test:fleet`, `check-private-facts`, focused suites; commit with explicit pathspecs and Unreleased lines
+- [x] 6.3 Both typechecks, lint, `test:fork`, `test:fleet`, `check-private-facts`, focused suites; commit with explicit pathspecs and Unreleased lines
 
 ## 7. Verify
 
-- [ ] 7.1 Run the full suites on the designated member; classify every failure against the 3.16.3 baseline
-- [ ] 7.2 Headless Chromium: default and Nightwatch at desktop and phone widths, dashboard, pane Chat, composer
+- [x] 7.1 Run the full suites on the designated member; classify every failure against the 3.16.3 baseline
+- [x] 7.2 Headless Chromium check of default and Nightwatch: deferred by the owner's priority on deploying; the token, font and theme suites cover the stacks, and the browser check is left to the owner
 - [x] 7.3 Real-pane Codex and Claude Code verification: withdrawn by the owner, who verifies those panes; nothing re-added
 
 ## 8. Release and level
 
-- [ ] 8.1 Read the remote's newest tag; cut `chore(release): 3.17.0`; annotated tag `v3.17.0`, pushed by name
-- [ ] 8.2 Level the lead, then each member; verify the census, the Gateway path (snapshot, a send to a throwaway shell on the lead and a member, pairing refusal); close the throwaway workspaces
+- [x] 8.1 Read the remote's newest tag; cut `chore(release): 3.17.0`; annotated tag `v3.17.0`, pushed by name
+- [x] 8.2 Level the lead, then each member; verify the census, the Gateway path (snapshot, a send to a throwaway shell on the lead and a member, pairing refusal); close the throwaway workspaces
 
 ## 9. Archive
 
-- [ ] 9.1 Sync specs, validate, archive, commit and push
+- [x] 9.1 Sync specs, validate, archive, commit and push
+
+## Phase record
+
+- 7.1 Designated member, Bun 1.4.2, at the release candidate: both typechecks, full lint, `test:fork`
+  (1003 owned / 67 invasive), version, fleet 742 / 0, cli 2242 / 0 (with an owner-only TMPDIR; a
+  group-writable TMPDIR parent fails upstream's durable doctor cases by design), scripts, crew, every
+  shell suite, bridge file by file clean except `bridge/mux/durable/client.test.ts` (one byte-cap case,
+  which fails identically on untouched `v1.22.6`), web 33652 pass / 34 expected fail with two router
+  timeouts that fail identically on untouched `v1.22.6` and one corpus case that passes on rerun; build
+  passes with the main script at 2,011,259 bytes, under the worker's 2 MiB precache limit.
+- 8.1 `chore(release): 3.17.0` is `2e15159b`, annotated tag `v3.17.0` pushed by name; no GitHub Release,
+  no upstream tag on the remote.
+- 8.2 Lead levelled from the release commit; the designated member through its node controller's
+  tagged update; the personal-computer member updated itself. The lead's census reports all three on
+  3.17.0. Through the public Gateway with a temporary session (logged out, 401 after): snapshot 200
+  across the three hosts; a send to a throwaway shell on the lead and on the designated member both
+  ended `sent` and echoed; pair and device revoke answer 403; throwaway workspaces closed.
