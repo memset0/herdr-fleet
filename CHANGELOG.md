@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.18.1] - 2026-10-19
+
+Only the lead redeploys: the change is in the web bundle.
+
 ### Fixed
 
-- **A tap on a slow pane's card waits for its repaint.** After a key to a dialog or menu card, the phone waits up to 5 s instead of 1.2 s for the pane to change, reading every 300 ms past upstream's first gaps, and stops on the first changed read.
+- **A tap on a slow pane's card waits for its repaint.** After a key to a dialog or menu card, the phone waits up to 5 s instead of 1.2 s for the pane to change, reading every 300 ms past upstream's first gaps, and stops on the first changed read. ([5192ad2a](https://github.com/memset0/herdr-fleet/commit/5192ad2a))
 
 ## [3.18.0] - 2026-10-19
 
