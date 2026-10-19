@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.18.0] - 2026-10-19
+
+Every member redeploys, the lead first: a member's Send Protocol runs the new bounds and cleanup, and the lead's forward of a member's send waits for them.
+
 ### Fixed
 
-- **A probe character that lands late is removed, never left as a draft.** The Send Protocol watches one more probe bound after a probe that did not show, Backspaces a late probe character standing alone in the box, treats a box holding only the probe character as its own debris at S0, waits several times longer at every step with a 250 ms read gap, and the phone and the lead's forward of a member's send wait past the new lock bound.
+- **A probe character that lands late is removed, never left as a draft.** The Send Protocol watches one more probe bound after a probe that did not show, Backspaces a late probe character standing alone in the box, treats a box holding only the probe character as its own debris at S0, waits several times longer at every step with a 250 ms read gap, and the phone and the lead's forward of a member's send wait past the new lock bound. ([4cbb242d](https://github.com/memset0/herdr-fleet/commit/4cbb242d))
 
 ## [3.17.0] - 2026-10-18
 
