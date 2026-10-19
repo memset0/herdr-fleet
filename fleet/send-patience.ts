@@ -23,3 +23,10 @@ const REPLY_ROUTE = /^pane\/[^/]+\/reply$/u;
 export function forwardWriteBudget(route: string, writeBudgetMs: number): number {
   return REPLY_ROUTE.test(route) ? Math.max(SEND_FORWARD_BUDGET_MS, writeBudgetMs) : writeBudgetMs;
 }
+
+/**
+ * How long the phone waits for a pane to repaint after it sent a key to a card (`settleAfterSend`,
+ * web/src/lib/harness/guard.ts). Collie's 1.2 s gives up before a slow pane repaints, and the next
+ * tap then meets a stale card; the wait still ends on the first changed read.
+ */
+export const TAP_SETTLE_DEADLINE_MS = 5_000;

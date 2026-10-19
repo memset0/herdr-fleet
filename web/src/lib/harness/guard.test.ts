@@ -112,10 +112,22 @@ describe("pollUntil — the verification budget", () => {
 });
 
 // settleAfterSend: after a key, wait until the pane text leaves what it showed at the send, or give up
-// at a short bound. Virtual time throughout: the sleep seam advances a clock and the reader answers by
+// at its bound (Fleet's, past the gaps' sum: the last gap repeats; fleet-send-patience). Virtual time throughout: the sleep seam advances a clock and the reader answers by
 // that clock, so nothing here waits for real.
 describe("settleAfterSend", () => {
-  const BOUND_MS = SETTLE_DELAYS_MS.reduce((a, b) => a + b, 0);
+  const BOUND_MS = SETTLE_DEADLINE_MS;
+  const LAST_GAP_MS = SETTLE_DELAYS_MS[SETTLE_DELAYS_MS.length - 1]!;
+  /** The gaps the loop sleeps when nothing changes: the list, then its last gap up to the bound. */
+  const allGaps = (): number[] => {
+    const gaps = [...SETTLE_DELAYS_MS];
+    let spent = gaps.reduce((a, b) => a + b, 0);
+    while (spent < BOUND_MS) {
+      const gap = Math.min(LAST_GAP_MS, BOUND_MS - spent);
+      gaps.push(gap);
+      spent += gap;
+    }
+    return gaps;
+  };
 
   /** A pane whose text turns from "before" to "after" at `changeAtMs` of virtual time. */
   function virtualPane(changeAtMs: number) {
@@ -133,11 +145,10 @@ describe("settleAfterSend", () => {
   }
 
   const settle = (pane: ReturnType<typeof virtualPane>, from: string | undefined = "before") =>
-    settleAfterSend({ paneId: "w1:p1", requestedLines: 200, from, sleep: pane.sleep, read: pane.read });
+    settleAfterSend({ paneId: "w1:p1", requestedLines: 200, from, sleep: pane.sleep, now: pane.now, read: pane.read });
 
-  it("the bound is about 1.2 s and the first read comes about 60 ms after the send", () => {
-    expect(BOUND_MS).toBeGreaterThanOrEqual(1100);
-    expect(BOUND_MS).toBeLessThanOrEqual(1300);
+  it("the bound outlasts the listed gaps and the first read comes about 60 ms after the send", () => {
+    expect(BOUND_MS).toBeGreaterThan(SETTLE_DELAYS_MS.reduce((a, b) => a + b, 0));
     expect(SETTLE_DELAYS_MS[0]).toBeGreaterThanOrEqual(50);
     expect(SETTLE_DELAYS_MS[0]).toBeLessThanOrEqual(70);
   });
@@ -157,26 +168,39 @@ describe("settleAfterSend", () => {
     expect(pane.now()).toBeLessThanOrEqual(BOUND_MS);
   });
 
-  it("gives up at its bound when nothing ever changes (2000 ms), with a bounded number of reads", async () => {
-    const pane = virtualPane(2000);
+  it("sees a repaint late in the bound within one gap", async () => {
+    const changeAt = BOUND_MS - 2 * LAST_GAP_MS;
+    const pane = virtualPane(changeAt);
+    await expect(settle(pane)).resolves.toBe(true);
+    expect(pane.now()).toBeGreaterThanOrEqual(changeAt);
+    expect(pane.now()).toBeLessThan(changeAt + LAST_GAP_MS);
+  });
+
+  it("gives up at its bound when nothing ever changes, with a bounded number of reads", async () => {
+    const pane = virtualPane(BOUND_MS + 1000);
     await expect(settle(pane)).resolves.toBe(false);
-    expect(pane.reads()).toBe(SETTLE_DELAYS_MS.length);
+    expect(pane.reads()).toBe(allGaps().length);
     expect(pane.now()).toBe(BOUND_MS);
   });
 
   it("never throws: a failing read counts as unchanged", async () => {
     const waits: number[] = [];
+    let clock = 0;
     const settled = await settleAfterSend({
       paneId: "w1:p1",
       requestedLines: 200,
       from: "before",
-      sleep: async (ms) => void waits.push(ms),
+      now: () => clock,
+      sleep: async (ms) => {
+        waits.push(ms);
+        clock += ms;
+      },
       read: async () => {
         throw new Error("bridge down");
       },
     });
     expect(settled).toBe(false);
-    expect(waits).toEqual([...SETTLE_DELAYS_MS]);
+    expect(waits).toEqual(allGaps());
   });
 
   it("returns false at the wall-clock deadline when a read never resolves until its signal aborts", async () => {
@@ -241,8 +265,8 @@ describe("settleAfterSend", () => {
     });
     expect(settled).toBe(false);
     expect(Math.max(...sleepEnds)).toBeLessThanOrEqual(SETTLE_DEADLINE_MS);
-    expect(reads).toBeLessThan(SETTLE_DELAYS_MS.length);
-    expect(reads).toBeLessThanOrEqual(3);
+    // Each read costs 500 ms on top of its gap, so the deadline caps the count.
+    expect(reads).toBeLessThanOrEqual(Math.ceil(SETTLE_DEADLINE_MS / 500));
     expect(t).toBeLessThanOrEqual(SETTLE_DEADLINE_MS + 500);
     expect(maxInFlight).toBe(1);
   });

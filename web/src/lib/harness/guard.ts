@@ -14,6 +14,7 @@ import { parseAnsi } from "../ansi";
 import { splitLines, type StyledLine } from "../blocks";
 import type { ColumnRange } from "../column-range";
 import type { Scope } from "../scope";
+import { TAP_SETTLE_DEADLINE_MS } from "../../../../fleet/send-patience.ts";
 
 /**
  * The canonical result of a guarded action. `sent` = the keystrokes went through; `changed` = the
@@ -197,8 +198,9 @@ export async function pollUntil<M>(
  *  {@link SETTLE_DEADLINE_MS}, and the gaps happen to sum to it. */
 export const SETTLE_DELAYS_MS: readonly number[] = [60, 80, 120, 160, 240, 240, 300];
 
-/** The wall-clock bound of {@link settleAfterSend}, from its first line to its return. */
-export const SETTLE_DEADLINE_MS = 1200;
+/** The wall-clock bound of {@link settleAfterSend}, from its first line to its return. Fleet's,
+ *  longer than the gaps' sum: past the list the last gap repeats (fleet-send-patience). */
+export const SETTLE_DEADLINE_MS = TAP_SETTLE_DEADLINE_MS;
 
 /**
  * After a key was sent, wait until the pane's text differs from what it showed when the key left, or
@@ -260,7 +262,8 @@ export async function settleAfterSend(args: {
   });
   aborted.catch(() => undefined);
   try {
-    for (const delay of SETTLE_DELAYS_MS) {
+    for (let i = 0; ; i++) {
+      const delay = SETTLE_DELAYS_MS[Math.min(i, SETTLE_DELAYS_MS.length - 1)]!;
       const left = deadline - now();
       if (left <= 0) break;
       await sleep(Math.min(delay, left));
