@@ -22,9 +22,10 @@
 // Escape is never cleanup: a protocol token cannot carry it. A person may press it.
 
 import type { MuxAck, MuxAdapter, MuxRefusalOutcome } from "../mux/types.ts";
+import { KEY_TOKEN_LIFETIME_MS } from "../../fleet/send-patience.ts";
 
-/** How long a protocol token lives, in ms. */
-export const TOKEN_LIFETIME_MS = 150;
+/** How long a protocol token lives, in ms: the fork's patient bound (fleet-send-patience). */
+export const TOKEN_LIFETIME_MS = KEY_TOKEN_LIFETIME_MS;
 
 /** Who is sending. `protocol` is the Send Protocol; the other two never meet a revision check. */
 export type KeyOrigin = "person_tap" | "legacy_reply" | "protocol";

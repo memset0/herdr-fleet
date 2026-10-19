@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **A verified send on a slow disk still presses Enter.** The key token now lives 3 s instead of 150 ms, so writing the send record on a network filesystem no longer leaves the text in the box with `stale_token`.
+
 ## [3.18.1] - 2026-10-19
 
 Only the lead redeploys: the change is in the web bundle.

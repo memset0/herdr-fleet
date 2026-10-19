@@ -30,3 +30,11 @@ export function forwardWriteBudget(route: string, writeBudgetMs: number): number
  * tap then meets a stale card; the wait still ends on the first changed read.
  */
 export const TAP_SETTLE_DEADLINE_MS = 5_000;
+
+/**
+ * How long a key token lives (`TOKEN_LIFETIME_MS`, bridge/surface/key-gate.ts). The Send Protocol
+ * mints it, records `submit-sent` on disk, then presses the submit key; on a network filesystem that
+ * write alone outlasts Collie's 150 ms and the verified text is left in the box. The gate's revision
+ * check still refuses a key that moved the pane in between.
+ */
+export const KEY_TOKEN_LIFETIME_MS = 3_000;

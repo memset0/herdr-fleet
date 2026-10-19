@@ -14,7 +14,7 @@ import type { HeldCancelAnswer, SendAnswer } from "../../web/src/lib/surface/sen
 import { parseAnsi } from "../../web/src/lib/ansi.ts";
 import { splitLines } from "../../web/src/lib/blocks.ts";
 import { findInputFrame } from "../../web/src/lib/surface/frame.ts";
-import { KeyGate } from "./key-gate.ts";
+import { KeyGate, TOKEN_LIFETIME_MS } from "./key-gate.ts";
 import { BOUNDS, boxMatches, commandBoxMatches, GENERIC_PROBE, LOCK_BOUND_MS, locateText, neverHeldEntry, POLL_GAP_MAX_MS, probeLanding, RowRing, SendProtocol, SessionLocks, steadyRow, type SendDeps, type SendRequest } from "./protocol.ts";
 import { RequestStore } from "./requests.ts";
 import { SurfaceLedger } from "./counters.ts";
@@ -2577,12 +2577,12 @@ describe("commit", () => {
     expect(phaseAtEnter).toBe("submit-sent");
   });
 
-  test("a token that ages past 150 ms before the key is refused stale_token: typed_not_submitted, no Enter", async () => {
+  test("a token that ages past its lifetime before the key is refused stale_token: typed_not_submitted, no Enter", async () => {
     const r = rig();
     const realMark = r.deps.store.markSubmitSent.bind(r.deps.store);
     r.deps.store.markSubmitSent = (id: string) => {
       realMark(id);
-      r.clock.now += 151;
+      r.clock.now += TOKEN_LIFETIME_MS + 1;
     };
     const answer = await r.send("hello world");
     expect(answer.receipt).toMatchObject({ outcome: "typed_not_submitted", reason: "stale_token", keys: [] });

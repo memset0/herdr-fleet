@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { BOUNDS, LOCK_BOUND_MS, POLL_GAP_MAX_MS } from "../bridge/surface/protocol.ts";
 import { WRITE_BUDGET_MS } from "../bridge/crew/peer-client.ts";
-import { forwardWriteBudget, SEND_FORWARD_BUDGET_MS, SEND_REQUEST_TIMEOUT_MS } from "./send-patience.ts";
+import { TOKEN_LIFETIME_MS } from "../bridge/surface/key-gate.ts";
+import { forwardWriteBudget, KEY_TOKEN_LIFETIME_MS, SEND_FORWARD_BUDGET_MS, SEND_REQUEST_TIMEOUT_MS } from "./send-patience.ts";
 
 describe("send patience", () => {
   test("every step's bound is ended by its time, not its read count, with the gap capped", () => {
@@ -28,5 +29,11 @@ describe("send patience", () => {
     for (const route of ["pane/w1:p1/keys", "pane/w1:p1/close", "pane/w1:p1/send", "launch", "tab", "pane/reply"]) {
       expect(forwardWriteBudget(route, WRITE_BUDGET_MS)).toBe(WRITE_BUDGET_MS);
     }
+  });
+
+  test("a key token outlives a slow record write and stays inside the S1 bound", () => {
+    expect(TOKEN_LIFETIME_MS).toBe(KEY_TOKEN_LIFETIME_MS);
+    expect(TOKEN_LIFETIME_MS).toBeGreaterThanOrEqual(1000);
+    expect(TOKEN_LIFETIME_MS).toBeLessThan(BOUNDS.s1.ms);
   });
 });
