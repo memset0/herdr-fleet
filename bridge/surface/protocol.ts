@@ -9,7 +9,9 @@
 //           Surface must be free, or unknown(no-match) with the hash of the rows the person saw
 //   probe   (3, 900) on the probed path: write the probe character, require exactly that one new run
 //           and no other change, Backspace through the gate, require the S0 box again. A probe that
-//           fails with its character standing once in the box gets one Backspace and one more read
+//           fails with its character standing once in the box gets one Backspace, read back until the
+//           character is gone. A probe whose character did not show is watched for one more probe
+//           bound: a character that lands late, alone where S0's box was, gets the same Backspace
 //   write   the whole text in one write per line (a bracketed paste where the multiplexer and the
 //           profile allow it); a line break is the profile's newline key, through the gate
 //   S1      (6, 2500) read until the box holds exactly the predicted text (or the profile's collapse
@@ -120,14 +122,19 @@ import type { KeyGate } from "./key-gate.ts";
 import type { RequestStore, SendRecord } from "./requests.ts";
 import { HOLD_BRIDGE_MAX, HOLD_PANE_MAX, heldRow, type HeldEntry, type HoldStore } from "./holds.ts";
 
-/** The step bounds, written as (max reads, max ms). */
+/**
+ * The step bounds, written as (max reads, max ms). Herdr Fleet (fleet-send-patience) runs them several
+ * times longer than Collie's (2, 1200), (3, 900), (6, 2500), (6, 3000) and (6, 2000): a pane that
+ * redraws slowly drew the probe after the step gave up. A step still ends on its deciding read, and
+ * the read counts are sized so that, with the gap capped ({@link POLL_GAP_MAX_MS}), the ms bound ends it.
+ */
 export const BOUNDS = {
-  s0: { reads: 2, ms: 1200 },
-  probe: { reads: 3, ms: 900 },
-  s1: { reads: 6, ms: 2500 },
-  s2: { reads: 6, ms: 3000 },
+  s0: { reads: 2, ms: 3000 },
+  probe: { reads: 40, ms: 8000 },
+  s1: { reads: 60, ms: 15000 },
+  s2: { reads: 60, ms: 15000 },
   /** A notice's digit, written with no submit key: the notice gone and the box empty (it takes S1's and S2's place). */
-  notice: { reads: 6, ms: 2000 },
+  notice: { reads: 40, ms: 10000 },
 } as const;
 
 /** The session lock's bound: the sum of the step bounds a send can take (the notice wait stands in for S1 and S2). A request past it ends `unknown`. */
@@ -150,6 +157,8 @@ const NO_ECHO_REFUSAL = "A password prompt is waiting on the last row. Collie do
 
 /** The detail after a failed probe whose one Backspace took the character out again. */
 const PROBE_REMOVED = "One Backspace removed the probe character, so the box is clean again.";
+/** The detail after a failed probe whose character showed late and one Backspace took out again. */
+const PROBE_REMOVED_LATE = "It showed late, and one Backspace removed it, so the box is clean again.";
 /** The detail after a failed probe that left its character where Collie cannot take it out. */
 function probeMayRemain(probe: string): string {
   return `A probe character (${probe}) may remain in the box. Check the pane before you type.`;
@@ -168,8 +177,10 @@ const HELD_OTHER = "The box held a different text than the request when Enter we
 export const SEND_READ_LINES = 120;
 /** The bottom window the probe must land in and the rows hash covers. */
 export const CLUSTER_ROWS = 24;
-/** The gap before the first poll of a step; each later gap doubles. */
+/** The gap before the first poll of a step; each later gap doubles, up to {@link POLL_GAP_MAX_MS}. */
 const FIRST_GAP_MS = 80;
+/** The longest gap between two polls (Herdr Fleet): a verdict late in a long bound is seen within it. */
+export const POLL_GAP_MAX_MS = 250;
 /** The gap between the two S0 reads. */
 const S0_GAP_MS = 120;
 /** Emptying a box (replace, discard) borrows the S2 bound: a read after every batch, inside S2's reads and ms. */
@@ -2290,6 +2301,7 @@ export class SendProtocol {
 
     this.begin(state);
     let s0 = await this.stableRead(state, "s0");
+    if (request.mode === "send" || request.mode === "command" || request.mode === "append") s0 = await this.sweepProbe(state, s0);
     state.marks.s0 = s0;
     state.manual = takesManualSend(s0.surface);
     if (state.manual) this.gateSteeringTurn(state, s0);
@@ -2810,7 +2822,7 @@ export class SendProtocol {
       const left = until - this.now();
       if (left <= 0) break;
       await this.sleep(Math.min(gap, left));
-      gap *= 2;
+      gap = Math.min(gap * 2, POLL_GAP_MAX_MS);
       reads++;
       let snap: Snap | null;
       try {
@@ -2903,7 +2915,7 @@ export class SendProtocol {
       const screen = boxOnly ? (typed.snap?.otherScreen ?? null) : null;
       const why =
         typed.verdict === "wait" ? "The probe character did not show in the box." : screen !== null ? probeOtherScreen(screen) : "The probe character changed more than the box.";
-      throw await this.probeCleanup(state, s0, typed.snap, probe, why);
+      throw await this.probeCleanup(state, s0, typed.verdict === "wait" ? null : typed.snap, probe, why, typed.verdict === "wait" ? prefix : null);
     }
 
     try {
@@ -2928,33 +2940,83 @@ export class SendProtocol {
   /**
    * After a failed probe: when the read shows the probe character exactly once and it stands in the
    * box (the frame's interior, or with no frame a row that reads as at S0 once the character is cut),
-   * one Backspace goes through the gate and one more read says whether the box is clean again. Any
-   * other screen gets no key at all. The reason stays `probe_failed` either way; the detail says
+   * one Backspace goes through the gate and the box is read until the character is gone. A probe whose
+   * character did not show (`late` holds the box's text before it) is watched for one more probe bound
+   * first: a slow pane may draw it after the probe gave up, and it would stand in the box as a draft.
+   * Any other screen gets no key at all. The reason stays `probe_failed` either way; the detail says
    * what is true now.
    */
-  private async probeCleanup(state: RunState, s0: Snap, snap: Snap | null, probe: string, why: string): Promise<Ended> {
+  private async probeCleanup(state: RunState, s0: Snap, snap: Snap | null, probe: string, why: string, late: string | null = null): Promise<Ended> {
     const failed = (detail: string, look: Snap | null): Ended =>
       new Ended("refused", "probe_failed", sawNote(look, { detail: `${why} ${detail}`, framed: s0.frame !== null }));
-    if (snap === null || !probeInBox(s0, snap, probe)) return failed(probeMayRemain(probe), snap);
+    let seen = snap;
+    if (late !== null) {
+      seen = await this.lateProbe(state, s0, probe, late);
+      if (seen === null) return failed(probeMayRemain(probe), state.lastRead);
+    } else if (snap === null || !probeInBox(s0, snap, probe)) {
+      return failed(probeMayRemain(probe), snap);
+    }
     try {
       await this.keysThroughGate(state, ["Backspace"], "refused");
     } catch (err) {
-      if (err instanceof Ended && err.outcome === "refused") return failed(probeMayRemain(probe), snap);
+      if (err instanceof Ended && err.outcome === "refused") return failed(probeMayRemain(probe), seen);
       throw err;
     }
-    await this.sleep(FIRST_GAP_MS);
     let look: Snap | null = null;
     try {
-      look = await this.read(state, "probe");
+      const back = await this.poll(state, "probe", BOUNDS.probe, (read) => (countIn(read.texts, probe) === countIn(s0.texts, probe) ? "pass" : "wait"));
+      if (back.verdict === "pass") look = back.snap;
+      else return failed(probeMayRemain(probe), back.snap ?? seen);
     } catch (err) {
-      if (!(err instanceof StepLate)) throw err;
+      if (!(err instanceof Ended)) throw err;
+      return failed(probeMayRemain(probe), seen);
     }
-    if (look !== null && countIn(look.texts, probe) === countIn(s0.texts, probe)) {
-      const clean = failed(PROBE_REMOVED, look);
-      clean.extra.probeClean = true;
-      return clean;
+    const clean = failed(late !== null ? PROBE_REMOVED_LATE : PROBE_REMOVED, look);
+    clean.extra.probeClean = true;
+    return clean;
+  }
+
+  /**
+   * The watch after a probe whose character did not show: reads for one more probe bound while the box
+   * stays as S0 left it. The read that shows the probe character landed alone where S0's box was (the
+   * probe's own pass rules: the box holds `prefix` and the character, no modal, no new cue, the rows
+   * under the box as they were; with no frame, one row changed by the character alone) is returned.
+   * Any other change ends the watch with null, and so does the request's bound: no key follows.
+   */
+  private async lateProbe(state: RunState, s0: Snap, probe: string, prefix: string): Promise<Snap | null> {
+    try {
+      const seen = await this.poll(state, "probe", BOUNDS.probe, (snap) => {
+        if (s0.frame !== null) {
+          if (snap.frame === null || boxText(snap.frame) === boxText(s0.frame)) return "wait";
+          return probeBoxPasses(s0, snap, prefix, probe) ? "pass" : "fail";
+        }
+        if (snap.plain.join("\n") === s0.plain.join("\n")) return "wait";
+        return probeLanding(s0.plain, snap.plain, probe, { freeBelow: state.manual }) !== null && !cueAppeared(s0, snap) ? "pass" : "fail";
+      });
+      return seen.verdict === "pass" ? seen.snap : null;
+    } catch (err) {
+      if (err instanceof Ended) return null;
+      throw err;
     }
-    return failed(probeMayRemain(probe), look ?? snap);
+  }
+
+  /**
+   * At S0 of a send, a command or Add to it: a found box whose whole text is the probe character, with
+   * no modal over it, is Collie's own debris (a probe that landed after its request ended), never the
+   * person's draft. One Backspace goes through the gate, the box is read until it is empty, and S0 is
+   * read again; the request goes on from there. A box that does not empty refuses the request
+   * `probe_failed` with no other key. Any other box is returned unchanged, with no key.
+   */
+  private async sweepProbe(state: RunState, s0: Snap): Promise<Snap> {
+    const probe = state.match?.profile.probe.char ?? GENERIC_PROBE;
+    const { frame } = s0;
+    if (frame === null || frame.placeholder || s0.surface.modal !== "none" || wsFree(boxText(frame)) !== probe) return s0;
+    await this.keysThroughGate(state, ["Backspace"], "refused");
+    const back = await this.poll(state, "s0", BOUNDS.probe, (snap) => (snap.frame !== null && wsFree(boxText(snap.frame)).length === 0 ? "pass" : "wait"));
+    if (back.verdict !== "pass") {
+      throw new Ended("refused", "probe_failed", sawNote(back.snap, { detail: `The box held only a probe character from an earlier send. ${probeMayRemain(probe)}`, framed: true }));
+    }
+    return this.stableRead(state, "s0");
   }
 
   /** The write: each line in one write, the profile's newline key between lines. */

@@ -452,8 +452,8 @@ paths = [
   "bridge/crew/forward.ts#pane.focus",
   "bridge/crew/forward.test.ts#pane.focus"
 ]
-verify = ["bridge/crew/forward.test.ts"]
-reason = "The peer's own `focus` handler records `pane.focus`, as `close` and `rename` record `pane.close` and `pane.rename`; upstream's forward table names it with the bare word, so the lead's line and the peer's line about one act disagree. One more name in the existing namespacing condition, and one assertion beside upstream's, make the two independent logs read against each other. Nothing about routing or the wire changes. It rode the manual-fit entry until that feature left Collie (relocate-manual-pane-fit). Collie 1.19 adds the launcher, recent-run and line-check routes to the forward table and still names a forwarded focus with the bare word, so the port stays (an upstream pull request branch is prepared)."
+verify = ["bridge/crew/forward.test.ts", "fleet/send-patience.test.ts"]
+reason = "The peer's own `focus` handler records `pane.focus`, as `close` and `rename` record `pane.close` and `pane.rename`; upstream's forward table names it with the bare word, so the lead's line and the peer's line about one act disagree. One more name in the existing namespacing condition, and one assertion beside upstream's, make the two independent logs read against each other. Nothing about routing or the wire changes. It rode the manual-fit entry until that feature left Collie (relocate-manual-pane-fit). Collie 1.19 adds the launcher, recent-run and line-check routes to the forward table and still names a forwarded focus with the bare word, so the port stays (an upstream pull request branch is prepared). This entry also carries the send-forward budget (patient-send-probe), because the manifest allows one entry per path: a member pane's reply route runs a whole Send Protocol send on the member, and upstream forwards it on the 5 s `WRITE_BUDGET_MS` like any write, which is shorter than the member's lock bound and cuts a slow send into `write_outcome_unknown`. One imported name and one call pick the budget through the fork-owned `fleet/send-patience.ts`, so every other write keeps upstream's number; upstream's write-budget case expects the send budget for the reply route and the write budget for the rest."
 
 [[invasive]]
 id = "declined-centred-history-column"
@@ -686,3 +686,17 @@ reviewed = "v1.22.6"
 paths = ["web/src/routes/detail-offline.test.tsx#OfflineFixtureModules"]
 verify = ["web/src/routes/detail-offline.test.tsx"]
 reason = "After resetting modules and installing the empty fake database, setup preloads the same modules mountApp imports. The five-second test deadline measures offline navigation rather than first-time module transformation. All cold-page semantics, assertions and production behavior remain unchanged."
+
+[[invasive]]
+id = "patient-send-protocol-port"
+intent = "Let the Send Protocol wait out slow panes, and never leave its own probe character in the box."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.22.6"
+paths = [
+  "bridge/surface/protocol.ts#POLL_GAP_MAX_MS",
+  "bridge/surface/protocol.test.ts#fleet-send-patience",
+  "web/src/lib/api.ts#SEND_REQUEST_TIMEOUT_MS"
+]
+verify = ["bridge/surface/protocol.test.ts", "fleet/send-patience.test.ts", "web/src/lib/reply-action.test.ts"]
+reason = "The steps, their bounds and the cleanup all live inside `SendProtocol`'s private methods, so no owned module can reach them (patient-send-probe). TIMING (fork-only): `BOUNDS` keeps upstream's shape with longer numbers as plain constants, and `poll()` caps its doubling gap at `POLL_GAP_MAX_MS`, one line; making the bounds injectable was rejected because it rewrites every bound reference in the file. CLEANUP (offered upstream as its own pull request, written identically so an adoption that contains it removes that half of this port): after a probe whose character did not show, one more probe bound is watched and a character that lands alone where S0's box was gets one Backspace through the gate, read back by polling; at S0 of a send, command or Add to it a box holding only the probe character is swept the same way and S0 is read again. Both reuse the probe's own pass predicates and never send Escape. TESTS: upstream cases that pinned 1200/900/2500/3000 ms or three probe reads are restated through the exported `BOUNDS` with their assertions unchanged; the cleanup and patience cases are added beside them. PHONE: postSend's two requests carry `SEND_REQUEST_TIMEOUT_MS` from the owned module, one imported name and one option each, because the generic 20 s mutation budget is shorter than a send may now take; every other request keeps its budget."

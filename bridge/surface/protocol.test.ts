@@ -15,7 +15,7 @@ import { parseAnsi } from "../../web/src/lib/ansi.ts";
 import { splitLines } from "../../web/src/lib/blocks.ts";
 import { findInputFrame } from "../../web/src/lib/surface/frame.ts";
 import { KeyGate } from "./key-gate.ts";
-import { boxMatches, commandBoxMatches, GENERIC_PROBE, LOCK_BOUND_MS, locateText, neverHeldEntry, probeLanding, RowRing, SendProtocol, SessionLocks, steadyRow, type SendDeps, type SendRequest } from "./protocol.ts";
+import { BOUNDS, boxMatches, commandBoxMatches, GENERIC_PROBE, LOCK_BOUND_MS, locateText, neverHeldEntry, POLL_GAP_MAX_MS, probeLanding, RowRing, SendProtocol, SessionLocks, steadyRow, type SendDeps, type SendRequest } from "./protocol.ts";
 import { RequestStore } from "./requests.ts";
 import { SurfaceLedger } from "./counters.ts";
 import { HoldStore } from "./holds.ts";
@@ -913,6 +913,148 @@ describe("after a failed probe", () => {
     expect(answer.detail).toContain("may remain in the box");
     expect(pane.keysSeen).toEqual([]);
     expect(pane.box).toBe(PROBE);
+  });
+
+  /** A pane that draws nothing while the probe step can read (its reads bound), then runs `late` on the read after. */
+  function lateAfterProbe(r: Rig, late: (pane: FakePane) => void): void {
+    let readsSince: number | null = null;
+    r.pane.swallow = true;
+    r.pane.afterInput = (_p, what) => {
+      if (what === `type:${PROBE}`) readsSince = 0;
+    };
+    r.pane.beforeRead = (p) => {
+      if (readsSince === null || !p.swallow) return;
+      readsSince++;
+      if (readsSince < BOUNDS.probe.reads) return;
+      p.swallow = false;
+      late(p);
+    };
+  }
+
+  test("a probe character that lands after the probe gave up gets one Backspace, and the box is clean again", async () => {
+    const r = rig({ version: "2.1.999" });
+    lateAfterProbe(r, (p) => {
+      p.box = PROBE;
+    });
+    const answer = await r.send("hello there");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "probe_failed", keys: ["probe", "Backspace"] });
+    expect(answer.detail).toBe("The probe character did not show in the box. It showed late, and one Backspace removed it, so the box is clean again.");
+    expect(r.pane.box).toBe("");
+    expect(r.pane.keysSeen).toEqual(["Backspace"]);
+    expect(r.pane.calls).toEqual([`type:${PROBE}`]);
+    // The next send finds an empty box, not a draft.
+    r.pane.beforeRead = null;
+    r.pane.afterInput = null;
+    expect((await r.send("hello there")).receipt?.outcome).toBe("sent");
+    neverEscape(r.pane);
+  });
+
+  test("a late probe character after an Add to it's draft is removed and the draft stays", async () => {
+    const r = rig({ version: "2.1.999" });
+    r.pane.box = "the start";
+    lateAfterProbe(r, (p) => {
+      p.box = `the start${PROBE}`;
+    });
+    const answer = await r.send(" and more", { mode: "append" });
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "probe_failed", keys: ["probe", "Backspace"] });
+    expect(r.pane.box).toBe("the start");
+  });
+
+  test("something other than the probe character landing late gets no key", async () => {
+    const r = rig({ version: "2.1.999" });
+    lateAfterProbe(r, (p) => {
+      p.box = `x${PROBE}`;
+    });
+    const answer = await r.send("hello there");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "probe_failed", keys: ["probe"] });
+    expect(answer.detail).toContain("may remain in the box");
+    expect(r.pane.keysSeen).toEqual([]);
+    expect(r.pane.box).toBe(`x${PROBE}`);
+  });
+
+  test("a late probe character with a dialog over the box gets no key", async () => {
+    const r = rig({ version: "2.1.999" });
+    lateAfterProbe(r, (p) => {
+      p.box = PROBE;
+      p.over = DIALOG;
+    });
+    const answer = await r.send("hello there");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "probe_failed", keys: ["probe"] });
+    expect(r.pane.keysSeen).toEqual([]);
+  });
+});
+
+describe("patient steps (Herdr Fleet, fleet-send-patience)", () => {
+  test("a probe drawn seconds late still passes, and is seen within one capped gap of drawing", async () => {
+    const r = rig({ version: "2.1.999" });
+    let typedAt: number | null = null;
+    let drawnAt: number | null = null;
+    let backspaceAt: number | null = null;
+    r.pane.swallow = true;
+    r.pane.afterInput = (_p, what) => {
+      if (what === `type:${PROBE}`) typedAt = r.clock.now;
+      if (what === "keys:Backspace" && backspaceAt === null) backspaceAt = r.clock.now;
+    };
+    r.pane.beforeRead = (p) => {
+      if (typedAt === null || drawnAt !== null || r.clock.now - typedAt < 6000) return;
+      p.swallow = false;
+      p.box = PROBE;
+      drawnAt = r.clock.now;
+    };
+    const answer = await r.send("hello there");
+    expect(answer.receipt).toMatchObject({ outcome: "sent", keys: ["probe", "Backspace", "Enter"] });
+    expect(drawnAt).not.toBeNull();
+    // The read that saw it is the one that drew it here; a real pane is seen on the next read, at most one gap on.
+    expect(backspaceAt! - drawnAt!).toBeLessThanOrEqual(POLL_GAP_MAX_MS);
+  });
+
+  test("a probe drawn at once ends the step on its first read", async () => {
+    const { pane, send } = rig({ version: "2.1.999" });
+    let probeReads = 0;
+    pane.beforeRead = (p) => {
+      if (p.box === PROBE) probeReads++;
+    };
+    expect((await send("hello there")).receipt?.outcome).toBe("sent");
+    expect(probeReads).toBe(1);
+  });
+});
+
+describe("a box holding only the probe character", () => {
+  test("is Collie's own debris: one Backspace clears it and the send goes out with its own text", async () => {
+    const { pane, send } = rig();
+    pane.box = PROBE;
+    const answer = await send("please fix the failing test in the parser");
+    expect(answer.receipt).toMatchObject({ outcome: "sent", keys: ["Backspace", "Enter"] });
+    expect(pane.transcript.at(-1)).toBe("> please fix the failing test in the parser");
+    expect(pane.calls).toEqual(["paste:please fix the failing test in the parser"]);
+    neverEscape(pane);
+  });
+
+  test("Add to it on debris alone sends the text without the probe character", async () => {
+    const { pane, send } = rig();
+    pane.box = PROBE;
+    const answer = await send("more words for the agent", { mode: "append" });
+    expect(answer.receipt?.outcome).toBe("sent");
+    expect(pane.transcript.at(-1)).toBe("> more words for the agent");
+  });
+
+  test("a draft beside a probe character is still the person's draft: refused draft_present, no key", async () => {
+    const { pane, send } = rig();
+    pane.box = `my draft ${PROBE}`;
+    const answer = await send("hello there, agent");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "draft_present", keys: [] });
+    expect(pane.keysSeen).toEqual([]);
+    expect(pane.box).toBe(`my draft ${PROBE}`);
+  });
+
+  test("debris that a Backspace does not take is refused probe_failed with no other key", async () => {
+    const { pane, send } = rig();
+    pane.box = PROBE;
+    pane.backspaceRestores = false;
+    const answer = await send("hello there, agent");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "probe_failed", keys: ["Backspace"] });
+    expect(pane.keysSeen).toEqual(["Backspace"]);
+    expect(pane.calls).toEqual([]);
   });
 });
 
@@ -2329,7 +2471,7 @@ describe("the probe", () => {
     expect(pane.calls).toEqual([`type:${PROBE}`]);
   });
 
-  test("the probe takes at most three reads", async () => {
+  test("the probe takes at most its own reads, and the late watch after it at most as many again", async () => {
     const { pane, send } = rig({ version: "2.1.999" });
     let probeReads = 0;
     pane.beforeRead = (p) => {
@@ -2337,7 +2479,7 @@ describe("the probe", () => {
     };
     pane.swallow = true;
     await send("hello there");
-    expect(probeReads).toBeLessThanOrEqual(3);
+    expect(probeReads).toBeLessThanOrEqual(2 * BOUNDS.probe.reads);
   });
 });
 
@@ -2674,11 +2816,11 @@ describe("the lock", () => {
     expect((await r.send("the next one")).receipt).toMatchObject({ outcome: "refused", reason: "draft_present" });
   });
 
-  test("S0 past its own bound (2 reads, 1200 ms) is refused bound before anything is written", async () => {
+  test("S0 past its own bound (2 reads, BOUNDS.s0.ms) is refused bound before anything is written", async () => {
     const r = rig();
-    // Two reads of 900 ms each: 900 + 120 + 900 = 1920 ms, past S0's 1200 ms though far inside the request's bound.
+    // Two reads of three quarters of S0's bound each, plus the 120 ms gap: past S0's bound though far inside the request's.
     r.pane.beforeRead = () => {
-      r.clock.now += 900;
+      r.clock.now += BOUNDS.s0.ms * 0.75;
     };
     const answer = await r.send("slow screen");
     expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "bound", keys: [], s0: null });
@@ -2691,7 +2833,7 @@ describe("the lock", () => {
   test("S0 does not start its second read when the gap alone would cross the bound", async () => {
     const r = rig();
     r.pane.beforeRead = () => {
-      r.clock.now += 1100;
+      r.clock.now += BOUNDS.s0.ms - 100;
     };
     const answer = await r.send("slow screen");
     expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "bound" });
@@ -2714,8 +2856,8 @@ describe("the lock", () => {
     const started = Date.now();
     const answer = await r.send("hung read");
     expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "bound" });
-    // 1200 ms less the 120 ms gap the fake clock skipped; far under the request's 7600 ms.
-    expect(Date.now() - started).toBeLessThan(2500);
+    // S0's bound less the 120 ms gap the fake clock skipped; far under the request's bound.
+    expect(Date.now() - started).toBeLessThan(BOUNDS.s0.ms + 1300);
     expect(r.pane.calls).toEqual([]);
   });
 
@@ -2777,10 +2919,10 @@ describe("bounded lock", () => {
     pane.afterInput = (_p, what) => {
       if (what === "keys:Enter") entered = true;
     };
-    // S2 has 3000 ms; the first read after Enter spends all but 300 ms of it on the fake clock, then never answers.
+    // The first read after Enter spends all but 300 ms of S2's bound on the fake clock, then never answers.
     pane.beforeRead = () => {
       if (!entered) return undefined;
-      clock.now += 2700;
+      clock.now += BOUNDS.s2.ms - 300;
       return new Promise<void>(() => undefined);
     };
     const started = Date.now();

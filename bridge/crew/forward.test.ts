@@ -23,6 +23,7 @@ import {
 } from "./forward.ts";
 import { crewDeviceOf } from "./peer-gate.ts";
 import { crewTimeoutBudget, WRITE_BUDGET_MS, type CrewLink, type PeerOutcome } from "./peer-client.ts";
+import { SEND_FORWARD_BUDGET_MS } from "../../fleet/send-patience.ts";
 import type { PeerState } from "./registry.ts";
 import { readSend, readSendReply } from "../../web/src/lib/send-protocol.ts";
 
@@ -879,7 +880,8 @@ describe("a forwarded write carries its own budget (§10.1)", () => {
       const [req, url] = post(`${path}?host=laptop`, "{}");
       await forward(req, url, { transport });
       expect(calls).toHaveLength(1);
-      expect(calls[0]!.budgetMs).toBe(WRITE_BUDGET_MS);
+      // Herdr Fleet: the reply route runs a whole send on the member and takes the send budget.
+      expect(calls[0]!.budgetMs).toBe(path.endsWith("/reply") ? SEND_FORWARD_BUDGET_MS : WRITE_BUDGET_MS);
     }
   });
 

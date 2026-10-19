@@ -28,6 +28,7 @@ import { stampSend } from "./poll-intent";
 import { observeServerBuild, SERVER_BUILD_HEADER } from "./server-build";
 import { noteServerDate } from "./server-clock";
 import { mounted } from "./base-path";
+import { SEND_REQUEST_TIMEOUT_MS } from "../../../fleet/send-patience.ts";
 import { CHAT_UNCHANGED, type ChatAnswer } from "./chat-window";
 import { decidedOf, parseAsk, type AnswerResult, type AskAnswer } from "./ask";
 import type { ColumnRange } from "./column-range";
@@ -1426,11 +1427,12 @@ export async function postSend(body: SendRequestBody, scope?: Scope): Promise<Se
           {
             method: "POST",
             body: JSON.stringify({ text: body.text, submit: true, id: body.id, mode: body.mode, rowsHash: body.rowsHash, capAck: body.capAck }),
+            timeoutMs: SEND_REQUEST_TIMEOUT_MS,
           },
           sendRecover(),
         ),
       )
-    : await req<JsonObject>(withScope("/api/send", scope), { method: "POST", body: JSON.stringify(body) }, sendRecover());
+    : await req<JsonObject>(withScope("/api/send", scope), { method: "POST", body: JSON.stringify(body), timeoutMs: SEND_REQUEST_TIMEOUT_MS }, sendRecover());
   const reply = readSendReply(got);
   if (reply === null) throw new ApiError("The send route sent a body this phone cannot read.", 502);
   if (reply.outcome === "sent" || reply.outcome === "effective") stampSend(body.pane);

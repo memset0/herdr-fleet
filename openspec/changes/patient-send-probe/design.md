@@ -1,0 +1,35 @@
+## Context
+
+Collie v1.22.6's Send Protocol (`bridge/surface/protocol.ts`) bounds each step as (max reads, max ms): S0 (2, 1200), probe (3, 900), S1 (6, 2500), S2 (6, 3000), notice (6, 2000); the lock bound is S0 + probe + S1 + S2 = 7600 ms. `poll()` returns on the first deciding read, but its gap starts at 80 ms and doubles, so with three reads the probe really gets two reads within roughly a quarter second before failing. Receipts on slow panes showed successful probes at 180–380 ms and failed ones ending "did not show"; the character then drew late. `probeCleanup` acts only when the failing read already shows the character, and afterwards reads exactly once, 80 ms after its Backspace.
+
+Callers: the phone's `POST /api/send` rides the generic 20 s mutation timeout (`web/src/lib/api.ts`). A crew member's pane is reached through `POST /api/pane/<id>/reply`, which the lead forwards on `WRITE_BUDGET_MS` = 5000 ms (`bridge/crew/forward.ts`) — already shorter than today's 7600 ms lock bound. The composer's `SENT_ECHO_GRACE_MS` starts when the answer arrives, not when the send starts, so it does not depend on the bound. Bun 1.4's server does not close a connection whose handler is still pending (checked: a 12 s handler answers 200 under the default idle timeout), so no route timeout is needed.
+
+## Goals / Non-Goals
+
+**Goals:** a probe that lands late is cleaned; Collie's own debris never blocks a send or rides one; long windows with short reaction latency; no caller gives up before the bridge answers.
+
+**Non-Goals:** redesigning the protocol's steps, verdicts, outcomes or receipt; making bounds configurable; changing the Surface fold (a lone probe character still reads as a draft to the phone and to the hold queue's release test); the ask answerer's own bounds; the late-witness read's fixed 300 ms (it only runs where a turn may be running, after the send was already proven).
+
+## Decisions
+
+**Bound values (fork-only, plain constants in `BOUNDS`).** S0 (2, 3000), probe (40, 8000), S1 (60, 15000), S2 (60, 15000), notice (40, 10000); lock bound 41000 ms. The probe is the step the receipts showed failing: eight seconds is twenty times the slowest successful probe observed and leaves room for a pane that freezes while an agent re-renders a long session over several hops. S1 and S2 wait on the same redraw plus the agent taking a paste or a submit, so they get the most. S0 only reads the screen twice and does not wait on the pane, so it grows least. Read counts are sized so the millisecond bound, not the count, ends a step: with the gap capped, a 15 s window needs about 60 reads. If panes prove slower still, the owner's direction is to raise these numbers again, not to add machinery.
+
+**Gap cap 250 ms (fork-only).** The gap still starts at 80 ms and doubles, but stops at 250 ms, so the first reads stay as quick as upstream's and a verdict late in a long window is seen within a quarter second. A read is one local multiplexer call; four a second per pane being sent to is negligible.
+
+**Late-probe cleanup and debris sweep (offered upstream).** Generic, harness-free logic in `protocol.ts`, reusing the probe's own pass predicates: on a framed box, `probeBoxPasses` (box = S0's text + the probe, no modal, no stronger cue, the same rows under the box); without a frame, `probeLanding` (exactly one row changed, by the probe alone) with no new cue. The late watch only follows a probe that timed out with the box unchanged ("did not show"); a probe that failed on some other change keeps upstream's handling. The watch is one more probe window and ends early on any other change ("fail" → no key). Removal is verified by polling for S0's probe count within one probe window instead of one read 80 ms later — the same slow redraw that delayed the character delays its removal. The S0 sweep fires only for send, command and Add-to-it on a found box whose whole text is the probe character with no modal; Replace already empties the box, and Submit/Discard name the box's text. A failed sweep is `probe_failed` (it is Collie's probe that could not be cleaned). Alternatives rejected: teaching the fold that a lone probe is not a draft (shared with the phone, a far wider change); refusing debris with a new reason (still blocks the operator); Escape (never cleanup by rule).
+
+**Where the logic lives.** The bounds, the gap and the cleanup all act inside `SendProtocol`'s private steps; no owned module can reach them, so `protocol.ts` is edited in place. The cleanup is written exactly as the upstream pull request carries it, so an adoption that contains it makes that part of the port vanish. Making the bounds injectable through `SendDeps` was considered: it would keep upstream's tests untouched, but it rewrites every bound reference in the file (a much larger port) and contradicts the owner's request for plain constants; instead the upstream tests that pinned old numbers are restated in terms of the exported `BOUNDS`/`LOCK_BOUND_MS`, which is also a form upstream could take.
+
+**Caller budgets in an owned module.** `fleet/send-patience.ts` holds the reply-forward budget (50 s) and the phone's send timeout (60 s), and the function that picks the forward budget for a route. The web bundle must not import the bridge's protocol module, so the numbers are standalone and a fork-owned test asserts phone > forward > lock bound. `api.ts` gains one imported name and one `timeoutMs` on each of postSend's two requests; `forward.ts` gains one imported name and one call choosing the write budget, so every other write keeps `WRITE_BUDGET_MS`.
+
+**Fork boundary accounting.** New invasive paths: `bridge/surface/protocol.ts`, `bridge/surface/protocol.test.ts`, `web/src/lib/api.ts` in one new entry. `bridge/crew/forward.ts` and its test are already invasive (crew-focus-audit-name-port); this manifest allows one entry per path, so that entry also carries the forward-budget port. Owned: `fleet/send-patience.ts` and its test, under the existing `fleet/**` root.
+
+**Release.** Bridge code peers execute changes: MINOR. The change is archived before the release is cut (lead tests and the full suite on a member host are its gate); members level afterwards.
+
+## Risks / Trade-offs
+
+- [A person who typed exactly the probe character alone loses it to the sweep] → the character is an inert symbol no message starts with; the receipt records the Backspace.
+- [A genuinely failing send now takes longer to be refused, up to about 24 s for a probe that never lands] → only on failure; success paths end on their deciding read.
+- [The pane lock is held up to 41 s] → a second send on the same pane is refused `busy` meanwhile, as before; the bound only matters when a step fails.
+- [A held send still waits while debris sits in the box, because the hold queue releases on a free Surface] → the late cleanup makes debris rare; the next direct send sweeps it.
+- [Restated upstream tests diverge from upstream's text] → each restatement keeps the assertion and only replaces a literal with the exported bound; reviewed at every sync.

@@ -4,6 +4,7 @@ import { MASK_VERSION } from "../redact.ts";
 import { MAX_UPLOAD_OVERHEAD, uploadTooLarge } from "../uploads.ts";
 import { DEVICE_HEADER, encodeDeviceHeader } from "./admission.ts";
 import { type CrewLink, type PeerFailure, type PeerOutcome, WRITE_BUDGET_MS } from "./peer-client.ts";
+import { forwardWriteBudget } from "../../fleet/send-patience.ts";
 import { HOST_PARAM, type PeerState } from "./registry.ts";
 
 // The LEAD side of a per-pane request: `?host=laptop` came in, the pane lives on the laptop, so the
@@ -789,7 +790,8 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
     route,
     forwardParams(url),
     init,
-    kind === "write" ? WRITE_BUDGET_MS : undefined,
+    // Herdr Fleet (fleet-send-patience): a pane's reply route runs a whole send on the member.
+    kind === "write" ? forwardWriteBudget(route, WRITE_BUDGET_MS) : undefined,
   );
   const action = forwardAuditAction(route);
   const paneId = forwardPaneId(route);
