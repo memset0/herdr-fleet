@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.19.0] - 2026-10-19
+
+Every member redeploys: the change is in the bridge's key gate.
+
 ### Fixed
 
-- **A verified send on a slow disk still presses Enter.** The key token now lives 3 s instead of 150 ms, so writing the send record on a network filesystem no longer leaves the text in the box with `stale_token`.
+- **A verified send on a slow disk still presses Enter.** The key token now lives 3 s instead of 150 ms, so writing the send record on a network filesystem no longer leaves the text in the box with `stale_token`. ([ab524957](https://github.com/memset0/herdr-fleet/commit/ab524957))
 
 ## [3.18.1] - 2026-10-19
 
