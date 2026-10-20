@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.20.0] - 2026-10-20
+
+Every member redeploys: the change is in the bridge's Send Protocol and the shared harness profile.
+
 ### Changed
 
-- **Codex texts go in with Enter, steering a running turn.** Fleet no longer sends with Tab, so a message during a Codex turn joins it at once instead of waiting in Codex's queue; commands in a turn still queue.
+- **Codex texts go in with Enter, steering a running turn.** Fleet no longer sends with Tab, so a message during a Codex turn joins it at once instead of waiting in Codex's queue; commands in a turn still queue. ([423887f8](https://github.com/memset0/herdr-fleet/commit/423887f8))
 
 ## [3.19.0] - 2026-10-19
 
