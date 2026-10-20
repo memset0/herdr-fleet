@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Codex texts go in with Enter, steering a running turn.** Fleet no longer sends with Tab, so a message during a Codex turn joins it at once instead of waiting in Codex's queue; commands in a turn still queue.
+
 ## [3.19.0] - 2026-10-19
 
 Every member redeploys: the change is in the bridge's key gate.

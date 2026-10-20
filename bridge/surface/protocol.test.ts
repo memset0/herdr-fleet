@@ -1246,9 +1246,15 @@ describe("a command (M56 spec 06)", () => {
 /** The live running row of Claude Code 2.1.301 (claude--v2301-working-quiet--w100.txt): no interrupt hint. */
 const LIVE_ROW = "* Wibbling… (4s · ↓ 304 tokens)";
 
+/**
+ * Collie's own Codex profile, with Tab as its submit key. Fleet loads Codex with Enter (fleet-enter-steers);
+ * the upstream cases below keep pinning the Tab path through this edit, unchanged.
+ */
+const upstreamCodexTab = (profile: Profile): Profile => ({ ...profile, keys: { ...profile.keys, submit: ["Tab"] } });
+
 describe("codex: Tab sends every text, Enter steers a running turn (M56 spec 13)", () => {
   const CODEX_RUNNING = "• Working (4s • esc to interrupt)";
-  const codex = (options: Parameters<typeof rig>[0] = {}): Rig => rig({ pane: new FakePane("codex"), harness: "codex", version: "0.159.2", ...options });
+  const codex = (options: Parameters<typeof rig>[0] = {}): Rig => rig({ pane: new FakePane("codex"), harness: "codex", version: "0.159.2", edit: upstreamCodexTab, ...options });
   /** The Codex profile as it was before Tab became the submit key: Enter submits, Tab queues. */
   const enterSubmits = (profile: Profile): Profile => {
     const { commandSubmit, ...keys } = profile.keys;
@@ -1435,7 +1441,7 @@ describe("codex: Tab sends every text, Enter steers a running turn (M56 spec 13)
     expect(pane.queued).toEqual(["half a thought"]);
   });
 
-  test("a steering profile whose submit key is Enter: rows that move above the box route the send to the queue key, never Enter (K8)", async () => {
+  test("a steering profile whose submit key is Enter: rows that move above the box send it with Enter, which steers (K8, restated by fleet-enter-steers)", async () => {
     const { pane, send } = codex({ edit: enterSubmits });
     // An answer that streams fast: a dozen rows a read, past the volatile band over the box.
     pane.turn = true;
@@ -1444,8 +1450,8 @@ describe("codex: Tab sends every text, Enter steers a running turn (M56 spec 13)
     };
     const answer = await send("please list the files in this folder");
     expect(answer.receipt).toMatchObject({ outcome: "sent" });
-    expect(answer.receipt?.keys.at(-1)).toBe("Tab");
-    expect(pane.keysSeen).not.toContain("Enter");
+    expect(answer.receipt?.keys.at(-1)).toBe("Enter");
+    expect(pane.keysSeen).not.toContain("Tab");
   });
 
   test("a steering profile whose submit key is Enter still presses Enter on a still, idle box", async () => {
@@ -4347,6 +4353,58 @@ describe("a frameless manual send in a turn is refused where Enter is not known 
   }
 });
 
+// fleet-enter-steers: Fleet loads Codex with Enter as its submit key, and a text into a running turn steers it.
+describe("fleet: Codex texts go in with Enter, which steers a running turn", () => {
+  const RUNNING = "• Working (4s • esc to interrupt)";
+  const codex = (): Rig => rig({ pane: new FakePane("codex"), harness: "codex", version: "0.159.2" });
+
+  test("the loaded Codex profile sends with Enter and keeps Tab as its queue key", () => {
+    const keys = loadProfiles().get("codex")?.keys;
+    expect(keys?.submit).toEqual(["Enter"]);
+    expect(keys?.queueKey).toBe("Tab");
+  });
+
+  test("a free Codex box: Enter, sent, never Tab", async () => {
+    const { pane, send } = codex();
+    const answer = await send("please list the files in this folder");
+    expect(answer.receipt).toMatchObject({ outcome: "sent", keys: ["Enter"] });
+    expect(pane.transcript.at(-1)).toBe("› please list the files in this folder");
+    expect(pane.keysSeen).not.toContain("Tab");
+  });
+
+  test("a running turn: probed, Enter steers the text into it, nothing queued, and the receipt says sent", async () => {
+    const { pane, send } = codex();
+    pane.over = [RUNNING];
+    const answer = await send("then add a short summary");
+    expect(answer.receipt).toMatchObject({ outcome: "sent", keys: ["probe", "Backspace", "Enter"] });
+    expect(answer.receipt && "queued" in answer.receipt).toBe(false);
+    expect(pane.queued).toEqual([]);
+    expect(pane.over[0]).toBe("› then add a short summary");
+    expect(pane.box).toBe("");
+    neverEscape(pane);
+  });
+
+  test("an answer that streams above the box with no working row: Enter, never Tab", async () => {
+    const { pane, send } = codex();
+    pane.turn = true;
+    pane.beforeRead = (p, n) => {
+      p.transcript.push(`streamed row ${String(n)}`);
+    };
+    const answer = await send("please list the files in this folder");
+    expect(answer.receipt?.outcome).toBe("sent");
+    expect(answer.receipt?.keys.at(-1)).toBe("Enter");
+    expect(pane.keysSeen).not.toContain("Tab");
+  });
+
+  test("a command in a running turn still takes the queue key, never Enter", async () => {
+    const { pane, send } = codex();
+    pane.over = [RUNNING];
+    const answer = await send("/status", { mode: "command" });
+    expect(answer.receipt?.keys.at(-1)).toBe("Tab");
+    expect(pane.keysSeen).not.toContain("Enter");
+  });
+});
+
 describe("the compare of a Codex send reads a changing status row (M56 spec 14 review)", () => {
   const RUNNING = "• Working (4s • esc to interrupt)";
   const signs = (loadProfiles().get("codex")?.idle.runningRows ?? []).map((source) => new RegExp(source, "u"));
@@ -4359,7 +4417,7 @@ describe("the compare of a Codex send reads a changing status row (M56 spec 14 r
   });
 
   test("a spinner that ticks in the status row between the reads of a send into a turn does not stop it: Tab, never Enter", async () => {
-    const { pane, send } = rig({ pane: new FakePane("codex"), harness: "codex", version: "0.159.2" });
+    const { pane, send } = rig({ pane: new FakePane("codex"), harness: "codex", version: "0.159.2", edit: upstreamCodexTab });
     pane.over = [RUNNING];
     pane.beforeRead = (p, n) => {
       p.codexStatus = `  GPT-6-Luna low · ~/project · ${GLYPHS[n % GLYPHS.length]!}`;

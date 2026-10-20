@@ -121,6 +121,7 @@ import { askLifetimeOf, type AskBook } from "./ask.ts";
 import type { KeyGate } from "./key-gate.ts";
 import type { RequestStore, SendRecord } from "./requests.ts";
 import { HOLD_BRIDGE_MAX, HOLD_PANE_MAX, heldRow, type HeldEntry, type HoldStore } from "./holds.ts";
+import { steersWithEnter } from "../../fleet/enter-steers.ts";
 
 /**
  * The step bounds, written as (max reads, max ms). Herdr Fleet (fleet-send-patience) runs them several
@@ -855,6 +856,8 @@ function commitKeys(state: RunState): readonly string[] {
   // The queued path on a harness whose Enter does not queue: S0 read a turn, or the rows above moved
   // while Collie typed. Only the queue key goes in; no rule can route the submit keys there.
   if ((state.queued || state.streamed) && keys.enterWhileRunning !== "queues") {
+    // Fleet: a text on a profile whose submit key is the Enter that steers goes into the turn with it (fleet-enter-steers).
+    if (!state.command && state.request.mode !== "command" && steersWithEnter(keys)) return keys.submit;
     if (keys.queueKey === undefined) throw new Ended("typed_not_submitted", "changed", { detail: TURN_RUNNING });
     return [keys.queueKey];
   }
