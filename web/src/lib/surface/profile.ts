@@ -15,7 +15,7 @@ import { compareSemver } from "../semver";
 import { EDGE_KINDS, type EdgeProfile } from "./edges";
 import { HOLD_DECISIONS, HOLD_GRACE_MS, type HoldProfile } from "./hold";
 import { PROFILE_FILES } from "./profiles/index";
-import { withEnterSubmit } from "../../../../fleet/enter-steers.ts";
+import { fleetProfile } from "../../../../fleet/profile-tunes.ts";
 
 export type ProfileStatus = "verified" | "provisional" | "revoked";
 export type HookKind = "edge" | "ask";
@@ -1118,7 +1118,7 @@ export function loadProfiles(): ReadonlyMap<string, Profile> {
   for (const [stem, raw] of Object.entries(PROFILE_FILES)) {
     const profile = parseProfile(raw);
     if (profile.id !== stem) throw new ProfileError("id", `${profile.id} does not match its file name ${stem}`);
-    out.set(profile.id, withEnterSubmit(profile));
+    out.set(profile.id, fleetProfile(profile));
   }
   const claimed = new Set(out.keys());
   for (const profile of out.values()) {

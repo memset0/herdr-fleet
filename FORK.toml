@@ -693,9 +693,9 @@ intent = "Send a Codex text with Enter, and let it steer a running turn instead 
 strategy = "adapt"
 review = "every-upstream-sync"
 reviewed = "v1.22.6"
-paths = ["web/src/lib/surface/profile.ts#withEnterSubmit"]
+paths = ["web/src/lib/surface/profile.ts#fleetProfile"]
 verify = ["bridge/surface/protocol.test.ts", "web/src/lib/surface/profile.test.ts"]
-reason = "The owner wants a Codex text to go in with Enter, which steers a running turn, as at the desk; Collie v1.22.6 sends with Tab and queues in a turn by its 2026-10-17 decision, which this reverses for Fleet (codex-enter-steers). PROFILE: `loadProfiles` passes each parsed profile through `withEnterSubmit` from the owned `fleet/enter-steers.ts`, one import and one call, so `codex.json` stays upstream's text and the bridge and phone read the same keys. The protocol half (one line in `commitKeys`) and its tests sit in `bridge/surface/protocol.ts` and its test file, which `patient-send-protocol-port` already declares; its reason carries them."
+reason = "The owner wants a Codex text to go in with Enter, which steers a running turn, as at the desk; Collie v1.22.6 sends with Tab and queues in a turn by its 2026-10-17 decision, which this reverses for Fleet (codex-enter-steers). PROFILE: `loadProfiles` passes each parsed profile through `fleetProfile` from the owned `fleet/profile-tunes.ts` (which applies `withEnterSubmit` from `fleet/enter-steers.ts` and the Claude notice hint of fleet-claude-notice-hint), one import and one call, so `codex.json` stays upstream's text and the bridge and phone read the same keys. The protocol half (one line in `commitKeys`) and its tests sit in `bridge/surface/protocol.ts` and its test file, which `patient-send-protocol-port` already declares; its reason carries them."
 
 [[invasive]]
 id = "patient-send-protocol-port"

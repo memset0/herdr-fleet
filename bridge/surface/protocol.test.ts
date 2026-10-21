@@ -3643,6 +3643,39 @@ describe("a prompt edge closes a receipt as effective", () => {
   });
 });
 
+// fleet-claude-notice-hint: a right-aligned notice under Claude's box that joins the hint row once the box holds text.
+describe("fleet: Claude's right-aligned notice row is a hint under the box", () => {
+  const LONG_HINT = "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← 2 agents";
+  const NOTICE = `${" ".repeat(63)}✔ Update installed · Restart to update`;
+  const MERGED = `  ⏵⏵ bypass permissions on (shift+tab to cycle)${" ".repeat(16)}✔ Update installed · Restart to update`;
+  /** Lab, Claude Code 2.1.304, 2026-10-21: two rows under the box in a turn, one once it holds text. */
+  const noticePane = (): FakePane => {
+    const pane = new FakePane("claude");
+    pane.over = [LIVE_ROW];
+    pane.status = [LONG_HINT, NOTICE];
+    pane.statusWithText = [MERGED];
+    return pane;
+  };
+  const withoutNoticeHint = (profile: Profile): Profile => ({
+    ...profile,
+    idle: { ...profile.idle, volatile: { ...profile.idle.volatile, below: { ...profile.idle.volatile.below, hints: [] } } },
+  });
+
+  test("a send into the turn passes the probe and goes in", async () => {
+    const { pane, send } = rig({ pane: noticePane() });
+    const answer = await send("then add a short summary");
+    expect(answer.receipt?.outcome).toBe("sent");
+    expect(answer.receipt?.keys).toContain("probe");
+    expect(pane.box).toBe("");
+  });
+
+  test("without the hint the same screen fails the probe (Collie's count of rows under the box)", async () => {
+    const { send } = rig({ pane: noticePane(), edit: withoutNoticeHint });
+    const answer = await send("then add a short summary");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "probe_failed" });
+  });
+});
+
 // fleet-no-send-hold: Fleet answers a send now; nothing new joins Collie's hold queue.
 describe("fleet: no send waits in the hold queue", () => {
   beforeEach(() => {

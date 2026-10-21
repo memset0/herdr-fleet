@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sends into a running Claude turn pass the probe again.** Claude's right-aligned "Update installed" notice, which joins the hint row once the box holds text, no longer counts as a row under the box.
+
 ## [3.21.0] - 2026-10-21
 
 Every member redeploys: the change is in the bridge's Send Protocol.
