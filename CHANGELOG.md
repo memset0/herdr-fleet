@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.21.0] - 2026-10-21
+
+Every member redeploys: the change is in the bridge's Send Protocol.
+
 ### Changed
 
-- **A send goes in now or is refused now, never held.** Fleet no longer keeps a send in Collie's hold queue until the turn ends; a send the agent cannot take at once is refused with its reason so you can send it again.
+- **A send goes in now or is refused now, never held.** Fleet no longer keeps a send in Collie's hold queue until the turn ends; a send the agent cannot take at once is refused with its reason so you can send it again. ([80fbadc3](https://github.com/memset0/herdr-fleet/commit/80fbadc3))
 
 ## [3.20.0] - 2026-10-20
 
