@@ -19,9 +19,13 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.22.0] - 2026-10-21
+
+Every member redeploys: the change is in the harness profile the bridge reads.
+
 ### Fixed
 
-- **Sends into a running Claude turn pass the probe again.** Claude's right-aligned "Update installed" notice, which joins the hint row once the box holds text, no longer counts as a row under the box.
+- **Sends into a running Claude turn pass the probe again.** Claude's right-aligned "Update installed" notice, which joins the hint row once the box holds text, no longer counts as a row under the box. ([614ad966](https://github.com/memset0/herdr-fleet/commit/614ad966))
 
 ## [3.21.0] - 2026-10-21
 
