@@ -122,6 +122,7 @@ import type { KeyGate } from "./key-gate.ts";
 import type { RequestStore, SendRecord } from "./requests.ts";
 import { HOLD_BRIDGE_MAX, HOLD_PANE_MAX, heldRow, type HeldEntry, type HoldStore } from "./holds.ts";
 import { steersWithEnter } from "../../fleet/enter-steers.ts";
+import { sendHolds } from "../../fleet/send-holds.ts";
 
 /**
  * The step bounds, written as (max reads, max ms). Herdr Fleet (fleet-send-patience) runs them several
@@ -1689,7 +1690,8 @@ export class SendProtocol {
     // manual send joins too: the screen the person confirmed is not the one its turn will come on.
     // A pane with no profile never holds: its send goes in blind (see the header), so it skips this.
     const holds = this.deps.holds;
-    const joins = holds !== undefined && JOINS.has(request.mode) && holds.waiting(target.session, target.paneId).length > 0;
+    // Fleet: no new hold, so a send never joins a queue left over from before (fleet-no-send-hold).
+    const joins = sendHolds.enabled && holds !== undefined && JOINS.has(request.mode) && holds.waiting(target.session, target.paneId).length > 0;
     const match = joins ? await this.deps.profile(target.harness) : null;
     if (match !== null) {
       const state = this.bareState(request, accepted.record, target, match);
@@ -1725,7 +1727,8 @@ export class SendProtocol {
    * a reserved lead is a command here too.
    */
   private holdsEnd(state: RunState, end: Ended): boolean {
-    if (this.deps.holds === undefined || end.outcome !== "refused") return false;
+    // Fleet: a refusal is answered now, never held (fleet-no-send-hold).
+    if (!sendHolds.enabled || this.deps.holds === undefined || end.outcome !== "refused") return false;
     const clean = cleanProbe(state, end);
     if (state.keys.length > 0 && !clean) return false;
     if (!HOLDABLE.has(state.request.mode) || state.neverHold === true) return false;

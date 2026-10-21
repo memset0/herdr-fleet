@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **A send goes in now or is refused now, never held.** Fleet no longer keeps a send in Collie's hold queue until the turn ends; a send the agent cannot take at once is refused with its reason so you can send it again.
+
 ## [3.20.0] - 2026-10-20
 
 Every member redeploys: the change is in the bridge's Send Protocol and the shared harness profile.

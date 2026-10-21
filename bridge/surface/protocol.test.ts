@@ -15,6 +15,7 @@ import { parseAnsi } from "../../web/src/lib/ansi.ts";
 import { splitLines } from "../../web/src/lib/blocks.ts";
 import { findInputFrame } from "../../web/src/lib/surface/frame.ts";
 import { KeyGate, TOKEN_LIFETIME_MS } from "./key-gate.ts";
+import { sendHolds } from "../../fleet/send-holds.ts";
 import { BOUNDS, boxMatches, commandBoxMatches, GENERIC_PROBE, LOCK_BOUND_MS, locateText, neverHeldEntry, POLL_GAP_MAX_MS, probeLanding, RowRing, SendProtocol, SessionLocks, steadyRow, type SendDeps, type SendRequest } from "./protocol.ts";
 import { RequestStore } from "./requests.ts";
 import { SurfaceLedger } from "./counters.ts";
@@ -279,6 +280,8 @@ let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "collie-protocol-"));
   resetProfileLog();
+  // Collie's hold queue is under test here; Fleet turns it off (fleet-no-send-hold).
+  sendHolds.enabled = true;
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -3637,6 +3640,37 @@ describe("a prompt edge closes a receipt as effective", () => {
     const answer = await send("hello there");
     expect(answer.receipt?.outcome).toBe("refused");
     expect(protocol.promptEdge("%1", hashOf(deps, "hello there"), clock.now)).toBeNull();
+  });
+});
+
+// fleet-no-send-hold: Fleet answers a send now; nothing new joins Collie's hold queue.
+describe("fleet: no send waits in the hold queue", () => {
+  beforeEach(() => {
+    sendHolds.enabled = false;
+  });
+  /** A Claude pane whose turn runs and whose binary reported no version: Collie would hold the send. */
+  const untrusted = (holds: HoldStore): Rig => {
+    const r = rig({ version: "no version here", holds });
+    r.pane.over = [LIVE_ROW];
+    return r;
+  };
+
+  test("a send the harness cannot take during its turn is refused at once, nothing typed, nothing held", async () => {
+    const holds = new HoldStore(join(dir, "held"));
+    const r = untrusted(holds);
+    const answer = await r.send("then give it a title", { id: "nohold-000001" });
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "turn_running", keys: [] });
+    expect(r.pane.keysSeen).toEqual([]);
+    expect(holds.list()).toEqual([]);
+  });
+
+  test("a held request left from before never makes a new send wait behind it", async () => {
+    const holds = new HoldStore(join(dir, "held"));
+    holds.add({ id: "nohold-left-0001", session: "main", paneId: "%1", harness: "claude", mode: "send", text: "an older message", revision: 0, command: false });
+    const r = rig({ holds });
+    const answer = await r.send("a new message", { id: "nohold-000002" });
+    expect(answer.receipt).toMatchObject({ outcome: "sent" });
+    expect(r.pane.transcript.at(-1)).toBe("> a new message");
   });
 });
 
