@@ -7,6 +7,7 @@ import { DEVICES_SUBCOMMANDS } from "./pairing.ts";
 import { PUSH_SUBCOMMANDS } from "./push.ts";
 import { STT_SUBCOMMANDS } from "./stt.ts";
 import { CONFIG_SUBCOMMANDS } from "./config.ts";
+import { WALKY_SUBCOMMANDS } from "./walky.ts";
 import { DURABLE_SUBCOMMANDS } from "./durable-attach.ts";
 import {
   type Command,
@@ -95,6 +96,9 @@ const STT_VERBS = ["stt"];
 /** The config-file tree (ADR 0040). Declared right after `stt`, for the same reasons. */
 const CONFIG_VERBS = ["config"];
 const DURABLE_VERBS = ["durable"];
+// Walky talky (M62). Declared after `durable`. One spelling: the `wt` alias was dropped before
+// release, because Windows Terminal's binary is `wt.exe`.
+const WALKY_VERBS = ["walky"];
 // The manual, printed out of the binary: `collie skill` for an AI agent, `collie docs` for the
 // operator pages. Neither was ever a shell verb — there was nothing to print before it was embedded.
 const MANUAL_VERBS = ["skill", "docs"];
@@ -117,6 +121,7 @@ describe("the verb table", () => {
       ...STT_VERBS,
       ...CONFIG_VERBS,
       ...DURABLE_VERBS,
+      ...WALKY_VERBS,
       ...CREW_VERBS,
       ...MANUAL_VERBS,
       "help",
@@ -395,6 +400,11 @@ describe("the subcommand trees", () => {
     expect(findCommand("config")?.subcommands?.map((s) => s.name)).toEqual([...CONFIG_SUBCOMMANDS]);
   });
 
+  test("`walky` declares exactly `cli/walky.ts`'s sub-verbs, and there is no `wt` alias", () => {
+    expect(findCommand("walky")?.subcommands?.map((s) => s.name)).toEqual([...WALKY_SUBCOMMANDS]);
+    expect(findCommand("wt")).toBeUndefined();
+  });
+
   test("`durable` declares exactly `cli/durable-attach.ts`'s sub-verbs, in its order", () => {
     expect(findCommand("durable")?.subcommands?.map((s) => s.name)).toEqual([...DURABLE_SUBCOMMANDS]);
   });
@@ -408,9 +418,12 @@ describe("the subcommand trees", () => {
       "stt",
       "config",
       "durable",
+      "walky",
       "crew",
       // The alias carries the SAME array — that is what `cli/crew.test.ts` pins.
       "pack",
+      // `skill` is a leaf that prints the general brief, and a tree for the walky talky installer.
+      "skill",
     ]);
   });
 });
@@ -532,6 +545,9 @@ describe("exit codes", () => {
       // fakes in a temp dir.
       ...CONFIG_VERBS,
       ...DURABLE_VERBS,
+      // `walky` talks to this host's running bridges over their local sockets, and a `send`
+      // would type into a real pane. cli/walky.test.ts drives every sub-verb against a temp socket.
+      ...WALKY_VERBS,
     ];
     // `skill` and `docs` print text compiled into this binary. They read nothing, resolve no state
     // dir and touch no machine, so the suite may run them for real.

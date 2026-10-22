@@ -6,6 +6,9 @@ import { parseAnsi } from "../../ansi";
 import { splitLines, type StyledLine } from "../../blocks";
 import { detectPromptSelect, detectPromptSelectRegion, type PromptFamily } from "./prompt-select";
 import { lineText } from "./markers";
+import { claudeBuildBlocks } from "./index";
+import { dropTaskChecklist } from "./task-checklist";
+import { buildBlocks } from "..";
 import { promptsEqual, promptsSameIdentity } from "../prompt-model";
 
 // Anchored on this file's own directory (NOT `new URL(..., import.meta.url)`, which Vite statically
@@ -399,6 +402,51 @@ describe("detectPromptSelectRegion — the dialog's subject", () => {
     expect(model.subject![0]!.segments.find((s) => s.text.trim() !== "")!.bold).toBe(true);
   });
 
+  // The 2026-10-19 incident on 2.1.303: a background agent's Bash permission with the dangerous-rm
+  // warning and a 26-row script as its command. The dialog's `─` edge sat 33 rows above the question,
+  // past REGION_SCAN_WINDOW, so the card had no subject and the ask had no region: every tap was
+  // refused `no_plan`. The rows inside the `╌` fence around the command are the dialog's own.
+  it.each([
+    ["claude--v2303-permission-bash-bg-agent-rm--w160.txt"],
+    ["claude--v2303-permission-bash-bg-agent-rm--w80.txt"],
+  ])("2.1.303 background agent Bash permission with a tall command and the dangerous-rm warning: %s", (name) => {
+    const lines = fixtureLines(name);
+    const region = detectPromptSelectRegion(lines);
+    expect(region).not.toBeNull();
+    const { model, startLine } = region!;
+    expect(model.family).toBe("permission");
+    expect(model.question).toBe("Do you want to proceed?");
+    expect(model.options.map((o) => o.label)).toEqual(["Yes", "No"]);
+    expect(model.options.map((o) => o.keys)).toEqual([["1"], ["2"]]);
+    expect(lineText(lines[startLine]!)).toMatch(/^─+$/);
+    expect(model.askRegion).toBeDefined();
+    expect(model.askRegion).not.toBeNull();
+    expect(model.askRegion!.split("\n")[0]).toMatch(/^─+$/);
+
+    const subject = model.subject!.map((l) => l.segments.map((s) => s.text).join(""));
+    expect(subject[0]).toBe("Bash command · from the general-purpose agent");
+    expect(subject[1]).toBe("Install revised set, measure hits and level gaps");
+    expect(subject[2]!.startsWith("S=/var/home/devel/projects/sample-workspace/experiments/showreel;")).toBe(true);
+    expect(subject.join(" ")).toContain("rm -f $D/*.wav");
+    expect(subject.join(" ")).toContain("python3 /tmp/earshot-work/scripts/level.py");
+    expect(subject.find((t) => t.startsWith("Dangerous rm operation on possibly-empty variable path: $D/*.wav in"))).toBeDefined();
+    expect(subject.some((t) => /╌/.test(t))).toBe(false);
+    expect(subject.some((t) => /^\s*│/.test(t))).toBe(false);
+  });
+
+  it("a `╌` fence with no closing rule above it does not carry the edge scan past the window", () => {
+    // The w160 screen with the fence's upper `╌` rule removed: the lower one is the only dashed row,
+    // so nothing is fenced and the 33-row climb to the edge is past the window again, as before the fix.
+    const text = fixtureText("claude--v2303-permission-bash-bg-agent-rm--w160.txt");
+    const rows = text.split("\r\n");
+    const fence = rows.findIndex((row) => row.includes("╌".repeat(20)));
+    const unfenced = [...rows.slice(0, fence), ...rows.slice(fence + 1)].join("\r\n");
+    const region = detectPromptSelectRegion(splitLines(parseAnsi(unfenced)))!;
+    expect(region.model.options.map((o) => o.label)).toEqual(["Yes", "No"]);
+    expect(region.model.subject).toBeUndefined();
+    expect(region.model.askRegion).toBeNull();
+  });
+
   it("the subject plays no part in identity: signature and coreSignature are what they were", () => {
     const lines = fixtureLines("claude--v2291-permission-bash-subagent.txt");
     const { model } = detectPromptSelectRegion(lines)!;
@@ -535,6 +583,8 @@ describe("detectPromptSelectRegion — the dialog's subject", () => {
       "claude--v2283-permission-amend-no-off-row.txt",
       "claude--v2283-permission-amend-typed.txt",
       "claude--v2291-permission-bash-subagent.txt",
+      "claude--v2303-permission-bash-bg-agent-rm--w160.txt",
+      "claude--v2303-permission-bash-bg-agent-rm--w80.txt",
       "claude--trust-prompt.txt",
       "claude--trust-prompt-unnumbered.txt",
       "claude--v2283-trust--w50.txt",
@@ -667,5 +717,118 @@ describe("detectPromptSelect — the unnumbered folder-trust prompt", () => {
     expect(promptsEqual(here, moved)).toBe(false);
     expect(promptsSameIdentity(here, moved)).toBe(true);
     expect(promptsEqual(here, here)).toBe(true);
+  });
+});
+
+// Issue 543: a Japanese AskUserQuestion on Claude Code 2.1.296 ends its question in a fullwidth
+// question mark. The reader looked for an ASCII "?" only, so the dialog was never lifted: the card
+// did not show and Chat on a pane with a session log showed nothing for it.
+describe("detectPromptSelect: a question that ends in a fullwidth question mark", () => {
+  const NAME = "claude--v2296-question-fullwidth--w150.txt";
+
+  it("lifts the two-line Japanese question as one select dialog", () => {
+    const model = detectPromptSelect(fixtureLines(NAME));
+    expect(model).not.toBeNull();
+    expect(model!.family).toBe("select");
+    expect(model!.question).toBe(
+      "共有された変更 (12 ファイル、+340/-15) は 2026-10-13 にマージ済みで、本番にもデプロイ済みです。 どこを中心にレビューしますか？",
+    );
+    expect(model!.options.map((o) => o.label)).toEqual([
+      "アプリコード (推奨)",
+      "インフラスクリプト",
+      "全体",
+      "返信の下書き",
+      "Chat about this",
+    ]);
+    // "5. Type something." is the free-text row: dropped, and "Chat about this" keeps its number.
+    expect(model!.options.map((o) => o.keys)).toEqual([["1", "Enter"], ["2", "Enter"], ["3", "Enter"], ["4", "Enter"], ["6", "Enter"]]);
+  });
+
+  it("reads the same dialog as the capture with an ASCII question mark", () => {
+    const ascii = fixtureText(NAME).replaceAll("？", "?");
+    expect(ascii).not.toBe(fixtureText(NAME));
+    const wide = detectPromptSelect(fixtureLines(NAME))!;
+    const plain = detectPromptSelect(splitLines(parseAnsi(ascii)))!;
+    expect(wide.options.map((o) => o.keys)).toEqual(plain.options.map((o) => o.keys));
+    expect(wide.question.replace("？", "?")).toBe(plain.question);
+  });
+
+  it("buildBlocks lifts it as a prompt-select block for Chat and the card", () => {
+    const kinds = buildBlocks(fixtureLines(NAME), { agent: "claude" }).map((b) => b.kind);
+    expect(kinds).toContain("prompt-select");
+  });
+
+  it("with no question mark at all, the rows under the chip are still the question", () => {
+    const text = fixtureText(NAME).replaceAll("？", "。");
+    const model = detectPromptSelect(splitLines(parseAnsi(text)));
+    expect(model).not.toBeNull();
+    expect(model!.family).toBe("select");
+    expect(model!.question).toBe(
+      "共有された変更 (12 ファイル、+340/-15) は 2026-10-13 にマージ済みで、本番にもデプロイ済みです。 どこを中心にレビューしますか。",
+    );
+  });
+
+  it("with no question mark and no chip, there is no question", () => {
+    const rows = fixtureText(NAME)
+      .replaceAll("？", "。")
+      .split("\n")
+      .map((row) => (row.includes("☐") ? "" : row));
+    expect(detectPromptSelect(splitLines(parseAnsi(rows.join("\n"))))).toBeNull();
+  });
+});
+
+/** The fixture's text with every row carrying the single-question chip `☐` replaced by a blank row. */
+function withoutChip(name: string): StyledLine[] {
+  const text = fixtureText(name);
+  const rows = text.split("\n").map((row) => (row.includes("☐") ? "" : row));
+  expect(rows.join("\n")).not.toBe(text);
+  return splitLines(parseAnsi(rows.join("\n")));
+}
+
+// The model writes AskUserQuestion's question text, and Claude Code prints it as written: a question
+// with no "?" (2.1.304, a field report from a `cui` session) lifted no card, and the phone fell back
+// to the unread-dialog card. Under the single-question chip the question is taken by position.
+describe("detectPromptSelectRegion: an AskUserQuestion whose question has no question mark", () => {
+  const CASES = [
+    {
+      name: "claude--v2304-ask-no-question-mark--w135.txt",
+      question:
+        "TREE-84 (apple lamp cloud, AT #29) fig red gate green watercolor: TREE-149'a moon path cup on box meadow, map box Mountain tea sand box apple yellow lantern leaf cabinet (sun 10 window blueberry; sun picture apple box cloud kettle rock an a painting). Sparrow stone notebook rock/lamp-cloud bell leaf (14+ orchard garden), pebbles box tree maple, lamp sparrow AT #29 sand /rock. Sand lamp on chair lamp weather green A:\\tree-sunlight-cloud, map Notebook as or window blue. TREE-150, TREE-154 map TREE-168 gate wind we yellow-log.",
+      labels: ["Green on boat morning (Recommended)", "Path box green", "Chat about this"],
+    },
+    {
+      name: "claude--v2304-ask-no-question-mark-plain--w135.txt",
+      question: "The release branch has passed every check. Pick how to proceed with the merge.",
+      labels: ["Merge now (Recommended)", "Hold the merge", "Chat about this"],
+    },
+  ];
+
+  for (const { name, question, labels } of CASES) {
+    it(`${name}: lifts a select with the whole question under the chip`, () => {
+      const region = detectPromptSelectRegion(dropTaskChecklist(fixtureLines(name)));
+      expect(region).not.toBeNull();
+      const model = region!.model;
+      expect(model.family).toBe("select");
+      expect(model.question).toBe(question);
+      expect(model.options.map((o) => o.label)).toEqual(labels);
+      // "3. Type something." is the free-text row: dropped, and "Chat about this" keeps its number.
+      expect(model.options.map((o) => o.keys)).toEqual([["1", "Enter"], ["2", "Enter"], ["4", "Enter"]]);
+    });
+
+    it(`${name}: claudeBuildBlocks ends with the prompt-select card`, () => {
+      const kinds = claudeBuildBlocks(fixtureLines(name)).map((b) => b.kind);
+      expect(kinds.at(-1)).toBe("prompt-select");
+    });
+
+    it(`${name}: with the chip row blank, no "?" and no chip is no card`, () => {
+      expect(detectPromptSelectRegion(dropTaskChecklist(withoutChip(name)))).toBeNull();
+    });
+  }
+
+  it("a permission dialog whose question lost its question mark is still no card", () => {
+    const text = fixtureText("claude--permission-bash.txt");
+    const stripped = text.replace("Do you want to proceed?", "Do you want to proceed");
+    expect(stripped).not.toBe(text);
+    expect(detectPromptSelectRegion(splitLines(parseAnsi(stripped)))).toBeNull();
   });
 });

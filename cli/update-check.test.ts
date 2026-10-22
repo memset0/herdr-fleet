@@ -80,7 +80,7 @@ const HEALTHY: NonNullable<Scripted["answers"]> = [
   ["df -Pk", { stdout: df(50_000_000) }],
   // `fakeExec.which` answers `/fake/<tool>`, and `bunCheck` now runs the RESOLVED path — so the
   // version answer is keyed on that path, not on the bare name it used to spawn.
-  ["/fake/bun --version", { stdout: "1.4.0\n" }],
+  ["/fake/bun --version", { stdout: "1.4.4\n" }],
   ["systemctl --user show-environment", { code: 0 }],
   ["systemctl --user is-active collie", { stdout: "active\n" }],
 ];
@@ -380,7 +380,7 @@ describe("preflight — the disk check", () => {
 describe("preflight — the bun check", () => {
   test("green when bun is installed at a version the build was measured on", async () => {
     const report = await preflight(harness().deps);
-    expect(byId(report, "bun").reason).toContain("1.4.0");
+    expect(byId(report, "bun").reason).toContain("1.4.4");
   });
 
   test("red when bun is absent on an install that builds from source", () => {
@@ -396,13 +396,15 @@ describe("preflight — the bun check", () => {
     expect(check.verdict).toBe("amber");
   });
 
-  // #438: 1.3.14 fails seven backend test files and one exhausts memory; 1.4.0 is the oldest that passes.
-  test("bun 1.3.14 is amber, and 1.4.0 is green", () => {
+  // #438: 1.3.14 fails seven backend test files and one exhausts memory. #568: 1.4.4 is the first Bun
+  // that rejects certificates issued under the compromised eMudhra intermediates, so 1.4.1 is amber too.
+  test("bun 1.3.14 and 1.4.1 are amber, and 1.4.4 is green", () => {
     const at = (version: string) =>
       bunCheck(harness({ answers: [["/fake/bun --version", { stdout: `${version}\n` }]] }).deps);
     expect(at("1.3.14").verdict).toBe("amber");
-    expect(at("1.3.14").reason).toContain("bun 1.3.14 is older than 1.4.0");
-    expect(at("1.4.0").verdict).toBe("green");
+    expect(at("1.3.14").reason).toContain("bun 1.3.14 is older than 1.4.4");
+    expect(at("1.4.1").verdict).toBe("amber");
+    expect(at("1.4.4").verdict).toBe("green");
   });
 
   // #169: PATH alone made this red on a host the shim builds on happily. A Bun at a known candidate
@@ -413,7 +415,7 @@ describe("preflight — the bun check", () => {
     const bun = join(HOME, ".bun", "bin", "bun");
     const h = harness({
       absent: ["bun"],
-      answers: [[`${bun} --version`, { stdout: "1.4.0\n" }]],
+      answers: [[`${bun} --version`, { stdout: "1.4.4\n" }]],
       files: { [bun]: "" },
     });
     const check = bunCheck(h.deps);
@@ -428,7 +430,7 @@ describe("preflight — the bun check", () => {
     const bun = join("/opt/bun", "bin", "bun");
     const h = harness({
       absent: ["bun"],
-      answers: [[`${bun} --version`, { stdout: "1.4.0\n" }]],
+      answers: [[`${bun} --version`, { stdout: "1.4.4\n" }]],
       env: { BUN_INSTALL: "/opt/bun" },
       files: { [bun]: "", [`${HOME}/.bun/bin/bun`]: "" },
     });
@@ -464,6 +466,32 @@ describe("preflight — the bun check", () => {
     };
     const report = await preflight(deps);
     expect(report.checks.map((c) => c.id)).toEqual(["doctor", "disk", "upstream", "service"]);
+  });
+});
+
+describe("preflight — the rollback target (M60 spec 01)", () => {
+  const binary = (seed: Record<string, string>) => {
+    const h = harness({ answers: [[`git -C /opt/app/versions/1.0.0 rev-parse --show-prefix`, { code: 128 }]], files: seed });
+    const deps: UpdateCheckDeps = {
+      ...h.deps,
+      ctx: context({}, { root: "/opt/app/versions/1.0.0" }),
+      link: fakeLinkFs({ "/opt/app/current": { kind: "symlink", target: "versions/1.0.0" } }),
+      net: { ...deadNet, getJson: () => Promise.resolve({ ok: true, value: [{ name: "v1.0.0", commit: { sha: "cccccccc" } }] }) },
+    };
+    return { ...h, deps };
+  };
+
+  test("names the build a rollback goes back to when one is kept, and the human report says so", async () => {
+    const h = binary({ "/opt/app/versions/1.0.0/bin/collie": "B", "/opt/app/versions/0.9.0/bin/collie": "B" });
+    const report = await preflight(h.deps);
+    expect(report.rollback).toEqual({ from: "1.0.0", to: "0.9.0" });
+    expect(await cmdUpdateCheck(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout.join("\n")).toContain("rollback: 0.9.0 is kept on disk (collie update --rollback)");
+  });
+
+  test("has no rollback key at all when nothing older is kept, or on an in-place checkout", async () => {
+    expect("rollback" in (await preflight(binary({ "/opt/app/versions/1.0.0/bin/collie": "B" }).deps))).toBe(false);
+    expect("rollback" in (await preflight(harness().deps))).toBe(false);
   });
 });
 

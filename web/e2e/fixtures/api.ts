@@ -108,6 +108,9 @@ async function answer(route: Route, path: string): Promise<void> {
       fileTruncated: false,
     });
   }
+  if (/^\/api\/pane\/[^/]+\/subagent\/[^/]+$/.test(path)) {
+    return fulfillJson(route, { paneId: "w1:p1", agentId: "a000000", available: false });
+  }
   if (/^\/api\/pane\/[^/]+\/reply$/.test(path)) {
     // The fake pane stays honest: the draft the POST carried is what the next mirror read renders,
     // exactly as the unit layer's handler does it.
@@ -122,6 +125,14 @@ async function answer(route: Route, path: string): Promise<void> {
   }
   if (/^\/api\/pane\/[^/]+\/(keys|close|rename)$/.test(path)) {
     return fulfillJson(route, { ok: true });
+  }
+  // Walky talky (M62): no messages, and a send answers an accepted receipt for the one address.
+  if (/^\/api\/pane\/[^/]+\/walky$/.test(path)) return fulfillJson(route, { messages: [] });
+  if (path === "/api/walky/who") return fulfillJson(route, { targets: [] });
+  if (path === "/api/walky" && method === "POST") {
+    // SAFETY: the body is the app's own, `lib/api.ts`'s `postWalky` is the only caller and it posts `{ id, to, body, replyTo? }`.
+    const posted = route.request().postDataJSON() as { id: string; to: string };
+    return fulfillJson(route, { receipt: { id: posted.id, state: "accepted", verified: "local", at: Date.now(), by: "solo", target: posted.to } });
   }
   if (/^\/api\/pane\/[^/]+$/.test(path)) {
     return fulfillJson(route, {

@@ -158,6 +158,12 @@ export interface DialogComparators<M> {
    * Absent on the kinds that never carry one, and `undefined` for a model that does not: whole rows.
    */
   columns?(m: M): ColumnRange | undefined;
+  /**
+   * The tail window the region may end in (`expected_tail_lines`, lib/tail-lines.ts), for a model
+   * whose harness paints live chrome of its own under the dialog. Absent on the kinds that never carry
+   * one, and `undefined` for a model that does not: the bridge's default window.
+   */
+  tail?(m: M): number | undefined;
 }
 
 /** The shape of the contract table: one row of comparators per interactive block kind. */
@@ -175,6 +181,7 @@ export const DIALOG_CONTRACT: DialogContract = {
     region: (m) => m.signature,
     styled: (m) => m.styledSignature,
     columns: (m) => m.bindColumns,
+    tail: (m) => m.bindTail,
   },
   wizard: {
     // Every wizard key commits too — a digit selects AND advances; Left/Right change the step.
@@ -203,8 +210,9 @@ export const DIALOG_CONTRACT: DialogContract = {
     // A footer-named key COMMITS (in the `/model` picker, Enter writes the user's default), so it
     // takes the full signature check; an arrow only moves the highlight — which is precisely what
     // changes the signature — so it compares identity without the leftRight label. A card off a notice
-    // above a live box (`liveBox`) has digit keys only, each printed on its key row, and no arrows: its
-    // region is the notice's rows, which the bridge finds in its fresh read or refuses the tap.
+    // above a live box (`liveBox`) has digit keys only (letter keys only, under a `letters` head), each
+    // printed on its key row, and no arrows: its region is the notice's rows, which the bridge finds in
+    // its fresh read or refuses the tap.
     commits: menusEqual,
     identity: menusSameIdentity,
     signature: (m) => m.signature,

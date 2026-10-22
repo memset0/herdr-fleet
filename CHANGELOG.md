@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Adopt Collie v1.23.3 as real ancestry.** Walky talky, Stable and Edge release lines with Roll back, the shell-line record, Tasks and Agents pills, a second turn check before Enter and the 1.23.x reader and send fixes arrive as upstream behaviour, with every Fleet send port kept; update the lead first, then every member, each on Bun 1.4.4 or later.
+
 ## [3.22.0] - 2026-10-21
 
 Every member redeploys: the change is in the harness profile the bridge reads.

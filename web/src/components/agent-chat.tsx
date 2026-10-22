@@ -36,10 +36,12 @@ import { savedAtLabel } from "@/lib/format";
 import { settleAfterSend } from "@/lib/harness/guard";
 import { setStatus } from "@/lib/status";
 import { setFollowing as publishFollowing } from "@/lib/poll-intent";
+import { useHarnessStatusLineShown } from "@/lib/harness-prefs";
 import { useAutoZenEnabled, useZenEnabled } from "@/lib/zen";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { setStripsCollapsed, useStripsCollapsed } from "@/lib/strips-collapsed";
 import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/chat/chat-message-list";
+import { StretchTextContext } from "@/components/markdown-text";
 import { BottomSheet } from "@/components/ui/sheet";
 import { DisplayPrefsContent } from "@/components/display-prefs";
 import { Collapse, CollapseSwap } from "@/components/ui/collapse";
@@ -83,8 +85,11 @@ import { paneGitHead } from "@/lib/git-head";
 import { CacheSheet } from "@/components/cache-sheet";
 import { PaneActionsSheet } from "@/components/pane-actions-sheet";
 import { CardWaitingCtx } from "@/components/chat-cards";
-import { chatStatusKey, SavedCopyRow, SessionStream } from "@/components/session-stream";
+import { chatStatusKey, SavedCopyRow, SessionStream, sharedFolderLine } from "@/components/session-stream";
 import { PaneSettingsSheet } from "@/components/pane-settings-sheet";
+import { WalkyOpenProvider } from "@/components/walky-log";
+import { paneAddress } from "@/lib/walky";
+import { WalkySheet } from "@/components/walky-sheet";
 import { CompactStripLabels, TAB_ROW_SQUARE_TAP_TARGET } from "@/components/ui/labelled-strip";
 import { ReadOnlyBanner } from "@/components/read-only-banner";
 import { HostStaleBanner } from "@/components/host-stale-banner";
@@ -94,7 +99,7 @@ import { useModelOnScreen } from "@/hooks/use-model-on-screen";
 import { modelLabel } from "@/lib/model-label";
 import { useMaskedHintRetired } from "@/lib/masked-hint";
 import { entriesHoldMask, holdsMask } from "@/lib/masked-text";
-import { useHostHealth } from "@/components/crew-provider";
+import { useCrew, useHostHealth } from "@/components/crew-provider";
 import { writeRefusal } from "@/lib/host-health";
 import { StatusArea } from "@/components/status-area";
 import { ToastViewport } from "@/components/ui/toast-viewport";
@@ -237,7 +242,7 @@ function foldLabelKey(tabCount: number, paneCount: number): MessageKey {
 
 // At most one drawer/sheet is open at a time; null = none. (The composer's own Keys/Quick/Agent
 // sheets are separate and live inside <Composer>.)
-type Drawer = "switcher" | "paneMenu" | "paneSettings" | "display" | null;
+type Drawer = "switcher" | "paneMenu" | "paneSettings" | "messages" | "display" | null;
 
 // The detail view mirrors a terminal pane, NOT a chat thread. The pane's output comes from the
 // route loader (`text`); polling revalidates it. Replies/keys are confirmed via the header status
@@ -321,8 +326,16 @@ export function AgentChat({
   const rootSpaces = useOptionalRootData()?.workspaces;
   const branchOffOffered = agent !== undefined && rootSpaces !== undefined && paneInRepo(rootSpaces, agent.workspaceId);
   // Single display-prefs instance: the View controls (in <Composer>) write it, the mirror reads it.
-  const { prefs, setWrap, stepFontSize, stepChatFontSize, setRawTerminal, setTapToFocus, setExpandClippedReply } =
-    useDisplayPrefs();
+  const {
+    prefs,
+    setWrap,
+    stepFontSize,
+    stepChatFontSize,
+    setRawTerminal,
+    setTapToFocus,
+    setExpandClippedReply,
+    setStretchText,
+  } = useDisplayPrefs();
   // The chosen terminal font (Settings → Terminal font), applied by re-pointing `--font-mono` on
   // the two mirror surfaces below and NOWHERE else — see mirrorFont() for how, and why it is not a
   // custom property. Scoped to terminal CONTENT on purpose: app chrome that happens to be monospace
@@ -421,6 +434,19 @@ export function AgentChat({
     setDrawer(null);
     setPull(0);
   };
+  // The walky talky message the Messages sheet opens on: a tapped Chat card, or an id chip. The pane menu's
+  // own row clears it, so that way in shows the list from the top.
+  const [walkyFocus, setWalkyFocus] = useState<string | null>(null);
+  // ONE predicate for "this pane has a Messages sheet" (a member's pane too: the lead forwards its list).
+  // The pane menu's row, a Chat card's tap and an id chip's tap all read it, so no tap opens a sheet the
+  // menu would not offer.
+  const messagesSheet = agent !== undefined;
+  const { lead: crewLead } = useCrew();
+  const walkySelf = paneAddress(paneId, scope, crewLead, agent?.instance);
+  const openWalkyMessage = useCallback((id: string) => {
+    setWalkyFocus(id);
+    setDrawer("messages");
+  }, []);
   // Pane settings' Rename row opens the ⋮ sheet on its rename view (one rename flow, not two). A
   // flag and not a drawer value, because the drawer is which sheet and this is how it opens. It
   // lasts until the ⋮ sheet is no longer the open one, so a later ⋮ tap opens the list as ever.
@@ -822,6 +848,12 @@ export function AgentChat({
       grammarsOn ? adapterFor(agent?.agent)?.extractStatusLines(splitLines(parseAnsi(display))) ?? [] : [],
     [display, agent?.agent, grammarsOn],
   );
+  // Settings → Harness configurations: whether this device draws the lifted status line, and for
+  // Claude Code the background-agents block under it, for THIS pane's harness (lib/harness-prefs.ts).
+  // Keyed by the same exact agent string `adapterFor` takes. Only the DRAWING is gated: the parses
+  // above still run and the Terminal body still shows the real rows, which is why the strip's
+  // `Collapse` below closes instead of the lines being dropped here.
+  const statusLineShown = useHarnessStatusLineShown(agent?.agent);
 
   // The background-agents block the harness paints under its statusline (issue #242). stripChrome
   // peels it off the mirror with the box, and the strip stops above it, so this is its one surface.
@@ -1137,14 +1169,16 @@ export function AgentChat({
   // holds the answer across frames so a dialog or a redraw cannot blink the label.
   const modelWords = modelLabel(agent?.model);
   const footerLifted = grammarsOn && adapterFor(agent?.agent) !== undefined;
+  // The same goes for a strip the operator turned off for this harness (`statusLineShown`): it draws
+  // no footer, so nothing names the model and the label comes back, exactly as in zen.
   const footerRows = useMemo(() => {
-    if (footerLifted) return statusLines.map(rowText);
+    if (footerLifted) return statusLineShown ? statusLines.map(rowText) : NO_ROWS;
     if (chatShown) return NO_ROWS; // Chat draws no raw footer, so there is nothing to parse
     return splitLines(parseAnsi(display)).slice(-RAW_FOOTER_ROWS).map(rowText);
-  }, [footerLifted, statusLines, display, chatShown]);
+  }, [footerLifted, statusLineShown, statusLines, display, chatShown]);
   const modelOnScreen = useModelOnScreen(
     `${paneId}|${modelWords ?? ""}`,
-    footerLifted ? !zen : !chatShown,
+    footerLifted ? !zen && statusLineShown : !chatShown,
     footerRows,
     modelWords,
   );
@@ -1171,6 +1205,10 @@ export function AgentChat({
   // The multiplexer's own words come first where it has any, because a multiplexer that keeps no
   // agent session log at all is not Collie's fault and Collie does not say it is. A device on the
   // terminal reads exactly the row it read before the gate existed.
+  // The bridge refused to guess this pane's session because another pane runs the same harness in
+  // its folder (#508). Said wherever the pane says why it has no Chat, in place of "no transcript
+  // file", which would be wrong: nothing is missing, the bridge will not pick.
+  const sharedFolder = sharedFolderLine(chatStatus, agent?.agent);
   const chatReason = !sessionLog.capable
     ? sessionLog.note || t("history.unavailable.noLog")
     : chatChosen
@@ -1180,7 +1218,7 @@ export function AgentChat({
           ? // The server's own reason: reading switched off, or a member older than the chat route.
             t(chatStatusKey(chatStatus) ?? "history.unavailable.disabled")
           : agent?.hasSession && journal === "missing"
-            ? t("history.unavailable.noLog")
+            ? (sharedFolder ?? t("history.unavailable.noLog"))
             : t("history.unavailable.noSession")
       : historyAvailable
         ? null
@@ -1832,7 +1870,7 @@ export function AgentChat({
     const target = e.target as Element | null;
     // The `a` is what keeps a tap on an autolinked URL (components/ansi-output) from popping the
     // keyboard on top of the page it just opened. Don't trim it out of this selector.
-    if (target?.closest?.("button, a, input, textarea, select, [role='textbox']")) return;
+    if (target?.closest?.("button, a, input, textarea, select, [role='textbox'], [role='button']")) return;
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return;
     composerRef.current?.focusInput();
@@ -2534,8 +2572,11 @@ export function AgentChat({
             {/* THE TWO BODIES. One box, one top rule, one face, one list handle — a send snaps
                 whichever body is on screen back to its tail without knowing which one it is. The
                 draft-notice slot below is outside the swap on purpose: the composer portals into it
-                and the notice floats over both bodies alike (ADR 0061). */}
+                and the notice floats over both bodies alike (ADR 0061). Both bodies draw agent
+                replies, so whether this device draws their stretches is read once, here. */}
+            <StretchTextContext.Provider value={prefs.stretchText}>
             {chatShown ? (
+              <WalkyOpenProvider open={messagesSheet ? openWalkyMessage : null} self={walkySelf}>
               <CardWaitingCtx.Provider value={questionNotes}>
                 <SessionStream
                   feed={chatFeed}
@@ -2552,6 +2593,7 @@ export function AgentChat({
                   // A new pane with nothing to read yet: one line that says how to begin, never the
                   // "no transcript file" reading, which is only true of a pane that should have one.
                   starting={body === "start"}
+                  agent={agent?.agent}
                   // A pane with no screen is a durable conversation: its thread shows the person's line at once,
                   // a working row while the program thinks, and a cursor on a reply still being written.
                   durable={gridless}
@@ -2586,6 +2628,7 @@ export function AgentChat({
                   }
                 />
               </CardWaitingCtx.Provider>
+              </WalkyOpenProvider>
             ) : (
             <ChatMessageList
               ref={listRef}
@@ -2677,7 +2720,7 @@ export function AgentChat({
                       for that reading, on the body the operator now has. */}
                   {noLogFallback && (
                     <p className="mb-2 px-2 py-1 text-center text-xs leading-snug text-muted-foreground">
-                      {t("history.unavailable.noLog")}
+                      {sharedFolder ?? t("history.unavailable.noLog")}
                     </p>
                   )}
                   {/* The newest reply in full, standing IN PLACE OF the rows it covers (the mirror
@@ -2743,6 +2786,7 @@ export function AgentChat({
               )}
             </ChatMessageList>
             )}
+            </StretchTextContext.Provider>
             {/* THE TERMINAL-DRAFT NOTICE FLOATS HERE (ADR 0061). The composer portals the notice
                 into this box, pinned to the mirror's bottom edge: above the card dock when a card
                 is docked, else above the chrome block and its belt. Absolute, so it covers the
@@ -2756,7 +2800,7 @@ export function AgentChat({
             />
             {/* The pane's model, small on the mirror's bottom-right corner, over both bodies alike
                 and under the notice slot above (model-tag.tsx says why there). */}
-            <ModelTag model={modelOnScreen ? undefined : agent?.model} />
+            <ModelTag model={modelOnScreen ? undefined : agent?.model} effort={agent?.effort} />
           </div>
 
           {/* THE CARD DOCK (.adr/0059). The lifted card used to render inside the scroller above,
@@ -2863,8 +2907,8 @@ export function AgentChat({
                   arrives or leaves — a bare conditional here is the §2 fault at its full height, the
                   mirror teleporting 50px twice per message. `Collapse` also UNMOUNTS at the end of the
                   exit, so nothing is left focusable behind a row that is not on screen. */}
-              <Collapse open={!composing && statusLines.length > 0}>
-                {statusLines.length > 0 && (
+              <Collapse open={!composing && statusLineShown && statusLines.length > 0}>
+                {statusLineShown && statusLines.length > 0 && (
                 <div
                   className={cn(
                     "max-h-[18dvh] overflow-y-auto overscroll-contain border-t border-border/40 px-3 py-1 font-mono text-[11px] leading-tight",
@@ -2904,8 +2948,8 @@ export function AgentChat({
               {/* Background agents, under the statusline as the TUI drew them. Its own element and its
                   own budget, one row until tapped (agents-footer.tsx). Stands down with the strip
                   while the keyboard is up, through `Collapse` for the same DESIGN.md reason. */}
-              <Collapse open={!composing && agentsFooter.length > 0}>
-                {agentsFooter.length > 0 && <AgentsFooter rows={agentsFooter} face={mirrorFace} />}
+              <Collapse open={!composing && statusLineShown && agentsFooter.length > 0}>
+                {statusLineShown && agentsFooter.length > 0 && <AgentsFooter rows={agentsFooter} face={mirrorFace} />}
               </Collapse>
 
               {/* THE PANE SWITCHER'S MARK IS NOT A ROW ANY MORE. It was a 30px full-width band here,
@@ -3000,6 +3044,7 @@ export function AgentChat({
                   ref={composerRef}
                   bindingPane={agent}
                   paneId={paneId}
+                  instance={agent?.instance}
                   // What owns the agent's keyboard, as the bridge read it (M56 spec 06). See
                   // `composerSurface` above for the facts folded in before any read.
                   surface={composerSurface}
@@ -3008,7 +3053,11 @@ export function AgentChat({
                   stale={actsDisabledByCache}
                   agent={agent?.agent}
                   isShell={isShell}
+                  cwd={agent?.cwd || undefined}
                   held={agent?.held}
+                  // The Chat window's turns: the composer reads them only to settle a send that
+                  // ended `unknown` once its text lands as a user turn (#511).
+                  chatEntries={chatEntries}
                   // NO `status` AND NO `stale` GO DOWN ANY MORE. The composer drew the state as a
                   // word on a 14px band above its controls row; Altan asked for that band's status
                   // half to go, so the prop went with it. The state is stated up here instead — the
@@ -3027,6 +3076,8 @@ export function AgentChat({
                   prefs={prefs}
                   // Settings → Hand: which thumb the belt and the reply box are laid out for.
                   hand={handOf(prefs)}
+                  todos={agent?.todos}
+                  subagents={agent?.subagents}
                   // The belt's ⚙: the button is the composer's, the sheet it opens is mounted below
                   // beside the switcher's, for the stacking-context reason the pane-menu note gives.
                   display={{
@@ -3154,6 +3205,7 @@ export function AgentChat({
             setTapToFocus={setTapToFocus}
             setExpandClippedReply={setExpandClippedReply}
             afterTextSize={paneFit.row}
+            setStretchText={setStretchText}
             // THE BODY SWITCH, second door. The ⋮ menu writes the same value; this is the one an
             // operator opens to change how a pane LOOKS, which is the question it answers. `chosen`
             // and `showing` are both passed because they differ on a pane with no journal, and the
@@ -3241,6 +3293,16 @@ export function AgentChat({
           // On a pane with no screen only for its Recent sends: the cache switch is not drawn there, because a
           // program has no prompt cache to warn about (M56 spec 14).
           onSettings={gridless && !programReceipts ? undefined : () => setDrawer("paneSettings")}
+          // The pane's walky talky messages (M62), a read row with the others. A member's pane too: the
+          // lead forwards its list from that member's own log (CREW_PROTOCOL.md §21).
+          onMessages={
+            messagesSheet
+              ? () => {
+                  setWalkyFocus(null);
+                  setDrawer("messages");
+                }
+              : undefined
+          }
           // A durable conversation: the writes only, and Close names what it closes.
           conversation={gridless}
           openInRename={renameOnOpen}
@@ -3258,6 +3320,21 @@ export function AgentChat({
               ? () => nav.down(newPath({ machine: scope?.host, pane: paneId, session: scope?.session }))
               : undefined
           }
+        />
+        {/* The pane's walky talky messages (M62). Reply hands the sender to the composer, which sends through
+            the bridge's walky route with `replyTo`; the sheet itself sends nothing. A reply is a write, so a
+            read-only device, a saved copy, a quiet machine and a pane that is gone get the list without the button. */}
+        <WalkySheet
+          open={drawer === "messages"}
+          onClose={closeDrawer}
+          canReply={!readOnly && !savedCopyWrites && hostBlock === undefined && !gone}
+          focusId={walkyFocus}
+          self={walkySelf}
+          onReply={(row) => {
+            closeDrawer();
+            if (row.from.address === null) return;
+            composerRef.current?.startMessage({ to: row.from.address, replyTo: row.id, label: row.from.label });
+          }}
         />
         {/* This pane's own settings — one switch today, the prompt-cache warning (ADR 0042). Scoped to
             the PANE's machine, because `?host=` there names where the pane lives; the preference itself

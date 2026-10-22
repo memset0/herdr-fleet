@@ -62,6 +62,7 @@ import { WALK_GAPS, WALK_PAIRS, walkGroupKey } from "./walk-pairs";
 // bridge imports web/src/lib/styled-region.ts the other way, and neither pulls a cycle).
 import { verifyExpectedStyled, verifyPromptBinding } from "../../../../bridge/prompt-binding.ts";
 import { cropRawColumns, type ColumnRange } from "../column-range";
+import { MAX_TAIL_LINES } from "../tail-lines";
 import { trailingTaskChecklistStart } from "../task-checklist";
 import { findInputFrame, plainRows } from "../surface/frame";
 import { loadProfiles } from "../surface/profile";
@@ -154,17 +155,21 @@ function namedFooterStart(rows: readonly string[]): number | null {
  * would be refused `not_in_tail` without the cut, the uncut count kept when the cut leaves the match
  * unfound or still out of the tail. A generic footer (`Frame.volatile.footer`) is never cut.
  */
-function rowsBelowMatch(rows: readonly string[], expected: string[]): number | null {
+function rowsBelowMatch(
+  rows: readonly string[],
+  expected: string[],
+  tailLines: number = BRIDGE_PROMPT_TAIL_LINES,
+): number | null {
   const read = normalizeRegion(rows.join("\n"));
   const end = trailingTaskChecklistStart(read) ?? read.length;
   const matchEnd = lastMatchEnd(read.slice(0, end), expected);
   if (matchEnd === -1) return null;
   const below = end - 1 - matchEnd;
-  if (below < BRIDGE_PROMPT_TAIL_LINES) return below;
+  if (below < tailLines) return below;
   const footer = namedFooterStart(rows);
   if (footer === null || footer >= end) return below;
   const aboveFooter = lastMatchEnd(read.slice(0, footer), expected);
-  if (aboveFooter === -1 || footer - 1 - aboveFooter >= BRIDGE_PROMPT_TAIL_LINES) return below;
+  if (aboveFooter === -1 || footer - 1 - aboveFooter >= tailLines) return below;
   return footer - 1 - aboveFooter;
 }
 
@@ -193,6 +198,34 @@ function lastNonBlank(lines: StyledLine[]): number {
 /** Whether a block is a menu lifted off a notice above a live box (`MenuModel.liveBox`). */
 function isNoticeMenu(block: Block): boolean {
   return block.kind === "menu" && block.menu.liveBox !== undefined;
+}
+
+/** The notice heads a profile marks `letters`: a card lifted off one of them prints single letters, not digits. */
+const LETTERED_HEADS = [...loadProfiles().values()].flatMap((profile) =>
+  (profile.idle.notices ?? []).filter((notice) => notice.letters === true).map((notice) => new RegExp(notice.head, "u")),
+);
+
+/** A keyed item as a row prints it: a letter or a digit after a space, the row's start or a separator glyph, then a colon or a parenthesis. */
+const PRINTED_KEY = /(?:^|[\s|│·•])([A-Za-z0-9])[:)]/gu;
+
+/**
+ * The keys a notice card's trailing key block printed, top row first: walking up from the card's last
+ * row, each row while it holds a printed key. When every row under the head holds one, the head row's
+ * keys printed after the card's title count too (an inline head, `✦ Dismissed.   1: …`).
+ */
+function printedNoticeKeys(rows: readonly string[], title: string): string[] {
+  const keyed = (text: string): string[] => [...text.matchAll(PRINTED_KEY)].map((m) => m[1]!);
+  const keys: string[][] = [];
+  for (let row = rows.length - 1; row > 0; row--) {
+    const found = keyed(rows[row]!);
+    if (found.length === 0) break;
+    keys.unshift(found);
+  }
+  if (keys.length === rows.length - 1) {
+    const head = rows[0]!.trim().replace(/^\S+\s+/u, "");
+    keys.unshift(keyed(head.startsWith(title) ? head.slice(title.length) : head));
+  }
+  return keys.flat();
 }
 
 /** The signatures of every menu block in a build — the race guard's freshness token, in order. */
@@ -700,16 +733,19 @@ export function describeAdapterConformance(
       if (menuFixtures.length === 0) it.todo("adapter lifts no menu blocks from its own fixtures");
 
       for (const name of noticeFixtures) {
-        // .adr/0009 still holds: no key is synthesised. Each is one digit the notice's own key row
-        // printed as `<digit>:` (the last row of the block), in the printed order. The row is parsed
-        // here on its own terms, not the reader's: every keyed item, a letter or a digit after a space,
-        // the row's start or a separator glyph, so a letter key the reader dropped shows.
-        it(`${name}: a notice card's keys are the digits its key row printed`, () => {
+        // .adr/0009 still holds: no key is synthesised. Each is one digit the notice's own key block
+        // printed as `<digit>:` (the trailing rows of the block), in the printed order; under a head
+        // the profile marks `letters`, one letter printed as `<letter>:` instead, and never a digit. The block is
+        // parsed here on its own terms, not the reader's: every keyed item, a letter or a digit after a
+        // space, the row's start or a separator glyph, so a letter key the reader dropped shows.
+        it(`${name}: a notice card's keys are the digits (letters under a letters head) its key block printed`, () => {
           for (const block of adapter.buildBlocks(loadLines(name))) {
             if (block.kind !== "menu" || block.menu.liveBox === undefined) continue;
-            const keyRow = lineText(block.lines.at(-1)!);
-            const printed = [...keyRow.matchAll(/(?:^|[\s|│·•])([A-Za-z0-9])[:)]/gu)].map((m) => m[1]!);
-            expect(printed.every((key) => /^\d$/u.test(key)), `${name}: a key row with a letter key lifted a card`).toBe(true);
+            const printed = printedNoticeKeys(block.lines.map(lineText), block.menu.title);
+            const head = lineText(block.lines[0]!).trimEnd();
+            const lettered = LETTERED_HEADS.some((pattern) => pattern.test(head));
+            const kind = lettered ? /^[A-Za-z]$/u : /^\d$/u;
+            expect(printed.every((key) => kind.test(key)), `${name}: a key row with a ${lettered ? "digit key under a letters head" : "letter key"} lifted a card`).toBe(true);
             expect(block.menu.actions.map((a) => a.keys)).toEqual(printed.map((key) => [key]));
             expect(block.menu.nav).toEqual({ upDown: false });
           }
@@ -823,7 +859,7 @@ export function describeAdapterConformance(
             }
           });
 
-          it(`${name}: the ${kind} bound region ends inside the bridge's ${BRIDGE_PROMPT_TAIL_LINES}-row tail window`, () => {
+          it(`${name}: the ${kind} bound region ends inside the bridge's tail window (${BRIDGE_PROMPT_TAIL_LINES} rows, or the model's declared tail)`, () => {
             // The first write of every choreography binds `region` as the bridge's expected prompt,
             // and `verifyExpectedPrompt` (bridge/prompt-binding.ts) only accepts a match ENDING
             // within the last 6 non-blank rows of the fresh read. A region ending higher 409s every
@@ -841,13 +877,39 @@ export function describeAdapterConformance(
               // tail (lib/task-checklist.ts), nor a named footer run under the box the region ends above
               // (`rowsBelowMatch`, cut only where the uncut read would be refused).
               const expected = normalizeRegion(contract.region(model));
-              const below = rowsBelowMatch(read, expected);
+              // A model that declares a tail window (`bindTail`, lib/tail-lines.ts) is matched against
+              // that window, which the bridge accepts only from its default up to MAX_TAIL_LINES.
+              const declared = contract.tail?.(model);
+              if (declared !== undefined) {
+                expect(declared, `${name}: the ${kind} declares a tail the bridge refuses`).toBeGreaterThan(BRIDGE_PROMPT_TAIL_LINES);
+                expect(declared, `${name}: the ${kind} declares a tail the bridge refuses`).toBeLessThanOrEqual(MAX_TAIL_LINES);
+              }
+              const tailWindow = declared ?? BRIDGE_PROMPT_TAIL_LINES;
+              const below = rowsBelowMatch(read, expected, tailWindow);
               expect(below, `${name}: the ${kind} region is not on its own screen`).not.toBeNull();
               expect(
                 below!,
                 `${name}: ${String(below)} non-blank rows sit below the ${kind} region — ` +
-                  `the bridge can only bind within the last ${BRIDGE_PROMPT_TAIL_LINES}`,
-              ).toBeLessThan(BRIDGE_PROMPT_TAIL_LINES);
+                  `the bridge can only bind within the last ${String(tailWindow)}`,
+              ).toBeLessThan(tailWindow);
+            }
+          });
+
+          // A model that declares a tail window (`bindTail`) binds to its own raw capture through the
+          // bridge's verifier with that window, and the same region is refused with the default one:
+          // a declared tail that was not needed would only widen what a stale copy can match.
+          it(`${name}: a ${kind} declared tail binds to its own raw capture through the bridge's verifier, and is needed`, () => {
+            for (const model of modelsOf(adapter, name, kind)) {
+              const tail = contract.tail?.(model);
+              if (tail === undefined) continue;
+              const raw = loadRaw(name);
+              const region = contract.region(model);
+              const columns = contract.columns?.(model);
+              expect(verifyPromptBinding(raw, region, contract.styled?.(model), columns, tail).ok, `${name} with tail ${tail}`).toBe(true);
+              expect(verifyPromptBinding(raw, region, contract.styled?.(model), columns), `${name} with the default tail`).toMatchObject({
+                ok: false,
+                reason: "not_in_tail",
+              });
             }
           });
 

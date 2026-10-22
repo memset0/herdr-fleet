@@ -67,9 +67,13 @@ const PINNED = [
   "muse--palette-partial.txt",
   "muse--palette-skill.txt",
   "muse--palette-typed-arg.txt",
+  "muse--prompt-hint-1410.txt",
+  "muse--prompt-hint-typed-1410.txt",
+  "muse--prompt-hint.txt",
   "muse--quoted-dialogs-bare.txt",
   "muse--resume-picker-moved.txt",
   "muse--resume-picker.txt",
+  "muse--slash-palette-1410.txt",
   "muse--tasks-popup-approval.txt",
   "muse--tasks-popup-draft.txt",
   "muse--tasks-popup.txt",
@@ -126,6 +130,10 @@ const allOpencodeFixtures = readdirSync(PANES_DIR)
   .toSorted();
 
 describeAdapterConformance(museAdapter, {
+  // Muse 1.4.10 paints the bare-`/` slash palette inside the box under the prompt row (measured
+  // live 2026-10-18): the composer is ready, but the prompt row sits more than the bridge's tail
+  // window above the bottom rule, so no region can bind and the sweep goes out unbound there.
+  unboundComposerFixtures: ["muse--slash-palette-1410.txt"],
   ownFixtures,
   foreignFixtures: [
     ...allClaudeFixtures,

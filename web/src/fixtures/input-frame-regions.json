@@ -838,6 +838,10 @@
   "frame": null
  },
  {
+  "fixture": "claude--v2296-question-fullwidth--w150.txt",
+  "frame": null
+ },
+ {
   "fixture": "claude--v2299-ask-under-long-task-list.txt",
   "frame": null
  },
@@ -1385,6 +1389,210 @@
    "status": {
     "first": 37,
     "last": 39
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2303-menu-resume-picker--w119-first.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2303-menu-resume-picker--w119-second.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2303-menu-resume-picker--w160-first.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2303-menu-resume-picker--w160-second.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2303-permission-bash-bg-agent-rm--w160.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2303-permission-bash-bg-agent-rm--w80.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2303-titled-edge-draft--w160.txt",
+  "frame": {
+   "top": 10,
+   "prompt": 11,
+   "bottom": 12,
+   "label": "1.23.0",
+   "text": "ok merge the five, running the crew update now",
+   "placeholder": false,
+   "status": {
+    "first": 13,
+    "last": 15
+   },
+   "footer": {
+    "first": 17,
+    "last": 20
+   }
+  }
+ },
+ {
+  "fixture": "claude--v2303-titled-edge-idle--w160.txt",
+  "frame": {
+   "top": 10,
+   "prompt": 11,
+   "bottom": 12,
+   "label": "1.23.0",
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 13,
+    "last": 15
+   },
+   "footer": {
+    "first": 17,
+    "last": 20
+   }
+  }
+ },
+ {
+  "fixture": "claude--v2303-titled-edge-survey--w160.txt",
+  "frame": {
+   "top": 13,
+   "prompt": 14,
+   "bottom": 15,
+   "label": "1.23.0",
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 16,
+    "last": 18
+   },
+   "footer": {
+    "first": 20,
+    "last": 23
+   }
+  }
+ },
+ {
+  "fixture": "claude--v2303-titled-edge-working--w160.txt",
+  "frame": {
+   "top": 10,
+   "prompt": 11,
+   "bottom": 12,
+   "label": "1.23.0",
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 13,
+    "last": 15
+   },
+   "footer": {
+    "first": 17,
+    "last": 20
+   }
+  }
+ },
+ {
+  "fixture": "claude--v2304-ask-no-question-mark--w135.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2304-ask-no-question-mark-plain--w135.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2304-heads-up-dismissed--w135.txt",
+  "frame": {
+   "top": 69,
+   "prompt": 70,
+   "bottom": 71,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 72,
+    "last": 73
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2304-heads-up-dismissed--w65.txt",
+  "frame": {
+   "top": 67,
+   "prompt": 68,
+   "bottom": 69,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 70,
+    "last": 71
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2304-heads-up-dismissed-after-explain--w65.txt",
+  "frame": {
+   "top": 67,
+   "prompt": 68,
+   "bottom": 69,
+   "label": null,
+   "text": "Read every plain note in the sample folder and the example one…",
+   "placeholder": true,
+   "status": {
+    "first": 70,
+    "last": 71
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2304-heads-up-explained--w135.txt",
+  "frame": {
+   "top": 69,
+   "prompt": 70,
+   "bottom": 71,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 72,
+    "last": 73
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2304-heads-up-explained--w65.txt",
+  "frame": {
+   "top": 67,
+   "prompt": 68,
+   "bottom": 69,
+   "label": null,
+   "text": "Read every plain note in the sample folder and the example one…",
+   "placeholder": true,
+   "status": {
+    "first": 70,
+    "last": 71
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2306-transcript-survey--w153.txt",
+  "frame": {
+   "top": 8,
+   "prompt": 9,
+   "bottom": 10,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 11,
+    "last": 15
    },
    "footer": null
   }

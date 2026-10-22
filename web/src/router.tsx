@@ -23,6 +23,7 @@ import { SettingsRoute } from "@/routes/settings";
 import {
   SettingsAlertsRoute,
   SettingsAppearanceRoute,
+  SettingsHarnessesRoute,
   SettingsExperimentsRoute,
   SettingsDeviceRoute,
   SettingsVoiceRoute,
@@ -112,6 +113,7 @@ export const router = createBrowserRouter([
         element: <SettingsRoute />,
       },
       { path: "settings/appearance", element: <SettingsAppearanceRoute /> },
+      { path: "settings/harnesses", element: <SettingsHarnessesRoute /> },
       { path: "settings/device", element: <SettingsDeviceRoute /> },
       { path: "settings/voice", element: <SettingsVoiceRoute /> },
       // Two pages below Voice: the host's option for every device, and the Whistle model's copies.

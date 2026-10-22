@@ -234,7 +234,7 @@ describe("the codex profile (M56 spec 13)", () => {
       return { list, pointer: (text: string) => commandOf(list.pointer, text), entry: (text: string) => commandOf(list.entry, text), wrapped: (text: string) => new RegExp(list.wrapped, "u").test(text) };
     };
     const stock = read("pi");
-    expect(stock.list).toMatchObject({ lead: "/", sides: ["under"], footer: { maxRows: 4 } });
+    expect(stock.list).toMatchObject({ lead: "/", sides: ["under"], footer: { pattern: "^(?:\\S| ↳ \\S)", maxRows: 6 } });
     // Stock pi 0.87.1 and 1.3.0, pi 1.2.0 with editor padding, OmO on pi.
     expect(stock.pointer("→ model          <provider/model> — Select model (opens selector UI)")).toBe("model");
     expect(stock.pointer(" → settings       Open settings menu")).toBe("settings");
@@ -263,6 +263,22 @@ describe("the codex profile (M56 spec 13)", () => {
     expect(omp.entry("╰─ /model")).toBeNull();
     expect(omp.pointer(" π > ⬢ no-model > 📁 …/project > ◫ 7.1K/? ⟲ ▶────")).toBeNull();
     expect(omp.pointer("│ ❯ ⬢ All models          34 │  All available models")).toBeNull();
+  });
+
+  it("muse: the slash palette inside the box names its entries, its pointer bold paint (MUSE-03, #519)", () => {
+    const list = loadProfiles().get("muse")!.idle.volatile.below.commandList!;
+    const commandOf = (source: string, text: string): string | null => new RegExp(source, "u").exec(text)?.groups?.["command"] ?? null;
+    expect(list).toMatchObject({ sides: ["inside"], pointerBold: true, argumentHint: true });
+    // 1.4.10 at 138 columns: the description in a second column; 1.4.8: a skill's tags before the gap.
+    expect(commandOf(list.entry, `  /bug${" ".repeat(51)}Report a bug to the team`)).toBe("/bug");
+    expect(commandOf(list.entry, "  /plan · built-in · default skill  On an explicit planning request")).toBe("/plan");
+    expect(commandOf(list.entry, "  /usage  Show session usage")).toBe("/usage");
+    expect(new RegExp(list.wrapped, "u").test("  ↓ 72 more")).toBe(true);
+    // Not a list row: the box's prompt, a dialog's pointed option, a wrapped prose row, the statusline.
+    expect(commandOf(list.entry, "❯ /model")).toBeNull();
+    expect(commandOf(list.entry, " ❯ 1. Yes")).toBeNull();
+    expect(commandOf(list.entry, "  some wrapped draft text")).toBeNull();
+    expect(commandOf(list.entry, "  muse-wonder-full-1.0 · xhigh · /tmp · YOLO")).toBeNull();
   });
 
   it("codex: the rows above may lose text, and the hint rows under the box are named (lab, 0.163.0)", () => {
@@ -360,6 +376,8 @@ interface Spec14Case {
   readonly enterWhileRunning: "queues" | "steers" | undefined;
   /** The key that queues a message in a turn, where Enter does not queue. */
   readonly queueKey?: string;
+  /** The pause after the text write the profile names (`paste.settleMs`, #507), where it names one. */
+  readonly pasteSettleMs?: number;
 }
 
 const SPEC14_CASES: readonly Spec14Case[] = [
@@ -368,7 +386,7 @@ const SPEC14_CASES: readonly Spec14Case[] = [
     binary: "opencode",
     versionOutput: "1.19.2",
     version: "1.19.2",
-    above: "1.19.2",
+    above: "1.19.4",
     takes: [
       { anchor: "top", row: "  ┃" },
       { anchor: "prompt", row: "  ┃  hello there", draft: "hello there" },
@@ -451,6 +469,7 @@ const SPEC14_CASES: readonly Spec14Case[] = [
     submit: ["Enter"],
     probeStatus: "provisional",
     enterWhileRunning: undefined,
+    pasteSettleMs: 350,
   },
   {
     id: "omp",
@@ -506,6 +525,65 @@ const SPEC14_CASES: readonly Spec14Case[] = [
     enterWhileRunning: "steers",
     queueKey: "alt+Enter",
   },
+  {
+    id: "hermes",
+    binary: "hermes",
+    versionOutput: "Hermes Agent v0.22.2 (2026.9.24) · stable · local d923a5eb487a\nInstall directory: /opt/hermes\n",
+    version: "0.22.2",
+    above: "0.22.3",
+    takes: [
+      { anchor: "top", row: "─".repeat(64) },
+      { anchor: "prompt", row: "❯" },
+      { anchor: "prompt", row: "❯ hello there", draft: "hello there" },
+      { anchor: "prompt", row: "assistant ❯ hello there", draft: "hello there" },
+      // A clarify's typed answer: Hermes's own input row, `✎` in front (alone below 64 columns).
+      { anchor: "prompt", row: "✎ ❯ CockroachDB 23.2", draft: "CockroachDB 23.2" },
+      { anchor: "prompt", row: "✎ Firebird", draft: "Firebird" },
+      // A turn running: Hermes's input row with `☤` in front. The same glyph is the profile's running
+      // row, so the box is found and the turn reads running.
+      { anchor: "prompt", row: "☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel", draft: "msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel" },
+      { anchor: "prompt", row: "☤ msg=interrupt", draft: "msg=interrupt" },
+      { anchor: "bottom", row: "─".repeat(64) },
+    ],
+    refuses: [
+      // A clarify waiting for a choice, an approval, a password: none takes text.
+      { anchor: "prompt", row: "? ❯" },
+      { anchor: "prompt", row: "⚠ ❯" },
+      { anchor: "prompt", row: "🔐 ❯" },
+      { anchor: "top", row: " ☤ lab-model │ ctx -- │ [░░░░░░░░░░] -- │ 0s │ ⏲ 0s" },
+    ],
+    collapse: { text: "[Pasted text #2: 12 lines → /home/u/.hermes/pastes/paste_2_101500.txt]", group: "lines", value: "12" },
+    reservedLeads: ["/", "!"],
+    submit: ["Enter"],
+    probeStatus: "provisional",
+    enterWhileRunning: "steers",
+  },
+  {
+    id: "cursor",
+    binary: "cursor-agent",
+    versionOutput: "2026.10.16-e3cb207\n",
+    version: "2026.10.16",
+    above: "2026.10.20",
+    takes: [
+      { anchor: "top", row: ` ${"▄".repeat(40)}` },
+      { anchor: "prompt", row: "  → hello there", draft: "hello there" },
+      { anchor: "prompt", row: `  → Add a follow-up${" ".repeat(60)}ctrl+c to stop`, draft: "Add a follow-up" },
+      { anchor: "prompt", row: "  ! echo hi", draft: "echo hi" },
+      { anchor: "bottom", row: ` ${"▀".repeat(40)}` },
+    ],
+    refuses: [
+      { anchor: "prompt", row: "  !important" },
+      { anchor: "prompt", row: "    → a wrapped row" },
+      { anchor: "prompt", row: "   → /model [filter]           Select model (Tab to edit)" },
+      { anchor: "top", row: ` ${"▀".repeat(40)}` },
+      { anchor: "bottom", row: ` ${"▄".repeat(40)}` },
+    ],
+    collapse: { text: "[Pasted text #1 +301 lines]", group: "lines", value: "301" },
+    submit: ["Enter"],
+    probeStatus: "verified",
+    enterWhileRunning: "queues",
+    rangeStatus: "provisional",
+  },
 ];
 
 describe.each(SPEC14_CASES)("the $id profile (M56 spec 14)", (c) => {
@@ -526,7 +604,7 @@ describe.each(SPEC14_CASES)("the $id profile (M56 spec 14)", (c) => {
     expect(p.keys.queueKey).toBe(c.queueKey);
     expect(p.reservedLeads).toEqual(c.reservedLeads ?? ["/", "!", "@"]);
     expect(p.probe.char.length).toBeGreaterThan(0);
-    expect(p.paste).toEqual({ bracketed: true });
+    expect(p.paste).toEqual(c.pasteSettleMs === undefined ? { bracketed: true } : { bracketed: true, settleMs: c.pasteSettleMs });
     expect(p.hooks).toBeDefined();
   });
 
@@ -547,12 +625,13 @@ describe.each(SPEC14_CASES)("the $id profile (M56 spec 14)", (c) => {
 
   it(`${c.id}: verified through the ledger row, provisional above it`, () => {
     // SAFETY: the ledger is this repo's own committed JSON; every agent row has a version and a verified date, and the key is a harness id from this table.
-    const row = (ledgerJson.agents as Record<string, { version: string; verified: string }>)[c.id]!;
+    const row = (ledgerJson.agents as Record<string, { version: string; verified: string } | undefined>)[c.id];
     if (c.rangeStatus === "provisional") {
       expect(profile().versions.map((range) => range.status)).toEqual(["provisional"]);
-      expect(profileFor(c.id, row.version, { log: () => {} })?.status).toBe("provisional");
+      expect(profileFor(c.id, row?.version ?? c.version, { log: () => {} })?.status).toBe("provisional");
       return;
     }
+    if (row === undefined) throw new Error(`${c.id} has a verified range and no ledger row`);
     const verified = profile().versions.filter((range) => range.status === "verified");
     expect(verified).toHaveLength(1);
     expect(verified[0]!.verifiedThrough).toBe(row.version);
@@ -581,8 +660,10 @@ describe("the frame schema of the interior walk (M56 spec 14)", () => {
     ["an under row that is no expression", ["idle", "frame", "under"], "[unclosed", "idle.frame.under"],
     ["an underPainted flag that is no boolean", ["idle", "frame", "underPainted"], "yes", "idle.frame.underPainted"],
     ["an underPainted flag with no under pattern", ["idle", "frame", "underPainted"], true, "idle.frame.underPainted"],
+    ["an ownPrompt flag that is no boolean", ["idle", "frame", "ownPrompt"], "yes", "idle.frame.ownPrompt"],
     ["a dialogsInBox flag that is no boolean", ["idle", "dialogsInBox"], "yes", "idle.dialogsInBox"],
     ["a placeholder prefix list that is no list", ["idle", "placeholders", "prefixes"], "Ask", "idle.placeholders.prefixes"],
+    ["an answer prompt that is no expression", ["idle", "answerPrompt"], "[unclosed", "idle.answerPrompt"],
   ];
   for (const [name, path, value, field] of cases) {
     it(`refuses ${name}`, () => {
@@ -594,6 +675,17 @@ describe("the frame schema of the interior walk (M56 spec 14)", () => {
     expect(failure(change(rawOpencode(), ["idle", "frame", "walk"], "edges")).path).toMatch(/^idle\.frame\./u);
     expect(failure(change(rawClaude(), ["idle", "frame", "rows"], "^x$")).path).toBe("idle.frame.rows");
     expect(failure(change(rawClaude(), ["idle", "frame", "bottom", "open"], true)).path).toBe("idle.frame.bottom.open");
+    expect(failure(change(rawClaude(), ["idle", "frame", "ownPrompt"], true)).path).toBe("idle.frame.ownPrompt");
+  });
+
+  it("takes the box's own prompt glyph (`ownPrompt`) only beside a rows pattern (issue 544)", () => {
+    const own = change(rawOpencode(), ["idle", "frame", "ownPrompt"], true);
+    expect(parseProfile(own).idle.frame.ownPrompt).toBe(true);
+    expect(parseProfile(change(rawOpencode(), ["idle", "frame", "ownPrompt"], false)).idle.frame.ownPrompt).toBeUndefined();
+    expect(failure(change(own, ["idle", "frame", "rows"], undefined)).path).toBe("idle.frame.ownPrompt");
+    const pi = parseProfile(parseJsonObject(readFileSync(join(PROFILES_DIR, "pi.json"), "utf8"))!);
+    expect(pi.idle.frame.ownPrompt).toBeUndefined();
+    expect(pi.idle.frameAlternates?.map((frame) => frame.ownPrompt)).toEqual([true]);
   });
 
   it("names the alternate frame shape in the path of a bad field", () => {
@@ -617,6 +709,12 @@ describe("the frame schema of the interior walk (M56 spec 14)", () => {
     expect(pointer.test("> model   Switch model")).toBe(false);
     expect(list.namespaces).toEqual(["skill:"]);
     expect(omp.idle.inlineHint).toEqual({ fg: ["rgb(107,114,128)"] });
+  });
+
+  it("muse (issue 510): the placeholder is named by its colour as well as its texts", () => {
+    const muse = parseProfile(parseJsonObject(readFileSync(join(PROFILES_DIR, "muse.json"), "utf8"))!);
+    expect(muse.idle.placeholders.fg).toEqual(["rgb(175,177,179)"]);
+    expect(muse.idle.placeholders.texts).toContain("/loop 10m <prompt> schedules a recurring prompt");
   });
 
   it("omp 18.11 (issue 497): the prompt and continuation rows leave the box's right border out of the draft", () => {
@@ -643,8 +741,33 @@ describe("the frame schema of the interior walk (M56 spec 14)", () => {
     expect(failure(change(rawClaude(), ["idle", "notices", 0, "head"], "^\\s*$")).path).toBe("idle.notices[0].head");
     expect(failure(change(rawClaude(), ["idle", "notices"], "no list")).path).toBe("idle.notices");
     expect(failure(change(rawClaude(), ["idle", "notices", 0], "no object")).path).toBe("idle.notices[0]");
-    expect(parseProfile(rawClaude()).idle.notices).toEqual([{ head: "^✦ (?:Heads up|You should know) ·(?:\\s|$)" }]);
+    expect(parseProfile(rawClaude()).idle.notices).toEqual([
+      { head: "^✦ (?:Heads up|You should know) ·(?:\\s|$)", body: true },
+      { head: "^● How is Claude doing this session\\? \\(optional\\)$" },
+      { head: "^● Can Anthropic look at your session transcript to help us improve Claude Code\\?$", letters: true },
+      { head: "^✦ Dismissed\\.(?=\\s|$)" },
+    ]);
     expect(parseProfile(rawOpencode()).idle.notices).toBeUndefined();
+  });
+
+  it("accepts `body: true` on a notice head and rejects any other value", () => {
+    expect(parseProfile(change(rawClaude(), ["idle", "notices", 1, "body"], true)).idle.notices?.[1]).toEqual({
+      head: "^● How is Claude doing this session\\? \\(optional\\)$",
+      body: true,
+    });
+    for (const bad of [false, "true", 1, null, {}]) {
+      expect(failure(change(rawClaude(), ["idle", "notices", 0, "body"], bad)).path, JSON.stringify(bad)).toBe("idle.notices[0].body");
+    }
+  });
+
+  it("accepts `letters: true` on a notice head and rejects any other value", () => {
+    expect(parseProfile(change(rawClaude(), ["idle", "notices", 1, "letters"], true)).idle.notices?.[1]).toEqual({
+      head: "^● How is Claude doing this session\\? \\(optional\\)$",
+      letters: true,
+    });
+    for (const bad of [false, "true", 1, null, {}]) {
+      expect(failure(change(rawClaude(), ["idle", "notices", 0, "letters"], bad)).path, JSON.stringify(bad)).toBe("idle.notices[0].letters");
+    }
   });
 
   it("accepts a profile that names no hook", () => {
@@ -668,6 +791,9 @@ describe("parseProfile names the failing field", () => {
     ["Escape as the clear key", ["keys", "clear", "key"], "Escape", "keys.clear.key"],
     ["a probe of two characters", ["probe", "char"], "ab", "probe.char"],
     ["a paste flag that is not a boolean", ["paste", "bracketed"], "yes", "paste.bracketed"],
+    ["a paste settle that is not a whole number", ["paste", "settleMs"], 1.5, "paste.settleMs"],
+    ["a paste settle below its floor", ["paste", "settleMs"], 0, "paste.settleMs"],
+    ["a paste settle above its ceiling", ["paste", "settleMs"], 99_999, "paste.settleMs"],
     ["an ask lifetime that is not a whole number", ["ask", "lifetimeMs"], 1.5, "ask.lifetimeMs"],
     ["an ask lifetime below its floor", ["ask", "lifetimeMs"], 10, "ask.lifetimeMs"],
     ["an unknown hook kind", ["hooks", "Stop"], "level", "hooks.Stop"],
@@ -700,6 +826,8 @@ describe("parseProfile names the failing field", () => {
     ["no command list side", ["idle", "volatile", "below", "commandList", "sides"], [], "idle.volatile.below.commandList.sides"],
     ["an unknown command list side", ["idle", "volatile", "below", "commandList", "sides"], ["under", "left"], "idle.volatile.below.commandList.sides[1]"],
     ["a command list side named twice", ["idle", "volatile", "below", "commandList", "sides"], ["under", "under"], "idle.volatile.below.commandList.sides[1]"],
+    ["a command list pointerBold that is no boolean", ["idle", "volatile", "below", "commandList", "pointerBold"], "yes", "idle.volatile.below.commandList.pointerBold"],
+    ["a command list argumentHint that is no boolean", ["idle", "volatile", "below", "commandList", "argumentHint"], "yes", "idle.volatile.below.commandList.argumentHint"],
     ["a command list footer that is no object", ["idle", "volatile", "below", "commandList", "footer"], "^\\S", "idle.volatile.below.commandList.footer"],
     ["a command list footer that matches a blank row", ["idle", "volatile", "below", "commandList", "footer"], { pattern: "^\\s*$", maxRows: 2 }, "idle.volatile.below.commandList.footer.pattern"],
     ["a command list footer of no rows", ["idle", "volatile", "below", "commandList", "footer"], { pattern: "^\\S", maxRows: 0 }, "idle.volatile.below.commandList.footer.maxRows"],
@@ -713,6 +841,11 @@ describe("parseProfile names the failing field", () => {
     ["an inline hint colour written as hex", ["idle", "inlineHint"], { fg: ["#6b7280"] }, "idle.inlineHint.fg[0]"],
     ["an inline hint colour out of range", ["idle", "inlineHint"], { fg: ["rgb(107,114,256)"] }, "idle.inlineHint.fg[0]"],
     ["an inline hint colour named twice", ["idle", "inlineHint"], { fg: ["rgb(1,2,3)", "rgb(1,2,3)"] }, "idle.inlineHint.fg[1]"],
+    ["placeholder colours that are no list", ["idle", "placeholders", "fg"], "rgb(175,177,179)", "idle.placeholders.fg"],
+    ["no placeholder colour", ["idle", "placeholders", "fg"], [], "idle.placeholders.fg"],
+    ["a placeholder colour written as hex", ["idle", "placeholders", "fg"], ["#afb1b3"], "idle.placeholders.fg[0]"],
+    ["a placeholder colour out of range", ["idle", "placeholders", "fg"], ["rgb(175,177,256)"], "idle.placeholders.fg[0]"],
+    ["a placeholder colour named twice", ["idle", "placeholders", "fg"], ["rgb(1,2,3)", "rgb(1,2,3)"], "idle.placeholders.fg[1]"],
     ["a hold on an event hooks does not list as an ask", ["hold", "event"], "Stop", "hold.event"],
     ["a hold tool event hooks does not list as an edge", ["hold", "toolEvent"], "PermissionRequest", "hold.toolEvent"],
     ["a hold limit at the hook timeout", ["hold", "limitMs"], 300000, "hold.limitMs"],

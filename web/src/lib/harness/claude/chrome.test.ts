@@ -987,6 +987,7 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "v2289-switch-model-yes", statusRows: 0, draft: null, stripped: 1 },
     { fixture: "v2289-switch-model-yes--w50", statusRows: 0, draft: null, stripped: 1 },
     { fixture: "v2291-permission-bash-subagent", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2296-question-fullwidth--w150", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "v2299-ask-under-long-task-list", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "v2299-ask-under-task-list", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "v2299-wizard-under-task-list", statusRows: 0, draft: null, stripped: 0 },
@@ -1029,6 +1030,12 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "v2302-slash-model-list--w120--h40", statusRows: 0, draft: "/model", stripped: 24 },
     { fixture: "v2302-slash-effort-list--w120--h40", statusRows: 0, draft: "/effort", stripped: 24 },
     { fixture: "v2302-heads-up-above-box--w142", statusRows: 2, draft: null, stripped: 6 },
+    // The Heads up follow-ups, 2.1.304 (derived): the box under each is empty or holds only the dim suggestion.
+    { fixture: "v2304-heads-up-dismissed--w135", statusRows: 2, draft: null, stripped: 6 },
+    { fixture: "v2304-heads-up-dismissed--w65", statusRows: 2, draft: null, stripped: 6 },
+    { fixture: "v2304-heads-up-dismissed-after-explain--w65", statusRows: 2, draft: null, stripped: 6 },
+    { fixture: "v2304-heads-up-explained--w135", statusRows: 2, draft: null, stripped: 6 },
+    { fixture: "v2304-heads-up-explained--w65", statusRows: 2, draft: null, stripped: 6 },
     // The fix rig's 120 x 36 Herdr pane (captured 2026-10-17): an empty box on a screen whose rows reach
     // the bottom, and the same pane with the list under the box, blank rows under the list.
     { fixture: "v2302-idle-full-screen--w120--h36", statusRows: 1, draft: null, stripped: 5 },
@@ -1043,6 +1050,19 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "v2302-wizard-review-long-q--w140", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "v2302-working-agents-panel--w119", statusRows: 3, draft: null, stripped: 11 },
     { fixture: "v2302-working-list-echo--w119", statusRows: 3, draft: null, stripped: 7 },
+    { fixture: "v2303-menu-resume-picker--w119-first", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2303-menu-resume-picker--w119-second", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2303-menu-resume-picker--w160-first", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "v2303-menu-resume-picker--w160-second", statusRows: 0, draft: null, stripped: 1 },
+    { fixture: "v2303-permission-bash-bg-agent-rm--w160", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2303-permission-bash-bg-agent-rm--w80", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2303-titled-edge-draft--w160", statusRows: 3, draft: "ok merge the five, running the crew update now", stripped: 11 },
+    { fixture: "v2303-titled-edge-idle--w160", statusRows: 3, draft: null, stripped: 11 },
+    { fixture: "v2303-titled-edge-survey--w160", statusRows: 3, draft: null, stripped: 11 },
+    { fixture: "v2303-titled-edge-working--w160", statusRows: 3, draft: null, stripped: 11 },
+    { fixture: "v2306-transcript-survey--w153", statusRows: 5, draft: null, stripped: 9 },
+    { fixture: "v2304-ask-no-question-mark--w135", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2304-ask-no-question-mark-plain--w135", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-checked", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-final", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-pointer-next", statusRows: 0, draft: null, stripped: 0 },
@@ -1080,5 +1100,26 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
       expect(extractInputDraft(lines)).toContain(draft);
     }
     expect(lines.length - stripChrome(lines).length).toBe(stripped);
+  });
+});
+
+// Claude Code 2.1.303 writes a named session's name into the box's top edge (`──── 1.23.0 ─`).
+describe("a session name in the box's top edge (2.1.303, 160 columns)", () => {
+  it("strips the titled box with its statusline and agents panel, and never keeps the name as transcript", () => {
+    for (const state of ["working", "idle", "draft", "survey"]) {
+      const lines = fixtureLines(`claude--v2303-titled-edge-${state}--w160.txt`);
+      const kept = joined(stripChrome(lines));
+      expect(hasInputBox(lines), state).toBe(true);
+      expect(kept, state).not.toContain("1.23.0");
+      expect(kept, state).not.toContain("bypass permissions");
+      expect(kept, state).toContain("Update installed");
+      expect(statusText(lines), state).toHaveLength(3);
+      expect(extractAgentsFooter(lines), state).toHaveLength(4);
+    }
+  });
+
+  it("reads the draft under the titled edge, without the name", () => {
+    expect(extractInputDraft(fixtureLines("claude--v2303-titled-edge-draft--w160.txt"))).toBe("ok merge the five, running the crew update now");
+    expect(extractInputDraft(fixtureLines("claude--v2303-titled-edge-idle--w160.txt"))).toBeNull();
   });
 });
