@@ -91,7 +91,9 @@ export type NavigationStatus = "idle" | "working" | "blocked" | "done" | "unknow
 export type NavigationSubject =
   | { kind: "host"; hostId: string; label: string }
   | { kind: "pane"; paneId: string }
-  | { kind: "tab"; tabId: string }
+  // `paneId` is set only on a row standing in for an elided single-Pane Tab: its actions are the
+  // Tab's, and the per-pane verbs (pin, tags) act on the one Pane it shows.
+  | { kind: "tab"; tabId: string; paneId?: string }
   | { kind: "space"; workspaceId: string };
 
 /** What activating a row does. A row without one only discloses. */
@@ -355,7 +357,7 @@ function hostRow(
           {
             ...paneRow(only, selected, hostId),
             label: operatorChosenName(only.ownLabel) ?? entry.tab.label,
-            subject: { kind: "tab", tabId: entry.tab.tabId },
+            subject: { kind: "tab", tabId: entry.tab.tabId, paneId: only.paneId },
           },
         ];
       }

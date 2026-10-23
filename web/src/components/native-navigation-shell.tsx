@@ -291,6 +291,11 @@ function FleetNavigationShell({
       : null;
   const actionTab =
     actions?.kind === "tab" ? (data.tabs.find((tab) => tab.tabId === actions.tabId) ?? null) : null;
+  // The one Pane a merged single-Pane row shows, resolved the way a Pane subject is.
+  const actionTabPane =
+    actions?.kind === "tab" && actions.paneId !== undefined
+      ? (allPanes.find((pane) => pane.paneId === actions.paneId) ?? null)
+      : null;
   // A Space is resolved to the snapshot's own row for the same reason a Pane and a Tab are: the
   // sheet acts on what the current snapshot describes, never on a copy the tree took a poll ago.
   const actionSpace =
@@ -742,6 +747,7 @@ function FleetNavigationShell({
           open={actionPane !== null}
           onClose={() => setActions(null)}
           pane={actionPane}
+          herd={allPanes}
           scope={data.scope}
           readOnly={readOnly}
           onRenamed={() => revalidator.revalidate()}
@@ -766,6 +772,8 @@ function FleetNavigationShell({
           open={actionTab !== null}
           onClose={() => setActions(null)}
           tab={actionTab}
+          pane={actionTabPane}
+          herd={allPanes}
           scope={data.scope}
           readOnly={readOnly}
           onRenamed={() => revalidator.revalidate()}

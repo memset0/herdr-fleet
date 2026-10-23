@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **Hierarchy right-click menu pins a pane and edits its tags.** Pin/Unpin and Edit pane tags join a Pane row's pointer menu, and a merged single-Pane Tab row's, outside the write gates; shells get Pin only.
+
 ## [3.23.1] - 2026-10-23
 
 ### Fixed

@@ -54,6 +54,11 @@ export function FleetPaneTagsProvider({ children, client: supplied }: { children
   );
 }
 
+/** The shell's one tag editor, opened for a pane's place (or the catalog for null); null outside the provider. */
+export function usePaneTagEditor(): ((pane: PanePlace | null) => void) | null {
+  return useContext(TagContext)?.open ?? null;
+}
+
 /** Register the existing editors against the shell's host/session-aware current pane. */
 export function FleetPaneTagCommands({ pane }: { pane?: AgentView }) {
   const context = useContext(TagContext);

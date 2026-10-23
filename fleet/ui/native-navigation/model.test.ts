@@ -84,6 +84,8 @@ describe("native navigation hierarchy", () => {
     // `t1` holds one Pane, so its row is the elided one and takes the Tab's name.
     expect(rows[0]?.children.map((row) => row.label)).toEqual(["Second", "First"]);
     expect(rows[0]?.children[0]?.children.map((row) => row.label)).toEqual(["Claude", "Shell"]);
+    // A Tab that still groups several Panes names no Pane: pin and tags have no single target there.
+    expect(rows[0]?.children[0]?.subject).toEqual({ kind: "tab", tabId: "t2" });
     // A Pane inside a Tab that SURVIVES keeps its own display label: there the terminal title is
     // what tells two siblings apart.
     expect(tree.selection).toEqual({
@@ -118,8 +120,8 @@ describe("native navigation hierarchy", () => {
       target: { kind: "pane", paneId: "p1" },
       // …and what it ACTS ON is the Tab, because this row is standing in the Tab's slot: the Tab got
       // no row of its own, so renaming here names the name that is on screen and closing here closes
-      // the container rather than leaving it behind empty.
-      subject: { kind: "tab", tabId: "t1" },
+      // the container rather than leaving it behind empty. The per-pane verbs still need the Pane.
+      subject: { kind: "tab", tabId: "t1", paneId: "p1" },
       selected: true,
     });
     expect(space?.children[0]?.disclosureId).toBeUndefined();

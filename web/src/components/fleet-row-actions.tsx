@@ -1,4 +1,4 @@
-import { Maximize2, Monitor, Pencil, Plus, ScrollText, Search, XCircle } from "lucide-react";
+import { Maximize2, Monitor, Pencil, Pin, PinOff, Plus, ScrollText, Search, Tags, XCircle } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 
 import { pointerMenuGestures } from "../../../fleet/ui/pointer-menu.ts";
@@ -9,6 +9,10 @@ import {
   FleetMenuItem,
 } from "@/components/fleet-context-menu";
 import { FleetRenameDialog } from "@/components/fleet-rename-dialog";
+import { usePaneTagEditor } from "@/components/fleet-pane-tags";
+import { tagPanePlace } from "@/lib/fleet-pane-tags";
+import { pinMatcher, setPinned, usePins } from "@/lib/pins";
+import type { AgentView } from "@/lib/types";
 import type { Scope } from "@/lib/scope";
 import { ActionRow } from "@/components/action-sheet-rows";
 import { BottomSheet } from "@/components/ui/sheet";
@@ -110,6 +114,66 @@ function useClaimedPoint(open: boolean, coarse: boolean): MenuPoint | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// A pane's own per-device verbs
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NO_HERD: readonly AgentView[] = [];
+
+/**
+ * PIN AND TAGS — the two verbs the Agent rail offers beside every row, offered here too.
+ *
+ * Neither types into a terminal: a pin is Collie's per-device store and tags are the lead's own
+ * authenticated catalog. So they stand OUTSIDE the read-only and host-write gates that hide rename,
+ * focus and close, exactly as the sheet keeps Pin outside them and the rail never gates either.
+ * The pin is the sheet's own `togglePin`, step for step (close, then write, then Collie's status);
+ * the tag row opens the shell's one editor rather than a second one. A shell gets no tag row, as the
+ * rail gives it none.
+ */
+function PaneOwnRows({
+  pane,
+  herd,
+  onClose,
+}: {
+  pane: AgentView;
+  herd: readonly AgentView[];
+  onClose: () => void;
+}) {
+  useFleetLocale();
+  const pins = usePins();
+  const editTags = usePaneTagEditor();
+  const pinned = pinMatcher(pins)(pane);
+  return (
+    <>
+      <FleetMenuItem
+        icon={
+          pinned ? (
+            <PinOff className="size-3 shrink-0 text-muted-foreground" />
+          ) : (
+            <Pin className="size-3 shrink-0 text-muted-foreground" />
+          )
+        }
+        label={pinned ? t("paneActions.unpin.label") : t("paneActions.pin.label")}
+        onSelect={() => {
+          onClose();
+          setPinned(pane, !pinned, herd);
+          setStatus(pinned ? t("paneActions.unpin.done") : t("paneActions.pin.done"), "success");
+        }}
+      />
+      {editTags !== null && pane.kind !== "shell" && (
+        <FleetMenuItem
+          icon={<Tags className="size-3 shrink-0 text-muted-foreground" />}
+          label={ft("fleet.tags.assign")}
+          onSelect={() => {
+            onClose();
+            editTags(tagPanePlace(pane));
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pane
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -188,6 +252,7 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
   return (
     <>
       <FleetContextMenu open={open && !renaming} at={at} onClose={onClose} label={name}>
+        {pane !== null && <PaneOwnRows pane={pane} herd={props.herd ?? NO_HERD} onClose={onClose} />}
         {blocked ? (
           <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
             {readOnly
@@ -289,7 +354,15 @@ export function FleetPaneActions(props: ComponentProps<typeof PaneActionsSheet>)
 // Tab
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
+export function FleetTabActions({
+  pane = null,
+  herd = NO_HERD,
+  ...props
+}: ComponentProps<typeof TabActionsSheet> & {
+  /** The one Pane a merged row shows, when this Tab's row stands in for it; its pin and tags ride along. */
+  pane?: AgentView | null;
+  herd?: readonly AgentView[];
+}) {
   useLocale();
   const { open, onClose, tab, scope, readOnly = false, onRenamed, onClosed } = props;
   const coarse = useCoarseOnly();
@@ -338,6 +411,7 @@ export function FleetTabActions(props: ComponentProps<typeof TabActionsSheet>) {
   return (
     <>
       <FleetContextMenu open={open && !renaming} at={at} onClose={onClose} label={name}>
+        {pane !== null && <PaneOwnRows pane={pane} herd={herd} onClose={onClose} />}
         {blocked ? (
           <p className="px-1.5 py-1 text-[11px] leading-snug text-muted-foreground">
             {readOnly

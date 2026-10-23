@@ -2,8 +2,12 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { emptyTags } from "../../../fleet/pane-tags/document.ts";
 import { usePointerMenuGestures } from "@/components/fleet-context-menu";
+import { FleetPaneTagsProvider } from "@/components/fleet-pane-tags";
 import { FleetPaneActions, FleetTabActions } from "@/components/fleet-row-actions";
+import { createPaneTagClient } from "@/lib/fleet-pane-tags";
+import { __resetPins, currentPins } from "@/lib/pins";
 import type { AgentView, TabView } from "@/lib/types";
 import { server } from "@/test/setup";
 
@@ -147,5 +151,94 @@ describe("FleetTabActions", () => {
     // deliberate press — a third is asking the operator to confirm what they have already done twice.
     await waitFor(() => expect(onClosed).toHaveBeenCalledExactlyOnceWith("w1:t1"));
     expect(screen.queryByText(/tap again/i)).toBeNull();
+  });
+});
+
+describe("a pane's own verbs in the menu", () => {
+  let posts = 0;
+  const client = () =>
+    createPaneTagClient(async (_url, init) => {
+      if (init?.method === "POST") posts += 1;
+      return Response.json({ version: "0", document: emptyTags() });
+    });
+
+  beforeEach(() => {
+    posts = 0;
+    __resetPins();
+    setPointer("fine");
+    render(<Recorder />);
+    rightClick(1, 1, "touch");
+  });
+
+  function openPane(target: AgentView, props: { readOnly?: boolean; onClose?: () => void } = {}) {
+    rightClick(200, 300);
+    return render(
+      <FleetPaneTagsProvider client={client()}>
+        <FleetPaneActions open onClose={props.onClose ?? vi.fn()} pane={target} readOnly={props.readOnly}
+          onRenamed={vi.fn()} onClosed={vi.fn()} />
+      </FleetPaneTagsProvider>,
+    );
+  }
+
+  it("pins through Collie's own store, then offers Unpin", () => {
+    const onClose = vi.fn();
+    const first = openPane(pane, { onClose });
+    fireEvent.click(within(screen.getByRole("menu")).getByText("Pin to top"));
+    expect(onClose).toHaveBeenCalled();
+    expect(currentPins()).toHaveLength(1);
+    first.unmount();
+    openPane(pane);
+    fireEvent.click(within(screen.getByRole("menu")).getByText("Unpin"));
+    expect(currentPins()).toHaveLength(0);
+  });
+
+  it("opens the shell's tag editor for that pane without writing a tag", async () => {
+    const onClose = vi.fn();
+    openPane(pane, { onClose });
+    fireEvent.click(within(screen.getByRole("menu")).getByText("Edit pane tags"));
+    expect(onClose).toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Edit pane tags" })).toBeInTheDocument();
+    expect(posts).toBe(0);
+  });
+
+  it("keeps both on a read-only device, where the terminal verbs are withheld", () => {
+    openPane(pane, { readOnly: true });
+    const menu = within(screen.getByRole("menu"));
+    expect(menu.getByText("Pin to top")).toBeInTheDocument();
+    expect(menu.getByText("Edit pane tags")).toBeInTheDocument();
+    expect(menu.queryByText("Rename")).toBeNull();
+  });
+
+  it("offers a shell its pin and no tags", () => {
+    openPane({ ...pane, kind: "shell" });
+    const menu = within(screen.getByRole("menu"));
+    expect(menu.getByText("Pin to top")).toBeInTheDocument();
+    expect(menu.queryByText("Edit pane tags")).toBeNull();
+  });
+
+  it("adds them to a merged row's Tab menu, and only there", () => {
+    rightClick(200, 300);
+    const merged = render(
+      <FleetPaneTagsProvider client={client()}>
+        <FleetTabActions open onClose={vi.fn()} tab={tab} pane={pane} onRenamed={vi.fn()} onClosed={vi.fn()} />
+      </FleetPaneTagsProvider>,
+    );
+    let menu = within(screen.getByRole("menu"));
+    expect(menu.getByText("Rename")).toBeInTheDocument();
+    expect(menu.getByText(/close tab/i)).toBeInTheDocument();
+    expect(menu.getByText("Pin to top")).toBeInTheDocument();
+    expect(menu.getByText("Edit pane tags")).toBeInTheDocument();
+    merged.unmount();
+
+    rightClick(200, 300);
+    render(
+      <FleetPaneTagsProvider client={client()}>
+        <FleetTabActions open onClose={vi.fn()} tab={tab} onRenamed={vi.fn()} onClosed={vi.fn()} />
+      </FleetPaneTagsProvider>,
+    );
+    menu = within(screen.getByRole("menu"));
+    expect(menu.queryByText("Pin to top")).toBeNull();
+    expect(menu.queryByText("Edit pane tags")).toBeNull();
   });
 });
