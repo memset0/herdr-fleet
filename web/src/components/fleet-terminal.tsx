@@ -17,6 +17,7 @@ import { markDead, markLive } from "@/lib/liveness";
 import { paneScopeKey } from "@/lib/scope";
 import { copyToClipboard, readOsc52, type CopyOutcome } from "../../../fleet/ui/terminal/clipboard.ts";
 import { sendToTerminal, terminalComposerPreference } from "../../../fleet/ui/terminal/composer.ts";
+import { terminalSpacingPreference, type TerminalSpacing } from "../../../fleet/ui/terminal/spacing.ts";
 import { terminalFontFamily } from "../../../fleet/ui/terminal/font.ts";
 import { TerminalLink, terminalUrl } from "../../../fleet/ui/terminal/link.ts";
 import { InstancePool } from "../../../fleet/ui/terminal/pool.ts";
@@ -50,10 +51,19 @@ import type { Viewport } from "../../../fleet/terminal/browser.ts";
 /** How many terminals this browser keeps alive across Pane switches. */
 export const RETAINED_TERMINALS = 3;
 
-/** The face and size the surface is currently drawn at, so a change to either can be noticed. */
+/**
+ * The face, size and spacing the surface is currently drawn at, so a change to any of them can be
+ * noticed — on a retained terminal too, which is updated in place rather than rebuilt.
+ */
 interface TerminalFace {
   readonly family: string;
   readonly size: number;
+  readonly lineHeight: number;
+  readonly letterSpacing: number;
+}
+
+function sameFace(left: TerminalFace, right: TerminalFace): boolean {
+  return left.family === right.family && left.size === right.size && left.lineHeight === right.lineHeight && left.letterSpacing === right.letterSpacing;
 }
 
 interface RetainedTerminal {
@@ -123,10 +133,10 @@ function readRootProperty(property: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(property);
 }
 
-function faceFor(family: FontFamily, size: number, cjk: string, only: boolean): TerminalFace {
+function faceFor(family: FontFamily, size: number, cjk: string, only: boolean, spacing: TerminalSpacing): TerminalFace {
   const font = fleetWebfont(cjk);
   const primary = only && font ? exclusiveCjkStack(font, "terminal") : fontStack(family);
-  return { family: terminalFontFamily(primary, property => property === "--font-cjk" ? `"${font?.family ?? CJK_FALLBACK_UNSET_FAMILY}"` : readRootProperty(property)), size };
+  return { family: terminalFontFamily(primary, property => property === "--font-cjk" ? `"${font?.family ?? CJK_FALLBACK_UNSET_FAMILY}"` : readRootProperty(property)), size, ...spacing };
 }
 
 export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChange }: PaneContentProps) {
@@ -150,7 +160,8 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
   const key = paneScopeKey(scope, paneId);
   const cjk = useSyncExternalStore(fleetCjkFallback.subscribe, fleetCjkFallback.snapshot, fleetCjkFallback.snapshot);
   const only = useSyncExternalStore(fleetCjkFallback.subscribe, fleetCjkFallback.only, fleetCjkFallback.only);
-  const face = faceFor(prefs.fontFamily, prefs.fontSize, cjk, only);
+  const spacing = useSyncExternalStore(terminalSpacingPreference.subscribe, terminalSpacingPreference.snapshot, terminalSpacingPreference.snapshot);
+  const face = faceFor(prefs.fontFamily, prefs.fontSize, cjk, only, spacing);
   const { open: findOpen, query: findQuery, current: currentMatch, onMatchCount } = find;
   const [searchSource, setSearchSource] = useState<{ terminal: Terminal } | null>(null);
   const finding = useRef(findOpen);
@@ -179,6 +190,8 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
         // rather than resolved, and the cell would be sized from whatever the browser made of it.
         fontFamily: face.family,
         fontSize: face.size,
+        lineHeight: face.lineHeight,
+        letterSpacing: face.letterSpacing,
         scrollback: 0,
       });
       const fit = new FitAddon();
@@ -288,11 +301,15 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     current.terminal.focus();
 
     // The face may have changed under a retained terminal — the operator opened Settings between
-    // two visits to this Pane — and the emulator measures at construction, so it has to be told.
-    if (current.face.family !== face.family || current.face.size !== face.size) {
+    // two visits to this Pane, or moved a spacing step just now — and the emulator measures at
+    // construction, so it has to be told. Options are set in place and the cell re-measured, so the
+    // new cols×rows go out through the ordinary viewport report and the screen is kept.
+    if (!sameFace(current.face, face)) {
       current.face = face;
       current.terminal.options.fontFamily = face.family;
       current.terminal.options.fontSize = face.size;
+      current.terminal.options.lineHeight = face.lineHeight;
+      current.terminal.options.letterSpacing = face.letterSpacing;
       remeasure();
     }
 
@@ -321,7 +338,7 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     // `readOnly` is deliberately not a dependency: a device's write permission does not change
     // under a mounted terminal, and rebuilding one on a snapshot field would throw away the screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, paneId, scope, face.family, face.size, onOutputChange, attempt]);
+  }, [key, paneId, scope, face.family, face.size, face.lineHeight, face.letterSpacing, onOutputChange, attempt]);
 
   // A fresh connection through the ordinary path: admission, resolution and the single-writer
   // refusal all apply again, so a terminal another browser holds still answers "busy".

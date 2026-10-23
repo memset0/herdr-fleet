@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **The ttyd terminal has line and character spacing.** Two per-device rows after Text size in the Display sheet (line height 1.0–2.0, letter spacing −1–4 px) re-fit the live terminal in place.
+
 ## [3.24.0] - 2026-10-23
 
 Update the lead first, then every member: the send diagnostic runs in each member's bridge.

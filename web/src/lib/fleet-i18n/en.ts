@@ -227,6 +227,16 @@ export const en = {
   "fleet.terminal.reconnect": "Reconnect",
   "fleet.terminal.closed.taken": "Another browser took over this terminal.",
   "fleet.terminal.takeOver": "Take over",
+  "fleet.terminal.spacing.lineHeight.label": "Line spacing",
+  "fleet.terminal.spacing.letterSpacing.label": "Character spacing",
+  "fleet.terminal.spacing.hint": "Changes the terminal's cell, so its columns and rows follow.",
+  "fleet.terminal.spacing.default": "Default",
+  "fleet.terminal.spacing.lineHeight.reduce": "Decrease line spacing",
+  "fleet.terminal.spacing.lineHeight.increase": "Increase line spacing",
+  "fleet.terminal.spacing.lineHeight.reset": "Reset line spacing",
+  "fleet.terminal.spacing.letterSpacing.reduce": "Decrease character spacing",
+  "fleet.terminal.spacing.letterSpacing.increase": "Increase character spacing",
+  "fleet.terminal.spacing.letterSpacing.reset": "Reset character spacing",
   "fleet.terminal.composer.toggle": "Input box",
   "fleet.terminal.composer.placeholder": "Type into the terminal",
   "fleet.terminal.composer.send": "Send to terminal",
@@ -241,6 +251,7 @@ export const en = {
   "fleet.settings.shortcuts.risky": "Browser-dependent: {bindings}",
   "fleet.settings.shortcuts.reference": "Command ids and their effective bindings",
   "connection.host.slowLink": "slow link",
+  "fleet.navigation.pinned": "pinned",
 } as const;
 
 /** Every key Fleet's own interface may ask for. */

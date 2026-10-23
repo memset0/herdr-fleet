@@ -13,6 +13,8 @@ interface FakeTerminalOptions {
   readonly disableStdin?: boolean;
   fontFamily?: string;
   fontSize?: number;
+  lineHeight?: number;
+  letterSpacing?: number;
   readonly scrollback?: number;
 }
 
@@ -118,6 +120,7 @@ vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 
 import { DEAD_DEBOUNCE_MS, LIVE_CAP_MS, isLive } from "@/lib/liveness";
 import { TERMINAL_COMPOSER_STORAGE_KEY, terminalComposerPreference } from "../../../fleet/ui/terminal/composer.ts";
+import { terminalSpacingPreference } from "../../../fleet/ui/terminal/spacing.ts";
 
 const { FleetTerminal } = await import("./fleet-terminal");
 
@@ -160,6 +163,10 @@ beforeEach(() => {
   vi.stubGlobal("WebSocket", FakeSocket);
   resizes.length = 0;
   act(() => terminalComposerPreference.set(false));
+  act(() => {
+    terminalSpacingPreference.set("lineHeight", null);
+    terminalSpacingPreference.set("letterSpacing", null);
+  });
   // jsdom ships no FontFaceSet, which is why the surface reaches for it optionally. The one case
   // that is ABOUT fonts arriving needs one, so it gets the two members the surface uses.
   // SAFETY: the object is an EventTarget and the line below gives it the only other member the
@@ -209,6 +216,26 @@ describe("the face it draws and measures with", () => {
     // given before the face arrived, and the narrower glyphs sit inside it.
     expect(terminal.opened).toBeGreaterThan(measured);
     expect(socket.frames().at(-1)).toEqual({ kind: "viewport", viewport: { columns: 80, rows: 24 } });
+  });
+
+  it("starts at the defaults, and a spacing change is applied in place and refitted live", () => {
+    const { terminal, socket } = mount();
+    expect(terminal.options.lineHeight).toBe(1);
+    expect(terminal.options.letterSpacing).toBe(0);
+    socket.fire("open");
+    const measured = terminal.opened;
+    proposed = { cols: 90, rows: 20 };
+    act(() => {
+      terminalSpacingPreference.set("lineHeight", 1.5);
+      terminalSpacingPreference.set("letterSpacing", 1);
+    });
+    // The same instance and the same connection: the screen is kept, nothing reconnects.
+    expect(FakeTerminal.instances).toHaveLength(1);
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(terminal.options.lineHeight).toBe(1.5);
+    expect(terminal.options.letterSpacing).toBe(1);
+    expect(terminal.opened).toBeGreaterThan(measured);
+    expect(socket.frames().at(-1)).toEqual({ kind: "viewport", viewport: { columns: 90, rows: 20 } });
   });
 });
 

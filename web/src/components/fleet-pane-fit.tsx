@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Loader2, Scaling } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,8 @@ import {
   type PaneFitAvailability,
 } from "../../../fleet/ui/manual-pane-fit.ts";
 import { ft } from "@/lib/fleet-i18n";
+import { FleetTerminalSpacingControls } from "@/components/fleet-terminal-spacing";
+import { DEFAULT_PANE_SURFACE, paneSurfaceStore } from "../../../fleet/ui/terminal/switch.ts";
 
 export type { PaneFitAvailability };
 
@@ -87,7 +89,10 @@ export interface FleetPaneFitInput {
 }
 
 export interface FleetPaneFit {
-  /** The Display row, or `undefined` when there is no Fleet Gateway or no Pane. */
+  /**
+   * Fleet's rows below Text size: the fit row (absent with no Fleet Gateway or no Pane) and, while
+   * Panes are drawn as the real terminal, its line and character spacing. `undefined` when neither.
+   */
   readonly row: ReactNode;
   /** One explicit fit attempt. A no-op while busy, read-only, blocked or unavailable. */
   readonly fit: () => Promise<void>;
@@ -135,7 +140,8 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
     }
   }, [usable, scrollElement, fontSize, paneId, scope]);
 
-  const row =
+  const surface = useSyncExternalStore(paneSurfaceStore.subscribe, paneSurfaceStore.snapshot, () => DEFAULT_PANE_SURFACE);
+  const fitRow =
     availability != null && !input.gone ? (
       <div className="flex items-center justify-between gap-3 py-1.5">
         <div className="min-w-0">
@@ -160,6 +166,10 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
         </Button>
       </div>
     ) : undefined;
+  // The same slot, because spacing is the other half of the cell Text size sizes; only the real
+  // terminal draws with it, so the mirror's sheet never offers it.
+  const spacing = surface === "terminal" ? <FleetTerminalSpacingControls /> : null;
+  const row = fitRow === undefined && spacing === null ? undefined : <>{fitRow}{spacing}</>;
 
   return { row, fit };
 }
