@@ -4945,6 +4945,18 @@ describe("fleet: Codex texts go in with Enter, which steers a running turn", () 
     expect(answer.receipt?.keys.at(-1)).toBe("Tab");
     expect(pane.keysSeen).not.toContain("Enter");
   });
+
+  test("a turn that starts while the text is typed (Collie 1.23's second turn check): Enter steers it, never Tab", async () => {
+    const { pane, send } = codex();
+    pane.afterInput = (p, what) => {
+      if (what.endsWith("then add a short summary")) p.over = [RUNNING];
+    };
+    const answer = await send("then add a short summary");
+    expect(answer.receipt?.outcome).toBe("sent");
+    expect(answer.receipt?.keys.at(-1)).toBe("Enter");
+    expect(pane.keysSeen).not.toContain("Tab");
+    expect(pane.queued).toEqual([]);
+  });
 });
 
 describe("the compare of a Codex send reads a changing status row (M56 spec 14 review)", () => {

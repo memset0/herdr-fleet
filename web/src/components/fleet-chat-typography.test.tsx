@@ -39,8 +39,8 @@ it("keeps bare Collie free of Fleet controls", () => {
 it("offers spacing below native Chat size and omits it for a terminal body", async () => {
   const stepChatFontSize = vi.fn();
   const display = (showing: "chat" | "terminal") => <FleetChatTypographyProvider><DisplayPrefsContent
-    prefs={{ wrap: true, fontSize: 10, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true }}
-    setWrap={vi.fn()} stepFontSize={vi.fn()} setRawTerminal={vi.fn()} setTapToFocus={vi.fn()} mirrorNative={false} setMirrorNative={vi.fn()} setExpandClippedReply={vi.fn()}
+    prefs={{ wrap: true, fontSize: 10, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, stretchText: false }}
+    setWrap={vi.fn()} stepFontSize={vi.fn()} setRawTerminal={vi.fn()} setTapToFocus={vi.fn()} mirrorNative={false} setMirrorNative={vi.fn()} setExpandClippedReply={vi.fn()} setStretchText={vi.fn()}
     paneView={{ chosen: "chat", showing, onChange: vi.fn(), showToolCalls: false, setShowToolCalls: vi.fn(), showCompactions: false, setShowCompactions: vi.fn(), chatFontSize: 14, stepChatFontSize }}
   /></FleetChatTypographyProvider>;
   const view = render(display("chat"));
