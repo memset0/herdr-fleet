@@ -31,7 +31,7 @@
 
 ## 6. Archive
 
-- [ ] 6.1 Sync specs, validate, archive and commit locally; the release, the full suites on a member and the levelling are the owner's
+- [x] 6.1 Sync specs, validate, archive and commit locally; the release, the full suites on a member and the levelling are the owner's
 
 ## Phase record
 
