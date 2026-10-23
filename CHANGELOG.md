@@ -23,6 +23,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 - **The rail's surface switch is compact and says ttyd.** Both segments are 32px tall on every pointer, and the terminal choice is written in lowercase.
 
+### Fixed
+
+- **A dead terminal now says why and can come back.** Gateway log lines are timestamped, every terminal end is logged once with a closed reason (`restart`, `upstream-exit`, `grace-expired`, `evicted`, `auth-ended`, `auth-expired`, `start-failed`), and the closed surface offers Reconnect in place.
+
 ## [3.23.2] - 2026-10-23
 
 ### Added

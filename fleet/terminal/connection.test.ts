@@ -49,10 +49,15 @@ function harness(
   const sent: Uint8Array[] = [];
   const upstreams = new Map<string, UpstreamHandlers>();
   const resolved: TerminalTarget[] = [];
+  const logs: { event: string; detail: Record<string, string | number> }[] = [];
+  const log = (event: string, detail: Record<string, string | number>): void => {
+    logs.push({ event, detail });
+  };
 
   const sessionDeps: SessionDeps = {
     limits: { graceMs: 5_000, maxSessions: 2, retainBytes: 64, ...options.limits },
     now: () => clock,
+    log,
     setTimer: (fn, ms) => {
       const id = nextTimer++;
       timers.set(id, { fn, due: clock + ms });
@@ -94,6 +99,7 @@ function harness(
       return options.resolution ?? { ok: true, placement: { kind: "local", terminalId: "term_abc", paneId: "w1:p1" } };
     },
     maxPendingInputBytes: options.maxPendingInputBytes,
+    log,
   };
 
   return {
@@ -102,6 +108,11 @@ function harness(
     started,
     stopped,
     resolved,
+    /** Every end line, from either layer, in the order they were written. */
+    ends: () =>
+      logs
+        .filter((line) => line.event === "terminal.session-ended" || line.event === "terminal.connection-ended")
+        .map((line) => Object.assign({ event: line.event }, line.detail)),
     starting: starting.promise,
     /** Everything the Gateway sent upstream, as command bytes and payload text. */
     upstreamFrames: () =>
@@ -406,6 +417,40 @@ describe("a session that stops being current takes its terminals with it", () =>
     expect(closed).toBe(1);
     expect(asked).toBe(false);
     expect(s.notices()).toEqual([NOTICE.ended]);
+  });
+
+  test("each end is logged once, by the layer that decided it", async () => {
+    const revoked = await attached();
+    const registry = new TerminalConnections();
+    registry.add(revoked.connection);
+    registry.closeForSession("session-1");
+    expect(revoked.h.ends()).toEqual([
+      { event: "terminal.connection-ended", pane: "local w1:p1", reason: "auth-ended" },
+    ]);
+
+    const expired = await attached();
+    registry.add(expired.connection);
+    await registry.sweep(async () => false);
+    expect(expired.h.ends().map((line) => line.reason)).toEqual(["auth-expired"]);
+
+    // The session ending under its browser is the session's line; the connection adds none.
+    const exited = await attached();
+    exited.h.upstreamClosed("term_abc");
+    expect(exited.h.ends()).toEqual([
+      { event: "terminal.session-ended", pane: "local w1:p1", reason: "upstream-exit", browser: 1 },
+    ]);
+  });
+
+  test("a restart names itself for the browser and for the session it held", async () => {
+    const { h, connection } = await attached();
+    const registry = new TerminalConnections();
+    registry.add(connection);
+    registry.closeAll();
+    await h.sessions.closeAll();
+    expect(h.ends()).toEqual([
+      { event: "terminal.connection-ended", pane: "local w1:p1", reason: "restart" },
+      { event: "terminal.session-ended", pane: "local w1:p1", reason: "restart", browser: 0 },
+    ]);
   });
 
   test("closing them all leaves nothing open", async () => {

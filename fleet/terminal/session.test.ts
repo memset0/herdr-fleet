@@ -33,11 +33,13 @@ function harness(over: Partial<SessionDeps["limits"]> = {}) {
   const stopped: string[] = [];
   const sent: Uint8Array[] = [];
   const upstreams = new Map<string, UpstreamHandlers>();
+  const logs: { event: string; detail: Record<string, string | number> }[] = [];
   let failNextStart = false;
 
   const deps: SessionDeps = {
     limits: { graceMs: 5_000, maxSessions: 2, retainBytes: 32, ...over },
     now: () => clock,
+    log: (event, detail) => logs.push({ event, detail }),
     setTimer: (fn, ms) => {
       const id = nextTimer++;
       timers.set(id, { fn, due: clock + ms });
@@ -74,6 +76,8 @@ function harness(over: Partial<SessionDeps["limits"]> = {}) {
     started,
     stopped,
     sent,
+    /** Only the end lines: one per session that ended, with the reason its closer decided. */
+    ended: () => logs.filter((line) => line.event === "terminal.session-ended").map((line) => line.detail),
     sessions: new TerminalSessions(deps),
     /** Advance the clock and fire everything due, oldest first. */
     advance(ms: number) {
@@ -90,8 +94,8 @@ function harness(over: Partial<SessionDeps["limits"]> = {}) {
       upstreams.get(terminalId)?.onOutput(data);
     },
     /** The far end going away on its own — the Pane closed, or the server exited. */
-    upstreamClosed(terminalId: string) {
-      upstreams.get(terminalId)?.onClosed();
+    upstreamClosed(terminalId: string, code?: number) {
+      upstreams.get(terminalId)?.onClosed(code);
     },
     failStart() {
       failNextStart = true;
@@ -298,6 +302,33 @@ describe("what a returning browser is given", () => {
   });
 });
 
+describe("why a session ended", () => {
+  test("an upstream exit under a browser is logged once, with the close code and nothing else", async () => {
+    const h = harness();
+    const session = await acquired(h.sessions, at("term_a"), GEOMETRY);
+    session.attach(client().handle);
+    h.emit("term_a", new TextEncoder().encode("secret output"));
+    h.upstreamClosed("term_a", 1006);
+    expect(h.ended()).toEqual([{ pane: "local w1:p1", reason: "upstream-exit", browser: 1, code: 1006 }]);
+    expect(JSON.stringify(h.ended())).not.toContain("secret");
+  });
+
+  test("a grace expiry is logged as one end with no browser", async () => {
+    const h = harness();
+    await acquired(h.sessions, at("term_a"), GEOMETRY);
+    h.advance(5_000);
+    expect(h.ended()).toEqual([{ pane: "local w1:p1", reason: "grace-expired", browser: 0 }]);
+  });
+
+  test("an eviction and a shutdown each name themselves", async () => {
+    const h = harness({ maxSessions: 1 });
+    await acquired(h.sessions, at("term_a"), GEOMETRY);
+    await acquired(h.sessions, at("term_b"), GEOMETRY);
+    await h.sessions.closeAll();
+    expect(h.ended().map((line) => line.reason)).toEqual(["evicted", "restart"]);
+  });
+});
+
 describe("the far end going away", () => {
   test("closes the session and the attached client with it", async () => {
     const h = harness();
@@ -320,9 +351,10 @@ describe("the far end going away", () => {
   test("closing twice is harmless", async () => {
     const h = harness();
     const session = await acquired(h.sessions, at("term_a"), GEOMETRY);
-    session.close();
-    session.close();
+    session.close("restart");
+    session.close("evicted");
     expect(h.stopped).toEqual(["term_a"]);
+    expect(h.ended()).toEqual([{ pane: "local w1:p1", reason: "restart", browser: 0 }]);
   });
 
   test("closing all leaves nothing running", async () => {
@@ -571,7 +603,7 @@ describe("ownership across asynchronous boundaries", () => {
       },
     });
     const first = await sessions.acquire(at("term_a"), GEOMETRY);
-    first.session.close();
+    first.session.close("evicted");
     first.release();
     const next = await sessions.acquire(at("term_a"), GEOMETRY);
     handlers[0]!.onClosed();

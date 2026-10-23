@@ -417,6 +417,24 @@ describe("leaving and coming back", () => {
     expect(socket.frames().at(-1)).toEqual({ kind: "viewport", viewport: { columns: 20, rows: 5 } });
   });
 
+  it("offers to reconnect in place once the connection closed, and opens one new connection", async () => {
+    const { view, socket, paneId } = mount();
+    socket.fire("open");
+    expect(view.container.querySelector('[data-testid="fleet-terminal-reconnect"]')).toBeNull();
+    socket.fire("close");
+    const button = await waitFor(() => {
+      const found = view.container.querySelector<HTMLButtonElement>('[data-testid="fleet-terminal-reconnect"]');
+      expect(found?.textContent).toBe("Reconnect");
+      return found!;
+    });
+    expect(view.container.textContent).toContain("The terminal connection ended.");
+    fireEvent.click(button);
+    expect(FakeSocket.instances).toHaveLength(2);
+    expect(FakeSocket.instances[1]!.url).toContain(`pane=${encodeURIComponent(paneId)}`);
+    expect(FakeTerminal.instances).toHaveLength(2);
+    await waitFor(() => expect(view.container.querySelector('[data-testid="fleet-terminal-reconnect"]')).toBeNull());
+  });
+
   it("builds a new one when the connection ended while it was away", () => {
     const { view, socket, paneId } = mount();
     socket.fire("open");

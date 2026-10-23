@@ -45,9 +45,18 @@ export interface Upstream {
 export interface UpstreamHandlers {
   /** Terminal output, already unwrapped from its frame. */
   onOutput(data: Uint8Array): void;
-  /** The upstream went away — the attachment ended, the Pane closed, or the server exited. */
-  onClosed(): void;
+  /**
+   * The upstream went away — the attachment ended, the Pane closed, or the server exited. The
+   * transport's numeric close code, when it reported one; never anything the terminal printed.
+   */
+  onClosed(code?: number): void;
 }
+
+/**
+ * Why a terminal session ended. A closed vocabulary, logged once by the session that ended, so a
+ * dead terminal can be diagnosed from the Gateway log without reading what was on it.
+ */
+export type SessionEndReason = "restart" | "upstream-exit" | "start-failed" | "grace-expired" | "evicted";
 
 export type StartServer = (placement: Placement, geometry: Geometry) => Promise<TerminalServer>;
 export type ConnectUpstream = (
@@ -192,8 +201,7 @@ class Session {
     const set = this.deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.graceHandle = set(() => {
       this.graceHandle = null;
-      this.deps.log?.("terminal.grace-expired", { pane: placementLabel(this.placement) });
-      this.close();
+      this.close("grace-expired");
     }, this.deps.limits.graceMs);
   }
 
@@ -204,12 +212,17 @@ class Session {
     this.graceHandle = null;
   }
 
-  /** Close the session, its server and its attachment. Idempotent, and safe from any of them. */
-  close(): void {
+  /**
+   * Close the session, its server and its attachment. Idempotent, and safe from any of them; only
+   * the first close is logged, with the reason its caller decided.
+   */
+  close(reason: SessionEndReason, code?: number): void {
     if (this.closed) return;
     this.closed = true;
     this.cancelGrace();
     const client = this.client;
+    const ended = { pane: placementLabel(this.placement), reason, browser: client === null ? 0 : 1 };
+    this.deps.log?.("terminal.session-ended", code === undefined ? ended : { ...ended, code });
     this.client = null;
     this.retained.clear();
     try {
@@ -331,8 +344,7 @@ export class TerminalSessions {
         if (oldest === null || candidate.session.lastUsed < oldest.lastUsed) oldest = candidate.session;
       }
       if (oldest !== null) {
-        this.deps.log?.("terminal.session-evicted", { pane: placementLabel(oldest.placement) });
-        oldest.close();
+        oldest.close("evicted");
       } else {
         await this.changed.promise;
       }
@@ -360,7 +372,7 @@ export class TerminalSessions {
       entry.session = session;
       const upstream = await this.deps.connect(server, geometry, {
         onOutput: (data) => session.receive(data),
-        onClosed: () => session.close(),
+        onClosed: (code) => session.close("upstream-exit", code),
       });
       session.bindUpstream(upstream);
       entry.established = true;
@@ -368,7 +380,7 @@ export class TerminalSessions {
       this.deps.log?.("terminal.session-opened", { pane: placementLabel(entry.placement), held: this.slots });
       return session;
     } catch (error) {
-      entry.session?.close();
+      entry.session?.close("start-failed");
       this.remove(entry);
       throw error;
     }
@@ -379,7 +391,7 @@ export class TerminalSessions {
     if (this.stopping !== null) return this.stopping;
     this.closed = true;
     const entries = Array.from(this.entries.values());
-    for (const entry of entries) entry.session?.close();
+    for (const entry of entries) entry.session?.close("restart");
     this.notify();
     this.stopping = Promise.allSettled(entries.map((entry) => entry.ready)).then(() => undefined);
     return this.stopping;

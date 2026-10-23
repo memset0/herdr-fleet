@@ -263,7 +263,9 @@ export function makeConnectUpstream(
       const frame = decodeServerFrame(new Uint8Array(data));
       if (frame.kind === "output") handlers.onOutput(frame.data);
     });
-    socket.addEventListener("close", () => handlers.onClosed(), { once: true });
+    // The close code is a number the transport chose; it says how the server went away, not what
+    // the terminal said before it did.
+    socket.addEventListener("close", (event) => handlers.onClosed(event.code), { once: true });
     socket.addEventListener("error", () => handlers.onClosed(), { once: true });
     return {
       send: (frame) => {

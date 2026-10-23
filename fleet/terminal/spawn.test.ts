@@ -12,6 +12,7 @@ import {
   TERMINAL_SERVER_NAME,
   findTerminalTools,
   awaitSocketBound,
+  makeConnectUpstream,
   makeStartServer,
   serverUrl,
   socketIsBound,
@@ -199,5 +200,28 @@ describe("knowing the socket is there", () => {
     await expect(awaitSocketBound(join(tmpdir(), "herdr-fleet-never.sock"), 60)).rejects.toThrow(
       "did not open its socket",
     );
+  });
+});
+
+describe("the Gateway's own client", () => {
+  test("reports the transport's close code when the server goes away, and nothing else", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "herdr-fleet-upstream-"));
+    const socketPath = join(directory, "t1.sock");
+    const server = Bun.serve({
+      unix: socketPath,
+      fetch: (request, bun) => (bun.upgrade(request) ? undefined : new Response(null, { status: 400 })),
+      websocket: { open: (ws) => ws.close(4001, "synthetic"), message: () => undefined },
+    });
+    try {
+      const closed = Promise.withResolvers<number | undefined>();
+      await makeConnectUpstream()({ endpoint: serverUrl(socketPath), stop: () => undefined }, GEOMETRY, {
+        onOutput: () => undefined,
+        onClosed: (code) => closed.resolve(code),
+      });
+      expect(await closed.promise).toBe(4001);
+    } finally {
+      server.stop(true);
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

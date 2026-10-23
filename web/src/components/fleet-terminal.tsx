@@ -5,8 +5,11 @@ import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 
 import type { PaneContentProps } from "@/components/agent-chat";
+import { Button } from "@/components/ui/button";
 import { Collapse } from "@/components/ui/collapse";
+import { Notice, NOTICE_ACTION } from "@/components/ui/notice";
 import { fontStack, useDisplayPrefs, type FontFamily } from "@/hooks/use-display-prefs";
+import { ft, useFleetLocale, type FleetMessageKey } from "@/lib/fleet-i18n";
 import { markDead, markLive } from "@/lib/liveness";
 import { paneScopeKey } from "@/lib/scope";
 import { copyToClipboard, readOsc52, type CopyOutcome } from "../../../fleet/ui/terminal/clipboard.ts";
@@ -80,6 +83,21 @@ const pool = new InstancePool<RetainedTerminal>({
 
 const encoder = new TextEncoder();
 
+/**
+ * The sentence for a closed connection. The Gateway's word is a closed vocabulary that carries no
+ * reason, so anything unrecognised — or no word at all, a socket that simply dropped — reads "ended".
+ */
+function closedKey(notice: string | null): FleetMessageKey {
+  if (notice === "busy") return "fleet.terminal.closed.busy";
+  if (notice === "unavailable") return "fleet.terminal.closed.unavailable";
+  if (notice === "protocol") return "fleet.terminal.closed.protocol";
+  return "fleet.terminal.closed.ended";
+}
+
+function closedMessage(notice: string | null): string {
+  return ft(closedKey(notice));
+}
+
 function copyMessage(outcome: CopyOutcome): string | null {
   if (outcome === "copied") return "Copied";
   if (outcome === "refused") return "The browser refused the clipboard — the selection is still there";
@@ -109,6 +127,11 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
   const retained = useRef<RetainedTerminal | null>(null);
   const [geometry, setGeometry] = useState<Viewport | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** True once this mount's connection closed: the surface then offers to reconnect in place. */
+  const [closed, setClosed] = useState(false);
+  /** Bumped by Reconnect, so the effect below releases the ended entry and builds a fresh one. */
+  const [attempt, setAttempt] = useState(0);
+  useFleetLocale();
   const [copied, setCopied] = useState<string | null>(null);
   const [mouseReporting, setMouseReporting] = useState(false);
   const { prefs } = useDisplayPrefs();
@@ -171,6 +194,7 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
           }
           markDead(paneId, scope);
           setNotice((shown) => shown ?? "ended");
+          setClosed(true);
         },
       });
       entry = { terminal, fit, element, link, ended: false, connected: false, hasOutput: false, opened: null, face };
@@ -191,6 +215,8 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     }
     const current = entry;
     retained.current = current;
+    // A retained entry that is still connected is not closed, whatever this mount last showed.
+    if (!current.ended) setClosed(false);
     setSearchSource({ terminal: current.terminal });
     onOutputChange(current.hasOutput);
     const parsed = current.terminal.onWriteParsed(() => {
@@ -274,7 +300,15 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     // `readOnly` is deliberately not a dependency: a device's write permission does not change
     // under a mounted terminal, and rebuilding one on a snapshot field would throw away the screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, paneId, scope, face.family, face.size, onOutputChange]);
+  }, [key, paneId, scope, face.family, face.size, onOutputChange, attempt]);
+
+  // A fresh connection through the ordinary path: admission, resolution and the single-writer
+  // refusal all apply again, so a terminal another browser holds still answers "busy".
+  const reconnect = useCallback(() => {
+    setNotice(null);
+    setClosed(false);
+    setAttempt((value) => value + 1);
+  }, []);
 
   const matches = useMemo(() => {
     const terminal = searchSource?.terminal;
@@ -337,6 +371,21 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
         {copied === null ? null : <span data-testid="fleet-terminal-copy">{copied}</span>}
         {notice === null ? null : <span data-testid="fleet-terminal-notice">{notice}</span>}
       </div>
+      </Collapse>
+      <Collapse open={closed}>
+        <Notice
+          tone="caution"
+          variant="box"
+          announce="status"
+          className="mx-3 my-1"
+          action={
+            <Button size="sm" variant="outline" className={NOTICE_ACTION} onClick={reconnect} data-testid="fleet-terminal-reconnect">
+              {ft("fleet.terminal.reconnect")}
+            </Button>
+          }
+        >
+          {closedMessage(notice)}
+        </Notice>
       </Collapse>
       <div
         ref={host}

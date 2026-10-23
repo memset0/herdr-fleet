@@ -19,6 +19,7 @@
  */
 
 import type { TerminalTarget } from "./admit.ts";
+import { placementLabel } from "./placement.ts";
 import { noticeFrame, outputFrame, readBrowserMessage, VIEWPORT_BOUNDS } from "./browser.ts";
 import { inputFrame, type Geometry } from "./protocol.ts";
 import type { Resolution } from "./resolve.ts";
@@ -41,6 +42,14 @@ export const NOTICE = {
 } as const;
 
 export type Notice = (typeof NOTICE)[keyof typeof NOTICE];
+
+/**
+ * Why the Gateway ended a browser's connection from above the session: a logout or revocation, an
+ * expiry the sweep found, or the Gateway itself stopping. Logged once, here, and never sent to the
+ * browser — its notice stays the closed, reason-free word above. An end the session decided (its
+ * attachment exited, its grace expired, it was evicted) is logged by the session instead.
+ */
+export type ConnectionEndReason = "auth-ended" | "auth-expired" | "restart";
 
 /**
  * Just enough of the authenticated session to recognise it again later.
@@ -216,10 +225,16 @@ export class TerminalConnection {
     this.held = null;
   }
 
-  /** End this connection from this side, telling the browser why. Idempotent. */
-  end(notice: Notice): void {
+  /**
+   * End this connection from this side, telling the browser why. Idempotent. A `reason` is given by
+   * the callers that end a connection above its session, and is logged once with the Pane.
+   */
+  end(notice: Notice, reason?: ConnectionEndReason): void {
     if (this.state === "closed") return;
     const session = this.held;
+    if (reason !== undefined) {
+      this.deps.log?.("terminal.connection-ended", { pane: this.label(session), reason });
+    }
     this.state = "closed";
     this.pending = [];
     this.pendingBytes = 0;
@@ -235,6 +250,12 @@ export class TerminalConnection {
     } catch {
       // Same.
     }
+  }
+
+  /** The placement label when attached; before that, the same shape from the Pane it asked for. */
+  private label(session: Session | null): string {
+    if (session !== null) return placementLabel(session.placement);
+    return `${this.target.host ?? "local"} ${this.target.paneId}`;
   }
 
   get sessionId(): string {
@@ -275,7 +296,7 @@ export class TerminalConnections {
     let closed = 0;
     for (const connection of Array.from(this.open)) {
       if (connection.sessionId !== sessionId) continue;
-      connection.end(NOTICE.ended);
+      connection.end(NOTICE.ended, "auth-ended");
       this.open.delete(connection);
       closed += 1;
     }
@@ -304,7 +325,7 @@ export class TerminalConnections {
           continue;
         }
       if (active) continue;
-      connection.end(NOTICE.ended);
+      connection.end(NOTICE.ended, "auth-expired");
       this.open.delete(connection);
       closed += 1;
     }
@@ -312,7 +333,7 @@ export class TerminalConnections {
   }
 
   closeAll(): void {
-    for (const connection of Array.from(this.open)) connection.end(NOTICE.ended);
+    for (const connection of Array.from(this.open)) connection.end(NOTICE.ended, "restart");
     this.open.clear();
   }
 }
