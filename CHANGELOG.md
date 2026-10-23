@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.23.1] - 2026-10-23
+
 ### Fixed
 
-- **The web UI builds again.** With Collie 1.23 merged in, the app's main chunk is over the service worker's 2 MiB precache limit, which stopped the build; the limit is now 4 MiB.
+- **The web UI builds again.** With Collie 1.23 merged in, the app's main chunk is over the service worker's 2 MiB precache limit, which stopped the build; the limit is now 4 MiB. ([b378af90](https://github.com/memset0/herdr-fleet/commit/b378af90))
 
 ## [3.23.0] - 2026-10-23
 
