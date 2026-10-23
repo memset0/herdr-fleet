@@ -19,15 +19,17 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.23.2] - 2026-10-23
+
 ### Added
 
-- **Hierarchy right-click menu pins a pane and edits its tags.** Pin/Unpin and Edit pane tags join a Pane row's pointer menu, and a merged single-Pane Tab row's, outside the write gates; shells get Pin only.
+- **Hierarchy right-click menu pins a pane and edits its tags.** Pin/Unpin and Edit pane tags join a Pane row's pointer menu, and a merged single-Pane Tab row's, outside the write gates; shells get Pin only. ([826c213e](https://github.com/memset0/herdr-fleet/commit/826c213e))
 
 ### Fixed
 
-- **Mark all seen clears peer panes at once.** On a lead, look-now also sweeps the members, and Mark all seen looks now before revalidating, so a member's panes no longer wait for the next sweep.
-- **The push-test action finds the subscribed browser.** Both Push actions now run through the Fleet launcher, which points Collie at the Fleet-launched Collie's state directory.
-- **Pane notifications show unless that pane is in front of you.** A push is withheld only while a focused window shows that same pane, so an app left open behind other windows still notifies.
+- **Mark all seen clears peer panes at once.** On a lead, look-now also sweeps the members, and Mark all seen looks now before revalidating, so a member's panes no longer wait for the next sweep. ([1da9a197](https://github.com/memset0/herdr-fleet/commit/1da9a197))
+- **The push-test action finds the subscribed browser.** Both Push actions now run through the Fleet launcher, which points Collie at the Fleet-launched Collie's state directory. ([ae99698f](https://github.com/memset0/herdr-fleet/commit/ae99698f))
+- **Pane notifications show unless that pane is in front of you.** A push is withheld only while a focused window shows that same pane, so an app left open behind other windows still notifies. ([494dd2c0](https://github.com/memset0/herdr-fleet/commit/494dd2c0))
 
 ## [3.23.1] - 2026-10-23
 
