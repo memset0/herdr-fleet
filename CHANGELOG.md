@@ -19,10 +19,12 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.24.1] - 2026-10-23
+
 ### Added
 
-- **The ttyd terminal has line and character spacing.** Two per-device rows after Text size in the Display sheet (line height 1.0–2.0, letter spacing −1–4 px) re-fit the live terminal in place.
-- **Pinned panes stand out in the Herds rail.** A row whose Pane is pinned (a merged single-Pane Tab row included) draws its title bold with a small "pinned" badge, live as pins change.
+- **The ttyd terminal has line and character spacing.** Two per-device rows after Text size in the Display sheet (line height 1.0–2.0, letter spacing −1–4 px) re-fit the live terminal in place. ([504a2031](https://github.com/memset0/herdr-fleet/commit/504a2031))
+- **Pinned panes stand out in the Herds rail.** A row whose Pane is pinned (a merged single-Pane Tab row included) draws its title bold with a small "pinned" badge, live as pins change. ([c8963670](https://github.com/memset0/herdr-fleet/commit/c8963670))
 
 ## [3.24.0] - 2026-10-23
 
