@@ -1,7 +1,7 @@
 # fleet-no-send-hold Specification
 
 ## Purpose
-TBD - created by archiving change no-send-hold. Update Purpose after archive.
+Answer every send at once: Fleet never parks a send in the hold queue until the turn ends; it is delivered when it can be and otherwise reported, and entries left over from earlier builds still drain.
 
 ## Requirements
 

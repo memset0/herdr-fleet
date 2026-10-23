@@ -1,7 +1,7 @@
 # fleet-claude-notice-hint Specification
 
 ## Purpose
-TBD - created by archiving change claude-notice-hint. Update Purpose after archive.
+Keep the send probe honest on a Claude Code pane whose right-aligned notice row (such as an update notice) shares the hint area under the input box, so a send into a running turn is not refused as a probe failure.
 
 ## Requirements
 

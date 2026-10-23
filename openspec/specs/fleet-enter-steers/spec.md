@@ -1,7 +1,7 @@
 # fleet-enter-steers Specification
 
 ## Purpose
-TBD - created by archiving change codex-enter-steers. Update Purpose after archive.
+Let a text sent to a Codex pane go in with Enter, so it steers a running turn instead of queueing behind it, while commands and upstream's other profiles keep their own submit keys.
 
 ## Requirements
 
