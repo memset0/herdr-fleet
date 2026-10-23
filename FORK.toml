@@ -701,6 +701,16 @@ verify = ["bridge/surface/protocol.test.ts", "web/src/lib/surface/profile.test.t
 reason = "The owner wants a Codex text to go in with Enter, which steers a running turn, as at the desk; Collie v1.22.6 sends with Tab and queues in a turn by its 2026-10-17 decision, which this reverses for Fleet (codex-enter-steers). PROFILE: `loadProfiles` passes each parsed profile through `fleetProfile` from the owned `fleet/profile-tunes.ts` (which applies `withEnterSubmit` from `fleet/enter-steers.ts` and the Claude notice hint of fleet-claude-notice-hint), one import and one call, so `codex.json` stays upstream's text and the bridge and phone read the same keys. The protocol half (one line in `commitKeys`) and its tests sit in `bridge/surface/protocol.ts` and its test file, which `patient-send-protocol-port` already declares; its reason carries them. Collie 1.23's second turn check routes a turn that starts while the text is typed through the same `commitKeys` line, so a Codex text gets Enter there too (fleet-enter-steers states it)."
 
 [[invasive]]
+id = "fleet-precache-limit-port"
+intent = "Let the web build precache the app's main chunk past Workbox's 2 MiB default."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.23.3"
+paths = ["web/vite.config.ts#maximumFileSizeToCacheInBytes"]
+verify = ["fleet/precache-limit.test.ts"]
+reason = "With Collie 1.23 merged in, the fork's main chunk is 2.12 MB, and Workbox's default `maximumFileSizeToCacheInBytes` is 2 MiB; vite-plugin-pwa's injectManifest then fails the build instead of leaving the chunk out, so no release builds (fleet-precache-limit). The option is a single literal in upstream's `injectManifest` block, and no owned file can set it: a constant imported from an owned module would be one more import for the same one line. 4 MiB leaves the chunk room to grow and still fails a build whose main chunk has doubled, which is when splitting it is the right fix. Upstream's own chunk stays under the default, so its build is unaffected by the value."
+
+[[invasive]]
 id = "patient-send-protocol-port"
 intent = "Let the Send Protocol wait out slow panes, never leave its own probe character in the box, and steer a Codex turn with Enter, and answer a send at once instead of holding it."
 strategy = "adapt"

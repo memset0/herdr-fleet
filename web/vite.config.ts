@@ -339,6 +339,9 @@ export default defineConfig({
         // reason the Nerd Font faces do: its glue is a .js file the glob would otherwise take, and
         // nobody who never taps Whistle should pay for it on install. It loads on first use.
         globIgnores: [...precacheIgnoresFor(channel), "stt/**"],
+        // Fleet: the main chunk outgrew Workbox's 2 MiB default once Collie 1.23 joined the fork's code; past
+        // the limit injectManifest fails the build rather than leaving the chunk out (fleet-precache-limit).
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
       // Over plain HTTP (insecure context) the SW can't register; in dev we don't want it anyway.
       devOptions: { enabled: false },

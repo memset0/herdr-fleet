@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **The web UI builds again.** With Collie 1.23 merged in, the app's main chunk is over the service worker's 2 MiB precache limit, which stopped the build; the limit is now 4 MiB.
+
 ## [3.23.0] - 2026-10-23
 
 Every member redeploys, each on Bun 1.4.4 or later: this adopts Collie v1.23.3.
