@@ -115,6 +115,7 @@ paths = [
   "web/src/components/fleet-pane-fit.test.tsx",
   "web/src/components/fleet-terminal.tsx",
   "web/src/components/fleet-terminal.test.tsx",
+  "web/src/components/fleet-terminal-composer.tsx",
   "web/src/lib/fleet-settings.ts",
   "web/src/lib/fleet-pane-tags.ts",
   "web/src/lib/fleet-pane-tags.test.ts",

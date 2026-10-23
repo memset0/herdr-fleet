@@ -22,6 +22,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 ### Added
 
 - **A failed send's screens are kept on the machine.** On a screen-decided failure (probe_failed, draft_present, mismatch, changed, modal_cue, …) the bridge writes the raw reads and the receipt to `<stateDir>/send-failures/`, owner-only, newest 50 and 8 MiB at most; never served.
+- **The ttyd surface has an optional input box.** A toggle in its top row shows a Collie-style box under the terminal (remembered per device); Ctrl/Cmd+Enter writes the draft as a chunked paste and then Enter, straight into the terminal, bypassing Collie's send pipeline.
 
 ### Changed
 

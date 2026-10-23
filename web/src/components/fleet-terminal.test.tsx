@@ -24,7 +24,7 @@ class FakeTerminal {
   readonly written: Uint8Array[] = [];
   readonly dataHandlers: ((data: string) => void)[] = [];
   readonly oscHandlers = new Map<number, OscHandler>();
-  modes = { mouseTrackingMode: "none" };
+  modes = { mouseTrackingMode: "none", bracketedPasteMode: false };
   selection = "";
   disposed = false;
   readonly parsedHandlers = new Set<() => void>();
@@ -117,6 +117,7 @@ vi.mock("@xterm/addon-fit", () => ({ FitAddon: FakeFitAddon }));
 vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 
 import { DEAD_DEBOUNCE_MS, LIVE_CAP_MS, isLive } from "@/lib/liveness";
+import { TERMINAL_COMPOSER_STORAGE_KEY, terminalComposerPreference } from "../../../fleet/ui/terminal/composer.ts";
 
 const { FleetTerminal } = await import("./fleet-terminal");
 
@@ -158,6 +159,7 @@ beforeEach(() => {
   proposed = { cols: 100, rows: 30 };
   vi.stubGlobal("WebSocket", FakeSocket);
   resizes.length = 0;
+  act(() => terminalComposerPreference.set(false));
   // jsdom ships no FontFaceSet, which is why the surface reaches for it optionally. The one case
   // that is ABOUT fonts arriving needs one, so it gets the two members the surface uses.
   // SAFETY: the object is an EventTarget and the line below gives it the only other member the
@@ -465,4 +467,61 @@ it("updates real terminal font measurement when its exclusive mode changes, inde
   act(() => fleetCjkFallback.set("none"));
   await waitFor(() => expect(terminal.options.fontFamily).toContain("JetBrains Mono"));
   expect(terminal.options.fontFamily).not.toContain("Maple Mono NF CN");
+});
+
+describe("the input box under the terminal", () => {
+  const output = (socket: FakeSocket): void => {
+    const frame = new Uint8Array([0x6f, 0x24]);
+    socket.fire("message", { data: frame.buffer.slice(0) });
+  };
+  const inputs = (socket: FakeSocket): string[] =>
+    socket.frames().flatMap((frame) => (frame.kind === "input" ? [new TextDecoder().decode(frame.data)] : []));
+  const sendButton = (container: HTMLElement) =>
+    container.querySelector<HTMLButtonElement>('[data-testid="fleet-terminal-composer-send"]');
+
+  it("is shown by its toggle, remembered on this device, and absent on a read-only one", () => {
+    const { view } = mount();
+    expect(view.container.querySelector('[data-testid="fleet-terminal-composer"]')).toBeNull();
+    const toggle = view.container.querySelector<HTMLButtonElement>('[aria-label="Input box"]')!;
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(view.container.querySelector('[data-testid="fleet-terminal-composer"]')).not.toBeNull();
+    expect(window.localStorage.getItem(TERMINAL_COMPOSER_STORAGE_KEY)).toBe("1");
+    view.unmount();
+
+    const readOnly = mount({ readOnly: true });
+    expect(readOnly.view.container.querySelector('[aria-label="Input box"]')).toBeNull();
+    expect(readOnly.view.container.querySelector('[data-testid="fleet-terminal-composer"]')).toBeNull();
+  });
+
+  it("refuses to send until the terminal answers, and keeps the draft when it closes", async () => {
+    act(() => terminalComposerPreference.set(true));
+    const { view, socket } = mount();
+    const field = view.container.querySelector("textarea")!;
+    fireEvent.change(field, { target: { value: "hello" } });
+    expect(sendButton(view.container)!.disabled).toBe(true);
+    socket.fire("open");
+    expect(sendButton(view.container)!.disabled).toBe(true);
+    act(() => output(socket));
+    await waitFor(() => expect(sendButton(view.container)!.disabled).toBe(false));
+    act(() => socket.fire("close"));
+    await waitFor(() => expect(sendButton(view.container)!.disabled).toBe(true));
+    expect(field.value).toBe("hello");
+    expect(inputs(socket)).toEqual([]);
+  });
+
+  it("writes the draft and then Enter, and clears only after the write", async () => {
+    act(() => terminalComposerPreference.set(true));
+    const { view, socket } = mount();
+    socket.fire("open");
+    act(() => output(socket));
+    const field = view.container.querySelector("textarea")!;
+    fireEvent.change(field, { target: { value: "line one\nline two" } });
+    await waitFor(() => expect(sendButton(view.container)!.disabled).toBe(false));
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(inputs(socket)).toEqual([]);
+    fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
+    await waitFor(() => expect(inputs(socket)).toEqual(["line one\rline two", "\r"]));
+    await waitFor(() => expect(field.value).toBe(""));
+  });
 });

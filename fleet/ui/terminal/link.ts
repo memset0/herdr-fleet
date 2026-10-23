@@ -145,10 +145,14 @@ export class TerminalLink {
     this.socket.send(wire(viewportMessage(viewport)));
   }
 
-  /** What the operator typed. Dropped before the socket opens: there is no terminal to type into. */
-  type(data: Uint8Array): void {
-    if (this.closed || !this.open || data.length === 0) return;
+  /**
+   * What the operator typed. Dropped before the socket opens: there is no terminal to type into.
+   * Says whether it was handed to the socket, so a sender can tell a written draft from a dropped one.
+   */
+  type(data: Uint8Array): boolean {
+    if (this.closed || !this.open || data.length === 0) return false;
     this.socket.send(wire(inputMessage(data)));
+    return true;
   }
 
   /** The geometry this link has actually stated, for the indicator that makes it legible. */

@@ -1,18 +1,22 @@
 import { fleetCjkFallback, fleetWebfont, exclusiveCjkStack, CJK_FALLBACK_UNSET_FAMILY } from "../../../fleet/ui/webfonts.ts";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { TextCursorInput } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 
 import type { PaneContentProps } from "@/components/agent-chat";
 import { Button } from "@/components/ui/button";
 import { Collapse } from "@/components/ui/collapse";
+import { ToggleButton } from "@/components/ui/toggle-button";
+import { FleetTerminalComposer } from "@/components/fleet-terminal-composer";
 import { Notice, NOTICE_ACTION } from "@/components/ui/notice";
 import { fontStack, useDisplayPrefs, type FontFamily } from "@/hooks/use-display-prefs";
 import { ft, useFleetLocale, type FleetMessageKey } from "@/lib/fleet-i18n";
 import { markDead, markLive } from "@/lib/liveness";
 import { paneScopeKey } from "@/lib/scope";
 import { copyToClipboard, readOsc52, type CopyOutcome } from "../../../fleet/ui/terminal/clipboard.ts";
+import { sendToTerminal, terminalComposerPreference } from "../../../fleet/ui/terminal/composer.ts";
 import { terminalFontFamily } from "../../../fleet/ui/terminal/font.ts";
 import { TerminalLink, terminalUrl } from "../../../fleet/ui/terminal/link.ts";
 import { InstancePool } from "../../../fleet/ui/terminal/pool.ts";
@@ -69,6 +73,8 @@ interface RetainedTerminal {
    * component that is no longer on screen.
    */
   opened: (() => void) | null;
+  /** The same, for the first output: the Gateway sends output only once the browser is attached. */
+  answered: (() => void) | null;
 }
 
 const pool = new InstancePool<RetainedTerminal>({
@@ -131,6 +137,9 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
   const [closed, setClosed] = useState(false);
   /** Bumped by Reconnect, so the effect below releases the ended entry and builds a fresh one. */
   const [attempt, setAttempt] = useState(0);
+  /** Attached and answering: the input box may write. */
+  const [ready, setReady] = useState(false);
+  const composerShown = useSyncExternalStore(terminalComposerPreference.subscribe, terminalComposerPreference.snapshot, terminalComposerPreference.snapshot);
   useFleetLocale();
   const [copied, setCopied] = useState<string | null>(null);
   const [mouseReporting, setMouseReporting] = useState(false);
@@ -183,7 +192,10 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
           self?.opened?.();
         },
         onOutput: (data) => {
-          if (self !== null) self.hasOutput = true;
+          if (self !== null && !self.hasOutput) {
+            self.hasOutput = true;
+            self.answered?.();
+          }
           terminal.write(data);
         },
         onNotice: (word) => setNotice(word),
@@ -195,9 +207,10 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
           markDead(paneId, scope);
           setNotice((shown) => shown ?? "ended");
           setClosed(true);
+          setReady(false);
         },
       });
-      entry = { terminal, fit, element, link, ended: false, connected: false, hasOutput: false, opened: null, face };
+      entry = { terminal, fit, element, link, ended: false, connected: false, hasOutput: false, opened: null, answered: null, face };
       self = entry;
       if (!readOnly) terminal.onData((data) => link.type(encoder.encode(data)));
       terminal.parser.registerOscHandler(52, (data) => {
@@ -217,6 +230,8 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     retained.current = current;
     // A retained entry that is still connected is not closed, whatever this mount last showed.
     if (!current.ended) setClosed(false);
+    setReady(current.connected && current.hasOutput);
+    current.answered = () => setReady(true);
     setSearchSource({ terminal: current.terminal });
     onOutputChange(current.hasOutput);
     const parsed = current.terminal.onWriteParsed(() => {
@@ -293,6 +308,7 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
       document.fonts?.removeEventListener("loadingdone", settle);
       observer.disconnect();
       current.opened = null;
+      current.answered = null;
       current.element.remove();
       retained.current = null;
       pool.put(key, current);
@@ -304,6 +320,16 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
 
   // A fresh connection through the ordinary path: admission, resolution and the single-writer
   // refusal all apply again, so a terminal another browser holds still answers "busy".
+  // Fleet's own send, never Collie's pipeline: the draft as a paste in bounded frames, then Enter.
+  const sendDraft = useCallback(async (text: string): Promise<boolean> => {
+    const current = retained.current;
+    if (current === null) return false;
+    return sendToTerminal(text, {
+      bracketed: current.terminal.modes.bracketedPasteMode,
+      write: (data) => current.link.type(data),
+    });
+  }, []);
+
   const reconnect = useCallback(() => {
     setNotice(null);
     setClosed(false);
@@ -370,6 +396,17 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
         {mouseReporting ? <span data-testid="fleet-terminal-shift-hint">Hold Shift to select</span> : null}
         {copied === null ? null : <span data-testid="fleet-terminal-copy">{copied}</span>}
         {notice === null ? null : <span data-testid="fleet-terminal-notice">{notice}</span>}
+        {readOnly ? null : (
+          <ToggleButton
+            pressed={composerShown}
+            onPressedChange={terminalComposerPreference.set}
+            label={ft("fleet.terminal.composer.toggle")}
+            title={ft("fleet.terminal.composer.toggle")}
+            icon={<TextCursorInput className="size-3.5" />}
+            // Drawn at 20px so the row stays a status line, with the 44px floor bought as hit area.
+            className="ml-auto h-5 size-5 before:absolute before:-inset-3 before:content-['']"
+          />
+        )}
       </div>
       </Collapse>
       <Collapse open={closed}>
@@ -395,6 +432,10 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}
       />
+      {/* In flow, not over the terminal: the host shrinks and its observer refits the terminal. */}
+      <Collapse open={composerShown && !readOnly && !zen}>
+        <FleetTerminalComposer ready={ready} onSend={sendDraft} />
+      </Collapse>
     </div>
   );
 }
