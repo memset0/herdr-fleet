@@ -39,6 +39,11 @@ export interface NavigationPaneInput {
   agent: string;
   status?: NavigationStatus;
   kind?: "agent" | "shell";
+  /**
+   * The Pane is pinned in Collie's own per-device pin store. Browser-local presentation data the
+   * shell derives from that store; it never comes from, or goes to, a snapshot.
+   */
+  pinned?: boolean;
 }
 
 /**
@@ -126,6 +131,8 @@ export interface NavigationRow {
   version?: HostVersionEvidence;
   /** The Pane state this row stands for, when it stands for a Pane. */
   status?: NavigationStatus;
+  /** The Pane this row stands for is pinned — a merged single-Pane row included. */
+  pinned?: true;
   /**
    * Browser-local disclosure identity. Present exactly when the row has children, so a leaf can
    * never occupy a disclosure slot and an elided level can never leave one behind.
@@ -234,6 +241,7 @@ function paneRow(pane: NavigationPaneInput, selected: boolean, hostId: string): 
   };
   if (pane.kind !== "shell") row.agent = pane.agent;
   if (pane.status) row.status = pane.status;
+  if (pane.pinned === true) row.pinned = true;
   return row;
 }
 

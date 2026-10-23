@@ -336,4 +336,30 @@ describe("native navigation hierarchy", () => {
     expect(tree.rows[0]?.fault).toBeUndefined();
     expect(tree.rows[1]?.fault).toBe("refused");
   });
+
+  test("carries a Pane's pin onto its row, a merged single-Pane row included", () => {
+    const tree = singleHost({
+      ...HOST,
+      workspaces: [{ workspaceId: "w1", label: "One" }],
+      tabs: [
+        { workspaceId: "w1", tabId: "t1", label: "Group" },
+        { workspaceId: "w1", tabId: "t2", label: "Merged" },
+      ],
+      agents: [
+        { workspaceId: "w1", tabId: "t1", paneId: "p1", label: "Pinned", agent: "claude", pinned: true },
+        { workspaceId: "w1", tabId: "t1", paneId: "p2", label: "Plain", agent: "codex", pinned: false },
+        { workspaceId: "w1", tabId: "t2", paneId: "p3", label: "Only", agent: "claude", pinned: true },
+      ],
+      shellPanes: [],
+    });
+
+    const [group, merged] = tree.rows[0]?.children[0]?.children ?? [];
+    expect(group?.pinned).toBeUndefined();
+    expect(group?.children.map((row) => [row.label, row.pinned])).toEqual([
+      ["Pinned", true],
+      ["Plain", undefined],
+    ]);
+    expect(merged?.subject).toEqual({ kind: "tab", tabId: "t2", paneId: "p3" });
+    expect(merged?.pinned).toBe(true);
+  });
 });

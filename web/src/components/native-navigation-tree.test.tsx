@@ -352,3 +352,53 @@ it("opens Host actions on an empty machine without navigation", () => {
   expect(onOpenSpace).not.toHaveBeenCalled();
   expect(onOpenPane).not.toHaveBeenCalled();
 });
+
+describe("the pinned mark", () => {
+  function pinnedTree() {
+    return deriveNavigationTree({
+      hosts: [{
+        hostId: "",
+        hostLabel: "This host",
+        workspaces: [{ workspaceId: "w1", label: "Project" }],
+        tabs: [
+          { workspaceId: "w1", tabId: "t1", label: "Group" },
+          { workspaceId: "w1", tabId: "t2", label: "Merged" },
+        ],
+        agents: [
+          { workspaceId: "w1", tabId: "t1", paneId: "p1", label: "Pinned pane", agent: "claude", status: "working", pinned: true },
+          { workspaceId: "w1", tabId: "t1", paneId: "p2", label: "Plain pane", agent: "codex", status: "working" },
+          { workspaceId: "w1", tabId: "t2", paneId: "p3", label: "Only pane", agent: "claude", status: "idle", pinned: true },
+        ],
+        shellPanes: [],
+      }],
+    });
+  }
+
+  function title(row: HTMLElement): HTMLElement {
+    const span = row.querySelector<HTMLElement>("span.truncate");
+    if (span === null) throw new Error("row has no title");
+    return span;
+  }
+
+  it("draws a pinned pane row and a pinned merged row bold with a badge, and an unpinned row plain", () => {
+    const store = new NavigationPreferenceStore();
+    store.ensureDisclosed([spaceDisclosureId("w1"), tabDisclosureId("w1", "t1")]);
+    render(<NativeNavigationTree tree={pinnedTree()} onOpenSpace={vi.fn()} onOpenPane={vi.fn()} preferenceStore={store} />);
+
+    for (const name of [/^Pinned pane/, /^Merged/]) {
+      const row = screen.getByRole("button", { name });
+      expect(title(row)).toHaveClass("font-bold");
+      const badge = row.querySelector('[data-slot="navigation-pinned"]');
+      expect(badge).toHaveTextContent("pinned");
+      // The badge follows the title and stays ahead of the trailing state dot.
+      expect(badge?.previousElementSibling).toBe(title(row));
+      expect(badge?.nextElementSibling).not.toBeNull();
+    }
+
+    const plain = screen.getByRole("button", { name: /^Plain pane/ });
+    expect(title(plain)).not.toHaveClass("font-bold");
+    expect(plain.querySelector('[data-slot="navigation-pinned"]')).toBeNull();
+    // A group row is never marked, whatever its Panes are.
+    expect(screen.getByRole("button", { name: "Group" }).querySelector('[data-slot="navigation-pinned"]')).toBeNull();
+  });
+});

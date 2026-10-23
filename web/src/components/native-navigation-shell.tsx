@@ -72,7 +72,7 @@ import { closePane, closeTab, refreshNow } from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { migrateLegacyFavorites, paneRosterFrom, pinnedAgents } from "@/lib/fleet-roster";
 import { markAllSeenThenRefresh } from "@/lib/fleet-mark-seen";
-import { usePins } from "@/lib/pins";
+import { pinMatcher, usePins } from "@/lib/pins";
 import { setStatus } from "@/lib/status";
 import { useFleetSettings } from "@/lib/fleet-settings";
 import { homePath, panePath, settingsPath, spacePath } from "@/lib/nav";
@@ -217,6 +217,13 @@ function FleetNavigationShell({
     // A solo snapshot has no roster at all, and its rows carry no host: one member, spelled "".
     return ordered.length === 0 && extra.length === 0 ? [""] : [...ordered, ...extra];
   }, [data.servers, allPanes, hostFaults]);
+  // Pins are Collie's, per device, and change without the snapshot moving, so the roster has to be
+  // recomputed when they do. The rail reads the same store; this subscribes so the command layer's
+  // copy of the order cannot fall behind the one on screen, and so the hierarchy's pinned mark
+  // follows a pin the moment it is made. The mark is presentation data derived here, in the
+  // browser: it never joins the snapshot or any request.
+  const pins = usePins();
+  const isPinned = useMemo(() => pinMatcher(pins), [pins]);
   const tree = useMemo(
     () =>
       deriveNavigationTree({
@@ -236,8 +243,8 @@ function FleetNavigationShell({
             }),
             workspaces: on(data.allWorkspaces ?? data.workspaces),
             tabs: on(data.allTabs ?? data.tabs),
-            agents: on(data.agents).map(toNavigationPane),
-            shellPanes: on(data.shellPanes).map(toNavigationPane),
+            agents: on(data.agents).map((pane) => toNavigationPane(pane, isPinned)),
+            shellPanes: on(data.shellPanes).map((pane) => toNavigationPane(pane, isPinned)),
           };
         }),
         selectedPaneId: paneId,
@@ -255,6 +262,7 @@ function FleetNavigationShell({
       data.agents,
       data.shellPanes,
       paneId,
+      isPinned,
     ],
   );
 
@@ -401,10 +409,6 @@ function FleetNavigationShell({
     [nav, data.scope, data.servers, data.sessions, closeHierarchy],
   );
 
-  // Pins are Collie's, per device, and change without the snapshot moving, so the roster has to be
-  // recomputed when they do. The rail reads the same store; this subscribes so the command layer's
-  // copy of the order cannot fall behind the one on screen.
-  const pins = usePins();
   const tabsForPins = data.allTabs ?? data.tabs;
 
   // THE RETIRED FAVOURITES BECOME PINS, ONCE (fleet/ui/agent-favorites.ts). Only against a fresh
@@ -792,7 +796,7 @@ function FleetNavigationShell({
   );
 }
 
-function toNavigationPane(pane: AgentView): NavigationPaneInput {
+function toNavigationPane(pane: AgentView, isPinned: (pane: AgentView) => boolean): NavigationPaneInput {
   const result: NavigationPaneInput = {
     paneId: pane.paneId,
     workspaceId: pane.workspaceId,
@@ -806,6 +810,7 @@ function toNavigationPane(pane: AgentView): NavigationPaneInput {
   if (pane.paneLabel) result.ownLabel = pane.paneLabel;
   if (pane.status) result.status = pane.status;
   if (pane.kind) result.kind = pane.kind;
+  if (isPinned(pane)) result.pinned = true;
   return result;
 }
 

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 
@@ -231,6 +231,25 @@ describe("NativeNavigationShell", () => {
     renderShell();
     expect(localStorage.getItem(LEGACY)).toBeNull();
     expect(pinMatcher(currentPins())(pane)).toBe(true);
+  });
+
+  it("marks a pinned pane in the hierarchy and follows the pin live", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    const herds = screen.getByRole("complementary", { name: "Herds" });
+    await user.click(within(herds).getByRole("button", { name: "Expand Project" }));
+    // The Space holds one Tab holding one Pane, so the Pane is drawn as one merged row.
+    const row = await within(herds).findByRole("button", { name: /^Main/ });
+    const mark = () => row.querySelector('[data-slot="navigation-pinned"]');
+    expect(mark()).toBeNull();
+
+    act(() => setPinned(pane, true, [pane]));
+    expect(mark()).toHaveTextContent("pinned");
+    expect(row.querySelector("span.truncate")).toHaveClass("font-bold");
+
+    act(() => setPinned(pane, false, [pane]));
+    expect(mark()).toBeNull();
+    expect(row.querySelector("span.truncate")).not.toHaveClass("font-bold");
   });
 
   it("resizes a rail by keyboard within its bounds and remembers the width", () => {

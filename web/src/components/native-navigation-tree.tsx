@@ -13,6 +13,7 @@ import { AgentIcon } from "@/components/agent-icon";
 import { useCrew } from "@/components/crew-provider";
 import { StatusDot } from "@/components/status-badge";
 import { HOST_TEXT_CLASSES, hostSlot } from "@/lib/hosts";
+import { Badge } from "@/components/ui/badge";
 import { Collapse } from "@/components/ui/collapse";
 import { t } from "@/lib/i18n";
 import { statusLabel } from "@/lib/types";
@@ -231,7 +232,21 @@ function Row({
             </span>
           ) : (
             <>
-              <span className="truncate">{row.label}</span>
+              {/* A PINNED PANE SAYS SO, from Collie's own per-device pin store via the shell. The
+                  title gives way first: it truncates while the badge and the trailing dot are
+                  `shrink-0`, and the 18px badge sits inside the 28px row, so the mark costs the row
+                  neither its height nor its trailing facts. It changes only on the operator's own
+                  pin or unpin (DESIGN.md §2, class (a)), never on a poll. */}
+              <span className={cn("truncate", row.pinned === true && "font-bold")}>{row.label}</span>
+              {row.pinned === true && (
+                <Badge
+                  variant="outline"
+                  data-slot="navigation-pinned"
+                  className="px-1.5 py-0 text-[10px] leading-4 font-medium text-muted-foreground"
+                >
+                  {ft("fleet.navigation.pinned")}
+                </Badge>
+              )}
               {/* The Agent's own logo took the leading slot, so the state moved to the trailing one —
                   the SAME dot the Tab row draws (components/tab-strip.tsx), so one colour means one
                   thing wherever it appears. `surface` is the rail's ground, because a resting state
