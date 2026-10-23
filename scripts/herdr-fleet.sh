@@ -29,6 +29,13 @@ operation="${1:-status}"
 if [[ "$operation" == "build" ]]; then
   exec bash "$root/scripts/collie-ctl.sh" build
 fi
+# Collie's Push verbs, run against the store the Fleet-launched Collie keeps: the runtime states that
+# child's state directory as <plugin state>/collie (fleet/runtime.ts), and Collie reads only this name.
+if [[ "$operation" == "push-keys" || "$operation" == "push-test" ]]; then
+  [[ "${HERDR_PLUGIN_STATE_DIR:-}" = /* ]] || { printf 'herdr-fleet: HERDR_PLUGIN_STATE_DIR must be an absolute path\n' >&2; exit 1; }
+  export COLLIE_STATE_DIR="${HERDR_PLUGIN_STATE_DIR%/}/collie"
+  exec bash "$root/scripts/collie-ctl.sh" "$operation"
+fi
 if [[ "$operation" != "url" && "$operation" != "status" && "$operation" != "stop" && ! -x "$root/bin/collie" ]]; then
   bash "$root/scripts/collie-ctl.sh" build
 fi

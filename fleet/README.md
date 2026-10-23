@@ -421,9 +421,11 @@ on; `collie skill install` and `collie skill sync` by hand stay the operator's o
 ## Native Web Push actions
 
 Herdr Fleet exposes Collie's existing `push-keys` and `push-test` commands as fixed no-argument
-plugin actions. They run through `scripts/collie-ctl.sh`, so Collie's own config-directory
-resolution, mode-600 writes, existing-key refusal, subscription store, and diagnostics remain the
-only implementation.
+plugin actions. They run through the Fleet launcher, which states Collie's state directory as the
+Fleet runtime does for its Collie child (`<plugin state>/collie`) and then hands the verb to
+`scripts/collie-ctl.sh`, so they read the subscriptions the running Collie keeps while Collie's own
+config-directory resolution, mode-600 writes, existing-key refusal, subscription store, and
+diagnostics remain the only implementation.
 
 The actions do not enable Push automatically. Generate initial keys only when intended, invoke the
 existing Fleet `restart` action so the running bridge reads them, then enable notifications in each

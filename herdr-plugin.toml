@@ -45,10 +45,10 @@ command = ["bash", "scripts/herdr-fleet.sh", "url"]
 id = "push-keys"
 title = "Generate push keys"
 contexts = ["workspace"]
-command = ["bash", "scripts/collie-ctl.sh", "push-keys"]
+command = ["bash", "scripts/herdr-fleet.sh", "push-keys"]
 
 [[actions]]
 id = "push-test"
 title = "Send a test notification"
 contexts = ["workspace"]
-command = ["bash", "scripts/collie-ctl.sh", "push-test"]
+command = ["bash", "scripts/herdr-fleet.sh", "push-test"]

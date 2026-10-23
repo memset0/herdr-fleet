@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -26,8 +26,8 @@ function validatePushActions(manifest: string): void {
     const matches = pushBlocks.filter((block) => block.includes(`id = "${id}"`));
     if (matches.length !== 1) throw new Error(`manifest must contain exactly one ${id} action`);
     const block = matches[0] ?? "";
-    const command = `command = ["bash", "scripts/collie-ctl.sh", "${id}"]`;
-    if (!block.includes(command)) throw new Error(`${id} must delegate to the frozen Collie shim`);
+    const command = `command = ["bash", "scripts/herdr-fleet.sh", "${id}"]`;
+    if (!block.includes(command)) throw new Error(`${id} must run through the Fleet launcher`);
     if (/--force|COLLIE_VAPID_|https?:|mailto:|push (list|forget)/.test(block)) {
       throw new Error(`${id} embeds forbidden Push arguments or values`);
     }
@@ -298,7 +298,31 @@ server_digest = "${"0".repeat(64)}"
     expect(manifest).toContain('id = "memset0.herdr-fleet"');
     expect(manifest).not.toContain("systemctl");
     expect(manifest).not.toContain("tailscale");
-    expect(manifest.match(/scripts\/herdr-fleet\.sh/g)?.length).toBe(6);
+    expect(manifest.match(/scripts\/herdr-fleet\.sh/g)?.length).toBe(8);
+  });
+
+  test("the launcher runs Collie's Push verbs against the Fleet-launched Collie's state directory", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "fleet-push-launcher-"));
+    try {
+      mkdirSync(join(sandbox, "scripts"));
+      copyFileSync(resolve(root, "scripts/herdr-fleet.sh"), join(sandbox, "scripts/herdr-fleet.sh"));
+      // A stub shim that reports what it was handed instead of running Collie.
+      writeFileSync(join(sandbox, "scripts/collie-ctl.sh"), 'printf "%s %s" "$COLLIE_STATE_DIR" "$1"\n');
+      chmodSync(join(sandbox, "scripts/collie-ctl.sh"), 0o755);
+      const stateDir = resolveRuntimePaths({ HERDR_FLEET_CONFIG: "/srv/fleet/fleet.toml", HERDR_PLUGIN_STATE_DIR: "/srv/fleet/state" }).collieStateDir;
+      for (const verb of ["push-keys", "push-test"]) {
+        const run = Bun.spawnSync(["bash", join(sandbox, "scripts/herdr-fleet.sh"), verb], {
+          env: { PATH: process.env.PATH ?? "", HOME: sandbox, HERDR_PLUGIN_STATE_DIR: "/srv/fleet/state" },
+        });
+        expect(run.stdout.toString()).toBe(`${stateDir} ${verb}`);
+      }
+      const relative = Bun.spawnSync(["bash", join(sandbox, "scripts/herdr-fleet.sh"), "push-test"], {
+        env: { PATH: process.env.PATH ?? "", HOME: sandbox, HERDR_PLUGIN_STATE_DIR: "state" },
+      });
+      expect(relative.exitCode).not.toBe(0);
+    } finally {
+      void rm(sandbox, { recursive: true, force: true });
+    }
   });
 
   test("the plugin manifest exposes only the two native no-argument Push actions", () => {
@@ -306,7 +330,7 @@ server_digest = "${"0".repeat(64)}"
     expect(() => validatePushActions(manifest)).not.toThrow();
     expect(() =>
       validatePushActions(
-        `${manifest}\n[[actions]]\nid = "push-test"\ncommand = ["bash", "scripts/collie-ctl.sh", "push-test"]\n`,
+        `${manifest}\n[[actions]]\nid = "push-test"\ncommand = ["bash", "scripts/herdr-fleet.sh", "push-test"]\n`,
       ),
     ).toThrow();
     expect(() =>
@@ -315,8 +339,8 @@ server_digest = "${"0".repeat(64)}"
     expect(() =>
       validatePushActions(
         manifest.replace(
-          '"scripts/collie-ctl.sh", "push-test"',
           '"scripts/herdr-fleet.sh", "push-test"',
+          '"scripts/collie-ctl.sh", "push-test"',
         ),
       ),
     ).toThrow();
