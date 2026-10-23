@@ -139,14 +139,11 @@ describe("release.yml: a Windows failure never stops a release", () => {
 describe("release.yml: an Edge tag (M60 spec 01)", () => {
   const stamp = 'bun scripts/release-version.ts --tag "$GITHUB_REF_NAME" --stamp';
 
-  test("matches the same trigger as a Stable tag", () => {
+  // Fleet: no tag starts this workflow, an Edge tag included; a person runs it (no-automatic-release-publication).
+  test("no tag starts it, an Edge tag no more than a Stable one", () => {
     // SAFETY: plain data from Bun's YAML parser, compared against literals below.
-    const on = (Bun.YAML.parse(text) as { on: { push: { tags: string[] } } }).on;
-    expect(on.push.tags).toEqual(["v*.*.*"]);
-    // GitHub's glob: `*` crosses everything but `/`, so `v1.23.0-edge.1` is `v` `1` `.` `23` `.` `0-edge.1`.
-    const glob = new RegExp(`^${on.push.tags[0]?.replaceAll(".", "\\.").replaceAll("*", "[^/]*") ?? ""}$`);
-    expect(glob.test("v1.23.0-edge.1")).toBe(true);
-    expect(glob.test("v1.23.0")).toBe(true);
+    const on = Bun.YAML.parse(text) as { on: { workflow_dispatch?: null; push?: { tags: string[] } } };
+    expect(Object.keys(on.on)).toEqual(["workflow_dispatch"]);
   });
 
   test("every job that builds stamps the tag's version before the version gate reads the files", () => {
