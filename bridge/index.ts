@@ -239,6 +239,7 @@ import { gateFor } from "./surface/key-gate.ts";
 import { RowRing, SendProtocol, SessionLocks } from "./surface/protocol.ts";
 import { ProgramDriver, type ProgramPort } from "./surface/durable-driver.ts";
 import { RequestStore } from "./surface/requests.ts";
+import { SendFailureScreens } from "../fleet/send-failure-screens.ts";
 import { HoldStore } from "./surface/holds.ts";
 import { SurfaceLedger } from "./surface/counters.ts";
 import { deliverEdge, EdgeRouter, type EdgeTarget } from "./surface/edges.ts";
@@ -1394,6 +1395,8 @@ if (sendStore !== null) {
 // The hold queue (M56 spec 15): a send the harness cannot take during its turn waits here, one file per
 // request under `<stateDir>/held/`, and is replayed on start. A request that was going out when the
 // last run stopped was settled `unknown` above; its row ends with that, the text kept for a Resend.
+// Herdr Fleet (fleet-send-failure-screens): a failed send's screens, kept owner-only on this machine.
+const sendFailureScreens = new SendFailureScreens(join(cfg.stateDir, "send-failures"));
 const holdStore = sendStore === null ? null : new HoldStore(join(cfg.stateDir, "held"));
 if (holdStore !== null && sendStore !== null) {
   const changed = SendProtocol.reconcileHolds(holdStore, sendStore);
@@ -1609,6 +1612,7 @@ const makeSession: SessionFactory = (name, endpoint, isPrimary) => {
           holds: holdStore ?? undefined,
           // A blind send on one of this session's shell panes joins Sent (ADR 0107); any other pane is left out.
           blindSent: sentRecorder(sentStore, () => engine.current().shellPanes),
+          failureScreens: sendFailureScreens,
         })
       : undefined;
   const asks =

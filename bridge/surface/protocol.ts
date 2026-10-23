@@ -124,6 +124,7 @@ import type { RequestStore, SendRecord } from "./requests.ts";
 import { HOLD_BRIDGE_MAX, HOLD_PANE_MAX, heldRow, type HeldEntry, type HoldStore } from "./holds.ts";
 import { steersWithEnter } from "../../fleet/enter-steers.ts";
 import { sendHolds } from "../../fleet/send-holds.ts";
+import type { FailureScreen, FailureScreenSink } from "../../fleet/send-failure-screens.ts";
 
 /**
  * The step bounds, written as (max reads, max ms). Herdr Fleet (fleet-send-patience) runs them several
@@ -275,6 +276,11 @@ export interface SendDeps {
    * of it is the caller's business: the bridge keeps the line only for a shell pane (bridge/sent.ts).
    */
   readonly blindSent?: (sent: { readonly session: string; readonly paneId: string; readonly text: string }) => void;
+  /**
+   * Herdr Fleet (fleet-send-failure-screens): a failed send's reads, unredacted, to the local store
+   * of fleet/send-failure-screens.ts. Asked after the receipt settles, inside a try; never waited on.
+   */
+  readonly failureScreens?: FailureScreenSink;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -348,6 +354,9 @@ export class RowRing {
 /** One screen read as the protocol sees it. */
 interface Snap {
   readonly revision: number;
+  /** The read as the multiplexer returned it, styling included, and the step it was made under (fleet-send-failure-screens). */
+  readonly raw: string;
+  readonly step: string;
   /** The gate's revision for the pane, taken with this read. */
   readonly gateRevision: number;
   readonly rows: readonly FrameRow[];
@@ -2275,8 +2284,32 @@ export class SendProtocol {
     const receipt = this.receiptOf(state, outcome, outcome === "effective" ? undefined : end.reason, end.extra.cap, end.extra);
     this.deps.store.settle(state.record.id, receipt);
     this.count(state, receipt, end.extra.surface);
+    this.keepFailure(state, receipt);
     const framed = end.extra.framed ?? (state.marks.s0?.frame ?? null) !== null;
     return answerWith({ receipt, offers: end.extra.offers ?? offersFor(outcome, receipt.reason, framed) }, end.extra);
+  }
+
+  /**
+   * Herdr Fleet (fleet-send-failure-screens): a failed send's distinct reads (S0, S1, S2, the last two)
+   * to the failure store. Never throws and never waits: the store only queues.
+   */
+  private keepFailure(state: RunState, receipt: SendReceipt): void {
+    const sink = this.deps.failureScreens;
+    if (sink === undefined) return;
+    try {
+      if (!sink.wants(receipt)) return;
+      const screens: FailureScreen[] = [];
+      const seen = new Set<Snap>();
+      const named: [string, Snap | null][] = [["s0", state.marks.s0], ["s1", state.marks.s1], ["s2", state.marks.s2], ["previous", state.previousRead], ["last", state.lastRead]];
+      for (const [label, snap] of named) {
+        if (snap === null || seen.has(snap)) continue;
+        seen.add(snap);
+        screens.push({ label, step: snap.step, revision: snap.revision, raw: snap.raw });
+      }
+      sink.keep({ receipt, at: this.now(), screens });
+    } catch (err) {
+      console.warn(`[send] keeping a failed send's screens failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /** The counters key of a request: harness, binary version, profile id and status, `-` where there is none. */
@@ -2831,6 +2864,8 @@ export class SendProtocol {
     const notice = noticeOver(texts, frame, idle);
     const snap: Snap = {
       revision: grid.value.revision,
+      raw: grid.value.text,
+      step,
       gateRevision,
       rows,
       texts,

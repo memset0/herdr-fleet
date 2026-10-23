@@ -16,6 +16,7 @@ import { lineText, splitLines } from "../../web/src/lib/blocks.ts";
 import { findInputFrame } from "../../web/src/lib/surface/frame.ts";
 import { KeyGate, TOKEN_LIFETIME_MS } from "./key-gate.ts";
 import { sendHolds } from "../../fleet/send-holds.ts";
+import { wantsFailureScreens, type FailureScreenSink, type SendFailureCapture } from "../../fleet/send-failure-screens.ts";
 import { BOUNDS, boxMatches, commandBoxMatches, GENERIC_PROBE, LOCK_BOUND_MS, locateText, neverHeldEntry, POLL_GAP_MAX_MS, probeLanding, RowRing, SendProtocol, SessionLocks, steadyRow, type SendDeps, type SendRequest } from "./protocol.ts";
 import { RequestStore } from "./requests.ts";
 import { SurfaceLedger } from "./counters.ts";
@@ -6427,4 +6428,88 @@ describe("pi under pi-powerline-footer's inset editor (issue 544, live 2026-10-2
       neverEscape(pane);
     });
   }
+});
+
+// fleet-send-failure-screens: a failed send hands its raw reads to the local failure store.
+describe("fleet: a failed send's screens go to the failure store", () => {
+  /** A sink that records what it is asked and handed, as the store's port sees it. */
+  function recordingSink(): FailureScreenSink & { asked: string[]; kept: SendFailureCapture[] } {
+    const asked: string[] = [];
+    const kept: SendFailureCapture[] = [];
+    return {
+      asked,
+      kept,
+      wants: (receipt) => {
+        asked.push(receipt.outcome);
+        return wantsFailureScreens(receipt);
+      },
+      keep: (capture) => {
+        kept.push(capture);
+      },
+    };
+  }
+  function withSink(sink: FailureScreenSink, options: Parameters<typeof rig>[0] = {}): Rig & { sendWith: (text: string) => Promise<SendAnswer> } {
+    const r = rig(options);
+    const protocol = new SendProtocol({ ...r.deps, failureScreens: sink });
+    return { ...r, protocol, sendWith: (text) => protocol.handle({ id: nextId(), text, mode: "send" }, { session: "main", paneId: "%1", harness: "claude" }) };
+  }
+
+  test("a probe that meets a swallowing pane: the S0 and probe reads go over raw, styling included", async () => {
+    const sink = recordingSink();
+    // An unverified version takes the probed path.
+    const r = withSink(sink, { version: "2.1.999" });
+    r.pane.swallow = true;
+    const answer = await r.sendWith("hello there, agent");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "probe_failed" });
+    expect(sink.kept).toHaveLength(1);
+    const [kept] = sink.kept;
+    expect(kept!.receipt).toBe(answer.receipt!);
+    expect(kept!.screens[0]).toMatchObject({ label: "s0", step: "s0" });
+    expect(kept!.screens.at(-1)).toMatchObject({ label: "last" });
+    expect(kept!.screens.some((screen) => screen.step === "probe")).toBe(true);
+    // Raw as the multiplexer returned it: the placeholder's faint styling is still there.
+    expect(kept!.screens[0]!.raw).toContain("\u001b[");
+    expect(new Set(kept!.screens.map((screen) => screen.label)).size).toBe(kept!.screens.length);
+  });
+
+  test("a draft in the box: the S0 read that showed it goes over", async () => {
+    const sink = recordingSink();
+    const r = withSink(sink);
+    r.pane.box = "a draft of mine";
+    const answer = await r.sendWith("hello there, agent");
+    expect(answer.receipt).toMatchObject({ outcome: "refused", reason: "draft_present" });
+    expect(sink.kept).toHaveLength(1);
+    expect(sink.kept[0]!.screens.some((screen) => screen.raw.includes("a draft of mine"))).toBe(true);
+  });
+
+  test("a send that goes in is asked about and keeps nothing", async () => {
+    const sink = recordingSink();
+    const r = withSink(sink);
+    const answer = await r.sendWith("please fix the failing test");
+    expect(answer.receipt?.outcome).toBe("sent");
+    expect(sink.asked).toEqual(["sent"]);
+    expect(sink.kept).toEqual([]);
+  });
+
+  test("a sink that throws changes nothing about the answer", async () => {
+    const quiet = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const plain = rig();
+      plain.pane.box = "a draft of mine";
+      const expected = await plain.send("hello there, agent");
+      const broken: FailureScreenSink = {
+        wants: () => true,
+        keep: () => {
+          throw new Error("disk full");
+        },
+      };
+      const r = withSink(broken);
+      r.pane.box = "a draft of mine";
+      const answer = await r.sendWith("hello there, agent");
+      expect({ ...answer.receipt, requestId: "-" }).toEqual({ ...expected.receipt!, requestId: "-" });
+      expect(answer.offers).toEqual(expected.offers);
+    } finally {
+      quiet.mockRestore();
+    }
+  });
 });

@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **A failed send's screens are kept on the machine.** On a screen-decided failure (probe_failed, draft_present, mismatch, changed, modal_cue, …) the bridge writes the raw reads and the receipt to `<stateDir>/send-failures/`, owner-only, newest 50 and 8 MiB at most; never served.
+
 ### Changed
 
 - **The rail's surface switch is compact and says ttyd.** Both segments are 32px tall on every pointer, and the terminal choice is written in lowercase.
