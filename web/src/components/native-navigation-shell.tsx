@@ -68,10 +68,10 @@ import { FleetRenameDialog, type RenameTarget } from "@/components/fleet-rename-
 import { FleetHostActions, FleetPaneActions, FleetSpaceActions, FleetTabActions } from "@/components/fleet-row-actions";
 import { findPane, hostName, paneScope } from "@/lib/hosts";
 import type { HomeData } from "@/lib/loaders";
-import { closePane, closeTab } from "@/lib/api";
+import { closePane, closeTab, refreshNow } from "@/lib/api";
 import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { migrateLegacyFavorites, paneRosterFrom, pinnedAgents } from "@/lib/fleet-roster";
-import { markPanesSeen } from "@/lib/fleet-mark-seen";
+import { markAllSeenThenRefresh } from "@/lib/fleet-mark-seen";
 import { usePins } from "@/lib/pins";
 import { setStatus } from "@/lib/status";
 import { useFleetSettings } from "@/lib/fleet-settings";
@@ -378,13 +378,18 @@ function FleetNavigationShell({
     closeHierarchy();
   };
   // Mark every unseen pane the rail lists seen through Collie's own per-pane seen read, each on its
-  // own host and session exactly as `openAgent` addresses it, then wait for the route data so the
-  // rail's control stays disabled until the snapshot that clears the marks has landed.
+  // own host and session exactly as `openAgent` addresses it, ask the lead to look now (which re-reads
+  // its members, so peer panes clear too), then wait for the route data so the rail's control stays
+  // disabled until the snapshot that clears the marks has landed.
   const { revalidate } = revalidator;
   const markAllSeen = useCallback(
     async (panes: AgentView[]) => {
-      await markPanesSeen(panes, (agent) => paneScope(data.scope, agent, data.servers, data.sessions));
-      await revalidate();
+      await markAllSeenThenRefresh(
+        panes,
+        (agent) => paneScope(data.scope, agent, data.servers, data.sessions),
+        () => refreshNow(),
+        revalidate,
+      );
     },
     [data.scope, data.servers, data.sessions, revalidate],
   );

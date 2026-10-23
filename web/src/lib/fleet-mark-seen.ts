@@ -54,3 +54,20 @@ export async function markPanesSeen(
   await Promise.all(Array.from({ length: Math.min(MARK_SEEN_CONCURRENCY, panes.length) }, worker));
   return marked;
 }
+
+/**
+ * Mark all seen, in the order that lets peer panes clear with lead panes: every seen read first,
+ * then one "look now" on the lead — which on a lead re-reads its members, so the stamps the reads
+ * just left on a peer are in the lead's copy — then the revalidation the rail waits on.
+ */
+export async function markAllSeenThenRefresh(
+  panes: readonly AgentView[],
+  scopeOf: (pane: AgentView) => Scope,
+  refresh: () => Promise<void>,
+  revalidate: () => Promise<void>,
+  read: SeenRead = seenRead,
+): Promise<void> {
+  await markPanesSeen(panes, scopeOf, read);
+  await refresh();
+  await revalidate();
+}

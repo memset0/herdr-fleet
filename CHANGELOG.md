@@ -23,6 +23,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 - **Hierarchy right-click menu pins a pane and edits its tags.** Pin/Unpin and Edit pane tags join a Pane row's pointer menu, and a merged single-Pane Tab row's, outside the write gates; shells get Pin only.
 
+### Fixed
+
+- **Mark all seen clears peer panes at once.** On a lead, look-now also sweeps the members, and Mark all seen looks now before revalidating, so a member's panes no longer wait for the next sweep.
+
 ## [3.23.1] - 2026-10-23
 
 ### Fixed

@@ -1531,6 +1531,9 @@ export function startServer(opts: {
       console.warn(`[refresh] ${rt.name}: ${errorText(err)}`);
     }
     rt.engine.pokeNow();
+    // DOWNSTREAM PORT (FORK.toml lead-look-now-sweeps-members): on a lead, "look now" also re-reads
+    // the members, so a seen read just forwarded to one shows in the very next snapshot.
+    await crewLead?.sweep();
   };
 
   /**

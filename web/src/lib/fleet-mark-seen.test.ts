@@ -3,7 +3,7 @@ import { HttpResponse, http } from "msw";
 import { server } from "@/test/setup";
 import type { Scope } from "@/lib/scope";
 import type { AgentView } from "@/lib/types";
-import { MARK_SEEN_CONCURRENCY, markPanesSeen } from "./fleet-mark-seen";
+import { MARK_SEEN_CONCURRENCY, markAllSeenThenRefresh, markPanesSeen } from "./fleet-mark-seen";
 
 function pane(paneId: string, host?: string): AgentView {
   const view: AgentView = {
@@ -77,5 +77,20 @@ describe("markPanesSeen", () => {
     const read = vi.fn(async () => {});
     expect(await markPanesSeen([], scopeOf, read)).toBe(0);
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe("markAllSeenThenRefresh", () => {
+  it("reads every pane, then asks the lead to look now, then revalidates", async () => {
+    const order: string[] = [];
+    await markAllSeenThenRefresh(
+      [pane("p1"), pane("p2", "peer")],
+      scopeOf,
+      async () => void order.push("refresh"),
+      async () => void order.push("revalidate"),
+      async (paneId) => void order.push(`read:${paneId}`),
+    );
+    expect(order.slice(0, 2).toSorted()).toEqual(["read:p1", "read:p2"]);
+    expect(order.slice(2)).toEqual(["refresh", "revalidate"]);
   });
 });

@@ -259,6 +259,21 @@ verify = [
 reason = "A bottom sheet and a context menu answer the same question and are not the same object: one dims the app, sticks a titled header over it and spends a thumb's 44px per verb; the other stands at the cursor, dims nothing and leaves when you look away. Collie's sheet primitive and both actions sheets are therefore untouched — the fork adds its own menu and its own centred prompt, and each strip changes by one imported name to a drop-in that takes the same props and renders the same sheet unless a mouse's context gesture opened it. The rows the menu draws are its own; every rule they run on — the capability gates, the host write block, the two-tap confirm, the press echo, the API calls and the status strings — is imported from where the sheet gets it, so the two surfaces can differ in shape and cannot differ in what they do. Geometry and the record of which gesture opened a surface stay under fleet/ui. The fork's hierarchy uses the same drop-in without any upstream change at all."
 
 [[invasive]]
+id = "lead-look-now-sweeps-members"
+intent = "Make a lead's look-now also re-read its members, so a seen read forwarded to a peer shows in the next snapshot."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.23.3"
+paths = [
+  "bridge/server.ts#await crewLead?.sweep();"
+]
+verify = [
+  "fleet/look-now-sweeps-members.test.ts",
+  "web/src/lib/fleet-mark-seen.test.ts"
+]
+reason = "Mark all seen stamps a peer's pane on the peer, but the lead answers the following revalidation from the member body its last periodic sweep banked, so peer panes kept their unseen mark until the next tick. The refresh route is already the operator's 'show me the present' and is already coalesced, and CrewLead.sweep() already guards against overlapping runs, so the narrowest port is one awaited call at the end of lookNow on the optional crew lead: a solo install and a peer have none and are unchanged byte for byte. A new sweep route or a client-side seen overlay were rejected — the first adds a route the requirement forbids, the second clears one browser's rail and nothing else. The shell's call order lives in the fork-owned web/src/lib/fleet-mark-seen.ts."
+
+[[invasive]]
 id = "unnarrowed-pack-rows-port"
 intent = "Expose whole-pack rows and optional Fleet version evidence from the crew census without changing scoped lists or delaying the required snapshot."
 strategy = "adapt"
