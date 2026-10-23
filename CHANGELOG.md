@@ -19,9 +19,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.24.2] - 2026-10-23
+
 ### Added
 
-- **A phone swipe scrolls the ttyd terminal.** A vertical one-finger swipe sends one mouse-wheel step per cell of travel through xterm's own wheel path (wheel report, or cursor keys without mouse tracking); the page stays still.
+- **A phone swipe scrolls the ttyd terminal.** A vertical one-finger swipe sends one mouse-wheel step per cell of travel through xterm's own wheel path (wheel report, or cursor keys without mouse tracking); the page stays still. ([fbcf4b3e](https://github.com/memset0/herdr-fleet/commit/fbcf4b3e))
 
 ## [3.24.1] - 2026-10-23
 
