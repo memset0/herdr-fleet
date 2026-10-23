@@ -1225,6 +1225,9 @@ const STATE_DIR_ENTRIES = [
   // The Send Protocol's request files and receipts (M56 spec 05), one per request id in this folder.
   // Created by a bridge that sends text, which is the default since spec 06: with COLLIE_SEND_PROTOCOL=0
   // nothing builds the store, so such an instance never has this folder.
+  // Herdr Fleet (fleet-send-failure-screens): a failed send's raw screens, owner-only and bounded,
+  // written by the owned fleet/send-failure-screens.ts only after a screen-decided failure; never served.
+  "send-failures",
   "sends",
   // Sent (ADR 0107): the shell lines a person sent through Collie on this machine, one JSON record per
   // line. Written by use and by nothing else: absent until the first line sent to a shell pane, or the
