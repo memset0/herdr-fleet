@@ -22,6 +22,7 @@ import { terminalFontFamily } from "../../../fleet/ui/terminal/font.ts";
 import { TerminalLink, terminalUrl } from "../../../fleet/ui/terminal/link.ts";
 import { InstancePool } from "../../../fleet/ui/terminal/pool.ts";
 import { terminalMatches } from "../../../fleet/ui/terminal/search.ts";
+import { TouchScroll, cellHeightOf, wheelStep, type TouchPoint } from "../../../fleet/ui/terminal/touch-scroll.ts";
 import type { Viewport } from "../../../fleet/terminal/browser.ts";
 
 /**
@@ -46,6 +47,11 @@ import type { Viewport } from "../../../fleet/terminal/browser.ts";
  * so a plain drag is the program's input and selects nothing. Holding Shift suppresses reporting for
  * the gesture; the hint appears the moment the operator's own drag lands on a program that is
  * consuming it, rather than living in documentation they would have to already suspect.
+ *
+ * **A swipe is a wheel.** The emulator keeps no scrollback and has no touch scrolling, so on a phone
+ * a vertical one-finger swipe is read as wheel steps (see `touch-scroll.ts`) and each step is
+ * dispatched as a wheel event on the emulator's own element — the path a desktop wheel takes — so
+ * the program gets its own mouse protocol's report, or the emulator's cursor-key fallback.
  */
 
 /** How many terminals this browser keeps alive across Pane switches. */
@@ -390,6 +396,45 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     wasFinding.current = findOpen;
   }, [findOpen, currentMatch, matches]);
 
+  // Touch props in React are passive, and a swipe must keep the page still, so these are bound by
+  // hand. The host outlives Pane switches within this mount; the terminal is read at event time.
+  useEffect(() => {
+    const container = host.current;
+    if (container === null) return;
+    const gesture = new TouchScroll();
+    const pointOf = (event: TouchEvent): TouchPoint | null => {
+      const touch = event.touches[0];
+      return touch === undefined ? null : { x: touch.clientX, y: touch.clientY };
+    };
+    const onStart = (event: TouchEvent): void => {
+      const point = pointOf(event);
+      if (point !== null) gesture.begin(point, event.touches.length);
+    };
+    const onMove = (event: TouchEvent): void => {
+      const current = retained.current;
+      const point = pointOf(event);
+      if (current === null || point === null) return;
+      const { terminal, face: drawn } = current;
+      const screenHeight = terminal.element?.querySelector<HTMLElement>(".xterm-screen")?.clientHeight ?? 0;
+      const steps = gesture.move(point, event.touches.length, cellHeightOf(screenHeight, terminal.rows, drawn.size, drawn.lineHeight));
+      if (gesture.swiping && event.cancelable) event.preventDefault();
+      const target = terminal.element;
+      if (target === undefined) return;
+      for (let step = 0; step < Math.abs(steps); step += 1) target.dispatchEvent(new WheelEvent("wheel", wheelStep(steps, gesture.origin)));
+    };
+    const onEnd = (): void => gesture.end();
+    container.addEventListener("touchstart", onStart, { passive: true });
+    container.addEventListener("touchmove", onMove, { passive: false });
+    container.addEventListener("touchend", onEnd);
+    container.addEventListener("touchcancel", onEnd);
+    return () => {
+      container.removeEventListener("touchstart", onStart);
+      container.removeEventListener("touchmove", onMove);
+      container.removeEventListener("touchend", onEnd);
+      container.removeEventListener("touchcancel", onEnd);
+    };
+  }, []);
+
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const current = retained.current;
     if (current === null) return;
@@ -461,7 +506,8 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
       <div
         ref={host}
         // Match an overflowing mirror's native scrollbar reservation before xterm measures.
-        className="min-h-0 min-w-0 w-full flex-1 px-2 overflow-hidden [scrollbar-gutter:stable]"
+        // A vertical swipe is the program's (wheel steps); sideways pans and pinch stay the browser's.
+        className="min-h-0 min-w-0 w-full flex-1 px-2 overflow-hidden [scrollbar-gutter:stable] [touch-action:pan-x_pinch-zoom]"
         data-testid="fleet-terminal-host"
         onPointerDown={onPointerDown}
         onPointerUp={onPointerUp}

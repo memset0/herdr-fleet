@@ -31,6 +31,10 @@ class FakeTerminal {
   disposed = false;
   readonly parsedHandlers = new Set<() => void>();
   readonly viewport = { width: 800, height: 600 };
+  /** The emulator's own element, where its wheel listeners live, and the row count it draws. */
+  element: HTMLElement | undefined;
+  rows = 30;
+  readonly wheels: WheelEvent[] = [];
   readonly parser = {
     registerOscHandler: (id: number, handler: OscHandler) => {
       this.oscHandlers.set(id, handler);
@@ -46,6 +50,17 @@ class FakeTerminal {
   loadAddon(): void {}
   open(element: HTMLElement): void {
     this.opened += 1;
+    if (this.element === undefined) {
+      const own = document.createElement("div");
+      const screenElement = document.createElement("div");
+      screenElement.className = "xterm-screen";
+      // Thirty rows of 20px: one cell is 20px of finger travel.
+      Object.defineProperty(screenElement, "clientHeight", { configurable: true, get: () => this.rows * 20 });
+      own.append(screenElement);
+      own.addEventListener("wheel", (event) => this.wheels.push(event));
+      element.append(own);
+      this.element = own;
+    }
     Object.defineProperties(element, {
       clientWidth: { configurable: true, get: () => this.viewport.width },
       clientHeight: { configurable: true, get: () => this.viewport.height },
@@ -396,6 +411,44 @@ describe("a drag that does nothing", () => {
     terminal.modes.mouseTrackingMode = "none";
     fireEvent.pointerDown(screen.getByTestId("fleet-terminal-host"));
     expect(screen.queryByTestId("fleet-terminal-shift-hint")).toBeNull();
+  });
+});
+
+describe("a swipe on a touch screen", () => {
+  const touch = (clientX: number, clientY: number) => ({ clientX, clientY });
+
+  it("reaches the emulator as one wheel step per cell, at the swipe's start, and keeps the page still", () => {
+    const { terminal } = mount();
+    const host = screen.getByTestId("fleet-terminal-host");
+    fireEvent.touchStart(host, { touches: [touch(50, 300)] });
+    const moved = fireEvent.touchMove(host, { touches: [touch(52, 240)] });
+    // Finger up three cells: three wheel-DOWN lines, the path a desktop wheel takes.
+    expect(terminal.wheels.map((event) => [event.deltaY, event.deltaMode, event.clientX, event.clientY])).toEqual([
+      [1, 1, 50, 300],
+      [1, 1, 50, 300],
+      [1, 1, 50, 300],
+    ]);
+    expect(moved).toBe(false);
+    fireEvent.touchMove(host, { touches: [touch(52, 290)] });
+    expect(terminal.wheels.slice(3).map((event) => event.deltaY)).toEqual([-1, -1]);
+    fireEvent.touchEnd(host, { touches: [] });
+  });
+
+  it("leaves a tap, a sideways swipe and a pinch to the browser", () => {
+    const { terminal } = mount();
+    const host = screen.getByTestId("fleet-terminal-host");
+    fireEvent.touchStart(host, { touches: [touch(50, 300)] });
+    expect(fireEvent.touchMove(host, { touches: [touch(53, 304)] })).toBe(true);
+    fireEvent.touchEnd(host, { touches: [] });
+
+    fireEvent.touchStart(host, { touches: [touch(50, 300)] });
+    expect(fireEvent.touchMove(host, { touches: [touch(150, 280)] })).toBe(true);
+    fireEvent.touchEnd(host, { touches: [] });
+
+    fireEvent.touchStart(host, { touches: [touch(50, 300), touch(80, 300)] });
+    expect(fireEvent.touchMove(host, { touches: [touch(50, 100), touch(80, 100)] })).toBe(true);
+    fireEvent.touchEnd(host, { touches: [] });
+    expect(terminal.wheels).toHaveLength(0);
   });
 });
 

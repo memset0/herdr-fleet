@@ -397,6 +397,7 @@ verify = [
   "fleet/ui/terminal/link.test.ts",
   "fleet/ui/terminal/pool.test.ts",
   "fleet/ui/terminal/clipboard.test.ts",
+  "fleet/ui/terminal/touch-scroll.test.ts",
   "web/src/components/fleet-pane-route.test.tsx",
   "web/e2e/fleet-agent-panel.spec.ts",
   "web/src/components/fleet-pane-surface-toggle.test.tsx",

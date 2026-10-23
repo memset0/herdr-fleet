@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **A phone swipe scrolls the ttyd terminal.** A vertical one-finger swipe sends one mouse-wheel step per cell of travel through xterm's own wheel path (wheel report, or cursor keys without mouse tracking); the page stays still.
+
 ## [3.24.1] - 2026-10-23
 
 ### Added
