@@ -61,6 +61,7 @@ import { packageCommand } from "./package-command.ts";
 import { herdrActionCommand, type Environment, type EnvVars } from "./context.ts";
 import { EXIT } from "./io.ts";
 import { parseSyncResult, skillSyncEnabled, syncLines } from "./skill-sync-result.ts";
+import { fleetSkillSyncEnabled } from "../fleet/skill-sync.ts";
 import { cmdLink, isCollieBinaryPath, type LinkReader, linkPath, type LinkWriter } from "./link.ts";
 import {
   type BunReadiness,
@@ -1141,7 +1142,8 @@ const SKILL_SYNC_TIMEOUT_MS = 30_000;
  * `nudgeWhenOff` is false on the two terminal rollbacks, which never nudged.
  */
 function syncSkill(deps: UpdateDeps, binary: string, nudgeWhenOff = true): void {
-  if (!skillSyncEnabled(deps.ctx.env.COLLIE_SKILL_SYNC)) {
+  // Herdr Fleet: off in a Fleet checkout unless the operator turns it on (fleet-plugin-runtime).
+  if (!fleetSkillSyncEnabled(deps.ctx.root, deps.ctx.env.COLLIE_SKILL_SYNC, skillSyncEnabled)) {
     if (nudgeWhenOff) nudgeSkill(deps, binary);
     return;
   }
