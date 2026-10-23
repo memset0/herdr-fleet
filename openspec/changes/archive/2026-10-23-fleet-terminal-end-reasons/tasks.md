@@ -11,7 +11,7 @@
 ## 3. Delivery
 
 - [x] 3.1 Run focused tests, both typechecks, lint, `check-fork`, `check-private-facts` and strict OpenSpec validation.
-- [ ] 3.2 Deploy to the lead and confirm a timestamped `terminal.session-ended`/`connection-ended` line and an in-place reconnect.
+- [x] 3.2 Deploy to the lead and confirm a timestamped `terminal.session-ended`/`connection-ended` line and an in-place reconnect.
 
 Verification: 93 focused terminal tests (connection, session, spawn, service, route) and 36 web tests
 (surface, Fleet i18n) pass; both typechecks, `check-fork`, `check-private-facts` and strict validation
