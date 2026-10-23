@@ -41,10 +41,12 @@ for selecting Collie's native Pack authority. It does not implement SSH reachabi
 member, contact a peer, aggregate Hosts, distribute software, or replace Collie's native Pack
 router, loaders, and UI. Collie's native optional Web Push remains available unchanged.
 
-Herdr Fleet runs on Bun 1.4.0 or later, on every machine. Collie's own floor (`MIN_BUN` in
-`cli/update-check.ts`) is the same 1.4.0 since Collie 1.21.3; Fleet's reason is its own: from 1.4.0 a timeout signal stays armed after its last
-listener is removed, which keeps a speech operation's whole deadline in force between its phases
-without a fork-owned helper (`fleet-stt-deadline-compat`). The crew's pinned-client TLS canary does
+Herdr Fleet runs on Bun 1.4.4 or later, on every machine. That is Collie's own floor (`MIN_BUN` in
+`cli/update-check.ts`) since Collie 1.23.3: 1.4.4 is the first Bun that rejects certificates issued
+under the compromised eMudhra intermediates. Fleet has a reason of its own that the floor also meets:
+from 1.4.0 a timeout signal stays armed after its last listener is removed, which keeps a speech
+operation's whole deadline in force between its phases without a fork-owned helper
+(`fleet-stt-deadline-compat`). The crew's pinned-client TLS canary does
 not hold on Bun 1.3.12, so no older runtime may run Pack or multi-host behavior either. The first
 schema keeps Pack unconfigured and exposes no Pack route.
 
@@ -404,6 +406,17 @@ What the adopted Collie does on its own, and Fleet neither enables nor prevents:
   receipt, the faster re-read at a turn edge, the held permission answer) are absent.
 - **Durable agents** are experimental and off: they start only from a `sources.json` beside Fleet's
   own configuration or from `COLLIE_MUX=durable`, and Fleet writes neither. Herdr panes are unchanged.
+- **Walky talky** (Collie 1.23) is kept as shipped and Fleet wires nothing to it: its phone routes
+  pass the Gateway like any other, its crew route rides the native Pack link, and `COLLIE_WALKY` keeps
+  Collie's default. No agent learns the `collie walky` verbs unless the operator installs the skill.
+
+One thing the adopted Collie would do that Fleet does prevent: **the skill sync**. From Collie 1.23
+(its ADR 0111) a successful update, rollback or release-line switch runs `collie skill sync`, which
+writes the walky talky skill into every agent harness on the machine. In a Herdr Fleet checkout —
+its `herdr-plugin.toml` names `memset0.herdr-fleet` — that step is off and the update prints Collie's
+one note when the skill is behind (`fleet/skill-sync.ts`). Setting `COLLIE_SKILL_SYNC` to an on-word
+for an update, or `skill_sync = true` under `[update]` in Collie's own configuration, turns it back
+on; `collie skill install` and `collie skill sync` by hand stay the operator's own acts.
 
 ## Native Web Push actions
 
