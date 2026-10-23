@@ -19,19 +19,23 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [3.24.0] - 2026-10-23
+
+Update the lead first, then every member: the send diagnostic runs in each member's bridge.
+
 ### Added
 
-- **A failed send's screens are kept on the machine.** On a screen-decided failure (probe_failed, draft_present, mismatch, changed, modal_cue, …) the bridge writes the raw reads and the receipt to `<stateDir>/send-failures/`, owner-only, newest 50 and 8 MiB at most; never served.
-- **The ttyd surface has an optional input box.** A toggle in its top row shows a Collie-style box under the terminal (remembered per device); Ctrl/Cmd+Enter writes the draft as a chunked paste and then Enter, straight into the terminal, bypassing Collie's send pipeline.
-- **A busy terminal can be taken over.** The busy notice offers Take over, which moves this browser onto the same terminal session; the displaced browser is told "taken" and can Reconnect. A second browser is still refused by default.
+- **A failed send's screens are kept on the machine.** On a screen-decided failure (probe_failed, draft_present, mismatch, changed, modal_cue, …) the bridge writes the raw reads and the receipt to `<stateDir>/send-failures/`, owner-only, newest 50 and 8 MiB at most; never served. ([ab884530](https://github.com/memset0/herdr-fleet/commit/ab884530))
+- **The ttyd surface has an optional input box.** A toggle in its top row shows a Collie-style box under the terminal (remembered per device); Ctrl/Cmd+Enter writes the draft as a chunked paste and then Enter, straight into the terminal, bypassing Collie's send pipeline. ([c5f6986c](https://github.com/memset0/herdr-fleet/commit/c5f6986c))
+- **A busy terminal can be taken over.** The busy notice offers Take over, which moves this browser onto the same terminal session; the displaced browser is told "taken" and can Reconnect. A second browser is still refused by default. ([0a6751cb](https://github.com/memset0/herdr-fleet/commit/0a6751cb))
 
 ### Changed
 
-- **The rail's surface switch is compact and says ttyd.** Both segments are 32px tall on every pointer, and the terminal choice is written in lowercase.
+- **The rail's surface switch is compact and says ttyd.** Both segments are 32px tall on every pointer, and the terminal choice is written in lowercase. ([877c4804](https://github.com/memset0/herdr-fleet/commit/877c4804))
 
 ### Fixed
 
-- **A dead terminal now says why and can come back.** Gateway log lines are timestamped, every terminal end is logged once with a closed reason (`restart`, `upstream-exit`, `grace-expired`, `evicted`, `auth-ended`, `auth-expired`, `start-failed`), and the closed surface offers Reconnect in place.
+- **A dead terminal now says why and can come back.** Gateway log lines are timestamped, every terminal end is logged once with a closed reason (`restart`, `upstream-exit`, `grace-expired`, `evicted`, `auth-ended`, `auth-expired`, `start-failed`), and the closed surface offers Reconnect in place. ([8505fa12](https://github.com/memset0/herdr-fleet/commit/8505fa12))
 
 ## [3.23.2] - 2026-10-23
 
