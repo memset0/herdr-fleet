@@ -26,7 +26,13 @@ const PANE_PARAM = "pane";
 /** Collie's own scope parameter names, so a terminal address is the address the app already builds. */
 const HOST_PARAM = "h";
 const SESSION_PARAM = "s";
-const ALLOWED = new Set([PANE_PARAM, HOST_PARAM, SESSION_PARAM]);
+/**
+ * The operator's explicit take-over intent, from the busy notice. It selects nothing — the target is
+ * still the Pane's own address — so it travels beside the target, never inside it, and its one
+ * accepted value is `1`.
+ */
+const TAKEOVER_PARAM = "takeover";
+const ALLOWED = new Set([PANE_PARAM, HOST_PARAM, SESSION_PARAM, TAKEOVER_PARAM]);
 
 /** A Pane the connection asked for, in the scope it asked for it. Nothing here selects a terminal. */
 export interface TerminalTarget {
@@ -49,7 +55,7 @@ export type RefusalReason =
 type DraftTarget = { paneId: string; host?: string; session?: string };
 
 export type Admission =
-  | { readonly ok: true; readonly target: TerminalTarget }
+  | { readonly ok: true; readonly target: TerminalTarget; readonly takeover: boolean }
   | { readonly ok: false; readonly reason: RefusalReason; readonly detail?: string };
 
 export interface AdmissionInput {
@@ -117,10 +123,13 @@ export function admit(input: AdmissionInput, config: AdmissionConfig): Admission
     return { ok: false, reason: "malformed-pane", detail: SESSION_PARAM };
   }
 
+  const takeover = input.url.searchParams.get(TAKEOVER_PARAM);
+  if (takeover !== null && takeover !== "1") return { ok: false, reason: "malformed-pane", detail: TAKEOVER_PARAM };
+
   // Built by assignment rather than spread so an absent scope stays absent: `{host: undefined}` and
   // `{}` are the same object to a reader and different ones to a resolver that checks `in`.
   const target: DraftTarget = { paneId };
   if (host !== null) target.host = host;
   if (session !== null) target.session = session;
-  return { ok: true, target };
+  return { ok: true, target, takeover: takeover === "1" };
 }

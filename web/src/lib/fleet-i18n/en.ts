@@ -225,6 +225,8 @@ export const en = {
   "fleet.terminal.closed.unavailable": "This terminal is unavailable.",
   "fleet.terminal.closed.protocol": "The connection was refused.",
   "fleet.terminal.reconnect": "Reconnect",
+  "fleet.terminal.closed.taken": "Another browser took over this terminal.",
+  "fleet.terminal.takeOver": "Take over",
   "fleet.terminal.composer.toggle": "Input box",
   "fleet.terminal.composer.placeholder": "Type into the terminal",
   "fleet.terminal.composer.send": "Send to terminal",

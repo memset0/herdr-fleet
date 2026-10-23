@@ -226,6 +226,8 @@ export const ja: FleetDictionary = {
   "fleet.terminal.closed.unavailable": "このターミナルは利用できません。",
   "fleet.terminal.closed.protocol": "接続が拒否されました。",
   "fleet.terminal.reconnect": "再接続",
+  "fleet.terminal.closed.taken": "別のブラウザがこのターミナルを引き継ぎました。",
+  "fleet.terminal.takeOver": "引き継ぐ",
   "fleet.terminal.composer.toggle": "入力欄",
   "fleet.terminal.composer.placeholder": "ターミナルに入力",
   "fleet.terminal.composer.send": "ターミナルに送信",

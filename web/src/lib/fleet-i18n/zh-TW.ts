@@ -226,6 +226,8 @@ export const zhTW: FleetDictionary = {
   "fleet.terminal.closed.unavailable": "此終端機無法使用。",
   "fleet.terminal.closed.protocol": "連線被拒絕。",
   "fleet.terminal.reconnect": "重新連線",
+  "fleet.terminal.closed.taken": "另一個瀏覽器接管了此終端機。",
+  "fleet.terminal.takeOver": "接管",
   "fleet.terminal.composer.toggle": "輸入框",
   "fleet.terminal.composer.placeholder": "輸入到終端機",
   "fleet.terminal.composer.send": "傳送到終端機",

@@ -37,6 +37,8 @@ export const NOTICE = {
   busy: "busy",
   /** The terminal went away, or the operator's session did. */
   ended: "ended",
+  /** Another browser explicitly took this terminal over. */
+  taken: "taken",
   /** This browser sent something the grammar does not define. */
   protocol: "protocol",
 } as const;
@@ -104,12 +106,15 @@ export class TerminalConnection {
     readonly session: ConnectionSession,
     private readonly socket: BrowserSocket,
     private readonly deps: ConnectionDeps,
+    /** The operator's explicit take-over intent, decided at admission. */
+    private readonly options: { readonly takeover?: boolean } = {},
   ) {
     this.client = {
       write: (data) => this.socket.send(outputFrame(data)),
       // The session ended under us — the terminal exited, the grace period expired, or another
       // session was evicted to make room. The browser is told, once, and the socket closes.
       close: () => this.end(NOTICE.ended),
+      taken: () => this.end(NOTICE.taken),
     };
   }
 
@@ -194,7 +199,7 @@ export class TerminalConnection {
     try {
       if (this.isClosed()) return;
       const session = acquisition.session;
-      const attached = session.attach(this.client);
+      const attached = session.attach(this.client, { takeover: this.options.takeover === true });
       if (!attached.ok) {
         this.end(NOTICE.busy);
         return;

@@ -226,6 +226,8 @@ export const zh: FleetDictionary = {
   "fleet.terminal.closed.unavailable": "此终端不可用。",
   "fleet.terminal.closed.protocol": "连接被拒绝。",
   "fleet.terminal.reconnect": "重新连接",
+  "fleet.terminal.closed.taken": "另一个浏览器接管了此终端。",
+  "fleet.terminal.takeOver": "接管",
   "fleet.terminal.composer.toggle": "输入框",
   "fleet.terminal.composer.placeholder": "输入到终端",
   "fleet.terminal.composer.send": "发送到终端",

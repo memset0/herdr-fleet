@@ -107,13 +107,17 @@ function harness(over: Partial<SessionDeps["limits"]> = {}) {
 function client() {
   const written: Uint8Array[] = [];
   let closed = false;
+  let taken = false;
   const handle: AttachedClient = {
     write: (data) => written.push(data),
     close: () => {
       closed = true;
     },
+    taken: () => {
+      taken = true;
+    },
   };
-  return { handle, written, closed: () => closed, text: () => Buffer.concat(written).toString() };
+  return { handle, written, closed: () => closed, taken: () => taken, text: () => Buffer.concat(written).toString() };
 }
 
 describe("holding a session past its browser", () => {
@@ -299,6 +303,30 @@ describe("what a returning browser is given", () => {
     const b = client();
     second.attach(b.handle);
     expect(b.written).toHaveLength(0);
+  });
+});
+
+describe("an explicit take-over", () => {
+  test("swaps the browser on the same session and upstream, and says so once", async () => {
+    const h = harness();
+    const session = await acquired(h.sessions, at("term_a"), GEOMETRY);
+    const first = client();
+    session.attach(first.handle);
+    h.emit("term_a", new TextEncoder().encode("screen"));
+    const second = client();
+    expect(session.attach(second.handle)).toEqual({ ok: false, reason: "busy" });
+    expect(first.taken()).toBe(false);
+
+    expect(session.attach(second.handle, { takeover: true })).toEqual({ ok: true });
+    expect(first.taken()).toBe(true);
+    expect(second.text()).toBe("screen");
+    // The displaced browser's own detach finds nothing to release, so no grace period starts.
+    session.detach(first.handle);
+    h.advance(10_000);
+    expect(h.started).toEqual(["term_a"]);
+    expect(h.stopped).toEqual([]);
+    h.emit("term_a", new TextEncoder().encode("!"));
+    expect(second.text()).toBe("screen!");
   });
 });
 

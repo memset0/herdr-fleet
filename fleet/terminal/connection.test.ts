@@ -108,6 +108,7 @@ function harness(
     started,
     stopped,
     resolved,
+    logged: (event: string) => logs.filter((line) => line.event === event).map((line) => line.detail),
     /** Every end line, from either layer, in the order they were written. */
     ends: () =>
       logs
@@ -289,6 +290,24 @@ describe("what the browser is told when it cannot have a terminal", () => {
     h.emit("term_abc", encoder.encode("still mine"));
     expect(s.output()).toBe("still mine");
     expect(h.started).toEqual(["term_abc"]);
+  });
+
+  test("an explicit take-over displaces the first with `taken` and reuses its terminal", async () => {
+    const { h, s, connection } = await attached();
+    const second = socket();
+    const other = new TerminalConnection(TARGET, OTHER_SESSION, second.handle, h.deps, { takeover: true });
+    other.message(viewportMessage({ columns: 100, rows: 30 }));
+    await Bun.sleep(0);
+    expect(s.notices()).toEqual([NOTICE.taken]);
+    expect(s.closed()).toBe(true);
+    expect(connection.status()).toBe("closed");
+    expect(other.status()).toBe("attached");
+    expect(second.notices()).toEqual([]);
+    h.emit("term_abc", encoder.encode("now yours"));
+    expect(second.output()).toBe("now yours");
+    expect(h.started).toEqual(["term_abc"]);
+    expect(h.stopped).toEqual([]);
+    expect(h.logged("terminal.session-taken")).toEqual([{ pane: "local w1:p1" }]);
   });
 });
 

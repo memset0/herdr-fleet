@@ -226,6 +226,8 @@ export const ko: FleetDictionary = {
   "fleet.terminal.closed.unavailable": "이 터미널을 사용할 수 없습니다.",
   "fleet.terminal.closed.protocol": "연결이 거부되었습니다.",
   "fleet.terminal.reconnect": "다시 연결",
+  "fleet.terminal.closed.taken": "다른 브라우저가 이 터미널을 가져갔습니다.",
+  "fleet.terminal.takeOver": "가져오기",
   "fleet.terminal.composer.toggle": "입력 상자",
   "fleet.terminal.composer.placeholder": "터미널에 입력",
   "fleet.terminal.composer.send": "터미널로 보내기",

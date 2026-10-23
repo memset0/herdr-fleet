@@ -78,6 +78,8 @@ export interface TerminalServiceDeps {
 export interface TerminalOpening {
   readonly target: TerminalTarget;
   readonly session: ConnectionSession;
+  /** The operator's explicit take-over intent; absent means a held terminal answers busy. */
+  readonly takeover?: boolean | undefined;
 }
 
 export class TerminalService {
@@ -113,11 +115,13 @@ export class TerminalService {
 
   /** Open a connection for an upgrade the Gateway has already admitted. */
   open(opening: TerminalOpening, socket: BrowserSocket): TerminalConnection {
-    const connection = new TerminalConnection(opening.target, opening.session, socket, {
-      sessions: this.sessions,
-      resolve: this.deps.resolve,
-      log: this.deps.log,
-    });
+    const connection = new TerminalConnection(
+      opening.target,
+      opening.session,
+      socket,
+      { sessions: this.sessions, resolve: this.deps.resolve, log: this.deps.log },
+      { takeover: opening.takeover === true },
+    );
     this.connections.add(connection);
     return connection;
   }

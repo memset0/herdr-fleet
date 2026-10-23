@@ -24,14 +24,20 @@ function ask(
 
 describe("what is admitted", () => {
   test("a Pane on the lead, with no scope", () => {
-    expect(ask("?pane=w1:p2")).toEqual({ ok: true, target: { paneId: "w1:p2" } });
+    expect(ask("?pane=w1:p2")).toEqual({ ok: true, target: { paneId: "w1:p2" }, takeover: false });
   });
 
   test("a Pane on a member, in a named session", () => {
     expect(ask("?pane=w1:p2&h=laptop&s=work")).toEqual({
       ok: true,
       target: { paneId: "w1:p2", host: "laptop", session: "work" },
+      takeover: false,
     });
+  });
+
+  test("an explicit take-over intent rides beside the target, and only as `1`", () => {
+    expect(ask("?pane=w1:p2&takeover=1")).toEqual({ ok: true, target: { paneId: "w1:p2" }, takeover: true });
+    expect(ask("?pane=w1:p2&takeover=yes")).toMatchObject({ ok: false, reason: "malformed-pane" });
   });
 
   test("an absent scope stays absent rather than becoming undefined keys", () => {

@@ -71,6 +71,8 @@ export interface AttachedClient {
   write(data: Uint8Array): void;
   /** End this client's connection. */
   close(): void;
+  /** End this client's connection because another browser explicitly took the terminal over. */
+  taken(): void;
 }
 
 export interface SessionLimits {
@@ -161,9 +163,22 @@ class Session {
     this.client?.write(data);
   }
 
-  attach(client: AttachedClient): AttachResult {
+  /**
+   * Attach a browser. A held terminal answers busy, unless the operator explicitly asked to take it
+   * over: then the attached browser is told and let go, and this one takes the SAME session — the
+   * server, the upstream and the Herdr attachment are untouched, so nothing starts twice.
+   */
+  attach(client: AttachedClient, options: { readonly takeover?: boolean } = {}): AttachResult {
     if (this.closed) return { ok: false, reason: "busy" };
-    if (this.client !== null) return { ok: false, reason: "busy" };
+    if (this.client !== null) {
+      if (options.takeover !== true) return { ok: false, reason: "busy" };
+      const displaced = this.client;
+      // Unset first: the displaced connection's own detach then finds nothing to release, so no grace
+      // period starts under the browser that is about to attach.
+      this.client = null;
+      this.deps.log?.("terminal.session-taken", { pane: placementLabel(this.placement) });
+      displaced.taken();
+    }
     this.cancelGrace();
     this.client = client;
     this.lastUsed = (this.deps.now ?? Date.now)();

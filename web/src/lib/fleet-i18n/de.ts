@@ -226,6 +226,8 @@ export const de: FleetDictionary = {
   "fleet.terminal.closed.unavailable": "Dieses Terminal ist nicht verfügbar.",
   "fleet.terminal.closed.protocol": "Die Verbindung wurde abgelehnt.",
   "fleet.terminal.reconnect": "Neu verbinden",
+  "fleet.terminal.closed.taken": "Ein anderer Browser hat dieses Terminal übernommen.",
+  "fleet.terminal.takeOver": "Übernehmen",
   "fleet.terminal.composer.toggle": "Eingabefeld",
   "fleet.terminal.composer.placeholder": "Ins Terminal tippen",
   "fleet.terminal.composer.send": "An das Terminal senden",

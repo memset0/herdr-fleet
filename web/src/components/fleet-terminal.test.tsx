@@ -437,6 +437,36 @@ describe("leaving and coming back", () => {
     await waitFor(() => expect(view.container.querySelector('[data-testid="fleet-terminal-reconnect"]')).toBeNull());
   });
 
+  it("offers Take over on a busy notice, and only there it asks to displace the holder", async () => {
+    const { view, socket } = mount();
+    socket.fire("open");
+    const busy = new Uint8Array([0x6e, ...new TextEncoder().encode("busy")]);
+    act(() => {
+      socket.fire("message", { data: busy.buffer.slice(0) });
+      socket.fire("close");
+    });
+    const button = await waitFor(() => {
+      const found = view.container.querySelector<HTMLButtonElement>('[data-testid="fleet-terminal-take-over"]');
+      expect(found?.textContent).toBe("Take over");
+      return found!;
+    });
+    expect(FakeSocket.instances[0]!.url).not.toContain("takeover");
+    fireEvent.click(button);
+    expect(FakeSocket.instances).toHaveLength(2);
+    expect(FakeSocket.instances[1]!.url).toContain("takeover=1");
+
+    // Displaced: its own sentence and Reconnect, never Take over, and a reconnect asks for nothing.
+    const taken = new Uint8Array([0x6e, ...new TextEncoder().encode("taken")]);
+    act(() => {
+      FakeSocket.instances[1]!.fire("message", { data: taken.buffer.slice(0) });
+      FakeSocket.instances[1]!.fire("close");
+    });
+    await waitFor(() => expect(view.container.textContent).toContain("Another browser took over this terminal."));
+    expect(view.container.querySelector('[data-testid="fleet-terminal-take-over"]')).toBeNull();
+    fireEvent.click(view.container.querySelector<HTMLButtonElement>('[data-testid="fleet-terminal-reconnect"]')!);
+    expect(FakeSocket.instances[2]!.url).not.toContain("takeover");
+  });
+
   it("builds a new one when the connection ended while it was away", () => {
     const { view, socket, paneId } = mount();
     socket.fire("open");

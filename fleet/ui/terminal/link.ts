@@ -31,12 +31,14 @@ export interface TerminalScope {
  * Same origin, upgraded to the matching WebSocket scheme, so the connection carries the app's own
  * cookie and is admitted by the same `connect-src 'self'` that admits everything else.
  */
-export function terminalUrl(origin: string, paneId: string, scope: TerminalScope = {}): string {
+export function terminalUrl(origin: string, paneId: string, scope: TerminalScope = {}, takeover = false): string {
   const url = new URL(TERMINAL_PATH, origin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("pane", paneId);
   if (scope.host !== undefined && scope.host !== "") url.searchParams.set("h", scope.host);
   if (scope.session !== undefined && scope.session !== "") url.searchParams.set("s", scope.session);
+  // The operator's explicit Take over from the busy notice; never set by anything else.
+  if (takeover) url.searchParams.set("takeover", "1");
   return url.toString();
 }
 

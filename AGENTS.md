@@ -37,8 +37,10 @@ keyboard — bounded here rather than true. The ADR's other objection, that thes
 was answered by probing them first; the findings are in
 [`fleet/README.md`](./fleet/README.md) and the reasoning in that change's `design.md`.
 The terminal surface SHALL always use `terminal attach <terminal-id> --takeover` on lead and peer,
-displacing an external Herdr attachment. Fleet SHALL still share one establishment per placement and
-refuse a second browser client without displacing the first; takeover is never a duplicate-start fix.
+displacing an external Herdr attachment. Fleet SHALL share one establishment per placement and refuse
+a second browser client by default. Only an explicit operator Take over, offered on the busy notice,
+displaces the attached browser onto the same establishment, and the displaced browser is told; it is
+never automatic and never a duplicate-start fix.
 
 ## Fork boundary — MANDATORY
 

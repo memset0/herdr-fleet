@@ -97,6 +97,7 @@ function closedKey(notice: string | null): FleetMessageKey {
   if (notice === "busy") return "fleet.terminal.closed.busy";
   if (notice === "unavailable") return "fleet.terminal.closed.unavailable";
   if (notice === "protocol") return "fleet.terminal.closed.protocol";
+  if (notice === "taken") return "fleet.terminal.closed.taken";
   return "fleet.terminal.closed.ended";
 }
 
@@ -137,6 +138,8 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
   const [closed, setClosed] = useState(false);
   /** Bumped by Reconnect, so the effect below releases the ended entry and builds a fresh one. */
   const [attempt, setAttempt] = useState(0);
+  /** One-shot: the next connection carries the operator's explicit take-over intent. */
+  const takeOverNext = useRef(false);
   /** Attached and answering: the input box may write. */
   const [ready, setReady] = useState(false);
   const composerShown = useSyncExternalStore(terminalComposerPreference.subscribe, terminalComposerPreference.snapshot, terminalComposerPreference.snapshot);
@@ -185,7 +188,9 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
       // Declared before the link so its own close handler can mark it ended: the entry outlives this
       // component, and a returning mount has to know whether what it takes back is still connected.
       let self: RetainedTerminal | null = null;
-      const link = new TerminalLink(new WebSocket(terminalUrl(window.location.origin, paneId, scope)), {
+      const takeover = takeOverNext.current;
+      takeOverNext.current = false;
+      const link = new TerminalLink(new WebSocket(terminalUrl(window.location.origin, paneId, scope, takeover)), {
         onOpen: () => {
           if (self !== null) self.connected = true;
           markLive(paneId, Date.now(), scope);
@@ -335,6 +340,11 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     setClosed(false);
     setAttempt((value) => value + 1);
   }, []);
+  // Only from the busy notice, only on the operator's press: the browser holding it is told.
+  const takeOver = useCallback(() => {
+    takeOverNext.current = true;
+    reconnect();
+  }, [reconnect]);
 
   const matches = useMemo(() => {
     const terminal = searchSource?.terminal;
@@ -416,9 +426,16 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
           announce="status"
           className="mx-3 my-1"
           action={
-            <Button size="sm" variant="outline" className={NOTICE_ACTION} onClick={reconnect} data-testid="fleet-terminal-reconnect">
-              {ft("fleet.terminal.reconnect")}
-            </Button>
+            <span className="flex items-center gap-2">
+              {notice === "busy" ? (
+                <Button size="sm" variant="outline" className={NOTICE_ACTION} onClick={takeOver} data-testid="fleet-terminal-take-over">
+                  {ft("fleet.terminal.takeOver")}
+                </Button>
+              ) : null}
+              <Button size="sm" variant="outline" className={NOTICE_ACTION} onClick={reconnect} data-testid="fleet-terminal-reconnect">
+                {ft("fleet.terminal.reconnect")}
+              </Button>
+            </span>
           }
         >
           {closedMessage(notice)}

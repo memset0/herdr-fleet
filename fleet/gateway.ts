@@ -118,6 +118,8 @@ export interface TerminalUpgrade {
   readonly target: TerminalTarget;
   /** The session behind the connection, so the socket can be closed when that session ends. */
   readonly session: SessionClaims;
+  /** The operator asked, from the busy notice, to displace the browser holding this terminal. */
+  readonly takeover?: boolean;
 }
 
 export interface GatewayOptions {
@@ -475,7 +477,7 @@ export function createGatewayHandler(options: GatewayOptions) {
       // are indistinguishable from outside.
       if (!decision.ok) return text("terminal unavailable\n", 400);
       if (context.upgrade === undefined) return text("terminal unavailable\n", 400);
-      const upgraded = context.upgrade(request, { target: decision.target, session: session! });
+      const upgraded = context.upgrade(request, { target: decision.target, session: session!, takeover: decision.takeover });
       // `upgrade` answers the request itself when it succeeds; there is no response to return.
       return upgraded ? new Response(null, { status: 101 }) : text("terminal unavailable\n", 400);
     }
