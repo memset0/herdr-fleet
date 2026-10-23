@@ -4,6 +4,7 @@ import { NavigationRoute, registerRoute } from "workbox-routing";
 import { clientsClaim } from "workbox-core";
 
 import { decidePush, notificationPath, type NotifData, type PushPayload } from "./lib/push-decision";
+import { paneInFront } from "./lib/fleet-push-focus";
 import { askInApp, openNotificationTarget, type OpenOutcome, type OpenTargetClient } from "./lib/notification-open";
 import { readPushTitles } from "./lib/push-title-store";
 import { FONT_URLS, navigationNetworkOnlyUnder } from "./lib/sw-routes";
@@ -223,9 +224,11 @@ self.addEventListener("push", (event: PushEvent) => {
   event.waitUntil(handlePush(event));
 });
 
-async function anyVisibleClient(): Promise<boolean> {
+async function anyVisibleClient(data: NotifData = {}): Promise<boolean> {
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  return windows.some((c) => c.visibilityState === "visible");
+  // DOWNSTREAM PORT (FORK.toml authenticated-navigation-cache): withheld only while a FOCUSED window
+  // shows this push's own pane, resolved exactly as the tap resolves it (lib/fleet-push-focus.ts).
+  return paneInFront(windows, new URL(notificationPath(data).replace(/^\/+/, ""), new URL("./", self.location.href)).href);
 }
 
 async function handlePush(event: PushEvent): Promise<void> {
@@ -246,7 +249,7 @@ async function handlePush(event: PushEvent): Promise<void> {
   // translate, and must not wait on storage.
   const templates =
     payload.titleCode === undefined ? {} : await readPushTitles(self.caches, self.location.origin, MOUNT);
-  const decision = decidePush(payload, await anyVisibleClient(), templates);
+  const decision = decidePush(payload, await anyVisibleClient(payload.data), templates);
   if (decision.kind === "suppress") return; // a visible Collie tab already surfaces it in-app
   if (decision.kind === "clear") {
     // Retraction: close the slot and show nothing. Chrome's silent-push budget tolerates this.

@@ -27,6 +27,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 - **Mark all seen clears peer panes at once.** On a lead, look-now also sweeps the members, and Mark all seen looks now before revalidating, so a member's panes no longer wait for the next sweep.
 - **The push-test action finds the subscribed browser.** Both Push actions now run through the Fleet launcher, which points Collie at the Fleet-launched Collie's state directory.
+- **Pane notifications show unless that pane is in front of you.** A push is withheld only while a focused window shows that same pane, so an app left open behind other windows still notifies.
 
 ## [3.23.1] - 2026-10-23
 
