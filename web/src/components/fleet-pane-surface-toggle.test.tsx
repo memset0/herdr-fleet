@@ -16,21 +16,21 @@ describe("the pane-surface switch in the rail", () => {
     const { container } = render(<FleetPaneSurfaceToggle />);
     expect(within(container).getAllByRole("radio").map((node) => node.textContent)).toEqual([
       "Collie",
-      "TTYD",
+      "ttyd",
     ]);
   });
 
   it("starts on Collie, which is the default surface", () => {
     const { container } = render(<FleetPaneSurfaceToggle />);
     expect(segment(container, "Collie")).toHaveAttribute("aria-checked", "true");
-    expect(segment(container, "TTYD")).toHaveAttribute("aria-checked", "false");
+    expect(segment(container, "ttyd")).toHaveAttribute("aria-checked", "false");
   });
 
-  it("switches to TTYD on one press, and back", () => {
+  it("switches to ttyd on one press, and back", () => {
     const { container } = render(<FleetPaneSurfaceToggle />);
-    fireEvent.click(segment(container, "TTYD"));
+    fireEvent.click(segment(container, "ttyd"));
     expect(paneSurfaceStore.snapshot()).toBe("terminal");
-    expect(segment(container, "TTYD")).toHaveAttribute("aria-checked", "true");
+    expect(segment(container, "ttyd")).toHaveAttribute("aria-checked", "true");
     fireEvent.click(segment(container, "Collie"));
     expect(paneSurfaceStore.snapshot()).toBe("mirror");
     expect(segment(container, "Collie")).toHaveAttribute("aria-checked", "true");
@@ -40,7 +40,7 @@ describe("the pane-surface switch in the rail", () => {
     const { container } = render(<FleetPaneSurfaceToggle />);
     // A change made anywhere else moves this control without it being re-rendered by hand.
     act(() => paneSurfaceStore.set("terminal"));
-    expect(segment(container, "TTYD")).toHaveAttribute("aria-checked", "true");
+    expect(segment(container, "ttyd")).toHaveAttribute("aria-checked", "true");
   });
 
   it("presses the surface it is already on without churn", () => {
@@ -59,12 +59,13 @@ describe("the pane-surface switch in the rail", () => {
     const group = within(container).getByRole("radiogroup");
     const indicator = group.querySelector('[aria-hidden="true"] > div')!;
     const on = segment(container, "Collie");
-    const off = segment(container, "TTYD");
+    const off = segment(container, "ttyd");
     expect(indicator.className).toContain("bg-primary");
     expect(indicator.className).toContain("motion-reduce:transition-none");
     expect(indicator.className).not.toContain("translate-x-full");
     for (const button of [on, off]) {
-      expect(button.className).toContain("min-h-11");
+      expect(button.className).toContain("h-8");
+      expect(button.className).not.toContain("min-h-11");
       expect(button.className).toContain("font-medium");
       expect(button.className).toContain("focus-visible:outline-2");
     }

@@ -18,9 +18,10 @@ import { ft, useFleetLocale } from "@/lib/fleet-i18n";
  * thing you are looking at, and Settings is two navigations away from it — the rail is the only
  * surface that is on screen no matter which Pane is.
  *
- * One track and one moving indicator make the mutually exclusive choice visible. The 44px
- * buttons own the hit area; the inset track spends only 36px on paint. Labels never move and
- * reduced motion removes the slide. Both navigation surfaces share this exact control.
+ * One track and one moving indicator make the mutually exclusive choice visible. The 32px
+ * buttons own the hit area on every pointer (the owner chose a compact rail over a touch floor);
+ * the inset track spends 28px on paint. Labels never move and reduced motion removes the slide.
+ * Both navigation surfaces share this exact control.
  */
 export function FleetPaneSurfaceToggle() {
   useFleetLocale();
@@ -31,7 +32,7 @@ export function FleetPaneSurfaceToggle() {
   );
   return (
     <div role="radiogroup" aria-label={ft("fleet.settings.surface.title")} className="relative mx-3 grid grid-cols-2">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 inset-y-1 rounded-md border border-border bg-muted/60 p-0.5">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 inset-y-0.5 rounded-md border border-border bg-muted/60 p-0.5">
         <div
           className={cn(
             "h-full w-1/2 rounded-md bg-primary shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none",
@@ -40,7 +41,7 @@ export function FleetPaneSurfaceToggle() {
         />
       </div>
       <Segment surface="mirror" label="Collie" selected={surface === "mirror"} />
-      <Segment surface="terminal" label="TTYD" selected={surface === "terminal"} />
+      <Segment surface="terminal" label="ttyd" selected={surface === "terminal"} />
     </div>
   );
 }
@@ -62,7 +63,7 @@ function Segment({
       onClick={() => paneSurfaceStore.set(surface)}
       variant="ghost"
       className={cn(
-        "relative min-h-11 h-auto rounded-md px-3 py-2 text-xs font-medium hover:bg-transparent active:scale-100 motion-reduce:transition-none",
+        "relative h-8 min-h-8 rounded-md px-3 py-0 text-xs font-medium hover:bg-transparent active:scale-100 motion-reduce:transition-none",
         selected ? "text-primary-foreground hover:text-primary-foreground" : "text-muted-foreground hover:text-foreground",
       )}
     >

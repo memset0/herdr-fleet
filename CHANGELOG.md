@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **The rail's surface switch is compact and says ttyd.** Both segments are 32px tall on every pointer, and the terminal choice is written in lowercase.
+
 ## [3.23.2] - 2026-10-23
 
 ### Added

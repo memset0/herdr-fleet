@@ -172,9 +172,9 @@ describe("NativeNavigationShell", () => {
       expect(segment(control, "Collie")).toHaveAttribute("aria-checked", "true");
     }
     // One store behind both: pressing in one moves the other.
-    fireEvent.click(segment(controls[1]!, "TTYD"));
+    fireEvent.click(segment(controls[1]!, "ttyd"));
     for (const control of controls) {
-      expect(segment(control, "TTYD")).toHaveAttribute("aria-checked", "true");
+      expect(segment(control, "ttyd")).toHaveAttribute("aria-checked", "true");
     }
   });
 
