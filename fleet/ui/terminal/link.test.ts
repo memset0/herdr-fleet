@@ -43,6 +43,7 @@ function handlers() {
   const output: string[] = [];
   const titles: string[] = [];
   const notices: string[] = [];
+  const exits: string[] = [];
   let opened = 0;
   let closed = 0;
   return {
@@ -53,6 +54,7 @@ function handlers() {
       onOutput: (data: Uint8Array) => output.push(decoder.decode(data)),
       onTitle: (title: string) => titles.push(title),
       onNotice: (notice: string) => notices.push(notice),
+      onEarlyExit: (tail: string) => exits.push(tail),
       onClose: () => {
         closed += 1;
       },
@@ -60,6 +62,7 @@ function handlers() {
     output,
     titles,
     notices,
+    exits,
     opened: () => opened,
     closed: () => closed,
   };
@@ -175,6 +178,19 @@ describe("what the link hears", () => {
     expect(h.output).toEqual(["hello"]);
     expect(h.titles).toEqual(["root@host"]);
     expect(h.notices).toEqual(["busy"]);
+  });
+
+  test("an early exit's tail reaches its own handler, ahead of the notice", () => {
+    const s = fakeSocket();
+    const h = handlers();
+    const link = new TerminalLink(s.socket, h.record);
+    expect(link.geometry()).toBeNull();
+    s.open();
+    s.deliver(new Uint8Array([TO_BROWSER.exit, ...encoder.encode("error: zero-sized grid")]));
+    s.deliver(new Uint8Array([TO_BROWSER.notice, ...encoder.encode("ended")]));
+    expect(h.exits).toEqual(["error: zero-sized grid"]);
+    expect(h.notices).toEqual(["ended"]);
+    expect(h.output).toEqual([]);
   });
 
   test("a frame in a command nobody defined is ignored rather than guessed at", () => {

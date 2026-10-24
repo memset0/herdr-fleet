@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { TerminalTarget } from "./admit.ts";
 import { TO_BROWSER, inputMessage, viewportMessage } from "./browser.ts";
+import { EARLY_EXIT_WINDOW_MS } from "./early-exit.ts";
 import type { Placement } from "./placement.ts";
 import { CLIENT } from "./protocol.ts";
 import type { Resolution } from "./resolve.ts";
@@ -311,6 +312,29 @@ describe("what the browser is told when it cannot have a terminal", () => {
   });
 });
 
+describe("a terminal that exits as it starts", () => {
+  test("the browser hears its printable tail, then `ended`, and the socket closes", async () => {
+    const { h, s } = await attached();
+    h.emit("term_abc", encoder.encode("\x1b]0;title\x07error: zero-sized grid\r\n"));
+    h.upstreamClosed("term_abc");
+    const kinds = s.frames.map((frame) => frame[0]);
+    const exit = s.frames.find((frame) => frame[0] === TO_BROWSER.exit);
+    expect(decoder.decode(exit?.subarray(1))).toBe("error: zero-sized grid");
+    expect(kinds.slice(-2)).toEqual([TO_BROWSER.exit, TO_BROWSER.notice]);
+    expect(s.notices()).toEqual([NOTICE.ended]);
+    expect(s.closed()).toBe(true);
+  });
+
+  test("a session that lived past its window ends with `ended` alone", async () => {
+    const { h, s } = await attached();
+    h.emit("term_abc", encoder.encode("ordinary work"));
+    h.advance(EARLY_EXIT_WINDOW_MS + 1);
+    h.upstreamClosed("term_abc");
+    expect(s.frames.some((frame) => frame[0] === TO_BROWSER.exit)).toBe(false);
+    expect(s.notices()).toEqual([NOTICE.ended]);
+  });
+});
+
 describe("input typed while the terminal was starting", () => {
   test("is delivered in order once it is attached", async () => {
     const h = harness();
@@ -454,6 +478,7 @@ describe("a session that stops being current takes its terminals with it", () =>
 
     // The session ending under its browser is the session's line; the connection adds none.
     const exited = await attached();
+    exited.h.advance(EARLY_EXIT_WINDOW_MS + 1);
     exited.h.upstreamClosed("term_abc");
     expect(exited.h.ends()).toEqual([
       { event: "terminal.session-ended", pane: "local w1:p1", reason: "upstream-exit", browser: 1 },

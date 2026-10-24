@@ -20,15 +20,19 @@ import { findTerminalTools, makeConnectUpstream, makeSocketDirectory, makeStartS
 /**
  * The lead's terminal numbers, stated once.
  *
- * **The grace period is twenty seconds.** It is not a cache — attaching was measured at a tenth to a
- * quarter of a second — so its length is not chosen to save that. It is chosen against the cost of
- * holding it: a held session is holding the Pane's geometry, and the Pane belongs to whoever is at
- * that machine's keyboard. Twenty seconds covers switching Panes and coming back; a minute would
- * leave somebody else's terminal at a phone's size while they worked in it.
+ * **The grace period is an hour.** It is not a cache — attaching was measured at a tenth to a quarter
+ * of a second — so its length is not chosen to save that. It was twenty seconds, chosen against the
+ * cost of holding: a held session holds the Pane's geometry, and the Pane belongs to whoever is at
+ * that machine's keyboard. That cost has not gone away — for up to an hour after the browser leaves,
+ * the Pane stays at the size that browser last stated while nobody watches it. The owner chose that:
+ * a terminal stepped away from for half a minute was already gone, and every re-establishment is
+ * another chance for the attachment to fail as it starts (see `early-exit.ts`). The bound allows six
+ * hours, for a retune; it is not operator configuration.
  *
- * **Four sessions.** Only one is attached at a time and the rest are inside their grace period, so
- * this is a bound on how many terminal servers a burst of Pane-switching can leave running, not a
- * working set anybody reaches.
+ * **Eight sessions.** Enough to hold the Panes an operator moves between through that hour, and no
+ * more than a member's own terminal service starts by default (`FLEET_TERMINAL_BOUNDS.maxServers` in
+ * `../config.ts`), so the lead never asks one member for more servers than it allows unless that
+ * member was configured lower. At the bound a session with no browser attached is evicted first.
  *
  * **Two hundred and fifty-six kilobytes retained.** The largest geometry this surface admits is 500
  * by 200 cells, and one full repaint of it with attributes is comfortably inside this. That is the
@@ -36,14 +40,14 @@ import { findTerminalTools, makeConnectUpstream, makeSocketDirectory, makeStartS
  * scrollback and a larger number would start to make it one.
  */
 export const FLEET_TERMINAL_LIMITS: SessionLimits = {
-  graceMs: 20_000,
-  maxSessions: 4,
+  graceMs: 3_600_000,
+  maxSessions: 8,
   retainBytes: 256 * 1024,
 };
 
 /** The bounds those numbers are validated against, so a tuned value cannot become a broken one. */
 export const FLEET_TERMINAL_LIMIT_BOUNDS = {
-  graceMs: { minimum: 1_000, maximum: 600_000 },
+  graceMs: { minimum: 1_000, maximum: 21_600_000 },
   maxSessions: { minimum: 1, maximum: 32 },
   retainBytes: { minimum: 4_096, maximum: 4 * 1024 * 1024 },
 } as const;

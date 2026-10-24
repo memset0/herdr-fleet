@@ -80,6 +80,11 @@ export interface TerminalLinkHandlers {
   onTitle?(title: string): void;
   /** A lifecycle word from the Gateway — never terminal content, and never a sentence to print raw. */
   onNotice?(notice: string): void;
+  /**
+   * The terminal exited as it started; the sanitized printable tail of what it printed, possibly
+   * empty. Always followed by the `ended` notice and the close. Plain text, to be shown as text.
+   */
+  onEarlyExit?(tail: string): void;
   onClose(): void;
 }
 
@@ -120,6 +125,7 @@ export class TerminalLink {
       if (frame[0] === TO_BROWSER.output) handlers.onOutput(body);
       else if (frame[0] === TO_BROWSER.title) handlers.onTitle?.(decoder.decode(body));
       else if (frame[0] === TO_BROWSER.notice) handlers.onNotice?.(decoder.decode(body));
+      else if (frame[0] === TO_BROWSER.exit) handlers.onEarlyExit?.(decoder.decode(body));
     });
     socket.addEventListener("close", () => {
       this.closed = true;

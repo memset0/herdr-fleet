@@ -20,7 +20,7 @@
 
 import type { TerminalTarget } from "./admit.ts";
 import { placementLabel } from "./placement.ts";
-import { noticeFrame, outputFrame, readBrowserMessage, VIEWPORT_BOUNDS } from "./browser.ts";
+import { exitFrame, noticeFrame, outputFrame, readBrowserMessage, VIEWPORT_BOUNDS } from "./browser.ts";
 import { inputFrame, type Geometry } from "./protocol.ts";
 import type { Resolution } from "./resolve.ts";
 import type { AttachedClient, Session, SessionAcquisition, TerminalSessions } from "./session.ts";
@@ -112,8 +112,19 @@ export class TerminalConnection {
     this.client = {
       write: (data) => this.socket.send(outputFrame(data)),
       // The session ended under us — the terminal exited, the grace period expired, or another
-      // session was evicted to make room. The browser is told, once, and the socket closes.
-      close: () => this.end(NOTICE.ended),
+      // session was evicted to make room. The browser is told, once, and the socket closes. A
+      // terminal that exited as it started also says what it printed, first, so the surface can
+      // show it and knows to try again; the word itself is still `ended`.
+      close: (early) => {
+        if (early !== undefined && this.state !== "closed") {
+          try {
+            this.socket.send(exitFrame(early.tail));
+          } catch {
+            // The socket is already gone; `end` below closes what is left.
+          }
+        }
+        this.end(NOTICE.ended);
+      },
       taken: () => this.end(NOTICE.taken),
     };
   }

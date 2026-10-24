@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
+import { EARLY_EXIT_WINDOW_MS } from "./early-exit.ts";
 import { placementKey, type Placement } from "./placement.ts";
 import type { Geometry } from "./protocol.ts";
 import {
   TerminalSessions,
   type AttachedClient,
+  type EarlyExit,
   type SessionDeps,
   type TerminalServer,
   type Upstream,
@@ -108,16 +110,18 @@ function client() {
   const written: Uint8Array[] = [];
   let closed = false;
   let taken = false;
+  let early: EarlyExit | undefined;
   const handle: AttachedClient = {
     write: (data) => written.push(data),
-    close: () => {
+    close: (exit) => {
       closed = true;
+      early = exit;
     },
     taken: () => {
       taken = true;
     },
   };
-  return { handle, written, closed: () => closed, taken: () => taken, text: () => Buffer.concat(written).toString() };
+  return { handle, written, closed: () => closed, taken: () => taken, early: () => early, text: () => Buffer.concat(written).toString() };
 }
 
 describe("holding a session past its browser", () => {
@@ -203,6 +207,29 @@ describe("the bound on how many a device holds", () => {
     expect(h.stopped).toEqual(["term_a"]);
     expect(h.sessions.size()).toBe(1);
     expect(h.sessions.held(key("term_b"))).toBe(true);
+  });
+
+  test("an unwatched session is evicted before an older watched one", async () => {
+    const h = harness({ maxSessions: 2 });
+    const watched = await acquired(h.sessions, at("term_a"), GEOMETRY);
+    const browser = client();
+    watched.attach(browser.handle);
+    h.advance(1_000);
+    await acquired(h.sessions, at("term_b"), GEOMETRY);
+    h.advance(1_000);
+    await acquired(h.sessions, at("term_c"), GEOMETRY);
+    expect(h.stopped).toEqual(["term_b"]);
+    expect(browser.closed()).toBe(false);
+  });
+
+  test("when every held session is watched, the least recently used watched one still makes room", async () => {
+    const h = harness({ maxSessions: 1 });
+    const watched = await acquired(h.sessions, at("term_a"), GEOMETRY);
+    const browser = client();
+    watched.attach(browser.handle);
+    await acquired(h.sessions, at("term_b"), GEOMETRY);
+    expect(h.stopped).toEqual(["term_a"]);
+    expect(browser.closed()).toBe(true);
   });
 
   test("a device must be allowed at least one", () => {
@@ -334,11 +361,50 @@ describe("why a session ended", () => {
   test("an upstream exit under a browser is logged once, with the close code and nothing else", async () => {
     const h = harness();
     const session = await acquired(h.sessions, at("term_a"), GEOMETRY);
-    session.attach(client().handle);
+    const browser = client();
+    session.attach(browser.handle);
     h.emit("term_a", new TextEncoder().encode("secret output"));
+    // Past the early window: this is a session somebody used, and none of its output is kept.
+    h.advance(EARLY_EXIT_WINDOW_MS + 1);
+    h.emit("term_a", new TextEncoder().encode("more secret output"));
     h.upstreamClosed("term_a", 1006);
     expect(h.ended()).toEqual([{ pane: "local w1:p1", reason: "upstream-exit", browser: 1, code: 1006 }]);
     expect(JSON.stringify(h.ended())).not.toContain("secret");
+    expect(browser.closed()).toBe(true);
+    expect(browser.early()).toBeUndefined();
+  });
+
+  test("an exit as it starts is logged with its lifetime and the printable tail, and the browser is told", async () => {
+    const h = harness();
+    const session = await acquired(h.sessions, at("term_a"), GEOMETRY);
+    const browser = client();
+    session.attach(browser.handle);
+    h.emit("term_a", new TextEncoder().encode("\x1b[31mkind: InvalidData,\x1b[0m\r\nerror: zero-sized grid\r\n"));
+    h.advance(1);
+    h.upstreamClosed("term_a", 1000);
+    expect(h.ended()).toEqual([
+      { pane: "local w1:p1", reason: "upstream-exit", browser: 1, code: 1000, early: 1, ms: 1, tail: "kind: InvalidData, error: zero-sized grid" },
+    ]);
+    expect(browser.early()).toEqual({ tail: "kind: InvalidData, error: zero-sized grid" });
+  });
+
+  test("an exit as it starts that printed nothing is still early, with no tail field", async () => {
+    const h = harness();
+    const session = await acquired(h.sessions, at("term_a"), GEOMETRY);
+    const browser = client();
+    session.attach(browser.handle);
+    h.upstreamClosed("term_a", 1000);
+    expect(h.ended()).toEqual([{ pane: "local w1:p1", reason: "upstream-exit", browser: 1, code: 1000, early: 1, ms: 0 }]);
+    expect(browser.early()).toEqual({ tail: "" });
+  });
+
+  test("an early end for any other reason carries no tail", async () => {
+    const h = harness({ maxSessions: 1 });
+    const first = await acquired(h.sessions, at("term_a"), GEOMETRY);
+    h.emit("term_a", new TextEncoder().encode("output"));
+    await acquired(h.sessions, at("term_b"), GEOMETRY);
+    expect(first.isClosed()).toBe(true);
+    expect(h.ended()).toEqual([{ pane: "local w1:p1", reason: "evicted", browser: 0 }]);
   });
 
   test("a grace expiry is logged as one end with no browser", async () => {

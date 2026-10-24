@@ -17,9 +17,10 @@ import { createViewStateStore } from "./view-state/store.ts";
 
 /**
  * Lifecycle only, and it is the shape of this call that keeps it so: a fixed event name and a record
- * of identity and counts, never a frame, a byte of output, or a session id. Every line carries the
- * time it was written, here and only here, so a terminal that ended can be placed against the
- * operator's own memory of when it died.
+ * of identity and counts, never a frame, a byte of output, or a session id — save one bounded,
+ * sanitized line from a terminal that exited as it started (`terminal/early-exit.ts`). Every line
+ * carries the time it was written, here and only here, so a terminal that ended can be placed against
+ * the operator's own memory of when it died. JSON keeps that line one line, whatever it printed.
  */
 function log(event: string, detail: Record<string, string | number>): void {
   console.log(`herdr-fleet ${new Date().toISOString()} ${event} ${JSON.stringify(detail)}`);

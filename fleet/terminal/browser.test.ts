@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   TO_BROWSER,
   VIEWPORT_BOUNDS,
+  exitFrame,
   inputMessage,
   noticeFrame,
   outputFrame,
@@ -95,5 +96,12 @@ describe("what the Gateway sends back", () => {
     expect(noticeFrame("this terminal has closed")[0]).toBe(TO_BROWSER.notice);
     expect(TO_BROWSER.title).not.toBe(TO_BROWSER.output);
     expect(TO_BROWSER.notice).not.toBe(TO_BROWSER.output);
+  });
+
+  test("an early exit's tail has a command of its own, distinct from every other", () => {
+    const frame = exitFrame("error: zero-sized grid");
+    expect(frame[0]).toBe(TO_BROWSER.exit);
+    expect(new TextDecoder().decode(frame.subarray(1))).toBe("error: zero-sized grid");
+    expect(new Set(Object.values(TO_BROWSER)).size).toBe(Object.values(TO_BROWSER).length);
   });
 });

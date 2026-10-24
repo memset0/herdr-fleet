@@ -21,6 +21,7 @@ import { terminalSpacingPreference, type TerminalSpacing } from "../../../fleet/
 import { terminalFontFamily } from "../../../fleet/ui/terminal/font.ts";
 import { TerminalLink, terminalUrl } from "../../../fleet/ui/terminal/link.ts";
 import { InstancePool } from "../../../fleet/ui/terminal/pool.ts";
+import { EARLY_RETRY_STABLE_MS, EarlyExitRetry } from "../../../fleet/ui/terminal/recover.ts";
 import { terminalMatches } from "../../../fleet/ui/terminal/search.ts";
 import { TouchScroll, cellHeightOf, wheelStep, type TouchPoint } from "../../../fleet/ui/terminal/touch-scroll.ts";
 import type { Viewport } from "../../../fleet/terminal/browser.ts";
@@ -47,6 +48,13 @@ import type { Viewport } from "../../../fleet/terminal/browser.ts";
  * so a plain drag is the program's input and selects nothing. Holding Shift suppresses reporting for
  * the gesture; the hint appears the moment the operator's own drag lands on a program that is
  * consuming it, rather than living in documentation they would have to already suspect.
+ *
+ * **A terminal that exits as it starts is tried again, and an ended one re-opens on return.** The
+ * Gateway marks an exit inside a session's first seconds and sends what it printed; the surface then
+ * says it is reconnecting, shows that text, and tries again on a backoff (`recover.ts`) until the
+ * terminal holds or the budget is spent. Coming back to an ended terminal — navigating back, or the
+ * page becoming visible again — opens a fresh connection rather than leaving the stale notice. Never
+ * with take-over intent: a terminal another browser holds still answers busy.
  *
  * **A swipe is a wheel.** The emulator keeps no scrollback and has no touch scrolling, so on a phone
  * a vertical one-finger swipe is read as wheel steps (see `touch-scroll.ts`) and each step is
@@ -80,6 +88,16 @@ interface RetainedTerminal {
   readonly link: TerminalLink;
   /** Set when the connection ends, so a return knows to establish a new one. */
   ended: boolean;
+  /** The Gateway's last lifecycle word for this connection, if it said one. */
+  notice: string | null;
+  /** Set when the terminal exited as it started: the printable tail of what it printed. */
+  early: string | null;
+  /**
+   * Whichever mount is showing this entry wants to hear about a notice or a close. On the entry, like
+   * `opened`, because a later visit to the same Pane takes the still-open entry back from the pool
+   * and must be the one told when it ends — not the visit that opened it, which is gone.
+   */
+  changed: (() => void) | null;
   /** True from the socket's open until its close: the Pane is answering through its real terminal. */
   connected: boolean;
   hasOutput: boolean;
@@ -156,6 +174,18 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
   const [attempt, setAttempt] = useState(0);
   /** One-shot: the next connection carries the operator's explicit take-over intent. */
   const takeOverNext = useRef(false);
+  /** The current run of early exits, and its pending automatic attempt. */
+  const retry = useRef(new EarlyExitRetry());
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Shown while a run is under way or after it gave up: the tail, and whether a retry is pending. */
+  const [early, setEarly] = useState<{ readonly tail: string; readonly retrying: boolean } | null>(null);
+  const cancelRetry = useCallback(() => {
+    if (retryTimer.current === null) return;
+    clearTimeout(retryTimer.current);
+    retryTimer.current = null;
+  }, []);
+  // Leaving the Pane ends the run: nobody is watching, so nothing is retried.
+  useEffect(() => cancelRetry, [cancelRetry]);
   /** Attached and answering: the input box may write. */
   const [ready, setReady] = useState(false);
   const composerShown = useSyncExternalStore(terminalComposerPreference.subscribe, terminalComposerPreference.snapshot, terminalComposerPreference.snapshot);
@@ -222,19 +252,23 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
           }
           terminal.write(data);
         },
-        onNotice: (word) => setNotice(word),
+        onNotice: (word) => {
+          if (self === null) return;
+          self.notice = word;
+          self.changed?.();
+        },
+        onEarlyExit: (tail) => {
+          if (self !== null) self.early = tail;
+        },
         onClose: () => {
-          if (self !== null) {
-            self.ended = true;
-            self.connected = false;
-          }
           markDead(paneId, scope);
-          setNotice((shown) => shown ?? "ended");
-          setClosed(true);
-          setReady(false);
+          if (self === null) return;
+          self.ended = true;
+          self.connected = false;
+          self.changed?.();
         },
       });
-      entry = { terminal, fit, element, link, ended: false, connected: false, hasOutput: false, opened: null, answered: null, face };
+      entry = { terminal, fit, element, link, ended: false, notice: null, early: null, changed: null, connected: false, hasOutput: false, opened: null, answered: null, face };
       self = entry;
       if (!readOnly) terminal.onData((data) => link.type(encoder.encode(data)));
       terminal.parser.registerOscHandler(52, (data) => {
@@ -252,10 +286,60 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     }
     const current = entry;
     retained.current = current;
-    // A retained entry that is still connected is not closed, whatever this mount last showed.
-    if (!current.ended) setClosed(false);
+    // A retained entry that is still connected is not closed, whatever this mount last showed — unless
+    // an automatic retry is under way, whose notice stays up until the new connection holds.
+    if (!current.ended && !retry.current.active()) setClosed(false);
     setReady(current.connected && current.hasOutput);
-    current.answered = () => setReady(true);
+
+    // The run of early exits is over once a connection has answered and then stayed up past the
+    // early window: a failing attempt opens and prints too, so neither alone says it held.
+    let stable: ReturnType<typeof setTimeout> | null = null;
+    const armStable = (): void => {
+      if (stable !== null || !retry.current.active()) return;
+      stable = setTimeout(() => {
+        stable = null;
+        if (current.ended || retained.current !== current) return;
+        retry.current.reset();
+        setEarly(null);
+        setNotice(null);
+        setClosed(false);
+      }, EARLY_RETRY_STABLE_MS);
+    };
+    current.answered = () => {
+      setReady(true);
+      armStable();
+    };
+    if (current.hasOutput && !current.ended) armStable();
+
+    current.changed = () => {
+      if (retained.current !== current) return;
+      // A socket that closed without a word reads "ended", as it always has.
+      setNotice(current.notice ?? (current.ended ? "ended" : null));
+      if (!current.ended) return;
+      setReady(false);
+      setClosed(true);
+      if (stable !== null) {
+        clearTimeout(stable);
+        stable = null;
+      }
+      if (current.early === null) {
+        // Not an early exit: the run, if any, is over, and the operator decides.
+        retry.current.reset();
+        setEarly(null);
+        return;
+      }
+      const tail = current.early;
+      const delay = retry.current.next(Date.now());
+      setEarly({ tail, retrying: delay !== null });
+      if (delay === null) return;
+      cancelRetry();
+      retryTimer.current = setTimeout(() => {
+        retryTimer.current = null;
+        setAttempt((value) => value + 1);
+      }, delay);
+    };
+    // An entry that ended between mounts is rebuilt above, so this one is open; say so at once.
+    setNotice(current.notice);
     setSearchSource({ terminal: current.terminal });
     onOutputChange(current.hasOutput);
     const parsed = current.terminal.onWriteParsed(() => {
@@ -331,6 +415,8 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
 
     return () => {
       live = false;
+      if (stable !== null) clearTimeout(stable);
+      current.changed = null;
       clearInterval(liveTimer);
       parsed.dispose();
       document.fonts?.removeEventListener("loadingdone", settle);
@@ -344,7 +430,7 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     // `readOnly` is deliberately not a dependency: a device's write permission does not change
     // under a mounted terminal, and rebuilding one on a snapshot field would throw away the screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, paneId, scope, face.family, face.size, face.lineHeight, face.letterSpacing, onOutputChange, attempt]);
+  }, [key, paneId, scope, face.family, face.size, face.lineHeight, face.letterSpacing, onOutputChange, attempt, cancelRetry]);
 
   // A fresh connection through the ordinary path: admission, resolution and the single-writer
   // refusal all apply again, so a terminal another browser holds still answers "busy".
@@ -358,11 +444,30 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
     });
   }, []);
 
+  // The operator's own Reconnect: any pending automatic attempt is dropped and a new run starts.
   const reconnect = useCallback(() => {
+    cancelRetry();
+    retry.current.reset();
+    setEarly(null);
     setNotice(null);
     setClosed(false);
     setAttempt((value) => value + 1);
-  }, []);
+  }, [cancelRetry]);
+
+  // A page coming back to an ended terminal re-opens it. Only "ended" (or a socket that simply
+  // dropped): busy, taken, unavailable and refused are the operator's to act on, and a pending
+  // automatic attempt is already on its way.
+  useEffect(() => {
+    const onVisible = (): void => {
+      if (document.visibilityState !== "visible") return;
+      const current = retained.current;
+      if (current === null || !current.ended || retryTimer.current !== null) return;
+      if (current.notice !== null && current.notice !== "ended") return;
+      reconnect();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [reconnect]);
   // Only from the busy notice, only on the operator's press: the browser holding it is told.
   const takeOver = useCallback(() => {
     takeOverNext.current = true;
@@ -500,7 +605,18 @@ export function FleetTerminal({ paneId, scope, readOnly, zen, find, onOutputChan
             </span>
           }
         >
-          {closedMessage(notice)}
+          {early === null ? closedMessage(notice) : (
+            <span className="flex min-w-0 flex-col gap-1">
+              <span data-testid="fleet-terminal-early">
+                {ft(early.retrying ? "fleet.terminal.closed.retrying" : "fleet.terminal.closed.keepsExiting")}
+              </span>
+              {early.tail === "" ? null : (
+                <span className="break-all font-mono text-xs opacity-80" data-testid="fleet-terminal-early-tail">
+                  {ft("fleet.terminal.closed.lastOutput", { tail: early.tail })}
+                </span>
+              )}
+            </span>
+          )}
         </Notice>
       </Collapse>
       <div

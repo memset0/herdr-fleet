@@ -136,6 +136,7 @@ vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 import { DEAD_DEBOUNCE_MS, LIVE_CAP_MS, isLive } from "@/lib/liveness";
 import { TERMINAL_COMPOSER_STORAGE_KEY, terminalComposerPreference } from "../../../fleet/ui/terminal/composer.ts";
 import { terminalSpacingPreference } from "../../../fleet/ui/terminal/spacing.ts";
+import { EARLY_RETRY_STABLE_MS } from "../../../fleet/ui/terminal/recover.ts";
 
 const { FleetTerminal } = await import("./fleet-terminal");
 
@@ -561,6 +562,173 @@ describe("leaving and coming back", () => {
   });
 });
 
+/** The Gateway's three frames for a terminal that exited as it started: tail, `ended`, close. */
+function exitAsItStarts(socket: FakeSocket, tail: string): void {
+  const exit = new Uint8Array([0x78, ...new TextEncoder().encode(tail)]);
+  const ended = new Uint8Array([0x6e, ...new TextEncoder().encode("ended")]);
+  act(() => {
+    socket.fire("open");
+    socket.fire("message", { data: exit.buffer.slice(0) });
+    socket.fire("message", { data: ended.buffer.slice(0) });
+    socket.fire("close");
+  });
+}
+
+function closeWith(socket: FakeSocket, word: string): void {
+  const notice = new Uint8Array([0x6e, ...new TextEncoder().encode(word)]);
+  act(() => {
+    socket.fire("message", { data: notice.buffer.slice(0) });
+    socket.fire("close");
+  });
+}
+
+function setVisibility(state: "visible" | "hidden"): void {
+  Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+}
+
+describe("a terminal that exits as it starts", () => {
+  it("says it is reconnecting, shows what it printed, and backs off until a connection holds", () => {
+    vi.useFakeTimers();
+    try {
+      const { view, socket } = mount();
+      exitAsItStarts(socket, "error: zero-sized grid");
+      expect(view.getByTestId("fleet-terminal-early").textContent).toBe(
+        "The terminal exited as it started. Reconnecting automatically…",
+      );
+      expect(view.getByTestId("fleet-terminal-early-tail").textContent).toBe("Last output: error: zero-sized grid");
+      expect(view.container.textContent).not.toContain("The terminal connection ended.");
+      expect(view.getByTestId("fleet-terminal-reconnect")).toBeTruthy();
+
+      act(() => vi.advanceTimersByTime(999));
+      expect(FakeSocket.instances).toHaveLength(1);
+      act(() => vi.advanceTimersByTime(1));
+      expect(FakeSocket.instances).toHaveLength(2);
+      expect(FakeSocket.instances[1]!.url).not.toContain("takeover");
+      // Still reconnecting while the attempt is in flight.
+      expect(view.getByTestId("fleet-terminal-early")).toBeTruthy();
+
+      exitAsItStarts(FakeSocket.instances[1]!, "error: zero-sized grid");
+      act(() => vi.advanceTimersByTime(1_999));
+      expect(FakeSocket.instances).toHaveLength(2);
+      act(() => vi.advanceTimersByTime(1));
+      expect(FakeSocket.instances).toHaveLength(3);
+
+      // The third holds: it answers, and stays up past the early window.
+      const third = FakeSocket.instances[2]!;
+      act(() => {
+        third.fire("open");
+        third.fire("message", { data: new Uint8Array([0x6f, 0x24]).buffer.slice(0) });
+      });
+      act(() => vi.advanceTimersByTime(EARLY_RETRY_STABLE_MS - 1));
+      expect(view.getByTestId("fleet-terminal-early")).toBeTruthy();
+      // Held: the notice leaves (after its own exit animation).
+      act(() => vi.advanceTimersByTime(1));
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(view.queryByTestId("fleet-terminal-early")).toBeNull();
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(FakeSocket.instances).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets Reconnect cut the backoff short and start it again from one second", () => {
+    vi.useFakeTimers();
+    try {
+      const { view, socket } = mount();
+      exitAsItStarts(socket, "");
+      expect(view.queryByTestId("fleet-terminal-early-tail")).toBeNull();
+      act(() => vi.advanceTimersByTime(1_000));
+      exitAsItStarts(FakeSocket.instances[1]!, "");
+      // A two-second wait is pending; the operator does not wait for it.
+      fireEvent.click(view.getByTestId("fleet-terminal-reconnect"));
+      expect(FakeSocket.instances).toHaveLength(3);
+      act(() => vi.advanceTimersByTime(2_000));
+      expect(FakeSocket.instances).toHaveLength(3);
+      exitAsItStarts(FakeSocket.instances[2]!, "");
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(FakeSocket.instances).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up after three minutes, says so with the tail, and leaves Reconnect to the operator", () => {
+    vi.useFakeTimers();
+    try {
+      const { view, socket } = mount();
+      exitAsItStarts(socket, "error: gone");
+      for (let guard = 0; guard < 20 && view.queryByText("The terminal keeps exiting as it starts.") === null; guard += 1) {
+        act(() => vi.advanceTimersByTime(30_000));
+        exitAsItStarts(FakeSocket.instances.at(-1)!, "error: gone");
+      }
+      expect(view.getByTestId("fleet-terminal-early").textContent).toBe("The terminal keeps exiting as it starts.");
+      expect(view.getByTestId("fleet-terminal-early-tail").textContent).toBe("Last output: error: gone");
+      const attempts = FakeSocket.instances.length;
+      expect(attempts).toBeLessThanOrEqual(11);
+      act(() => vi.advanceTimersByTime(600_000));
+      expect(FakeSocket.instances).toHaveLength(attempts);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is never retried for a busy terminal, and leaving the Pane cancels a pending attempt", () => {
+    vi.useFakeTimers();
+    try {
+      const busy = mount();
+      act(() => busy.socket.fire("open"));
+      closeWith(busy.socket, "busy");
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(FakeSocket.instances).toHaveLength(1);
+      busy.view.unmount();
+
+      const left = mount();
+      exitAsItStarts(left.socket, "x");
+      left.view.unmount();
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(FakeSocket.instances).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("coming back to an ended terminal", () => {
+  it("re-opens it when the page becomes visible again, and only for an ended one", () => {
+    const { view, socket } = mount();
+    act(() => socket.fire("open"));
+    act(() => socket.fire("close"));
+    expect(view.container.textContent).toContain("The terminal connection ended.");
+    setVisibility("hidden");
+    expect(FakeSocket.instances).toHaveLength(1);
+    setVisibility("visible");
+    expect(FakeSocket.instances).toHaveLength(2);
+    expect(FakeSocket.instances[1]!.url).not.toContain("takeover");
+
+    closeWith(FakeSocket.instances[1]!, "taken");
+    setVisibility("hidden");
+    setVisibility("visible");
+    expect(FakeSocket.instances).toHaveLength(2);
+    expect(view.container.textContent).toContain("Another browser took over this terminal.");
+  });
+
+  it("tells a later visit when the connection it took back from the pool closes", async () => {
+    const first = mount();
+    act(() => first.socket.fire("open"));
+    first.view.unmount();
+    const again = render(
+      <FleetTerminal paneId={first.paneId} scope={{}} {...bodyControls} device={undefined} readOnly={false} />,
+    );
+    expect(FakeSocket.instances).toHaveLength(1);
+    act(() => first.socket.fire("close"));
+    await waitFor(() => expect(again.container.textContent).toContain("The terminal connection ended."));
+    expect(again.container.querySelector('[data-testid="fleet-terminal-reconnect"]')).not.toBeNull();
+  });
+});
 
 it("updates real terminal font measurement when its exclusive mode changes, independently of UI", async () => {
   document.documentElement.style.setProperty("--font-mono", '"Nerd Font Symbols", "JetBrains Mono", var(--font-cjk), monospace');

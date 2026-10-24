@@ -24,6 +24,12 @@ export const TO_BROWSER = {
   title: 0x74, // "t"
   /** A lifecycle notice in the operator's language — never terminal content. */
   notice: 0x6e, // "n"
+  /**
+   * The terminal exited as it started (see `early-exit.ts`), sent once, just before the `ended`
+   * notice. Its payload is the sanitized printable tail of what it printed, possibly empty — the only
+   * frame besides output that carries anything the terminal produced, and only on that path.
+   */
+  exit: 0x78, // "x"
 } as const;
 
 /** A viewport, in cells. Bounds are the surface's, not the terminal's. */
@@ -74,6 +80,11 @@ export function titleFrame(title: string): Uint8Array {
 /** A short, non-secret sentence about the connection's own lifecycle. Never terminal bytes. */
 export function noticeFrame(notice: string): Uint8Array {
   return framed(TO_BROWSER.notice, encoder.encode(notice));
+}
+
+/** An early exit's sanitized tail. Never sent for a session that lived past its early window. */
+export function exitFrame(tail: string): Uint8Array {
+  return framed(TO_BROWSER.exit, encoder.encode(tail));
 }
 
 function readViewport(payload: Uint8Array): BrowserMessage {

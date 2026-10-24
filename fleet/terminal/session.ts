@@ -18,6 +18,7 @@
  * which is the only way to know a timer fires when it should and not when it should not.
  */
 
+import { EarlyTail } from "./early-exit.ts";
 import { placementKey, placementLabel, type Placement } from "./placement.ts";
 import { authFrame, decodeServerFrame, inputFrame, resizeFrame, type Geometry } from "./protocol.ts";
 import { retainedWindow, type RetainedWindow } from "./retain.ts";
@@ -65,12 +66,20 @@ export type ConnectUpstream = (
   handlers: UpstreamHandlers,
 ) => Promise<Upstream>;
 
+/**
+ * A session that ended `upstream-exit` inside its early window, and the sanitized printable tail of
+ * what it printed (see `early-exit.ts`). The only terminal-derived value that leaves this layer.
+ */
+export interface EarlyExit {
+  readonly tail: string;
+}
+
 /** Whoever is currently reading the terminal. Exactly zero or one at a time. */
 export interface AttachedClient {
   /** Deliver terminal output. */
   write(data: Uint8Array): void;
-  /** End this client's connection. */
-  close(): void;
+  /** End this client's connection; `early` is present only when the terminal exited as it started. */
+  close(early?: EarlyExit): void;
   /** End this client's connection because another browser explicitly took the terminal over. */
   taken(): void;
 }
@@ -98,7 +107,10 @@ export interface SessionDeps {
   readonly now?: () => number;
   readonly setTimer?: (fn: () => void, ms: number) => TimerHandle;
   readonly clearTimer?: (handle: TimerHandle) => void;
-  /** Reports lifecycle only. Never terminal bytes — see the diagnostics boundary. */
+  /**
+   * Reports lifecycle only. Never terminal bytes — see the diagnostics boundary — with its one
+   * bounded exception: an early exit's sanitized tail (`early-exit.ts`).
+   */
   readonly log?: ((event: string, detail: Record<string, string | number>) => void) | undefined;
 }
 
@@ -118,6 +130,8 @@ class Session {
   private graceHandle: TimerHandle | null = null;
   private closed = false;
   readonly retained: RetainedWindow;
+  /** The first seconds of output, kept only so an early exit can say why. */
+  private readonly early: EarlyTail;
   private readonly onDetached: () => void;
   lastUsed: number;
 
@@ -133,6 +147,7 @@ class Session {
     this.onDetached = onDetached;
     this.retained = retainedWindow(deps.limits.retainBytes);
     this.lastUsed = (deps.now ?? Date.now)();
+    this.early = new EarlyTail(this.lastUsed);
   }
 
   private upstream: Upstream | null = null;
@@ -160,6 +175,7 @@ class Session {
   receive(data: Uint8Array): void {
     if (this.closed) return;
     this.retained.push(data);
+    this.early.push(data, (this.deps.now ?? Date.now)());
     this.client?.write(data);
   }
 
@@ -236,8 +252,16 @@ class Session {
     this.closed = true;
     this.cancelGrace();
     const client = this.client;
-    const ended = { pane: placementLabel(this.placement), reason, browser: client === null ? 0 : 1 };
-    this.deps.log?.("terminal.session-ended", code === undefined ? ended : { ...ended, code });
+    const now = (this.deps.now ?? Date.now)();
+    // Taken unconditionally so the capture is discarded on every close; only an upstream exit inside
+    // the window keeps what it returns.
+    const tail = this.early.take(now);
+    const early: EarlyExit | undefined = reason === "upstream-exit" && tail !== null ? { tail } : undefined;
+    const base = { pane: placementLabel(this.placement), reason, browser: client === null ? 0 : 1 };
+    const coded = code === undefined ? base : { ...base, code };
+    const marked = { ...coded, early: 1, ms: this.early.lifetime(now) };
+    const ended = early === undefined ? coded : early.tail === "" ? marked : { ...marked, tail: early.tail };
+    this.deps.log?.("terminal.session-ended", ended);
     this.client = null;
     this.retained.clear();
     try {
@@ -250,7 +274,7 @@ class Session {
     } catch {
       // Same.
     }
-    client?.close();
+    client?.close(early);
     this.onEnded(this);
   }
 }
@@ -353,11 +377,18 @@ export class TerminalSessions {
 
   private async reserve(entry: SessionEntry): Promise<void> {
     while (!this.closed && this.slots >= this.deps.limits.maxSessions) {
-      let oldest: Session | null = null;
+      // Unwatched first: a session nobody is looking at is the one to give back. A watched one goes
+      // only when every candidate is watched, because waiting for a browser to leave could wait forever.
+      let unwatched: Session | null = null;
+      let watched: Session | null = null;
       for (const candidate of this.entries.values()) {
-        if (!candidate.established || candidate.users !== 0 || candidate.session === null) continue;
-        if (oldest === null || candidate.session.lastUsed < oldest.lastUsed) oldest = candidate.session;
+        const session = candidate.session;
+        if (!candidate.established || candidate.users !== 0 || session === null) continue;
+        if (session.hasClient()) {
+          if (watched === null || session.lastUsed < watched.lastUsed) watched = session;
+        } else if (unwatched === null || session.lastUsed < unwatched.lastUsed) unwatched = session;
       }
+      const oldest = unwatched ?? watched;
       if (oldest !== null) {
         oldest.close("evicted");
       } else {

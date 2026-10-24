@@ -19,6 +19,15 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Added
+
+- **A terminal that exits as it starts says why and retries.** An `upstream-exit` within 5 s of opening logs `early`, `ms` and a sanitized 300-character `tail` of its output, shows that tail on screen, and reconnects by itself after 1, 2, 4, 8, 15, then 30 s for up to three minutes; Reconnect restarts the backoff.
+- **Returning to an ended terminal re-opens it.** Navigating back to the Pane, or the page becoming visible again on an `ended` notice, opens a fresh connection; a later visit now hears its retained connection close.
+
+### Changed
+
+- **An unwatched terminal is held for an hour, eight at most.** Lead grace 20 s → 1 h (bound 6 h), sessions 4 → 8; at the bound an unwatched session is evicted first.
+
 ## [3.24.2] - 2026-10-23
 
 ### Added

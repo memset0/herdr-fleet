@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { FLEET_TERMINAL_BOUNDS } from "../config.ts";
 import { NOTICE, type BrowserSocket, type ConnectionSession } from "./connection.ts";
 import {
   FLEET_TERMINAL_LIMITS,
@@ -63,8 +64,15 @@ describe("the numbers, and their bounds", () => {
     expect(validateLimits(FLEET_TERMINAL_LIMITS)).toBe(FLEET_TERMINAL_LIMITS);
   });
 
-  test("the grace period is short, because it holds somebody else's terminal at somebody else's size", () => {
-    expect(FLEET_TERMINAL_LIMITS.graceMs).toBeLessThanOrEqual(30_000);
+  test("an unwatched terminal is held for an hour, and the bound allows six", () => {
+    expect(FLEET_TERMINAL_LIMITS.graceMs).toBe(60 * 60 * 1_000);
+    expect(FLEET_TERMINAL_LIMIT_BOUNDS.graceMs.maximum).toBe(21_600_000); // six hours
+    expect(() => validateLimits({ ...FLEET_TERMINAL_LIMITS, graceMs: 6 * 60 * 60 * 1_000 + 1 })).toThrow("graceMs");
+  });
+
+  test("the lead holds no more sessions than a member starts servers by default", () => {
+    expect(FLEET_TERMINAL_LIMITS.maxSessions).toBe(8);
+    expect(FLEET_TERMINAL_LIMITS.maxSessions).toBeLessThanOrEqual(FLEET_TERMINAL_BOUNDS.maxServers.fallback);
   });
 
   test("the retained window fits one repaint of the largest geometry this surface admits", () => {

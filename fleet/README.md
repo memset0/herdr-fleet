@@ -655,6 +655,18 @@ only its own acquisition interest. Once no browser or acquiring caller needs a s
 bounded grace period applies. Establishing sessions count toward the same capacity bound as held
 ones. The manual Pane-fit controller never takes over; see *Manual Pane fit*.
 
+**Held for an hour, eight at most.** The lead holds a session nobody is watching for one hour, so
+the Pane stays at the last browser's geometry for that long, and holds up to eight sessions — no
+more than a member's default `max_servers`. At the bound an unwatched session is evicted first.
+
+**A terminal that exits as it starts is named and retried.** A session that ends `upstream-exit`
+within five seconds of opening logs `early`, its lifetime `ms`, and `tail`: the last 300 printable
+characters it printed, escape sequences removed — the attach child's own error, which otherwise
+reaches only its pty. Output of a session that lived longer is never kept for this. The browser is
+sent the same tail before `ended`, says it is reconnecting, and retries after 1, 2, 4, 8, 15 and
+then every 30 seconds for up to three minutes; Reconnect restarts that. Returning to an ended
+terminal — navigating back, or the page becoming visible — opens a fresh connection.
+
 ## Retained Collie deployment alternatives
 
 Collie's Tailscale serve and `Tailscale-User-Login` implementation remains in the repository to keep
