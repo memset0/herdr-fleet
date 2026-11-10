@@ -20,18 +20,20 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-10
+
 ### Added
 
-- **Fleet follows the Core used by Herdr App.** Standalone control, exact Core selection, terminal attachment, manual fit and permanent terminal references work without a TUI process.
+- **Fleet follows the Core used by Herdr App.** Standalone control, exact Core selection, terminal attachment, manual fit and permanent terminal references work without a TUI process. ([f77c7e26e](https://github.com/memset0/herdr-fleet/commit/f77c7e26e))
 
 ### Changed
 
-- **Upstream adoption can reconcile audited parallel release lines.** The acknowledgement pins the adopted release, target and actual common ancestor without changing provenance.
-- **Todoist leaves the product for an independent replacement.** OAuth, routes, sidebar, settings and task delivery are removed; existing operator data and external tasks remain untouched.
+- **Upstream adoption can reconcile audited parallel release lines.** The acknowledgement pins the adopted release, target and actual common ancestor without changing provenance. ([b2390e031](https://github.com/memset0/herdr-fleet/commit/b2390e031))
+- **Todoist leaves the product for an independent replacement.** OAuth, routes, sidebar, settings and task delivery are removed; existing operator data and external tasks remain untouched. ([f77c7e26e](https://github.com/memset0/herdr-fleet/commit/f77c7e26e))
 
 ### Fixed
 
-- **Patient sends keep their answer through every transport.** Both HTTP listeners, forwarding and browser budgets outlast the bounded protocol, retaining upstream's late-screen and durable-record fixes.
+- **Patient sends keep their answer through every transport.** Both HTTP listeners, forwarding and browser budgets outlast the bounded protocol, retaining upstream's late-screen and durable-record fixes. ([f77c7e26e](https://github.com/memset0/herdr-fleet/commit/f77c7e26e))
 
 ## [3.24.3] - 2026-10-24
 
