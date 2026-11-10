@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Segmented } from "@/components/ui/segmented";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
+import { isFleetBuild } from "@/lib/fleet-build";
 import { setWideLayoutMode, useWideLayoutMode, type WideLayoutMode } from "@/lib/wide-layout-store";
 
 // Whether this device may show the large-screen layout (ADR 0120): the sidebar and the strip of pane
@@ -13,6 +14,7 @@ import { setWideLayoutMode, useWideLayoutMode, type WideLayoutMode } from "@/lib
 export function WideLayoutControl() {
   useLocale();
   const mode = useWideLayoutMode();
+  if (isFleetBuild()) return null;
   const options: { value: WideLayoutMode; label: string }[] = [
     { value: "auto", label: t("settings.wideLayout.auto") },
     { value: "off", label: t("settings.wideLayout.off") },

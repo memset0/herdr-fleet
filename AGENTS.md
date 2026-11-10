@@ -69,6 +69,10 @@ baseline to be its merge base unless an explicitly audited parallel-release-line
 every owned path it has begun to occupy. Every invasive entry is then reviewed against that release
 and records it; the boundary check fails while one lags.
 
+## Fleet sidebar ownership
+
+Fleet builds use the owned persistent navigation shell and a single Pane view. Upstream ADR 0120's nested large-screen Pane sidebar and its setting are declined in Fleet; standalone Collie keeps them. Pane-first filtered labels are governed by `openspec/specs/fleet-native-navigation-sidebars/spec.md`.
+
 ## Fleet terminal associations
 
 Fleet's shared binding layer owns durable terminal identity for favorites and tags.

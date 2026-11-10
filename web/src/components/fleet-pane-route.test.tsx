@@ -18,6 +18,8 @@ interface PaneLoaderArgs {
   request?: Request;
 }
 
+vi.mock("@/hooks/use-width-class", () => ({ useWidthClass: () => "expanded" }));
+
 const paneLoader = vi.fn();
 vi.mock("@/lib/loaders", async (importOriginal) => ({
   ...(await importOriginal<typeof LoaderModule>()),
@@ -65,6 +67,8 @@ describe("native Pane frame across surface changes", () => {
   it("keeps identity and actions mounted, and restores fresh mirror text on return", async () => {
     const { container, router } = mount();
     await screen.findByText("fresh mirror output");
+    expect(container.querySelector('[data-slot="wide-sidebar"]')).toBeNull();
+    expect(container.querySelector('[data-slot="wide-layout"]')).toBeNull();
     const identity = screen.getByRole("button", { name: /Open .+ overview/ });
     const actions = screen.getByRole("button", { name: "Pane actions" });
     // The adopted Collie lays the identity button over its block and paints the lines beside it, so

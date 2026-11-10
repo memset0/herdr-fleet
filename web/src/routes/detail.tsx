@@ -27,7 +27,7 @@ import { useRootData } from "@/lib/route-data";
 // isn't in the snapshot yet, so we fall back to the `freshPane` passed via navigation state — the
 // composer stays live immediately while polling catches the snapshot up. Keyed by paneId so
 // switching panes remounts the composer fresh.
-export function DetailRoute({ renderContent }: { renderContent?: PaneContentRenderer | undefined } = {}) {
+export function DetailRoute({ renderContent, singlePane = false }: { renderContent?: PaneContentRenderer | undefined; singlePane?: boolean } = {}) {
   // SAFETY: this is the `/pane/:paneId` route's element and `paneLoader` returns `PaneData`; the
   // element does not mount until that loader has resolved. React Router types a data-mode
   // `useLoaderData()` as `unknown`.
@@ -45,7 +45,7 @@ export function DetailRoute({ renderContent }: { renderContent?: PaneContentRend
   // here changes.
   const widthClass = useWidthClass();
   // A half-open foldable splits the screen at the fold (ADR 0120, "Folded postures"); flat elsewhere.
-  const fold = usePaneFold(widthClass);
+  const fold = usePaneFold(singlePane ? "compact" : widthClass);
 
   // SAFETY: `location.state` is whatever the navigation that got here attached — `unknown` by
   // definition. Collie puts `{ freshPane }` there (components/agent-list's optimistic open), beside
@@ -195,7 +195,7 @@ export function DetailRoute({ renderContent }: { renderContent?: PaneContentRend
           onClose: () => nav.up(panePath(paneId, scope)),
         }}
         onBackArrow={backArrow}
-        inStrip={widthClass !== "compact"}
+        inStrip={!singlePane && widthClass !== "compact"}
         // Tabletop: the belt and the reply box stand in the bottom segment, under the fold.
         tabletop={fold === "tabletop"}
         // Pane to pane is a sideways move: it replaces, and the pane's way up comes along.
@@ -224,7 +224,7 @@ export function DetailRoute({ renderContent }: { renderContent?: PaneContentRend
           fold, a hinge that moves) changes an attribute and never remounts the pane view under the
           finger. Tabletop ends this box at the top segment's bottom edge (index.css). */}
       <div data-slot="fold-frame" data-fold={fold} className="flex min-h-0 flex-1 flex-col">
-        {widthClass === "compact" ? (
+        {singlePane || widthClass === "compact" ? (
           view
         ) : (
           <WideLayout widthClass={widthClass} fold={fold} paneId={paneId} scope={scope} agent={agent} focused={view} />

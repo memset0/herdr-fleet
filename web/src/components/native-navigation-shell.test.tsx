@@ -239,7 +239,7 @@ describe("NativeNavigationShell", () => {
     const herds = screen.getByRole("complementary", { name: "Herds" });
     await user.click(within(herds).getByRole("button", { name: "Expand Project" }));
     // The Space holds one Tab holding one Pane, so the Pane is drawn as one merged row.
-    const row = await within(herds).findByRole("button", { name: /^Main/ });
+    const row = await within(herds).findByRole("button", { name: /^claude · repo/ });
     const mark = () => row.querySelector('[data-slot="navigation-pinned"]');
     expect(mark()).toBeNull();
 
@@ -299,7 +299,7 @@ describe("NativeNavigationShell", () => {
     // because nobody named the Pane.
     await user.click(surface.getByRole("button", { name: "Expand Project" }));
     // The row also carries its state, so its accessible name is the pair.
-    await user.click(await surface.findByRole("button", { name: /^Main/ }));
+    await user.click(await surface.findByRole("button", { name: /^claude · repo/ }));
 
     expect(await screen.findByText("Pane route")).toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());
@@ -739,7 +739,7 @@ describe("the shell's command layer", () => {
     // is the thing that has to agree. `codex` is the favourite's own name, wherever in its row it
     // falls.
     expect(barOrder.map((text) => (text ?? "").includes("codex"))).toEqual([true, false]);
-    expect(railOrder.map((text) => (text ?? "").includes("Second"))).toEqual([true, false]);
+    expect(railOrder.map((text) => (text ?? "").includes("codex · repo"))).toEqual([true, false]);
   });
 
   it("renames from the keyboard in the panel, not in the row-actions surface", async () => {

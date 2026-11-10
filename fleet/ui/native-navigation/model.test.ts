@@ -81,8 +81,8 @@ describe("native navigation hierarchy", () => {
     expect(rows.map((row) => row.label)).toEqual(["Two", "One"]);
     // Two tabs survive, so the Tab level stays; `t2` groups two Panes and `t1` groups one, which
     // means the second Tab is replaced by its own Pane.
-    // `t1` holds one Pane, so its row is the elided one and takes the Tab's name.
-    expect(rows[0]?.children.map((row) => row.label)).toEqual(["Second", "First"]);
+    // `t1` holds one Pane, so its row is the elided one and keeps the pane display name.
+    expect(rows[0]?.children.map((row) => row.label)).toEqual(["Second", "Codex"]);
     expect(rows[0]?.children[0]?.children.map((row) => row.label)).toEqual(["Claude", "Shell"]);
     // A Tab that still groups several Panes names no Pane: pin and tags have no single target there.
     expect(rows[0]?.children[0]?.subject).toEqual({ kind: "tab", tabId: "t2" });
@@ -102,7 +102,7 @@ describe("native navigation hierarchy", () => {
       workspaces: [{ workspaceId: "w1", label: "One" }],
       tabs: [{ workspaceId: "w1", tabId: "t1", label: "Rename the tree" }],
       agents: [
-        { workspaceId: "w1", tabId: "t1", paneId: "p1", label: "root@host:~/repo", agent: "claude" },
+        { workspaceId: "w1", tabId: "t1", paneId: "p1", label: "claude · repo", agent: "claude" },
       ],
       shellPanes: [],
       selectedPaneId: "p1",
@@ -113,7 +113,7 @@ describe("native navigation hierarchy", () => {
     expect(space?.disclosureId).toBe(spaceDisclosureId("w1"));
     expect(space?.children).toHaveLength(1);
     expect(space?.children[0]).toMatchObject({
-      label: "Rename the tree",
+      label: "claude · repo",
       icon: "agent",
       agent: "claude",
       // What it OPENS is the Pane — a Tab has no route.
@@ -137,8 +137,7 @@ describe("native navigation hierarchy", () => {
           workspaceId: "w1",
           tabId: "t1",
           paneId: "p1",
-          label: "root@host:~/repo",
-          ownLabel: "guard work",
+          label: "guard work",
           agent: "claude",
         },
       ],
@@ -146,7 +145,7 @@ describe("native navigation hierarchy", () => {
     });
     expect(named.rows[0]?.children[0]?.children[0]?.label).toBe("guard work");
 
-    // …and a multiplexer's own ordinal is not a name, so the Tab's still wins.
+    // …and a multiplexer's own ordinal is not a name, so the normalized pane label still wins.
     const numbered = singleHost({
       ...HOST,
       workspaces: [{ workspaceId: "w1", label: "One" }],
@@ -156,14 +155,13 @@ describe("native navigation hierarchy", () => {
           workspaceId: "w1",
           tabId: "t1",
           paneId: "p1",
-          label: "root@host:~/repo",
-          ownLabel: "1",
+          label: "claude · repo",
           agent: "claude",
         },
       ],
       shellPanes: [],
     });
-    expect(numbered.rows[0]?.children[0]?.children[0]?.label).toBe("Rename the tree");
+    expect(numbered.rows[0]?.children[0]?.children[0]?.label).toBe("claude · repo");
   });
 
   test("keeps a group row and its folder only where more than one child survives", () => {
@@ -189,8 +187,8 @@ describe("native navigation hierarchy", () => {
       disclosureId: tabDisclosureId("w1", "t1"),
     });
     expect(children[0]?.target).toBeUndefined();
-    // `t2` holds one Pane and nobody named it, so its row takes the Tab's name.
-    expect(children[1]).toMatchObject({ label: "Single", icon: "agent" });
+    // `t2` holds one Pane and nobody named it, so its row keeps the pane display name.
+    expect(children[1]).toMatchObject({ label: "C", icon: "agent" });
     expect(children.filter((row) => row.icon === "group")).toHaveLength(1);
     expect(tree.rows[0]?.children[0]?.icon).toBe("none");
   });

@@ -1,4 +1,3 @@
-import { operatorChosenName } from "../pane-naming.ts";
 import type { HostVersionEvidence } from "../version-evidence.ts";
 
 export const MAX_NAVIGATION_SPACES = 256;
@@ -21,21 +20,8 @@ export interface NavigationPaneInput {
   paneId: string;
   workspaceId: string;
   tabId: string;
-  /** Collie's own display name for the Pane, which may be a terminal- or Agent-supplied value. */
+  /** The filtered pane display name supplied by the Fleet shell. */
   label: string;
-  /**
-   * The name the OPERATOR gave this Pane, when they gave it one.
-   *
-   * It is carried separately from {@link label} because only this one is a name: `label` falls back
-   * through a session name, a terminal title and finally the Agent's own name, and on a herd where
-   * no Pane is named those values repeat across every sibling row. An elided row is named by this,
-   * then by the Tab it replaced — see {@link deriveNavigationTree}.
-   *
-   * A value that is only digits is NOT one: a multiplexer numbers the panes nobody named, so `"1"`
-   * is the counter answering rather than a person, and letting it win would hide the Tab's real
-   * name behind an ordinal. {@link operatorChosen} is where that is decided.
-   */
-  ownLabel?: string;
   agent: string;
   status?: NavigationStatus;
   kind?: "agent" | "shell";
@@ -364,7 +350,7 @@ function hostRow(
         return [
           {
             ...paneRow(only, selected, hostId),
-            label: operatorChosenName(only.ownLabel) ?? entry.tab.label,
+            label: only.label,
             subject: { kind: "tab", tabId: entry.tab.tabId, paneId: only.paneId },
           },
         ];

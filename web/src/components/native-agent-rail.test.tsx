@@ -16,6 +16,7 @@ function agent(paneId: string, overrides: Partial<AgentView> = {}): AgentView {
     workspaceNumber: 1,
     tabId: "t1",
     tabLabel: paneId,
+    paneLabel: overrides.paneLabel ?? overrides.tabLabel ?? paneId,
     agent: "claude",
     status: "working",
     cwd: "/repo",
@@ -82,7 +83,7 @@ describe("NativeAgentRail", () => {
   it("leads each row with where the work is and follows with what it is doing", () => {
     render(
       <NativeAgentRail
-        agents={[agent("p1", { tabLabel: "workshop", sessionName: "SSHFS support check", lastSeenAt: Date.now() })]}
+        agents={[agent("p1", { tabLabel: "different tab", paneLabel: "workshop", sessionName: "SSHFS support check", lastSeenAt: Date.now() })]}
         onOpen={vi.fn()}
       />,
     );
@@ -105,7 +106,7 @@ describe("NativeAgentRail", () => {
   it("truncates Space and work name together with one trailing ellipsis", () => {
     const space = "A long workspace name without a separate width cap";
     const work = "A long work name";
-    render(<NativeAgentRail agents={[agent("p1", { workspaceLabel: space, tabLabel: work })]} onOpen={vi.fn()} />);
+    render(<NativeAgentRail agents={[agent("p1", { workspaceLabel: space, paneLabel: work, tabLabel: "different tab" })]} onOpen={vi.fn()} />);
     const row = rows()[0]!;
     const heading = row.querySelector('[data-slot="native-agent-heading"]')!;
     expect(heading.textContent).toBe(`${space} · ${work}`);
@@ -117,17 +118,17 @@ describe("NativeAgentRail", () => {
     expect(heading.contains(row.querySelector('[data-slot="agent-pin"]'))).toBe(false);
   });
 
-  it("names a row by its Tab when the multiplexer numbered the Pane", () => {
+  it("filters a positional pane label without promoting its Tab", () => {
     // Two rows so the numbered Pane is the SECOND: its own shortcut badge then reads "2", and a
     // stray "1" in this row could only be the multiplexer's label leaking into the name.
     render(
       <NativeAgentRail
-        agents={[agent("p0", { tabLabel: "first" }), agent("p1", { paneLabel: "1", tabLabel: "workshop" })]}
+        agents={[agent("p0", { tabLabel: "first" }), agent("p1", { paneLabel: "1", sessionName: "Real pane work", tabLabel: "workshop" })]}
         onOpen={vi.fn()}
       />,
     );
     const row = rows()[1]!;
-    expect(within(row).getByText("workshop")).toBeInTheDocument();
+    expect(within(row).getByText("Real pane work")).toBeInTheDocument();
     expect(within(row).queryByText("1")).toBeNull();
   });
 

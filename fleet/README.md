@@ -751,3 +751,7 @@ The operator supplies both directions, including the lead-side projections of Co
 Install a supporting stable release before selecting this mode. Restart only the Fleet plugin through its ordinary Herdr action. The peer then supervises Collie and its optional terminal service, with no SSH child. Its status includes `transport=external`. A running supervisor means the local Fleet services are ready; it does not certify operator-owned network reachability. Verify connectivity through the lead's authenticated crew census.
 
 An unavailable external path does not prevent local service startup and never causes Fleet to create a tunnel or restart Collie. Restore the external projections through their own owner. To roll back, release conflicting operator projections, restore the prior stable release/configuration and restart only Fleet; preserve crew state and the multiplexer.
+
+## Sidebar ownership and pane names
+
+Fleet keeps its persistent hierarchy and Agent rails at every native route. The Pane route uses a single view inside this shell; upstream large-screen sidebars and their setting remain available only outside Fleet. Sidebar rows use filtered pane/session/terminal titles, with generic, stale, path and prompt titles falling back to program and directory. Single-pane tabs keep their existing actions and targets while displaying the pane name.

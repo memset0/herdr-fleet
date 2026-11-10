@@ -82,6 +82,7 @@ import { paneName } from "@/lib/pane-name";
 import { isReadOnly, type AgentView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isFleetBuild } from "@/lib/fleet-build";
+import { sidebarPaneName } from "../../../fleet/ui/sidebar-pane-name.ts";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
 import { FleetViewExperience } from "@/components/fleet-view-experience";
 
@@ -797,13 +798,9 @@ function toNavigationPane(pane: AgentView, isPinned: (pane: AgentView) => boolea
     paneId: pane.paneId,
     workspaceId: pane.workspaceId,
     tabId: pane.tabId,
-    label: paneName(pane),
+    label: sidebarPaneName(pane),
     agent: pane.agent,
   };
-  // The operator's own name for the Pane, and only that. `paneName` above already falls back
-  // through a session name, a sole tab's name, a terminal title and the Agent's own name; the model needs to know which
-  // of the two values was chosen by a person, because an elided row is named by a person's choice.
-  if (pane.paneLabel) result.ownLabel = pane.paneLabel;
   if (pane.status) result.status = pane.status;
   if (pane.kind) result.kind = pane.kind;
   if (isPinned(pane)) result.pinned = true;

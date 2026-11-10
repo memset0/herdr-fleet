@@ -84,5 +84,5 @@ export function FleetPaneRoute() {
     previous.current = surface;
     void revalidate();
   }, [surface, revalidate]);
-  return <DetailRoute renderContent={surface === "terminal" ? terminalContent : undefined} />;
+  return <DetailRoute singlePane renderContent={surface === "terminal" ? terminalContent : undefined} />;
 }

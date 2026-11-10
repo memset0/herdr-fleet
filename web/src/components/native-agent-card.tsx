@@ -2,7 +2,7 @@ import { PaneTagButton, PaneTagLine } from "@/components/fleet-pane-tags";
 import { Star } from "lucide-react";
 import type { ReactNode, HTMLAttributes } from "react";
 
-import { operatorChosenName } from "../../../fleet/ui/pane-naming.ts";
+import { sidebarPaneName } from "../../../fleet/ui/sidebar-pane-name.ts";
 import { AgentIcon } from "@/components/agent-icon";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -58,9 +58,8 @@ export const NATIVE_AGENT_SHORTCUT_LIMIT = 9;
  * the Space, then the name the operator gave this piece of work — and WHAT it is doing second. The
  * avatar carries the ordinal, because a key addresses a row on screen, not a heading.
  *
- * THE NAME ON LINE 1 is the same rule the hierarchy uses (fleet/ui/pane-naming.ts): the operator's
- * own name for the pane when they gave it one, and the Tab's otherwise — never a number the
- * multiplexer assigned, and never a terminal title, which line 2 already carries.
+ * THE NAME ON LINE 1 follows the filtered pane-name rule shared with the hierarchy. Tab names
+ * remain grouping metadata; redundant detail is omitted below.
  *
  * WHY NOT REUSE THE SHARED CARD. It serves the dashboard, the space view and the pane sheet through
  * four presentation props; a fifth that reverses its two lines stops being a variant. Collie's own
@@ -87,7 +86,7 @@ export function NativeAgentCard({
   // The shared surface encloses body and passive tags; controls remain independent siblings.
   const Shell = flat ? "div" : Card;
   const project = agent.workspaceLabel || agent.workspaceId;
-  const name = operatorChosenName(agent.paneLabel) ?? agent.tabLabel ?? agent.agent;
+  const name = sidebarPaneName(agent);
   const doing = unavailable ? ft("fleet.panel.unavailable") : secondaryLine(agent, name);
   const stamp = age === "seen" ? agent.lastSeenAt : age === "active" ? agent.lastActiveAt : undefined;
   const badge =

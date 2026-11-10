@@ -110,6 +110,7 @@ paths = [
   "web/src/components/fleet-pane-surface-toggle.tsx",
   "web/src/components/fleet-pane-surface-toggle.test.tsx",
   "web/src/components/fleet-pane-route.tsx",
+  "web/src/components/fleet-sidebar-layout.test.tsx",
   "web/src/components/fleet-pane-route.test.tsx",
   "web/src/components/fleet-pane-fit.tsx",
   "web/src/components/fleet-pane-fit.test.tsx",
@@ -337,9 +338,9 @@ intent = "Forward an optional Pane body while retaining the native route metadat
 strategy = "adapt"
 review = "every-upstream-sync"
 reviewed = "v1.28.0"
-paths = ["web/src/routes/detail.tsx#renderContent"]
+paths = ["web/src/routes/detail.tsx#singlePane"]
 verify = ["web/src/components/fleet-pane-route.test.tsx", "web/src/routes/detail.test.tsx"]
-reason = "The native route already owns scoped Pane lookup, fresh-Pane fallback, closed-Pane recovery and navigation. Forwarding one optional typed content renderer into AgentChat preserves all of them and keeps the same frame mounted across surface changes. Reimplementing that frame in a terminal-only route duplicated its header and omitted identity/actions; this port is narrower than extracting or copying the header. AgentChat itself is attributed to native-pane-page-port, whose rationale covers the matching body slot and the Chat gate. Collie 1.23 wraps the route in its walky log provider and subagent sheet; `renderContent` is forwarded inside them unchanged."
+reason = "The native route already owns scoped Pane lookup, fresh-Pane fallback, closed-Pane recovery and navigation. Forwarding one optional typed content renderer into AgentChat preserves all of them and keeps the same frame mounted across surface changes. Reimplementing that frame in a terminal-only route duplicated its header and omitted identity/actions; this port is narrower than extracting or copying the header. AgentChat itself is attributed to native-pane-page-port, whose rationale covers the matching body slot and the Chat gate. Collie 1.23 wraps the route in its walky log provider and subagent sheet; `renderContent` is forwarded inside them unchanged. The optional singlePane flag lets the Fleet-owned route decline the nested upstream WideLayout while other callers retain it."
 
 [[invasive]]
 id = "authenticated-navigation-cache"
@@ -757,3 +758,13 @@ reviewed = "v1.28.0"
 paths = ["scripts/check-crew-wire.sh#<<<"]
 verify = ["scripts/pre-commit.test.sh"]
 reason = "With pipefail, an early grep -q match closes a large staged-path producer with SIGPIPE, falsely rejecting the staged contract. Here-strings preserve the existing exact predicates without a producer pipe. The pre-commit hook uses the same form for its existing changelog and functional-path gates."
+
+[[invasive]]
+id = "fleet-declines-upstream-layout-setting"
+intent = "Expose only Fleet sidebar controls in Fleet builds."
+strategy = "adapt"
+review = "every-upstream-sync"
+reviewed = "v1.28.0"
+paths = ["web/src/components/wide-layout-control.tsx#isFleetBuild"]
+verify = ["web/src/components/wide-layout-control.test.tsx", "web/src/components/fleet-sidebar-layout.test.tsx"]
+reason = "An early build-gated return hides the upstream sidebar setting whose layout the Fleet route declines. Its hooks and standalone upstream behavior remain unchanged."
