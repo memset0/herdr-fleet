@@ -24,7 +24,7 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ### Fixed
 
-- **Core cold starts wait for a bounded readiness window.** Daemon, control and launch-lock budgets agree, while ready children return immediately and legacy TUI timing is preserved. ([f4f289606](https://github.com/memset0/herdr-fleet/commit/f4f289606))
+- **Core cold starts wait for a bounded readiness window.** Daemon, control and launch-lock budgets agree, while ready children return immediately and legacy TUI timing is preserved. Every peer must redeploy. ([f4f289606](https://github.com/memset0/herdr-fleet/commit/f4f289606))
 
 ## [4.0.0] - 2026-11-10
 

@@ -9,3 +9,7 @@
 - Fork boundary, privacy audit, strict change validation and version consistency: pass. No upstream-owned file changed.
 
 The minor release and operator acceptance are recorded after completion; operational observations remain outside this public tree.
+
+The functional commit passed selected lead acceptance before cutting the minor. Release 4.1.0 has an annotated tag on its separate release commit; 4.0.0 remains unchanged. The standard production build passed. Focused web version/header/PWA coverage passed 21 tests across three files; the unchanged UI corpus was already covered by the adoption baseline. No private deployment values are recorded here.
+
+The selected Core deployment passed actual cold-start acceptance under the new bounded policy. Authenticated reads and unchanged terminal-runtime continuity were verified by the separate operator workflow; its records remain operator-local. The public source and delta set passed final strict validation and privacy checks.
