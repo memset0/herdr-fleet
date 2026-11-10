@@ -135,6 +135,9 @@ export interface PreflightInput {
   readonly tagObject: string | null;
   readonly commit: string;
   readonly mergeBase: string;
+  /** Explicit operator acknowledgement: adopted:target:common-ancestor. */
+  readonly releaseLine?: string;
+  readonly baselineInHead?: boolean;
   /** Paths the target release changes, measured from the adopted baseline; both sides of a rename. */
   readonly changedPaths: ReadonlySet<string>;
   /** Every path the target release renamed, mapped to the path it arrived at. */
@@ -184,7 +187,10 @@ export function planUpstreamAdoption(manifest: ForkManifest, input: PreflightInp
   if (input.tagObject === null) {
     return refuse("the target is not an annotated tag, so the release it names cannot be pinned");
   }
-  if (input.mergeBase !== manifest.upstream.commit) {
+  if (input.mergeBase !== manifest.upstream.commit && !(
+    input.baselineInHead === true && input.mergeBase !== "" &&
+    input.releaseLine === `${manifest.upstream.commit}:${input.commit}:${input.mergeBase}`
+  )) {
     return refuse(
       `the recorded baseline ${manifest.upstream.commit} is not the merge base of this tree and the target (${input.mergeBase})`,
     );
@@ -337,13 +343,15 @@ function activeChanges(root: string): string[] {
   }
 }
 
-export function preflightInput(root: string, ref: string, allowActiveChanges: boolean, manifest: ForkManifest): PreflightInput {
+export function preflightInput(root: string, ref: string, allowActiveChanges: boolean, manifest: ForkManifest, releaseLine?: string): PreflightInput {
   const dirty = lines(git(root, ["status", "--porcelain", "--untracked-files=all"]));
   const tagObject = tryGit(root, ["cat-file", "-t", ref])?.trim() === "tag" ? tryGit(root, ["rev-parse", ref])?.trim() ?? null : null;
   const commit = tryGit(root, ["rev-parse", `${ref}^{commit}`])?.trim() ?? "";
   if (commit === "") throw new Error(`the target ref ${ref} does not resolve to a commit`);
   const mergeBase = tryGit(root, ["merge-base", "HEAD", commit])?.trim() ?? "";
-  const comparable = tagObject !== null && mergeBase === manifest.upstream.commit;
+  const baselineInHead = tryGit(root, ["merge-base", "--is-ancestor", manifest.upstream.commit, "HEAD"]) !== null;
+  const reconciled = baselineInHead && mergeBase !== "" && releaseLine === `${manifest.upstream.commit}:${commit}:${mergeBase}`;
+  const comparable = tagObject !== null && (mergeBase === manifest.upstream.commit || reconciled);
   // --find-renames is passed explicitly so the operator's diff.renames setting cannot change the report.
   const diff = comparable
     ? parseTargetDiff(git(root, ["diff", "--name-status", "--find-renames", manifest.upstream.commit, commit]))
@@ -355,6 +363,8 @@ export function preflightInput(root: string, ref: string, allowActiveChanges: bo
     tagObject,
     commit,
     mergeBase,
+    releaseLine,
+    baselineInHead,
     changedPaths: diff.changed,
     renames: diff.renames,
     targetFiles: new Set(comparable ? lines(git(root, ["ls-tree", "-r", "--name-only", commit])) : []),
@@ -365,15 +375,16 @@ export async function preflightUpstreamAdoption(
   root: string,
   ref: string,
   allowActiveChanges: boolean,
+  releaseLine?: string,
 ): Promise<{ report: PreflightReport; manifest: ForkManifest; input: PreflightInput }> {
   const manifest = await loadForkManifest(resolve(root, "FORK.toml"));
-  const input = preflightInput(root, ref, allowActiveChanges, manifest);
+  const input = preflightInput(root, ref, allowActiveChanges, manifest, releaseLine);
   return { report: planUpstreamAdoption(manifest, input), manifest, input };
 }
 
 function usage(message: string): never {
   console.error(`fork boundary: ${message}`);
-  console.error("usage: check-fork.ts [--target <ref> [--allow-active-changes]]");
+  console.error("usage: check-fork.ts [--target <ref> [--allow-active-changes] [--release-line adopted:target:common-ancestor]]");
   process.exit(2);
 }
 
@@ -382,12 +393,18 @@ if (import.meta.main) {
   const argv = Bun.argv.slice(2);
   let target: string | null = null;
   let allowActiveChanges = false;
+  let releaseLine: string | undefined;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--target") {
       const value = argv[index + 1];
       if (value === undefined || value.startsWith("--")) usage("--target needs a ref");
       target = value;
+      index += 1;
+    } else if (argument === "--release-line") {
+      const value = argv[index + 1];
+      if (value === undefined || !/^[a-f0-9]{40}:[a-f0-9]{40}:[a-f0-9]{40}$/.test(value)) usage("--release-line needs adopted:target:common-ancestor full commits");
+      releaseLine = value;
       index += 1;
     } else if (argument === "--allow-active-changes") {
       allowActiveChanges = true;
@@ -396,6 +413,7 @@ if (import.meta.main) {
     }
   }
   if (target === null) {
+    if (releaseLine !== undefined) usage("--release-line only applies to --target");
     if (allowActiveChanges) usage("--allow-active-changes only applies to --target");
     const result = await checkForkRepository(root);
     if (result.errors.length > 0) {
@@ -405,13 +423,14 @@ if (import.meta.main) {
       console.log(`fork boundary: ${result.owned.size} owned paths, ${result.invasive.size} invasive paths`);
     }
   } else {
-    const { report, manifest, input } = await preflightUpstreamAdoption(root, target, allowActiveChanges);
+    const { report, manifest, input } = await preflightUpstreamAdoption(root, target, allowActiveChanges, releaseLine);
     if (report.errors.length > 0) {
       for (const error of report.errors) console.error(`upstream adoption: ${error}`);
       process.exitCode = 1;
     } else {
       console.log(`upstream adoption: ${manifest.upstream.tag} (${manifest.upstream.commit}) -> ${target} (${input.commit})`);
       console.log(`  tag object ${input.tagObject}`);
+      if (input.releaseLine !== undefined) console.log(`  authorized release-line reconciliation ${input.releaseLine}; actual common ancestor ${input.mergeBase}`);
       console.log(`  ${report.disturbed.length} invasive entries disturbed by this release:`);
       for (const entry of report.disturbed) {
         console.log(`    ${entry.id}: ${entry.paths.length} path(s)`);

@@ -224,6 +224,17 @@ describe("upstream adoption preflight", () => {
     expect(plan({ mergeBase: "0".repeat(40) }).errors[0]).toContain(`the recorded baseline ${baseline} is not the merge base`);
   });
 
+  test("parallel release lines require exact acknowledgement and ancestry", () => {
+    const common = "0".repeat(40);
+    const target = "ba39c05c6350a52bcb0a88f118cd0680ff85a1c5";
+    const releaseLine = `${baseline}:${target}:${common}`;
+    expect(plan({ mergeBase: common, baselineInHead: true, releaseLine }).errors).toEqual([]);
+    expect(plan({ mergeBase: common, baselineInHead: false, releaseLine }).errors).not.toEqual([]);
+    expect(plan({ mergeBase: common, baselineInHead: true, releaseLine: `${baseline}:${target}:${baseline}` }).errors).not.toEqual([]);
+    expect(plan({ mergeBase: "", baselineInHead: true, releaseLine }).errors).not.toEqual([]);
+    expect(plan({ mergeBase: common, baselineInHead: true }).errors).not.toEqual([]);
+  });
+
   test("refuses an active change until the operator authorizes it, then proceeds", () => {
     expect(plan({ activeChanges: ["attach-the-browser"] }).errors[0]).toContain("proceed only with the operator's authorization");
     const authorized = plan({ activeChanges: ["attach-the-browser"], allowActiveChanges: true });

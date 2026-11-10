@@ -65,7 +65,7 @@ bookkeeping, and the judgement is yours.
 **Adopting a newer Collie release follows a written procedure, not judgement at the time** —
 `openspec/specs/fleet-upstream-sync/spec.md`. Its preflight is
 `bun scripts/check-fork.ts --target <tag>`, which resolves the release, requires our recorded
-baseline to be its merge base, refuses a dirty tree, and reports every port the release disturbs and
+baseline to be its merge base unless an explicitly audited parallel-release-line acknowledgement binds the adopted release, target and actual common ancestor, refuses a dirty tree, and reports every port the release disturbs and
 every owned path it has begun to occupy. Every invasive entry is then reviewed against that release
 and records it; the boundary check fails while one lags.
 

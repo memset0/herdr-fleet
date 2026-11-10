@@ -19,6 +19,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Changed
+
+- **Upstream adoption can reconcile audited parallel release lines.** The acknowledgement pins the adopted release, target and actual common ancestor without changing provenance.
+
 ## [3.24.3] - 2026-10-24
 
 ### Added

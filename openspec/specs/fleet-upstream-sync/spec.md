@@ -14,9 +14,7 @@ NOT target a branch, a commit selected because it looked current, or any commit 
 upstream's default branch moves, and a fork that adopts a moving reference can never say afterwards
 what it is a fork of.
 
-The commit recorded in `FORK.toml` SHALL be the merge base of the current tree and the selected
-target. When it is not, the recorded baseline is not the ancestor it claims to be, and the adoption
-MUST stop rather than proceed on a manifest that describes a history the repository does not have.
+The commit recorded in `FORK.toml` SHALL normally be the merge base of the current tree and the selected target. A disagreement MUST stop the adoption by default. An explicitly authorized release-line reconciliation MAY proceed only when the recorded adopted commit is an ancestor of the current tree, both releases share a verified earlier upstream ancestor, and an audit records that ancestor, both release identities, every upstream-only change on the adopted release line, and its disposition in the target. Preflight SHALL require an explicit acknowledgement bound to the exact recorded release, target and merge base; an acknowledgement for another tuple MUST fail. It MUST NOT silently change the recorded baseline, rewrite history, flatten the adoption, or treat an unrelated history as a release-line reconciliation.
 
 Once accepted, the adopted tag and its dereferenced commit SHALL be recorded in `FORK.toml`, and
 `UPSTREAM.md` SHALL gain one row stating which release of this product corresponds to that Collie
@@ -32,11 +30,19 @@ release. Adopting a release SHALL NOT move this product's own version.
 
 #### Scenario: The recorded baseline is not the merge base
 - **WHEN** the commit recorded in `FORK.toml` is not the merge base of the current tree and the target
-- **THEN** the adoption stops and reports the disagreement rather than merging against an unrelated baseline
+- **THEN** the adoption stops and reports the disagreement unless the exact release-line reconciliation has been explicitly authorized and audited
 
 #### Scenario: An adoption is accepted
 - **WHEN** the adopted release is recorded
 - **THEN** `FORK.toml` names the new tag and commit, `UPSTREAM.md` gains one correspondence row, and this product's version is unchanged
+
+#### Scenario: Upstream maintained parallel release lines
+- **WHEN** an explicitly authorized audit proves the recorded adoption is in the current tree and records the exact earlier common ancestor and the disposition of every adopted-line change
+- **THEN** preflight reports both release identities and that ancestor, preserves the recorded provenance, and permits only the acknowledged exact target
+
+#### Scenario: A reconciliation acknowledgement is stale or unrelated
+- **WHEN** its recorded release, target or common ancestor differs, or the recorded adoption is not in the current tree
+- **THEN** preflight refuses before merge and leaves provenance untouched
 
 ### Requirement: A preflight proves the ground before the merge starts
 
