@@ -7,7 +7,7 @@
 
 ## 2. Exact upstream adoption
 
-- [ ] 2.1 Merge exact v1.28.0 as real second-parent ancestry; review every conflict against the upstream-line audit and preserve current downstream behavior, as verified by the complete conflict inventory and merge-parent check.
+- [x] 2.1 Merge exact v1.28.0 as real second-parent ancestry; review every conflict against the upstream-line audit and preserve current downstream behavior, as verified by the complete conflict inventory and merge-parent check.
 - [x] 2.2 Review every invasive entry with keep/adapt/replace/drop evidence and its declared verification; update FORK.toml and truthful provenance, retaining the upstream changelog's verbatim prefix and historical seam, then pass the fork boundary check.
 - [x] 2.3 Reconcile send patience with upstream late-probe, partial-screen and post-record-token fixes; verify delayed success, immediate fast-path success, stale/draft refusal, residue cleanup and no deferred send holds with focused tests.
 - [x] 2.4 Recompute complete send, forwarding and browser deadlines; test the longest enabled recovery path, slow writes, bounded polling gaps and uncertain outcomes without automatic resend.
@@ -26,6 +26,8 @@
 
 - [x] 4.1 Pass both typechecks, full-tree lint, root/web/Fleet suites, version consistency, all invasive-entry checks and public-tree/privacy audits; record exact commands and results.
 - [x] 4.2 Exercise an isolated native Core end to end for screen reads, patient sends, raw terminal attachment, manual fit, browser exclusivity and Fleet restart without killing terminals; retain generic evidence only.
-- [ ] 4.3 Prepare the selected deployment's snapshot, exact candidate and rollback outside the public source tree; obtain any separately required service/interruption approval, then verify authenticated Core Web access and unchanged terminal processes after switching only Fleet.
-- [ ] 4.4 Publish the explicitly owner-authorized major release 4.0.0; verify all version files, changelog and the annotated product tag agree before publishing the adoption, without publishing upstream tags or creating a GitHub Release.
-- [ ] 4.5 After complete acceptance and publication, validate/sync/archive only this change; report product, source push and actual deployment states separately, leaving unrelated active changes untouched.
+- [x] 4.3 Prepare the selected deployment's snapshot, exact candidate and rollback outside the public source tree; obtain any separately required service/interruption approval, then verify authenticated Core Web access and unchanged terminal processes after switching only Fleet.
+- [x] 4.4 Publish the explicitly owner-authorized major release 4.0.0; verify all version files, changelog and the annotated product tag agree before publishing the adoption, without publishing upstream tags or creating a GitHub Release.
+- [x] 4.5 Prepare the fully accepted source change for spec synchronization and archive: validate its exact delta set, public-safe evidence and boundary, and preserve unrelated active changes.
+
+After these acceptance tasks, the repository lifecycle synchronizes and archives this change, then commits and pushes that archive. Deployment orchestration outside the public source tree retains its own remaining member acceptance gates.

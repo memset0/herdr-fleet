@@ -84,7 +84,7 @@ recorded there rather than resolved silently at the call site.
 - **THEN** the root instruction file governs and the conflict is written down there
 
 ### Requirement: Herdr owns the role-aware Fleet runtime lifecycle
-The plugin SHALL run the exact child composition selected by its validated Fleet configuration and
+The plugin and the standalone Core entrypoint SHALL run the exact child composition selected by its validated Fleet configuration and
 native Pack authority state without requiring Collie's Tailscale publication or a separately
 installed operating-system service.
 
@@ -101,6 +101,8 @@ A Peer selecting `ssh-reverse` whose configuration declares no terminal endpoint
 this change and MUST NOT start a terminal-service child. The terminal-service child SHALL be permitted
 to stand itself down while idle without that being reported as a failure, and a later request SHALL
 bring it back under the same supervision.
+
+Core-backed standalone execution SHALL use the same validated role composition and trust state without requiring a TUI server or invoking a TUI plugin action. It SHALL manage only Fleet children and SHALL neither start nor stop the Core terminal runtime.
 
 Start, stop, restart, status, and failed-start cleanup MUST act only on the plugin-owned generation,
 MUST report the configured role and exact child set without secrets, and MUST leave unrelated Herdr
@@ -140,6 +142,10 @@ link process, terminal server, published projection, or terminal endpoint.
 #### Scenario: An external peer starts
 - **WHEN** an enrolled peer selects external transport
 - **THEN** Fleet supervises only Collie and its optional terminal service, status explicitly declares external transport, and the multiplexer and operator-owned network processes remain untouched
+
+#### Scenario: Core-backed execution without a TUI
+- **WHEN** an operator selects the standalone Core entrypoint on a machine with no TUI installed
+- **THEN** Fleet runs its validated role composition, lifecycle commands operate only on Fleet, and Core terminals continue across a Fleet restart
 
 ### Requirement: Upstream Tailscale support is retained but inactive in the Fleet profile
 

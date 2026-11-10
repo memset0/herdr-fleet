@@ -1,8 +1,13 @@
 # Herdr Fleet downstream runtime
 
-Herdr Fleet adds an authenticated Herdr plugin boundary to the exact Collie baseline recorded in
+Herdr Fleet adds an authenticated Gateway and runtime boundary to the exact Collie baseline recorded in
 [`FORK.toml`](../FORK.toml). Collie's PWA, bridge API, multiplexer adapters, Pack implementation, and
 standalone deployment alternatives remain upstream behavior.
+
+Fleet 4.0 supports standalone herdr-core execution for Herdr App terminals. Follow the
+[Core migration guide](migrations/core-v4.md) for explicit backend selection, direct lifecycle
+commands and rollback. The legacy TUI adapter remains available separately. Todoist integration
+is retired; its external tasks and operator-owned data are not deleted.
 
 ## Shared selection and touch Agent panel
 
@@ -215,18 +220,19 @@ resolve an upstream plugin identity from a constant and pick a host supervision 
 service manager, so one of them writes a foreign configuration directory and registers a service
 unit — and a Fleet peer runs rootless on hosts that have no service manager at all.
 
-Fleet installs, enables and restarts no operating-system service anywhere. Its lifecycle is the
-Herdr plugin's: children are supervised by the plugin's own generation-owned supervisor, and a
-membership change reaches a running runtime when that plugin is restarted.
+Fleet installs, enables and restarts no operating-system service anywhere. Its generation-owned
+supervisor controls the children. Legacy TUI installs reach it through plugin actions; standalone
+Core installs call the direct Fleet control entrypoint. A membership change reaches a running
+runtime when Fleet is restarted, without restarting either terminal runtime.
 
 Enrolling the first peer is an explicit, ordered operator sequence. Nothing about starting,
 restarting or supervising a runtime creates, spends or alters membership.
 
 ```text
 on the lead    herdr-fleet pack-invite --label <name>
-               herdr plugin action invoke restart --plugin memset0.herdr-fleet
+               "$HERDR_PLUGIN_ROOT/scripts/herdr-fleet.sh" restart
 on the peer    herdr-fleet pack-join --lead <origin> --address <host:port> -
-on the lead    herdr plugin action invoke restart --plugin memset0.herdr-fleet
+on the lead    "$HERDR_PLUGIN_ROOT/scripts/herdr-fleet.sh" restart
 ```
 
 `--lead` is the peer's own loopback projection of the lead's Collie, so the plaintext hop lives inside

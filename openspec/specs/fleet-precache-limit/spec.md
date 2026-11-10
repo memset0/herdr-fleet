@@ -1,7 +1,7 @@
 # fleet-precache-limit Specification
 
 ## Purpose
-TBD - created by archiving change fleet-precache-limit. Update Purpose after archive.
+Define the Fleet service-worker asset size boundary so the complete web application remains installable offline while oversized bundles still fail visibly.
 
 ## Requirements
 
