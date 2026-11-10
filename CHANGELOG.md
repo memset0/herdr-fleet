@@ -20,9 +20,11 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-11-10
+
 ### Fixed
 
-- **Fleet keeps its own sidebars and filtered pane names.** The nested upstream desktop sidebar is omitted; hierarchy and Agent rows follow pane titles instead of tab labels.
+- **Fleet keeps its own sidebars and filtered pane names.** The nested upstream desktop sidebar is omitted; hierarchy and Agent rows follow pane titles instead of tab labels. ([357cf0c47](https://github.com/memset0/herdr-fleet/commit/357cf0c47))
 
 ## [4.1.0] - 2026-11-10
 
