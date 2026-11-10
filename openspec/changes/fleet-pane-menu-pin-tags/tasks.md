@@ -11,6 +11,6 @@
 
 ## 3. Verification and audits
 
-- [ ] 3.1 Add the CHANGELOG `[Unreleased]` line; run root and web typecheck, `bun run lint`, and the focused web tests above
+- [x] 3.1 Add the CHANGELOG `[Unreleased]` line; run root and web typecheck, `bun run lint`, and the focused web tests above
 - [ ] 3.2 Build on the lead and check the menu visually over CDP (pane row, merged row, group row)
-- [ ] 3.3 Run `bun scripts/check-fork.ts` and the private-facts guard; confirm no upstream-owned path changed and `FORK.toml` needs no entry
+- [x] 3.3 Run `bun scripts/check-fork.ts` and the private-facts guard; confirm no upstream-owned path changed and `FORK.toml` needs no entry

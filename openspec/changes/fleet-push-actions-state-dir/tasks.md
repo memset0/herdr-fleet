@@ -6,4 +6,4 @@
 ## 2. Verification
 
 - [x] 2.1 Add the CHANGELOG line; run `bun run typecheck`, `bun run lint` and `bun scripts/check-fork.ts`
-- [ ] 2.2 After the lead deploy, invoke `herdr plugin action invoke push-test --plugin memset0.herdr-fleet` and confirm it reports delivery to the subscribed device
+- [x] 2.2 After the lead deploy, invoke `herdr plugin action invoke push-test --plugin memset0.herdr-fleet` and confirm it reports delivery to the subscribed device
