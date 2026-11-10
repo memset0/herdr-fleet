@@ -20,6 +20,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Standalone builds retain their upstream desktop layout.** The single-pane override is limited to Fleet builds.
+
 ## [4.1.1] - 2026-11-10
 
 ### Fixed

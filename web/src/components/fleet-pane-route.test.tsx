@@ -59,11 +59,19 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  vi.stubEnv("VITE_HERDR_FLEET", "1");
   paneSurfaceStore.set("mirror");
   paneLoader.mockReset();
 });
 
 describe("native Pane frame across surface changes", () => {
+  it("keeps the upstream sidebar in a non-Fleet build", async () => {
+    vi.stubEnv("VITE_HERDR_FLEET", "0");
+    const { container, router } = mount();
+    await screen.findByText("fresh mirror output");
+    expect(container.querySelector('[data-slot="wide-sidebar"], [data-slot="rail"]')).not.toBeNull();
+    router.dispose();
+  });
   it("keeps identity and actions mounted, and restores fresh mirror text on return", async () => {
     const { container, router } = mount();
     await screen.findByText("fresh mirror output");

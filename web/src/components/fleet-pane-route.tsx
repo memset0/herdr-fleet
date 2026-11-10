@@ -5,6 +5,7 @@ import type { PaneContentProps } from "@/components/agent-chat";
 import { paneLoader, type PaneData } from "@/lib/loaders";
 import { internScope, scopeFromUrl } from "@/lib/scope";
 import { DetailRoute } from "@/routes/detail";
+import { isFleetBuild } from "@/lib/fleet-build";
 import {
   DEFAULT_PANE_SURFACE,
   paneSurfaceStore,
@@ -84,5 +85,5 @@ export function FleetPaneRoute() {
     previous.current = surface;
     void revalidate();
   }, [surface, revalidate]);
-  return <DetailRoute singlePane renderContent={surface === "terminal" ? terminalContent : undefined} />;
+  return <DetailRoute singlePane={isFleetBuild()} renderContent={surface === "terminal" ? terminalContent : undefined} />;
 }

@@ -2,8 +2,10 @@
 
 - Fleet suite: 1,647 pass, zero failures.
 - Naming/model: 13 pass, covering pane precedence, Codex title filtering, decorated paths, prompts, stale/generic names and unchanged Tab action subjects.
-- Six focused Web files: 78 pass and one timing-sensitive Pane fixture failure; its complete five-case file subsequently passed with the same expanded-width assertion. Combined coverage verifies shell navigation/ordering, Agent presentation, standalone upstream settings/routes and Fleet sidebar suppression.
+- Six focused Web files: all 79 tests passed in a clean full rerun, covering expanded-width Fleet routes, upstream standalone routes/settings, hierarchy navigation and Agent presentation.
 - Both typechecks, full-tree lint, strict change validation, boundary and privacy audits passed.
 - No backend or peer behavior changes. Patch axis: 4.1.0 to 4.1.1; only the lead redeploys.
 
 Lead acceptance is recorded after publication; operator-specific evidence remains outside the public source.
+
+The final build-boundary regression passed all eight cases across three files, explicitly checking Fleet single-pane rendering and preserved standalone upstream sidebar/settings behavior. Initial 4.1.1 is retained; final delivery uses patch 4.1.2 with the explicit build gate.
