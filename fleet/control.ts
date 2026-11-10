@@ -8,6 +8,7 @@ import { validatePackAuthority } from "./pack-authority.ts";
 import { assertLinkFiles } from "./pack-reachability.ts";
 import { isUnavailableControlError, sendControl, type ControlOperation, type ControlResponse } from "./protocol.ts";
 import { collieSpecEnv, ensurePrivateRuntime, resolveRuntimePaths, sanitizedDaemonEnv } from "./runtime.ts";
+import { startupPolicy, type StartupPolicy } from "./startup-policy.ts";
 
 const sleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
@@ -58,7 +59,7 @@ async function waitForRelease(socketPath: string, generation: string): Promise<v
   throw new Error("older supervisor did not release its control socket");
 }
 
-async function launchLock(lockDir: string, socketPath: string, generation: string): Promise<boolean> {
+async function launchLock(lockDir: string, socketPath: string, generation: string, startup: StartupPolicy): Promise<boolean> {
   try {
     await mkdir(lockDir, { mode: 0o700 });
     return true;
@@ -66,12 +67,12 @@ async function launchLock(lockDir: string, socketPath: string, generation: strin
     if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
   }
   try {
-    await waitForReady(socketPath, generation, 12_000);
+    await waitForReady(socketPath, generation, startup.controlMs);
     return false;
   } catch {
     let old = false;
     try {
-      old = Date.now() - (await stat(lockDir)).mtimeMs > 15_000;
+      old = Date.now() - (await stat(lockDir)).mtimeMs > startup.staleLockMs;
     } catch {
       old = true;
     }
@@ -86,6 +87,7 @@ async function ensureSupervisor(): Promise<ControlResponse> {
   const paths = resolveRuntimePaths();
   await ensurePrivateRuntime(paths);
   const config = await loadFleetConfig(paths.configPath);
+  const startup = startupPolicy(config);
   await validatePackAuthority(config, paths.collieStateDir);
   assertCollieConfigFilesCede(collieSpecEnv(config, paths, sanitizedDaemonEnv(process.env)));
   if (config.schemaVersion === 2 && config.role === "peer" && config.transport.mode === "ssh-reverse") {
@@ -94,8 +96,8 @@ async function ensureSupervisor(): Promise<ControlResponse> {
   const current = await query(paths.socketPath, "ensure", paths.generation);
   if (current?.status === "running" && current.generation === paths.generation) return current;
   if (current?.status === "replacing") await waitForRelease(paths.socketPath, paths.generation);
-  if (!(await launchLock(paths.lockDir, paths.socketPath, paths.generation))) {
-    return await waitForReady(paths.socketPath, paths.generation);
+  if (!(await launchLock(paths.lockDir, paths.socketPath, paths.generation, startup))) {
+    return await waitForReady(paths.socketPath, paths.generation, startup.controlMs);
   }
   try {
     const afterLock = await query(paths.socketPath, "ensure", paths.generation);
@@ -104,7 +106,7 @@ async function ensureSupervisor(): Promise<ControlResponse> {
       afterLock?.generation === paths.generation &&
       (afterLock.status === "starting" || afterLock.status === "restarting")
     ) {
-      return await waitForReady(paths.socketPath, paths.generation);
+      return await waitForReady(paths.socketPath, paths.generation, startup.controlMs);
     }
     await rm(paths.socketPath, { force: true });
     const child = spawn(process.execPath, ["run", join(paths.pluginRoot, "fleet", "daemon.ts")], {
@@ -120,7 +122,7 @@ async function ensureSupervisor(): Promise<ControlResponse> {
       },
     });
     child.unref();
-    return await waitForReady(paths.socketPath, paths.generation);
+    return await waitForReady(paths.socketPath, paths.generation, startup.controlMs);
   } finally {
     await rm(paths.lockDir, { recursive: true, force: true });
   }
@@ -156,7 +158,10 @@ async function main(): Promise<void> {
     return;
   }
   console.log(formatStatus(result));
-  if (operation === "restart") console.log(formatStatus(await waitForReady(paths.socketPath, paths.generation)));
+  if (operation === "restart") {
+    const startup = startupPolicy(await loadFleetConfig(paths.configPath));
+    console.log(formatStatus(await waitForReady(paths.socketPath, paths.generation, startup.controlMs)));
+  }
 }
 
 if (import.meta.main) {

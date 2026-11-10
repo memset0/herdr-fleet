@@ -20,6 +20,10 @@ not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `w
 
 ## [Unreleased]
 
+### Fixed
+
+- **Core cold starts wait for a bounded readiness window.** Daemon, control and launch-lock budgets agree, while ready children return immediately and legacy TUI timing is preserved.
+
 ## [4.0.0] - 2026-11-10
 
 ### Added

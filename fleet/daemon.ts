@@ -10,9 +10,9 @@ import { validatePackAuthority } from "./pack-authority.ts";
 import { assertLinkFiles, probeEndpoint } from "./pack-reachability.ts";
 import { parseControlRequest, type ControlResponse } from "./protocol.ts";
 import { childSpecs, collieSpecEnv, ensurePrivateRuntime, resolveRuntimePaths } from "./runtime.ts";
+import { startupPolicy, waitForStartup } from "./startup-policy.ts";
 
 const LOG_LIMIT_BYTES = 256 * 1024;
-const READY_TIMEOUT_MS = 10_000;
 
 async function lifecycleLog(path: string, message: string): Promise<void> {
   try {
@@ -44,6 +44,7 @@ async function main(): Promise<void> {
   const paths = resolveRuntimePaths();
   await ensurePrivateRuntime(paths);
   const config = await loadFleetConfig(paths.configPath);
+  const startup = startupPolicy(config);
   await validatePackAuthority(config, paths.collieStateDir);
   assertCollieConfigFilesCede(collieSpecEnv(config, paths, process.env));
   if (config.schemaVersion === 2 && config.role === "peer" && config.transport.mode === "ssh-reverse") {
@@ -97,15 +98,8 @@ async function main(): Promise<void> {
   };
 
   const waitForReadiness = async () => {
-    const deadline = Date.now() + READY_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      if (await readiness()) {
-        ready = true;
-        return;
-      }
-      await Bun.sleep(100);
-    }
-    throw new Error("Fleet children did not become ready within 10 seconds");
+    await waitForStartup(readiness, startup.readyMs);
+    ready = true;
   };
 
   const response = (status: ControlResponse["status"], message?: string): ControlResponse => {
